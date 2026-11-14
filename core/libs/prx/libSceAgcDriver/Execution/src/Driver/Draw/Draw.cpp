@@ -615,7 +615,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) return;
         vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, decodeReads[i], 8u - program.firstUserSgpr);
         if (vertexInfos[i]) {
-            vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207), program.tailContinuation.get()) | graphics.layerExports;
+            vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207), program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
             vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
             Graphics::ApplyPointSize(graphics, *vertexInfos[i]);
         }
@@ -874,7 +874,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         decodeReads[i].clear();
         vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, 8u - program.firstUserSgpr);
         if (vertexInfos[i]) {
-            vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports;
+            vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
             vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
             Graphics::ApplyPointSize(graphics, *vertexInfos[i]);
         }
@@ -1466,7 +1466,7 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
         if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) continue;
         tail.vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, tail.decodeReads[i], 8u - program.firstUserSgpr);
         if (!tail.vertexInfos[i]) continue;
-        tail.vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports;
+        tail.vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, tail.reg207, program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
         tail.vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
         Graphics::ApplyPointSize(graphics, *tail.vertexInfos[i]);
     }

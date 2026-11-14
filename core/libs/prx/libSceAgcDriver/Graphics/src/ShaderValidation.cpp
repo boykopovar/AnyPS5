@@ -56,6 +56,7 @@ struct Module {
     std::uint32_t primitiveInputs = 0;
     bool pointSizeOutput = false;
     bool pointSize = false;
+    bool viewportOutput = false;
     std::map<std::uint32_t, std::vector<std::uint32_t>> modes;
 
     const std::vector<std::uint32_t>& Type(std::uint32_t id) const {
@@ -149,7 +150,7 @@ struct Module {
             if (!input && value == spv::BuiltInPrimitivePointIndicesEXT) primitiveIndices = 1u;
             if (!input && value == spv::BuiltInPrimitiveLineIndicesEXT) primitiveIndices = 2u;
             if (!input && value == spv::BuiltInPrimitiveTriangleIndicesEXT) primitiveIndices = 3u;
-            Require((input && ((value == spv::BuiltInWorkgroupId || value == spv::BuiltInLocalInvocationId || value == spv::BuiltInGlobalInvocationId || value == spv::BuiltInNumWorkgroups) && signature == "u32x3")) || (input && value == spv::BuiltInLocalInvocationIndex && signature == "u32") || (!input && value == spv::BuiltInPrimitivePointIndicesEXT && signature == "u32") || (!input && value == spv::BuiltInPrimitiveLineIndicesEXT && signature == "u32x2") || (!input && value == spv::BuiltInPrimitiveTriangleIndicesEXT && signature == "u32x3") || (!input && value == spv::BuiltInCullPrimitiveEXT && signature == "bool") || (!input && value == spv::BuiltInLayer && signature == "u32"), "unsupported mesh built-in");
+            Require((input && ((value == spv::BuiltInWorkgroupId || value == spv::BuiltInLocalInvocationId || value == spv::BuiltInGlobalInvocationId || value == spv::BuiltInNumWorkgroups) && signature == "u32x3")) || (input && value == spv::BuiltInLocalInvocationIndex && signature == "u32") || (!input && value == spv::BuiltInPrimitivePointIndicesEXT && signature == "u32") || (!input && value == spv::BuiltInPrimitiveLineIndicesEXT && signature == "u32x2") || (!input && value == spv::BuiltInPrimitiveTriangleIndicesEXT && signature == "u32x3") || (!input && value == spv::BuiltInCullPrimitiveEXT && signature == "bool") || (!input && value == spv::BuiltInLayer && signature == "u32") || (!input && value == spv::BuiltInViewportIndex && viewportOutput && signature == "u32"), "unsupported mesh built-in");
             return;
         }
         const auto signature = Signature(type);
@@ -157,6 +158,7 @@ struct Module {
             Require((value == spv::BuiltInVertexIndex || value == spv::BuiltInInstanceIndex || value == spv::BuiltInBaseInstance) && signature == "i32", "unsupported vertex built-in input");
         } else if (vertex && storage == spv::StorageClassOutput) {
             if (value == spv::BuiltInLayer && layerOutput && (signature == "u32" || signature == "i32")) return;
+            if (value == spv::BuiltInViewportIndex && layerOutput && viewportOutput && (signature == "u32" || signature == "i32")) return;
             if (value == spv::BuiltInPointSize && pointSizeOutput && signature == "f32" && !pointSize) {
                 pointSize = true;
                 return;
@@ -199,6 +201,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
 
     Module module;
     module.pointSizeOutput = (state.vertexPoints && stage == Stage::Vertex) || (mesh && state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u);
+    module.viewportOutput = !state.extraViewports.empty();
     std::uint32_t entries = 0;
     std::uint32_t memoryModels = 0;
     std::uint32_t entryPoint = 0;
@@ -284,6 +287,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilityImage1D ||
                     capability == spv::CapabilityImageGatherExtended ||
                     capability == spv::CapabilityImageQuery ||
+                    (mesh && module.viewportOutput && capability == spv::CapabilityMultiViewport) ||
                     (shaderResourceMinLod && capability == spv::CapabilityMinLod) ||
                     ((vertex || control || evaluation || mesh) && shaderClipDistance && capability == spv::CapabilityClipDistance) ||
                     (vertex && capability == spv::CapabilityDrawParameters) ||

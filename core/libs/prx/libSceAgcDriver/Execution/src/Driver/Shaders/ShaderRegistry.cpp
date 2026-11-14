@@ -2119,7 +2119,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
             continue;
         }
         if (vertex) {
-            vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, decoded.state.paClVsOutCntl, program.tailContinuation.get()) | decoded.state.layerExports;
+            vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, decoded.state.paClVsOutCntl, program.tailContinuation.get()) | decoded.state.layerExports | decoded.state.viewportExports;
             vertex->depthRemapMode = decoded.state.depthRemap.mode;
             Graphics::ApplyPointSize(decoded.state, *vertex);
         }

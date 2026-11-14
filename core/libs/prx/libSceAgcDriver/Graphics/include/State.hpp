@@ -157,9 +157,12 @@ struct State {
     std::uint32_t meshLayerBase = 0;
     std::uint32_t meshLayerCount = 0xffffffffu;
     std::uint32_t layerExports = 0;
+    std::uint32_t viewportExports = 0;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
     VkViewport viewport;
+    std::vector<VkViewport> extraViewports;
+    std::vector<VkRect2D> viewportScissors;
     bool negativeOneToOne;
     bool depthClamp = false;
     float depthScale = 1;
@@ -205,6 +208,8 @@ struct State {
 // PA_CL_VS_OUT_CNTL bits that place position exports (clip and cull distances, the misc and the two
 // distance vectors); a vertex program that exports pos1..pos3 depends on them.
 inline constexpr std::uint32_t PositionExportLayoutBits = 0xffffu | (1u << 21u) | (1u << 22u) | (1u << 23u);
+inline constexpr std::uint32_t ViewportIndexExport = 1u << 19u;
+inline constexpr std::uint32_t MaxViewports = 16;
 
 inline constexpr std::uint8_t CopyRop = 0xccu;
 VkLogicOp LogicOpFromRop(std::uint8_t rop);
@@ -213,6 +218,8 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = 
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
+void ApplyViewportIndex(const Context& context, State& state);
+inline std::uint32_t ViewportCount(const State& state) { return 1u + static_cast<std::uint32_t>(state.extraViewports.size()); }
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
@@ -345,7 +352,7 @@ struct DrawKeyRange {
 };
 inline constexpr std::array<DrawKeyRange, 53> DrawKeyRegisters{{
     {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 2}, {RegisterBank::Context, 0x005, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 5},
-    {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 2}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 6},
+    {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 0x20}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 0x60},
     // SPI_PS_INPUT_CNTL_0..31, SPI_PS_INPUT_ENA/ADDR, SPI_PS_IN_CONTROL .. SPI_BARYC_CNTL, SPI_SHADER_POS/Z/COL_FORMAT,
     // CB_BLEND0..7_CONTROL, GE_MAX_OUTPUT_PER_SUBGROUP.
     {RegisterBank::Context, 0x191, 32}, {RegisterBank::Context, 0x1b3, 2}, {RegisterBank::Context, 0x1b6, 3}, {RegisterBank::Context, 0x1c3, 3}, {RegisterBank::Context, 0x1e0, 8}, {RegisterBank::Context, 0x1ff, 1},
