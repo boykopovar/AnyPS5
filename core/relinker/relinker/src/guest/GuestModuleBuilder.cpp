@@ -1,5 +1,6 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
@@ -492,6 +493,15 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (sceImage)
                 if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size()))
                     code.resize(*end - header.MappedAddress);
+            const auto replacedStubs = FindReplacedPltStubs(code, header.MappedAddress, image.Got, image.Dynamic.RelaPltData.size());
+            for (const auto& stub : replacedStubs) {
+                std::string import;
+                for (std::size_t position = 0; position < image.Dynamic.RelaPltData.size(); position += 24)
+                    if (Io::ReadU64(image.Dynamic.RelaPltData, position) == stub.GotEntry) import = image.Symbols[Io::ReadU64(image.Dynamic.RelaPltData, position + 8) >> 32].Name;
+                auto target = Io::Utf8Path(image.SourcePath.lexically_relative(root));
+                std::replace(target.begin(), target.end(), '\\', '/');
+                progress.Message(DescribeReplacedPltStub(stub, target, import));
+            }
             auto scanCode = code;
             for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
                 if (table.Begin >= header.MappedAddress && table.End >= table.Begin) {
@@ -501,7 +511,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 }
             }
             const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
-            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges)) {
+            std::vector<std::size_t> syscallTraps;
+            try {
+                syscallTraps = syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges);
+            } catch (const Domain::RelinkerException& error) {
+                const auto cause = DescribeReplacedPltStubReaching(replacedStubs, code, header.MappedAddress, error.FailureOffset);
+                if (cause.empty()) throw;
+                Domain::RelinkerException explained(error.what() + cause, error.FailureOffset);
+                explained.InputPath = error.InputPath;
+                throw explained;
+            }
+            for (const auto offset : syscallTraps) {
                 if (offset > code.size() || code.size() - offset < 2u)
                     throw Domain::RelinkerException("Syscall trap patch exceeds guest executable segment", header.MappedAddress + offset);
                 if (!image.PatchedRanges.empty()) {

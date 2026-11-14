@@ -285,6 +285,14 @@ x86 `mov r/m64, imm32` and `add`/`sub`/`cmp r/m64, imm32` sign-extend their imme
 
 Entries apply in file order. A patch range must lie in the file bytes of one `PT_LOAD` and outside the ELF header and program header table. The conversion fails before writing any output if bytes differ from `expected`, a range is not valid, two entries overlap, a target matches no file or more than one file, or a range overlaps bytes the relinker itself rewrites (`--to-intel` replacements and trampolines, relinker patches, syscall traps) or the 8-byte target of a relocation of the file.
 
+A PLT stub of the executable or of a bundled module that no longer starts with the linked `jmp` through its GOT entry is reported during the conversion, because the import of that entry is not called through it:
+
+```
+Replaced PLT stub: [<target>] va=0x<address> <linked> -> <found> [(jump to 0x<address>)]; import <NID> is not called through it; a --patches entry with expected = "<found>" and value = "<linked>" restores the linked stub
+```
+
+`<target>` is the module's patch target and is left out for the executable. The bytes are the 6-byte jump, or the whole 16-byte stub when its `push` and `jmp` to the PLT header differ as well. The conversion is otherwise unchanged and converts the replacement as it is. A table in which no stub is linked that way is not reported. When a syscall instruction is refused in the code such a stub jumps to, before that code's first return or jump, the error names the stub. Restoring the stub leaves that code unreferenced but still scanned, so a second entry has to overwrite it before the file converts.
+
 When at least one patch is applied, `<output-stem>.patches.toml` is written beside the output. It lists every applied entry for every converted file, with `main_target`, `linux_base` (the address a Linux `ET_EXEC` output is placed at) and `config` (the patch file path in forward-slash form, reduced to its file name when the path holds a `"`, backslash or control character; the conversion fails before writing any output when even that cannot be held); typed entries keep their `type`, integers and `min`, `max` and `align`, and `--patches` accepts it to reproduce the conversion. The manifest must not replace the patch file it was read from.
 
 `--verify-patches <file> <path>` writes nothing and exits `0` when no entry is a mismatch. Without `--verify-output`, `<path>` is the input executable of any type, modules are found as in a conversion (module options and `--executable` apply), and each entry is `applicable` (the input holds `expected`) or `mismatch`. A target that matches nothing is an error that suggests `--verify-output`.
