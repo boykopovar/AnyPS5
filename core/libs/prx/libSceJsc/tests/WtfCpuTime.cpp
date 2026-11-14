@@ -38,10 +38,18 @@ double Seconds(const KernelTimeval& value) {
 
 volatile std::uint64_t sink;
 
-void BurnCpu() {
-    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+double ChargedSeconds() {
+    const GuestResourceUsage usage = Usage();
+    return Seconds(usage.ru_utime) + Seconds(usage.ru_stime);
+}
+
+void BurnCpuPast(double charged) {
+    const auto start = std::chrono::steady_clock::now();
+    const auto minimum = start + std::chrono::milliseconds(50);
+    const auto deadline = start + std::chrono::seconds(10);
     std::uint64_t value = 1;
-    while (std::chrono::steady_clock::now() < end) {
+    while (std::chrono::steady_clock::now() < minimum || ChargedSeconds() <= charged) {
+        Check(std::chrono::steady_clock::now() < deadline, __LINE__);
         for (int i = 0; i < 10000; ++i) value = value * 6364136223846793005ull + 1442695040888963407ull;
     }
     sink = value;
@@ -70,7 +78,7 @@ void TestMatchesKernel() {
 
 void TestAdvances() {
     const OptionalCPUTime first = _ZN3WTF7CPUTime3getEv();
-    BurnCpu();
+    BurnCpuPast(first.value.userTime + first.value.systemTime);
     const OptionalCPUTime second = _ZN3WTF7CPUTime3getEv();
     Check(first.hasValue && second.hasValue, __LINE__);
     Check(second.value.cpuTime - first.value.cpuTime >= 0.05, __LINE__);
