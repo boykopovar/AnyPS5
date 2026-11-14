@@ -755,7 +755,10 @@ public:
         for (const auto& sampler : plan.info.samplers) {
             if (sampler.table != NoTable) {
                 count = std::max(count, sampler.table + 1u);
-                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value() && plan.descriptorSources[sampler.source].tableColumn->indirect) hasIndirect = true;
+                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value()) {
+                    const auto& column = *plan.descriptorSources[sampler.source].tableColumn;
+                    hasIndirect |= column.indirect || plan.descriptorSources.at(column.heapSource).tableColumn.has_value();
+                }
             }
         }
         if (count == 0u) {
@@ -878,6 +881,27 @@ private:
         std::vector<std::uint32_t> values{0u};
         std::vector<std::pair<std::uint64_t, std::uint64_t>> scanned;
         for (const auto& domain : column.keyDomains) {
+            if (domain.child) {
+                if (!plan.descriptorSources.at(column.heapSource).tableColumn.has_value()) {
+                    skip(NarrowSkip::Value);
+                    return;
+                }
+                std::uint32_t word = 0u;
+                if (const auto dword = ImageTableAbi::ScalarBufferDword(domain.offset, 0u, records.size)) {
+                    const auto address = records.base + *dword;
+                    if (!PageAccessible(address, records.base, records.base + records.size)) {
+                        skip(NarrowSkip::Unmapped);
+                        return;
+                    }
+                    if (runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, address, sizeof(std::uint32_t))) {
+                        skip(NarrowSkip::Pending);
+                        return;
+                    }
+                    word = Read(address);
+                }
+                values.push_back((word >> domain.shift) & domain.mask);
+                continue;
+            }
             if (domain.value) {
                 DescriptorValue key;
                 try {
@@ -1131,7 +1155,7 @@ private:
         const auto end = records.base + records.size;
         if (column.indirect) {
             unread();
-            if (column.buffer) records.pointers.assign(records.keys, ImageTableAbi::UncapturedPointer);
+            if (column.buffer || column.pointerKeyed) records.pointers.assign(records.keys, ImageTableAbi::UncapturedPointer);
             for (std::uint32_t record = 0; record < records.keys; record++) {
                 if (records.states[record] != RecordState::Read) continue;
                 const auto offset = column.addend + record * column.stride;
@@ -1142,6 +1166,7 @@ private:
                     continue;
                 }
                 std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
+                if (column.pointerKeyed) records.pointers[record] = pointer;
                 for (const auto& hop : column.pointerHops) {
                     const auto low = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate);
                     const auto high = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate + 4u);
@@ -1498,6 +1523,7 @@ private:
         const auto& records = Column(source);
         auto& out = tables.tables.at(table);
         out = CopyRecords(records);
+        out.pointerKeyed = column.pointerKeyed;
         for (std::uint32_t resource = 0; resource < plan.info.images.size(); ++resource) {
             const auto& image = plan.info.images[resource];
             if (image.table != table || !registeredSampledArrayCandidate(image) || runtime.normalizeImageView == nullptr) continue;
@@ -1925,7 +1951,7 @@ bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::v
     for (std::size_t index = 0; index < left.size(); index++) {
         const auto& a = left[index];
         const auto& b = right[index];
-        if (a.base != b.base || a.size != b.size || a.records != b.records || a.keys != b.keys || a.fault != b.fault || a.outside != b.outside || a.nested != b.nested || !a.pointers.Shares(b.pointers) || !a.codes.Shares(b.codes) || !a.words.Shares(b.words) || a.resourceViews != b.resourceViews) return false;
+        if (a.base != b.base || a.size != b.size || a.records != b.records || a.keys != b.keys || a.fault != b.fault || a.outside != b.outside || a.nested != b.nested || a.pointerKeyed != b.pointerKeyed || !a.pointers.Shares(b.pointers) || !a.codes.Shares(b.codes) || !a.words.Shares(b.words) || a.resourceViews != b.resourceViews) return false;
     }
     return true;
 }
@@ -1933,7 +1959,7 @@ bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::v
 std::size_t resolutionFootprint(const ResolvedImageTables& resolved, const std::vector<ImageTableColumnSnapshot>& tables) {
     std::size_t footprint = resolved.map.size() + (resolved.elements.size() * sizeof(ImageTableElement) + resolved.samplers.size() * sizeof(ImageTableSamplerElement) + resolved.poison.size() * sizeof(ImageTablePoisonRecord)) / sizeof(std::uint32_t);
     for (const auto& table : tables) {
-        footprint += 16u + table.codes.size() + table.words.size() * 9u + table.pointers.size() * 2u;
+        footprint += 16u + table.codes.size() + table.words.size() * 9u + table.pointers.size() * 2u + table.readRanges.size() * 4u;
         for (const auto& view : table.resourceViews) footprint += view.words.size() * 9u + view.identities.size() * (sizeof(RegisteredImageView) / sizeof(std::uint32_t));
     }
     return footprint;
@@ -2125,20 +2151,21 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             out.map[header + Abi::TableFault] = poison(resource, PoisonReason::UnsupportedOperation, nullptr);
         }
         outside[table] = outside[table] || column.outside;
+        const bool byPointer = column.nested || column.pointerKeyed;
         const auto mapStart = static_cast<std::uint32_t>(out.map.size());
-        if (!column.nested) {
+        if (!byPointer) {
             growMap(column.keys);
             out.map[header + Abi::TableMapStart] = mapStart;
             out.map.resize(out.map.size() + column.keys, 0u);
         } else if (column.pointers.size() != column.keys) {
-            throw std::runtime_error("nested image table snapshot has no pointer for each record");
+            throw std::runtime_error("pointer-keyed image table snapshot has no pointer for each record");
         }
         std::map<std::uint64_t, std::uint32_t> pointers;
         if (column.nested) nestedRecords.Clear();
         else records.Clear();
         for (std::uint32_t key = 0; key < column.keys; key++) {
             const auto code = column.codes[key];
-            if (column.nested && column.pointers[key] == Abi::UncapturedPointer) continue;
+            if (byPointer && column.pointers[key] == Abi::UncapturedPointer) continue;
             std::uint32_t mapped = Abi::NullCode;
             if ((code & Abi::PoisonFlag) != 0u) {
                 const auto reason = static_cast<PoisonReason>(code & ~Abi::PoisonFlag);
@@ -2166,15 +2193,15 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                     records.Set(code, mapped);
                 }
             }
-            if (column.nested) {
+            if (byPointer) {
                 const auto [found, inserted] = pointers.try_emplace(column.pointers[key], mapped);
-                if (!inserted && found->second != mapped) throw std::runtime_error("nested image table captured conflicting values at one pointer");
+                if (!inserted && found->second != mapped) throw std::runtime_error("pointer-keyed image table captured conflicting values at one pointer");
             } else {
                 out.map[mapStart + key] = mapped;
             }
         }
-        if (column.nested) {
-            if (pointers.size() > Abi::MaxParentKeys) throw std::runtime_error("nested image table has too many pointers");
+        if (byPointer) {
+            if (pointers.size() > Abi::MaxParentKeys) throw std::runtime_error("pointer-keyed image table has too many pointers");
             growMap(pointers.size() * Abi::PointerRecordWords);
             out.map[header + Abi::TableKeyCount] = static_cast<std::uint32_t>(pointers.size());
             out.map[header + Abi::TableMapStart] = static_cast<std::uint32_t>(out.map.size());

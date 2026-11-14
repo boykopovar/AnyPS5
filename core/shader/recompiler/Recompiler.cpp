@@ -1916,6 +1916,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
         mix(table.nested ? 1u : 0u);
+        mix(table.pointerKeyed ? 1u : 0u);
         mix(table.pointers.Hash());
         mix(table.codes.Hash());
         mix(table.words.Hash());
