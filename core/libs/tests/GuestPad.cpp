@@ -195,6 +195,9 @@ static void CheckStickDeadZones(int handle) {
 
 static void CheckTouchContact(int handle) {
     Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadReadState(handle, reinterpret_cast<PadData*>(std::uintptr_t{0x10})) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
     for (const int invalid : {-1, 0, handle + 1, 9999}) {
         Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
