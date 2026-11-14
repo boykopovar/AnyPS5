@@ -1,5 +1,6 @@
 #include "prx/libSceSystemLogger2/libSceSystemLogger2.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -143,6 +144,28 @@ int main() {
     Require(sceSystemLogger2SetRnpsEventAsync(record) == kInvalidArgument);
     StorePointer(record, kRnpsTokenOffset, record);
     Require(sceSystemLogger2SetRnpsEventAsync(record) == kNotAvailable);
+
+    errno = 71;
+    eventStatus = 0xDEADBEEF;
+    const auto* unreadable = reinterpret_cast<const void*>(0x10);
+    Require(sceSystemLogger2SetEventAsyncInternal(unreadable, &eventStatus) == kInvalidArgument);
+    Require(eventStatus == 0xDEADBEEF);
+    Require(sceSystemLogger2SetEventAsync(unreadable) == kInvalidArgument);
+    Require(sceSystemLogger2SetEventAsyncEx(unreadable) == kInvalidArgument);
+    Require(sceSystemLogger2SetEventAsyncEx2(unreadable) == kInvalidArgument);
+    Require(sceSystemLogger2SetRnpsEventAsync(unreadable) == kInvalidArgument);
+    Require(errno == 71);
+
+    StoreU32(record, kCountOffset, 1);
+    StorePointer(record, kEntryOffset, unreadable);
+    Require(sceSystemLogger2SetEventAsyncEx(record) == kInvalidArgument);
+    StorePointer(record, kEntryOffset, nullptr);
+    StorePointer(record, kEntryLanguageOffset, unreadable);
+    Require(sceSystemLogger2SetEventAsyncEx(record) == kInvalidArgument);
+    StorePointer(record, kEntryLanguageOffset, nullptr);
+    StoreU32(record, kCountOffset, 0);
+    Require(errno == 71);
+    Require(sceSystemLogger2SetEventAsyncEx(record) == kNotAvailable);
 
     Require(sceSystemLogger2Terminate() == 0);
     Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);

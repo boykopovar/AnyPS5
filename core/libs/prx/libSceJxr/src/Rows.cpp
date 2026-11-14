@@ -16,9 +16,13 @@ const char* JxrAdvanceMRPtr_nid_no_patch(void* codec);
 const char* JxrSwapMRPtr_nid_no_patch(void* codec);
 const char* JxrAdvanceOneMBRow_nid_no_patch(void* codec);
 const char* JxrResetCodingContext_nid_no_patch(void* context);
+std::int32_t JxrAllocateCodingContextDec_nid_no_patch(void* codec, std::int32_t count);
 }
 
 namespace {
+
+constexpr std::int32_t MaxCodingContexts = 4096;
+constexpr std::int32_t CodingContextError = -1;
 
 [[noreturn]] void Fail(const char* function, const char* error) {
     throw std::invalid_argument(std::string(function) + ": " + error);
@@ -75,6 +79,13 @@ void APS5_VABI ResetCodingContext_nid_postfix(void* context) {
     GuestArena::HostWrite write(context, JxrCodingContextBytes_nid_no_patch());
     if (!write.Open()) Fail(__func__, "coding context is not writable");
     Check(JxrResetCodingContext_nid_no_patch(context), __func__);
+}
+
+std::int32_t APS5_VABI AllocateCodingContextDec_nid_postfix(void* codec, std::int32_t count) {
+    if (count < 1 || count > MaxCodingContexts || !codec) return CodingContextError;
+    GuestArena::HostWrite write(codec, JxrCodecBytes_nid_no_patch());
+    if (!write.Open()) Fail(__func__, "codec is not writable");
+    return JxrAllocateCodingContextDec_nid_no_patch(codec, count);
 }
 
 } // extern "C"

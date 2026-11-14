@@ -60,6 +60,8 @@ std::mutex primitiveTouchMutex;
 struct GestureContext {
     std::int32_t handle = 0;
     std::vector<TrackedTouch> touches;
+    std::array<std::uint8_t, 32> touchArea{};
+    bool touchAreaConfigured = false;
 };
 
 std::array<GestureContext, 8> gestureContexts;
@@ -400,10 +402,20 @@ int APS5_VABI sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gestureHand
     if (!recognizer) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     if (!rectangle) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     RecognizerState state{};
-    if (loadRecognizerState(recognizer, state)) {
+    const int savedErrno = errno;
+    const bool readState = GuestCopyIn_nid_no_patch(&state, recognizer, sizeof(state));
+    errno = savedErrno;
+    if (!readState) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
+    if (state.magic == RECOGNIZER_STATE_MAGIC) {
+        SystemGestureRectangle localRectangle{};
+        const bool readRectangle = GuestCopyIn_nid_no_patch(&localRectangle, rectangle, sizeof(localRectangle));
+        errno = savedErrno;
+        if (!readRectangle) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
         state.hasRectangle = 1;
-        state.rectangle = *rectangle;
-        storeRecognizerState(recognizer, state);
+        state.rectangle = localRectangle;
+        const bool written = GuestCopyOut_nid_no_patch(recognizer, &state, sizeof(state));
+        errno = savedErrno;
+        if (!written) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     }
     return 0;
 }
@@ -416,8 +428,15 @@ int APS5_VABI sceSystemGestureDebugGetVersion() {
 
 extern "C" {
 
-int APS5_VABI sceSystemGestureSetTouchAreaInformation() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSystemGestureSetTouchAreaInformation(int32_t gestureHandle, const void* information) {
+    std::lock_guard lock(primitiveTouchMutex);
+    if (!gestureInitialized) return static_cast<int>(0x80890003);
+    if (!information) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
+    auto* context = findGestureContext(gestureHandle);
+    if (!context) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
+    std::memcpy(context->touchArea.data(), information, context->touchArea.size());
+    context->touchAreaConfigured = true;
+    return 0;
 }
 
 }
