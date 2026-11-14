@@ -158,6 +158,13 @@ struct PreparedShaderState {
         std::vector<std::uint64_t> callees;
         std::vector<std::vector<std::uint32_t>> code;
         std::shared_ptr<const ShaderRecompiler::LinkedCalls> linked;
+        std::vector<std::uint32_t> tableUserData;
+        std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> dependencies;
+
+        void AppendRegions(std::vector<ShaderRecompiler::MemoryRegion>& regions) const;
+        void VouchRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::vector<VouchedRegions>& vouched) const;
+        static bool Restamp(const ShaderRecompiler::SrtGuestWords& block, ShaderMemory::PendingWriteQuery pending);
+        bool Overlaps(std::uint64_t address, std::size_t bytes) const;
     };
     std::vector<Entry> entries;
     std::vector<UserDataLink> userDataLinks;
@@ -349,8 +356,8 @@ ShaderRecompiler::RectListShaders PreparedRectangle(const ShaderSnapshot& snapsh
 ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, const std::shared_ptr<const ShaderSnapshot>& fragment, std::uint64_t vertexId, std::uint64_t fragmentId, const ShaderRecompiler::SpirvTarget& target);
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
-std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation);
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
 bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset);
 
 }

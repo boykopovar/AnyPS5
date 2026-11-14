@@ -13,15 +13,14 @@ void Driver::verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffse
         std::abort();
     };
     auto verifyMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
-    auto invocation = InvocationFor(snapshot, codeOffset, request);
-    const auto capture = CaptureInvocation(*verifyMemory, snapshot, codeOffset, request, invocation);
+    std::shared_ptr<const PreparedShaderState::UserDataLink> linking;
+    auto invocation = InvocationFor(snapshot, codeOffset, request, &linking);
+    const auto capture = CaptureInvocation(*verifyMemory, snapshot, codeOffset, request, invocation, &linking);
     const auto regions = verifyMemory->Regions();
     request.context.memory = regions;
     const auto result = invocation.Materialize(*capture);
     std::size_t position = 0, run = 0;
-    for (const auto& region : regions) {
-        const bool registered = std::any_of(memory.begin(), memory.end(), [&](const auto& known) { return region.guestAddress >= known.guestAddress && region.guestAddress < known.guestAddress + known.bytes.size(); });
-        if (registered) continue;
+    for (const auto& region : dispatchRegions(memory, regions, linking.get())) {
         if (run >= variant.runs.size() || variant.runs[run].first != region.guestAddress || variant.runs[run].second != region.guestAddress + region.bytes.size()) fail("the read set", position, run);
         const auto count = region.bytes.size() / sizeof(std::uint32_t);
         if (position + count > liveWords.size() || std::memcmp(region.bytes.data(), liveWords.data() + position, region.bytes.size()) != 0) fail("the captured bytes", position, run);
