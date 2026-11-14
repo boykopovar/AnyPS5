@@ -774,6 +774,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             physical.imageShapes.reserve(physical.imageShapes.size() + tables->elements.size());
             physical.imageDepthCompare.reserve(physical.imageDepthCompare.size() + tables->elements.size());
             physical.imageWritten.reserve(physical.imageWritten.size() + tables->elements.size());
+            physical.imageUintStorage.reserve(physical.imageUintStorage.size() + tables->elements.size());
             physical.imageAtomic.reserve(physical.imageAtomic.size() + tables->elements.size());
             physical.imageAtomic64.reserve(physical.imageAtomic64.size() + tables->elements.size());
             physical.imageSamplers.reserve(physical.imageSamplers.size() + tables->elements.size());
