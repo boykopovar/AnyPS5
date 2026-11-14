@@ -37,7 +37,9 @@
 namespace {
 
 using AgcDriver::Graphics::Require;
+using AgcDriver::DriverDetail::DrawFinisher;
 using AgcDriver::DriverDetail::DrawMiss;
+using AgcDriver::DriverDetail::DrawPipeline;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> VertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> SecondVertexCode = VertexCode;
@@ -329,7 +331,7 @@ std::atomic<bool> RestartChecked{false};
 
 void ChangeForwardedDataBeforeCheck() {
     if (!RestartArmed.exchange(false)) return;
-    RestartChecked.store(AgcDriver::DriverDetail::DrawFinisher::OnFinisherThread());
+    RestartChecked.store(DrawFinisher::OnFinisherThread());
     ForwardedData[0] = 0.25f;
 }
 
@@ -381,6 +383,8 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     const auto restartedCounters = draw(&OffsetTable[2]);
     AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
     Require(!RestartArmed.load(), mode + ": the capture check did not run for the relocated draw");
+    const bool pipelined = DrawFinisher::Enabled() && DrawPipeline::Depth() != 0;
+    Require(!pipelined || RestartChecked.load(), mode + ": the pipelined relocated draw was checked on the queue worker, not the draw finisher, so its restart patch and skip count were not exercised");
     if (RestartChecked.load()) {
         const auto skipped = restartedCounters.restartPatchSkipped - counters.restartPatchSkipped;
         const auto expected = std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr ? 1u : 0u;
