@@ -2626,8 +2626,10 @@ static int SendAll(const Socket& socket, const void* data, std::uint64_t length,
     return 0;
 }
 static int SendIovecs(const Socket& socket, const KernelIovec* iov, int count, std::int64_t& sent) {
-    for (int i = 0; iov && i < count; ++i)
+    for (int i = 0; iov && i < count; ++i) {
+        GuestArena::GuestArenaPrepareHostRead_nid_no_patch(iov[i].base, iov[i].length);
         if (const int error = SendAll(socket, iov[i].base, iov[i].length, sent)) return error;
+    }
     return 0;
 }
 int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset, std::uint64_t length,
