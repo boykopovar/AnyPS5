@@ -150,6 +150,21 @@ void BufferValueWordsArePatchedInTheirBinding() {
     Driver::tagUserValueWords(*pointer, program);
     Require((pointer->valueWords >> 4u & 1u) == 0u, "a user word relocated as a pointer was also tagged as a V# value");
 
+    const auto pointerUpperHalf = Variant(result(false));
+    pointerUpperHalf->relocatableWords = 1u << 3u;
+    Driver::tagUserValueWords(*pointerUpperHalf, program);
+    Require(pointerUpperHalf->valueWords == 0u, "the user word after a relocated pointer word, the pointer's upper half, was tagged as a V# value (mask " + std::to_string(pointerUpperHalf->valueWords) + "), so a pointer that moved only its upper half would reuse the draw with the memory under the old upper half");
+
+    const auto calleeUpperHalf = Variant(result(false));
+    calleeUpperHalf->calleeWords = 1u << 3u;
+    Driver::tagUserValueWords(*calleeUpperHalf, program);
+    Require(calleeUpperHalf->valueWords == 0u, "the user word after a fetch subroutine pointer word, the pointer's upper half, was tagged as a V# value (mask " + std::to_string(calleeUpperHalf->valueWords) + "), so a call target that moved only its upper half would reuse the draw keyed by the code under the old upper half");
+
+    const auto countUpperHalf = Variant(result(false));
+    countUpperHalf->relocatableWords = 1u << 5u;
+    Driver::tagUserValueWords(*countUpperHalf, program);
+    Require(countUpperHalf->valueWords == (1u << 4u) && countUpperHalf->valueSlots.size() == 1u && countUpperHalf->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u}, "a record count that is also the upper half of a relocated pointer was tagged as a V# value (mask " + std::to_string(countUpperHalf->valueWords) + ")");
+
     const auto shared = [&](std::uint32_t otherRecords) {
         auto compiled = result(false);
         compiled->bindings.push_back(GuestBuffer({Low(Buffer.data()) + 0x100u, descriptor[1], otherRecords, descriptor[3]}, false));
