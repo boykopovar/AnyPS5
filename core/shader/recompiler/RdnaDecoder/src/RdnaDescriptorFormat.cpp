@@ -131,8 +131,12 @@ std::optional<FmaskLayout> FmaskLayoutOf(IrBufferFormat format) {
         case IrBufferFormat::Fmask8_S4_F2: return FmaskLayout{4u, 2u, 2u, 8u};
         case IrBufferFormat::Fmask8_S4_F4: return FmaskLayout{4u, 4u, 2u, 8u};
         case IrBufferFormat::Fmask16_S8_F2: return FmaskLayout{8u, 2u, 2u, 16u};
+        case IrBufferFormat::Fmask16_S16_F1: return FmaskLayout{16u, 1u, 1u, 16u};
+        case IrBufferFormat::Fmask32_S16_F2: return FmaskLayout{16u, 2u, 2u, 32u};
         case IrBufferFormat::Fmask32_S8_F4: return FmaskLayout{8u, 4u, 4u, 32u};
         case IrBufferFormat::Fmask32_S8_F8: return FmaskLayout{8u, 8u, 4u, 32u};
+        case IrBufferFormat::Fmask64_S16_F4: return FmaskLayout{16u, 4u, 4u, 64u};
+        case IrBufferFormat::Fmask64_S16_F8: return FmaskLayout{16u, 8u, 4u, 64u};
         default: return std::nullopt;
     }
 }
