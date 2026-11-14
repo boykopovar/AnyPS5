@@ -47,5 +47,17 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual(rows["new"]["todo_names"], {"added": ["b"], "removed": []})
 
 
+class SymbolSetTests(unittest.TestCase):
+    def row(self, base_group, head_group):
+        return progress_diff.compare(snapshot(libraries=[base_group]), snapshot(libraries=[head_group]))["libraries"]["groups"][0]
+
+    def test_each_state_reports_added_and_removed_names(self):
+        row = self.row({"name": "G", "done_names": ["a", "b"], "todo_names": ["c"], "inert_names": ["d"]},
+                       {"name": "G", "done_names": ["b", "c"], "todo_names": ["a", "d"], "inert_names": []})
+        self.assertEqual(row["done_names"], {"added": ["c"], "removed": ["a"]})
+        self.assertEqual(row["todo_names"], {"added": ["a", "d"], "removed": ["c"]})
+        self.assertEqual(row["inert_names"], {"added": [], "removed": ["d"]})
+
+
 if __name__ == "__main__":
     unittest.main()
