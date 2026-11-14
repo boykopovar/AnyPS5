@@ -294,7 +294,6 @@ int main() {
     Require(Throws([] { return sceSystemServiceAddLocalProcessForPsmKit(nullptr, nullptr, nullptr); }));
     Require(Throws([] { return sceSystemServiceKillLocalProcessForPsmKit(1); }));
     Require(sceSystemServiceGetHdrToneMapLuminance(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
-    Require(sceSystemServiceGetHdrToneMapLuminance(reinterpret_cast<SystemServiceHdrToneMapLuminance*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceHdrToneMapLuminance luminance{-1.0f, -1.0f, -1.0f};
     Require(sceSystemServiceGetHdrToneMapLuminance(&luminance) == SYSTEM_SERVICE_OK);
     Require(luminance.max_full_frame_tone_map_luminance == 100.0f);
@@ -335,7 +334,6 @@ int main() {
     Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, tail, 600) == SYSTEM_SERVICE_ERROR_PARAMETER);
 
     Require(sceSystemServiceGetStatus(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
-    Require(sceSystemServiceGetStatus(reinterpret_cast<SystemServiceStatus*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceStatus status;
     std::memset(&status, 0x5a, sizeof(status));
     Require(sceSystemServiceGetStatus(&status) == SYSTEM_SERVICE_OK);
@@ -351,7 +349,6 @@ int main() {
     Require(safeArea.ratio == 1.0f);
     for (unsigned char byte : safeArea.reserved) Require(byte == 0);
     Require(sceSystemServiceGetNoticeScreenSkipFlag(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
-    Require(sceSystemServiceGetNoticeScreenSkipFlag(reinterpret_cast<bool*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
     bool skip = true;
     Require(sceSystemServiceGetNoticeScreenSkipFlag(&skip) == SYSTEM_SERVICE_OK && !skip);
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);

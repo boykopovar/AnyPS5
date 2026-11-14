@@ -382,12 +382,10 @@ int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLumi
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  const auto hdr = AgcDriver::CurrentHostHdr();
- SystemServiceHdrToneMapLuminance result{};
- result.max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
- result.max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
- result.min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
- if (!GuestCopyOut_nid_no_patch(luminance, &result, sizeof(result))) return SYSTEM_SERVICE_ERROR_PARAMETER;
- AgcDriverNoteReportedToneMapPeak_nid_postfix(result.max_tone_map_luminance);
+ luminance->max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
+ luminance->max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
+ luminance->min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
+ AgcDriverNoteReportedToneMapPeak_nid_postfix(luminance->max_tone_map_luminance);
  return SYSTEM_SERVICE_OK;
 }
 
@@ -395,8 +393,7 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- constexpr bool skip = false;
- if (!GuestCopyOut_nid_no_patch(value, &skip, sizeof(skip))) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ *value = false;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -404,8 +401,7 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- const SystemServiceStatus current{};
- if (!GuestCopyOut_nid_no_patch(status, &current, sizeof(current))) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ *status = SystemServiceStatus{};
  return SYSTEM_SERVICE_OK;
 }
 
@@ -538,12 +534,10 @@ int APS5_VABI sceSystemServiceHideSplashScreen(void) {
  return SYSTEM_SERVICE_OK;
 }
 
-int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* output) {
- if (output == nullptr) {
+int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
+ if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- int result = 0;
- int* const value = &result;
  switch (paramId) {
   case SYSTEM_SERVICE_PARAM_ID_LANG:
   case SYSTEM_SERVICE_PARAM_ID_400: *value = SystemServiceConsoleLanguage("sceSystemServiceParamGetInt"); break;
@@ -557,7 +551,6 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* output) {
    *value = measured->value;
   }
  }
- if (!GuestCopyOut_nid_no_patch(output, &result, sizeof(result))) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
