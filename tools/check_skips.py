@@ -20,6 +20,8 @@ CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MA
 
 WINDOWS_PREFIX = "agc"
 
+ENVIRONMENT_LOADER_RETENTION = "environment binding: skipped unload checks because the platform loader retained libkernel; fallback detachment was not verified"
+
 
 def device_limitations(output, patterns):
     reasons = [match.group(0) for line in output.splitlines() if (match := re.search(r"skipped,.*", line, re.IGNORECASE))]
@@ -42,6 +44,11 @@ def high_refresh_limitation(output):
         if reason:
             reasons.append(reason)
     return bool(reasons) and all(HIGH_REFRESH_LIMITATION.fullmatch(reason) for reason in reasons)
+
+
+def environment_loader_retention(output):
+    reasons = [line.strip() for line in output.splitlines() if re.search(r"\bskipp(?:ed|ing)\b", line, re.IGNORECASE)]
+    return reasons == [ENVIRONMENT_LOADER_RETENTION]
 
 
 def skips(path, require_tests=False):
@@ -98,8 +105,9 @@ def main(argv=None):
         unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not symlink_privilege_limitation(name, output) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE, NO_RAW_SOCKET)) and not high_refresh_limitation(output)]
         expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket, or the two symlink creation tests reporting unavailable Windows symbolic-link privileges"
     else:
-        unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)]
-        expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window, a display without a 120 Hz mode or no permission to create a raw socket"
+        unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)
+                      and not (name == "guest_environment_binding_unload" and environment_loader_retention(output))]
+        expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window, a display without a 120 Hz mode or no permission to create a raw socket, or guest_environment_binding_unload reporting loader retention"
     if args.json:
         grouped = {}
         for name, output in found:
