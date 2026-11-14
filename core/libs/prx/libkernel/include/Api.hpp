@@ -141,6 +141,12 @@ struct SceKernelSystemSwVersion {
     std::uint32_t version;
 };
 
+struct KernelTitleWorkaround {
+    std::int32_t version;
+    std::int32_t align;
+    std::uint64_t ids[2];
+};
+
 extern "C" {
 int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, std::uint32_t attr, std::uint64_t initPattern, const void* param);
 int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef);
@@ -849,5 +855,16 @@ int APS5_VABI sysKernelGetUpdVersion_nid_postfix(std::uint32_t* version);
 int APS5_VABI sysKernelGetManufacturingMode_nid_postfix(void);
 int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void);
 int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void);
+int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version);
+int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* category);
+int APS5_VABI sceKernelIsNeoMode(void);
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled);
+int APS5_VABI sceKernelAllocateToolMemory(void);
+int APS5_VABI sceKernelAvailableToolMemorySize(void);
+int APS5_VABI sceKernelMapToolMemory(void);
+int APS5_VABI sceKernelReleaseToolMemory(void);
+int APS5_VABI sceKernelGetToolMemoryRange(void);
+int APS5_VABI sceKernelSetProcessProperty(void);
 
 }
