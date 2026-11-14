@@ -429,40 +429,43 @@ std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const voi
     return WmpErrSuccess;
 }
 
-int APS5_VABI allocateBitIOInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI detachISRead_nid_postfix(void* codec, Jxr::BitIo* io) {
+    if (!io || !io->stream) APS5_INVALID_ARG_EX;
+    auto* stream = io->stream;
+    flushToByte_nid_postfix(io);
+    if ((io->bitsUsed & 7) != 0) APS5_INVALID_ARG_EX;
+    const auto result = readIS_nid_postfix(codec, io);
+    if (result < 0) return result;
+    constexpr std::uintptr_t packetSize = 8192;
+    if (!io->start || !io->current) APS5_INVALID_ARG_EX;
+    const auto start = reinterpret_cast<std::uintptr_t>(io->start);
+    const auto current = reinterpret_cast<std::uintptr_t>(io->current);
+    const auto byteOffset = static_cast<std::uintptr_t>(io->bitsUsed / 8);
+    if (start > UINTPTR_MAX - packetSize || current > UINTPTR_MAX - byteOffset) APS5_INVALID_ARG_EX;
+    const auto end = start + packetSize;
+    const auto position = current + byteOffset;
+    const auto remaining = end - position;
+    if (!stream->setPosition) APS5_INVALID_ARG_EX;
+    stream->setPosition(stream, io->referenceOffset - remaining);
+    io->stream = nullptr;
+    return result;
 }
 
-int APS5_VABI allocatePredInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI allocateQuantizer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI allocateTileInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI detachISRead_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI detachISWrite_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI freePredInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI freeQuantizer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI freeTileInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI detachISWrite_nid_postfix(void* codec, Jxr::BitIo* io) {
+    if (!io) APS5_INVALID_ARG_EX;
+    if ((io->bitsUsed & 7) != 0) APS5_INVALID_ARG_EX;
+    const auto result = writeIS_nid_postfix(codec, io);
+    if (result < 0) return result;
+    if (!io->stream || !io->stream->write || !io->start || !io->current) APS5_INVALID_ARG_EX;
+    const auto start = reinterpret_cast<std::uintptr_t>(io->start);
+    const auto current = reinterpret_cast<std::uintptr_t>(io->current);
+    const auto byteCount = static_cast<std::uintptr_t>(io->bitsUsed / 8);
+    if (current > UINTPTR_MAX - byteCount) APS5_INVALID_ARG_EX;
+    const auto end = current + byteCount;
+    const auto writeResult = io->stream->write(io->stream, io->start, end - start);
+    if (writeResult < 0) return writeResult;
+    io->stream = nullptr;
+    return writeResult;
 }
 
 std::int32_t APS5_VABI initPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t mbWidth, std::size_t numChannels) {
@@ -492,10 +495,6 @@ std::int32_t APS5_VABI initPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProc
     }
 
     return 0;
-}
-
-int APS5_VABI setBitIOPointers_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI termPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t numChannels) {
