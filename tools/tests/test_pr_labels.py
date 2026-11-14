@@ -200,6 +200,38 @@ class PerfTests(unittest.TestCase):
 
 
 class NumbersTests(unittest.TestCase):
+    def test_different_capture_contexts_do_not_satisfy_a_perf_report(self):
+        first = json.loads(summary("a"))
+        changes = (
+            ("gpu", "other GPU"),
+            ("driver", "other driver"),
+            ("os", "other OS"),
+            ("resolution", "2560x1440"),
+            ("cpu", "other CPU"),
+            ("title_id", "PPSA00001"),
+            ("window", {"spec": "frames 601:4", "first_present": 601, "ms": 80.0}),
+            ("env", {"APS5_TRACE_FRAMES": "601:4"}),
+        )
+        for field, value in changes:
+            with self.subTest(field=field):
+                second = json.loads(summary("b"))
+                second[field] = value
+                body = json.dumps(first) + "\n" + json.dumps(second)
+                self.assertFalse(pr_labels.has_numbers(body))
+                self.assertEqual(pr_labels.labels_for(pr("perf(agc): compare", body)),
+                                 ({"perf", "perf numbers missing"}, set()))
+
+    def test_matching_context_from_distinct_commits_still_counts(self):
+        first = json.loads(summary("a"))
+        second = json.loads(summary("b"))
+        first["title_id"] = second["title_id"] = "PPSA00001"
+        first["cpu"] = second["cpu"] = "CPU"
+        body = json.dumps(first) + "\n" + json.dumps(second)
+        self.assertTrue(pr_labels.has_numbers(body))
+        self.assertEqual(pr_labels.labels_for(pr("perf(agc): compare", body,
+                                                  ["perf", "perf numbers missing"])),
+                         (set(), {"perf numbers missing"}))
+
     def test_counts(self):
         cases = [
             ("", False),
@@ -255,7 +287,7 @@ class ProcessTests(unittest.TestCase):
     def run_process(self, pull, comments=0, dry_run=False, comment=True):
         calls = []
 
-        def fake(*args):
+        def fake(*args, **kwargs):
             calls.append(args)
             return ""
 
@@ -407,6 +439,50 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+    def test_gh_retries_on_transient_error_and_succeeds(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 502: Bad Gateway")
+            return subprocess.CompletedProcess(cmd, 0, stdout="success\n", stderr="")
+
+        with patch.object(pr_labels.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_labels.time, "sleep") as sleep_mock:
+            result = pr_labels.gh("test", delay=0.01)
+        self.assertEqual(result, "success\n")
+        self.assertEqual(len(calls), 2)
+        sleep_mock.assert_called_once_with(0.01)
+
+    def test_gh_fails_immediately_on_non_transient_error(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 404: Not Found")
+
+        with patch.object(pr_labels.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_labels.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_labels.gh("test", delay=0.01)
+        self.assertEqual(len(calls), 1)
+        sleep_mock.assert_not_called()
+
+    def test_gh_raises_called_process_error_on_retry_exhaustion(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 503: Service Unavailable")
+
+        with patch.object(pr_labels.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_labels.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_labels.gh("test", attempts=3, delay=0.01)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleep_mock.call_count, 2)
 
 
 
