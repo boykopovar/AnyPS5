@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -230,6 +231,35 @@ void CheckLimits(int context) {
     Require(sceHttpCookieFlush(context) == 0 && Stats(context).peakCookieCount == 3000, "flush keeps the peaks");
 }
 
+void AppendU32(std::vector<std::uint8_t>& blob, std::uint32_t value) {
+    for (int shift = 0; shift < 32; shift += 8) blob.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+
+void AppendU64(std::vector<std::uint8_t>& blob, std::uint64_t value) {
+    for (int shift = 0; shift < 64; shift += 8) blob.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+
+void AppendString(std::vector<std::uint8_t>& blob, const char* text) {
+    AppendU32(blob, static_cast<std::uint32_t>(std::strlen(text)));
+    blob.insert(blob.end(), text, text + std::strlen(text));
+}
+
+std::vector<std::uint8_t> BlobWithExpiry(std::uint64_t expiry) {
+    std::vector<std::uint8_t> blob{'A', 'P', 'S', '5', 'C', 'K', '1', 0};
+    blob.reserve(64);
+    AppendU32(blob, 1);
+    AppendString(blob, "x");
+    AppendString(blob, "1");
+    AppendString(blob, "a.test");
+    AppendString(blob, "a.test");
+    AppendString(blob, "/");
+    blob.push_back(0);
+    blob.push_back(1);
+    AppendU64(blob, expiry);
+    AppendU64(blob, 1);
+    return blob;
+}
+
 void CheckExportImport() {
     const int source = Init();
     Add(source, "http://export.example.com/", "a=1; Domain=export.example.com; Path=/");
@@ -258,6 +288,12 @@ void CheckExportImport() {
 
     Require(sceHttpCookieImport(target, nullptr, blob.size()) == InvalidValue, "an import without a buffer");
     Require(sceHttpCookieImport(target, blob.data(), blob.size() - 1) == InvalidValue, "a truncated import");
+    Require(sceHttpCookieImport(target, blob.data(), std::numeric_limits<std::size_t>::max()) == OutOfSize, "an oversized import length");
+    const auto hugeExpiry = BlobWithExpiry(std::numeric_limits<std::uint64_t>::max());
+    const int expiryContext = Init();
+    Require(sceHttpCookieImport(expiryContext, hugeExpiry.data(), hugeExpiry.size()) == 0, "an import with a huge expiry");
+    Require(Get(expiryContext, "http://a.test/") == "x=1", "a huge expiry is clamped instead of overflowing");
+    Require(sceHttpTerm_nid_postfix(expiryContext) == 0, "term the expiry context");
     auto corrupted = blob;
     corrupted[0] ^= 0xff;
     const std::string before = Get(target, "http://export.example.com/");
@@ -276,7 +312,25 @@ void CheckExportImport() {
     Require(sceHttpCookieImport(target, emptyBlob.data(), emptyBlob.size()) == 0, "an empty import");
     Require(Missing(target, "http://export.example.com/"), "an empty import clears the store");
 
-    for (const int id : {source, target, empty}) Require(sceHttpTerm_nid_postfix(id) == 0, "term export/import context");
+    const int limited = Init();
+    Require(sceHttpSetCookieMaxSize(limited, 0) == 0, "a zero cookie size limit");
+    Require(sceHttpCookieImport(limited, blob.data(), blob.size()) == OutOfSize, "an import above the per-cookie size limit");
+    Require(Stats(limited).cookieCount == 0, "a rejected size import leaves the store alone");
+
+    const int same = Init();
+    Add(same, "http://same.example.com/", "a=1");
+    Add(same, "http://same.example.com/", "b=2");
+    std::size_t sameSize = 0;
+    Require(sceHttpCookieExport(same, nullptr, 0, &sameSize) == 0, "the same-domain export size");
+    std::vector<std::uint8_t> sameBlob(sameSize);
+    std::size_t sameWritten = 0;
+    Require(sceHttpCookieExport(same, sameBlob.data(), sameBlob.size(), &sameWritten) == 0, "the same-domain export");
+    const int perDomain = Init();
+    Require(sceHttpSetCookieMaxNumPerDomain(perDomain, 1) == 0, "a one-cookie domain limit");
+    Require(sceHttpCookieImport(perDomain, sameBlob.data(), sameBlob.size()) == OutOfSize, "an import above the per-domain limit");
+    Require(Stats(perDomain).cookieCount == 0, "a rejected domain import leaves the store alone");
+
+    for (const int id : {source, target, empty, limited, same, perDomain}) Require(sceHttpTerm_nid_postfix(id) == 0, "term export/import context");
 }
 
 }

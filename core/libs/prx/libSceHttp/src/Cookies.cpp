@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -444,7 +445,12 @@ bool importBlob(const std::vector<std::uint8_t>& input, std::vector<Cookie>& coo
             return false;
         }
         cookie.secure = secure != 0;
-        if (hasExpiry != 0) cookie.expiry = Clock::time_point{std::chrono::seconds{static_cast<std::int64_t>(seconds)}};
+        if (hasExpiry != 0) {
+            const std::int64_t signedSeconds = seconds > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
+                ? std::numeric_limits<std::int64_t>::max()
+                : static_cast<std::int64_t>(seconds);
+            cookie.expiry = clampedTime(std::chrono::sys_seconds{std::chrono::seconds{signedSeconds}});
+        }
         if (cookie.name.empty() && cookie.value.empty()) return false;
         if (cookie.domain.empty() || cookie.path.empty() || cookie.path.front() != '/') return false;
         cookies.push_back(std::move(cookie));
@@ -593,11 +599,15 @@ int ExportHttpCookies(int contextId, void* buffer, std::size_t size, std::size_t
 }
 
 int ImportHttpCookies(int contextId, const void* buffer, std::size_t size) {
+    std::uint64_t maximumSize = 0;
     {
         std::lock_guard lock(g_cookieMutex);
-        if (!findJar(contextId)) return ERROR_INVALID_ID;
+        CookieJar* jar = findJar(contextId);
+        if (!jar) return ERROR_INVALID_ID;
+        maximumSize = CookieExportMagic.size() + static_cast<std::uint64_t>(jar->maxNum) * 38 + jar->totalMaxSize;
     }
     if (!buffer || size < CookieExportMagic.size()) return ERROR_INVALID_VALUE;
+    if (size > maximumSize) return ERROR_OUT_OF_SIZE;
     std::vector<std::uint8_t> input;
     std::vector<Cookie> cookies;
     try {
@@ -620,7 +630,16 @@ int ImportHttpCookies(int contextId, const void* buffer, std::size_t size) {
     CookieJar* jar = findJar(contextId);
     if (!jar) return ERROR_INVALID_ID;
     std::uint64_t stored = 0;
-    for (const Cookie& cookie : cookies) stored += storedSize(cookie);
+    std::unordered_map<std::string, std::uint32_t> perDomain;
+    try {
+        for (const Cookie& cookie : cookies) {
+            if (cookieSize(cookie) > jar->maxSize || storedSize(cookie) > jar->maxSize + StoredSizeSlack) return ERROR_OUT_OF_SIZE;
+            if (++perDomain[cookie.domain] > jar->maxNumPerDomain) return ERROR_OUT_OF_SIZE;
+            stored += storedSize(cookie);
+        }
+    } catch (const std::bad_alloc&) {
+        return ERROR_OUT_OF_MEMORY;
+    }
     if (cookies.size() > jar->maxNum || stored > jar->totalMaxSize) return ERROR_OUT_OF_SIZE;
     for (Cookie& cookie : cookies) {
         if (cookie.creation == 0) cookie.creation = ++g_cookieClock;
