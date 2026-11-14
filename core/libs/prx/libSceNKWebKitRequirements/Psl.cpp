@@ -1,11 +1,16 @@
 #include "prx/libSceNKWebKitRequirements/include/GuestPsl.hpp"
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 #include <libpsl.h>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 
 extern "C" {
 
@@ -66,11 +71,33 @@ int APS5_VABI psl_is_public_suffix2_nid_postfix(const NKWebKit::GuestPslCtx* psl
 }
 
 NKWebKit::GuestPslCtx* APS5_VABI psl_latest_nid_postfix(const char* fname) {
-    return const_cast<NKWebKit::GuestPslCtx*>(reinterpret_cast<const NKWebKit::GuestPslCtx*>(psl_latest(fname)));
+    struct Source {
+        const char* filename;
+        std::int64_t modified;
+    };
+    const std::int64_t builtinTime = psl_builtin_file_time();
+    std::array<Source, 3> sources{{{fname, builtinTime}, {psl_dist_filename(), builtinTime}, {psl_builtin_filename(), builtinTime}}};
+    for (auto& source : sources) {
+        if (!source.filename || !*source.filename) continue;
+        FileStat status{};
+        if (stat_nid_postfix(source.filename, &status) == 0) source.modified = status.st_mtim.tv_sec;
+    }
+    for (std::size_t attempt = 0; attempt < sources.size(); ++attempt) {
+        auto source = std::max_element(sources.begin(), sources.end(), [](const Source& left, const Source& right) {
+            return left.modified < right.modified;
+        });
+        if (source->modified <= builtinTime) break;
+        auto* loaded = psl_load_file_nid_postfix(source->filename);
+        source->modified = builtinTime;
+        if (loaded) return loaded;
+    }
+    return const_cast<NKWebKit::GuestPslCtx*>(reinterpret_cast<const NKWebKit::GuestPslCtx*>(psl_builtin()));
 }
 
 NKWebKit::GuestPslCtx* APS5_VABI psl_load_file_nid_postfix(const char* fname) {
-    return const_cast<NKWebKit::GuestPslCtx*>(reinterpret_cast<const NKWebKit::GuestPslCtx*>(psl_load_file(fname)));
+    if (!fname || !*fname) return nullptr;
+    std::unique_ptr<FileStream, decltype(&fclose_nid_postfix)> stream(fopen_nid_postfix(fname, "rb"), fclose_nid_postfix);
+    return stream ? psl_load_fp_nid_postfix(stream.get()) : nullptr;
 }
 
 NKWebKit::GuestPslCtx* APS5_VABI psl_load_fp_nid_postfix(FileStream* fp) {

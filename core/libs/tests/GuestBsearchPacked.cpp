@@ -5,7 +5,9 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <source_location>
+#include <stdexcept>
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
@@ -38,4 +40,30 @@ int main() {
             }
         }
     }
+
+    unsigned char sample = 7;
+    Require(bsearch_nid_postfix(nullptr, nullptr, 0, 0, nullptr) == nullptr);
+    Require(bsearch_nid_postfix(&sample, nullptr, 0, sizeof(sample), Compare) == nullptr);
+    Require(bsearch_nid_postfix(&sample, keys.data(), 0, sizeof(unsigned char), Compare) == nullptr);
+
+    auto expectInvalidArgument = [](const void* key, const void* base, std::size_t count, std::size_t size,
+                                    int (APS5_VABI* compare)(const void*, const void*)) {
+        try {
+            bsearch_nid_postfix(key, base, count, size, compare);
+            Require(false);
+        } catch (const std::invalid_argument&) {
+        }
+    };
+    expectInvalidArgument(nullptr, keys.data(), keys.size(), sizeof(unsigned char), Compare);
+    expectInvalidArgument(&sample, nullptr, keys.size(), sizeof(unsigned char), Compare);
+    expectInvalidArgument(&sample, keys.data(), keys.size(), 0, Compare);
+    expectInvalidArgument(&sample, keys.data(), keys.size(), sizeof(unsigned char), nullptr);
+
+    bool overflowed = false;
+    try {
+        bsearch_nid_postfix(&sample, keys.data(), (std::numeric_limits<std::size_t>::max() / 4) + 1, 4, Compare);
+    } catch (const std::overflow_error&) {
+        overflowed = true;
+    }
+    Require(overflowed);
 }
