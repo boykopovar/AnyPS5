@@ -273,8 +273,10 @@ void Font::AddStateFallbackFace(FontState& state, std::shared_ptr<const std::vec
     if (!library || !bytes || bytes->empty()) return;
     FT_Face face = nullptr;
     if (FT_New_Memory_Face(library, bytes->data(), static_cast<FT_Long>(bytes->size()), static_cast<FT_Long>(subFontIndex), &face) != 0) return;
+    std::unique_ptr<FT_FaceRec, decltype(&FT_Done_Face)> owner(face, &FT_Done_Face);
     FT_Select_Charmap(face, FT_ENCODING_UNICODE);
-    state.fallbacks.push_back({std::move(bytes), face, subFontIndex});
+    state.fallbacks.push_back({bytes, face, subFontIndex});
+    owner.release();
 }
 
 FT_Face Font::FallbackFaceForCode(const FontState& state, std::uint32_t code, FT_UInt* glyphIndex) {
