@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -404,7 +405,7 @@ int APS5_VABI _ZN6icu_689UVector329removeAllERKS0__nid_postfix();
 int APS5_VABI _ZNK6icu_686Locale13isRightToLeftEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_99itJwBBSz0_nid_no_patch();
 int APS5_VABI _ZNK6icu_6813UnicodeString11moveIndex32Eii_nid_postfix();
-int APS5_VABI uprv_stableBinarySearch_nid_postfix();
+std::int32_t APS5_VABI uprv_stableBinarySearch_nid_postfix(char* array, std::int32_t limit, void* item, std::int32_t itemSize, std::int32_t (APS5_VABI* cmp)(const void*, const void*, const void*), const void* context);
 int APS5_VABI ucptrie_toBinary_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet13createFromAllERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator7setTextEP5UTextR10UErrorCode_nid_postfix();
