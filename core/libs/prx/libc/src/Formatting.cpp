@@ -118,10 +118,6 @@ bool HasNarrowCharacterScan(const char* format) {
 bool ScansInProcess(const char* format) {
     return HasGuestWideScan(format) || HasNarrowCharacterScan(format);
 }
-#else
-void RequireScannableWideFields(const char* format) {
-    if (HasGuestWideScan(format)) LibcDetail::RequireNoPositionalWideScan(format);
-}
 #endif
 
 const char* CutAtQuadScanDirective(const char* format, std::string& head) {
@@ -774,8 +770,6 @@ int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList*
     format = CutAtQuadScanDirective(format, head);
 #ifdef _WIN32
     if (!ScansInProcess(format)) return LibcDetail::ScanWindows(input, format, args);
-#else
-    RequireScannableWideFields(format);
 #endif
     LibcDetail::FormatArguments arguments(args);
     return ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
@@ -795,7 +789,6 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
     va_start(args, format);
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    RequireScannableWideFields(format);
     const int result = ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; });
     va_end(args);
     return result;
