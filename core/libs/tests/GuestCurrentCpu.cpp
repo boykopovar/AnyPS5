@@ -41,7 +41,8 @@ int main() {
     Require(scePthreadSetaffinity(scePthreadSelf(), 0) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadGetaffinity(nullptr, &currentMask) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadGetaffinity(scePthreadSelf(), nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadGetaffinity(scePthreadSelf(), &currentMask) == SCE_OK && currentMask != 0);
+    Require(scePthreadGetaffinity(scePthreadSelf(), &currentMask) == SCE_OK && currentMask != 0 && (currentMask & available) != 0);
+    Require(GuestCpuFromHost(0, available) == GuestCpuFromHost(0, available));
 
     const std::array<KernelCpumask, 8> affinities{available, 0x1FFB, 0x3, 0x3F, 0x1000, 0x1, 0xFFFF, 0x10000};
     for (const KernelCpumask affinity : affinities) {

@@ -76,8 +76,12 @@ EGLBoolean APS5_VABI eglGetConfigs_nid_postfix(EGLDisplay display, EGLConfig* co
     std::lock_guard lock(mutex);
     if (!Display_nid_no_patch(display)) return 0;
     if (!count || (configs && size < 0)) return EglError_nid_no_patch(0x300c);
-    *count = configs ? std::min(size, 1) : 1;
-    if (configs && size) configs[0] = &configToken;
+    const EGLint countValue = configs ? std::min(size, 1) : 1;
+    if (!GuestCopyOut_nid_no_patch(count, &countValue, sizeof(countValue))) return EglError_nid_no_patch(0x300c);
+    if (configs && size > 0) {
+        const EGLConfig config = &configToken;
+        if (!GuestCopyOut_nid_no_patch(configs, &config, sizeof(config))) return EglError_nid_no_patch(0x300c);
+    }
     return 1;
 }
 
@@ -279,22 +283,24 @@ EGLBoolean APS5_VABI eglQuerySurface_nid_postfix(EGLDisplay display, EGLSurface 
     auto surface = SurfaceFor(handle);
     if (!surface) return 0;
     if (!value) return EglError_nid_no_patch(0x300c);
+    EGLint result;
     switch (attribute) {
-    case 0x3028: *value = 1; break;
-    case 0x3057: *value = surface->image.width; break;
-    case 0x3056: *value = surface->image.height; break;
-    case 0x3058: *value = surface->largest; break;
-    case 0x3080: case 0x3081: *value = 0x305c; break;
-    case 0x3082: *value = surface->mipmap; break;
-    case 0x3083: *value = surface->mipmapLevel; break;
-    case 0x3086: *value = 0x3084; break;
-    case 0x3087: *value = surface->colorspace; break;
-    case 0x3088: *value = surface->alphaFormat; break;
-    case 0x3090: case 0x3091: case 0x3092: *value = -1; break;
-    case 0x3093: *value = 0x3094; break;
-    case 0x3099: *value = 0x309a; break;
+    case 0x3028: result = 1; break;
+    case 0x3057: result = surface->image.width; break;
+    case 0x3056: result = surface->image.height; break;
+    case 0x3058: result = surface->largest; break;
+    case 0x3080: case 0x3081: result = 0x305c; break;
+    case 0x3082: result = surface->mipmap; break;
+    case 0x3083: result = surface->mipmapLevel; break;
+    case 0x3086: result = 0x3084; break;
+    case 0x3087: result = surface->colorspace; break;
+    case 0x3088: result = surface->alphaFormat; break;
+    case 0x3090: case 0x3091: case 0x3092: result = -1; break;
+    case 0x3093: result = 0x3094; break;
+    case 0x3099: result = 0x309a; break;
     default: return EglError_nid_no_patch(0x3004);
     }
+    if (!GuestCopyOut_nid_no_patch(value, &result, sizeof(result))) return EglError_nid_no_patch(0x300c);
     return 1;
 }
 
