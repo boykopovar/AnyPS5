@@ -1,4 +1,5 @@
 #include "prx/libc/include/WindowsMappings.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <initializer_list>
 #include <utility>
@@ -146,6 +147,52 @@ static void CheckEvictKeepsWrittenPages() {
     CloseHandle(section);
 }
 
+static void CheckOpenHostWriteCollected() {
+    constexpr std::size_t bytes = 2 * 1024 * 1024;
+    constexpr std::size_t step = 65536;
+    auto& mappings = GuestArena::WindowsMappings::Get();
+    auto* reserved = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * bytes));
+    Require(reserved != nullptr);
+    const auto start = (reinterpret_cast<std::uintptr_t>(reserved) + bytes - 1) & ~static_cast<std::uintptr_t>(bytes - 1);
+    auto* base = reinterpret_cast<unsigned char*>(start);
+    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, bytes, nullptr);
+    Require(section != nullptr);
+    mappings.Map(base, bytes, section, 0, PAGE_READWRITE, true, true);
+    std::vector<void*> pages(bytes / 4096);
+    const auto collect = [&] {
+        std::size_t count = pages.size();
+        Require(mappings.Collect(start, bytes, pages.data(), &count, true));
+        std::vector<std::uintptr_t> collected;
+        for (std::size_t index = 0; index < count; ++index) collected.push_back(reinterpret_cast<std::uintptr_t>(pages[index]));
+        return collected;
+    };
+    const auto covers = [](const std::vector<std::uintptr_t>& collected, std::uintptr_t from, std::uintptr_t to) {
+        for (auto page = from & ~std::uintptr_t{4095}; page < to; page += 4096) {
+            if (std::find(collected.begin(), collected.end(), page) == collected.end()) return false;
+        }
+        return true;
+    };
+    base[step + 7] = 1;
+    collect();
+    Require(collect().empty());
+    const auto hostBegin = start + 3 * step + 100;
+    const auto hostBytes = 2 * step;
+    Require(mappings.BeginHostWrite(hostBegin, hostBytes));
+    base[3 * step + 200] = 2;
+    const auto open = collect();
+    Require(covers(open, hostBegin, hostBegin + hostBytes));
+    Require(std::is_sorted(open.begin(), open.end()) && std::adjacent_find(open.begin(), open.end()) == open.end());
+    Require(open.front() >= start && open.back() < start + bytes);
+    Require(covers(collect(), hostBegin, hostBegin + hostBytes));
+    mappings.EndHostWrite(hostBegin, hostBytes);
+    Require(collect().empty());
+    mappings.Reset(base, bytes);
+    Require(VirtualFree(reserved, 2 * bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS));
+    Require(VirtualFree(reserved, 0, MEM_RELEASE));
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2) CheckMetadataMismatch(static_cast<unsigned>(argv[1][0] - '0'));
@@ -153,6 +200,7 @@ int main(int argc, char** argv) {
             CheckValidRelease();
             CheckTouchedPagesAnyOrder();
             CheckEvictKeepsWrittenPages();
+            CheckOpenHostWriteCollected();
         }
     } catch (const std::exception& failure) {
         std::fprintf(stderr, "%s\n", failure.what());
