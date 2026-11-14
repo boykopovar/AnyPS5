@@ -82,10 +82,11 @@ GLboolean APS5_VABI glIsBuffer_nid_postfix(GLuint name) {
 void APS5_VABI glDeleteBuffers_nid_postfix(GLsizei count, const GLuint* names) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count == 0) return;
     auto& c = Current_nid_no_patch();
-    for (GLsizei i = 0; i < count; ++i) {
-        auto it = c.share->buffers.find(names[i]);
-        if (it == c.share->buffers.end()) continue;
+    if (!ForEachGuestName(count, names, [&](GLuint name) {
+        auto it = c.share->buffers.find(name);
+        if (it == c.share->buffers.end()) return;
         auto object = it->second;
         if (object) {
             if (c.arrayBuffer == object) c.arrayBuffer.reset();
@@ -93,7 +94,7 @@ void APS5_VABI glDeleteBuffers_nid_postfix(GLsizei count, const GLuint* names) {
             for (auto& a : c.attributes) if (a.buffer == object) a.buffer.reset();
         }
         c.share->buffers.erase(it);
-    }
+    })) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glBufferData_nid_postfix(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
@@ -106,7 +107,12 @@ void APS5_VABI glBufferData_nid_postfix(GLenum target, GLsizeiptr size, const vo
         std::vector<unsigned char> next;
         if (static_cast<std::size_t>(size) > next.max_size()) { Error_nid_no_patch(0x0505); return; }
         next.resize(size);
-        if (size && data) std::memcpy(next.data(), data, size);
+        if (size && data) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(next.data(), data, static_cast<std::size_t>(size));
+            errno = savedErrno;
+            if (!copied) { Error_nid_no_patch(0x0501); return; }
+        }
         buffer->data.swap(next);
         buffer->usage = usage;
     } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
@@ -117,16 +123,26 @@ void APS5_VABI glBufferSubData_nid_postfix(GLenum target, GLintptr offset, GLsiz
     auto* buffer = BoundBuffer(target);
     if (!buffer) return;
     if (offset < 0 || size < 0 || static_cast<std::size_t>(offset) > buffer->data.size() || static_cast<std::size_t>(size) > buffer->data.size() - offset) { Error_nid_no_patch(0x0501); return; }
-    if (size) std::memcpy(buffer->data.data() + offset, data, size);
+    if (size) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(buffer->data.data() + offset, data, static_cast<std::size_t>(size));
+        errno = savedErrno;
+        if (!copied) { Error_nid_no_patch(0x0501); return; }
+    }
 }
 
 void APS5_VABI glGetBufferParameteriv_nid_postfix(GLenum target, GLenum name, GLint* value) {
     std::lock_guard lock(mutex);
     auto* buffer = BoundBuffer(target);
     if (!buffer) return;
-    if (name == 0x8764) *value = static_cast<GLint>(std::min<std::size_t>(buffer->data.size(), std::numeric_limits<GLint>::max()));
-    else if (name == 0x8765) *value = buffer->usage;
-    else Error_nid_no_patch(0x0500);
+    GLint result;
+    if (name == 0x8764) result = static_cast<GLint>(std::min<std::size_t>(buffer->data.size(), std::numeric_limits<GLint>::max()));
+    else if (name == 0x8765) result = buffer->usage;
+    else { Error_nid_no_patch(0x0500); return; }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 GLuint APS5_VABI glCreateShader_nid_postfix(GLenum type) {
@@ -201,11 +217,47 @@ void APS5_VABI glShaderSource_nid_postfix(GLuint shader, GLsizei count, const GL
     auto* object = FindShader(shader);
     if (!object) return;
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count > MaxBatchNames) { Error_nid_no_patch(0x0505); return; }
+    if (count > 0 && !strings) { Error_nid_no_patch(0x0501); return; }
     try {
+        std::vector<const GLchar*> localStrings(static_cast<std::size_t>(count));
+        if (count > 0) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(localStrings.data(), strings, localStrings.size() * sizeof(const GLchar*));
+            errno = savedErrno;
+            if (!copied) { Error_nid_no_patch(0x0501); return; }
+        }
+        std::vector<GLint> localLengths;
+        if (lengths) {
+            localLengths.resize(static_cast<std::size_t>(count));
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(localLengths.data(), lengths, localLengths.size() * sizeof(GLint));
+            errno = savedErrno;
+            if (!copied) { Error_nid_no_patch(0x0501); return; }
+        }
         std::string source;
         for (GLsizei i = 0; i < count; ++i) {
-            if (lengths && lengths[i] >= 0) source.append(strings[i], lengths[i]);
-            else source.append(strings[i]);
+            if (lengths && localLengths[i] >= 0) {
+                std::array<char, 4096> piece{};
+                auto remaining = static_cast<std::size_t>(localLengths[i]);
+                const GLchar* from = localStrings[i];
+                while (remaining) {
+                    const auto n = std::min(remaining, piece.size());
+                    const int savedErrno = errno;
+                    const bool copied = GuestCopyIn_nid_no_patch(piece.data(), from, n);
+                    errno = savedErrno;
+                    if (!copied) { Error_nid_no_patch(0x0501); return; }
+                    source.append(piece.data(), n);
+                    from += n;
+                    remaining -= n;
+                }
+            } else {
+                std::string piece;
+                if (!localStrings[i] || CopyGuestString_nid_no_patch(localStrings[i], 1 << 20, piece) != 0) {
+                    Error_nid_no_patch(0x0501); return;
+                }
+                source.append(piece);
+            }
         }
         object->source.swap(source);
     } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
@@ -215,25 +267,35 @@ void APS5_VABI glGetShaderiv_nid_postfix(GLuint shader, GLenum name, GLint* valu
     std::lock_guard lock(mutex);
     auto* object = FindShader(shader);
     if (!object) return;
+    GLint result;
     switch (name) {
-    case 0x8b4f: *value = object->type; break;
-    case 0x8b80: *value = object->deleted; break;
-    case 0x8b81: case 0x8b84: *value = 0; break;
-    case 0x8b88: *value = object->source.empty() ? 0 : static_cast<GLint>(std::min<std::size_t>(object->source.size() + 1, std::numeric_limits<GLint>::max())); break;
-    default: Error_nid_no_patch(0x0500); break;
+    case 0x8b4f: result = object->type; break;
+    case 0x8b80: result = object->deleted; break;
+    case 0x8b81: case 0x8b84: result = 0; break;
+    case 0x8b88: result = object->source.empty() ? 0 : static_cast<GLint>(std::min<std::size_t>(object->source.size() + 1, std::numeric_limits<GLint>::max())); break;
+    default: Error_nid_no_patch(0x0500); return;
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetProgramiv_nid_postfix(GLuint program, GLenum name, GLint* value) {
     std::lock_guard lock(mutex);
     auto* object = FindProgram(program);
     if (!object) return;
+    GLint result;
     switch (name) {
-    case 0x8b80: *value = object->deleted; break;
-    case 0x8b85: *value = static_cast<GLint>(object->shaders.size()); break;
-    case 0x8b82: case 0x8b83: case 0x8b84: case 0x8b86: case 0x8b87: case 0x8b89: case 0x8b8a: *value = 0; break;
-    default: Error_nid_no_patch(0x0500); break;
+    case 0x8b80: result = object->deleted; break;
+    case 0x8b85: result = static_cast<GLint>(object->shaders.size()); break;
+    case 0x8b82: case 0x8b83: case 0x8b84: case 0x8b86: case 0x8b87: case 0x8b89: case 0x8b8a: result = 0; break;
+    default: Error_nid_no_patch(0x0500); return;
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetAttachedShaders_nid_postfix(GLuint program, GLsizei size, GLsizei* count, GLuint* shaders) {
@@ -241,12 +303,24 @@ void APS5_VABI glGetAttachedShaders_nid_postfix(GLuint program, GLsizei size, GL
     if (size < 0) { Error_nid_no_patch(0x0501); return; }
     auto* object = FindProgram(program);
     if (!object) return;
-    GLsizei written = 0;
+    std::vector<GLuint> local;
     for (auto& entry : object->shaders) {
-        if (written == size) break;
-        shaders[written++] = entry.first;
+        if (static_cast<GLsizei>(local.size()) == size) break;
+        local.push_back(entry.first);
     }
-    if (count) *count = written;
+    if (!local.empty()) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(shaders, local.data(), local.size() * sizeof(GLuint));
+        errno = savedErrno;
+        if (!copied) { Error_nid_no_patch(0x0501); return; }
+    }
+    if (count) {
+        const GLsizei written = static_cast<GLsizei>(local.size());
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(count, &written, sizeof(written));
+        errno = savedErrno;
+        if (!copied) Error_nid_no_patch(0x0501);
+    }
 }
 
 void APS5_VABI glGetShaderInfoLog_nid_postfix(GLuint shader, GLsizei size, GLsizei* length, GLchar* log) {
@@ -266,8 +340,10 @@ void APS5_VABI glBindAttribLocation_nid_postfix(GLuint program, GLuint index, co
     auto* object = FindProgram(program);
     if (!object) return;
     if (index >= 8) { Error_nid_no_patch(0x0501); return; }
-    if (std::strncmp(name, "gl_", 3) == 0) { Error_nid_no_patch(0x0502); return; }
-    try { object->attributes[name] = index; }
+    std::string localName;
+    if (!name || CopyGuestString_nid_no_patch(name, 1024, localName) != 0) { Error_nid_no_patch(0x0501); return; }
+    if (localName.starts_with("gl_")) { Error_nid_no_patch(0x0502); return; }
+    try { object->attributes[localName] = index; }
     catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
 

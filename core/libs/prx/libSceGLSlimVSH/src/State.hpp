@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -154,9 +155,26 @@ GLuint Name_nid_no_patch(const std::map<GLuint, std::shared_ptr<TObject>>& objec
     return name;
 }
 
+constexpr GLsizei MaxBatchNames = 1 << 16;
+
+template<class TVisit>
+bool ForEachGuestName(GLsizei count, const GLuint* guest, TVisit visit) {
+    std::array<GLuint, 256> local{};
+    for (GLsizei done = 0; done < count; done += static_cast<GLsizei>(local.size())) {
+        const auto n = std::min(count - done, static_cast<GLsizei>(local.size()));
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(local.data(), guest + done, static_cast<std::size_t>(n) * sizeof(GLuint));
+        errno = savedErrno;
+        if (!copied) return false;
+        for (GLsizei i = 0; i < n; ++i) visit(local[i]);
+    }
+    return true;
+}
+
 template<class TObject>
 void Generate_nid_no_patch(GLsizei count, GLuint* names, std::map<GLuint, std::shared_ptr<TObject>>& objects) {
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count > MaxBatchNames) { Error_nid_no_patch(0x0505); return; }
     try {
         auto next = objects;
         std::vector<GLuint> result;
