@@ -122,6 +122,24 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "1 to 4096 events after repetition"):
             pad_timeline.compile_timeline(self.document, 42, 2049, 0)
 
+    def test_command_file_fits_the_runtime_read_limit(self):
+        document = {"version": 1, "events": [
+            {"at_ms": 0, "hold_ms": 1, "buttons": ["cross"], "left_stick": [255, 255], "right_stick": [255, 255]}]}
+        self.assertEqual(len(pad_timeline.compile_timeline(document, 10**6, 2297, 0).encode("ascii")), 64 * 1024)
+        with self.assertRaisesRegex(ValueError, "65537 bytes; the runtime reads at most 65536"):
+            pad_timeline.compile_timeline(document, 10**7, 2297, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            original = b"777 0 100\n"
+            output.write_bytes(original)
+            timeline.write_text(json.dumps(document), encoding="utf-8")
+            result = self.run_cli(timeline, output, "--repeat", "4096", "--gap-ms", "0")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("the runtime reads at most 65536", result.stderr)
+            self.assertNotIn("Queued", result.stdout)
+            self.assertEqual(output.read_bytes(), original)
+
     def test_repeated_duration_includes_inter_iteration_gaps_only(self):
         document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 5000, "buttons": ["cross"]}]}
         self.assertEqual(
@@ -164,9 +182,9 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"new\n")
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
-    def run_cli(self, timeline, output):
+    def run_cli(self, timeline, output, *arguments):
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
-        return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
+        return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output), *arguments],
                               capture_output=True, encoding="utf-8", timeout=5, env=env)
 
     def test_cli_roundtrip_and_invalid_input_preservation(self):
