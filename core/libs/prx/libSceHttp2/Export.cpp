@@ -7,6 +7,7 @@
 #include "Cookies.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "GuestAccess.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
 #include <atomic>
@@ -305,8 +306,10 @@ int APS5_VABI sceHttp2SetAutoRedirect(int id, int enable) {
 }
 
 int APS5_VABI sceHttp2SetConnectionWaitTimeOut(int id, uint32_t usec) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Update(id, __func__, [&](auto& settings) {
+        if (!usec) NotImplemented_nid_no_patch("sceHttp2SetConnectionWaitTimeOut");
+        settings.connectionWaitTimeout = usec;
+    });
 }
 
 int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec) {
@@ -492,7 +495,12 @@ int APS5_VABI sceHttp2SetResolveRetry(int id, int32_t retry) {
 int APS5_VABI sceHttp2WebSocketCreateRequest(std::int32_t templateId, const char* url, Http2WebSocketTextCallback textCallback, Http2WebSocketDataCallback dataCallback, Http2WebSocketCloseCallback closeCallback, Http2WebSocketErrorCallback errorCallback, void* receiveBuffer, std::size_t receiveBufferSize, void* userData, const void* option) {
     (void)userData;
     if (textCallback == nullptr || dataCallback == nullptr || closeCallback == nullptr || errorCallback == nullptr || receiveBuffer == nullptr || receiveBufferSize == 0 || option != nullptr) return ERROR_INVALID_VALUE;
-    std::memset(receiveBuffer, 0, receiveBufferSize);
+    static constexpr std::byte zeros[0x1000]{};
+    for (std::size_t offset = 0; offset < receiveBufferSize;) {
+        const std::size_t chunk = receiveBufferSize - offset < sizeof(zeros) ? receiveBufferSize - offset : sizeof(zeros);
+        if (!Http2Guest::CopyOut(static_cast<std::byte*>(receiveBuffer) + offset, zeros, chunk)) return ERROR_INVALID_VALUE;
+        offset += chunk;
+    }
     std::lock_guard lock(g_handlesMutex);
     const auto* parent = FindHandle(templateId, Http2Kind::Template);
     if (parent == nullptr) return ERROR_INVALID_ID;
@@ -560,7 +568,7 @@ int APS5_VABI sceHttp2CookieImport(void) {
 int APS5_VABI sceHttp2GetAuthEnabled(int id, int* is_enable) {
     return Read(id, [&](const auto& settings) {
         if (!is_enable) throw std::invalid_argument("sceHttp2GetAuthEnabled: null out-pointer");
-        *is_enable = settings.auth ? 1 : 0;
+        if (!Http2Guest::Store(is_enable, settings.auth ? 1 : 0)) return ERROR_NULL_POINTER;
         return 0;
     });
 }
@@ -568,17 +576,17 @@ int APS5_VABI sceHttp2GetAuthEnabled(int id, int* is_enable) {
 int APS5_VABI sceHttp2GetAutoRedirect(int id, int* enable) {
     return Read(id, [&](const auto& settings) {
         if (!enable) return ERROR_INVALID_VALUE;
-        *enable = settings.redirect;
+        if (!Http2Guest::Store(enable, static_cast<int>(settings.redirect))) return ERROR_NULL_POINTER;
         return 0;
     });
 }
 
 int APS5_VABI sceHttp2GetCookieBox(int id, int* cookieBoxId) {
     if (!cookieBoxId) return ERROR_NULL_POINTER;
-    *cookieBoxId = 0;
+    if (!Http2Guest::Store(cookieBoxId, 0)) return ERROR_NULL_POINTER;
     return Read(id, [&](const auto& settings) {
         if (settings.cookieBox == 0) return ERROR_NOT_FOUND;
-        *cookieBoxId = settings.cookieBox;
+        if (!Http2Guest::Store(cookieBoxId, static_cast<int>(settings.cookieBox))) return ERROR_NULL_POINTER;
         return 0;
     });
 }
