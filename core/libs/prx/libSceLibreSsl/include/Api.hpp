@@ -767,7 +767,7 @@ int APS5_VABI HMAC_Update_nid_postfix(HmacContext* context, const unsigned char*
 void APS5_VABI OBJ_cleanup_nid_postfix(void);
 int APS5_VABI OBJ_create_nid_postfix(const char* oid, const char* shortName, const char* longName);
 const char* APS5_VABI OBJ_nid2sn_nid_postfix(int nid);
-int APS5_VABI OBJ_obj2nid_nid_postfix(void);
+int APS5_VABI OBJ_obj2nid_nid_postfix(const LibreSslAsn1Object* object);
 int APS5_VABI OBJ_sn2nid_nid_postfix(const char* name);
 void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response);
 void APS5_VABI OCSP_RESPONSE_free_nid_postfix(LibreSslOcspResponse* response);
@@ -821,7 +821,7 @@ int APS5_VABI SSL_CTX_check_private_key_nid_postfix(const LibreSslCtx* ctx);
 std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::int64_t larg, void* parg);
 int APS5_VABI SSL_CTX_free_nid_postfix(void);
 void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx);
-int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void);
+void* APS5_VABI SSL_CTX_get_ex_data_nid_postfix(const LibreSslCtx* ctx, int index);
 int APS5_VABI SSL_CTX_get_ex_new_index_nid_postfix(std::int64_t argl, void* argp, LibreSslExNew newFunction, LibreSslExDup dupFunction, LibreSslExFree freeFunction);
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx);
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path);
