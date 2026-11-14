@@ -8,12 +8,28 @@ namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
+constexpr int kErrNotInit = static_cast<int>(0x80c40001);
+constexpr int kErrAlreadyInit = static_cast<int>(0x80c40002);
 constexpr int kErrInvalidArg = static_cast<int>(0x80c40003);
 constexpr std::uint32_t kFill = 0xaaaaaaaau;
+
+void CheckLifecycle() {
+    Require(scePadTrackerTerm() == kErrNotInit);
+    Require(scePadTrackerCalibrate() == kErrNotInit);
+    Require(scePadTrackerReadState() == kErrNotInit);
+    Require(scePadTrackerUpdate() == kErrNotInit);
+
+    Require(scePadTrackerInit() == 0);
+    Require(scePadTrackerInit() == kErrAlreadyInit);
+
+    Require(scePadTrackerTerm() == 0);
+    Require(scePadTrackerTerm() == kErrNotInit);
+}
 
 }
 
 int main() {
+    CheckLifecycle();
     std::array<std::uint32_t, 2> first{kFill, kFill};
     std::array<std::uint32_t, 2> second{kFill, kFill};
 
