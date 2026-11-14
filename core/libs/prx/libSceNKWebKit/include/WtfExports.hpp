@@ -101,6 +101,8 @@ char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str);
 bool APS5_VABI _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWithDynamicClockType& time);
 bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF11LogArgumentIPKvE8toStringES2_(const void* argument);
+WTF::StackBounds APS5_VABI _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv();
+void APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv(WTF::TimingScope* self);
 void* APS5_VABI _ZN3WTF11fastReallocEPvm(void* ptr, std::size_t size);
 void APS5_VABI _ZN3WTF11jsValueFreeEPv(void* ptr);
 bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const NKWebKit::WtfAbi::URL* url);
