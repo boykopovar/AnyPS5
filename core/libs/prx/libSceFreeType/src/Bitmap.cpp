@@ -28,7 +28,12 @@ FT_Bitmap NativeBitmap(const GuestBitmap& bitmap) {
     return {bitmap.rows, bitmap.width, bitmap.pitch, bitmap.buffer, bitmap.num_grays, bitmap.pixel_mode, bitmap.palette_mode, bitmap.palette};
 }
 
-void SyncBitmap(GuestBitmap& guest, const FT_Bitmap& bitmap) {
+
+}
+
+namespace FreeType {
+
+void SyncBitmap_nid_no_patch(GuestBitmap& guest, const FT_Bitmap& bitmap) {
     guest = {bitmap.rows, bitmap.width, bitmap.pitch, bitmap.buffer, bitmap.num_grays, bitmap.pixel_mode, bitmap.palette_mode, bitmap.palette};
     auto& owners = Owners();
     std::lock_guard lock(owners.mutex);
@@ -36,9 +41,6 @@ void SyncBitmap(GuestBitmap& guest, const FT_Bitmap& bitmap) {
     if (found != owners.bitmaps.end() && found->second) *found->second = bitmap;
 }
 
-}
-
-namespace FreeType {
 
 void RegisterBitmap_nid_no_patch(GuestFace& face) {
     auto& owners = Owners();
@@ -57,7 +59,7 @@ void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap) {
 extern "C" {
 
 void APS5_VABI FT_Bitmap_New_nid_postfix(GuestBitmap* bitmap) {
-    if (bitmap) SyncBitmap(*bitmap, {});
+    if (bitmap) SyncBitmap_nid_no_patch(*bitmap, {});
 }
 
 void APS5_VABI FT_Bitmap_Init_nid_postfix(GuestBitmap* bitmap) {
@@ -68,7 +70,7 @@ int APS5_VABI FT_Bitmap_Copy_nid_postfix(GuestLibrary* library, const GuestBitma
     if (!library) return FT_Err_Invalid_Library_Handle;
     if (!source || !target) return FT_Err_Invalid_Argument;
     if (source == target) {
-        SyncBitmap(*target, NativeBitmap(*target));
+        SyncBitmap_nid_no_patch(*target, NativeBitmap(*target));
         return 0;
     }
     if (source->buffer && source->buffer == target->buffer) {
@@ -77,7 +79,7 @@ int APS5_VABI FT_Bitmap_Copy_nid_postfix(GuestLibrary* library, const GuestBitma
     const FT_Bitmap nativeSource = NativeBitmap(*source);
     FT_Bitmap nativeTarget = NativeBitmap(*target);
     const FT_Error error = FT_Bitmap_Copy(library->host, &nativeSource, &nativeTarget);
-    SyncBitmap(*target, nativeTarget);
+    SyncBitmap_nid_no_patch(*target, nativeTarget);
     return error;
 }
 
@@ -90,7 +92,7 @@ int APS5_VABI FT_Bitmap_Convert_nid_postfix(GuestLibrary* library, const GuestBi
     const FT_Bitmap nativeSource = NativeBitmap(*source);
     FT_Bitmap nativeTarget = NativeBitmap(*target);
     const FT_Error error = FT_Bitmap_Convert(library->host, &nativeSource, &nativeTarget, alignment);
-    SyncBitmap(*target, nativeTarget);
+    SyncBitmap_nid_no_patch(*target, nativeTarget);
     return error;
 }
 
@@ -108,7 +110,7 @@ int APS5_VABI FT_Bitmap_Embolden_nid_postfix(GuestLibrary* library, GuestBitmap*
     }
     FT_Bitmap native = NativeBitmap(*bitmap);
     const FT_Error error = FT_Bitmap_Embolden(library->host, &native, static_cast<FT_Pos>(xStrength), static_cast<FT_Pos>(yStrength));
-    SyncBitmap(*bitmap, native);
+    SyncBitmap_nid_no_patch(*bitmap, native);
     return error;
 }
 
@@ -124,7 +126,7 @@ int APS5_VABI FT_Bitmap_Done_nid_postfix(GuestLibrary* library, GuestBitmap* bit
     if (!bitmap) return FT_Err_Invalid_Argument;
     FT_Bitmap native = NativeBitmap(*bitmap);
     const FT_Error error = FT_Bitmap_Done(library->host, &native);
-    SyncBitmap(*bitmap, native);
+    SyncBitmap_nid_no_patch(*bitmap, native);
     return error;
 }
 

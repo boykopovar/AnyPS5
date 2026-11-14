@@ -63,6 +63,7 @@ struct GuestFace {
 };
 
 void RegisterBitmap_nid_no_patch(GuestFace& face);
+void SyncBitmap_nid_no_patch(GuestBitmap& guest, const FT_Bitmap& bitmap);
 
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);
