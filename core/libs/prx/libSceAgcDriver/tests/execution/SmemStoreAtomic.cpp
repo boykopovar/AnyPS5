@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -30,28 +31,42 @@ constexpr std::array<std::uint32_t, 2> Move(std::uint32_t sgpr, std::uint32_t va
     return {0xbe8003ffu | (sgpr << 16u), value};
 }
 
-constexpr auto BuildCode() {
-    const std::array<std::array<std::uint32_t, 2>, 33> words{{
-        Move(8u, 0x11111111u), Move(9u, 0x22222222u), Move(10u, 0x33333333u), Move(11u, 0x44444444u),
-        Smem(0x10u, 8u, 4u, 0x00u), Smem(0x11u, 8u, 4u, 0x08u), Smem(0x12u, 8u, 4u, 0x10u),
-        Smem(0x18u, 9u, 0u, 0x20u), Smem(0x19u, 10u, 0u, 0x28u), Smem(0x1au, 8u, 0u, 0x30u),
-        Move(14u, 5u), Smem(0x82u, 14u, 4u, 0x40u, true), Smem(0x10u, 14u, 4u, 0x44u),
-        Move(15u, 7u), Smem(0x82u, 15u, 4u, 0x48u), Smem(0x10u, 15u, 4u, 0x4cu),
-        Move(16u, 0xaaaau), Move(17u, 0x1234u), Smem(0x81u, 16u, 4u, 0x50u, true), Smem(0x10u, 16u, 4u, 0x54u),
-        Move(18u, 1u), Move(19u, 0u), Smem(0xa2u, 18u, 4u, 0x58u, true), Smem(0x11u, 18u, 4u, 0x60u),
-        Move(20u, 3u), Smem(0x42u, 20u, 0u, 0x68u, true), Smem(0x10u, 20u, 4u, 0x6cu),
-        Move(22u, 9u), Move(23u, 0u), Smem(0x67u, 22u, 0u, 0x70u),
-        {0xf4840000u, 0x00000000u}, {0xbf810000u, 0xbf800000u}, {0xbf800000u, 0xbf800000u},
-    }};
-    std::array<std::uint32_t, words.size() * 2u> code{};
-    for (std::size_t index = 0; index < words.size(); ++index) {
-        code[index * 2u] = words[index][0];
-        code[index * 2u + 1u] = words[index][1];
-    }
+constexpr std::array<std::array<std::uint32_t, 2>, 23> CommonWords{{
+    Move(8u, 0x11111111u), Move(9u, 0x22222222u), Move(10u, 0x33333333u), Move(11u, 0x44444444u),
+    Smem(0x10u, 8u, 4u, 0x00u), Smem(0x11u, 8u, 4u, 0x08u), Smem(0x12u, 8u, 4u, 0x10u),
+    Smem(0x18u, 9u, 0u, 0x20u), Smem(0x19u, 10u, 0u, 0x28u), Smem(0x1au, 8u, 0u, 0x30u),
+    Move(14u, 5u), Smem(0x82u, 14u, 4u, 0x40u, true), Smem(0x10u, 14u, 4u, 0x44u),
+    Move(15u, 7u), Smem(0x82u, 15u, 4u, 0x48u), Smem(0x10u, 15u, 4u, 0x4cu),
+    Move(16u, 0xaaaau), Move(17u, 0x1234u), Smem(0x81u, 16u, 4u, 0x50u, true), Smem(0x10u, 16u, 4u, 0x54u),
+    Move(20u, 3u), Smem(0x42u, 20u, 0u, 0x68u, true), Smem(0x10u, 20u, 4u, 0x6cu),
+}};
+
+constexpr std::array<std::array<std::uint32_t, 2>, 7> Int64Words{{
+    Move(18u, 1u), Move(19u, 0u), Smem(0xa2u, 18u, 4u, 0x58u, true), Smem(0x11u, 18u, 4u, 0x60u),
+    Move(22u, 9u), Move(23u, 0u), Smem(0x67u, 22u, 0u, 0x70u),
+}};
+
+constexpr std::array<std::array<std::uint32_t, 2>, 3> EndWords{{
+    {0xf4840000u, 0x00000000u}, {0xbf810000u, 0xbf800000u}, {0xbf800000u, 0xbf800000u},
+}};
+
+template<bool WithInt64> constexpr auto BuildCode() {
+    std::array<std::uint32_t, (CommonWords.size() + (WithInt64 ? Int64Words.size() : 0u) + EndWords.size()) * 2u> code{};
+    std::size_t next = 0;
+    const auto append = [&](const auto& words) {
+        for (const auto& word : words) {
+            code[next++] = word[0];
+            code[next++] = word[1];
+        }
+    };
+    append(CommonWords);
+    if constexpr (WithInt64) append(Int64Words);
+    append(EndWords);
     return code;
 }
 
-alignas(256) constexpr auto Code = BuildCode();
+alignas(256) constexpr auto Code = BuildCode<true>();
+alignas(256) constexpr auto CodeWithoutInt64 = BuildCode<false>();
 
 alignas(256) constexpr std::array<std::uint32_t, 4> ScratchStoreCode{0xf4540200u, 0xfa000000u, 0xbf810000u, 0xbf800000u};
 
@@ -85,7 +100,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     Output.fill(0xdeadbeefu);
     Output[0x40 / 4] = 100u;
     Output[0x48 / 4] = 1000u;
@@ -95,12 +110,16 @@ void Run(AgcDriver::VulkanDevice& device) {
     Output[0x68 / 4] = 50u;
     Output[0x70 / 4] = 5u;
     Output[0x74 / 4] = 0u;
-    const auto result = Compile(device, Code);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    const auto result = Compile(device, code);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
-void Check() {
+bool Int64Row(std::uint32_t offset) {
+    return (offset >= 0x58u && offset < 0x68u) || offset >= 0x70u;
+}
+
+void Check(bool int64Atomics) {
     const std::array<std::pair<std::uint32_t, std::uint32_t>, 30> expected{{
         {0x00, 0x11111111u}, {0x04, 0xdeadbeefu}, {0x08, 0x11111111u}, {0x0c, 0x22222222u},
         {0x10, 0x11111111u}, {0x14, 0x22222222u}, {0x18, 0x33333333u}, {0x1c, 0x44444444u},
@@ -112,6 +131,7 @@ void Check() {
         {0x68, 53u}, {0x6c, 50u}, {0x70, 9u}, {0x74, 0u},
     }};
     for (const auto& [offset, value] : expected) {
+        if (!int64Atomics && Int64Row(offset)) continue;
         const std::uint32_t actual = Output[offset / 4u];
         Require(actual == value, "smem store/atomic: byte " + Hex(offset) + " is " + Hex(actual) + ", expected " + Hex(value));
     }
@@ -132,8 +152,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
+        const bool int64Atomics = TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics);
+        Run(*device, int64Atomics ? std::span<const std::uint32_t>(Code) : std::span<const std::uint32_t>(CodeWithoutInt64));
+        Check(int64Atomics);
+        if (!int64Atomics) std::puts("skipped the 64-bit atomic rows, the device has no shaderBufferInt64Atomics");
         CheckScratchStoreRejected(*device);
         std::puts("smem store/atomic tests passed");
         return 0;
