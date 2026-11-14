@@ -384,7 +384,7 @@ std::uint32_t Interpolate(SpirvEmitterState& state, std::uint32_t delta, std::ui
     special = Select(state, u32, Nan32(state, inputs[1]), quiet(inputs[1]), special);
     special = Select(state, u32, Nan32(state, inputs[0]), quiet(inputs[0]), special);
     const auto result = Unary(state, spv::OpBitcast, TypeF32(state), Select(state, u32, nonFinite, special, finite));
-    return halfResult ? FlushDenormal32(state, result, flush16, 0x38800000u) : FlushDenormal32(state, result, flush32, 0x00800000u);
+    return halfResult ? FlushDenormal32(state, result, (mode & InterpolationFlushResult16) != 0u, 0x38800000u) : FlushDenormal32(state, result, (mode & InterpolationFlushResult32) != 0u, 0x00800000u);
 }
 
 std::uint32_t InterpolateInteger(SpirvEmitterState& state, std::uint32_t delta, std::uint32_t coordinate, std::uint32_t base, bool halfResult, std::uint32_t mode) {
@@ -520,7 +520,7 @@ std::uint32_t InterpolateInteger(SpirvEmitterState& state, std::uint32_t delta, 
     special = pick(u32, Nan32(state, inputs[1]), quiet(inputs[1]), special);
     special = pick(u32, Nan32(state, inputs[0]), quiet(inputs[0]), special);
     const auto result = Unary(state, spv::OpBitcast, TypeF32(state), pick(u32, nonFinite, special, finite));
-    return halfResult ? FlushDenormal32(state, result, flush16, 0x38800000u) : FlushDenormal32(state, result, flush32, 0x00800000u);
+    return halfResult ? FlushDenormal32(state, result, (mode & InterpolationFlushResult16) != 0u, 0x38800000u) : FlushDenormal32(state, result, (mode & InterpolationFlushResult32) != 0u, 0x00800000u);
 }
 
 std::uint32_t FusedMultiplyAdd(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t scale) {
@@ -1355,7 +1355,7 @@ std::uint32_t InterpolateFast(SpirvEmitterState& state, std::uint32_t delta, std
     const auto increment = Binary(state, spv::OpIAdd, u32, op(spv::OpBitwiseAnd, op(spv::OpShiftRightLogical, resultBits, 13u), 1u), ConstantU32(state, 0x0fffu));
     const auto normal = op(spv::OpBitwiseAnd, Binary(state, spv::OpIAdd, u32, resultBits, increment), 0xffffe000u);
     auto small = bits(shifted);
-    if (flush16) small = Select(state, u32, test(spv::OpULessThan, small, 0x38800000u), ConstantU32(state, 0u), small);
+    if ((mode & InterpolationFlushResult16) != 0u) small = Select(state, u32, test(spv::OpULessThan, small, 0x38800000u), ConstantU32(state, 0u), small);
     small = Binary(state, spv::OpBitwiseOr, u32, op(spv::OpBitwiseAnd, resultBits, 0x80000000u), small);
     return Unary(state, spv::OpBitcast, f32, Select(state, u32, subnormal, small, normal));
 }

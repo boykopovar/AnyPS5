@@ -288,6 +288,8 @@ struct ShaderFloatMode {
     bool operator==(const ShaderFloatMode&) const = default;
 };
 
+inline constexpr std::uint32_t InterpolationFlushResult32 = 0x80u;
+inline constexpr std::uint32_t InterpolationFlushResult16 = 0x100u;
 inline constexpr std::uint32_t InterpolationQuiet = 1u;
 inline constexpr std::uint32_t InterpolationFlush32 = 2u;
 inline constexpr std::uint32_t InterpolationFlush16 = 4u;
