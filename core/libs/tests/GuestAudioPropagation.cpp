@@ -366,6 +366,9 @@ int main() {
 
     std::uint32_t count = 7;
     Require(sceAudioPropagationSourceGetAudioPathCount(source, &count) == 0 && count == AudioPropagation::MaxPaths, "source path pool size");
+    errno = 71;
+    Require(sceAudioPropagationSourceGetAudioPathCount(source, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable count output");
+    Require(errno == 71, "errno preserved on unwritable count output");
     AudioPropagationHandle path = 0;
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, &path) == 0 && path != 0, "path lookup immediately after source creation");
     AudioPropagationHandle repeated = 0;

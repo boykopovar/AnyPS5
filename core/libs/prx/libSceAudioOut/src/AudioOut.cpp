@@ -625,7 +625,13 @@ int APS5_VABI sceAudioOutGetLastOutputTime(int handle, std::uint64_t* outputTime
     if (port == nullptr) {
         return -2144993277;
     }
-    *outputTime = port->lastDataOutputTime;
+    const std::uint64_t time = port->lastDataOutputTime;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(outputTime, &time, sizeof(time));
+    errno = savedErrno;
+    if (!copied) {
+        return -2144993276;
+    }
     return 0;
 }
 
