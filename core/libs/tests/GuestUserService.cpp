@@ -84,6 +84,9 @@ void VerifyLoggedInUser(int userId) {
 
     std::uint64_t accountId = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetNpAccountId(userId, reinterpret_cast<uint64_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetNpAccountId(userId, &accountId) == USER_SERVICE_OK);
     Require(accountId == 0);
 
