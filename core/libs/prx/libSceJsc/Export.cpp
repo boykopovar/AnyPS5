@@ -721,10 +721,6 @@ int APS5_VABI JSWeakObjectMapClear() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated11ScriptValueC1ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -733,28 +729,12 @@ void APS5_VABI _ZN10Deprecated11ScriptValueC1Ev(void* self) {
     std::memset(self, 0, 8);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI _ZN10Deprecated11ScriptValueC2Ev(void* self) {
     std::memset(self, 0, 8);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueaSERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN10Deprecated12ScriptObjectC1EPN3JSC14JSGlobalObjectEPNS1_8JSObjectE() {
