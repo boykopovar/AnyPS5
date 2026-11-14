@@ -12,6 +12,8 @@
 #include <initializer_list>
 
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
+static constexpr int NP_UTIL_INVALID_ARGUMENT = static_cast<int>(0x80550601);
+static constexpr int NP_UTIL_INVALID_CHARACTER = static_cast<int>(0x80550608);
 static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
 static constexpr int NOT_MATCH = static_cast<int>(0x80550609);
 static constexpr int COND_TIMEDOUT = static_cast<int>(0x8055800B);
@@ -326,6 +328,52 @@ static int testClock() {
     return ok ? 0 : 1;
 }
 
+int testUtf8() {
+    bool ok = expect(_sceNpMsgPackStrUtilIsValidUtf8String("hello"), "plain ASCII was not valid");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String(""), "an empty string was not valid");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xC2\xA9"), "a two-byte sequence was not valid");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xE2\x82\xAC"), "a three-byte sequence was not valid");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xF0\x9F\x98\x80"), "a four-byte sequence was not valid");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z"), "a mixed string was not valid");
+
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xC0\x80"), "a C0 lead was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xC1\x80"), "a C1 lead was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\x80"), "a bare continuation byte was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xBF"), "a BF continuation lead was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xF8\x80\x80\x80\x80"), "an F8 lead was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xFF"), "an FF byte was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xC2x"), "a non-continuation was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xE2\x82"), "a truncated sequence was accepted");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8String("\xF0\x9F\x98"), "a truncated four-byte sequence was accepted");
+
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xE0\x80\x80"), "the firmware scheme rejects an overlong three-byte encoding");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xED\xA0\x80"), "the firmware scheme rejects a surrogate encoding");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xF4\x90\x80\x80"), "the firmware scheme rejects a value past U+10FFFF");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xF5\x80\x80\x80"), "the firmware scheme rejects an F5 lead");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8String("\xF7\xBF\xBF\xBF"), "the firmware scheme rejects an F7 lead");
+
+    const char sized[] = {'\xE2', '\x82', '\xAC', 'q'};
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8StringWithSize(sized, 4), "a sized valid string was not valid");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8StringWithSize(sized, 3), "a sized sequence was not valid");
+    ok &= expect(!_sceNpMsgPackStrUtilIsValidUtf8StringWithSize(sized, 2), "a truncated sized sequence was accepted");
+    ok &= expect(_sceNpMsgPackStrUtilIsValidUtf8StringWithSize(sized, 0), "a zero size was not valid");
+
+    ok &= expect(sceNpUtilNumChars(nullptr) == NP_UTIL_INVALID_ARGUMENT, "a null string was counted");
+    ok &= expect(sceNpUtilNumChars("") == 0, "an empty string did not count zero");
+    ok &= expect(sceNpUtilNumChars("hello") == 5, "ASCII did not count five");
+    ok &= expect(sceNpUtilNumChars("a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z") == 5, "a mixed string did not count sequences");
+    ok &= expect(sceNpUtilNumChars("\x01") == NP_UTIL_INVALID_CHARACTER, "a control byte was counted");
+    ok &= expect(sceNpUtilNumChars("\x7F") == NP_UTIL_INVALID_CHARACTER, "a DEL byte was counted");
+    ok &= expect(sceNpUtilNumChars("\xC0\x80") == NP_UTIL_INVALID_CHARACTER, "a C0 lead was counted");
+    ok &= expect(sceNpUtilNumChars("\x80") == NP_UTIL_INVALID_CHARACTER, "a bare continuation was counted");
+    ok &= expect(sceNpUtilNumChars("\xF8\x80\x80\x80\x80") == NP_UTIL_INVALID_CHARACTER, "an F8 lead was counted");
+    ok &= expect(sceNpUtilNumChars("\xC2x") == NP_UTIL_INVALID_CHARACTER, "a non-continuation was counted");
+    ok &= expect(sceNpUtilNumChars("\xE0\x80\x80") == 1, "the firmware scheme did not count an overlong encoding");
+    ok &= expect(sceNpUtilNumChars("\xED\xA0\x80") == 1, "the firmware scheme did not count a surrogate encoding");
+    ok &= expect(sceNpUtilNumChars("\xF5\x80\x80\x80") == 1, "the firmware scheme did not count an F5 lead");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
     int status = 2;
@@ -333,6 +381,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "sync") == 0) status = testSync();
     else if (std::strcmp(argv[1], "clock") == 0) status = testClock();
     else if (std::strcmp(argv[1], "wake") == 0) status = testWake();
+    else if (std::strcmp(argv[1], "utf8") == 0) status = testUtf8();
     if (status == 0) std::printf("NpCommon %s tests passed\n", argv[1]);
     return status;
 }
