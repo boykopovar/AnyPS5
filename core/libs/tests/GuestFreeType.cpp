@@ -200,6 +200,19 @@ static void CheckOutlineOrientation() {
     CheckOrientationCase({{0, 0}, {0x1000001, 100}, {100, 0}}, {2}, FT_ORIENTATION_NONE);
     CheckOrientationCase({{0, 0}, {100, 0x1000001}, {0, 100}}, {2}, FT_ORIENTATION_NONE);
     CheckOrientationCase({{INT64_MIN, INT64_MIN}, {INT64_MAX, INT64_MAX}, {0, 1}}, {2}, FT_ORIENTATION_NONE, false);
+    {
+        GuestVector square[]{{0, 0}, {40, 0}, {40, 40}, {0, 40}};
+        std::uint16_t contour[]{3};
+        unsigned char tags[]{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_ON};
+        const auto throwsOrientation = [](GuestOutline outline) {
+            return ThrowsWith([&] { FT_Outline_Get_Orientation_nid_postfix(&outline); }, "FT_Outline_Get_Orientation_nid_postfix");
+        };
+        Require(throwsOrientation({1, 4, nullptr, tags, contour, 0}));
+        Require(throwsOrientation({0, 4, nullptr, tags, nullptr, 0}));
+        Require(throwsOrientation({1, 4, square, tags, nullptr, 0}));
+        std::uint16_t contourPastEnd[]{4};
+        Require(throwsOrientation({1, 4, square, tags, contourPastEnd, 0}));
+    }
     std::vector<GuestVector> repeated{{0, 0}, {32767, 0}, {32767, 32767}, {0, 32767},
                                       {0, 0}, {32767, 0}, {32767, 32767}, {0, 32767}};
     CheckOrientationCase(repeated, {3, 7}, FT_ORIENTATION_POSTSCRIPT, sizeof(FT_Pos) == 8);
@@ -1823,6 +1836,9 @@ int main() {
     Require(kerning.x == 123 && kerning.y == 456);
     Require(FT_Get_Kerning_nid_postfix(nullptr, 1, 1, FT_KERNING_DEFAULT, nullptr) == FT_Err_Invalid_Face_Handle);
     Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, nullptr) == FT_Err_Invalid_Argument);
+    errno = 71;
+    Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, reinterpret_cast<GuestVector*>(0x10)) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
     Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, &kerning) == 0);
     Require(kerning.x == 0 && kerning.y == 0);
 
