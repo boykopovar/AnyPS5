@@ -226,13 +226,15 @@ void Validation(int file, int readOnly) {
     Require(aio_read_nid_postfix(&negative) == -1 && Error() == Einval && negative.error == Einval);
 
     auto huge = Request(file, buffer, std::uint64_t{std::numeric_limits<int>::max()} + 1);
-    Require(aio_read_nid_postfix(&huge) == -1 && Error() == Einval && huge.error == 0);
+    Require(aio_read_nid_postfix(&huge) == -1 && Error() == Einval && huge.error == Einval);
+    Require(aio_error_nid_postfix(&huge) == Einval);
 
     auto notify = Request(file, buffer, sizeof(buffer));
     notify.sigevent.notify = 2;
     Require(aio_read_nid_postfix(&notify) == -1 && Error() == Einval && notify.error == Einval);
     notify.sigevent = {1, 0, 0, {}};
-    Require(aio_read_nid_postfix(&notify) == -1 && Error() == Einval);
+    Require(aio_read_nid_postfix(&notify) == -1 && Error() == Einval && notify.error == Einval);
+    Require(aio_error_nid_postfix(&notify) == Einval);
 
     int pipe[2] = {-1, -1};
     Require(pipe_nid_postfix(pipe) == 0);
