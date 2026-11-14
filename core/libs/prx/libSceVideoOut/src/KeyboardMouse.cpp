@@ -201,8 +201,12 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
         const double seconds = std::chrono::duration<double>(now - lastAdvance).count();
         lastAdvance = now;
         if (mouseMode) mouse.Advance(seconds);
+        gyroRate = mouseGyro && mouseMode && seconds > 0.0 ? std::array<double, 2>{gyroCountsX / seconds, gyroCountsY / seconds} : std::array<double, 2>{};
+        gyroCountsX = 0.0;
+        gyroCountsY = 0.0;
     }
     bool changed = advanceAxes(now);
+    if (gyroRate[0] != 0.0 || gyroRate[1] != 0.0) changed = true;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
         const auto& binding = configuration.bindings[index];
         if (pressed[index] && binding.control == InputControl::Shake) changed = true;
@@ -215,6 +219,7 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
 }
 
 void Pad::KeyboardMouse::SetMouseMode(bool enabled) {
+    if (enabled) mouseTouch.reset();
     mouseMode = enabled;
     mouse.Reset();
 }
@@ -230,15 +235,49 @@ void Pad::KeyboardMouse::Release() {
     triggerAxes = {};
 }
 
+void Pad::KeyboardMouse::SetMouseTouchpad(bool enabled) {
+    mouseTouchpad = enabled;
+    if (!enabled) mouseTouch.reset();
+}
+
+void Pad::KeyboardMouse::SetMouseGyro(bool enabled) {
+    mouseGyro = enabled;
+    if (!enabled) {
+        gyroCountsX = 0.0;
+        gyroCountsY = 0.0;
+        gyroRate = {};
+    }
+}
+
+void Pad::KeyboardMouse::SetViewport(int width, int height) {
+    viewportWidth = width;
+    viewportHeight = height;
+}
+
+std::optional<PadTouchPoint> Pad::KeyboardMouse::touchAt(int x, int y) const {
+    if (viewportWidth <= 0 || viewportHeight <= 0) return std::nullopt;
+    const auto clampedX = std::clamp(x, 0, viewportWidth - 1);
+    const auto clampedY = std::clamp(y, 0, viewportHeight - 1);
+    const auto padX = std::min<std::int64_t>(static_cast<std::int64_t>(clampedX) * kTouchPadWidth / viewportWidth, kTouchPadWidth - 1);
+    const auto padY = std::min<std::int64_t>(static_cast<std::int64_t>(clampedY) * kTouchPadHeight / viewportHeight, kTouchPadHeight - 1);
+    return PadTouchPoint{true, static_cast<std::uint16_t>(padX), static_cast<std::uint16_t>(padY), 0};
+}
+
 Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock::time_point now) {
     InputRequests requests;
     if (event.type == SDL_WINDOWEVENT) {
         if (event.window.event != SDL_WINDOWEVENT_FOCUS_LOST && event.window.event != SDL_WINDOWEVENT_CLOSE) return requests;
         Release();
+        mouseTouch.reset();
         requests.releaseMouse = mouseMode;
         return requests;
     }
     if (event.type == SDL_MOUSEMOTION) {
+        if (mouseTouch) mouseTouch = touchAt(event.motion.x, event.motion.y);
+        if (mouseGyro && mouseMode) {
+            gyroCountsX += event.motion.xrel;
+            gyroCountsY += event.motion.yrel;
+        }
         if (mouseMode && !titleReadsMouse) mouse.Move(event.motion.xrel, event.motion.yrel);
         return requests;
     }
@@ -267,6 +306,8 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
     if (!keyboard && !mouseButton) return requests;
     if (keyboard && event.key.repeat != 0) return requests;
     if (event.type == SDL_MOUSEBUTTONDOWN && titleReadsMouse) return requests;
+    if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) mouseTouch.reset();
+    if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT && mouseTouchpad && !mouseMode) mouseTouch = touchAt(event.button.x, event.button.y);
     advanceAxes(now);
     const bool down = event.type == SDL_KEYDOWN || event.type == SDL_MOUSEBUTTONDOWN;
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
@@ -365,6 +406,15 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
     if (configuration.settings.triggerRampMs > 0.0) {
         state.analogButtonsL2 = std::max(state.analogButtonsL2, triggerByte(triggerAxes[0]));
         state.analogButtonsR2 = std::max(state.analogButtonsR2, triggerByte(triggerAxes[1]));
+    }
+    if (mouseGyro && mouseMode && (gyroRate[0] != 0.0 || gyroRate[1] != 0.0)) {
+        state.hasMotion = true;
+        state.gyro[1] += static_cast<float>(gyroRate[1] * MouseGyroRadiansPerCount);
+        state.gyro[2] += static_cast<float>(gyroRate[0] * MouseGyroRadiansPerCount);
+    }
+    if (mouseTouch) {
+        if (!state.touch[0].active) state.touch[0] = *mouseTouch;
+        else if (!state.touch[1].active) state.touch[1] = *mouseTouch;
     }
     if (state.analogButtonsL2 != 0) state.buttons |= static_cast<std::uint32_t>(PadButton::L2);
     if (state.analogButtonsR2 != 0) state.buttons |= static_cast<std::uint32_t>(PadButton::R2);
