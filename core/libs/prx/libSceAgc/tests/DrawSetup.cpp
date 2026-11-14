@@ -54,7 +54,8 @@ void testIndexSize() {
     const auto* objectId = sceAgcDcbSetIndexSize_0600(&storage.buffer, 2, 3, 1);
     check(objectId == storage.words.data() + 3 && objectId[0] == 0xc0017a00u && objectId[1] == 0x20000243u && objectId[2] == (0x4c2u | 0x4000u), "index size packet with a per-instance object id mismatch");
     expectFailure(storage, [&] { sceAgcDcbSetIndexSize(&storage.buffer, 3, 0); }, "an index size above 2 was accepted");
-    expectFailure(storage, [&] { sceAgcDcbSetIndexSize(&storage.buffer, 0, 4); }, "a cache policy above 3 was accepted");
+    const auto* masked = sceAgcDcbSetIndexSize(&storage.buffer, 0x22, 0x44);
+    check(masked == storage.words.data() + 6 && masked[0] == 0xc0017a00u && masked[1] == 0x20000243u && masked[2] == 0x402u, "index size packet differs from the console's for bits above its fields");
     expectFailure(storage, [&] { sceAgcDcbSetIndexSize_0600(&storage.buffer, 0, 0, 2); }, "a per-instance object id above 1 was accepted");
 }
 

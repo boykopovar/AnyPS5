@@ -128,13 +128,6 @@ agcbuild_DcbSetCxRegistersIndirect_c	throw	AnyPS5 throws for arguments the conso
 agcbuild_DcbSetFlip_a	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbSetFlip_c	diff	the console returns null and writes nothing for these arguments
-agcbuild_DcbSetIndexBuffer_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetIndexBuffer_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetIndexIndirectArgs_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetIndexIndirectArgs_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetIndexIndirectArgs_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetIndexSize_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetIndexSize_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetPredication_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetPredication_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetPredication_c	throw	AnyPS5 throws for arguments the console encodes
