@@ -1451,7 +1451,6 @@ long double APS5_VABI cbrtl_nid_postfix(long double x) {
 }
 long double APS5_VABI erfl_nid_postfix(long double x) { return std::erf(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return std::erfc(x); }
-long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
 long double APS5_VABI log1pl_nid_postfix(long double x) { return std::log1p(x); }
 long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
@@ -4259,6 +4258,69 @@ static long double ExplMsun(long double x) {
     }
     return t * ExplPowerOfTwo(reduced.k + 10000) * ExplTwoPowerMinus10000;
 }
+static constexpr int Expm1lMantissaDigits = 64;
+static constexpr double Expm1lSeriesBound = 0.1659;
+static constexpr long double Expm1lB3 = 0xAAAAAAAAAAAAAAABp-66L;
+static constexpr long double Expm1lB4 = 0xAAAAAAAAAAAAAAACp-68L;
+static constexpr double Expm1lB5 = 8.3333333333333245e-3;
+static constexpr double Expm1lB6 = 1.3888888888888861e-3;
+static constexpr double Expm1lB7 = 1.9841269841532042e-4;
+static constexpr double Expm1lB8 = 2.4801587302069236e-5;
+static constexpr double Expm1lB9 = 2.7557316558468562e-6;
+static constexpr double Expm1lB10 = 2.7557315829785151e-7;
+static constexpr double Expm1lB11 = 2.5063168199779829e-8;
+static constexpr double Expm1lB12 = 2.0887164654459567e-9;
+
+static long double Expm1lSeries(long double x, int exponent) {
+    if (exponent < ExplBias - 74) return x == 0 ? x : (0x1p100 * x + std::fabs(x)) * 0x1p-100;
+    const long double x2 = x * x;
+    const long double x4 = x2 * x2;
+    const long double q = x4 * (x2 * (x4 * (x2 * Expm1lB12 + (x * Expm1lB11 + Expm1lB10)) + (x2 * (x * Expm1lB9 + Expm1lB8) + (x * Expm1lB7 + Expm1lB6))) + (x * Expm1lB5 + Expm1lB4)) + x2 * x * Expm1lB3;
+    const long double xHigh = static_cast<float>(x);
+    const long double xLow = x - xHigh;
+    const long double halfSquareHigh = xHigh * xHigh / 2;
+    const long double halfSquareLow = xLow * (x + xHigh) / 2;
+    if (exponent >= ExplBias - 7) return (halfSquareHigh + xHigh) + (halfSquareLow + xLow + q);
+    return x + (halfSquareLow + q + halfSquareHigh);
+}
+
+static long double Expm1lScaled(double hi, double lo, int k, long double q, long double r1) {
+    const long double t = static_cast<long double>(lo) + hi;
+    if (k == 0) return (hi - 1) + (lo * (r1 + 1) + t * q + hi * r1);
+    if (k == -1) return ((hi - 2) + (lo * (r1 + 1) + t * q + hi * r1)) / 2;
+    if (k < -7) return (hi + (lo + t * (q + r1))) * ExplPowerOfTwo(k) - 1;
+    if (k > 2 * Expm1lMantissaDigits - 1) {
+        const long double sum = hi + (lo + t * (q + r1));
+        return (k == 16384 ? sum * 2 * 0x1p16383L : sum * ExplPowerOfTwo(k)) - 1;
+    }
+    const long double twoPowerMinusK = ExplPowerOfTwo(-k);
+    if (k > Expm1lMantissaDigits - 1) return (hi + (lo - twoPowerMinusK + t * (q + r1))) * ExplPowerOfTwo(k);
+    return ((hi - twoPowerMinusK) + (lo + t * (q + r1))) * ExplPowerOfTwo(k);
+}
+
+static long double Expm1lGeneral(long double x) {
+    const long double fn = x * ExplInvL + 0x1.8p63 - 0x1.8p63;
+    const int n = static_cast<int>(fn);
+    const long double r1 = x - fn * ExplL1;
+    const long double r2 = fn * -ExplL2;
+    const long double r = r1 + r2;
+    const long double z = r * r;
+    const long double q = r2 + z * (ExplA2 + r * ExplA3) + z * z * (ExplA4 + r * ExplA5) + z * z * z * ExplA6;
+    const auto& entry = ExplTable[static_cast<unsigned>(n) % ExplIntervals];
+    return Expm1lScaled(entry.hi, entry.lo, n >> ExplLog2Intervals, q, r1);
+}
+
+static long double Expm1lMsun(long double x) {
+    const std::uint16_t signExponent = SplitExtended(x).signExponent;
+    const int exponent = signExponent & 0x7fff;
+    if (exponent >= ExplBias + 6) {
+        if (exponent == ExplBias + 16384) return (signExponent & 0x8000) != 0 ? -1 / x - 1 : x + x;
+        if (x > ExplOverflowThreshold) return ExplHuge * ExplHuge;
+        if ((signExponent & 0x8000) != 0) return ExplTiny + -1;
+    }
+    if (-Expm1lSeriesBound < x && x < Expm1lSeriesBound) return Expm1lSeries(x, exponent);
+    return Expm1lGeneral(x);
+}
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_sinhl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_sinhl.c */
 static constexpr long double SinhlS3 = 1.66666666666666666658e-1L;
 static constexpr double SinhlS5 = 8.3333333333333332e-3;
@@ -4763,6 +4825,7 @@ long double APS5_VABI sinhl_nid_postfix(long double x) { return SinhlMsun(x); }
 long double APS5_VABI coshl_nid_postfix(long double x) { return CoshlMsun(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return TanhlMsun(x); }
 long double APS5_VABI expl_nid_postfix(long double x) { return ExplMsun(x); }
+long double APS5_VABI expm1l_nid_postfix(long double x) { return Expm1lMsun(x); }
 /*-
  * Copyright (c) 2005-2008 David Schultz <das@FreeBSD.ORG>
  * All rights reserved.
