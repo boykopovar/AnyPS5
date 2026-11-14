@@ -27,6 +27,11 @@
 #include <new>
 #include <typeinfo>
 #endif
+#ifndef _WIN32
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 static_assert(sizeof(GuestSigaction) == 32 && offsetof(GuestSigaction, flags) == 8 && offsetof(GuestSigaction, mask) == 12);
 
@@ -128,7 +133,11 @@ struct PendingSignals {
     std::mutex lock;
     TimedWait::Condition changed;
     std::atomic<std::uint32_t> words[4]{};
+    std::atomic<std::uint32_t> lwp[MaxSignal + 1]{};
     std::deque<std::int32_t> queued[MaxSignal + 1];
+#ifndef _WIN32
+    std::atomic<int> wakeWriter{-1};
+#endif
 };
 
 constexpr std::size_t MaxQueuedPerSignal = 1024;
@@ -138,19 +147,65 @@ PendingSignals& Pending() {
     return *state;
 }
 
+void NotePendingLwp(int guest) {
+    auto& pending = Pending();
+    auto& count = pending.lwp[guest];
+    std::uint32_t value = count.load(std::memory_order_relaxed);
+    while (value < MaxQueuedPerSignal && !count.compare_exchange_weak(value, value + 1, std::memory_order_seq_cst)) {
+    }
+    pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_seq_cst);
+}
+
+#ifndef _WIN32
+void RunWakeRelay(int reader) {
+    for (;;) {
+        unsigned char byte = 0;
+        const auto got = ::read(reader, &byte, 1);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) return;
+        auto& pending = Pending();
+        {
+            const std::lock_guard lock(pending.lock);
+        }
+        pending.changed.NotifyAll();
+    }
+}
+
+void EnsureWakeRelay() {
+    auto& pending = Pending();
+    if (pending.wakeWriter.load(std::memory_order_acquire) >= 0) return;
+    int ends[2];
+    if (::pipe(ends) != 0) throw std::runtime_error("signal: creating the wake pipe failed with errno " + std::to_string(errno));
+    for (const int end : ends) ::fcntl(end, F_SETFD, FD_CLOEXEC);
+    ::fcntl(ends[1], F_SETFL, O_NONBLOCK);
+    Libc::StartHostThread(RunWakeRelay, ends[0]).detach();
+    pending.wakeWriter.store(ends[1], std::memory_order_release);
+}
+
+void WakeFromHandler(int guest) {
+    const int saved = errno;
+    const unsigned char byte = static_cast<unsigned char>(guest);
+    const int writer = Pending().wakeWriter.load(std::memory_order_acquire);
+    while (writer >= 0 && ::write(writer, &byte, 1) < 0 && errno == EINTR) {
+    }
+    errno = saved;
+}
+#endif
+
 void MarkPending(int guest, std::int32_t code) {
     auto& pending = Pending();
     {
         // under the same lock the waits check the set with: without it a signal raised
         // between the check and the wait is lost and the wait never returns
         std::lock_guard lock(pending.lock);
-        auto& queued = pending.queued[guest];
-        const bool merged = code == GuestSiKernel && std::find(queued.begin(), queued.end(), GuestSiKernel) != queued.end();
-        if (!merged && queued.size() < MaxQueuedPerSignal) {
-            const auto firstOther = std::find_if(queued.begin(), queued.end(), [](std::int32_t entry) { return entry != GuestSiLwp; });
-            queued.insert(code == GuestSiLwp ? firstOther : queued.end(), code);
+        if (code == GuestSiLwp) {
+            NotePendingLwp(guest);
+        } else {
+            auto& queued = pending.queued[guest];
+            const bool merged = code == GuestSiKernel && std::find(queued.begin(), queued.end(), GuestSiKernel) != queued.end();
+            if (!merged && queued.size() + pending.lwp[guest].load(std::memory_order_relaxed) < MaxQueuedPerSignal) queued.push_back(code);
+            pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
         }
-        pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
     }
     pending.changed.NotifyAll();
 }
@@ -158,12 +213,23 @@ void MarkPending(int guest, std::int32_t code) {
 bool TakePendingLocked(int guest, std::int32_t* code = nullptr) {
     auto& pending = Pending();
     auto& queued = pending.queued[guest];
+    auto& counted = pending.lwp[guest];
     auto& word = pending.words[SignalWord(guest)];
     const std::uint32_t bit = SignalBit(guest);
-    if ((word.load(std::memory_order_relaxed) & bit) == 0) return false;
-    if (code != nullptr) *code = queued.empty() ? 0 : queued.front();
-    if (!queued.empty()) queued.pop_front();
-    if (queued.empty()) word.fetch_and(~bit, std::memory_order_relaxed);
+    if ((word.load(std::memory_order_acquire) & bit) == 0) return false;
+    std::uint32_t lwp = counted.load(std::memory_order_relaxed);
+    while (lwp != 0 && !counted.compare_exchange_weak(lwp, lwp - 1, std::memory_order_relaxed)) {
+    }
+    if (lwp != 0) {
+        if (code != nullptr) *code = GuestSiLwp;
+    } else {
+        if (code != nullptr) *code = queued.empty() ? 0 : queued.front();
+        if (!queued.empty()) queued.pop_front();
+    }
+    if (queued.empty() && counted.load(std::memory_order_seq_cst) == 0) {
+        word.fetch_and(~bit, std::memory_order_seq_cst);
+        if (counted.load(std::memory_order_seq_cst) != 0) word.fetch_or(bit, std::memory_order_seq_cst);
+    }
     return true;
 }
 
@@ -178,6 +244,7 @@ void DiscardPendingIfIgnored(int guest, const GuestSigaction& action) {
     auto& pending = Pending();
     std::lock_guard lock(pending.lock);
     pending.queued[guest].clear();
+    pending.lwp[guest].store(0, std::memory_order_relaxed);
     pending.words[SignalWord(guest)].fetch_and(~SignalBit(guest), std::memory_order_relaxed);
 }
 
@@ -261,7 +328,12 @@ void Dispatch(int native) {
     std::signal(native, Dispatch);
 #endif
     if (SignalBlocked(guest)) {
+#ifdef _WIN32
         MarkPending(guest, GuestSiLwp);
+#else
+        NotePendingLwp(guest);
+        WakeFromHandler(guest);
+#endif
         return;
     }
     const auto callback = handlers[guest].load();
@@ -278,6 +350,12 @@ bool Install(int guest, const GuestSigaction& action) {
     if (!native) return true;
     const auto previous = handlers[guest].exchange(Delivered(action) ? reinterpret_cast<GuestHandler>(action.handler) : nullptr);
     auto hostHandler = action.handler == 1 ? SIG_IGN : Delivered(action) ? Dispatch : SIG_DFL;
+#ifndef _WIN32
+    if (hostHandler == Dispatch) {
+        EnsureWakeRelay();
+        static_cast<void>(CurrentSignals());
+    }
+#endif
     if (std::signal(native, hostHandler) == SIG_ERR) {
         handlers[guest].store(previous);
         return false;
