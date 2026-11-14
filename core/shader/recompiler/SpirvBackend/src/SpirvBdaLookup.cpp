@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include <bit>
 #include <utility>
 #include <iterator>
@@ -64,21 +65,42 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
         }
         leaveIf(binary(spv::OpINotEqual, boolean, reason, constant(0u)), reason);
     };
-    const auto length = state.module.AllocateId();
-    state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
-    fail(binary(spv::OpULessThan, boolean, length, constant(4)), BdaAbi::FaultReason::InvalidTable);
+    std::uint32_t length = 0;
+    if (state.BdaAddressed()) {
+        const auto table = EmitRootAddress(state, RuntimeAbi::RootItem::PagetableAddress);
+        fail(binary(spv::OpIEqual, boolean, table, BdaConstant(state, 0u)), BdaAbi::FaultReason::InvalidTable);
+    } else {
+        length = state.module.AllocateId();
+        state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
+        fail(binary(spv::OpULessThan, boolean, length, constant(4)), BdaAbi::FaultReason::InvalidTable);
+    }
     const auto count = BdaLoadWord(state, constant(1));
-    const auto available = binary(spv::OpISub, u32, length, constant(4));
     const auto end = binary(spv::OpIAdd, u64, address, Unary(state, spv::OpUConvert, u64, bytes));
-    failFirst({
-        {binary(spv::OpINotEqual, boolean, BdaLoadWord(state, constant(0)), constant(BdaAbi::Version)), BdaAbi::FaultReason::InvalidTable},
-        {binary(spv::OpINotEqual, boolean, BdaLoadWord(state, constant(2)), constant(sizeof(BdaAbi::Range))), BdaAbi::FaultReason::InvalidTable},
-        {binary(spv::OpINotEqual, boolean, BdaLoadWord(state, constant(3)), constant(0)), BdaAbi::FaultReason::InvalidTable},
-        {binary(spv::OpINotEqual, boolean, binary(spv::OpBitwiseAnd, u32, available, constant(7)), constant(0)), BdaAbi::FaultReason::InvalidTable},
-        {binary(spv::OpINotEqual, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), BdaAbi::FaultReason::InvalidTable},
-        {binary(spv::OpIEqual, boolean, bytes, constant(0)), BdaAbi::FaultReason::Overflow},
-        {binary(spv::OpULessThanEqual, boolean, end, address), BdaAbi::FaultReason::Overflow},
-    });
+    const auto version = binary(spv::OpINotEqual, boolean, BdaLoadWord(state, constant(0)), constant(BdaAbi::Version));
+    const auto entryBytes = binary(spv::OpINotEqual, boolean, BdaLoadWord(state, constant(2)), constant(sizeof(BdaAbi::Range)));
+    const auto reserved = binary(spv::OpINotEqual, boolean, BdaLoadWord(state, constant(3)), constant(0));
+    const auto empty = binary(spv::OpIEqual, boolean, bytes, constant(0));
+    const auto wrapped = binary(spv::OpULessThanEqual, boolean, end, address);
+    if (state.BdaAddressed()) {
+        failFirst({
+            {version, BdaAbi::FaultReason::InvalidTable},
+            {entryBytes, BdaAbi::FaultReason::InvalidTable},
+            {reserved, BdaAbi::FaultReason::InvalidTable},
+            {empty, BdaAbi::FaultReason::Overflow},
+            {wrapped, BdaAbi::FaultReason::Overflow},
+        });
+    } else {
+        const auto available = binary(spv::OpISub, u32, length, constant(4));
+        failFirst({
+            {version, BdaAbi::FaultReason::InvalidTable},
+            {entryBytes, BdaAbi::FaultReason::InvalidTable},
+            {reserved, BdaAbi::FaultReason::InvalidTable},
+            {binary(spv::OpINotEqual, boolean, binary(spv::OpBitwiseAnd, u32, available, constant(7)), constant(0)), BdaAbi::FaultReason::InvalidTable},
+            {binary(spv::OpINotEqual, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), BdaAbi::FaultReason::InvalidTable},
+            {empty, BdaAbi::FaultReason::Overflow},
+            {wrapped, BdaAbi::FaultReason::Overflow},
+        });
+    }
     const auto header = state.module.AllocateId();
     const auto body = state.module.AllocateId();
     const auto continuation = state.module.AllocateId();

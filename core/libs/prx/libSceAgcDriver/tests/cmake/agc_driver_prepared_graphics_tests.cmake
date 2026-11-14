@@ -17,3 +17,7 @@ if(BUILD_TESTING)
         set_tests_properties(${prebuildPolicyTest} PROPERTIES ENVIRONMENT_MODIFICATION "${prebuildPolicyEnvironment}")
     endforeach()
 endif()
+
+if(BUILD_TESTING)
+    agc_add_gpu_heap_test(agc_driver_prepared_graphics)
+endif()

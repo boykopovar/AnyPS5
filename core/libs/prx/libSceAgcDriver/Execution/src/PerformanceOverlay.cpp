@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -1183,7 +1184,7 @@ OverlayRect PerformanceOverlay::RecordRects(VkCommandBuffer commands, std::size_
     state.SetViewport(context, {0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f});
     state.SetScissor(context, area);
     const OverlayParameters parameters{OverlayPalette(format, colorSpace), {static_cast<float>(extent.width), static_cast<float>(extent.height)}};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
+    Graphics::CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
     const VkBuffer buffer = slot.rects->Handle();
     const VkDeviceSize offset = 0;
     context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers")(commands, 0, 1, &buffer, &offset);

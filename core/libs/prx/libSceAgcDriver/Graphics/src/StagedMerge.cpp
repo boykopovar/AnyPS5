@@ -1,9 +1,11 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/PackedMerge_spv.h"
 #include <array>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -23,7 +25,15 @@ struct MergePush {
     std::uint32_t samples;
 };
 
-class Temporary final : public StagedTemporary {
+struct HeapMergePush {
+    MergePush push;
+    std::uint32_t temporary;
+    std::uint32_t target;
+};
+
+static_assert(offsetof(HeapMergePush, temporary) == 24 && offsetof(HeapMergePush, target) == 28);
+
+class Temporary final : public StagedTemporary, public HeapSlotOwner {
 public:
     Temporary(const Context& context, VkExtent2D extent, std::uint32_t samples) : context(context), extent(extent), samples(samples) {
         try {
@@ -70,6 +80,7 @@ public:
 
 private:
     void release() noexcept {
+        ReleaseHeapSlots(context);
         if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
         if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
@@ -99,8 +110,25 @@ public:
         return temporaries.back();
     }
 
-    void Merge(VkCommandBuffer commands, StagedTemporary& temporary, VkImageView target, std::uint32_t mask, std::uint32_t samples, VkRect2D area) {
+    void Merge(VkCommandBuffer commands, StagedTemporary& temporary, VkImageView target, std::uint32_t mask, std::uint32_t samples, VkRect2D area, const HeapSlotOwner* targetOwner) {
         const auto pipeline = mergePipeline();
+        const auto x = static_cast<std::uint32_t>(area.offset.x);
+        const auto y = static_cast<std::uint32_t>(area.offset.y);
+        const MergePush push{{x, y}, {x + area.extent.width, y + area.extent.height}, mask, samples};
+        auto* owned = dynamic_cast<Temporary*>(&temporary);
+        if (heapPipeline != VK_NULL_HANDLE && targetOwner != nullptr && owned != nullptr) {
+            auto& heap = BindlessHeap::For(context);
+            const auto temporarySlot = heap.ViewSlot(HeapPassStorageKind, owned, temporary.View());
+            const auto targetSlot = temporarySlot ? heap.ViewSlot(HeapPassStorageKind, targetOwner, target) : std::nullopt;
+            if (targetSlot) {
+                heap.BindDescriptorHeaps(commands);
+                context.BindComputePipeline(commands, heapPipeline);
+                const HeapMergePush pushed{push, *temporarySlot, *targetSlot};
+                CmdPushData(context, commands, sizeof(pushed), &pushed);
+                context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (area.extent.width + 7u) / 8u, (area.extent.height + 7u) / 8u, 1);
+                return;
+            }
+        }
         const auto set = allocate();
         const std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, temporary.View(), VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, target, VK_IMAGE_LAYOUT_GENERAL}}};
         std::array<VkWriteDescriptorSet, 2> writes{};
@@ -113,12 +141,9 @@ public:
             writes[binding].pImageInfo = &images[binding];
         }
         context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 2, writes.data(), 0, nullptr);
-        const auto x = static_cast<std::uint32_t>(area.offset.x);
-        const auto y = static_cast<std::uint32_t>(area.offset.y);
-        const MergePush push{{x, y}, {x + area.extent.width, y + area.extent.height}, mask, samples};
         context.BindComputePipeline(commands, pipeline);
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
-        context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+        CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, SetBindSite::StagedMerge);
+        CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
         context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (area.extent.width + 7u) / 8u, (area.extent.height + 7u) / 8u, 1);
     }
 
@@ -150,6 +175,13 @@ private:
         {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &pipeline);
+        }
+        if (created == VK_SUCCESS && HeapPassesActive(context)) {
+            const auto& heap = BindlessHeap::For(context);
+            const std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{
+                HeapPushIndexMapping(heap, 0, 0, HeapPassStorageImages, offsetof(HeapMergePush, temporary)),
+                HeapPushIndexMapping(heap, 0, 1, HeapPassStorageImages, offsetof(HeapMergePush, target))};
+            heapPipeline = CreateHeapComputePipeline(context, info, mappings);
         }
         context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, shader, nullptr);
         Check(created, "vkCreateComputePipelines staged merge");
@@ -198,6 +230,7 @@ private:
     void release() noexcept {
         temporaries.clear();
         if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+        if (heapPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, heapPipeline, nullptr);
         for (const auto pool : pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
         if (pipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, pipelineLayout, nullptr);
         if (setLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, setLayout, nullptr);
@@ -207,6 +240,7 @@ private:
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline heapPipeline = VK_NULL_HANDLE;
     std::vector<VkDescriptorPool> pools;
     std::vector<std::uint64_t> serials;
     std::size_t current = 0;
@@ -257,12 +291,13 @@ void RecordStagedClear(const Context& context, VkCommandBuffer commands, StagedT
     if (Recorder::Active() != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
 }
 
-void RecordStagedMerge(const Context& context, VkCommandBuffer commands, StagedTemporary& temporary, VkImageView target, std::uint32_t mask, std::uint32_t samples, VkRect2D area) {
+void RecordStagedMerge(const Context& context, VkCommandBuffer commands, StagedTemporary& temporary, VkImageView target, std::uint32_t mask, std::uint32_t samples, VkRect2D area,
+                       const HeapSlotOwner* targetOwner) {
     if (area.extent.width == 0 || area.extent.height == 0) return;
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     {
         std::lock_guard lock(mergesMutex());
-        mergesFor(context).Merge(commands, temporary, target, mask, samples, area);
+        mergesFor(context).Merge(commands, temporary, target, mask, samples, area, targetOwner);
     }
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT, anyAccess);
     if (Recorder::Active() != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);

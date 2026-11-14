@@ -236,7 +236,7 @@ void RecordedMasks(AgcDriver::VulkanDevice& device, const Shaders& compiled, VkC
     const auto context = device.graphicsContext();
     const auto shaders = Stages(device, compiled);
     const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    Recorder recorder(context);
+    Recorder recorder(context, true);
     recorder.Activate();
     const MaskTrace trace(context);
     const auto continued = [] { return DrawPassTotals()[0].passesContinued; };

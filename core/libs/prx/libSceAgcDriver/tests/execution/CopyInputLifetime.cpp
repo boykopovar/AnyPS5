@@ -94,7 +94,7 @@ void Scenario(Graphics::Context context, bool fail) {
     bool caught = false;
     bool earlyReuse = false;
     {
-        Graphics::Recorder recorder(context);
+        Graphics::Recorder recorder(context, true);
         recorder.Activate();
         try {
             Graphics::GuestBufferMemory memory(context);

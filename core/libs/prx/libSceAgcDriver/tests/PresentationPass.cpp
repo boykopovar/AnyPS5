@@ -1,3 +1,5 @@
+#include "execution/VulkanTestDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
@@ -34,7 +36,6 @@ using AgcDriver::PresentationPass;
 using AgcDriver::PresentationScaler;
 using AgcDriver::PresentationUpscaler;
 
-constexpr int VulkanTestSkipped = 77;
 constexpr std::uint64_t Bgra8 = 0x8000000000000000ull;
 constexpr std::uint64_t Rgba8 = 0x8000000022000000ull;
 constexpr std::uint64_t TenBit = 0x0100000000000000ull;
@@ -807,7 +808,7 @@ void sourceImageOutsideDeviceMemoryTests(const Context& base) {
     base.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(base.device, probe, &requirements);
     base.Function<PFN_vkDestroyImage>("vkDestroyImage")(base.device, probe, nullptr);
     if (!base.HostMemoryType(requirements.memoryTypeBits)) {
-        std::printf("presentation source in host memory: skipped, the device offers no host memory type for the image\n");
+        std::printf("presentation source in host memory: skipped, the device has no host memory type for the image\n");
         return;
     }
     auto context = base;
@@ -1354,6 +1355,14 @@ int main(int argc, char** argv) {
         residentPresentTests(device->GetContext());
         overlayPlaneTests(device->GetContext());
         sourceImageOutsideDeviceMemoryTests(device->GetContext());
+        if (GpuHeapEnabled()) {
+            const auto heapDevice = OpenVulkanTestDevice();
+            if (!heapDevice) return VulkanTestSkipped;
+            if (SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
+            const auto context = heapDevice->graphicsContext();
+            Require(BindlessHeap::For(context).DescriptorHeapMode(), "the test device did not open the descriptor heap");
+            residentPresentTests(context);
+        }
         std::cout << "resident present format, presentation pass, overlay plane and letterbox tests passed\n";
         return 0;
     } catch (const std::exception& error) {

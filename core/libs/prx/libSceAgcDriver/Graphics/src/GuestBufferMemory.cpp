@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/AdaptiveStaging.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ThreadOwned.hpp"
@@ -71,6 +72,7 @@ constexpr unsigned long UDMABUF_CREATE_LIST = 0;
 #include <iterator>
 #include <list>
 #include <map>
+#include <unordered_set>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -744,8 +746,7 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     allocated = true;
     entry.memoryType = allocation.memoryTypeIndex;
     if (const auto result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, entry.buffer, entry.memory, 0); result != VK_SUCCESS) return failed("vkBindBufferMemory", result);
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, entry.buffer};
-    entry.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    entry.address = BufferDeviceAddress(context, entry.buffer);
     if (entry.address == 0) return failed("vkGetBufferDeviceAddressKHR", VK_ERROR_UNKNOWN);
     return nullptr;
 }
@@ -969,10 +970,9 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
         failure = result;
         return "vkBindBufferMemory";
     }
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
     entry.buffer = buffer;
     entry.memory = VK_NULL_HANDLE;
-    entry.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    entry.address = BufferDeviceAddress(context, buffer);
     entry.chunk = std::move(chunk);
     entry.dmaBuf = true;
     return nullptr;
@@ -1078,8 +1078,7 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
     context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     if (bound != VK_SUCCESS) fail("vkQueueBindSparse", bound);
     if (waited != VK_SUCCESS) fail("vkWaitForFences", waited);
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
-    const auto address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    const auto address = BufferDeviceAddress(context, buffer);
     if (address == 0) fail("vkGetBufferDeviceAddressKHR", VK_ERROR_UNKNOWN);
     entry.buffer = buffer;
     entry.memory = VK_NULL_HANDLE;
@@ -1244,6 +1243,7 @@ const char* settleImport(const Context& context, HostImports& state, const HostI
         if ((result = context.Function<PFN_vkResetCommandBuffer>("vkResetCommandBuffer")(settle.settleCommands, 0)) != VK_SUCCESS) return "vkResetCommandBuffer (settle)";
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        NoteCommandBufferBegun(settle.settleCommands);
         if ((result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(settle.settleCommands, &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer (settle)";
         const VkBufferCopy region{0, 0, 4};
         context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(settle.settleCommands, source, settle.settleTarget, 1, &region);
@@ -1338,6 +1338,7 @@ void submitSettleBatch(const Context& context, HostImports& state) {
     if ((result = context.Function<PFN_vkResetCommandBuffer>("vkResetCommandBuffer")(batch.commands, 0)) != VK_SUCCESS) return fail("vkResetCommandBuffer (settle batch)");
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    NoteCommandBufferBegun(batch.commands);
     if ((result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(batch.commands, &begin)) != VK_SUCCESS) return fail("vkBeginCommandBuffer (settle batch)");
     const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
     RecordMemoryBarrier(context, batch.commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -3255,6 +3256,10 @@ VkDeviceAddress mirrorAddress(const ImageMirror& mirror) {
     return mirror.resident != nullptr ? mirror.resident->DeviceAddress() : mirror.buffer->DeviceAddress();
 }
 
+VkDeviceAddress mirrorHandleAddress(const ImageMirror& mirror) {
+    return mirror.resident != nullptr ? mirror.resident->HandleAddress() : mirror.buffer->DeviceAddress();
+}
+
 bool sameRange(const std::weak_ptr<const GuestAllocations::Range>& mirrored, const std::shared_ptr<const GuestAllocations::Range>& range) {
     return !mirrored.owner_before(range) && !range.owner_before(mirrored);
 }
@@ -3676,6 +3681,13 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
         checked.emplace_back(index, generation);
     }
     return checked;
+}
+
+void refreshWritableMirrors(const GuestBufferMemory::AddressSpace& space, std::vector<RefreshBlock>& blocks) {
+    for (const auto index : space.writableMirrors) {
+        const auto& region = space.base[index];
+        if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
+    }
 }
 
 bool heapMirrorWatched(ImageMirror& mirror) {
@@ -4476,11 +4488,13 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
         allocate.commandBufferCount = 3;
         if ((probe.result = context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocate, commands)) != VK_SUCCESS) return "vkAllocateCommandBuffers";
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        NoteCommandBufferBegun(commands[0]);
         if ((probe.result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands[0], &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer";
         const VkBufferCopy region{0, 0, bytes};
         context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands[0], import.buffer, destination, 1, &region);
         if ((probe.result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(commands[0])) != VK_SUCCESS) return "vkEndCommandBuffer";
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        NoteCommandBufferBegun(commands[1]);
         if ((probe.result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands[1], &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer";
         context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands[1], import.buffer, 0, bytes, 0x02020202u);
         if ((probe.result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(commands[1])) != VK_SUCCESS) return "vkEndCommandBuffer";
@@ -5318,10 +5332,7 @@ void GuestBufferMemory::AcquireRegistered() {
             // before any of them is dereferenced.
             served = true;
             mirrored = space->mirrored;
-            for (const auto index : space->writableMirrors) {
-                const auto& region = space->base[index];
-                if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
-            }
+            refreshWritableMirrors(*space, blocks);
             lap(timing.mirrorsUs, at);
         }
     }
@@ -5935,10 +5946,7 @@ bool GuestBufferMemory::RetakeSpace() {
     if (reuse) {
         noteEpochMirrors(true, *space);
     } else {
-        for (const auto index : space->writableMirrors) {
-            const auto& region = space->base[index];
-            if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
-        }
+        refreshWritableMirrors(*space, blocks);
         if (epochMirrors()) noteEpochMirrors(false, *space);
     }
     const auto checked = refreshHeapRuns(*space, blocks);
@@ -6347,6 +6355,16 @@ bool GuestBufferMemory::gpuCopyEligible(const Region& region) const {
 bool GuestBufferMemory::bindableInPlace(std::uint64_t offset, bool addressable) const {
     if (adjustedRegions && !addressable) return offset % 4 == 0;
     return offset % context.limits.minStorageBufferOffsetAlignment == 0;
+}
+
+VkDeviceSize GuestBufferViewAlignment(const VkPhysicalDeviceLimits& limits) {
+    Require(limits.minStorageBufferOffsetAlignment != 0, "no storage buffer offset alignment");
+    const auto storage = std::max<VkDeviceSize>(limits.minStorageBufferOffsetAlignment, 4);
+    return UniformConstantBuffersEnabled() ? std::max<VkDeviceSize>(storage, limits.minUniformBufferOffsetAlignment) : storage;
+}
+
+VkDeviceSize GuestBufferMemory::viewAlignment() const {
+    return GuestBufferViewAlignment(context.limits);
 }
 
 bool GuestBufferMemory::stagingEligible(const Region& region, bool addressable) const {
@@ -6964,6 +6982,7 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         readBytes += region.snapshot.size();
     }
     region.snapshot.clear();
+    NoteCpuBufferCopy(readBytes);
     if (uploadGeneration != 0 && uploadUnchanged(region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated), uploadGeneration)) insertUploaded(context, region.begin, region.backed, static_cast<std::size_t>(allocated), usage, region.buffer, uploadGeneration);
     if (profile) readUs.fetch_add(microsecondsSince(readStart), std::memory_order_relaxed);
     if (profile) {
@@ -7235,35 +7254,63 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     recorder.EndGpuTiming(timing, copiedBytes);
 }
 
-VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {
-    Require(uploaded && !committed, "guest GPU memory is not available");
-    Require(bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest buffer view");
+VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment, VkDeviceAddress* handleAddress) const {
+    std::string failure;
+    const auto info = TryDescriptor(address, bytes, adjustment, &failure, handleAddress);
+    if (!info.has_value()) Require(false, failure);
+    return *info;
+}
+
+std::optional<VkDescriptorBufferInfo> GuestBufferMemory::TryDescriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment, std::string* failure, VkDeviceAddress* handleAddress) const {
+    const auto fail = [failure](std::string text) -> std::optional<VkDescriptorBufferInfo> {
+        if (failure != nullptr) *failure = std::move(text);
+        return std::nullopt;
+    };
+    if (!uploaded || committed) return fail("guest GPU memory is not available");
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return fail("invalid guest buffer view");
     const auto* found = owner(address, address + bytes);
-    Require(found != nullptr, "guest buffer has no GPU owner");
+    if (found == nullptr) return fail("guest buffer has no GPU owner");
     const auto& region = *found;
     const auto describe = [&](const char* what) {
+        if (failure == nullptr) return std::string();
         char text[256];
         std::snprintf(text, sizeof(text), "guest buffer view 0x%llx+0x%llx %s its GPU owner 0x%llx-0x%llx (buffer %d, direct %d, mirror %d)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), what, static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end), region.buffer != nullptr, region.direct != nullptr, region.mirror != nullptr);
         return std::string(text);
     };
-    if (!(address >= region.begin && address + bytes <= region.end && (region.buffer != nullptr || region.direct != nullptr || region.mirror != nullptr))) Require(false, describe("exceeds"));
+    if (!(address >= region.begin && address + bytes <= region.end && (region.buffer != nullptr || region.direct != nullptr || region.mirror != nullptr))) return fail(describe("exceeds"));
     const auto base = region.direct != nullptr ? region.direct->base - region.direct->lead : region.mirror != nullptr ? mirrorStart(*region.mirror) : region.begin;
     const auto offset = address - base;
-    Require(context.limits.minStorageBufferOffsetAlignment != 0, "no storage buffer offset alignment");
-    Require(base % 4 == 0, "a guest buffer view in a GPU owner that does not start at a DWORD boundary is not implemented");
-    adjustment = static_cast<std::uint32_t>(offset % std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4));
+    if (base % 4 != 0) return fail("a guest buffer view in a GPU owner that does not start at a DWORD boundary is not implemented");
+    adjustment = static_cast<std::uint32_t>(offset % viewAlignment());
+    if (bytes / 4 + adjustment / 4 + 2 > std::numeric_limits<std::uint64_t>::max() / 4) return fail("guest buffer view range overflow");
     auto range = ViewBytes(bytes, adjustment);
     const auto end = region.direct != nullptr ? region.direct->base + region.direct->bytes : servedEnd(region);
     const bool cut = (region.direct == nullptr || region.runCut) && end < region.end;
     if (cut) {
-        Require(address - adjustment < end, "guest buffer view starts past its copy");
+        if (address - adjustment >= end) return fail("guest buffer view starts past its copy");
         range = std::min<std::uint64_t>(range, end - (address - adjustment));
     }
     if (bytes <= context.limits.maxStorageBufferRange) range = std::min<std::uint64_t>(range, context.limits.maxStorageBufferRange & ~std::uint64_t{3});
-    if (address - adjustment + range > end) Require(false, describe("rounded up to its view range exceeds"));
-    Require(range <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
+    if (address - adjustment + range > end) return fail(describe("rounded up to its view range exceeds"));
+    if (range > context.limits.maxStorageBufferRange) return fail("guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? mirrorHandle(*region.mirror) : region.buffer->Handle();
-    return {handle, offset - adjustment, range};
+    if (handleAddress != nullptr) *handleAddress = region.direct != nullptr ? region.direct->address - region.direct->lead : region.mirror != nullptr ? mirrorHandleAddress(*region.mirror) : region.buffer->DeviceAddress();
+    return VkDescriptorBufferInfo{handle, offset - adjustment, range};
+}
+
+std::optional<VkDeviceAddressRangeEXT> GuestBufferMemory::ImportedView(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return std::nullopt;
+    const auto* import = ExistingHostImportFor(context, address, bytes);
+    if (import == nullptr || import->address == 0) return std::nullopt;
+    const auto offset = HostImportOffset(*import, address);
+    adjustment = static_cast<std::uint32_t>(offset % viewAlignment());
+    const auto start = offset - adjustment;
+    const auto end = import->lead + import->bytes;
+    auto range = (ViewBytes(bytes, adjustment) + 3u) & ~std::uint64_t{3};
+    if (bytes <= context.limits.maxStorageBufferRange) range = std::min<std::uint64_t>(range, context.limits.maxStorageBufferRange & ~std::uint64_t{3});
+    range = std::min<std::uint64_t>(range, end - start);
+    if (range < adjustment + bytes || range > context.limits.maxStorageBufferRange) return std::nullopt;
+    return VkDeviceAddressRangeEXT{import->address - import->lead + start, range};
 }
 
 std::uint64_t GuestBufferMemory::ViewBytes(std::uint64_t bytes, std::uint32_t adjustment) {

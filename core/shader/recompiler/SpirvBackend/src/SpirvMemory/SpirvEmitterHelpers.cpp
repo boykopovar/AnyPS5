@@ -7,6 +7,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvDescriptors.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvInputOutput.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <limits>
@@ -141,7 +142,7 @@ std::uint32_t StorageBufferU64BlockType(SpirvEmitterState& state) {
 }
 
 std::uint32_t PushConstantArrayType(SpirvEmitterState& state) {
-    const auto count = ConstantU32(state, PushData::DwordCount);
+    const auto count = ConstantU32(state, state.program.Metadata().bindings.UsesDataAddress() || GpuScratchPool(state) ? RuntimeAbi::PushDataDwords : PushData::DwordCount);
     return state.module.DecoratedType(spv::OpTypeArray,
         {{spv::OpDecorate, {spv::DecorationArrayStride, static_cast<std::uint32_t>(sizeof(std::uint32_t))}}},
         TypeU32(state), count);
@@ -168,7 +169,7 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
 
 void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh;
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || program.Metadata().bindings.bufferAddressDwords != 0u || program.Metadata().bindings.UsesDataAddress();
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
@@ -495,31 +496,114 @@ void DefineOutputs(SpirvEmitterState& state) {
     }
 }
 
+namespace {
+
+std::uint32_t defineHeapArray(SpirvEmitterState& state, std::uint32_t slotCount, std::uint32_t elementType, const char* name, std::uint32_t heapKind) {
+    const auto type = state.module.Type(spv::OpTypeArray, elementType, slotCount);
+    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
+    state.module.AddName(variable, name);
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::FragmentDescriptorSet);
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(heapKind)));
+    return variable;
+}
+
+}
+
 void DefineDescriptors(SpirvEmitterState& state) {
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     const IrShaderStage stage = state.program.Resources().stage;
-    if (layout.UsesPushData() || state.stencilReplay || stage == IrShaderStage::Mesh || stage == IrShaderStage::TessellationControl || (state.depthRangeRemap && (stage == IrShaderStage::Vertex || stage == IrShaderStage::TessellationEvaluation))) {
+    if (layout.UsesPushData() || layout.UsesDataAddress() || GpuScratchPool(state) || state.stencilReplay || stage == IrShaderStage::Mesh || stage == IrShaderStage::TessellationControl || (state.depthRangeRemap && (stage == IrShaderStage::Vertex || stage == IrShaderStage::TessellationEvaluation))) {
         const auto type = PushConstantBlockType(state);
         state.pushConstantVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPushConstant, type), spv::StorageClassPushConstant);
         state.module.AddName(type, "BufferResource");
         state.module.AddName(state.pushConstantVariable, "vsharp");
     }
     for (const IrDescriptorBinding& binding : layout.descriptors) {
+        const bool gpuHeap = SharedHeapArray(layout, binding.kind, state.gpuResolvedImages);
         const auto Define = [&](std::uint32_t type, const char* name, std::uint32_t storage = spv::StorageClassStorageBuffer) {
             const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
             state.module.AddName(variable, name);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, state.fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(stage, binding.kind));
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, DescriptorSetNumber(layout, binding.kind, stage, state.gpuResolvedImages, state.fragmentDescriptorSet, false));
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, DescriptorBindingNumber(layout, binding.kind, stage, state.gpuResolvedImages));
             return variable;
         };
         const auto ArrayType = [&](std::uint32_t type) {
             const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
-            const auto count = static_cast<std::uint32_t>(binding.resources.size());
-            const auto length = heap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
+            const bool samplers = binding.kind == DescriptorBindingKind::Samplers;
+            const auto count = gpuHeap ? (samplers ? RuntimeAbi::GpuSamplerHeapSlots : RuntimeAbi::GpuImageHeapSlots) : static_cast<std::uint32_t>(binding.resources.size());
+            const auto length = gpuHeap && !samplers ? HeapImageSlotCount(state) : heap && !gpuHeap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
             return state.module.Type(spv::OpTypeArray, type, length);
         };
         switch (binding.kind) {
-        case DescriptorBindingKind::Buffers:
+        case DescriptorBindingKind::Buffers: {
+            if (layout.bufferAddressDwords != 0u) {
+                state.addressedBuffers = true;
+                const auto count = layout.bufferAddressDwords / RuntimeAbi::BufferAddressWords;
+                const auto pushedBuffer = [&](std::uint32_t type, std::uint32_t element, const char* name) {
+                    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, type), spv::StorageClassStorageBuffer);
+                    state.module.AddName(variable, (std::string(name) + "_" + std::to_string(element)).c_str());
+                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::PushedBufferSet);
+                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, element);
+                    return variable;
+                };
+                const bool aliased = state.requirements.coherentBufferAlias || state.requirements.bufferU64View;
+                std::vector<std::uint32_t> uniformWords(count, 0u);
+                if (state.uniformConstantBuffers) {
+                    std::vector<bool> eligible(count, true);
+                    std::vector<std::uint32_t> end(count, 0u);
+                    const auto& memory = state.program.Resources().memoryInfo;
+                    for (const auto& block : state.program.Blocks()) {
+                        for (const IrValue* inst : block->Instructions()) {
+                            const auto op = inst->Opcode();
+                            if (op != IrOpcode::ReadConstBuffer && BufferAccessOf(op) == BufferAccess::None) continue;
+                            const auto index = inst->Flags<MemoryFlags>().index;
+                            if (index >= memory.size()) continue;
+                            const auto& info = memory[index];
+                            if (info.gpuDescriptor || info.planningOnly || (info.kind != ResourceKind::Buffer && info.kind != ResourceKind::ScalarBuffer)) continue;
+                            const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, info.resource);
+                            if (element >= count) continue;
+                            const auto* offset = inst->ArgumentCount() > 1u ? inst->Argument(1u) : nullptr;
+                            if (op != IrOpcode::ReadConstBuffer || info.coherent || offset == nullptr || !offset->HasImmediate()) {
+                                eligible[element] = false;
+                                continue;
+                            }
+                            const auto byte = static_cast<std::uint64_t>(offset->ImmediateU32()) + info.offset;
+                            end[element] = std::max(end[element], static_cast<std::uint32_t>(std::min<std::uint64_t>((byte & ~std::uint64_t{3u}) + 8u, 0xffffffffu)));
+                        }
+                    }
+                    for (std::uint32_t element = 0; element < count; ++element) {
+                        const auto bytes = static_cast<std::uint64_t>(end[element]) + RuntimeAbi::UniformViewAdjustmentLimit;
+                        if (eligible[element] && end[element] != 0u && bytes <= RuntimeAbi::UniformConstantBufferBytes) uniformWords[element] = static_cast<std::uint32_t>((bytes + 3u) / 4u);
+                    }
+                }
+                for (std::uint32_t element = 0; element < count; ++element) {
+                    if (uniformWords[element] != 0u) {
+                        const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, TypeU32(state), ConstantU32(state, uniformWords[element]));
+                        const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+                        const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniform, block), spv::StorageClassUniform);
+                        state.module.AddName(variable, ("pushed_constant_buffer_" + std::to_string(element)).c_str());
+                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::PushedBufferSet);
+                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, element);
+                        state.pushedBufferUniformVariables.push_back(variable);
+                        state.pushedBufferVariables.push_back(0u);
+                        state.pushedBufferCoherentVariables.push_back(0u);
+                        state.pushedBufferU64Variables.push_back(0u);
+                        continue;
+                    }
+                    state.pushedBufferUniformVariables.push_back(0u);
+                    state.pushedBufferVariables.push_back(pushedBuffer(StorageBufferBlockType(state), element, "pushed_buffer"));
+                    state.pushedBufferCoherentVariables.push_back(state.requirements.coherentBufferAlias ? pushedBuffer(StorageBufferBlockType(state), element, "pushed_buffer_coherent") : 0u);
+                    state.pushedBufferU64Variables.push_back(state.requirements.bufferU64View ? pushedBuffer(StorageBufferU64BlockType(state), element, "pushed_buffer_u64") : 0u);
+                    for (const auto variable : {state.pushedBufferVariables.back(), state.pushedBufferCoherentVariables.back(), state.pushedBufferU64Variables.back()}) {
+                        if (variable != 0u && aliased) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
+                    }
+                    if (state.requirements.coherentBuffers) {
+                        state.module.AddAnnotation(spv::OpDecorate, state.pushedBufferCoherentVariables.back() != 0u ? state.pushedBufferCoherentVariables.back() : state.pushedBufferVariables.back(), spv::DecorationCoherent);
+                        if (state.pushedBufferU64Variables.back() != 0u) state.module.AddAnnotation(spv::OpDecorate, state.pushedBufferU64Variables.back(), spv::DecorationCoherent);
+                    }
+                }
+                break;
+            }
             state.storageBufferVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers");
             if (state.requirements.coherentBufferAlias) state.storageBufferCoherentVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers_coherent");
             if (state.requirements.bufferU64View) state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
@@ -533,25 +617,57 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 if (state.storageBufferU64Variable != 0u) state.module.AddAnnotation(spv::OpDecorate, state.storageBufferU64Variable, spv::DecorationCoherent);
             }
             break;
+        }
         case DescriptorBindingKind::BdaPagetable:
-            state.bdaPagetableVariable = Define(StorageBufferBlockType(state), "bda_pagetable");
-            state.module.AddAnnotation(spv::OpDecorate, state.bdaPagetableVariable, spv::DecorationNonWritable);
+            if (layout.UsesDataAddress()) {
+                state.bdaPagetableVariable = state.module.AllocateId();
+            } else {
+                state.bdaPagetableVariable = Define(StorageBufferBlockType(state), "bda_pagetable");
+                state.module.AddAnnotation(spv::OpDecorate, state.bdaPagetableVariable, spv::DecorationNonWritable);
+            }
             break;
         case DescriptorBindingKind::FaultBuffer:
-            state.faultBufferVariable = Define(StorageBufferBlockType(state), "fault_buffer");
+            if (layout.UsesDataAddress()) {
+                state.faultBufferVariable = state.module.AllocateId();
+            } else {
+                state.faultBufferVariable = Define(StorageBufferBlockType(state), "fault_buffer");
+            }
             break;
         case DescriptorBindingKind::ShaderData:
-            state.shaderDataStorageVariable = Define(StorageBufferBlockType(state), "shader_data");
+            if (!layout.UsesDataAddress()) {
+                state.shaderDataStorageVariable = Define(StorageBufferBlockType(state), "shader_data");
+                state.module.AddAnnotation(spv::OpDecorate, state.shaderDataStorageVariable, spv::DecorationNonWritable);
+            } else if (layout.ShaderDataDwords() != 0u && layout.ShaderDataDwords() <= state.heapDataUniformDwords) {
+                const auto vectors = (layout.ShaderDataDwords() + 3u) / 4u;
+                const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 16u}}}, TypeU32Vector(state, 4), ConstantU32(state, vectors));
+                const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+                state.shaderDataUniformVariable = Define(block, "shader_data", spv::StorageClassUniform);
+                state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::ShaderData);
+            }
+            if (layout.UsesDataAddress() && SplitUserData(state) && layout.userDataRegisters.size() <= state.heapDataUniformDwords) {
+                const auto vectors = static_cast<std::uint32_t>((layout.userDataRegisters.size() + 3u) / 4u);
+                const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 16u}}}, TypeU32Vector(state, 4), ConstantU32(state, vectors));
+                const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+                state.userDataUniformVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniform, block), spv::StorageClassUniform);
+                state.module.AddName(state.userDataUniformVariable, "user_data");
+                state.module.AddAnnotation(spv::OpDecorate, state.userDataUniformVariable, spv::DecorationDescriptorSet, RuntimeAbi::GpuDataSet);
+                state.module.AddAnnotation(spv::OpDecorate, state.userDataUniformVariable, spv::DecorationBinding, NativeBinding(stage, DescriptorBindingKind::UserData));
+                state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::UserData) | RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::ShaderData);
+            }
             break;
         case DescriptorBindingKind::FlattenedSrt:
-            state.flattenedSrtVariable = Define(StorageBufferBlockType(state), "flattened_srt");
-            state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
+            if (layout.UsesDataAddress()) state.flattenedSrtAddressed = true;
+            else {
+                state.flattenedSrtVariable = Define(StorageBufferBlockType(state), "flattened_srt");
+                state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
+            }
             break;
         case DescriptorBindingKind::Samplers:
             state.samplerVariable = Define(ArrayType(state.module.Type(spv::OpTypeSampler)), "samplers", spv::StorageClassUniformConstant);
             break;
         case DescriptorBindingKind::Gds:
             state.gdsVariable = Define(StorageBufferBlockType(state), "gds");
+            if (layout.UsesDataAddress()) state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::GdsAddress);
             state.module.AddAnnotation(spv::OpDecorate, state.gdsVariable, spv::DecorationCoherent);
             if (state.requirements.gdsInt64Atomics) {
                 state.gdsU64Variable = Define(StorageBufferU64BlockType(state), "gds_u64");
@@ -573,18 +689,35 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     if ((ImageBindingResourceClass(kind) == ImageResourceClass::Storage) != (binding.kind == DescriptorBindingKind::ImageStorageTable)) continue;
                     if (std::any_of(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
                     const auto name = "table_images_" + std::to_string(static_cast<std::uint32_t>(kind));
-                    state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
+                    if (state.TableHeap()) {
+                        const auto value = static_cast<std::uint32_t>(kind);
+                        const auto part = RuntimeAbi::StorageHeapPart(value);
+                        const auto heapKind = binding.kind != DescriptorBindingKind::ImageStorageTable ? RuntimeAbi::FirstImageBinding : part == RuntimeAbi::HeapPart::Atomic || part == RuntimeAbi::HeapPart::Atomic64 ? RuntimeAbi::HeapPartFirstBinding(part) : RuntimeAbi::FirstStorageImageBinding;
+                        const auto slotCount = HeapImageSlotCount(state);
+                        state.tableImageVariables.push_back({kind, defineHeapArray(state, slotCount, ImageType(state, mode), name.c_str(), heapKind)});
+                    } else {
+                        state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
+                    }
                     if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(binding.kind == DescriptorBindingKind::ImageStorageTable ? spv::CapabilityImage1D : spv::CapabilitySampled1D);
                 }
             }
             break;
         case DescriptorBindingKind::SamplerTable:
             RequireTableIndexing(state);
-            state.tableSamplerVariable = Define(state.module.Type(spv::OpTypeRuntimeArray, state.module.Type(spv::OpTypeSampler)), "table_samplers", spv::StorageClassUniformConstant);
+            if (state.gpuResolvedImages && layout.UsesDataAddress()) {
+                const auto slotCount = ConstantU32(state, RuntimeAbi::GpuSamplerHeapSlots);
+                state.tableSamplerVariable = defineHeapArray(state, slotCount, state.module.Type(spv::OpTypeSampler), "table_samplers", static_cast<std::uint32_t>(DescriptorBindingKind::Samplers));
+            } else {
+                state.tableSamplerVariable = Define(state.module.Type(spv::OpTypeRuntimeArray, state.module.Type(spv::OpTypeSampler)), "table_samplers", spv::StorageClassUniformConstant);
+            }
             break;
         case DescriptorBindingKind::ImageTableMap:
-            state.tableMapVariable = Define(StorageBufferBlockType(state), "table_map");
-            state.module.AddAnnotation(spv::OpDecorate, state.tableMapVariable, spv::DecorationNonWritable);
+            if (layout.UsesDataAddress()) {
+                state.tableMapVariable = state.module.AllocateId();
+            } else {
+                state.tableMapVariable = Define(StorageBufferBlockType(state), "table_map");
+                state.module.AddAnnotation(spv::OpDecorate, state.tableMapVariable, spv::DecorationNonWritable);
+            }
             break;
         default: {
             if (ImageBindingResourceClass(binding.kind) == ImageResourceClass::None) {
@@ -607,13 +740,13 @@ void DefineDescriptors(SpirvEmitterState& state) {
     if (LdsInDeviceMemory(state)) {
         state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
         state.module.AddName(state.ldsBufferVariable, "workgroup_memory");
-        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationDescriptorSet, WorkgroupMemoryDescriptorSet);
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationDescriptorSet, state.gpuResolvedImages ? GpuWorkgroupMemoryDescriptorSet : WorkgroupMemoryDescriptorSet);
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationBinding, 0u);
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationCoherent);
         if (state.requirements.ldsBufferInt64Atomics) {
             state.ldsBufferU64Variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferU64BlockType(state)), spv::StorageClassStorageBuffer);
             state.module.AddName(state.ldsBufferU64Variable, "workgroup_memory_u64");
-            state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferU64Variable, spv::DecorationDescriptorSet, WorkgroupMemoryDescriptorSet);
+            state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferU64Variable, spv::DecorationDescriptorSet, state.gpuResolvedImages ? GpuWorkgroupMemoryDescriptorSet : WorkgroupMemoryDescriptorSet);
             state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferU64Variable, spv::DecorationBinding, 0u);
             state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferU64Variable, spv::DecorationCoherent);
             for (const auto variable : {state.ldsBufferVariable, state.ldsBufferU64Variable}) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
@@ -649,7 +782,7 @@ void DefineScratchPool(SpirvEmitterState& state) {
     if (!ScratchPoolActive(state)) return;
     state.scratchPoolVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
     state.module.AddName(state.scratchPoolVariable, "scratch_pool");
-    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationDescriptorSet, ScratchPoolDescriptorSet);
+    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationDescriptorSet, GpuScratchPool(state) ? GpuScratchPoolDescriptorSet : ScratchPoolDescriptorSet);
     state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationBinding, 0u);
     state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationCoherent);
     state.scratchPoolSlotVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassWorkgroup, TypeU32(state)), spv::StorageClassWorkgroup);

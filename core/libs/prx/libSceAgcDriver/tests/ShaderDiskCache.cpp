@@ -400,6 +400,7 @@ CompiledVariant sampleVariant() {
     info.bindings.memoryOffsetDword = 1;
     info.bindings.memoryOffsetCount = 5;
     info.bindings.stencilReferenceDword = 23u;
+    info.bindings.dataAddress = true;
     info.bindings.userDataRegisters = {4, 5, 9};
     info.bindings.descriptors = {{DescriptorBindingKind::Buffers, {0, 1}}, {DescriptorBindingKind::FlattenedSrt, {}}};
     variant.bindings.layout = info.bindings;

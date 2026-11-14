@@ -1,6 +1,8 @@
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
+#include "PipelineSpecialization.hpp"
+#include "RuntimeAbi.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
 #include <string>
@@ -34,6 +36,10 @@ std::uint32_t ConstantBool(SpirvEmitterState& state, bool value) {
 
 std::uint32_t ConstantU64(SpirvEmitterState& state, std::uint64_t value) {
     return state.module.Constant(spv::OpConstantComposite, TypeU64(state), ConstantU32(state, static_cast<std::uint32_t>(value)), ConstantU32(state, static_cast<std::uint32_t>(value >> 32u)));
+}
+
+std::uint32_t HeapImageSlotCount(SpirvEmitterState& state) {
+    return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapImageSlots, RuntimeAbi::GpuImageHeapSlots);
 }
 
 std::uint32_t ConstantU32CompositeZero(SpirvEmitterState& state, std::uint32_t components) {

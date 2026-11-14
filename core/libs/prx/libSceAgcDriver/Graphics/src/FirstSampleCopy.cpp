@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -179,6 +181,11 @@ FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExte
         pipelineInfo.layout = pipelineLayout;
         pipelineInfo.renderPass = renderPass;
         Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines first sample");
+        if (HeapPassesActive(context)) {
+            auto mapping = HeapPushIndexMapping(BindlessHeap::For(context), 0, 0, VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT, 0);
+            mapping.sourceData.pushIndex.pEmbeddedSampler = &samplerInfo;
+            heapPipeline = CreateHeapGraphicsPipeline(context, pipelineInfo, std::span(&mapping, 1));
+        }
     } catch (...) {
         release();
         throw;
@@ -190,6 +197,7 @@ FirstSampleCopy::~FirstSampleCopy() {
 }
 
 void FirstSampleCopy::release() noexcept {
+    if (heapPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, heapPipeline, nullptr);
     if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
     if (fragment) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, fragment, nullptr);
     if (vertex) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, vertex, nullptr);
@@ -211,6 +219,30 @@ void FirstSampleCopy::release() noexcept {
     view = VK_NULL_HANDLE;
     image = VK_NULL_HANDLE;
     memory = VK_NULL_HANDLE;
+}
+
+void FirstSampleCopy::Record(Recorder& recorder, Texture& texture) {
+    const auto source = texture.View();
+    const auto layout = texture.Layout();
+    const auto slot = heapPipeline != VK_NULL_HANDLE ? BindlessHeap::For(context).TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, &texture, source, layout) : std::nullopt;
+    if (slot) {
+        recorder.RecordUncounted([&](CommandState& recording) {
+            const auto commands = recording.Commands();
+            BindlessHeap::For(context).BindDescriptorHeaps(commands);
+            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            begin.renderPass = renderPass;
+            begin.framebuffer = framebuffer;
+            begin.renderArea = {{0, 0}, extent};
+            context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+            recording.BindPipeline(context, heapPipeline, 0);
+            const std::uint32_t pushed = *slot;
+            CmdPushData(context, commands, sizeof(pushed), &pushed);
+            context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
+            context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
+        });
+        return;
+    }
+    Record(recorder, source, layout);
 }
 
 void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayout layout) {
@@ -245,7 +277,7 @@ void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayo
         begin.renderArea = {{0, 0}, extent};
         context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
         recording.BindPipeline(context, pipeline, 0);
-        context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, 0, nullptr);
+        CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, SetBindSite::FirstSampleCopy);
         context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
         context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
     });

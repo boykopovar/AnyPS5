@@ -8,3 +8,7 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_image_table_reuse_records agc_driver_image_table_reuse_records_narrow PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+if(BUILD_TESTING)
+    agc_add_gpu_heap_test(agc_driver_image_table_reuse)
+endif()

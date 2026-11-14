@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include <shared_mutex>
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
@@ -213,7 +214,7 @@ std::shared_ptr<Buffer> stageGuestSamples(const Context& context, const Multisam
     return staging;
 }
 
-class MultisampleTarget : public std::enable_shared_from_this<MultisampleTarget> {
+class MultisampleTarget : public std::enable_shared_from_this<MultisampleTarget>, public HeapSlotOwner {
 public:
     MultisampleTarget(const Context& context, const ColorTarget& target, bool guestSamples = false, std::optional<VkClearColorValue> initialClear = std::nullopt, std::shared_ptr<Buffer> preparedUpload = {}) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
         this->context.bufferPool.reset();
@@ -300,7 +301,7 @@ public:
                 const auto bytes = static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.samples * target.elementBytes;
                 for (std::uint64_t offset = 0; offset < bytes; offset += stride) {
                     const auto count = std::min<std::uint64_t>(stride, bytes - offset);
-                    context.detiler->DispatchMultisampleImage(commands, target.elementBytes, upload->Handle(), offset, (count + 3u) & ~std::uint64_t{3}, uploadView, target.extent.width, target.extent.height, 1u, target.samples, static_cast<std::uint32_t>(offset / target.elementBytes), static_cast<std::uint32_t>(count / target.elementBytes));
+                    context.detiler->DispatchMultisampleImage(commands, target.elementBytes, upload->Handle(), offset, (count + 3u) & ~std::uint64_t{3}, uploadView, target.extent.width, target.extent.height, 1u, target.samples, static_cast<std::uint32_t>(offset / target.elementBytes), static_cast<std::uint32_t>(count / target.elementBytes), this);
                 }
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
                 if (recorder != nullptr) {
@@ -586,7 +587,7 @@ public:
     std::shared_ptr<Texture> FirstSample(VkComponentMapping components) {
         const auto source = Sampled({});
         if (firstSampleCopy == nullptr) firstSampleCopy = std::make_unique<FirstSampleCopy>(context, target.format, target.extent);
-        firstSampleCopy->Record(*Recorder::Active(), source->View(), source->Layout());
+        firstSampleCopy->Record(*Recorder::Active(), *source);
         const std::array<std::uint32_t, 4> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)};
         auto& texture = firstSampleTextures[key];
         if (texture == nullptr) {
@@ -914,6 +915,7 @@ private:
         firstSampleTextures.clear();
         firstSampleCopy.reset();
         for (const auto& [format, resolvePass] : resolvePasses) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
+        ReleaseHeapSlots(context);
         if (uploadView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uploadView, nullptr);
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
         if (twinView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, twinView, nullptr);
@@ -1531,7 +1533,7 @@ SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const Col
     auto& found = acquire(context, target);
     found.drawn = true;
     ++found.contents;
-    return {found.image, found.OrderView(), found.orderFormat, target.extent, target.samples, SampleOrderMethod::Storage, found.shared_from_this()};
+    return {found.image, found.OrderView(), found.orderFormat, target.extent, target.samples, SampleOrderMethod::Storage, found.shared_from_this(), &found};
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image) {
@@ -1638,7 +1640,7 @@ void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget
     acquire(context, target);
 }
 
-VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {
+MultisampleStorage MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {
     TargetsLock lock;
     discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
@@ -1650,13 +1652,14 @@ VkImageView MultisampleTargetStorageView(const Context& context, const GuestText
         if (rendered.eqaaFragments != 0) throw std::runtime_error(eqaaReadRefusal("storage image access to", rendered, resource));
         if (sameStorageForm(context, rendered.format, format) && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) {
             if (!holdHostOnly(*target)) continue;
-            return target->Storage(StorageFormatForGuest(context, resource.format), uintStorage);
+            return {target->Storage(StorageFormatForGuest(context, resource.format), uintStorage), target.get(), target};
         }
         other = target.get();
     }
     if (other == nullptr) {
         Require(Recorder::Active() != nullptr, "a multisampled color target is only written by recorded dispatches");
-        return createFilled(context, resource, format, "writing", true).Storage(StorageFormatForGuest(context, resource.format), uintStorage);
+        auto& created = createFilled(context, resource, format, "writing", true);
+        return {created.Storage(StorageFormatForGuest(context, resource.format), uintStorage), &created, created.shared_from_this()};
     }
     char text[320];
     std::snprintf(text, sizeof(text), "AGC graphics: storage image access to multisampled color target 0x%llx (%ux%u, %u samples, vk format %d) as a %ux%u texture of %u samples and guest format %u (vk %d) is not implemented", static_cast<unsigned long long>(resource.baseAddress), other->target.extent.width, other->target.extent.height, other->target.samples, static_cast<int>(other->target.format), resource.width, resource.height, resource.samples, resource.format, static_cast<int>(format));

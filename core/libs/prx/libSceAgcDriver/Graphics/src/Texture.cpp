@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PendingRangeIndex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -14,6 +15,7 @@
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
@@ -30,6 +32,7 @@
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include <algorithm>
+#include <cassert>
 #include <filesystem>
 #include <array>
 #include <bit>
@@ -1535,6 +1538,7 @@ VkImageView Texture::BaseLevelView() const {
 }
 
 void Texture::release() noexcept {
+    ReleaseHeapSlots(context);
     upload.reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     view = VK_NULL_HANDLE;
@@ -1862,19 +1866,43 @@ public:
     iterator end() { return textures.end(); }
     void push_back(StorageTexture* texture) {
         textures.push_back(texture);
+        if (LabelCandidate(texture)) labelCandidates.push_back(texture);
+        const auto begin = texture->Descriptor().baseAddress;
+        index.Insert(begin, begin + texture->GuestBytes(), texture, nextOrder++);
         changed();
     }
     iterator erase(iterator it) {
+        unindex(*it);
         const auto next = textures.erase(it);
         changed();
         return next;
     }
     void remove(const StorageTexture* texture) {
-        if (std::erase(textures, texture) != 0) changed();
+        const auto found = std::find(textures.begin(), textures.end(), texture);
+        if (found == textures.end()) return;
+        unindex(const_cast<StorageTexture*>(texture));
+        textures.erase(found);
+        changed();
     }
     bool MayOverlap(std::uint64_t address, std::size_t bytes) {
         if (indexed != version) rebuild();
         return !textures.empty() && Overlaps(ranges, address, bytes);
+    }
+    template <class Visit>
+    bool AnyOverlapping(std::uint64_t address, std::size_t bytes, Visit&& visit) {
+        return index.AnyOverlapping(address, bytes, visit);
+    }
+    template <class Match>
+    StorageTexture* FirstOverlapping(std::uint64_t address, std::size_t bytes, Match&& match) {
+        const auto* entry = index.FirstByPosition(address, bytes, match);
+        return entry != nullptr ? entry->item : nullptr;
+    }
+    static bool LabelCandidate(const StorageTexture* texture) {
+        return texture->Descriptor().tileMode == TextureTileMode::kLinear || texture->GuestBytes() <= StorageTexture::OccasionalStoreBytes;
+    }
+    const std::vector<StorageTexture*>& LabelCandidates() const { return labelCandidates; }
+    void Publish() {
+        if (indexed != version) rebuild();
     }
     bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
         const auto current = published.load(std::memory_order_acquire);
@@ -1899,21 +1927,26 @@ private:
         changes.store(version, std::memory_order_release);
     }
 
+    void unindex(StorageTexture* texture) {
+        if (LabelCandidate(texture)) std::erase(labelCandidates, texture);
+        const bool found = index.Erase(texture->Descriptor().baseAddress, texture);
+        assert(found);
+        static_cast<void>(found);
+    }
     void rebuild() {
         ranges.clear();
-        for (const auto* texture : textures) ranges.emplace_back(texture->Descriptor().baseAddress, texture->Descriptor().baseAddress + texture->GuestBytes());
-        std::sort(ranges.begin(), ranges.end());
-        std::size_t merged = 0;
-        for (const auto& range : ranges) {
-            if (merged != 0 && range.first <= ranges[merged - 1].second) ranges[merged - 1].second = std::max(ranges[merged - 1].second, range.second);
-            else ranges[merged++] = range;
+        for (const auto& entry : index.Entries()) {
+            if (!ranges.empty() && entry.begin <= ranges.back().second) ranges.back().second = std::max(ranges.back().second, entry.end);
+            else ranges.emplace_back(entry.begin, entry.end);
         }
-        ranges.resize(merged);
         indexed = version;
         published.store(std::make_shared<const Snapshot>(Snapshot{version, ranges}), std::memory_order_release);
     }
     std::vector<StorageTexture*> textures;
+    std::vector<StorageTexture*> labelCandidates;
     Ranges ranges;
+    PendingRangeIndex<StorageTexture*> index;
+    std::size_t nextOrder = 0;
     std::uint64_t version = 0;
     std::uint64_t indexed = ~std::uint64_t{0};
     std::atomic<std::uint64_t> changes{0};
@@ -2412,6 +2445,13 @@ VkImageView StorageTexture::StorageView(std::uint32_t mip, bool firstLayer, bool
     const auto created = createView(mip, firstLayer, format);
     uintViews.emplace(std::pair{mip, firstLayer}, created);
     return created;
+}
+
+VkImageView StorageTexture::UintStorageViewOrDefault(std::uint32_t mip, bool firstLayer) {
+    const auto uintFormat = UintStorageViewFormat(storageFormat);
+    const bool available = PackedStorageViewFormat(storageFormat) == VK_FORMAT_UNDEFINED && uintFormat != VK_FORMAT_UNDEFINED &&
+                           StorageFormatOrUndefined(context, uintFormat) == uintFormat;
+    return StorageView(mip, firstLayer, available);
 }
 
 VkImageView StorageTexture::ElementView() {
@@ -2916,7 +2956,8 @@ bool StorageTexture::otherPendingOverlaps() const {
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     const auto other = [&](const StorageTexture* texture) { return texture != this && texture->overlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); };
-    return std::any_of(pending.textures.begin(), pending.textures.end(), other) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
+    const auto pendingHere = [&](const StorageTexture* texture) { return texture != this && (texture->descriptor.dccAddress != 0 || texture->pendingUnitInside(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))); };
+    return pending.textures.AnyOverlapping(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), pendingHere) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
 }
 
 bool StorageTexture::refreshProved() {
@@ -3405,7 +3446,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
-                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
+                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor}, this);
                 }
             }
             recordDirectUploadDone(commands);
@@ -3952,10 +3993,10 @@ std::uint64_t StorageTexture::uploadWindows(std::span<const ImportSegment> segme
             detile.pipeBankXor = descriptor.pipeBankXor;
             const auto view = elementLayerView(window.level, window.layer);
             if (source.shadow) {
-                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), view, mip, false, window.layer, detile);
+                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), view, mip, false, window.layer, detile, this);
             } else {
                 detile.tiledBase = 0;
-                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestOffset(window.layer, mip), view, mip, false, window.layer, detile);
+                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestOffset(window.layer, mip), view, mip, false, window.layer, detile, this);
             }
         }
         recordDirectUploadDone(commands);
@@ -4318,9 +4359,9 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
             for (auto k = directRanges[i].first; k < directRanges[i].second; ++k) {
                 auto piece = directPieces[k].window;
                 piece.pipeBankXor = descriptor.pipeBankXor;
-                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, directPieces[k].slab, directPieces[k].offset, elementLayerView(window.level, window.layer), mips[window.level], true, window.layer, piece);
+                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, directPieces[k].slab, directPieces[k].offset, elementLayerView(window.level, window.layer), mips[window.level], true, window.layer, piece, this);
             }
-            if (directRanges[i].first == directRanges[i].second) detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, tiledScratch->Handle(), scratchPositions[i], elementLayerView(window.level, window.layer), mips[window.level], true, window.layer, retile);
+            if (directRanges[i].first == directRanges[i].second) detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, tiledScratch->Handle(), scratchPositions[i], elementLayerView(window.level, window.layer), mips[window.level], true, window.layer, retile, this);
         }
         singlePassMoves.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -4563,7 +4604,8 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     }
     std::optional<MapImportGate::PublishHold> publication;
     if (!layerPending.Any()) publication.emplace(descriptor.baseAddress, guestBytes);
-    if (!layerPending.AllIn(first, count)) {
+    const bool newUnits = !layerPending.AllIn(first, count);
+    if (newUnits) {
         std::vector<bool> unsaved;
         bool anyUnsaved = false;
         const bool trims = CommitTrims();
@@ -4649,7 +4691,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     if (const auto format = ResolveTextureFormat(descriptor.format); format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8_UNORM) eightBitWrites().fetch_add(1, std::memory_order_release);
     const bool wasLent = std::exchange(lent, false);
     if (dirty) {
-        if (wasLent) BumpPendingSerial();
+        if (wasLent || newUnits) BumpPendingSerial();
         return;
     }
     dirty = true;
@@ -5018,8 +5060,9 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
         if (!pending.textures.SurelyClear(address, bytes)) {
             std::lock_guard lock(pending.mutex);
+            pending.textures.Publish();
             const auto* exempt = Refreshing::Get();
-            if (pending.textures.MayOverlap(address, bytes) && std::any_of(pending.textures.begin(), pending.textures.end(), [&](const StorageTexture* texture) { return texture != except && texture != exempt && texture->overlaps(address, bytes) && texture->pendingUnitInside(address, bytes); })) return false;
+            if (pending.textures.AnyOverlapping(address, bytes, [&](const StorageTexture* texture) { return texture != except && texture != exempt && texture->pendingUnitInside(address, bytes); })) return false;
             if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
         }
         return scope == PublishScope::None || !AnyShadowedOverlaps(address, bytes);
@@ -5602,7 +5645,8 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
             return std::any_of(pending.textures.begin(), pending.textures.end(), sharesStored) || std::any_of(pending.flushing.begin(), pending.flushing.end(), shares);
         };
 #endif
-        for (const auto* texture : pending.textures) {
+        const auto& candidates = pending.textures.LabelCandidates();
+        for (const auto* texture : candidates) {
             if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
 #if defined(__APPLE__)
             if (trap && !sharesPage(texture) && (texture->readTrapped.load(std::memory_order_acquire) || !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
@@ -5612,7 +5656,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
 #endif
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
-        for (auto* texture : pending.textures) {
+        for (auto* texture : candidates) {
             if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
             if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
             if (!texture->writtenOccasionally.exchange(false, std::memory_order_relaxed)) continue;
@@ -5730,14 +5774,7 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPendingSlice(std::uint64_t a
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except) {
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
-    if (!pending.textures.MayOverlap(address, bytes)) return false;
-    for (const auto* texture : pending.textures) {
-        // A free function (declared in ShaderResources.hpp): the overlap is computed from the public
-        // surface description rather than the private helper.
-        const auto begin = texture->Descriptor().baseAddress;
-        if (texture != except && address < begin + texture->GuestBytes() && begin < address + bytes) return true;
-    }
-    return false;
+    return pending.textures.AnyOverlapping(address, bytes, [&](const StorageTexture* texture) { return texture != except; });
 }
 
 std::uint64_t StorageTexture::StampKeepingNewerResults(std::uint64_t address, std::size_t bytes, std::uint64_t recorded, const std::function<std::uint64_t()>& stamp) {
@@ -5838,17 +5875,24 @@ std::uint64_t StorageTexture::StampKeepingNewerResults(std::uint64_t address, st
 bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (ranges.empty()) return false;
     auto& pending = Pending();
+    const auto surelyClear = [&] {
+        if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
+        for (const auto& [begin, end] : ranges) {
+            if (end > begin && !pending.textures.SurelyClear(begin, static_cast<std::size_t>(end - begin))) return false;
+        }
+        return pending.flushingCount.load(std::memory_order_acquire) == 0;
+    };
+    if (surelyClear()) return false;
     std::lock_guard lock(pending.mutex);
+    pending.textures.Publish();
     const auto overlapsAny = [&](const StorageTexture* texture) {
         for (const auto& [begin, end] : ranges) {
             if (end > begin && texture->overlaps(begin, static_cast<std::size_t>(end - begin))) return true;
         }
         return false;
     };
-    if (std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.second > range.first && pending.textures.MayOverlap(range.first, static_cast<std::size_t>(range.second - range.first)); })) {
-        for (const auto* texture : pending.textures) {
-            if (overlapsAny(texture)) return true;
-        }
+    for (const auto& [begin, end] : ranges) {
+        if (end > begin && pending.textures.AnyOverlapping(begin, static_cast<std::size_t>(end - begin), [](const StorageTexture*) { return true; })) return true;
     }
     for (const auto* texture : pending.flushing) {
         if (overlapsAny(texture)) return true;
@@ -5865,14 +5909,14 @@ bool StorageTexture::AnyPendingUnitsOverlap(std::span<const std::pair<std::uint6
         for (const auto* texture : pending.flushing) {
             if (texture->overlaps(begin, bytes)) return true;
         }
-        if (!pending.textures.MayOverlap(begin, bytes)) continue;
-        for (const auto* texture : pending.textures) {
-            if (!texture->overlaps(begin, bytes)) continue;
+        const auto unitPending = [&](const StorageTexture* texture) {
             for (std::uint32_t layer = 0; layer < texture->trackedLayers; ++layer) {
                 const auto unit = texture->layerBegin(layer);
                 if (texture->layerPending[layer] && unit < end && begin < unit + texture->layerBytes(layer)) return true;
             }
-        }
+            return false;
+        };
+        if (pending.textures.AnyOverlapping(begin, bytes, unitPending)) return true;
     }
     return false;
 }
@@ -6085,12 +6129,8 @@ bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
         query.found = nullptr;
         if (query.end <= query.begin) continue;
         const auto bytes = static_cast<std::size_t>(query.end - query.begin);
-        if (pending.textures.MayOverlap(query.begin, bytes)) {
-            for (const auto* texture : pending.textures) {
-                if (query.found == nullptr && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes) query.found = texture;
-                if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;
-            }
-        }
+        query.found = pending.textures.FirstOverlapping(query.begin, bytes, [&](const StorageTexture* texture) { return texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes; });
+        query.overlaps = pending.textures.AnyOverlapping(query.begin, bytes, [&](const StorageTexture* texture) { return texture != query.except; });
         for (const auto* texture : pending.flushing) {
             if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;
         }
@@ -7699,6 +7739,7 @@ StorageTexture::~StorageTexture() {
 }
 
 void StorageTexture::release() noexcept {
+    ReleaseHeapSlots(context);
     for (const auto& [mip, extra] : extraViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);
     extraViews.clear();
     for (const auto& [mip, extra] : firstLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);

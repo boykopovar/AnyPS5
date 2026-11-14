@@ -168,8 +168,11 @@ void SetObservationHookForTest(void (*hook)(int point));
 // tracker mutex, so every collect that bumped before it has finished its walk and every later
 // collect stamps newer.
 std::uint64_t TrackerGeneration();
+std::uint64_t StableTrackerGeneration();
+std::uint64_t TrackerAcquisitions();
 void AdvanceTrackerGenerationForTest(std::uint64_t generation);
 std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes);
+bool NoStampAfter(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t generation);
 std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 // Whether no CPU write touched the range since `generation`: an uncached resetting collect of the
 // range's pages first (a game store not collected yet becomes a block stamp), then the compare over

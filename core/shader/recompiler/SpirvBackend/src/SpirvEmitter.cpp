@@ -80,6 +80,18 @@ std::uint32_t WaveLdsScope(const IrProgram& program, const ShaderWorkgroupInputI
 SpirvEmitterState::SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo) : module(program.Resources().stage == IrShaderStage::Mesh ? 0x00010400u : 0x00010300u), program(program), inputInfo(inputInfo), requirements(AnalyzeProgramRequirements(program)) {
 }
 
+bool SpirvEmitterState::BdaAddressed() const {
+    return (bdaPagetableVariable != 0 || faultBufferVariable != 0) && program.Metadata().bindings.UsesDataAddress();
+}
+
+bool SpirvEmitterState::TableMapAddressed() const {
+    return tableMapVariable != 0 && program.Metadata().bindings.UsesDataAddress();
+}
+
+bool SpirvEmitterState::TableHeap() const {
+    return gpuResolvedImages && program.Metadata().bindings.UsesDataAddress();
+}
+
 SpirvValueEmitContext::SpirvValueEmitContext(SpirvEmitterState& state) : state(state) {
 }
 
@@ -268,6 +280,9 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float64DenormPreserve = target.float64DenormPreserve;
     state.depthRangeRemap = target.depthRangeRemap;
     state.registrationModules = target.registrationModules;
+    state.gpuResolvedImages = target.gpuResolvedImages;
+    state.heapDataUniformDwords = target.heapDataUniformDwords;
+    state.uniformConstantBuffers = target.uniformConstantBuffers;
     state.fragmentDescriptorSet = target.fragmentDescriptorSet;
     state.meshBarycentricPixel = target.meshBarycentricPixel;
     state.meshBarycentricVertex = target.meshBarycentricVertex;
@@ -343,6 +358,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
+        info->bdaStores = state.bdaWritePointerFunction != 0;
+        info->pushItems = state.pushItems;
         info->meshWindowBuffer = state.meshWindowBuffer;
         info->scratchPoolSlotDwords = ScratchPoolActive(state) ? ScratchPoolSlotDwords(state) : 0u;
     }

@@ -98,6 +98,7 @@ private:
     std::atomic<std::uint64_t> decodeDrains{0};
     std::uint64_t reportedDecodeDrains = 0;
     std::uint32_t idleWaiters = 0;
+    std::uint32_t fullWaiters = 0;
     std::size_t resumeAt = 0;
     bool committerWaiting = false;
     bool stopped = false;
@@ -139,7 +140,7 @@ public:
     LabelLookup PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t& value);
     bool PendingOverlapsAny(std::span<const Range> ranges);
     bool PendingKey(std::uint64_t key, std::uint64_t shape);
-    enum class DrainSite : std::uint32_t { Lookup, Reads, Packet, Kept, Count };
+    enum class DrainSite : std::uint32_t { Lookup, Reads, Packet, Kept, Dispatch, Count };
     static void NoteDrain(DrainSite site, bool drained);
     static std::string DrainText();
     static void NoteDrainedOpcode(std::uint32_t opcode, bool besideCommits);

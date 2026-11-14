@@ -25,6 +25,7 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    agc_add_gpu_heap_test(agc_driver_sample_multisample_target)
     foreach(initialMode IN ITEMS nonuniform nonuniform_lifetime nonuniform_capabilities nonuniform_hook)
         add_test(NAME agc_driver_native_color_initial_${initialMode} COMMAND agc_driver_sample_multisample_target_tests --initial-${initialMode})
         set_tests_properties(agc_driver_native_color_initial_${initialMode} PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

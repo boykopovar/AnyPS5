@@ -180,6 +180,148 @@ std::string EncodeBase64(const std::vector<std::uint8_t>& bytes) {
     }
     return text;
 }
+std::vector<std::uint8_t> AtVersion55(std::vector<std::uint8_t> bytes) {
+    Require(bytes.size() > 8u && bytes[4] == 56u);
+    bytes[4] = 55u;
+    return bytes;
+}
+
+void VerifyHeapProfile(const ShaderRecompiler::RequestSerializer& serializer) {
+    struct Profile {
+        bool gpuResolvedImages;
+        bool descriptorMemory;
+        std::uint32_t heapDataUniformDwords;
+    };
+    constexpr std::array<Profile, 6> profiles{{{false, false, 0u}, {true, true, 0u}, {true, true, 4096u}, {true, true, 16384u}, {true, false, 16384u}, {false, true, 16384u}}};
+    for (const auto& profile : profiles) {
+        ShaderRecompiler::RecompileRequest request{};
+        request.target.gpuResolvedImages = profile.gpuResolvedImages;
+        request.target.descriptorMemory = profile.descriptorMemory;
+        request.target.heapDataUniformDwords = profile.heapDataUniformDwords;
+        const auto encoded = serializer.Serialize(request);
+        const auto replay = serializer.Deserialize(encoded);
+        Require(replay.request.target.gpuResolvedImages == profile.gpuResolvedImages);
+        Require(replay.request.target.descriptorMemory == profile.descriptorMemory);
+        Require(replay.request.target.heapDataUniformDwords == profile.heapDataUniformDwords);
+        Require(serializer.Serialize(replay.request) == encoded);
+        auto bytes = DecodeBase64(encoded);
+        Require(bytes[4] == 60u && bytes.size() > 18u);
+        bytes.resize(bytes.size() - 18u);
+        for (const std::uint8_t version : {55u, 54u, 53u, 52u}) {
+            if (version == 53u) bytes.resize(bytes.size() - 2u);
+            if (version == 52u) bytes.pop_back();
+            bytes[4] = version;
+            const auto older = serializer.Deserialize(EncodeBase64(bytes)).request.target;
+            Require(!older.gpuResolvedImages && !older.descriptorMemory && older.heapDataUniformDwords == 0u);
+        }
+        bytes.push_back(0u);
+        bytes[4] = 60u;
+        bool truncated = false;
+        try {
+            static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
+        } catch (const std::runtime_error& error) {
+            truncated = std::string_view(error.what()) == "RequestSerializer: truncated data";
+        }
+        Require(truncated);
+        bytes = DecodeBase64(encoded);
+        bytes.push_back(0u);
+        bool trailing = false;
+        try {
+            static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
+        } catch (const std::runtime_error& error) {
+            trailing = std::string_view(error.what()) == "RequestSerializer: unexpected trailing data";
+        }
+        Require(trailing);
+    }
+    ShaderRecompiler::RecompileRequest limits{};
+    limits.target.gpuResolvedImages = true;
+    limits.target.descriptorMemory = true;
+    limits.target.heapDataUniformDwords = 16384u;
+    ShaderRecompiler::RecompileRequest addressed = limits;
+    addressed.target.heapDataUniformDwords = 0u;
+    Require(serializer.Serialize(limits) != serializer.Serialize(addressed));
+}
+
+void VerifyRetiredHeapTargetFields(const ShaderRecompiler::RequestSerializer& serializer) {
+    for (const bool uniform : {false, true}) {
+        ShaderRecompiler::RecompileRequest request{};
+        request.target.gpuResolvedImages = true;
+        request.target.descriptorMemory = true;
+        request.target.uniformConstantBuffers = uniform;
+        const auto encoded = serializer.Serialize(request);
+        Require(serializer.Deserialize(encoded).request.target.uniformConstantBuffers == uniform);
+        auto bytes = DecodeBase64(encoded);
+        Require(bytes[4] == 60u && bytes.size() > 5u);
+        bytes.resize(bytes.size() - 5u);
+        Require(bytes.back() == (uniform ? 1u : 0u));
+        bytes[4] = 59u;
+        Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(bytes)).request) == encoded);
+        bytes.insert(bytes.end() - 1, 2u, 1u);
+        bytes[4] = 58u;
+        Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(bytes)).request) == encoded);
+    }
+}
+
+void VerifyComputeAcrossVersions(const ShaderRecompiler::RequestSerializer& serializer) {
+    ShaderRecompiler::RecompileRequest request{};
+    request.context.compute = ShaderRecompiler::ShaderComputeStageInfo{};
+    request.context.compute->granulatedVgprCount = 13u;
+    request.context.compute->sharedVgprBlocks = 2u;
+    request.target.maxImageArrayLayers = 2048u;
+    request.target.fixedPushSlots = true;
+    request.target.gpuResolvedImages = true;
+    request.target.descriptorMemory = true;
+    request.target.heapDataUniformDwords = 16384u;
+    const auto encoded = serializer.Serialize(request);
+    const auto bytes = DecodeBase64(encoded);
+    Require(bytes.size() > 26u && bytes[4] == 60u);
+    const auto replay60 = serializer.Deserialize(encoded).request;
+    Require(replay60.context.compute->granulatedVgprCount == 13u && replay60.context.compute->sharedVgprBlocks == 2u && replay60.target.maxImageArrayLayers == 2048u && replay60.target.fixedPushSlots && replay60.target.gpuResolvedImages && replay60.target.heapDataUniformDwords == 16384u);
+    auto version59 = bytes;
+    version59.resize(version59.size() - 5u);
+    version59[4] = 59u;
+    const auto replay59 = serializer.Deserialize(EncodeBase64(version59)).request;
+    Require(replay59.context.compute->granulatedVgprCount == 13u && replay59.context.compute->sharedVgprBlocks == 2u && replay59.target.gpuResolvedImages && replay59.target.heapDataUniformDwords == 16384u);
+    Require(replay59.target.maxImageArrayLayers == ShaderRecompiler::SpirvTarget{}.maxImageArrayLayers && replay59.target.fixedPushSlots == ShaderRecompiler::SpirvTarget{}.fixedPushSlots);
+    auto version57 = bytes;
+    version57.erase(version57.end() - 5 - 8 - 13, version57.end() - 5 - 8);
+    version57[4] = 57u;
+    const auto replay57 = serializer.Deserialize(EncodeBase64(version57)).request;
+    Require(replay57.context.compute->granulatedVgprCount == 13u && replay57.context.compute->sharedVgprBlocks == 2u && replay57.target.maxImageArrayLayers == 2048u && replay57.target.fixedPushSlots);
+    Require(!replay57.target.gpuResolvedImages && !replay57.target.descriptorMemory && replay57.target.heapDataUniformDwords == 0u);
+}
+
+void VerifyKeyedTargetFields(const ShaderRecompiler::RequestSerializer& serializer) {
+    using Field = bool ShaderRecompiler::SpirvTarget::*;
+    constexpr std::array<Field, 7> fields{&ShaderRecompiler::SpirvTarget::ldsLockFences, &ShaderRecompiler::SpirvTarget::meshWindowBuffer, &ShaderRecompiler::SpirvTarget::waveLdsMemoryBarriers, &ShaderRecompiler::SpirvTarget::deviceScopeLdsMemoryBarriers, &ShaderRecompiler::SpirvTarget::exactRobustLoads, &ShaderRecompiler::SpirvTarget::robustBufferAccess2, &ShaderRecompiler::SpirvTarget::uniformConstantBuffers};
+    const ShaderRecompiler::RecompileRequest defaults{};
+    const auto defaultEncoded = serializer.Serialize(defaults);
+    for (std::size_t chosen = 0; chosen <= fields.size(); ++chosen) {
+        ShaderRecompiler::RecompileRequest request{};
+        for (std::size_t index = 0; index < fields.size(); ++index) request.target.*fields[index] = chosen == fields.size() || index == chosen;
+        const auto encoded = serializer.Serialize(request);
+        Require(chosen == fields.size() ? encoded != defaultEncoded : encoded != defaultEncoded && encoded.size() == defaultEncoded.size());
+        const auto replay = serializer.Deserialize(encoded);
+        for (std::size_t index = 0; index < fields.size(); ++index) Require(replay.request.target.*fields[index] == (chosen == fields.size() || index == chosen));
+        Require(serializer.Serialize(replay.request) == encoded);
+        auto bytes = DecodeBase64(encoded);
+        Require(bytes[4] == 60u && bytes.size() > 18u);
+        bytes.resize(bytes.size() - 18u);
+        for (const std::uint8_t version : {55u, 54u, 53u, 52u}) {
+            if (version == 53u) bytes.resize(bytes.size() - 2u);
+            if (version == 52u) bytes.pop_back();
+            bytes[4] = version;
+            const auto older = serializer.Deserialize(EncodeBase64(bytes)).request.target;
+            for (const auto field : fields) Require(!(older.*field));
+        }
+        for (std::size_t index = 0; index < fields.size(); ++index) {
+            auto other = request;
+            other.target.*fields[index] = !(other.target.*fields[index]);
+            Require(serializer.Serialize(other) != encoded);
+        }
+    }
+}
+
 
 }
 
@@ -202,8 +344,10 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 13u && bytes[4] == 57u);
+    Require(bytes.size() > 26u && bytes[4] == 60u);
     bytes.resize(bytes.size() - 5u);
+    const std::ptrdiff_t compute = request.context.compute.has_value() ? 8 : 0;
+    bytes.erase(bytes.end() - compute - 13, bytes.end() - compute);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
 }
@@ -226,7 +370,7 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 57u);
+                    Require(bytes[4] == 60u);
                     for (std::size_t missing = 1u; missing <= 5u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
@@ -238,7 +382,7 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
-                    bytes.resize(bytes.size() - 5u);
+                    bytes.resize(bytes.size() - 18u);
                     bytes[4] = 56u;
                     const auto legacy56 = serializer.Deserialize(EncodeBase64(bytes));
                     Require(!legacy56.request.target.fixedPushSlots && legacy56.request.target.maxImageArrayLayers == 0u);
@@ -755,8 +899,8 @@ int VerifyVersion56Compatibility() {
         const auto encoded = SerializeVersion56(request);
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.target.float16DenormPreserve == preserve && replay.request.target.float32FlushToZero == !preserve && replay.request.target.float32DenormPreserve == preserve && replay.request.target.largePixelFunctionLdsBuffer == !preserve && replay.request.target.pixelFunctionStorageDwords == request.target.pixelFunctionStorageDwords);
-        auto bytes = DecodeBase64(encoded);
-        Require(bytes.size() >= 8u && bytes[4] == 56u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
+        auto bytes = AtVersion55(DecodeBase64(encoded));
+        Require(bytes.size() >= 8u && bytes[4] == 55u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
         auto version40 = bytes;
         version40.pop_back();
         version40.pop_back();
@@ -772,7 +916,7 @@ int VerifyVersion56Compatibility() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 58u;
+        future[4] = 61u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
@@ -818,7 +962,7 @@ int VerifyVersion56Compatibility() {
     const auto pixelEncoded = SerializeVersion56(request);
     const auto pixelReplay = serializer.Deserialize(pixelEncoded);
     Require(pixelReplay.request.context.pixel.has_value() && pixelReplay.request.context.pixel->iteratesSamples && pixelReplay.request.context.pixel->positionLocation == ShaderRecompiler::PixelPositionLocation::UpperLeft && pixelReplay.request.context.pixel->sampleLocations == pixel.sampleLocations);
-    auto pixelBytes = DecodeBase64(pixelEncoded);
+    auto pixelBytes = AtVersion55(DecodeBase64(pixelEncoded));
     const auto marker = std::search(pixelBytes.begin(), pixelBytes.end(), pixel.sampleLocations.begin(), pixel.sampleLocations.begin() + 4);
     Require(marker != pixelBytes.end() && marker - pixelBytes.begin() >= 2 && *(marker - 1) == 3u && *(marker - 2) == 1u);
     *(marker - 1) = 4u;
@@ -833,7 +977,7 @@ int VerifyVersion56Compatibility() {
     request.context.pixel = pixel;
     const auto orderEncoded = SerializeVersion56(request);
     Require(serializer.Deserialize(orderEncoded).request.context.pixel->sampleOrder == pixel.sampleOrder);
-    auto version42 = DecodeBase64(orderEncoded);
+    auto version42 = AtVersion55(DecodeBase64(orderEncoded));
     const auto orderOffset = std::search(version42.begin(), version42.end(), pixel.sampleLocations.begin(), pixel.sampleLocations.end()) - version42.begin() + static_cast<std::ptrdiff_t>(pixel.sampleLocations.size() + 1u);
     Require(version42.end() - version42.begin() > orderOffset + static_cast<std::ptrdiff_t>(sizeof(pixel.sampleOrder)) && version42[static_cast<std::size_t>(orderOffset)] == 0x10u);
     EraseDefaultTargetMerge(version42, orderOffset + static_cast<std::ptrdiff_t>(sizeof(pixel.sampleOrder)));
@@ -1146,6 +1290,12 @@ int VerifyVersion56Compatibility() {
     }
     request.target.float16WidenNans = false;
     request.target.float16NarrowNans = false;
+
+    VerifyHeapProfile(serializer);
+
+    VerifyKeyedTargetFields(serializer);
+    VerifyRetiredHeapTargetFields(serializer);
+    VerifyComputeAcrossVersions(serializer);
 
     return 0;
 }

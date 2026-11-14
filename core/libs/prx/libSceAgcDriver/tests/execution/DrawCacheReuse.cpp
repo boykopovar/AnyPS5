@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
@@ -317,7 +318,8 @@ void RecordsKeepThePacketsFragmentWord(bool libraries) {
 void RecordWordsReachTheShader(bool libraries) {
     const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
     const bool cached = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
-    const bool forwarded = std::getenv("APS5_DRAW_CACHE_PUSH_WORD") != nullptr;
+    const bool pushWord = std::getenv("APS5_DRAW_CACHE_PUSH_WORD") != nullptr;
+    const bool forwarded = pushWord && !AgcDriver::Graphics::GpuHeapEnabled();
     const bool verify = forwarded && std::getenv("APS5_VERIFY_DRAW_PUSH_WORD") != nullptr;
     Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
     ColorMemory.fill(std::byte{0});
@@ -347,6 +349,7 @@ void RecordWordsReachTheShader(bool libraries) {
     const auto refused = after.recordWordsRefused - before.recordWordsRefused;
     const auto verified = after.recordWordsVerified - before.recordWordsVerified;
     if (forwarded) Require(wordsForwarded == 4 && stagesRecompiled == 0 && refused == 0, mode + ": with APS5_DRAW_CACHE_PUSH_WORD, four records forwarded " + std::to_string(wordsForwarded) + " patched words as push data, re-materialized " + std::to_string(stagesRecompiled) + " stages and refused " + std::to_string(refused) + " words, expected 4, 0 and 0");
+    else if (pushWord) Require(wordsForwarded == 0 && stagesRecompiled == 4 && refused == 4, mode + ": with APS5_DRAW_CACHE_PUSH_WORD in GPU heap mode, four records forwarded " + std::to_string(wordsForwarded) + " patched words, re-materialized " + std::to_string(stagesRecompiled) + " stages and refused " + std::to_string(refused) + " words, expected 0, 4 and 4");
     else Require(wordsForwarded == 0 && stagesRecompiled == 4, mode + ": without APS5_DRAW_CACHE_PUSH_WORD, four records forwarded " + std::to_string(wordsForwarded) + " words and re-materialized " + std::to_string(stagesRecompiled) + " stages, expected 0 and 4");
     Require(verified == (verify ? 4u : 0u), mode + ": " + std::to_string(verified) + " forwarded words were verified against a full build, expected " + std::to_string(verify ? 4 : 0));
 }

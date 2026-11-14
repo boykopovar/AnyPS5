@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -17,6 +18,7 @@
 #include <limits>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -30,6 +32,21 @@ struct VulkanDeviceTestAccess {
 }
 
 namespace {
+
+template <typename Record>
+void RecordStayingOnHeap(const AgcDriver::Graphics::Context& context, VkCommandBuffer commands, const std::string& what, Record&& record) {
+    if (!AgcDriver::Graphics::HeapPassesActive(context)) {
+        record();
+        return;
+    }
+    auto& heap = AgcDriver::Graphics::BindlessHeap::For(context);
+    heap.BindDescriptorHeaps(commands);
+    const auto binds = AgcDriver::Graphics::DescriptorHeapBinds();
+    record();
+    heap.BindDescriptorHeaps(commands);
+    if (AgcDriver::Graphics::DescriptorHeapBinds() != binds) throw std::runtime_error(what + " put its command buffer back in classic descriptor mode, so the heaps were bound again");
+}
+
 
 using namespace AgcDriver::Graphics;
 
@@ -81,7 +98,7 @@ bool SurfaceSupported(const Context& context, VkFormat format, std::uint32_t sam
     return false;
 }
 
-struct Surface {
+struct Surface : AgcDriver::Graphics::HeapSlotOwner {
     Context context;
     VkFormat format;
     std::uint32_t elementBytes;
@@ -235,6 +252,7 @@ struct Surface {
     Surface& operator=(const Surface&) = delete;
 
     void Release() noexcept {
+        ReleaseHeapSlots(context);
         if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
         if (pipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, pipelineLayout, nullptr);
         for (const auto module : modules) if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
@@ -297,7 +315,7 @@ std::vector<std::byte> CheckReadback(TextureDetiler& reader, const Surface& surf
     CommandBatch batch(surface.context);
     RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     for (std::uint32_t repeat = 0u; repeat < repetitions; ++repeat) {
-        reader.DispatchMultisampleReadback(batch.Handle(), surface.format, output.Handle(), offset, bytes, surface.arrayView, surface.width, surface.height, surface.layers, surface.samples, first, elements);
+        RecordStayingOnHeap(surface.context, batch.Handle(), "the multisample readback", [&] { reader.DispatchMultisampleReadback(batch.Handle(), surface.format, output.Handle(), offset, bytes, surface.arrayView, surface.width, surface.height, surface.layers, surface.samples, first, elements, &surface); });
         if (repeat + 1u < repetitions) RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     }
     RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
@@ -376,7 +394,7 @@ void CheckRefusals(TextureDetiler& reader, const Surface& surface) {
     Buffer output(surface.context, 4096u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     CommandBatch batch(surface.context);
     const auto call = [&](VkFormat format, std::uint64_t offset, std::uint64_t bytes, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t first, std::uint32_t elements) {
-        reader.DispatchMultisampleReadback(batch.Handle(), format, output.Handle(), offset, bytes, surface.arrayView, width, height, layers, fragments, first, elements);
+        RecordStayingOnHeap(surface.context, batch.Handle(), "the multisample readback", [&] { reader.DispatchMultisampleReadback(batch.Handle(), format, output.Handle(), offset, bytes, surface.arrayView, width, height, layers, fragments, first, elements, &surface); });
     };
     for (auto format : {VK_FORMAT_UNDEFINED, VK_FORMAT_R32_SFLOAT, VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT_S8_UINT}) Refused([&] { call(format, 0u, 4u, 1u, 1u, 1u, 4u, 0u, 1u); }, "requires an unsigned element view or D32 depth");
     for (auto fragments : {0u, 1u, 3u, 16u}) Refused([&] { call(surface.format, 0u, 4u, 1u, 1u, 1u, fragments, 0u, 1u); }, "fragment count is unsupported");
@@ -409,7 +427,7 @@ std::vector<std::byte> Upload(TextureDetiler& transfer, TextureDetiler& reader, 
     for (std::uint32_t repeat = 0; repeat < repetitions; ++repeat) {
         for (std::size_t done = 0; done < bytes; done += stride) {
             const auto count = std::min(stride, bytes - done);
-            transfer.DispatchMultisampleImage(batch.Handle(), surface.elementBytes, source.Handle(), offset + done, (count + 3u) & ~std::size_t{3}, surface.arrayView, surface.width, surface.height, surface.layers, surface.samples, first + static_cast<std::uint32_t>(done / surface.elementBytes), static_cast<std::uint32_t>(count / surface.elementBytes));
+            RecordStayingOnHeap(surface.context, batch.Handle(), "the multisample upload", [&] { transfer.DispatchMultisampleImage(batch.Handle(), surface.elementBytes, source.Handle(), offset + done, (count + 3u) & ~std::size_t{3}, surface.arrayView, surface.width, surface.height, surface.layers, surface.samples, first + static_cast<std::uint32_t>(done / surface.elementBytes), static_cast<std::uint32_t>(count / surface.elementBytes), &surface); });
         }
         RecordMemoryBarrier(surface.context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     }

@@ -220,6 +220,7 @@ public:
     void FlushDeferredReleases();
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
+    void BoundDrawBatch();
     std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
     enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart, PaddedVertex };
     static constexpr std::size_t DrawSnapshotBudget = std::size_t{1024} << 20u;
@@ -522,6 +523,7 @@ public:
     // validation instead of one per run, and every test sees the same snapshot (design13 R1's p0).
     using WriteRanges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
     static std::shared_ptr<const WriteRanges> PendingWriteSnapshot();
+    static bool ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before);
     static bool SnapshotOverlaps(const WriteRanges* snapshot, std::uint64_t address, std::size_t bytes);
     // A label behind pending completions (CPU write-backs the label must not precede): stored to
     // guest memory by a completion action appended to the open batch, or to the newest in-flight
@@ -905,9 +907,14 @@ private:
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
     VkPipeline meshArgumentPipeline = VK_NULL_HANDLE;
+    VkPipeline meshArgumentHeapPipeline = VK_NULL_HANDLE;
     int changedCopyState = 0;
     VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
     VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
+    VkPipeline changedCopyHeapPipeline = VK_NULL_HANDLE;
+    VkPipeline createPushOnlyHeapPipeline(const VkComputePipelineCreateInfo& info) const;
+    void bindPushOnlyPipeline(VkCommandBuffer commands, VkPipeline pipeline, VkPipeline heapPipeline) const;
+    void pushOnlyParameters(VkCommandBuffer commands, VkPipeline heapPipeline, VkPipelineLayout layout, std::uint32_t bytes, const void* values) const;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
@@ -919,6 +926,7 @@ private:
     int dispatchArgumentState = 0;
     VkPipelineLayout dispatchArgumentLayout = VK_NULL_HANDLE;
     VkPipeline dispatchArgumentPipeline = VK_NULL_HANDLE;
+    VkPipeline dispatchArgumentHeapPipeline = VK_NULL_HANDLE;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
@@ -938,7 +946,6 @@ private:
     PFN_vkCmdEndQuery cmdEndQuery = nullptr;
     PFN_vkCmdResetQueryPool cmdResetQueryPool = nullptr;
     PFN_vkCmdCopyQueryPoolResults cmdCopyQueryPoolResults = nullptr;
-    PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
     TFunction function(TFunction resolved, FunctionName name) const {

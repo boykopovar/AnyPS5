@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
@@ -449,6 +450,15 @@ bool BdaResources::TableGuardCurrent(VkDevice device, std::span<const ShaderReco
 
 VkDescriptorBufferInfo BdaResources::Fault() const {
     return {faultChunk->buffer->Handle(), faultOffset, faultChunk->slotBytes};
+}
+
+VkDeviceAddress BdaResources::TableAddress() const {
+    Require(table != nullptr, "BDA page table was not requested");
+    return table->DeviceAddress();
+}
+
+VkDeviceAddress BdaResources::FaultAddress() const {
+    return faultChunk->buffer->DeviceAddress() + faultOffset;
 }
 
 namespace {

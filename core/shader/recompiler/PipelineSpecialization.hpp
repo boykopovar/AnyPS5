@@ -37,14 +37,22 @@ inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
 inline constexpr std::uint32_t MeshLayerBase = 8237u;
 inline constexpr std::uint32_t MeshLayerCount = 8238u;
+inline constexpr std::uint32_t HeapImageSlots = 8239u;
 inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
 inline constexpr std::uint32_t WorkgroupOffsetWords = 3u;
+inline constexpr std::uint32_t PushedDataBase = 8244u;
+inline constexpr std::uint32_t PushedDataCount = 8245u;
+inline constexpr std::uint32_t RootItemPositionBase = 8448u;
+inline constexpr std::uint32_t RootItemPositions = 16u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
 inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
 inline constexpr std::uint32_t StoreQuantizeWords = 4u;
+inline constexpr std::uint32_t BufferRootPosition = 57856u;
+inline constexpr std::uint32_t BufferRootCount = 4u;
+inline constexpr std::uint32_t BufferOverflowPosition = BufferRootPosition + BufferRootCount;
 inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
@@ -58,6 +66,12 @@ inline constexpr std::uint32_t VolumeGatherBase = 58176u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;
+}
+
+static_assert(MipCountBase < RootItemPositionBase && RootItemPositionBase + RootItemPositions <= StoreQuantizeBase);
+
+inline constexpr bool IsPushPlacement(std::uint32_t id) {
+    return id == PushedDataBase || id == PushedDataCount || (id >= BufferRootPosition && id <= BufferOverflowPosition) || (id >= RootItemPositionBase && id < RootItemPositionBase + RootItemPositions);
 }
 
 inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {

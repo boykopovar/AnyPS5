@@ -6,4 +6,6 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_driver_pipeline_journal_undecodable_module PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    agc_add_env_test(agc_driver_pipeline_journal_gpu_heap agc_driver_pipeline_journal_tests
+            ARGS --gpu-heap ENV APS5_GPU_HEAP=1 TIMEOUT 30)
 endif()

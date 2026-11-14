@@ -80,6 +80,7 @@ public:
     void SavePipelineCache();
     // Compute pipelines this device built, by dispatches and by the journal replay (tests).
     std::uint64_t ComputePipelinesCreated() const;
+    std::uint64_t DescriptorHeapComputePipelines() const;
     ~VulkanDevice();
     VulkanDevice(const VulkanDevice&) = delete;
     VulkanDevice& operator=(const VulkanDevice&) = delete;
@@ -347,6 +348,7 @@ public:
     // Whether dispatch-cache hits use recipes (APS5_NO_DISPATCH_RECIPE unset) and whether every
     // hit is verified (APS5_VERIFY_RECIPE=1).
     static bool DispatchRecipes();
+    static std::string DispatchRecipeRefusalText();
     static bool VerifyRecipes();
     // Whether compute templates refresh their data buffers with a hit's words instead of keying
     // them (APS5_NO_TEMPLATE_DATA_REFRESH unset); the driver's data-only hits require it.
@@ -360,8 +362,9 @@ public:
     static void NoteRecipe(RecipeEvent event, RecipeKind kind);
     enum class DrawRecipePrecheck : std::size_t { NoRecipe, Device };
     static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
-    using DrawTraceContext = Graphics::DrawTraceContext;
     static std::uint64_t DrawRecipeHits();
+    static std::uint64_t DispatchRecipeTemplatesGone();
+    using DrawTraceContext = Graphics::DrawTraceContext;
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
     void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0);
@@ -384,6 +387,7 @@ public:
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
     bool PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
+    const Graphics::Context& contextRef(std::optional<Graphics::Context>& scratch) const;
 
 public:
     // The device's Graphics::Context: a copy of the one built at setup (its instance functions

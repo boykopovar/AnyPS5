@@ -374,6 +374,10 @@ struct SpirvTarget {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool gpuResolvedImages = false;
+    bool descriptorMemory = false;
+    std::uint32_t heapDataUniformDwords = 0;
+    bool uniformConstantBuffers = false;
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
@@ -457,7 +461,10 @@ inline constexpr std::uint32_t TessellationCaptureArgumentAddressDword = 2;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
 inline constexpr std::uint32_t ScratchPoolDescriptorSet = 2;
-
+inline constexpr std::uint32_t GpuWorkgroupMemoryDescriptorSet = 3;
+inline constexpr std::uint32_t GpuScratchPoolDescriptorSet = 5;
+inline constexpr std::uint32_t GpuScratchPoolAddressPushByte = 136;
+inline constexpr std::uint32_t GpuScratchPoolDwordsPushByte = 144;
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
     std::uint32_t indexCount;
@@ -498,6 +505,36 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+};
+
+struct VertexAttribute;
+
+struct HeapTemplateCacheCounts {
+    std::uint64_t entries = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t evicted = 0;
+};
+HeapTemplateCacheCounts HeapTemplateCounts();
+
+struct ResultKeyMemo {
+    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    ResultKeyMemo() = default;
+    ResultKeyMemo(const ResultKeyMemo&) {}
+    ResultKeyMemo& operator=(const ResultKeyMemo&) {
+        words.store(nullptr, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
+struct HeapStageWords {
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> flattenedSrt;
+    std::vector<VertexAttribute> vertexAttributes;
+    std::vector<std::vector<std::uint32_t>> bindings;
+    std::shared_ptr<const HeapStageWords> base;
+    std::uint64_t dataOrigin = 0;
+    ResultKeyMemo drawKeyMemo;
+    bool memoizeKey = true;
 };
 
 struct RecompileRequest {
@@ -710,6 +747,8 @@ struct DescriptorBinding {
     ElementFlags samplerUnnormalized;
     ElementFlags samplerIntegerBorder;
     ElementFlags samplerCoordinatesIgnored;
+    std::vector<std::uint32_t> samplerEmbedded;
+    std::vector<std::uint32_t> samplerEmbeddedWords;
     ElementFlags imageUnnormalized;
     ElementFlags imageUnnormalizedBaseLevel;
     std::vector<std::uint64_t> imageSamplers;
@@ -905,6 +944,15 @@ struct CompiledShaderArtifact {
     std::uint32_t runtimeImageCount = 0;
     std::vector<std::uint32_t> runtimeImageResources;
     bool registrationModule = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t samplerSlotDword = 0;
+    std::uint32_t bufferAddressDword = 0;
+    std::uint32_t bufferAddressCount = 0;
+    std::uint32_t pushedBufferCount = 0;
+    std::vector<std::uint32_t> pushedData;
+    std::uint32_t pushItems = 0;
+    bool dataAddressPush = false;
+    bool bdaStores = false;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t windowLaneGuards = 0;
     std::uint32_t descriptorFaults = 0;
@@ -935,6 +983,7 @@ struct CompiledShaderArtifact {
 
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
+    std::vector<RuntimeAbi::HeapSlotWord> heapSlotWords;
     std::uint64_t specializationId = 0;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
@@ -963,17 +1012,9 @@ struct PipelineIdentity {
     auto operator<=>(const PipelineIdentity&) const = default;
 };
 
-struct ResultKeyMemo {
-    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
-    ResultKeyMemo() = default;
-    ResultKeyMemo(const ResultKeyMemo&) {}
-    ResultKeyMemo& operator=(const ResultKeyMemo&) {
-        words.store(nullptr, std::memory_order_relaxed);
-        return *this;
-    }
-};
-
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    std::uint64_t heapTemplateId = 0;
+    std::vector<std::uint32_t> heapUserWords;
     ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
@@ -993,7 +1034,17 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
         mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (meshWindowBuffer ? 0x40000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
-        for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+        for (const auto& binding : bindings) {
+            mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+            mix(binding.samplerEmbedded.size());
+            for (const auto value : binding.samplerEmbedded) mix(value);
+            mix(binding.samplerEmbeddedWords.size());
+            for (const auto value : binding.samplerEmbeddedWords) mix(value);
+            for (const auto* flags : {&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}) {
+                mix(flags->size());
+                for (std::size_t element = 0; element < flags->size(); ++element) mix((*flags)[element] ? 1u : 0u);
+            }
+        }
         if (identity.Empty()) identity.low = 1;
         return identity;
     }

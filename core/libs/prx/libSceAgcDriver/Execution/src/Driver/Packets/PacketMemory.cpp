@@ -340,25 +340,40 @@ void Driver::dumpSampleCounters(std::uint64_t address) {
     }
 }
 
-bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
+bool Driver::sampleDumpQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_SAMPLE_DUMPS") == nullptr;
     if (!ordered || opcode != 0x46 || queue != 0 || packet.size() < 4 || !Pm4::SampleDump(packet) || !DrawPipeline::Active() || !deferredLabels().labels.empty()) return false;
     const auto address = Pm4::SampleDumpAddress(packet);
-    if (address == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), Pm4::SampleDumpBytes, true)) return false;
-    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SampleDump, [this, queue, address] {
-        GuestMemory::SetCurrentPacket(0x46, queue);
-        bool wrote = false;
-        {
-            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
-            std::lock_guard gpuLock(GuestMemory::GpuMutex());
-            if (const auto localDevice = device.Load()) {
-                recordDeferredLabels(localDevice.get(), queue);
-                wrote = localDevice->DumpSamplesOnGpu(address);
-                if (!wrote) localDevice->WaitIdle();
+    return address != 0 && GuestMemory::Accessible(reinterpret_cast<const void*>(address), Pm4::SampleDumpBytes, true);
+}
+
+bool Driver::enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue) {
+    if (!sampleDumpQueues(packet, opcode, queue)) return false;
+    const auto address = Pm4::SampleDumpAddress(packet);
+    auto enqueue = [this, queue, address] {
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SampleDump, [this, queue, address] {
+            GuestMemory::SetCurrentPacket(0x46, queue);
+            bool wrote = false;
+            {
+                GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
+                std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                if (const auto localDevice = device.Load()) {
+                    recordDeferredLabels(localDevice.get(), queue);
+                    wrote = localDevice->DumpSamplesOnGpu(address);
+                    if (!wrote) localDevice->WaitIdle();
+                }
             }
-        }
-        if (!wrote) dumpSampleCounters(address);
-    }, {{address, address + Pm4::SampleDumpBytes}});
+            if (!wrote) dumpSampleCounters(address);
+        }, {{address, address + Pm4::SampleDumpBytes}});
+    };
+    if (DrawFinisher::Overlap() && DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) {
+        DrawFinisher::Pending held;
+        held.unknown = false;
+        held.writes = {{address, address + Pm4::SampleDumpBytes}};
+        DrawFinisher::Get().Enqueue(std::move(enqueue), std::move(held));
+    } else {
+        enqueue();
+    }
     ++sampleDumpsQueued;
     Graphics::Recorder::CountRecordedWork();
     return true;

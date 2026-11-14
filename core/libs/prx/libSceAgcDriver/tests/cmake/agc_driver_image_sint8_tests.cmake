@@ -9,4 +9,5 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_image_sint8_gather_constant_one agc_driver_image_sint8_gather_constant_all_bits PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    agc_add_gpu_heap_test(agc_driver_image_sint8)
 endif()

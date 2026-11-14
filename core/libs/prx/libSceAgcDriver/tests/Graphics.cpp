@@ -6735,6 +6735,46 @@ void copyInputKeptBytesTests() {
     Require(mock.live == 0, "copy input accounting tests leaked Vulkan objects");
 }
 
+void pooledBufferAddressTests() {
+    using namespace AgcDriver::Graphics;
+    constexpr std::size_t bytes = 4096;
+    constexpr auto properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    const bool forced = BufferPool::ForceAddresses();
+    mock = MockVulkan{};
+    {
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.bufferDeviceAddress = true;
+        context.memory.memoryTypes[0].propertyFlags |= properties;
+        context.memory.memoryHeapCount = 1;
+        context.memory.memoryHeaps[0] = {std::uint64_t{4} << 30u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        context.limits.maxMemoryAllocationCount = 4096;
+        context.bufferPool = std::make_shared<BufferPool>(context);
+        BufferPool::SetForceAddresses(true);
+        VkBuffer pooled = VK_NULL_HANDLE;
+        {
+            DeviceBuffer texture(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            pooled = texture.Handle();
+        }
+        VkDeviceAddress address = 0;
+        VkDeviceAddress expected = 0;
+        {
+            Buffer staging(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, properties);
+            Require(staging.Handle() == pooled, "a device-local buffer of the pooled device buffer's size and usage did not reuse its allocation");
+            const VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, pooled};
+            expected = mockGetBufferDeviceAddress(context.device, &info);
+            Require(expected != 0, "the mock device address of the pooled buffer is zero");
+            try {
+                address = staging.DeviceAddress();
+            } catch (const std::exception&) {
+            }
+        }
+        BufferPool::SetForceAddresses(forced);
+        Require(address == expected, "a buffer that reuses a pooled device buffer's allocation has no device address");
+    }
+    Require(mock.live == 0, "pooled buffer address tests leaked Vulkan objects");
+}
+
 void depthCopyKeptBytesTests() {
     using namespace AgcDriver::Graphics;
     constexpr std::size_t bytes = (8 * 8 + 4 * 4) * sizeof(float);
@@ -13923,6 +13963,27 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         subgroup.hostSubgroupSize = 64;
         Require(!(subgroup.Identity() == constFirst.Identity()), "the host subgroup size did not enter the identity");
         Require(ShaderRecompiler::RecompileResult{}.Identity().Empty(), "a result without a module has an identity");
+        const auto embedded = [&](std::uint32_t element, std::uint32_t word) {
+            auto result = module(1);
+            auto& binding = result.bindings.emplace_back();
+            binding.samplerEmbedded = {element};
+            binding.samplerEmbeddedWords = {word, 1u, 2u, 3u};
+            return result;
+        };
+        Require(embedded(0u, 5u).Identity() == embedded(0u, 5u).Identity() && !(embedded(0u, 5u).Identity() == constFirst.Identity()), "an embedded sampler did not enter the identity");
+        Require(!(embedded(0u, 5u).Identity() == embedded(0u, 6u).Identity()), "the embedded sampler words did not enter the identity");
+        Require(!(embedded(0u, 5u).Identity() == embedded(1u, 5u).Identity()), "the embedded sampler element did not enter the identity");
+        const auto flagged = [&](std::size_t flag) {
+            auto result = embedded(0u, 5u);
+            auto& binding = result.bindings.back();
+            for (auto* flags : {&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}) flags->assign(1, false);
+            if (flag < 4u) (*std::array{&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}[flag])[0] = true;
+            return result;
+        };
+        for (std::size_t flag = 0; flag < 4u; ++flag) Require(!(flagged(flag).Identity() == flagged(4u).Identity()), "an embedded sampler flag did not enter the identity");
+        Require(DescribedPipelineIdentity(embedded(0u, 5u)) == embedded(0u, 5u).Identity(), "the described identity of a result with an embedded sampler differs from its identity");
+        Require(!(DescribedPipelineIdentity(embedded(0u, 5u)) == DescribedPipelineIdentity(embedded(0u, 6u))), "the embedded sampler words did not enter the described identity");
+        for (std::size_t flag = 0; flag < 4u; ++flag) Require(!(DescribedPipelineIdentity(flagged(flag)) == DescribedPipelineIdentity(flagged(4u))), "an embedded sampler flag did not enter the described identity");
         Require(DescribedPipelineIdentity(ShaderRecompiler::RecompileResult{}).Empty(), "a result without a module has a described identity");
         const auto withTable = [&](Role role, std::uint32_t elements, std::uint32_t buffers) {
             auto result = module(1);
@@ -14860,6 +14921,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--copy-input-kept-bytes") {
             copyInputKeptBytesTests();
             std::cout << "GPU-copy input snapshot accounting and retention passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pooled-buffer-address") {
+            pooledBufferAddressTests();
+            std::cout << "a reused pooled allocation keeps a device address\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-copy-kept-bytes") {

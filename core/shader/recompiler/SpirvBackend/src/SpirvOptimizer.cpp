@@ -175,6 +175,7 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirvInline(std::span<const std::u
     spvtools::ValidatorOptions validatorOptions;
     validatorOptions.SetAllowOffsetTextureOperand(allowOffsetTextureOperand);
     validatorOptions.SetFriendlyNames(false);
+    validatorOptions.SetUniformBufferStandardLayout(true);
     if (!tools.Validate(spirv.data(), spirv.size(), validatorOptions)) {
         throw std::runtime_error("SPIR-V validation before optimization failed:\n" + diagnostics);
     }

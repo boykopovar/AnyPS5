@@ -44,6 +44,9 @@ struct SpirvTargetOptions {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t heapDataUniformDwords = 0;
+    bool uniformConstantBuffers = false;
     bool ldsLockFences = false;
     bool meshWindowBuffer = false;
     bool float16WidenNans = false;
@@ -53,7 +56,9 @@ struct SpirvTargetOptions {
 struct SpirvEmitInfo {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
+    bool bdaStores = false;
     bool meshWindowBuffer = false;
+    std::uint32_t pushItems = 0;
     std::uint32_t scratchPoolSlotDwords = 0;
 };
 

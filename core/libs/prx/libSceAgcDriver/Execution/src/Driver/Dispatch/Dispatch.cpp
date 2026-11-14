@@ -2,6 +2,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferCopy.hpp"
@@ -64,7 +66,7 @@ void ReportDispatchItems(bool profile) {
         std::snprintf(item, sizeof(item), " %s %llu", ItemFallbackNames[i], static_cast<unsigned long long>(itemFallbacks[i].load(std::memory_order_relaxed)));
         drained += item;
     }
-    std::fprintf(stderr, "[dispatch-item] %llu commit items (%llu recipes rebuilt on the committer, %llu queued after a cache miss, %llu queued without a recipe, %llu cached ones kept off the queue as not plain); drained instead, cumulative:%s\n", static_cast<unsigned long long>(itemCommits.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemRebuilds.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemMisses.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemRecipeLess.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemNotPlain.load(std::memory_order_relaxed)), drained.c_str());
+    std::fprintf(stderr, "[dispatch-item] %llu commit items (%llu recipes rebuilt on the committer, %llu queued after a cache miss, %llu queued without a recipe, %llu cached ones kept off the queue as not plain); drained instead, cumulative:%s; recipes refused:%s\n", static_cast<unsigned long long>(itemCommits.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemRebuilds.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemMisses.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemRecipeLess.load(std::memory_order_relaxed)), static_cast<unsigned long long>(itemNotPlain.load(std::memory_order_relaxed)), drained.c_str(), VulkanDevice::DispatchRecipeRefusalText().c_str());
 }
 
 bool CapturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderSnapshot& code) {
@@ -144,6 +146,16 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     const bool pipelineCandidate = !resolving && !fromAhead && DispatchItemsEnabled() && DrawPipeline::Active() && indirectArguments == 0 && deferredLabels().labels.empty() && !matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute);
     const bool partialLastGroup = partialGroups != std::array<std::uint32_t, 3>{};
+    if (!resolving && DrawPipeline::Active() && DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) {
+        const auto code = std::span(snapshot.code).subspan(codeOffset);
+        const bool handled = !pipelineCandidate || Graphics::MatchMultisampledSingleClear(code, userData, compute.numThreads) || matchesFillKernel(code, userData, compute) ||
+                             (indirectArguments == 0 && (MatchDwordPatternFill(packet, code, userData, compute) || MatchConstantDwordFill(packet, code, userData, compute) ||
+                                                         MatchClampedGlobalFill(packet, code, userData, compute) || MatchMemoryValueBufferFill(packet, code, userData, compute) ||
+                                                         Graphics::MatchMemoryValueFill(code, userData, compute.numThreads, {packet[1], packet[2], packet[3]}).has_value())) ||
+                             Graphics::HtileDepthClearAddress(code, userData, compute.numThreads) != 0 || Graphics::MatchHtileBufferMaskClear(code, userData, compute, packet, indirectArguments).has_value();
+        if (handled) DrawFinisher::Get().Drain();
+        DrawFinisher::NoteDrain(DrawFinisher::DrainSite::Dispatch, handled);
+    }
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClearCompletion;
     Graphics::HtileMaskClear htileMask;
     if (resolving) {
@@ -200,6 +212,16 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         localDevice->ComputeTarget((packet[4] & 0x8000u) != 0 ? 32u : 64u),
         {0, 0, 0, threadGroup != std::array<std::uint32_t, 3>{} ? 0u : 128u}
     };
+    if (request.target.gpuResolvedImages && HeapStageExcluded(ShaderRecompiler::ShaderStage::Compute)) request.target.gpuResolvedImages = false;
+    if (request.target.gpuResolvedImages && HeapClassesExcluded()) {
+        const auto invocation = InvocationFor(snapshot, codeOffset, request);
+        const auto plan = invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
+        require(plan != nullptr, "a GPU heap compute stage has no resource plan to apply APS5_GPU_HEAP_EXCLUDE to");
+        if (HeapPlanExcluded(*plan)) {
+            Graphics::NoteHeapExcluded(Graphics::HeapExcluded::Dispatch);
+            request.target.gpuResolvedImages = false;
+        }
+    }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static std::atomic<double> captureMs{0}, keyMs{0}, recompileMs{0}, deviceMs{0};
     static std::atomic<std::uint64_t> cacheHits{0};
@@ -309,6 +331,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
 
     mix(reinterpret_cast<std::uintptr_t>(registeredShader.get()));
+    mix(request.target.gpuResolvedImages);
     if (fromAhead && key != ahead.key) {
         fromAhead = false;
         ++groupStats.keyMismatches;
@@ -417,6 +440,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
             timing.Mark("capture_resources");
             compiledResult = invocation.Materialize(*capture);
+            if (compiledResult->gpuResolvedImages) RequireHeapStageMappable(*compiledResult, compiledResult->workgroupMemoryDwords != 0);
             timing.Mark("materialize");
             if (profile && compiledResult->cacheHit) cacheHits.fetch_add(1, std::memory_order_relaxed);
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
@@ -576,7 +600,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         const auto queueId = submission.queue;
         itemCommits.fetch_add(1, std::memory_order_relaxed);
-        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
+        auto commit = [this, localDevice = std::move(localDevice), result = compiledResult, capture, registeredViews, snapshots = std::move(snapshots), liveWords = std::move(liveWords), groups, address, queueId, recipe, keepVariant, attach, prepareThreads, dataHit, epoch, htileClearCompletion, htileMask] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(0x15, queueId);
             const auto& compiledCommit = *result;
@@ -625,7 +649,17 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
                 throw std::runtime_error(where + std::string(error.what()));
             }
-        }, std::move(itemWrites));
+        };
+        if (DrawFinisher::Overlap() && DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) {
+            DrawFinisher::Pending held;
+            held.unknown = false;
+            held.writes = itemWrites;
+            DrawFinisher::Get().Enqueue([commit = std::move(commit), writes = std::move(itemWrites)]() mutable {
+                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, std::move(commit), std::move(writes));
+            }, std::move(held));
+        } else {
+            DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, std::move(commit), std::move(itemWrites));
+        }
         ReportDispatchItems(profile);
         return;
     }

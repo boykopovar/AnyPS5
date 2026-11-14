@@ -58,6 +58,7 @@ struct PreparedGraphicsStage {
     ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Vertex;
     std::uint32_t pushOffset = 0;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
+    bool heapVariant = false;
 };
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared = false);
@@ -133,6 +134,12 @@ struct StageCapture {
     std::uint32_t pushOffset = 0;
     ShaderRecompiler::SrtUserDataUse userDataUse;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    bool direct = false;
+    bool ring = false;
+    std::shared_ptr<ShaderRecompiler::HeapStageWords> heapWords;
+    std::shared_ptr<const std::vector<std::uint32_t>> heapReadWords;
+
+    bool Cacheable() const { return !direct || ring; }
 };
 
 struct RelocatableUserWord {
@@ -163,7 +170,7 @@ struct DrawRelocationTrial {
 };
 
 struct DrawRelocationCounters {
-    std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0;
+    std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0, admitted = 0;
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);

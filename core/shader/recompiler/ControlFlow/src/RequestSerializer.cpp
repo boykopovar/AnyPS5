@@ -916,7 +916,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(57u);
+    writer.WriteU32(60u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -963,6 +963,16 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.shaderImageMinLod);
     writer.WriteBool(request.target.float16WidenNans);
     writer.WriteBool(request.target.float16NarrowNans);
+    writer.WriteBool(request.target.gpuResolvedImages);
+    writer.WriteBool(request.target.descriptorMemory);
+    writer.WriteU32(request.target.heapDataUniformDwords);
+    writer.WriteBool(request.target.ldsLockFences);
+    writer.WriteBool(request.target.meshWindowBuffer);
+    writer.WriteBool(request.target.waveLdsMemoryBarriers);
+    writer.WriteBool(request.target.deviceScopeLdsMemoryBarriers);
+    writer.WriteBool(request.target.exactRobustLoads);
+    writer.WriteBool(request.target.robustBufferAccess2);
+    writer.WriteBool(request.target.uniformConstantBuffers);
     if (request.context.compute.has_value()) {
         writer.WriteU32(request.context.compute->granulatedVgprCount);
         writer.WriteU32(request.context.compute->sharedVgprBlocks);
@@ -977,7 +987,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 57u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 60u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1044,11 +1054,27 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.float16WidenNans = reader.ReadBool();
         result.request.target.float16NarrowNans = reader.ReadBool();
     }
-    if (version >= 56u && result.request.context.compute.has_value()) {
+    if (version >= 58u) {
+        result.request.target.gpuResolvedImages = reader.ReadBool();
+        result.request.target.descriptorMemory = reader.ReadBool();
+        result.request.target.heapDataUniformDwords = reader.ReadU32();
+        result.request.target.ldsLockFences = reader.ReadBool();
+        result.request.target.meshWindowBuffer = reader.ReadBool();
+        result.request.target.waveLdsMemoryBarriers = reader.ReadBool();
+        result.request.target.deviceScopeLdsMemoryBarriers = reader.ReadBool();
+        result.request.target.exactRobustLoads = reader.ReadBool();
+        result.request.target.robustBufferAccess2 = reader.ReadBool();
+        if (version == 58u) {
+            reader.ReadBool();
+            reader.ReadBool();
+        }
+        result.request.target.uniformConstantBuffers = reader.ReadBool();
+    }
+    if (version >= 56u && version != 58u && result.request.context.compute.has_value()) {
         result.request.context.compute->granulatedVgprCount = reader.ReadU32();
         result.request.context.compute->sharedVgprBlocks = reader.ReadU32();
     }
-    if (version >= 57u) {
+    if (version == 57u || version >= 60u) {
         result.request.target.maxImageArrayLayers = reader.ReadU32();
         result.request.target.fixedPushSlots = reader.ReadBool();
     }

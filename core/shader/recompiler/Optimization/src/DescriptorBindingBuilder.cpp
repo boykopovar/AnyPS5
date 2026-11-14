@@ -20,7 +20,8 @@
 namespace ShaderRecompiler {
 
 static_assert(PipelineSpecialization::ImageBase + ShaderInfo::MaxImages * PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase);
-static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::StoreQuantizeBase);
+static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::RootItemPositionBase);
+static_assert(PipelineSpecialization::RootItemPositionBase + PipelineSpecialization::RootItemPositions <= PipelineSpecialization::StoreQuantizeBase);
 static_assert(PipelineSpecialization::StoreQuantizeBase + ShaderInfo::MaxImages * PipelineSpecialization::StoreQuantizeWords <= PipelineSpecialization::DescriptorIndexBase);
 static_assert(PipelineSpecialization::CompareBase + ShaderInfo::MaxImages * PipelineSpecialization::CompareWords <= PipelineSpecialization::FoldOffsetBase);
 static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedBaseLevelBase);
@@ -192,24 +193,6 @@ DescriptorImageShape ImageShapeForResource(const ImageResource& image) {
         return info.arrayed != 0u ? DescriptorImageShape::Image2DArray : DescriptorImageShape::Image2D;
     }
     fail("DescriptorBindingBuilder::Populate image resource dimension has no descriptor image shape");
-}
-
-std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
-    std::vector<std::uint32_t> result;
-    result.reserve(resources.size() * 4u);
-    for (const std::uint32_t r : resources) {
-        if (r >= snapshot.buffers.size()) {
-            fail("DescriptorBindingBuilder::Populate guest buffer index is out of range");
-        }
-        const DescriptorValue& value = snapshot.buffers[r];
-        if (value.dwordCount != 4u) {
-            fail("DescriptorBindingBuilder::Populate guest buffer descriptor has an invalid width");
-        }
-        for (std::uint32_t dword = 0; dword < 4u; dword++) {
-            result.push_back(value.dwords[dword]);
-        }
-    }
-    return result;
 }
 
 std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
@@ -441,6 +424,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity (" + std::to_string(info.images.size()) + " of " + std::to_string(ShaderInfo::MaxImages) + ")");
     DescriptorBindingPlan plan;
+    plan.addressedBuffers = layout.bufferAddressDwords != 0u;
+    plan.addressedData = layout.UsesDataAddress();
     const auto unnormalized = ProveUnnormalized(info, snapshot);
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
         if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
@@ -573,10 +558,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if (last < first || last - first >= RuntimeAbi::StorageMipSlots) fail("invalid dynamic storage mip range");
         if (!registrationModules) plan.specialization.push_back({PipelineSpecialization::MipCountBase + index, last - first + 1u});
     }
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> activeElements(info.images.size(), {UINT32_MAX, 0u});
     plan.bindings.reserve(layout.descriptors.size());
+    const bool slotWords = layout.gpuResolvedImages && !registrationModules;
+    std::uint32_t imageSlotBase = layout.ImageSlotDword();
     for (const auto& logical : layout.descriptors) {
         const bool imageHeap = ImageBindingResourceClass(logical.kind) != ImageResourceClass::None;
         const bool samplerHeap = logical.kind == DescriptorBindingKind::Samplers;
+        const bool sampledSlots = slotWords && layout.HeapImageKind(logical.kind);
         IrDescriptorBinding compact{logical.kind, {}};
         std::vector<std::uint32_t> originals;
         std::vector<bool> inactive;
@@ -599,18 +588,22 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 active = (samplerModes.at(resource) & (1u << (element & 1u))) != 0u;
             }
             if ((imageHeap || samplerHeap) && !registrationModules) plan.specialization.push_back({PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(logical.kind), element), active ? static_cast<std::uint32_t>(compact.resources.size()) : 0u});
+            if (active && sampledSlots) plan.heapSlotWords.push_back({imageSlotBase + element, static_cast<std::uint32_t>(logical.kind), static_cast<std::uint32_t>(compact.resources.size())});
+            const bool embeddedSampler = samplerHeap && layout.gpuResolvedImages && info.samplers.at(resource).constant;
+            if (active && slotWords && samplerHeap && !embeddedSampler) plan.heapSlotWords.push_back({layout.SamplerSlotDword() + element, static_cast<std::uint32_t>(logical.kind), static_cast<std::uint32_t>(compact.resources.size())});
             if (active || ((imageHeap || samplerHeap) && registrationModules)) {
                 compact.resources.push_back(resource);
                 originals.push_back(element);
                 inactive.push_back(!active);
             }
         }
+        if (sampledSlots) imageSlotBase += static_cast<std::uint32_t>(logical.resources.size());
         if ((imageHeap || samplerHeap) && !registrationModules) plan.specialization.push_back({PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(logical.kind), std::max(1u, static_cast<std::uint32_t>(compact.resources.size()))});
         if ((imageHeap || samplerHeap) && compact.resources.empty()) continue;
         PreparedDescriptorBinding entry{};
         auto& physical = entry.descriptor;
-        physical.descriptorSet = fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
-        physical.binding = NativeBinding(stage, compact.kind);
+        physical.descriptorSet = DescriptorSetNumber(layout, compact.kind, stage, layout.gpuResolvedImages, fragmentDescriptorSet, true);
+        physical.binding = DescriptorBindingNumber(layout, compact.kind, stage, layout.gpuResolvedImages);
         physical.count = compact.resources.empty() ? 1u : static_cast<std::uint32_t>(compact.resources.size());
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
@@ -641,6 +634,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
+                if (layout.gpuResolvedImages && !inactive[element] && activeElements[resource].first == UINT32_MAX && DescriptorBindingForImage(mode) == compact.kind) activeElements[resource] = {static_cast<std::uint32_t>(compact.kind), static_cast<std::uint32_t>(element)};
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {
@@ -655,6 +649,13 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 const auto& words = snapshot.samplers.at(resource).dwords;
                 const bool tablePointOnly = (directSamplerModes.at(resource) & 2u) == 0u;
                 if ((originals[element] & 1u) != 0u && !inactive[element] && !(tablePointOnly && ReducesBetweenTexels(words[0], words[2]))) entry.samplerFilterElements.push_back(element);
+                const auto& sampler = info.samplers.at(resource);
+                const bool embedded = layout.gpuResolvedImages && sampler.constant && !inactive[element];
+                physical.samplerEmbedded.push_back(embedded ? originals[element] : RuntimeAbi::NoEmbeddedSampler);
+                auto embeddedWords = sampler.constantWords;
+                if (embedded && (originals[element] & 1u) != 0u && !(tablePointOnly && ReducesBetweenTexels(embeddedWords[0], embeddedWords[2])))
+                    embeddedWords[2] = PointFilteredSamplerWord(embeddedWords[0], embeddedWords[2]);
+                physical.samplerEmbeddedWords.insert(physical.samplerEmbeddedWords.end(), embeddedWords.begin(), embeddedWords.end());
             }
         } else if (physical.role == DescriptorRole::ShaderData && layout.UsesPushData()) {
             fail("DescriptorBindingBuilder::Populate shader-data binding must not exist when push data is used");
@@ -671,6 +672,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         RuntimeAbi::ResourceMetadata metadata{};
         if (descriptor.dwordCount != metadata.descriptor.size()) fail("invalid runtime image descriptor width");
         metadata.elementCount = 1u;
+        if (layout.gpuResolvedImages && activeElements[resource].first != UINT32_MAX) {
+            metadata.binding = activeElements[resource].first;
+            metadata.firstElement = activeElements[resource].second;
+        }
         if (imageModes[resource] > RuntimeAbi::ImageModeMask) fail("runtime image mode exceeds its metadata field");
         metadata.flags = imageModes[resource] << 1u | (registrationModules ? (compareStates[resource] & RuntimeAbi::CompareStateMask) << RuntimeAbi::CompareStateShift : 0u);
         if (descriptor.dwords[0] == 0u && (descriptor.dwords[1] & 0xffu) == 0u) metadata.flags |= 1u;
@@ -703,14 +708,40 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     return plan;
 }
 
+namespace {
+
+bool IsAddressedRole(const DescriptorBindingPlan& plan, DescriptorRole role) {
+    switch (role) {
+    case DescriptorRole::GuestBuffers: return plan.addressedBuffers;
+    case DescriptorRole::ShaderData:
+    case DescriptorRole::FlattenedSrt:
+    case DescriptorRole::BdaPagetable:
+    case DescriptorRole::FaultBuffer:
+    case DescriptorRole::ImageTable:
+    case DescriptorRole::ImageStorageTable:
+    case DescriptorRole::SamplerTable:
+    case DescriptorRole::ImageTableMap: return plan.addressedData;
+    default: return false;
+    }
+}
+
+}
+
 DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings) const {
     DescriptorBindingPlan selected;
     std::set<std::uint32_t> remaining(bindings.begin(), bindings.end());
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
-        if (remaining.erase(binding.descriptor.binding) == 0u) continue;
+        const bool addressed = IsAddressedRole(plan, binding.descriptor.role);
+        const bool embedded = std::ranges::any_of(binding.descriptor.samplerEmbedded, [](std::uint32_t element) { return element != RuntimeAbi::NoEmbeddedSampler; });
+        if (remaining.erase(binding.descriptor.binding) == 0u && !addressed && !embedded) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
+    }
+    if (plan.addressedData) {
+        for (const auto kind : {RuntimeAbi::FirstImageBinding, RuntimeAbi::FirstStorageImageBinding, RuntimeAbi::FirstAtomicImageBinding, RuntimeAbi::FirstAtomic64ImageBinding, static_cast<std::uint32_t>(DescriptorBindingKind::Samplers)}) {
+            remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(kind)));
+        }
     }
     if (!remaining.empty()) fail("specialized module bindings disagree with the prepared plan");
     const bool hasSamplers = std::any_of(selected.bindings.begin(), selected.bindings.end(), [](const auto& binding) { return binding.descriptor.role == DescriptorRole::GuestSamplers; });
@@ -722,7 +753,91 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     }
     selected.imageMetadata = plan.imageMetadata;
     selected.runtimeState = plan.runtimeState;
+    constexpr auto bindingCount = static_cast<std::uint32_t>(RuntimeAbi::Binding::Count);
+    std::set<std::uint32_t> droppedKinds;
+    for (const auto& binding : plan.bindings) droppedKinds.insert(binding.descriptor.binding % bindingCount);
+    for (const auto& binding : selected.bindings) droppedKinds.erase(binding.descriptor.binding % bindingCount);
+    selected.heapSlotWords.reserve(plan.heapSlotWords.size());
+    for (const auto& word : plan.heapSlotWords) {
+        if (!droppedKinds.contains(word.kind)) selected.heapSlotWords.push_back(word);
+    }
+    selected.addressedBuffers = plan.addressedBuffers;
+    selected.addressedData = plan.addressedData;
     return selected;
+}
+
+namespace {
+
+void guestBindingWords(const PreparedDescriptorBinding& entry, std::vector<std::uint32_t>& words, const ResourceSnapshot& snapshot, const ResolvedImageTables* tables) {
+    switch (entry.descriptor.role) {
+    case DescriptorRole::GuestBuffers:
+        words.clear();
+        words.reserve(entry.resources.size() * 4u);
+        for (const std::uint32_t resource : entry.resources) {
+            if (resource >= snapshot.buffers.size()) fail("DescriptorBindingBuilder::Populate guest buffer index is out of range");
+            const DescriptorValue& value = snapshot.buffers[resource];
+            if (value.dwordCount != 4u) fail("DescriptorBindingBuilder::Populate guest buffer descriptor has an invalid width");
+            words.insert(words.end(), value.dwords.begin(), value.dwords.begin() + 4);
+        }
+        break;
+    case DescriptorRole::GuestImages:
+        words.reserve(words.size() + entry.resources.size() * 8u);
+        for (std::size_t element = 0; element < entry.resources.size(); ++element) {
+            const auto& descriptor = snapshot.images.at(entry.resources[element]);
+            if (descriptor.dwordCount != 8u) fail("invalid runtime image descriptor width");
+            if (!entry.inactive.empty() && entry.inactive[element]) {
+                words.insert(words.end(), 8u, 0u);
+                continue;
+            }
+            const auto offset = words.size();
+            words.insert(words.end(), descriptor.dwords.begin(), descriptor.dwords.begin() + 8);
+            if (entry.identityImageSwizzle[element]) words[offset + 3u] = (words[offset + 3u] & ~0xfffu) | ShaderImageIdentitySwizzle;
+        }
+        break;
+    case DescriptorRole::GuestSamplers:
+        words = GuestSamplersDescriptor(entry.resources, snapshot);
+        for (const auto element : entry.samplerFilterElements) {
+            auto& filter = words.at(element * 4u + 2u);
+            filter = PointFilteredSamplerWord(words.at(element * 4u), filter);
+        }
+        break;
+    case DescriptorRole::ImageTable:
+    case DescriptorRole::ImageStorageTable:
+        if (tables == nullptr) fail("DescriptorBindingBuilder::Populate image table elements were not resolved");
+        words.reserve(words.size() + tables->elements.size() * 8u);
+        for (const auto& element : tables->elements) words.insert(words.end(), element.words.begin(), element.words.end());
+        break;
+    case DescriptorRole::SamplerTable:
+        if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
+        words.reserve(words.size() + tables->samplers.size() * 4u);
+        for (const auto& element : tables->samplers) {
+            const auto first = words.size();
+            words.insert(words.end(), element.words.begin(), element.words.end());
+            if (element.point) words[first + 2u] = PointFilteredSamplerWord(words[first], words[first + 2u]);
+        }
+        break;
+    case DescriptorRole::ImageTableMap:
+        if (tables == nullptr || tables->map.empty()) fail("DescriptorBindingBuilder::Populate image table map was not resolved");
+        words = tables->map;
+        break;
+    case DescriptorRole::FlattenedSrt:
+        if (snapshot.flattenedSrt.empty()) fail("DescriptorBindingBuilder::Populate flattened SRT snapshot is empty");
+        words = snapshot.flattenedSrt;
+        break;
+    case DescriptorRole::ShaderData:
+    case DescriptorRole::Gds:
+    case DescriptorRole::BdaPagetable:
+    case DescriptorRole::FaultBuffer:
+        break;
+    }
+    const auto role = entry.descriptor.role;
+    if (role == DescriptorRole::GuestBuffers || role == DescriptorRole::GuestImages || role == DescriptorRole::GuestSamplers) {
+        if (entry.descriptor.count == 0u || words.size() % entry.descriptor.count != 0u) {
+            fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
+        }
+    }
+}
+
 }
 
 void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables) const {
@@ -740,37 +855,15 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     std::size_t readOnlyHere = 0;
     for (const auto& entry : plan.bindings) {
         auto physical = entry.descriptor;
+        if (physical.role == DescriptorRole::ShaderData) physical.guestDescriptor = std::move(shaderData);
+        else guestBindingWords(entry, physical.guestDescriptor, snapshot, tables);
         switch (physical.role) {
         case DescriptorRole::GuestBuffers:
-            physical.guestDescriptor = GuestBuffersDescriptor(entry.resources, snapshot);
             writtenHere += entry.writtenBuffers;
             readOnlyHere += entry.readOnlyBuffers;
             break;
-        case DescriptorRole::GuestImages:
-            physical.guestDescriptor.reserve(entry.resources.size() * 8u);
-            for (std::size_t element = 0; element < entry.resources.size(); ++element) {
-                const auto& descriptor = snapshot.images.at(entry.resources[element]);
-                if (descriptor.dwordCount != 8u) fail("invalid runtime image descriptor width");
-                if (!entry.inactive.empty() && entry.inactive[element]) {
-                    physical.guestDescriptor.insert(physical.guestDescriptor.end(), 8u, 0u);
-                    continue;
-                }
-                const auto offset = physical.guestDescriptor.size();
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), descriptor.dwords.begin(), descriptor.dwords.begin() + 8);
-                if (entry.identityImageSwizzle[element]) physical.guestDescriptor[offset + 3u] = (physical.guestDescriptor[offset + 3u] & ~0xfffu) | ShaderImageIdentitySwizzle;
-            }
-            break;
-        case DescriptorRole::GuestSamplers:
-            physical.guestDescriptor = GuestSamplersDescriptor(entry.resources, snapshot);
-            for (const auto element : entry.samplerFilterElements) {
-                auto& filter = physical.guestDescriptor.at(element * 4u + 2u);
-                filter = PointFilteredSamplerWord(physical.guestDescriptor.at(element * 4u), filter);
-            }
-            break;
         case DescriptorRole::ImageTable:
         case DescriptorRole::ImageStorageTable:
-            if (tables == nullptr) fail("DescriptorBindingBuilder::Populate image table elements were not resolved");
-            physical.guestDescriptor.reserve(tables->elements.size() * 8u);
             physical.imageShapes.reserve(physical.imageShapes.size() + tables->elements.size());
             physical.imageDepthCompare.reserve(physical.imageDepthCompare.size() + tables->elements.size());
             physical.imageWritten.reserve(physical.imageWritten.size() + tables->elements.size());
@@ -778,14 +871,13 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             physical.imageAtomic64.reserve(physical.imageAtomic64.size() + tables->elements.size());
             physical.imageSamplers.reserve(physical.imageSamplers.size() + tables->elements.size());
             for (const auto& element : tables->elements) {
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
                 ImageResource shape;
                 shape.dimension = element.dimension;
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
-                physical.imageAtomic.push_back(element.atomic);
-                physical.imageAtomic64.push_back(element.atomic64);
+                physical.imageAtomic.push_back(element.atomic || RuntimeAbi::AtomicImageKind(static_cast<std::uint32_t>(element.kind)));
+                physical.imageAtomic64.push_back(element.atomic64 || RuntimeAbi::Atomic64ImageKind(static_cast<std::uint32_t>(element.kind)));
                 std::uint64_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
                     if (((element.samplers >> sampler) & 1u) != 0u) samplers |= entry.tableSamplerMasks[sampler];
@@ -795,45 +887,15 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             physical.count = static_cast<std::uint32_t>(tables->elements.size());
             break;
         case DescriptorRole::SamplerTable:
-            if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
-            physical.guestDescriptor.reserve(tables->samplers.size() * 4u);
             physical.samplerDepthCompare.reserve(physical.samplerDepthCompare.size() + tables->samplers.size());
-            for (const auto& element : tables->samplers) {
-                const auto first = physical.guestDescriptor.size();
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
-                if (element.point) physical.guestDescriptor[first + 2u] = PointFilteredSamplerWord(physical.guestDescriptor[first], physical.guestDescriptor[first + 2u]);
-                physical.samplerDepthCompare.push_back(element.compare);
-            }
+            for (const auto& element : tables->samplers) physical.samplerDepthCompare.push_back(element.compare);
             physical.count = static_cast<std::uint32_t>(tables->samplers.size());
             break;
-        case DescriptorRole::ImageTableMap:
-            if (tables == nullptr || tables->map.empty()) fail("DescriptorBindingBuilder::Populate image table map was not resolved");
-            physical.guestDescriptor = tables->map;
-            break;
-        case DescriptorRole::FlattenedSrt:
-            if (snapshot.flattenedSrt.empty()) {
-                fail("DescriptorBindingBuilder::Populate flattened SRT snapshot is empty");
-            }
-            physical.guestDescriptor = snapshot.flattenedSrt;
-            break;
-        case DescriptorRole::ShaderData:
-            physical.guestDescriptor = std::move(shaderData);
-            break;
-        case DescriptorRole::Gds:
-        case DescriptorRole::BdaPagetable:
-        case DescriptorRole::FaultBuffer:
+        default:
             break;
         }
-
-        if (physical.role == DescriptorRole::GuestBuffers || physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
-            if (physical.count == 0u || physical.guestDescriptor.size() % physical.count != 0u) {
-                fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
-            }
-        }
-
         bindings.push_back(std::move(physical));
     }
-
     if (bufferWrittenTraceEnabled()) {
         // Cumulative counts include every Populate of the process (the replay tool populates
         // each program twice), so the per-call counts are the ones to sum per program.
@@ -846,6 +908,22 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     if (layout.UsesPushData()) {
         allocation.pushConstants.resize(static_cast<std::size_t>(shaderData.size()) * sizeof(std::uint32_t));
         std::memcpy(allocation.pushConstants.data(), shaderData.data(), allocation.pushConstants.size());
+    }
+}
+
+void DescriptorBindingBuilder::PopulateGuestWords(std::vector<std::vector<std::uint32_t>>& words, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables) const {
+    const auto& layout = compiled.layout;
+    words.resize(plan.bindings.size());
+    for (std::size_t index = 0; index < plan.bindings.size(); ++index) {
+        const auto& entry = plan.bindings[index];
+        if (entry.descriptor.role != DescriptorRole::ShaderData) {
+            words[index].assign(entry.descriptor.guestDescriptor.begin(), entry.descriptor.guestDescriptor.end());
+            guestBindingWords(entry, words[index], snapshot, tables);
+        } else if (layout.UsesPushData() || plan.storageData) {
+            words[index] = ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState);
+        } else {
+            words[index].clear();
+        }
     }
 }
 

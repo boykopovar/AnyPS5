@@ -3,6 +3,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvRuntimeBuffer.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -102,11 +103,17 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         state.module.AddFunction(spv::OpLoad, TypeI32(state), value, state.stencilRefVariable);
         const auto reference = Unary(state, spv::OpBitcast, TypeU32(state), value);
         const auto masked = Binary(state, spv::OpBitwiseAnd, TypeU32(state), reference, ConstantU32(state, 0xffu));
-        const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::StencilReferenceOffset, state.program.Metadata().bindings.stencilReferenceDword);
-        const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), offset);
-        const auto expected = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeU32(state), expected, pointer);
+        const auto& layout = state.program.Metadata().bindings;
+        auto expected = 0u;
+        if (layout.UsesDataAddress()) {
+            expected = EmitRootItemDword(state, RuntimeAbi::RootItem::StencilReference, 0u);
+        } else {
+            const auto offset = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::StencilReferenceOffset, layout.stencilReferenceDword);
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), offset);
+            expected = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), expected, pointer);
+        }
         EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), masked, expected));
     }
     EmitReturnReleasingScratch(state);

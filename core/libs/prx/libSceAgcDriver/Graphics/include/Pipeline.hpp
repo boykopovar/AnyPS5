@@ -48,6 +48,7 @@ public:
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
     VkPipelineLayout Layout() const;
+    bool DescriptorHeap() const { return descriptorHeap; }
     std::shared_ptr<Framebuffer> AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<void>> owners, VkExtent2D extent, std::uint32_t layers = 1);
     // Begins the render pass on the framebuffer, binds the pipeline and sets its dynamic state.
     void Begin(CommandState& recording, const Framebuffer& framebuffer, VkExtent2D extent, const State& state, const State* masked = nullptr) const;
@@ -64,6 +65,7 @@ public:
     bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
     VkExtent2D HostSampleLocationGrid() const { return sampleLocationGrid; }
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
+    std::span<const ShaderRecompiler::StagePushPlacement> PushPlacements() const { return pushPlacements; }
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
     void Abandon() noexcept;
 
@@ -82,6 +84,7 @@ private:
     void setColorWriteMasks(CommandState& recording, const State& state, const State* masked, bool secondChannel) const;
     Context context;
     std::vector<VkShaderModule> _modules;
+    std::vector<ShaderRecompiler::StagePushPlacement> pushPlacements;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkRenderPass renderPass = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -97,6 +100,7 @@ private:
     std::uint32_t dynamicSlots = 0;
     std::shared_ptr<OptimizedPipeline> optimized;
     bool dynamicRendering = false;
+    bool descriptorHeap = false;
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     std::vector<std::uint32_t> colorSlots;

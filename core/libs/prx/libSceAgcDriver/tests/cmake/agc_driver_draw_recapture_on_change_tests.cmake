@@ -1,6 +1,8 @@
 if(BUILD_TESTING)
     add_test(NAME agc_driver_draw_recapture_on_change_inline COMMAND agc_driver_draw_recapture_on_change_tests)
     set_tests_properties(agc_driver_draw_recapture_on_change_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    agc_add_env_test(agc_driver_draw_recapture_on_change_gpu_heap agc_driver_draw_recapture_on_change_tests
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_VERIFY_GPU_HEAP=1)
     add_test(NAME agc_driver_draw_recapture_on_change_finisher COMMAND agc_driver_draw_recapture_on_change_tests)
     set_tests_properties(agc_driver_draw_recapture_on_change_finisher PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_dispatch_recapture_on_change_items COMMAND agc_driver_dispatch_recapture_on_change_tests)

@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -18,10 +19,12 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cstddef>
 #include <cstdio>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -43,6 +46,20 @@ struct DepthPush {
     std::array<std::uint32_t, 4> map;
     std::uint32_t bit;
 };
+
+struct HeapStoragePush {
+    StoragePush push;
+    std::uint32_t image;
+};
+
+struct HeapDepthPush {
+    DepthPush push;
+    std::uint32_t depth;
+    std::uint32_t stencil;
+};
+
+static_assert(offsetof(HeapStoragePush, image) == 28);
+static_assert(offsetof(HeapDepthPush, depth) == 20 && offsetof(HeapDepthPush, stencil) == 24);
 
 bool exactDepth(VkFormat format) {
     return format == VK_FORMAT_D16_UNORM || format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT;
@@ -90,7 +107,7 @@ void transitionLocated(const Context& context, VkCommandBuffer commands, VkImage
     context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, sourceStages, destinationStages, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
-class CopyImage {
+class CopyImage : public HeapSlotOwner {
 public:
     CopyImage(const Context& context, VkFormat format, std::uint32_t samples, VkExtent2D extent, bool stencil) : context(context), format(format), samples(samples), extent(extent) {
         try {
@@ -147,6 +164,7 @@ private:
     }
 
     void release() noexcept {
+        ReleaseHeapSlots(context);
         if (stencilView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, stencilView, nullptr);
         if (depthView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, depthView, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
@@ -167,6 +185,20 @@ public:
 
     void Storage(VkCommandBuffer commands, const SampleOrderTarget& target, const std::array<std::uint32_t, 4>& map, VkExtent2D region) {
         const auto pipeline = storagePipeline(target.format);
+        const StoragePush push{map, {region.width, region.height}, target.samples};
+        const auto dispatch = [&] { context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, ((region.width + 1u) / 2u + 7u) / 8u, ((region.height + 1u) / 2u + 7u) / 8u, 1); };
+        const auto heapPipeline = heapStoragePipelines[storageIndex(target.format)];
+        if (heapPipeline != VK_NULL_HANDLE && target.owner != nullptr) {
+            auto& heap = BindlessHeap::For(context);
+            if (const auto slot = heap.ViewSlot(HeapPassStorageKind, target.owner, target.view)) {
+                heap.BindDescriptorHeaps(commands);
+                context.BindComputePipeline(commands, heapPipeline);
+                const HeapStoragePush pushed{push, *slot};
+                CmdPushData(context, commands, sizeof(pushed), &pushed);
+                dispatch();
+                return;
+            }
+        }
         const auto set = allocate(storageSetLayout, {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, setsPerPool}});
         const VkDescriptorImageInfo imageInfo{VK_NULL_HANDLE, target.view, VK_IMAGE_LAYOUT_GENERAL};
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -176,11 +208,10 @@ public:
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         write.pImageInfo = &imageInfo;
         context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
-        const StoragePush push{map, {region.width, region.height}, target.samples};
         context.BindComputePipeline(commands, pipeline);
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, storagePipelineLayout, 0, 1, &set, 0, nullptr);
-        context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, storagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
-        context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, ((region.width + 1u) / 2u + 7u) / 8u, ((region.height + 1u) / 2u + 7u) / 8u, 1);
+        CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, storagePipelineLayout, 0, 1, &set, SetBindSite::Detiler);
+        CmdPushConstants(context, commands, storagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+        dispatch();
     }
 
     void Depth(CommandState& recording, const SampleOrderTarget& target, const std::array<std::uint32_t, 4>& map, VkExtent2D region, const SampleOrderPass& order, std::vector<std::shared_ptr<void>>& kept) {
@@ -216,18 +247,16 @@ public:
         if (located) transitionLocated(context, commands, target.image, target.format, info, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, fragmentStages, depthAccess);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, fragmentStages, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | depthAccess);
         const auto& pass = depthPass(target.format, target.samples, target.method, located, locations);
-        const auto set = allocate(sampledSetLayout, {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, setsPerPool * 2u}});
-        std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, copy->depthView, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, stencil ? copy->stencilView : copy->depthView, VK_IMAGE_LAYOUT_GENERAL}}};
-        std::array<VkWriteDescriptorSet, 2> writes{};
-        for (std::uint32_t binding = 0; binding < writes.size(); ++binding) {
-            writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[binding].dstSet = set;
-            writes[binding].dstBinding = binding;
-            writes[binding].descriptorCount = 1;
-            writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            writes[binding].pImageInfo = &images[binding];
+        std::optional<std::uint32_t> depthSlot;
+        std::optional<std::uint32_t> stencilSlot;
+        if (pass.heapDepth != VK_NULL_HANDLE) {
+            auto& heap = BindlessHeap::For(context);
+            depthSlot = heap.ViewSlot(HeapPassSampledKind, copy.get(), copy->depthView);
+            stencilSlot = depthSlot && stencil ? heap.ViewSlot(HeapPassSampledKind, copy.get(), copy->stencilView) : depthSlot;
         }
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, stencil ? 2u : 1u, writes.data(), 0, nullptr);
+        const bool heapPass = depthSlot && stencilSlot;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!heapPass) set = writeDepthSet(*copy, stencil);
         const std::array<VkImageView, 1> views{target.view};
         auto framebuffer = std::make_shared<Framebuffer>(context, pass.renderPass, views, region);
         kept.push_back(framebuffer);
@@ -248,19 +277,25 @@ public:
         const VkRect2D scissor{{0, 0}, region};
         recording.SetViewport(context, viewport);
         recording.SetScissor(context, scissor);
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, 0, nullptr);
+        if (heapPass) BindlessHeap::For(context).BindDescriptorHeaps(commands);
+        else CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, SetBindSite::Detiler);
         const auto slots = CommandState::DynamicSlots(depthOrderDynamicStates);
-        const auto draw = [&](VkPipeline pipeline, std::uint32_t bit, std::uint32_t writeMask, std::uint32_t reference) {
-            recording.BindPipeline(context, pipeline, slots);
+        const auto draw = [&](VkPipeline pipeline, VkPipeline heapPipeline, std::uint32_t bit, std::uint32_t writeMask, std::uint32_t reference) {
+            recording.BindPipeline(context, heapPass ? heapPipeline : pipeline, slots);
             recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_AND_BACK, writeMask);
             recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
             const DepthPush push{map, bit};
-            context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, sampledPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+            if (heapPass) {
+                const HeapDepthPush pushed{push, *depthSlot, *stencilSlot};
+                CmdPushData(context, commands, sizeof(pushed), &pushed);
+            } else {
+                CmdPushConstants(context, commands, sampledPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+            }
             context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, 3, 1, 0, 0);
         };
-        draw(pass.depth, 0u, 0xffu, 0u);
+        draw(pass.depth, pass.heapDepth, 0u, 0xffu, 0u);
         if (target.method == SampleOrderMethod::DepthStencilBits) {
-            for (std::uint32_t bit = 0; bit < 8u; ++bit) draw(pass.stencilBits, bit, 1u << bit, 0xffu);
+            for (std::uint32_t bit = 0; bit < 8u; ++bit) draw(pass.stencilBits, pass.heapStencilBits, bit, 1u << bit, 0xffu);
         }
         context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
     }
@@ -279,7 +314,32 @@ private:
         VkRenderPass renderPass = VK_NULL_HANDLE;
         VkPipeline depth = VK_NULL_HANDLE;
         VkPipeline stencilBits = VK_NULL_HANDLE;
+        VkPipeline heapDepth = VK_NULL_HANDLE;
+        VkPipeline heapStencilBits = VK_NULL_HANDLE;
     };
+
+    VkDescriptorSet writeDepthSet(const CopyImage& copy, bool stencil) {
+        const auto set = allocate(sampledSetLayout, {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, setsPerPool * 2u}});
+        std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, copy.depthView, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, stencil ? copy.stencilView : copy.depthView, VK_IMAGE_LAYOUT_GENERAL}}};
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (std::uint32_t binding = 0; binding < writes.size(); ++binding) {
+            writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[binding].dstSet = set;
+            writes[binding].dstBinding = binding;
+            writes[binding].descriptorCount = 1;
+            writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[binding].pImageInfo = &images[binding];
+        }
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, stencil ? 2u : 1u, writes.data(), 0, nullptr);
+        return set;
+    }
+
+    static std::size_t storageIndex(VkFormat format) {
+        const std::array<VkFormat, 5> formats{VK_FORMAT_R8_UINT, VK_FORMAT_R16_UINT, VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32A32_UINT};
+        const auto found = std::ranges::find(formats, format);
+        Require(found != formats.end(), "reordering the samples of a color target through a storage view of this format is not implemented");
+        return static_cast<std::size_t>(found - formats.begin());
+    }
 
     using DepthKey = std::tuple<VkFormat, std::uint32_t, SampleOrderMethod, bool, std::array<std::uint32_t, 16>>;
     using CopyKey = std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, bool>;
@@ -321,10 +381,7 @@ private:
     }
 
     VkPipeline storagePipeline(VkFormat format) {
-        const std::array<VkFormat, 5> formats{VK_FORMAT_R8_UINT, VK_FORMAT_R16_UINT, VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32A32_UINT};
-        const auto found = std::ranges::find(formats, format);
-        Require(found != formats.end(), "reordering the samples of a color target through a storage view of this format is not implemented");
-        const auto index = static_cast<std::size_t>(found - formats.begin());
+        const auto index = storageIndex(format);
         if (storagePipelines[index] != VK_NULL_HANDLE) return storagePipelines[index];
         if (storageSetLayout == VK_NULL_HANDLE) storageSetLayout = setLayout(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
         if (storagePipelineLayout == VK_NULL_HANDLE) storagePipelineLayout = pipelineLayout(storageSetLayout, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(StoragePush));
@@ -340,6 +397,10 @@ private:
         {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &storagePipelines[index]);
+        }
+        if (created == VK_SUCCESS && HeapPassesActive(context)) {
+            const auto mapping = HeapPushIndexMapping(BindlessHeap::For(context), 0, 0, HeapPassStorageImages, offsetof(HeapStoragePush, image));
+            heapStoragePipelines[index] = CreateHeapComputePipeline(context, info, std::span(&mapping, 1));
         }
         destroyModule(shader);
         Check(created, "vkCreateComputePipelines sample order");
@@ -444,14 +505,27 @@ private:
                     auto pipelineCacheLock = context.LockPipelineCacheForUse();
                     created = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &pipeline);
                 }
+                VkPipeline heapPipeline = VK_NULL_HANDLE;
+                if (created == VK_SUCCESS && HeapPassesActive(context)) {
+                    const auto& heap = BindlessHeap::For(context);
+                    const std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{
+                        HeapPushIndexMapping(heap, 0, 0, VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT, offsetof(HeapDepthPush, depth)),
+                        HeapPushIndexMapping(heap, 0, 1, VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT, offsetof(HeapDepthPush, stencil))};
+                    heapPipeline = CreateHeapGraphicsPipeline(context, info, mappings);
+                }
                 destroyModule(fragment);
                 destroyModule(vertex);
                 Check(created, "vkCreateGraphicsPipelines sample order");
-                return pipeline;
+                return std::pair{pipeline, heapPipeline};
             };
-            if (method == SampleOrderMethod::DepthStencilExport) pass.depth = create(SAMPLE_ORDER_STENCILEXPORT_SPV, sizeof(SAMPLE_ORDER_STENCILEXPORT_SPV), true);
-            else pass.depth = create(SAMPLE_ORDER_DEPTH_SPV, sizeof(SAMPLE_ORDER_DEPTH_SPV), true);
-            if (method == SampleOrderMethod::DepthStencilBits) pass.stencilBits = create(SAMPLE_ORDER_STENCILBITS_SPV, sizeof(SAMPLE_ORDER_STENCILBITS_SPV), false);
+            if (method == SampleOrderMethod::DepthStencilExport) std::tie(pass.depth, pass.heapDepth) = create(SAMPLE_ORDER_STENCILEXPORT_SPV, sizeof(SAMPLE_ORDER_STENCILEXPORT_SPV), true);
+            else std::tie(pass.depth, pass.heapDepth) = create(SAMPLE_ORDER_DEPTH_SPV, sizeof(SAMPLE_ORDER_DEPTH_SPV), true);
+            if (method == SampleOrderMethod::DepthStencilBits) std::tie(pass.stencilBits, pass.heapStencilBits) = create(SAMPLE_ORDER_STENCILBITS_SPV, sizeof(SAMPLE_ORDER_STENCILBITS_SPV), false);
+            if (method == SampleOrderMethod::DepthStencilBits && (pass.heapDepth == VK_NULL_HANDLE) != (pass.heapStencilBits == VK_NULL_HANDLE)) {
+                if (pass.heapDepth) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pass.heapDepth, nullptr);
+                if (pass.heapStencilBits) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pass.heapStencilBits, nullptr);
+                pass.heapDepth = pass.heapStencilBits = VK_NULL_HANDLE;
+            }
         } catch (...) {
             destroyPass(pass);
             throw;
@@ -515,6 +589,8 @@ private:
     }
 
     void destroyPass(const DepthPass& pass) noexcept {
+        if (pass.heapStencilBits) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pass.heapStencilBits, nullptr);
+        if (pass.heapDepth) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pass.heapDepth, nullptr);
         if (pass.stencilBits) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pass.stencilBits, nullptr);
         if (pass.depth) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pass.depth, nullptr);
         if (pass.renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, pass.renderPass, nullptr);
@@ -524,6 +600,9 @@ private:
         copies.clear();
         for (const auto& [key, pass] : depthPasses) destroyPass(pass);
         depthPasses.clear();
+        for (const auto pipeline : heapStoragePipelines) {
+            if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+        }
         for (const auto pipeline : storagePipelines) {
             if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
         }
@@ -544,6 +623,7 @@ private:
     VkPipelineLayout storagePipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout sampledPipelineLayout = VK_NULL_HANDLE;
     std::array<VkPipeline, 5> storagePipelines{};
+    std::array<VkPipeline, 5> heapStoragePipelines{};
     std::map<DepthKey, DepthPass> depthPasses;
     std::map<CopyKey, std::pair<std::shared_ptr<CopyImage>, std::uint64_t>> copies;
     std::uint64_t uses = 0;

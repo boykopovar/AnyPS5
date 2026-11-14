@@ -2814,6 +2814,14 @@ std::uint64_t TrackerGeneration() {
     return tracker.generation;
 }
 
+std::uint64_t StableTrackerGeneration() {
+    return Tracker().stable.load(std::memory_order_acquire);
+}
+
+std::uint64_t TrackerAcquisitions() {
+    return trackerAcquisitions.load(std::memory_order_relaxed);
+}
+
 void AdvanceTrackerGenerationForTest(std::uint64_t generation) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
@@ -2825,6 +2833,14 @@ std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes) {
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     return bytes == 0 ? 0 : tracker.newestStamp(address, address + bytes);
+}
+
+bool NoStampAfter(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t generation) {
+    if (ranges.empty()) return true;
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    return std::none_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.second > range.first && tracker.newestStamp(range.first, range.second) > generation; });
 }
 
 #ifdef _WIN32

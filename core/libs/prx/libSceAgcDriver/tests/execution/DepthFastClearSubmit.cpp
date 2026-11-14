@@ -365,14 +365,14 @@ void RecreatedRecorderReadsHtile(AgcDriver::VulkanDevice& device, bool clearSurf
     auto& htile = NewBlock();
     const DepthTarget target{NewBlock().Address(), 0, {64, 32}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, htile.Address(), false};
     std::optional<Recorder> recorder;
-    recorder.emplace(context);
+    recorder.emplace(context, true);
     const auto* address = &*recorder;
     RecordHtileWords(context, *recorder, htile, 0xf0u);
     const auto note = recorder->NewestWriteNote(htile.Address(), HtileBytes);
     NoteHtileMaskOnGpu(context, {htile.Address(), HtileBytes, 0x3f0u, 0u});
     recorder.reset();
     if (clearSurfaces) ClearDepthSurfaces(context.device);
-    recorder.emplace(context);
+    recorder.emplace(context, true);
     Require(&*recorder == address, "the replacement recorder did not reuse the original storage");
     RecordHtileWords(context, *recorder, htile, 0xfu);
     Require(recorder->NewestWriteNote(htile.Address(), HtileBytes) == note, "the replacement recorder did not reuse the original note");
@@ -411,8 +411,8 @@ void LiveRecorderMaskIsolation(AgcDriver::VulkanDevice& device) {
     auto* previous = Recorder::Active();
     {
         auto& htile = NewBlock();
-        Recorder first(context);
-        Recorder second(context);
+        Recorder first(context, true);
+        Recorder second(context, true);
         RecordHtileWords(context, first, htile, 0xf0u);
         NoteHtileMaskOnGpu(context, {htile.Address(), HtileBytes, 0x3f0u, 0u});
         RecordHtileWords(context, second, htile, 0xfu);
@@ -437,8 +437,8 @@ void MaskCleanupIsolation(AgcDriver::VulkanDevice& device, AgcDriver::VulkanDevi
         auto& firstHtile = NewBlock();
         auto& secondHtile = NewBlock();
         std::optional<Recorder> first;
-        first.emplace(context);
-        Recorder second(context);
+        first.emplace(context, true);
+        Recorder second(context, true);
         RecordHtileWords(context, *first, firstHtile, 0xf0u);
         NoteHtileMaskOnGpu(context, {firstHtile.Address(), HtileBytes, 0x3f0u, 0u});
         RecordHtileWords(context, second, secondHtile, 0xf0u);
@@ -450,9 +450,9 @@ void MaskCleanupIsolation(AgcDriver::VulkanDevice& device, AgcDriver::VulkanDevi
         auto& firstHtile = NewBlock();
         auto& secondHtile = NewBlock();
         auto& otherHtile = NewBlock();
-        Recorder first(context);
-        Recorder second(context);
-        Recorder other(otherContext);
+        Recorder first(context, true);
+        Recorder second(context, true);
+        Recorder other(otherContext, true);
         RecordHtileWords(context, first, firstHtile, 0xf0u);
         NoteHtileMaskOnGpu(context, {firstHtile.Address(), HtileBytes, 0x3f0u, 0u});
         RecordHtileWords(context, second, secondHtile, 0xf0u);

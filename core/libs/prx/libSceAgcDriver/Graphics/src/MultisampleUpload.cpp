@@ -1,14 +1,30 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MultisampleUpload_spv.h"
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <limits>
 
 namespace AgcDriver::Graphics {
 
-VkPipeline TextureDetiler::multisampleUploadPipeline(std::uint32_t elementBytes) {
-    const auto key = (1u << 19u) | elementBytes;
+namespace {
+
+struct HeapMultisamplePush {
+    std::array<std::uint32_t, 7> values;
+    std::uint32_t pad;
+    VkDeviceAddress buffer;
+    std::uint32_t slot;
+    std::uint32_t pad2;
+};
+
+static_assert(offsetof(HeapMultisamplePush, buffer) == 32 && offsetof(HeapMultisamplePush, slot) == 40 && sizeof(HeapMultisamplePush) == 48);
+
+}
+
+VkPipeline TextureDetiler::multisampleUploadPipeline(std::uint32_t elementBytes, bool heap) {
+    const auto key = (1u << 19u) | (heap ? 1u << 18u : 0u) | elementBytes;
     for (const auto& entry : pipelines) if (entry.first == key) return entry.second;
     if (multisampleUploadModule == VK_NULL_HANDLE) {
         VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -27,7 +43,12 @@ VkPipeline TextureDetiler::multisampleUploadPipeline(std::uint32_t elementBytes)
     info.layout = imagePipelineLayout;
     pipelines.reserve(pipelines.size() + 1u);
     VkPipeline result = VK_NULL_HANDLE;
-    {
+    if (heap) {
+        const std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{
+            HeapPushAddressMapping(0u, 0u, offsetof(HeapMultisamplePush, buffer)),
+            HeapPushIndexMapping(BindlessHeap::For(context), 0u, 1u, HeapPassStorageImages, offsetof(HeapMultisamplePush, slot))};
+        result = CreateHeapComputePipeline(context, info, mappings);
+    } else {
         auto pipelineCacheLock = context.LockPipelineCacheForUse();
         Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1u, &info, nullptr, &result), "vkCreateComputePipelines multisample upload");
     }
@@ -35,7 +56,7 @@ VkPipeline TextureDetiler::multisampleUploadPipeline(std::uint32_t elementBytes)
     return result;
 }
 
-void TextureDetiler::DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements) {
+void TextureDetiler::DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements, const HeapSlotOwner* owner) {
     Require(context.storageImageMultisample && context.storageImageWriteWithoutFormat, "device does not enable multisampled storage image writes without format");
     Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && arrayView != VK_NULL_HANDLE, "multisample upload requires commands, buffer and array view");
     Require(std::has_single_bit(elementBytes) && elementBytes <= 16u, "multisample upload element size is unsupported");
@@ -52,16 +73,27 @@ void TextureDetiler::DispatchMultisampleImage(VkCommandBuffer commands, std::uin
     Require(groupsX != 0u, "device has no multisample upload workgroups");
     const auto groupsY = (groups + groupsX - 1u) / groupsX;
     Require(groupsY <= context.limits.maxComputeWorkGroupCount[1] && groupsX * groupsY * 64u <= std::numeric_limits<std::uint32_t>::max(), "multisample upload dispatch exceeds the device limits");
-    const auto target = multisampleUploadPipeline(elementBytes);
+    const std::array<std::uint32_t, 7> push{width, height, layers, fragments, firstElement, elements, static_cast<std::uint32_t>(groupsX * 64u)};
+    const auto address = owner != nullptr && HeapPassesActive(context) ? bufferAddress(source) : 0;
+    const auto heapTarget = address != 0 ? multisampleUploadPipeline(elementBytes, true) : VK_NULL_HANDLE;
+    const auto slot = heapTarget != VK_NULL_HANDLE ? BindlessHeap::For(context).ViewSlot(HeapPassStorageKind, owner, arrayView) : std::nullopt;
+    if (slot) {
+        BindlessHeap::For(context).BindDescriptorHeaps(commands);
+        context.BindComputePipeline(commands, heapTarget);
+        const HeapMultisamplePush pushed{push, 0u, address + offset, *slot, 0u};
+        CmdPushData(context, commands, sizeof(pushed), &pushed);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>(groupsX), static_cast<std::uint32_t>(groupsY), 1u);
+        return;
+    }
+    const auto target = multisampleUploadPipeline(elementBytes, false);
     const auto set = allocateSet(true);
     const VkDescriptorBufferInfo buffer{source, offset, bytes};
     const VkDescriptorImageInfo image{VK_NULL_HANDLE, arrayView, VK_IMAGE_LAYOUT_GENERAL};
     const std::array<VkWriteDescriptorSet, 2> writes{{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0u, 0u, 1u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffer, nullptr}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1u, 0u, 1u, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &image, nullptr, nullptr}}};
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 2u, writes.data(), 0u, nullptr);
     context.BindComputePipeline(commands, target);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, imagePipelineLayout, 0u, 1u, &set, 0u, nullptr);
-    const std::array<std::uint32_t, 7> push{width, height, layers, fragments, firstElement, elements, static_cast<std::uint32_t>(groupsX * 64u)};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(push), push.data());
+    CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, imagePipelineLayout, 0u, 1u, &set, SetBindSite::ColorTransfer);
+    CmdPushConstants(context, commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(push), push.data());
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>(groupsX), static_cast<std::uint32_t>(groupsY), 1u);
 }
 
