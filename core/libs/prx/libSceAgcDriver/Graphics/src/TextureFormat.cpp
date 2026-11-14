@@ -228,11 +228,13 @@ VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponen
     constexpr std::array<VkComponentSwizzle, 4> bgra{VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A};
     constexpr std::array<VkComponentSwizzle, 4> abgr{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R};
     constexpr std::array<VkComponentSwizzle, 4> argb{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B};
+    constexpr std::array<VkComponentSwizzle, 4> grba{VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     switch (guestFormat) {
         case 133: return bgrb[index];
         case 134: return bgra[index];
         case 135: return abgr[index];
         case 136: return argb[index];
+        case 137: return grba[index];
         case 43: return bgra[index];
         default: return component;
     }
