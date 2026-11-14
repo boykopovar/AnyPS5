@@ -653,8 +653,8 @@ void testControls() {
         std::lock_guard lock(cfg->mutex);
         check(cfg->outputModeEvents.empty(), "output mode unsubscription did not clear registration");
     }
-    check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
-    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
+    check(sceVideoOutDeleteOutputModeEvent(queue, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate output mode unsubscription did not return INVALID_EVENT");
+    check(sceVideoOutDeleteOutputModeEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "output mode unsubscription from queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
     check(sceVideoOutSysGetBus(handle) == VIDEO_OUT_BUS_TYPE_MAIN, "the main port's bus is not main");
     check(sceVideoOutSysGetBus(0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a null handle");
@@ -734,8 +734,8 @@ void testControls() {
         std::lock_guard lock(cfg->mutex);
         check(cfg->vrrStatusEvents.empty(), "VRR status unsubscription did not clear registration");
     }
-    check(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == 0, "duplicate VRR status unsubscription failed");
-    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
+    check(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate VRR status unsubscription did not return INVALID_EVENT");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "VRR status unsubscription from queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteVrrActiveStatusEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR status unsubscription on an invalid handle was accepted");
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 1, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });

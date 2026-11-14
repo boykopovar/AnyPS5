@@ -50,6 +50,26 @@ int main() {
     Require(sceVideoOutAddFlipEvent(deleted, handle, nullptr) == InvalidEventQueue, "adding a flip event to a deleted queue did not return INVALID_EVENT_QUEUE");
     Require(sceVideoOutDeleteFlipEvent(deleted, handle) == InvalidEventQueue, "deleting a flip event from a deleted queue did not return INVALID_EVENT_QUEUE");
     Require(sceVideoOutAddFlipEvent(0, handle + 1, nullptr) == InvalidHandle, "the handle was not checked before the queue");
+    Require(sceVideoOutDeleteVblankEvent(queue, handle) == InvalidEvent, "deleting a vblank event that was never added did not return INVALID_EVENT");
+    Require(sceVideoOutAddVblankEvent(queue, handle, nullptr) == 0 && sceVideoOutDeleteVblankEvent(queue, handle) == 0, "the vblank event was not added and deleted");
+    Require(sceVideoOutDeleteVblankEvent(queue, handle) == InvalidEvent, "deleting the vblank event a second time did not return INVALID_EVENT");
+    Require(sceVideoOutAddVblankEvent(0, handle, nullptr) == InvalidEventQueue && sceVideoOutDeleteVblankEvent(0, handle) == InvalidEventQueue, "queue 0 did not give the vblank pair INVALID_EVENT_QUEUE");
+    Require(sceVideoOutAddVblankEvent(deleted, handle, nullptr) == InvalidEventQueue && sceVideoOutDeleteVblankEvent(deleted, handle) == InvalidEventQueue, "a deleted queue did not give the vblank pair INVALID_EVENT_QUEUE");
+    Require(sceVideoOutDeletePreVblankStartEvent(queue, handle) == InvalidEvent, "deleting a pre-vblank-start event that was never added did not return INVALID_EVENT");
+    Require(sceVideoOutAddPreVblankStartEvent(queue, handle, nullptr) == 0 && sceVideoOutDeletePreVblankStartEvent(queue, handle) == 0, "the pre-vblank-start event was not added and deleted");
+    Require(sceVideoOutDeletePreVblankStartEvent(queue, handle) == InvalidEvent, "deleting the pre-vblank-start event a second time did not return INVALID_EVENT");
+    Require(sceVideoOutAddPreVblankStartEvent(0, handle, nullptr) == InvalidEventQueue && sceVideoOutDeletePreVblankStartEvent(0, handle) == InvalidEventQueue, "queue 0 did not give the pre-vblank-start pair INVALID_EVENT_QUEUE");
+    Require(sceVideoOutAddPreVblankStartEvent(deleted, handle, nullptr) == InvalidEventQueue && sceVideoOutDeletePreVblankStartEvent(deleted, handle) == InvalidEventQueue, "a deleted queue did not give the pre-vblank-start pair INVALID_EVENT_QUEUE");
+    Require(sceVideoOutDeleteOutputModeEvent(queue, handle) == InvalidEvent, "deleting a output-mode event that was never added did not return INVALID_EVENT");
+    Require(sceVideoOutAddOutputModeEvent(queue, handle, nullptr) == 0 && sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "the output-mode event was not added and deleted");
+    Require(sceVideoOutDeleteOutputModeEvent(queue, handle) == InvalidEvent, "deleting the output-mode event a second time did not return INVALID_EVENT");
+    Require(sceVideoOutAddOutputModeEvent(0, handle, nullptr) == InvalidEventQueue && sceVideoOutDeleteOutputModeEvent(0, handle) == InvalidEventQueue, "queue 0 did not give the output-mode pair INVALID_EVENT_QUEUE");
+    Require(sceVideoOutAddOutputModeEvent(deleted, handle, nullptr) == InvalidEventQueue && sceVideoOutDeleteOutputModeEvent(deleted, handle) == InvalidEventQueue, "a deleted queue did not give the output-mode pair INVALID_EVENT_QUEUE");
+    Require(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == InvalidEvent, "deleting a VRR status event that was never added did not return INVALID_EVENT");
+    Require(sceVideoOutAddVrrActiveStatusEvent(queue, handle, nullptr) == 0 && sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == 0, "the VRR status event was not added and deleted");
+    Require(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == InvalidEvent, "deleting the VRR status event a second time did not return INVALID_EVENT");
+    Require(sceVideoOutAddVrrActiveStatusEvent(0, handle, nullptr) == InvalidEventQueue && sceVideoOutDeleteVrrActiveStatusEvent(0, handle) == InvalidEventQueue, "queue 0 did not give the VRR status pair INVALID_EVENT_QUEUE");
+    Require(sceVideoOutAddVrrActiveStatusEvent(deleted, handle, nullptr) == InvalidEventQueue && sceVideoOutDeleteVrrActiveStatusEvent(deleted, handle) == InvalidEventQueue, "a deleted queue did not give the VRR status pair INVALID_EVENT_QUEUE");
 
     Require(sceVideoOutClose(handle) == 0, "sceVideoOutClose failed");
     Require(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
