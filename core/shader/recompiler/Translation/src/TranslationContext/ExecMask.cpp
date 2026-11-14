@@ -15,12 +15,7 @@ IrU32 TranslationContext::hostExecWord(std::uint32_t half) {
     if (half != 0u && program.WaveSize() != 64u) {
         return word;
     }
-    auto active = ballotMask(IrU1(ir.ConstantBool(true)));
-    if (program.Resources().stage == IrShaderStage::Pixel) {
-        const IrU64 lanes(ir.ConstructU64(active[0].Value(), active[1].Value()));
-        active = extractU64(IrU64(ir.Emit(IrOpcode::WqmU64, IrType::U64, {&lanes.Value()})));
-    }
-    return IrU32(ir.BitwiseAnd(word.Value(), active[half].Value()));
+    return IrU32(ir.BitwiseAnd(word.Value(), ballotMask(IrU1(ir.ConstantBool(true)))[half].Value()));
 }
 
 IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask) {
@@ -147,6 +142,20 @@ std::array<IrU32, 2> TranslationContext::writeMask(const RdnaOperand& operand, I
             writeRawU32(operand, mask[0]);
             writeRawU32(offsetOperand(operand, 1u), mask[1]);
             return mask;
+    }
+}
+
+void TranslationContext::writeMaskLanes(const RdnaOperand& operand, IrU1 lane, IrU1 valid) {
+    switch (operand.kind) {
+        case RdnaOperandKind::ScalarRegister: {
+            const ScalarReg reg = static_cast<ScalarReg>(operand.reg);
+            ir.SetThreadBitScalarReg(reg, lane.Value());
+            ir.SetScalarMaskTag(reg, valid.Value());
+            break;
+        }
+        case RdnaOperandKind::ExecLo: ir.SetExec(lane.Value()); break;
+        case RdnaOperandKind::VccLo: ir.SetVcc(lane.Value()); break;
+        default: break;
     }
 }
 

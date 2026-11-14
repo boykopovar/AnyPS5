@@ -16,6 +16,10 @@
 
 - [Inspector and bmalloc placement new](../../../core/libs/prx/libSceJsc/src/PlacementNew.cpp) - tested on the host, not against console binaries; the console code for these 3 overloads is unverified. They return their location argument and ignore the size and tag, as the pinned [`FastMalloc.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastMalloc.h#L312-L339) and [`BMalloced.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/bmalloc/bmalloc/BMalloced.h#L30-L33) macros define them.
 
+- [WTF hash, hex and MediaTime helpers](../../../core/libs/prx/libSceJsc/include/WtfHelperExports.hpp) - the console WTF version and layouts are unverified; `appendHex` assumes the guest `std::pair<LChar*, unsigned>` is returned in RAX:RDX. The three exports follow pinned [SixCharacterHash.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/SixCharacterHash.cpp), [HexNumber.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/HexNumber.cpp) and [MediaTime.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/MediaTime.cpp), whose declarations match the mangled names. Null arguments, more hex digits than the buffer holds and a zero time scale that `compare` divides by throw where WebKit corrupts memory or faults.
+
+- [WTF object identifiers and random numbers](../../../core/libs/prx/libSceJsc/src/WtfRandom.cpp) (libSceJsc) - not compared with a console module. `cryptographicallyRandomNumber` reads host entropy instead of WebKit's [ARC4 generator](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/CryptographicallyRandomNumber.cpp#L139-L179), so values cannot match a console. The identifier counters follow [ObjectIdentifier.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/ObjectIdentifier.cpp#L32-L46) but both are atomic; `randomNumber` and `weakRandomUint32` follow [RandomNumber.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/RandomNumber.cpp#L38-L50) and [WeakRandom.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/WeakRandom.h#L44-L117), with a mutex where WebKit races.
+
 - [WTF string search](../../../core/libs/prx/libSceJsc/src/WtfStringSearch.cpp) - the console WTF version and string layout are unverified. The 18 `StringImpl` queries, `StringView::contains(const char*)` and `protocolIs` read a 24-byte `StringImpl` (8-bit flag `1 << 2`) and a 16-byte `StringView` as in pinned [StringImpl.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.h), whose declarations match the mangled names, and follow its [StringImpl.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.cpp), [StringCommon.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringCommon.h) and [URL.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/URL.cpp). Null `this`, reference, match function or C string arguments throw where WebKit faults.
 
 - [JSValueMakeString and JSObjectHasPropertyForKey](../../../core/libs/prx/libSceJsc/src/ApiBridge.cpp) (libSceJsc) - not compared with a console module. libSceJsc exports them, but contexts and values exist only in libSceNKWebKit, which registers its QuickJS implementations at load; unregistered, a call with a context throws. They follow [JSValueRef.cpp](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/JavaScriptCore/API/JSValueRef.cpp#L336-L347) and [JSObjectRef.cpp](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/JavaScriptCore/API/JSObjectRef.cpp#L386-L406): a null context gives null or false, a null string makes the empty string, the key goes through property-key conversion and the lookup follows prototypes and proxy traps, and a thrown exception goes to `exception` and gives false. A null object or key gives false, as in the libSceNKWebKit `ForKey` siblings. Closes when: compared with a console module.
@@ -56,7 +60,7 @@
   - `fj3HITuKDPs`
   - `uF3DZ2xR1sA`
 
-- [Additional callable exports](../../../core/libs/prx/libSceJsc/Export.cpp) - 330 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e699987524d8485a9de9740280cfe4c1/09c89f4d64a17da12485e0eb637620ced4f6eeb2) from two version-labelled images (SHA-256 `d2a5f8a8807f23cb71170a5d3b779a57636f5a3480d92955e4255545ffe1e97e`). The labels are not authenticated. Apart from the 13 register-set queries and constructors and the two `Deprecated::ScriptValue` getters in the firmware 13.42 entries below, prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Shared WebKit exports require separate loader analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceJsc/Export.cpp) - 322 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e699987524d8485a9de9740280cfe4c1/09c89f4d64a17da12485e0eb637620ced4f6eeb2) from two version-labelled images (SHA-256 `d2a5f8a8807f23cb71170a5d3b779a57636f5a3480d92955e4255545ffe1e97e`). The labels are not authenticated. Apart from the 13 register-set queries and constructors and the two `Deprecated::ScriptValue` getters in the firmware 13.42 entries below, prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Shared WebKit exports require separate loader analysis.
 
 | Name | NID |
 | --- | --- |
@@ -274,26 +278,20 @@
 | `_ZN3WTF11Persistence5CoderISt5arrayIhLm20EEE6encodeERNS0_7EncoderERKS3_` | `jiOeDsjiDkY` |
 | `_ZN3WTF11emptyStringEv` | `yDG0A0GSJX0` |
 | `_ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_deleteIS1_EE` | `G4Jr+rsslPg` |
-| `_ZN3WTF12randomNumberEv` | `f+79V4V+sLE` |
 | `_ZN3WTF14AtomStringImpl3addEPKDs` | `CbzhOF12EMk` |
 | `_ZN3WTF14AtomStringImpl3addEPKh` | `HykcoTLLx5o` |
 | `_ZN3WTF14FileSystemImpl17openTemporaryFileERKNS_6StringERiS3_` | `kMydohzpE+Q` |
 | `_ZN3WTF14FileSystemImpl24pathByAppendingComponentERKNS_6StringES3_` | `h3p-IDytuAk` |
 | `_ZN3WTF15FilePrintStream4openEPKcS2_` | `g0vmm9VmCFY` |
-| `_ZN3WTF16weakRandomUint32Ev` | `FPJ7KlJEPzo` |
 | `_ZN3WTF17PrivateSymbolImpl16createNullSymbolEv` | `3cRqbsC4oQE` |
 | `_ZN3WTF17TextBreakIteratorC1ENS_10StringViewENS0_4ModeERKNS_10AtomStringE` | `E0+yxDU5iW8` |
 | `_ZN3WTF17TextBreakIteratorC2ENS_10StringViewENS0_4ModeERKNS_10AtomStringE` | `Up0zYyxuRLQ` |
 | `_ZN3WTF19initializeThreadingEv` | `9zPBIupchgA` |
-| `_ZN3WTF20ObjectIdentifierBase26generateIdentifierInternalEv` | `7Zihjr8aD+Y` |
-| `_ZN3WTF20ObjectIdentifierBase36generateThreadSafeIdentifierInternalEv` | `l9kqixNsNq4` |
 | `_ZN3WTF21LineBreakIteratorPool10sharedPoolEv` | `LVut7lXu51g` |
 | `_ZN3WTF23openLatin1UTextProviderEPNS_15UTextWithBufferEPKhjP10UErrorCode` | `RxRtEFonL5U` |
 | `_ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStringEPKDsjNS_21LineBreakIteratorModeE` | `OmR6AUTosbU` |
 | `_ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator` | `mqVRQv4SBS4` |
 | `_ZN3WTF25createCanonicalUUIDStringEv` | `i1pLagnFZ5M` |
-| `_ZN3WTF29cryptographicallyRandomNumberEv` | `wMu+dIbw7c0` |
-| `_ZN3WTF31integerToSixCharacterHashStringEj` | `bhNTXZsyzkE` |
 | `_ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE` | `pF6MaJY4tLM` |
 | `_ZN3WTF6Logger9observersEv` | `aQHUuJt0YS8` |
 | `_ZN3WTF6String23make16BitFrom8BitSourceEPKhm` | `1dq4iQIG88U` |
@@ -318,7 +316,6 @@
 | `_ZN3WTF7Unicode18convertUTF8ToUTF16EPKcS2_PPDsS3_Pb` | `UjTDE3AQCRg` |
 | `_ZN3WTF7Unicode19convertLatin1ToUTF8EPPKhS2_PPcS4_` | `AJ7+0UjKEww` |
 | `_ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2_PPDsS3_Pb` | `PqZUVw-1dv0` |
-| `_ZN3WTF8Internal9appendHexEPhjmjNS_17HexConversionModeE` | `J9Fo8pqmVZ4` |
 | `_ZN3WTF8JSONImpl5Value12escapeStringERNS_13StringBuilderENS_10StringViewE` | `ewZNP1Jwrx8` |
 | `_ZN3WTF8pageMaskEv` | `rIKEui9oRJg` |
 | `_ZN7bmalloc11AllIsoHeapsC1ERKSt11scoped_lockIJNS_5MutexEEE` | `LZqSlU-3M0s` |
@@ -385,7 +382,6 @@
 | `_ZNK3WTF6String4utf8Ev` | `s+42ELWxjCI` |
 | `_ZNK3WTF6String5splitERKS0_` | `i1zdtddvwdE` |
 | `_ZNK3WTF6String9substringEjj` | `aTSGWfAX47k` |
-| `_ZNK3WTF9MediaTimeneERKS0_` | `oJV+0NA8pss` |
 | `_ZNK9Inspector15RemoteInspector18clientCapabilitiesEv` | `7HwcP1R63Eo` |
 | `_ZNK9Inspector18InjectedScriptBase27callFunctionWithEvalEnabledERN10Deprecated18ScriptFunctionCallE` | `69Ng45oazLY` |
 | `_ZNK9Inspector18InjectedScriptHost16savedResultAliasEv` | `1EYcTwBoE4w` |
