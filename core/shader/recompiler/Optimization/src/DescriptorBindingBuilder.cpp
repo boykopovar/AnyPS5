@@ -27,9 +27,13 @@ static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <
 static_assert(PipelineSpecialization::UnnormalizedBaseLevelBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MirrorUnnormalizedBase);
 static_assert(PipelineSpecialization::MirrorUnnormalizedBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MinLodBase);
 static_assert(PipelineSpecialization::MinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::SamplerLodBiasBase);
-static_assert(PipelineSpecialization::SamplerLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::FmaskFormatBase);
+static_assert(PipelineSpecialization::SamplerLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::GatherLodBase);
+static_assert(PipelineSpecialization::GatherLodBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::GatherLodBiasBase);
+static_assert(PipelineSpecialization::GatherLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::GatherImageMinLodBase);
+static_assert(PipelineSpecialization::GatherImageMinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::FmaskFormatBase);
 static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
-static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
+static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::GatherImageShapeBase);
+static_assert(PipelineSpecialization::GatherImageShapeBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 static_assert(PipelineSpecialization::ImageComponentBase + ShaderInfo::MaxImages <= PipelineSpecialization::NormalizedImageBase);
 
 namespace {
@@ -454,6 +458,33 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             if (beyondThreshold && pair.sampler == index && info.images.at(pair.image).cube) fail("a guest sampler LOD bias beyond the sampler limit on a cube image is not implemented");
         }
         if (AppliesLodBiasInShader(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::SamplerLodBiasBase + index, beyondThreshold ? std::bit_cast<std::uint32_t>(bias) : 0u});
+        if ((info.samplers[index].uses & SamplerUseGatherLod) != 0u && info.samplers[index].table == NoTable) {
+            const auto& words = snapshot.samplers.at(index).dwords;
+            const auto mipNone = ((words[2] >> 26u) & 3u) == 0u;
+            const auto state = (words[1] & 0xffffffu) | ((words[0] & 0x3fu) << 24u) | (mipNone ? 1u << 30u : 0u);
+            const auto bias = static_cast<float>(static_cast<std::int32_t>(((words[2] & 0x3fffu) ^ 0x2000u) - 0x2000u)) / 256.0f;
+            plan.specialization.push_back({PipelineSpecialization::GatherLodBase + index, state});
+            plan.specialization.push_back({PipelineSpecialization::GatherLodBiasBase + index, std::bit_cast<std::uint32_t>(bias)});
+        }
+    }
+    for (const auto& pair : info.sampledPairs) {
+        if ((info.samplers.at(pair.sampler).uses & SamplerUseGatherLod) == 0u || info.images.at(pair.image).table != NoTable) continue;
+        const auto& words = snapshot.images.at(pair.image).dwords;
+        const auto minLod = (words[1] >> 8u) & 0xfffu;
+        const auto base = ((words[3] >> 12u) & 0xfu) * 256u;
+        const PipelineSpecializationConstant constant{PipelineSpecialization::GatherImageMinLodBase + pair.image, minLod > base ? minLod - base : 0u};
+        if (std::ranges::find(plan.specialization, constant) == plan.specialization.end()) plan.specialization.push_back(constant);
+        const auto width = (((words[1] >> 30u) & 0x3u) | ((words[2] & 0xfffu) << 2u)) + 1u;
+        const auto height = ((words[2] >> 14u) & 0x3fffu) + 1u;
+        const auto baseLevel = (words[3] >> 12u) & 0xfu;
+        const auto lastLevel = (words[3] >> 16u) & 0xfu;
+        const auto maxMip = (words[5] >> 4u) & 0xfu;
+        const auto viewLast = baseLevel <= maxMip ? std::min(lastLevel, maxMip) : lastLevel;
+        const auto levels = viewLast >= baseLevel ? viewLast - baseLevel + 1u : 1u;
+        const auto baseWidth = std::max(width >> baseLevel, 1u);
+        const auto baseHeight = std::max(height >> baseLevel, 1u);
+        const PipelineSpecializationConstant shape{PipelineSpecialization::GatherImageShapeBase + pair.image, (levels - 1u) | ((baseWidth - 1u) << 4u) | ((baseHeight - 1u) << 18u)};
+        if (std::ranges::find(plan.specialization, shape) == plan.specialization.end()) plan.specialization.push_back(shape);
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
