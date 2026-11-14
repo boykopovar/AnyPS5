@@ -144,6 +144,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Calculated length ref-counting](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - WebCore::Length::ref and WebCore::Length::deref throw through NotImplemented_nid_no_patch; they manage ref-counts in the WebCore style engine's global CalculationValueMap, whose internal runtime state is not initialized or pinned.
 - [JSON serialisation](../../../core/libs/prx/libSceNKWebKit/src/WtfJson.cpp) (libSceNKWebKit) - the `writeJSON` virtual slot of `WTF::JSONImpl::Value` and of `ArrayBase` throws through `NotImplemented_nid_no_patch`, like the exported `writeJSON` handlers: serialising a value needs WTF's `StringBuilder` and its double-conversion number formatting, which are not implemented.
 - [Filter operations](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - the `WebCore::FilterOperation` subclasses (Default, Blur, DropShadow, InvertLightness, BasicColorMatrix, BasicComponentTransfer) stay stubs: their objects are dispatched through the module's own vtables, which this library does not provide.
+- [JSC::PropertyDescriptor](../../../core/libs/prx/libSceNKWebKit/src/PropertyDescriptor.cpp) (libSceNKWebKit) - the 32-byte layout in [PropertyDescriptorAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/PropertyDescriptorAbi.hpp) follows [PropertyDescriptor.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/runtime/PropertyDescriptor.h) and is unverified against the PS5 module. `JSValue` arguments are taken as their encoded 64-bit word. `configurable`, `setDescriptor` and `setAccessorDescriptor` still throw `NotImplemented_nid_no_patch`.
 - [WebCore::CredentialBase](../../../core/libs/prx/libSceNKWebKit/src/CredentialBase.cpp) (libSceNKWebKit) - the 24-byte layout in [CredentialBaseAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/CredentialBaseAbi.hpp) (two `WTF::String`, then a 32-bit `CredentialPersistence`) follows [CredentialBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/CredentialBase.h) and assumes the generic [Credential.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/Credential.h) (no Cocoa or Soup fields); it is unverified against the PS5 module. The 10 exports follow [CredentialBase.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/CredentialBase.cpp).
 - [Local and empty-document scheme queries](../../../core/libs/prx/libSceNKWebKit/src/Mime.cpp) (libSceNKWebKit) - not compared with a console module: the device's WebKit revision is unverified. The 3.20 `LegacySchemeRegistry::shouldTreatURLSchemeAsLocal` and `shouldLoadURLSchemeAsEmptyDocument` follow [LegacySchemeRegistry.cpp](https://github.com/WebKit/WebKit/blob/73a35b43be7ae44c084885bd3fa4b403e59723c8/Source/WebCore/platform/LegacySchemeRegistry.cpp#L284-L357) of August 2020 and read the host scheme lists the `registerURLSchemeAsLocal` and `registerURLSchemeAsEmptyDocument` exports fill, which start with `file` and `about`; a null scheme answers false and names compare without ASCII case. Closes when: compared with a console module.
 - [WebCore::SecurityOrigin](../../../core/libs/prx/libSceNKWebKit/src/SecurityOrigin.cpp) (libSceNKWebKit) - only `isLocalHostOrLoopbackIPAddress` is implemented, from [SecurityOrigin.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/SecurityOrigin.cpp); the `StringView` by-value convention is that of the other `WTF::StringView` exports and is unverified. `create(URL)`, `createFromString`, `toString`, `toRawString`, `isolatedCopy`, `isSameOriginAs`, `isSameSchemeHostPort`, `equal`, `domainForCachePartition` and `isMatchingRegistrableDomainSuffix` still throw `NotImplemented_nid_no_patch`: they need the `SecurityOriginData` variant and opaque-origin identifier layout, URL parsing, `LegacySchemeRegistry`, `OriginAccessEntry` and the public suffix list, none of which are implemented or verified.
@@ -1018,14 +1019,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC18IncrementalSweeper13startSweepingERNS_4HeapE` | `giqKNgVN4+w` |
 | `_ZN3JSC18IncrementalSweeperC1EPNS_4HeapE` | `zQmtzzBK6wQ` |
 | `_ZN3JSC18IncrementalSweeperC2EPNS_4HeapE` | `2X3KbR1J6-c` |
-| `_ZN3JSC18PropertyDescriptor11setWritableEb` | `TPYlzWierqc` |
-| `_ZN3JSC18PropertyDescriptor12setUndefinedEv` | `KJAQlWsQKf8` |
 | `_ZN3JSC18PropertyDescriptor13setDescriptorENS_7JSValueEj` | `6yS9uNax8IU` |
-| `_ZN3JSC18PropertyDescriptor13setEnumerableEb` | `UGdSsj17Fm8` |
-| `_ZN3JSC18PropertyDescriptor15setConfigurableEb` | `6kO8OVYUL7U` |
 | `_ZN3JSC18PropertyDescriptor21setAccessorDescriptorEPNS_12GetterSetterEj` | `1U1HXAR-PdU` |
-| `_ZN3JSC18PropertyDescriptor9setGetterENS_7JSValueE` | `9tHTHaoaTRU` |
-| `_ZN3JSC18PropertyDescriptor9setSetterENS_7JSValueE` | `nJ0Pu5MzLBw` |
 | `_ZN3JSC19HeapSnapshotBuilder11analyzeNodeEPNS_6JSCellE` | `6+Ilj5seAW8` |
 | `_ZN3JSC19HeapSnapshotBuilder13buildSnapshotEv` | `KJoz6a9hUJQ` |
 | `_ZN3JSC19HeapSnapshotBuilder15setLabelForCellEPNS_6JSCellERKN3WTF6StringE` | `WudmiYuePRQ` |
@@ -4796,10 +4791,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK3JSC18BytecodeCacheError7isValidEv` | `uBoKXflFvyo` |
 | `_ZNK3JSC18BytecodeCacheError7messageEv` | `tzLyXXPWt64` |
 | `_ZNK3JSC18GCActivityCallback9isEnabledEv` | `CAOt1d2AT44` |
-| `_ZNK3JSC18PropertyDescriptor10enumerableEv` | `8VxnZ-Os8hU` |
-| `_ZNK3JSC18PropertyDescriptor16isDataDescriptorEv` | `TO6C8Mw-kjo` |
-| `_ZNK3JSC18PropertyDescriptor20isAccessorDescriptorEv` | `JlMrGMLBCAA` |
-| `_ZNK3JSC18PropertyDescriptor8writableEv` | `cStwmF0rgi8` |
 | `_ZNK3JSC19CacheableIdentifier4dumpERN3WTF11PrintStreamE` | `BER1Mhcfk28` |
 | `_ZNK3JSC19ControlFlowProfiler8dumpDataEv` | `KrAUJMghj1A` |
 | `_ZNK3JSC19HeapSnapshotBuilder18descriptionForCellEPNS_6JSCellE` | `nRR4MuQjSqY` |
