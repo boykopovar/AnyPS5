@@ -1,6 +1,8 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -16,6 +18,15 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -168,6 +179,10 @@ void CheckPortWrappers() {
     Require(Open(parameters, &id) == OUT_OF_RESOURCES && id == 7, "open ex takes the only port");
     Require(sceAudio3dPortCreate(0x100, 0, 0, &id) == INVALID_PARAMETER && id == 7, "create is checked before the port count");
     Require(sceAudio3dPortGetStatus(1, &status, nullptr, 0) == INVALID_PORT && status == 7, "status of port 1");
+    errno = 71;
+    Require(sceAudio3dPortGetStatus(0, reinterpret_cast<uint32_t*>(0x10), nullptr, 0) == INVALID_PARAMETER, "unwritable status");
+    Require(sceAudio3dPortGetStatus(0, nullptr, reinterpret_cast<char*>(0x10), 16) == INVALID_PARAMETER, "unwritable description");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dPortGetStatus(0, nullptr, nullptr, 0) == 0, "status without outputs");
     char description[32];
     std::memset(description, 'x', sizeof(description));
@@ -190,6 +205,7 @@ void CheckPortWrappers() {
 void CheckAttributes() {
     float value = 0.5f;
     int flag = 1;
+    const void* const unreadable = reinterpret_cast<const void*>(std::uintptr_t{0x10});
     constexpr std::uint32_t supported[]{0x10001, 0x10002, 0x10003};
     std::uint32_t num_attributes = 99;
     Require(sceAudio3dPortGetAttributesSupported(0, nullptr, &num_attributes) == 0 && num_attributes == 3, "null output reports the supported attribute count");
@@ -214,6 +230,12 @@ void CheckAttributes() {
     Require(sceAudio3dPortSetAttribute(0, 0x10003, nullptr, 4) == INVALID_PARAMETER, "height aware needs a value");
     Require(sceAudio3dPortSetAttribute(0, 0x10004, &value, 4) == INVALID_PARAMETER, "unknown attribute");
     Require(sceAudio3dPortSetAttribute(0, 0x10001, &value, 8) == INVALID_PARAMETER, "a float attribute is 4 bytes");
+    Require(sceAudio3dPortSetAttribute(1, 0x10001, unreadable, 4) == INVALID_PORT, "invalid port precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10004, unreadable, 4) == INVALID_PARAMETER, "unknown attribute precedes the float pointer");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 8) == INVALID_PARAMETER, "float size precedes the pointer read");
+    Require(sceAudio3dPortSetAttribute(0, 0x10003, unreadable, 4) == 0, "height aware does not read the value");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 4) == INVALID_PARAMETER, "unreadable reverb value");
+    Require(sceAudio3dPortSetAttribute(0, 0x10002, unreadable, 4) == INVALID_PARAMETER, "unreadable spread radius");
     const auto set_float = [](std::uint32_t attribute_id, float level) {
         return sceAudio3dPortSetAttribute(0, attribute_id, &level, sizeof(level));
     };
@@ -235,6 +257,9 @@ void CheckObjects() {
     std::uint32_t id = 7;
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     Require(sceAudio3dObjectReserve(0, nullptr) == INVALID_PARAMETER, "null object id");
+    errno = 71;
+    Require(sceAudio3dObjectReserve(0, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable object id");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dObjectReserve(1, &object) == INVALID_PORT && object == 7, "reserve on port 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "first object is 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 2, "second object is 2");
@@ -261,6 +286,10 @@ void CheckQueue() {
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     CheckAttributes();
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
+    errno = 71;
+    Require(sceAudio3dPortGetQueueLevel(0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == INVALID_PARAMETER, "unwritable level");
+    Require(sceAudio3dPortGetQueueLevel(0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable available");
+    Require(errno == 71, "errno preserved");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
     std::uint32_t level = 99;
@@ -655,11 +684,15 @@ int RunAsPs4Process(const char* program) {
         file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
     }
 #ifdef _WIN32
-    const std::string command = "\"cd /d \"" + directory.string() + "\" && \"" + program + "\" ps4-process\"";
+    static_cast<void>(program);
+    std::wstring executable(32768, L'\0');
+    executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
+    const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-process\"";
+    const int status = _wsystem(command.c_str());
 #else
     const std::string command = "cd \"" + directory.string() + "\" && \"" + program + "\" ps4-process";
-#endif
     const int status = std::system(command.c_str());
+#endif
     std::filesystem::remove_all(directory);
     return status;
 }

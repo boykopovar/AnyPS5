@@ -3,6 +3,7 @@ import io
 import json
 import os
 import ctypes
+import shutil
 import stat
 import subprocess
 import sys
@@ -48,8 +49,8 @@ class PublicHeaderPackageTests(unittest.TestCase):
         (self.libs / "Common.hpp").write_text('struct Common {};\n', encoding="utf-8")
         self.umbrella.with_name("Private.hpp").write_text('#include <vendor.h>\n', encoding="utf-8")
 
-    def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
-        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in (self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp")}
+    def assert_archive_bytes(self, headers):
+        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in headers}
         expected["LICENSE"] = (self.source / "LICENSE").read_bytes()
         package_headers.package(self.source, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
@@ -57,6 +58,24 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(len(archive.namelist()), len(expected))
         with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
             self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
+        self.assert_archive_bytes((self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp"))
+
+    def test_bom_prefixed_umbrella_and_nested_header_keep_dependencies_and_original_bytes(self):
+        nested = self.umbrella.with_name("Nested.hpp")
+        nested_dep = self.umbrella.with_name("NestedDep.hpp")
+        nested.write_text('#include "NestedDep.hpp"\n', encoding="utf-8")
+        nested_dep.write_text('struct NestedDep {};\n', encoding="utf-8")
+        self.api.write_text('#include "Nested.hpp"\n', encoding="utf-8")
+        for header in (self.umbrella, nested):
+            with self.subTest(bom_header=header.name):
+                original = header.read_bytes()
+                header.write_bytes(b"\xef\xbb\xbf" + original)
+                try:
+                    self.assert_archive_bytes((self.umbrella, self.api, nested, nested_dep, self.libs / "Common.hpp"))
+                finally:
+                    header.write_bytes(original)
 
     def test_forbidden_or_missing_dependencies_preserve_existing_archives(self):
         self.output.mkdir()
@@ -69,6 +88,18 @@ class PublicHeaderPackageTests(unittest.TestCase):
                     package_headers.package(self.source, self.output, "v1")
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous")
+
+    def test_bom_prefixed_rejected_directives_preserve_existing_archives(self):
+        self.output.mkdir()
+        previous = {name: self.output / name for name in ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")}
+        for path in previous.values():
+            path.write_bytes(b"previous " + path.name.encode("ascii"))
+        for directive in ('#include "Missing.hpp"', '#include <vendor.h>', '#include "../../../3rdparty/vendor.hpp"', '#include MACRO_HEADER', '#include_next <vendor.h>'):
+            with self.subTest(directive=directive):
+                self.api.write_bytes(b"\xef\xbb\xbf" + (directive + "\n").encode("utf-8"))
+                with self.assertRaises(RuntimeError):
+                    package_headers.package(self.source, self.output, "v1")
+                self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, {name: b"previous " + name.encode("ascii") for name in previous})
 
     def test_ambiguous_quoted_include_is_rejected(self):
         (self.libs / "Api.hpp").write_text("", encoding="utf-8")
@@ -85,6 +116,12 @@ class PublicHeaderPackageTests(unittest.TestCase):
     def test_comments_and_raw_strings_do_not_add_dependencies(self):
         self.api.write_text('/*\n#include "Missing.hpp"\n*/\nconst char* text = R"test(\n#include "AlsoMissing.hpp"\n)test";\n', encoding="utf-8")
         self.assertEqual(len(package_headers.public_headers(self.source)), 3)
+
+    def test_include_next_is_rejected(self):
+        self.api.write_text('#include_next <vendor.h>\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Unsupported include_next"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
 
     def test_external_symlink_is_rejected(self):
         external = self.root / "external.hpp"
@@ -114,6 +151,177 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
         self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
 
+    def test_digraph_include_directives_packaged_with_byte_parity(self):
+        digraph_nested = self.umbrella.with_name("DigraphNested.hpp")
+        digraph_nested.write_text('\t%: \tinclude <Common.hpp>\n%:include <vector>\n', encoding="utf-8")
+        self.api.write_text('  %:   include "DigraphNested.hpp"\n%:include <Common.hpp>\n#include "Windows.hpp"\n', encoding="utf-8")
+        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in (self.umbrella, self.api, digraph_nested, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp")}
+        expected["LICENSE"] = (self.source / "LICENSE").read_bytes()
+        package_headers.package(self.source, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+            self.assertEqual({name: archive.read(name) for name in archive.namelist()}, expected)
+            self.assertEqual(len(archive.namelist()), len(expected))
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_digraph_forbidden_or_missing_dependencies_preserve_existing_archives(self):
+        self.output.mkdir()
+        previous = self.output / "prx-headers-v1.zip"
+        previous.write_bytes(b"previous")
+        for directive in ('%:include "Missing.hpp"', '%: include <vendor.h>', '  %:  include "../../../3rdparty/vendor.hpp"', '%:include MACRO_HEADER', '%:include "invalid:name"', '%:include "c:\\invalid.hpp"'):
+            with self.subTest(directive=directive):
+                self.api.write_text(directive + "\n", encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    package_headers.package(self.source, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous")
+
+    def test_digraph_in_comments_and_strings_do_not_add_dependencies(self):
+        self.api.write_text('// %:include "Missing.hpp"\n/*\n%:include "Missing.hpp"\n*/\nconst char* text = R"test(\n%:include "AlsoMissing.hpp"\n)test";\nconst char* str = "%:include <Missing.hpp>";\n', encoding="utf-8")
+        self.assertEqual(len(package_headers.public_headers(self.source)), 3)
+
+    def test_digraph_include_next_is_rejected(self):
+        self.api.write_text('%:include_next <vendor.h>\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Unsupported include_next"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
+    def test_archive_promotion_failure_restores_the_pair(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+
+        def replace(source, target):
+            if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                raise OSError("second promotion failed")
+            return original_replace(source, target)
+
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                output.mkdir()
+                previous = {}
+                if existing:
+                    for name in names:
+                        data = ("previous " + name).encode()
+                        (output / name).write_bytes(data)
+                        previous[name] = data
+                with patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                    package_headers.package(self.source, output, "v1")
+                for name in names:
+                    path = output / name
+                    if existing:
+                        self.assertEqual(path.read_bytes(), previous[name])
+                    else:
+                        self.assertFalse(path.exists())
+                self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
+
+    def test_archive_restore_failure_preserves_unrestored_backup(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+            previous = {}
+            for name in names:
+                data = ("previous " + name).encode()
+                (output / name).write_bytes(data)
+                previous[name] = data
+
+            def replace(source, target):
+                if (
+                    source.name == names[1]
+                    and source.parent.name.startswith(".headers-")
+                    and source.parent.name != "previous"
+                ):
+                    raise OSError("second promotion failed")
+                if source.name == names[1] and source.parent.name == "previous":
+                    raise PermissionError("tar restore failed")
+                return original_replace(source, target)
+
+            with patch.object(Path, "replace", replace), self.assertRaisesRegex(
+                RuntimeError, "second promotion failed.*unrestored backups .* retained"
+            ) as raised:
+                package_headers.package(self.source, output, "v1")
+
+            self.assertIsInstance(raised.exception.__cause__, PermissionError)
+            self.assertRegex(str(raised.exception.__cause__), "tar restore failed")
+            self.assertIn(names[1], str(raised.exception))
+            self.assertEqual((output / names[0]).read_bytes(), previous[names[0]])
+            self.assertFalse((output / names[1]).exists())
+            recovery = [path for path in output.glob(".headers-*/previous") if path.is_dir()]
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual((recovery[0] / names[1]).read_bytes(), previous[names[1]])
+            self.assertIn(str(recovery[0]), str(raised.exception))
+
+    def test_archive_removal_failure_reports_leftover_and_retains_staging(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+        original_unlink = Path.unlink
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+
+            def replace(source, target):
+                if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                    raise OSError("second promotion failed")
+                return original_replace(source, target)
+
+            def unlink(path, missing_ok=False):
+                if path == output / names[0]:
+                    raise PermissionError("promoted zip is locked")
+                return original_unlink(path, missing_ok=missing_ok)
+
+            with patch.object(Path, "replace", replace), patch.object(Path, "unlink", unlink), self.assertRaisesRegex(
+                RuntimeError, "second promotion failed.*promoted archives could not be removed.*remaining staged archives retained"
+            ) as raised:
+                package_headers.package(self.source, output, "v1")
+
+            self.assertIsInstance(raised.exception.__cause__, PermissionError)
+            self.assertIn(str(output / names[0]), str(raised.exception))
+            self.assertTrue((output / names[0]).is_file())
+            self.assertFalse((output / names[1]).exists())
+            staging = [path for path in output.glob(".headers-*") if path.is_dir()]
+            self.assertEqual(len(staging), 1)
+            self.assertTrue((staging[0] / names[1]).is_file())
+            self.assertIn(str(staging[0]), str(raised.exception))
+
+
+class FontconfigLicenseInstallTests(unittest.TestCase):
+    def test_cmake_installs_both_notices_with_original_bytes(self):
+        cmake = shutil.which("cmake")
+        ninja = shutil.which("ninja")
+        compiler = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
+        if not cmake or not ninja or not compiler:
+            self.skipTest("CMake, Ninja and a C++ compiler are required")
+        root = Path(__file__).resolve().parents[2]
+        library = root / "core/libs/prx/libfontconfig"
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            build = Path(temporary) / "build"
+            install = Path(temporary) / "install"
+            copying = source / "3rdparty/fontconfig/COPYING"
+            copying.parent.mkdir(parents=True)
+            copying.write_bytes("Fontconfig notice ©\r\n".encode("utf-8"))
+            harness = '\n'.join([
+                "cmake_minimum_required(VERSION 3.22.1)",
+                "project(FontconfigNotices LANGUAGES CXX)",
+                "set(BUILD_TESTING OFF)",
+                "function(configure_windows_unwind target)",
+                "endfunction()",
+                f'add_subdirectory("{library.as_posix()}" fontconfig)',
+            ])
+            (source / "CMakeLists.txt").write_text(harness, encoding="utf-8")
+            configured = subprocess.run([cmake, "-S", str(source), "-B", str(build), "-G", "Ninja",
+                                         f"-DCMAKE_CXX_COMPILER={compiler}"], capture_output=True, text=True)
+            self.assertEqual(configured.returncode, 0, configured.stdout + configured.stderr)
+            installed = subprocess.run([cmake, "--install", str(build), "--prefix", str(install)], capture_output=True, text=True)
+            self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+            self.assertEqual((install / "licenses/fontconfig/COPYING").read_bytes(), copying.read_bytes())
+            self.assertEqual((install / "licenses/fontconfig/Unicode-LICENSE.txt").read_bytes(),
+                             (library / "Unicode-LICENSE.txt").read_bytes())
+
 
 class ReleasePackageTests(unittest.TestCase):
     def setUp(self):
@@ -129,6 +337,11 @@ class ReleasePackageTests(unittest.TestCase):
         libraries.mkdir(parents=True)
         self.library = libraries / "libc.prx"
         self.library.write_bytes(b"library bytes")
+        self.allocator = libraries / "libmimalloc.so"
+        self.allocator.write_bytes(b"allocator bytes")
+        self.allocator_license = self.source / "3rdparty/mimalloc/LICENSE"
+        self.allocator_license.parent.mkdir(parents=True)
+        self.allocator_license.write_bytes(b"allocator license")
         (libraries / "unpatched").mkdir()
         self.unpatched = libraries / "unpatched/libc.prx"
         self.unpatched.write_bytes(b"original exports")
@@ -148,10 +361,10 @@ class ReleasePackageTests(unittest.TestCase):
         before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (self.library, self.unpatched, self.implib)}
         package_release.package("linux", self.build, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-linux-unpatched-v1.zip") as archive:
-            self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+            self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.read("libs/libc.prx"), b"original exports")
         with tarfile.open(self.output / "prx-linux-unpatched-v1.tar.gz") as archive:
-            self.assertEqual(archive.getnames(), ["libs/libc.prx"])
+            self.assertEqual(archive.getnames(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
         for path, (content, timestamp) in before.items():
             self.assertEqual(path.read_bytes(), content)
@@ -197,6 +410,61 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous release")
 
+    def test_linux_archives_include_mimalloc(self):
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                self.assertEqual(archive.read("libs/libmimalloc.so"), b"allocator bytes")
+            with tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                self.assertEqual(archive.extractfile("libs/libmimalloc.so").read(), b"allocator bytes")
+
+    def test_linux_package_without_mimalloc_preserves_existing_outputs(self):
+        self.allocator.unlink()
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        with self.assertRaisesRegex(RuntimeError, "Missing or empty release file: .*libmimalloc\\.so"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual(list(self.output.iterdir()), [previous])
+        self.assertEqual(previous.read_bytes(), b"previous release")
+
+    def test_mimalloc_license_in_archives(self):
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                self.assertEqual(archive.read("libs/licenses/mimalloc.txt"), b"allocator license")
+            with tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                self.assertEqual(archive.extractfile("libs/licenses/mimalloc.txt").read(), b"allocator license")
+
+    def test_package_without_mimalloc_license_preserves_existing_outputs(self):
+        self.allocator_license.unlink()
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        with self.assertRaisesRegex(RuntimeError, r"Missing or empty release file: .*mimalloc[\\/]LICENSE"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual(list(self.output.iterdir()), [previous])
+        self.assertEqual(previous.read_bytes(), b"previous release")
+
+    def test_harfbuzz_release_includes_both_redistribution_notices(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library bytes")
+        notices = {"COPYING": ("harfbuzz.txt", b"HarfBuzz notice"), "src/ms-use/COPYING": ("harfbuzz-ms-use.txt", b"Microsoft USE notice")}
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty/harfbuzz" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.namelist())
+                self.assertEqual(archive.read("libs/licenses/" + name), content)
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.getnames())
+                self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
     def test_ajm_vibration_decoder_license_in_archives(self):
         (self.source / "core/libs/prx/libSceAjm.native").mkdir()
         (self.unpatched.parent / "libSceAjm.native.prx").write_bytes(b"unpatched library")
@@ -226,6 +494,85 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
             self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
 
+    def test_cairo_and_pixman_licenses_in_archives(self):
+        (self.source / "core/libs/prx/libcairo").mkdir()
+        (self.unpatched.parent / "libcairo.prx").write_bytes(b"unpatched library")
+        (self.build / "core/libs/libs/libcairo.prx").write_bytes(b"cairo")
+        notices = {
+            "cairo/COPYING": ("cairo.txt", b"cairo notice"),
+            "cairo/COPYING-LGPL-2.1": ("cairo-lgpl-2.1.txt", b"cairo LGPL"),
+            "cairo/COPYING-MPL-1.1": ("cairo-mpl-1.1.txt", b"cairo MPL"),
+            "pixman/COPYING": ("pixman.txt", b"pixman notice"),
+        }
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.read("libs/licenses/" + name), content)
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
+    def fontconfig_notices(self):
+        (self.source / "core/libs/prx/libfontconfig").mkdir()
+        (self.unpatched.parent / "libfontconfig.prx").write_bytes(b"unpatched Fontconfig library")
+        (self.library.parent / "libfontconfig.prx").write_bytes(b"Fontconfig library")
+        notices = {
+            self.source / "3rdparty/fontconfig/COPYING": ("fontconfig.txt", "Fontconfig notice ©\r\n".encode("utf-8")),
+            self.source / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt": ("fontconfig-unicode.txt", b"Unicode permission notice\n"),
+        }
+        for path, (_, content) in notices.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        return notices
+
+    def test_fontconfig_notices_in_patched_and_unpatched_archives(self):
+        notices = self.fontconfig_notices()
+        runtime = self.root / "toolchain"
+        runtime.mkdir()
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            (runtime / name).write_bytes(b"runtime")
+        for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            (self.library.parent / name).write_bytes(b"allocator")
+        (self.build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=" + (runtime / "g++.exe").as_posix() + "\n", encoding="utf-8")
+        (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
+        fontconfig_implib = self.implib.parent / "libfontconfig.dll.a"
+        fontconfig_implib.write_bytes(b"Fontconfig import archive")
+        self.manifest.write_text(self.manifest.read_text(encoding="utf-8") + "libfontconfig=" + fontconfig_implib.as_posix() + "\n", encoding="utf-8")
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                package_release.package(platform, self.build, self.output, "v1")
+                for variant in ("", "-unpatched"):
+                    with zipfile.ZipFile(self.output / f"prx-{platform}{variant}-v1.zip") as archive:
+                        for name, content in notices.values():
+                            self.assertEqual(archive.read("libs/licenses/" + name), content)
+                    with tarfile.open(self.output / f"prx-{platform}{variant}-v1.tar.gz") as archive:
+                        for name, content in notices.values():
+                            self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
+    def test_missing_or_empty_fontconfig_notices_preserve_existing_outputs(self):
+        notices = self.fontconfig_notices()
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        for invalid in notices:
+            for content in (None, b""):
+                with self.subTest(notice=invalid, content=content):
+                    if content is None:
+                        invalid.unlink()
+                    else:
+                        invalid.write_bytes(content)
+                    with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                        package_release.package("linux", self.build, self.output, "v1")
+                    self.assertEqual(list(self.output.iterdir()), [previous])
+                    self.assertEqual(previous.read_bytes(), b"previous release")
+                    self.assertEqual((self.library.parent / "libfontconfig.prx").read_bytes(), b"Fontconfig library")
+                    self.assertEqual((self.unpatched.parent / "libfontconfig.prx").read_bytes(), b"unpatched Fontconfig library")
+                    invalid.write_bytes(notices[invalid][1])
+
     def test_windows_runtime_follows_the_configured_compiler_directory(self):
         runtime = self.root / "custom toolchain" / "bin"
         runtime.mkdir(parents=True)
@@ -240,7 +587,7 @@ class ReleasePackageTests(unittest.TestCase):
         (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
         package_release.package("windows", self.build, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-windows-v1.zip") as archive:
-            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", *("libs/" + name for name in names + allocator)})
+            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", "libs/licenses/mimalloc.txt", *("libs/" + name for name in names + allocator)})
             for name in names + allocator:
                 self.assertEqual(archive.read("libs/" + name), name.encode())
         with tarfile.open(self.output / "prx-windows-v1.tar.gz") as archive:
@@ -250,10 +597,96 @@ class ReleasePackageTests(unittest.TestCase):
         with zipfile.ZipFile(self.output / "prx-windows-unpatched-v1.zip") as archive:
             self.assertEqual(archive.read("libs/libc.prx"), b"original exports")
             self.assertEqual(archive.read("libs/implib/libc.dll.a"), b"import archive")
-            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", "libs/implib/libc.dll.a", *("libs/" + name for name in names + allocator)})
+            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", "libs/implib/libc.dll.a", "libs/licenses/mimalloc.txt", *("libs/" + name for name in names + allocator)})
         with tarfile.open(self.output / "prx-windows-unpatched-v1.tar.gz") as archive:
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
             self.assertEqual(archive.extractfile("libs/implib/libc.dll.a").read(), b"import archive")
+
+    def test_windows_packages_preserve_unicode_separators_in_compiler_paths(self):
+        names = ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
+        for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            (self.library.parent / name).write_bytes(name.encode())
+        (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(separator=repr(separator), newline=repr(newline)):
+                    runtime = self.root / ("tool" + separator + "chain") / "bin"
+                    runtime.mkdir(parents=True, exist_ok=True)
+                    for name in names:
+                        (runtime / name).write_bytes(name.encode())
+                    cache = "CMAKE_CXX_COMPILER:FILEPATH=" + (runtime / "g++.exe").as_posix() + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    package_release.package("windows", self.build, self.output, "v1")
+                    for filename in ("prx-windows-v1.zip", "prx-windows-unpatched-v1.zip"):
+                        with zipfile.ZipFile(self.output / filename) as archive:
+                            for name in names:
+                                self.assertEqual(archive.read("libs/" + name), name.encode())
+
+    def test_tracy_cache_records_are_not_created_by_unicode_separators(self):
+        client = self.library.with_name("libTracyClient.dll")
+        client.write_bytes(b"Tracy client")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(separator=repr(separator), newline=repr(newline)):
+                    cache = "OTHER:STRING=value" + separator + "APS5_ENABLE_TRACY:BOOL=ON" + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    self.assertEqual(package_release.tracy_runtime("windows", self.build), [])
+                    cache += "APS5_ENABLE_TRACY:BOOL=ON" + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
+
+    def test_webrtc_library_archives_include_vad_notices(self):
+        (self.source / "core/libs/prx/libwebrtc").mkdir()
+        (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
+        (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
+        source = self.source / "3rdparty/libfvad"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"VAD license\n")
+        (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        package_release.package("linux", self.build, self.output, "v1")
+        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+            with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
+            with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+                self.assertEqual(archive.extractfile("libs/licenses/" + archive_name).read(), content)
+
+    def test_harfbuzz_library_archives_include_the_bundled_notices(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched HarfBuzz library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library")
+        notices = {
+            "COPYING": ("harfbuzz.txt", b"HarfBuzz redistribution notice\n"),
+            "src/ms-use/COPYING": ("harfbuzz-ms-use.txt", b"Microsoft USE redistribution notice\n"),
+        }
+        for name, (_, content) in notices.items():
+            source = self.source / "3rdparty/harfbuzz" / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        for variant in ("", "-unpatched"):
+            with zipfile.ZipFile(self.output / f"prx-linux{variant}-v1.zip") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.read("libs/licenses/" + name), content)
+            with tarfile.open(self.output / f"prx-linux{variant}-v1.tar.gz") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
+    def test_harfbuzz_release_without_a_required_notice_is_rejected(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched HarfBuzz library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library")
+        source = self.source / "3rdparty/harfbuzz"
+        (source / "src/ms-use").mkdir(parents=True)
+        for missing in ("COPYING", "src/ms-use/COPYING"):
+            for name in ("COPYING", "src/ms-use/COPYING"):
+                file = source / name
+                file.unlink(missing_ok=True)
+                if name != missing:
+                    file.write_bytes(b"Required notice\n")
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(RuntimeError, "COPYING"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertFalse(self.output.exists())
 
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
@@ -292,6 +725,18 @@ class ReleasePackageTests(unittest.TestCase):
         (self.build / "CMakeCache.txt").write_bytes(b"\xef\xbb\xbfCMAKE_CXX_COMPILER:STRING=" + compiler.as_posix().encode("utf-8") + b"\n")
         self.assertEqual(package_release.windows_runtime(self.build), compiler.parent)
 
+    def test_windows_runtime_finds_a_bare_compiler_name_on_path(self):
+        compiler = self.root / "custom toolchain" / "bin" / "g++.exe"
+        (self.build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:UNINITIALIZED=g++\n", encoding="utf-8")
+        with patch.object(package_release.shutil, "which", return_value=str(compiler)) as which:
+            self.assertEqual(package_release.windows_runtime(self.build), compiler.parent)
+        which.assert_called_once_with("g++")
+        with patch.object(package_release.shutil, "which", return_value=os.path.join(".", "g++.exe")):
+            self.assertEqual(package_release.windows_runtime(self.build), Path.cwd())
+        with patch.object(package_release.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "not on PATH"):
+                package_release.windows_runtime(self.build)
+
     def test_tracy_runtime_decodes_cmake_cache_with_utf8_bom(self):
         client = self.build / "core/libs/libs/libTracyClient.dll"
         client.write_bytes(b"client")
@@ -305,7 +750,9 @@ class ReleasePackageTests(unittest.TestCase):
                 client = directory / name
                 client.write_bytes(platform.encode() + b" Tracy client")
                 cache = "APS5_ENABLE_TRACY:BOOL=ON\n"
-                expected = {"libs/libc.prx", "libs/" + name}
+                expected = {"libs/libc.prx", "libs/" + name, "libs/licenses/mimalloc.txt"}
+                if platform == "linux":
+                    expected.add("libs/libmimalloc.so")
                 if platform == "windows":
                     runtime = self.root / "toolchain"
                     runtime.mkdir()
@@ -335,7 +782,7 @@ class ReleasePackageTests(unittest.TestCase):
                 output = self.output / str(index)
                 package_release.package("linux", self.build, output, "v1")
                 with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
-                    self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+                    self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
     def test_missing_or_ambiguous_tracy_client_preserves_existing_assets(self):
         (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
@@ -363,17 +810,17 @@ class ReleasePackageTests(unittest.TestCase):
         with working_directory(self.source):
             package_release.package("linux", self.build, self.output, "v1.0")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
-            self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+            self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
     def test_removed_libraries_are_not_packaged_from_a_reused_build(self):
         stale = self.library.with_name("libRemoved.prx")
         stale.write_bytes(b"obsolete library")
         package_release.package("linux", self.build, self.output, "v1.0")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
-            self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+            self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.read("libs/libc.prx"), b"library bytes")
         with tarfile.open(self.output / "prx-linux-v1.0.tar.gz") as archive:
-            self.assertEqual(archive.getnames(), ["libs/libc.prx"])
+            self.assertEqual(archive.getnames(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"library bytes")
         self.assertEqual(stale.read_bytes(), b"obsolete library")
 
@@ -397,6 +844,123 @@ class ReleasePackageTests(unittest.TestCase):
         self.library.unlink()
         with working_directory(self.source), self.assertRaisesRegex(RuntimeError, "Missing patched libraries"):
             package_release.package("linux", self.build, self.output, "v1.0")
+
+    def test_promotion_failure_restores_previous_native_assets(self):
+        names = sorted(["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"])
+        for exception in (OSError, KeyboardInterrupt):
+            for present in (names, names[::2], []):
+                for blocked in names:
+                    with self.subTest(exception=exception.__name__, present=present, blocked=blocked), tempfile.TemporaryDirectory() as tmp:
+                        output = Path(tmp)
+                        previous = {name: b"old " + name.encode() for name in present}
+                        previous["unrelated.txt"] = b"unrelated"
+                        for name, content in previous.items():
+                            (output / name).write_bytes(content)
+                        timestamps = {name: (output / name).stat().st_mtime_ns for name in previous}
+                        failure = exception("simulated native promotion failure")
+                        original_replace = Path.replace
+                        failed = False
+
+                        def replace(source, destination):
+                            nonlocal failed
+                            destination = Path(destination)
+                            if destination == output / blocked and source.parent != output and not failed:
+                                failed = True
+                                raise failure
+                            return original_replace(source, destination)
+
+                        with patch.object(Path, "replace", replace), self.assertRaises(exception) as error:
+                            package_release.package("linux", self.build, output, "v1")
+                        self.assertIs(error.exception, failure)
+                        self.assertTrue(failed)
+                        self.assertEqual({path.name for path in output.iterdir()}, set(previous))
+                        for name, content in previous.items():
+                            self.assertEqual((output / name).read_bytes(), content)
+                            self.assertEqual((output / name).stat().st_mtime_ns, timestamps[name])
+
+    @unittest.skipUnless(os.name == "nt", "Windows file sharing prevents replacement")
+    def test_locked_destination_restores_previous_native_assets(self):
+        names = sorted(["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"])
+        for blocked in names:
+            with self.subTest(blocked=blocked), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp)
+                package_release.package("linux", self.build, output, "v1")
+                previous = {path.name: path.read_bytes() for path in output.iterdir()}
+                candidate = b"candidate " + blocked.encode()
+                self.library.write_bytes(candidate)
+                self.unpatched.write_bytes(candidate + b" unpatched")
+                (self.build / "core/relinker/relinker").write_bytes(candidate + b" executable")
+                with (output / blocked).open("rb"), self.assertRaises(OSError):
+                    package_release.package("linux", self.build, output, "v1")
+                self.assertEqual({path.name for path in output.iterdir()}, set(previous))
+                self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, previous)
+                package_release.package("linux", self.build, output, "v1")
+                with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
+                    self.assertEqual(archive.read("libs/libc.prx"), candidate)
+                self.assertEqual((output / "relinker-v1").read_bytes(), candidate + b" executable")
+
+    def test_failed_native_promotion_restores_symlinks(self):
+        self.output.mkdir()
+        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
+        target = self.root / "previous.zip"
+        target.write_bytes(b"original linked target")
+        self.file_link(self.output / names[0], target)
+        self.file_link(self.output / names[1], "missing.tar.gz")
+        original_target = (self.output / names[0]).readlink()
+        for name in names[2:]:
+            (self.output / name).write_bytes(b"old " + name.encode())
+        original_replace = Path.replace
+        failed = False
+
+        def replace(source, destination):
+            nonlocal failed
+            if Path(destination) == self.output / "relinker-v1" and not failed:
+                failed = True
+                raise OSError("simulated native promotion failure")
+            return original_replace(source, destination)
+
+        with patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "simulated native promotion failure"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual({path.name for path in self.output.iterdir()}, set(names))
+        self.assertEqual((self.output / names[0]).readlink(), original_target)
+        self.assertEqual((self.output / names[1]).readlink(), Path("missing.tar.gz"))
+        self.assertEqual(target.read_bytes(), b"original linked target")
+        self.assertFalse((self.output / "missing.tar.gz").exists())
+        for name in names[2:]:
+            self.assertEqual((self.output / name).read_bytes(), b"old " + name.encode())
+
+    def test_failed_native_rollback_retains_recovery_assets(self):
+        names = sorted(["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"])
+        self.output.mkdir()
+        for name in names:
+            (self.output / name).write_bytes(b"old " + name.encode())
+        original_replace = Path.replace
+        promotion_failed = False
+        recovery_failed = False
+
+        def replace(source, destination):
+            nonlocal promotion_failed, recovery_failed
+            destination = Path(destination)
+            if destination == self.output / names[-1] and not promotion_failed:
+                promotion_failed = True
+                raise OSError("simulated native promotion failure")
+            if promotion_failed and destination == self.output / names[0]:
+                recovery_failed = True
+                raise OSError("simulated native restoration failure")
+            return original_replace(source, destination)
+
+        with patch.object(Path, "replace", replace), self.assertRaises(RuntimeError) as error:
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertTrue(promotion_failed)
+        self.assertTrue(recovery_failed)
+        self.assertIn("simulated native promotion failure", str(error.exception))
+        self.assertIn("simulated native restoration failure", str(error.exception))
+        recovery = [path for path in self.output.iterdir() if path.is_dir()]
+        self.assertEqual(len(recovery), 1)
+        self.assertIn(str(recovery[0]), str(error.exception))
+        self.assertEqual((recovery[0] / names[0]).read_bytes(), b"old " + names[0].encode())
+        for name in names[1:]:
+            self.assertEqual((self.output / name).read_bytes(), b"old " + name.encode())
 
     def test_directory_destination_preserves_every_existing_asset(self):
         names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
@@ -700,9 +1264,12 @@ class ReleaseAssetsTests(unittest.TestCase):
             root = Path(tmp)
             source = root / "source"
             (source / "core/libs/prx/libc").mkdir(parents=True)
+            (source / "3rdparty/mimalloc").mkdir(parents=True)
+            (source / "3rdparty/mimalloc/LICENSE").write_bytes(b"allocator license")
             build = root / "build"
             (build / "core/libs/libs").mkdir(parents=True)
             (build / "core/libs/libs/libc.prx").write_bytes(b"new library")
+            (build / "core/libs/libs/libmimalloc.so").write_bytes(b"new allocator")
             (build / "core/libs/libs/unpatched").mkdir()
             (build / "core/libs/libs/unpatched/libc.prx").write_bytes(b"original library")
             (build / "core/relinker").mkdir(parents=True)
@@ -750,7 +1317,7 @@ class ReleaseNoteDestinationsTests(unittest.TestCase):
                 previous = {path: path.read_bytes() for index, path in enumerate(paths) if index != position}
                 result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
                                          "--input", str(paths[0]), "--body", str(paths[1]), "--full", str(paths[2])],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, text=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertTrue(paths[position].is_symlink())
@@ -854,6 +1421,62 @@ class ReleaseNotesTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "distinct files"):
                         prepare_release_notes.prepare_notes(*paths)
                     self.assertEqual([path.read_bytes() for path in paths], previous)
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive output paths")
+    def test_missing_case_aliases_are_rejected_before_creating_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "notes.json"
+            body, full = root / "output/Notes.md", root / "output/notes.md"
+            notes = "Intro\n\n## What's Changed\n" + "- entry\n" * 20000 + "\n**Full Changelog**: link\n"
+            source.write_text(json.dumps({"body": notes}), encoding="utf-8")
+            original = source.read_bytes()
+            with self.assertRaisesRegex(ValueError, "distinct files"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(source.read_bytes(), original)
+            self.assertFalse(body.parent.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-insensitive output paths")
+    def test_cli_missing_case_aliases_preserve_input_in_write_and_check_modes(self):
+        for flags in ([], ["--check"]):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "notes.json"
+                source.write_text(json.dumps({"body": "Release notes"}), encoding="utf-8")
+                original = source.read_bytes()
+                result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
+                                         "--input", str(source), "--body", str(root / "output/Notes.md"),
+                                         "--full", str(root / "output/notes.md"), *flags],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("distinct files", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(source.read_bytes(), original)
+                self.assertFalse((root / "output").exists())
+
+    def test_symlink_loop_output_is_reported_without_traceback(self):
+        notes = json.dumps({"body": "release notes"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "notes.json"
+            source.write_text(notes, encoding="utf-8")
+            loop = root / "body.md"
+            try:
+                loop.symlink_to(loop.name)
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f"symbolic links unavailable: {error}")
+            full = root / "full.md"
+            with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+                prepare_release_notes.prepare_notes(source, loop, full)
+            result = subprocess.run(
+                [sys.executable, str(Path(prepare_release_notes.__file__)),
+                 "--input", str(source), "--body", str(loop), "--full", str(full)],
+                capture_output=True, text=True, encoding="utf-8", timeout=20)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("symbolic link loop", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
 
 
     def test_short_notes_are_unchanged_including_unicode_at_limit(self):
@@ -1100,7 +1723,7 @@ class ReleaseMainTests(unittest.TestCase):
                 self.skipTest(str(error))
             result = subprocess.run([sys.executable, str(Path(package_release.__file__)),
                                      "--docs", str(docs), "--output", str(output)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertNotIn("Traceback", result.stderr)
             self.assertIn("symbolic link loop", result.stderr)

@@ -15,26 +15,34 @@ void _appendBytes(std::vector<std::uint8_t>& s, const std::uint8_t* bytes, std::
 
 std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
     const std::uint64_t stubVaddr,
-    const std::uint64_t realEntryVaddr
+    const std::uint64_t realEntryVaddr,
+    const std::optional<std::uint64_t> mainStackEntrySlotVaddr
 ) const {
     std::vector<std::uint8_t> s;
+    const auto appendRel32 = [&](const std::uint64_t target) {
+        const std::uint64_t nextVaddr = stubVaddr + s.size() + sizeof(std::int32_t);
+        std::int64_t displacement = 0;
+        if (!SignedDistance(target, nextVaddr, displacement) || displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+            throw Domain::RelinkerException("Entry stub call exceeds rel32 range");
+        const auto rel32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement));
+        for (std::size_t shift = 0; shift < 32; shift += 8)
+            s.push_back(static_cast<std::uint8_t>((rel32 >> shift) & 0xff));
+    };
     _appendBytes(s, kStubOpMovRdiRsp, sizeof(kStubOpMovRdiRsp));
     _appendBytes(s, kStubOpAndRsp0xf0, sizeof(kStubOpAndRsp0xf0));
     _appendBytes(s, kStubOpPushZero, sizeof(kStubOpPushZero));
     _appendBytes(s, kStubOpPushZero, sizeof(kStubOpPushZero));
     _appendBytes(s, kStubOpMovRbpRsp, sizeof(kStubOpMovRbpRsp));
-    _appendBytes(s, kStubOpXorRsiRsi, sizeof(kStubOpXorRsiRsi));
-    const std::uint64_t callInsnVaddr = stubVaddr + s.size();
-    const std::uint64_t callNextVaddr = callInsnVaddr + kStubCallInstructionSize;
-    std::int64_t displacement = 0;
-    if (!SignedDistance(realEntryVaddr, callNextVaddr, displacement) || displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
-        throw Domain::RelinkerException("Entry stub call exceeds rel32 range");
-    const auto rel32 = static_cast<std::int32_t>(displacement);
-    s.push_back(kStubOpCallRel32);
-    s.push_back(static_cast<std::uint8_t>(rel32 & 0xff));
-    s.push_back(static_cast<std::uint8_t>((rel32 >> 8) & 0xff));
-    s.push_back(static_cast<std::uint8_t>((rel32 >> 16) & 0xff));
-    s.push_back(static_cast<std::uint8_t>((rel32 >> 24) & 0xff));
+    if (mainStackEntrySlotVaddr) {
+        _appendBytes(s, kStubOpLeaRsiRip, sizeof(kStubOpLeaRsiRip));
+        appendRel32(realEntryVaddr);
+        _appendBytes(s, kStubOpCallRipIndirect, sizeof(kStubOpCallRipIndirect));
+        appendRel32(*mainStackEntrySlotVaddr);
+    } else {
+        _appendBytes(s, kStubOpXorRsiRsi, sizeof(kStubOpXorRsiRsi));
+        s.push_back(kStubOpCallRel32);
+        appendRel32(realEntryVaddr);
+    }
     _appendBytes(s, kStubOpUd2, sizeof(kStubOpUd2));
     return s;
 }

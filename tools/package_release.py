@@ -13,7 +13,7 @@ from pathlib import Path
 import package_headers
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
+WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "i18n.mjs", "output-directory.mjs", "worker.mjs",
              "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 
 
@@ -36,10 +36,15 @@ def windows_runtime(build):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
         raise RuntimeError(f"Missing CMakeCache.txt in build directory: {build}")
-    for line in cache.read_text(encoding="utf-8-sig").splitlines():
+    for line in cache.read_text(encoding="utf-8-sig").split("\n"):
         if line.startswith("CMAKE_CXX_COMPILER:"):
             compiler = line.partition("=")[2]
             if compiler and not compiler.endswith("-NOTFOUND"):
+                if Path(compiler).parent == Path("."):
+                    found = shutil.which(compiler)
+                    if not found:
+                        raise RuntimeError(f"CMAKE_CXX_COMPILER {compiler} in {cache} is not on PATH")
+                    compiler = os.path.abspath(found)
                 return Path(compiler).parent
     raise RuntimeError(f"CMAKE_CXX_COMPILER is not configured in {cache}")
 
@@ -48,7 +53,7 @@ def tracy_runtime(platform, build):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
         return []
-    lines = cache.read_text(encoding="utf-8-sig").splitlines()
+    lines = cache.read_text(encoding="utf-8-sig").split("\n")
     enabled = next((line.partition("=")[2].upper() for line in lines if line.startswith("APS5_ENABLE_TRACY:")), "OFF")
     if enabled in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") or enabled.endswith("-NOTFOUND"):
         return []
@@ -58,6 +63,36 @@ def tracy_runtime(platform, build):
     if len(clients) != 1:
         raise RuntimeError(f"Missing or ambiguous Tracy runtime for APS5_ENABLE_TRACY: {directory / pattern}")
     return clients
+
+
+def promote_native_assets(staging, output):
+    files = sorted(staging.iterdir())
+    backups = Path(tempfile.mkdtemp(prefix=".release-backup-", dir=output))
+    try:
+        for file in files:
+            destination = output / file.name
+            if os.path.lexists(destination):
+                destination.replace(backups / file.name)
+            file.replace(destination)
+    except BaseException as error:
+        failures = []
+        for file in reversed(files):
+            try:
+                previous = backups / file.name
+                if os.path.lexists(previous):
+                    previous.replace(output / file.name)
+                elif not file.exists():
+                    (output / file.name).unlink()
+            except OSError as recovery_error:
+                failures.append(f"{file.name}: {recovery_error}")
+        if failures:
+            raise RuntimeError(f"Native release promotion failed: {error}; rollback failed: {'; '.join(failures)}; recovery files retained at {backups}") from error
+        try:
+            backups.rmdir()
+        except OSError as cleanup_error:
+            raise RuntimeError(f"Native release promotion failed: {error}; rollback completed but backup cleanup failed at {backups}: {cleanup_error}") from error
+        raise
+    shutil.rmtree(backups)
 
 
 def package(platform, build, output, version):
@@ -71,6 +106,17 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = [library for library in libraries if library.name in expected]
     licenses = []
+    if "libharfbuzz.prx" in expected:
+        licenses.append((ROOT / "3rdparty/harfbuzz/COPYING", "libs/licenses/harfbuzz.txt"))
+        licenses.append((ROOT / "3rdparty/harfbuzz/src/ms-use/COPYING", "libs/licenses/harfbuzz-ms-use.txt"))
+    if "libcairo.prx" in expected:
+        licenses.append((ROOT / "3rdparty/cairo/COPYING", "libs/licenses/cairo.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-LGPL-2.1", "libs/licenses/cairo-lgpl-2.1.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-MPL-1.1", "libs/licenses/cairo-mpl-1.1.txt"))
+        licenses.append((ROOT / "3rdparty/pixman/COPYING", "libs/licenses/pixman.txt"))
+    if "libwebrtc.prx" in expected:
+        licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
+        licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
@@ -78,10 +124,18 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/vorbis/COPYING", "libs/licenses/vorbis.txt"))
     if expected & {"libSceOpusDec.prx", "libSceOpusCeltDec.prx"}:
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
+    if "libSceNKWebKitRequirements.prx" in expected:
+        licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
+    if "libfontconfig.prx" in expected:
+        licenses.append((ROOT / "3rdparty/fontconfig/COPYING", "libs/licenses/fontconfig.txt"))
+        licenses.append((ROOT / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt", "libs/licenses/fontconfig-unicode.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
         files.extend(build / "core/libs/libs" / name for name in ("mimalloc.dll", "mimalloc-redirect.dll"))
+    else:
+        files.append(build / "core/libs/libs/libmimalloc.so")
+    licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
     files.extend(tracy_runtime(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
@@ -131,8 +185,7 @@ def package(platform, build, output, version):
                 for source, destination in entries + licenses:
                     archive.add(source, arcname=destination)
         shutil.copy2(binary, staging / asset)
-        for file in sorted(staging.iterdir()):
-            file.replace(output / file.name)
+        promote_native_assets(staging, output)
 
 
 def collect_docs(source, output):

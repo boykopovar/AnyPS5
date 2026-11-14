@@ -46,42 +46,48 @@ DEFAULT_SYMBOLS = [(IMPORT_NAME, 0, 0x12, 0), (EXPORT_NAME, 1, 0x12, EXPORT_ADDR
 DEFAULT_TAGS = (4, 5, 6, 10, 11, 23, 2, 20)
 
 
-def hash_bytes(kind, count):
+def hash_bytes(kind, count, bloom_count=1):
     if kind == "sysv":
         return struct.pack("<II", 1, count) + bytes(4 + 4 * count)
     chains = [0] * (count - 1)
-    chains[-1] = 1
-    return struct.pack("<IIII", 1, 1, 1, 0) + bytes(8) + struct.pack("<I", 1) + struct.pack("<%dI" % len(chains), *chains)
+    if chains:
+        chains[-1] = 1
+        bucket = struct.pack("<I", 1)
+    else:
+        bucket = struct.pack("<I", 0)
+    return struct.pack("<IIII", 1, 1, bloom_count, 0) + bytes(8 * bloom_count) + bucket + struct.pack("<%dI" % len(chains), *chains)
 
 
-def data_bytes(tags, values, symbols, relocations, glob_dats, kind):
+def data_bytes(tags, values, symbols, relocations, glob_dats, kind, bloom_count=1):
     strings = b"\0"
     entries = struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)
     for name, shndx, info, value in symbols:
         entries += struct.pack("<IBBHQQ", len(strings), info, 0, shndx, value, 1)
         strings += symbol_name(name).encode() + b"\0"
-    resolved = {4: DATA_ADDRESS, GNU_HASH: DATA_ADDRESS, 5: DATA_ADDRESS + 0x100, 6: DATA_ADDRESS + 0x40, 10: len(strings), 11: 24,
+    hash_blob = hash_bytes(kind, len(symbols) + 1, bloom_count)
+    hash_offset = 0x400 if bloom_count > 4 else 0
+    resolved = {4: DATA_ADDRESS, GNU_HASH: DATA_ADDRESS + hash_offset, 5: DATA_ADDRESS + 0x100, 6: DATA_ADDRESS + 0x40, 10: len(strings), 11: 24,
                 7: DATA_ADDRESS + 0x200, 8: 24 * len(glob_dats), 23: DATA_ADDRESS + 0x280, 2: 24 * len(relocations), 20: 7,
                 9: 24, 17: DATA_ADDRESS + 0x200}
     resolved.update(values)
     dynamic = b"".join(struct.pack("<qQ", tag, resolved[tag]) for tag in tags) + struct.pack("<qQ", 0, 0)
-    image = bytearray(0x810)
+    image = bytearray(max(0x810, hash_offset + len(hash_blob)))
     pack = lambda rows, kind_code: b"".join(struct.pack("<QQq", slot, (index << 32) | kind_code, 0) for slot, index in rows)
-    for offset, blob in ((0, hash_bytes(kind, len(symbols) + 1)), (0x40, entries), (0x100, strings), (0x200, pack(glob_dats, 6)),
+    for offset, blob in ((hash_offset, hash_blob), (0x40, entries), (0x100, strings), (0x200, pack(glob_dats, 6)),
                          (0x280, pack(relocations, 7)), (0x300, dynamic)):
         image[offset:offset + len(blob)] = blob
     return bytes(image), len(dynamic)
 
 
 def build_module(tags=DEFAULT_TAGS, values=None, symbols=DEFAULT_SYMBOLS, relocations=((SLOT, 1),), glob_dats=(), code=None,
-                 code_flags=5, extra_code=None, kind="sysv", machine=0x3E):
+                 code_flags=5, extra_code=None, kind="sysv", machine=0x3E, bloom_count=1):
     code = code_bytes() if code is None else code
-    data, dynamic_size = data_bytes(tags, values or {}, symbols, relocations, glob_dats, kind)
+    data, dynamic_size = data_bytes(tags, values or {}, symbols, relocations, glob_dats, kind, bloom_count)
     headers = [(1, code_flags, 0x1000, CODE_ADDRESS, len(code)), (1, 6, 0x2000, DATA_ADDRESS, len(data)),
                (2, 6, 0x2300, DATA_ADDRESS + 0x300, dynamic_size)]
     if extra_code is not None:
         headers.append((1, 7, 0x3000, 0x3000, len(extra_code)))
-    image = bytearray(0x3000 + len(extra_code or b""))
+    image = bytearray(max(0x3000, 0x2000 + len(data)) + len(extra_code or b""))
     image[:64] = struct.pack("<16sHHIQQQIHHHHHH", b"\x7fELF\x02\x01\x01" + bytes(9), 3, machine, 1, 0, 64, 0, 0, 64, 56, len(headers), 0, 0, 0)
     for index, (kind_code, flags, offset, vaddr, size) in enumerate(headers):
         image[64 + index * 56:120 + index * 56] = struct.pack("<IIQQQQQQ", kind_code, flags, offset, vaddr, vaddr, size, size, 0x1000)
@@ -104,6 +110,15 @@ def with_relocation(module, table_offset, index, slot, symbol_index, kind):
 
 
 class ImportRelocationTests(unittest.TestCase):
+    def test_dynamic_segment_must_contain_complete_terminated_tags(self):
+        for size in (113, 128, 0x10000):
+            with self.subTest(size=size):
+                image = bytearray(build_module())
+                struct.pack_into("<QQ", image, 64 + 2 * 56 + 32, size, size)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "PT_DYNAMIC"):
+                    annotate_module.Module(image)
+        self.assertTrue(annotate_module.Module(build_module()).imports())
+
     def test_symbol_entry_size_must_match_elf64(self):
         for size in (None, 0, 16, 32):
             with self.subTest(size=size):
@@ -111,6 +126,41 @@ class ImportRelocationTests(unittest.TestCase):
                 data = build_module(tags=tags, values={} if size is None else {11: size})
                 with self.assertRaisesRegex(annotate_module.ModuleError, "DT_SYMENT"):
                     annotate_module.Module(data)
+
+    def test_unsupported_elf_header_layout_is_rejected(self):
+        for form, offset, value in (("<B", 6, 0), ("<I", 20, 0), ("<H", 52, 63),
+                                    ("<H", 54, 48), ("<Q", 32, 63), ("<H", 56, 0xFFFF)):
+            with self.subTest(offset=offset, value=value):
+                image = bytearray(build_module())
+                struct.pack_into(form, image, offset, value)
+                with self.assertRaises(annotate_module.ModuleError):
+                    annotate_module.Module(image)
+        self.assertTrue(annotate_module.Module(build_module()).exports())
+
+    def test_short_program_headers_cannot_overlap_parser_reads(self):
+        image = bytearray(build_module())
+        struct.pack_into("<HH", image, 54, 48, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 7, 0x1000, 0x1000, 0, 0x1810, 0x1810, 1)
+        struct.pack_into("<IIQQQQQQ", image, 112, 2, 6, 0x2300, 0x2300, 0, 144, 144, 8)
+        with self.assertRaisesRegex(annotate_module.ModuleError, "program header size"):
+            annotate_module.Module(image)
+
+    def test_missing_program_headers_report_the_missing_dynamic_header(self):
+        for offset in (0, 63, 64):
+            with self.subTest(offset=offset):
+                image = bytearray(build_module())
+                struct.pack_into("<Q", image, 32, offset)
+                struct.pack_into("<H", image, 56, 0)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "^no PT_DYNAMIC program header$"):
+                    annotate_module.Module(image)
+
+    def test_nonempty_program_header_tables_must_fit_outside_the_elf_header(self):
+        for offset in (0, 63, len(build_module()) - 55, 1 << 63):
+            with self.subTest(offset=offset):
+                image = bytearray(build_module())
+                struct.pack_into("<Q", image, 32, offset)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "program header table is outside"):
+                    annotate_module.Module(image)
 
     def test_tables_cannot_read_file_padding_past_the_load_segment(self):
         for tag in (5, 6, 23):
@@ -170,6 +220,28 @@ class ImportRelocationTests(unittest.TestCase):
                 with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index .* is outside"):
                     annotate_module.Module(module).imports()
 
+    def test_gnu_hash_bloom_filter_size_must_be_nonzero_power_of_two(self):
+        for bloom_count in (0, 3, 1025):
+            with self.subTest(bloom_count=bloom_count):
+                module = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=bloom_count)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "GNU hash Bloom filter count %d is not a power of two" % bloom_count):
+                    annotate_module.Module(module)
+
+    def test_gnu_hash_accepts_valid_bloom_filter_sizes(self):
+        for bloom_count in (1, 2, 4):
+            with self.subTest(bloom_count=bloom_count):
+                module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=bloom_count))
+                self.assertEqual(module.symbol_count, len(DEFAULT_SYMBOLS) + 1)
+
+    def test_gnu_hash_accepts_empty_symbol_table(self):
+        module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], relocations=(), kind="gnu", bloom_count=1))
+        self.assertEqual(module.symbol_count, 1)
+
+    def test_dt_hash_precedence_preserves_unused_invalid_gnu_hash(self):
+        tags = (4, GNU_HASH, 5, 6, 10, 11, 23, 2, 20)
+        module = build_module(tags=tags, values={GNU_HASH: DATA_ADDRESS + 0x400}, kind="sysv", bloom_count=3)
+        self.assertEqual(annotate_module.Module(module).symbol_count, len(DEFAULT_SYMBOLS) + 1)
+
 
 class ObjdumpDiscoveryTests(unittest.TestCase):
     def discover(self, versions):
@@ -179,6 +251,8 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         def run(command, **kwargs):
             return subprocess.CompletedProcess(command, 0, versions[Path(command[0]).name], "")
 
+        annotate_module.gnu_objdump.cache_clear()
+        self.addCleanup(annotate_module.gnu_objdump.cache_clear)
         with mock.patch.object(annotate_module.shutil, "which", which), mock.patch.object(annotate_module.subprocess, "run", run):
             return annotate_module.gnu_objdump()
 
@@ -237,15 +311,35 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
 
     def test_unknown_nid_prints_the_nid(self):
-        empty = self.root / "empty.csv"
-        empty.write_text("", encoding="utf-8")
-        self.run_tool(build_module(), "--db", str(empty))
+        db = self.root / "db.csv"
+        db.write_text("AAAAAAAAAAA some_other_name\n", encoding="utf-8")
+        self.run_tool(build_module(), "--db", str(db))
         self.assertEqual("%#x %s %s\n" % (SLOT, symbol_name(IMPORT_NAME), nid(IMPORT_NAME)), self.read(".imports.txt"))
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
 
     def test_no_names_skips_the_database(self):
         self.run_tool(build_module(), "--no-names")
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
+
+    def test_a_temporary_directory_outside_the_ansi_code_page_is_disassembled(self):
+        temporary = self.root / "тест 界 \U0001f3ae"
+        temporary.mkdir()
+        with mock.patch.object(tempfile, "tempdir", str(temporary)):
+            summary = self.annotate(build_module())
+        self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+        self.assertTrue(instruction(self.read(".asm").splitlines(), "call").endswith("; -> " + IMPORT_NAME))
+        self.assertEqual([], list(temporary.iterdir()))
+
+    def test_objdump_found_through_a_relative_path_entry_is_disassembled(self):
+        found = Path(annotate_module.gnu_objdump()).absolute()
+        self.addCleanup(annotate_module.gnu_objdump.cache_clear)
+        self.addCleanup(os.chdir, os.getcwd())
+        annotate_module.gnu_objdump.cache_clear()
+        os.chdir(found.parent.parent)
+        with mock.patch.dict(os.environ, {"PATH": found.parent.name}):
+            self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
+            summary = self.annotate(build_module())
+        self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
 
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
@@ -307,6 +401,74 @@ class AnnotateModuleTests(unittest.TestCase):
                     self.assertIn("0 stubs", summary)
                     self.assertNotIn("; GOT ", self.read(".asm"))
                     self.assertNotIn("; -> ", self.read(".asm"))
+
+    def test_lea_destination_width_controls_import_address(self):
+        address = 0x100001000
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        for segment in (b"", b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                with self.subTest(segment=segment, address_prefix=address_prefix):
+                    code, expected = b"", {}
+                    for opcode in (0x8D, 0x8B):
+                        for width in (16, 32, 64):
+                            for register in range(16):
+                                rex = (0x48 if width == 64 else 0x40) | (4 if register >= 8 else 0)
+                                prefix = segment + (b"\x66" if width == 16 else b"") + address_prefix
+                                if rex != 0x40:
+                                    prefix += bytes([rex])
+                                encoded = prefix + bytes([opcode, 5 | ((register & 7) << 3)])
+                                location = address + len(code)
+                                next_address = location + len(encoded) + 4
+                                code += encoded + struct.pack("<I", (SLOT - next_address) & 0xFFFFFFFF)
+                                if opcode == 0x8D:
+                                    name = None if width == 16 else IMPORT_NAME if width == 32 or address_prefix else SECOND_IMPORT_NAME
+                                else:
+                                    name = None if segment else IMPORT_NAME if address_prefix else SECOND_IMPORT_NAME
+                                expected[location] = (opcode, width, register, name)
+                    module = bytearray(build_module(code=code + b"\xc3", symbols=symbols,
+                                                   relocations=((SLOT, 1), (0x100000000 + SLOT, 3))))
+                    struct.pack_into("<Q", module, 64 + 16, address)
+                    self.annotate(bytes(module))
+                    observed = set()
+                    for line in self.read(".asm").splitlines():
+                        match = annotate_module.LINE_ADDRESS.match(line)
+                        location = int(match.group(1), 16) if match else None
+                        if location not in expected:
+                            continue
+                        observed.add(location)
+                        opcode, width, register, name = expected[location]
+                        with self.subTest(opcode=opcode, width=width, register=register):
+                            if name is None:
+                                self.assertNotIn("; GOT ", line)
+                            else:
+                                self.assertTrue(line.endswith("; GOT " + name), line)
+                    self.assertEqual(observed, set(expected))
+
+    def test_lea_ignores_segment_base_when_naming_import_addresses(self):
+        address = 0x100001000
+        for segment in (b"", b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                with self.subTest(segment=segment, address_prefix=address_prefix):
+                    code = b""
+                    for opcode in (b"\x48\x8d\x05", b"\x48\x8b\x05", b"\xff\x15", b"\xff\x25"):
+                        instruction_bytes = segment + address_prefix + opcode
+                        next_address = address + len(code) + len(instruction_bytes) + 4
+                        code += instruction_bytes + struct.pack("<I", (SLOT - next_address) & 0xFFFFFFFF)
+                    symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+                    module = bytearray(build_module(code=code + b"\xc3", symbols=symbols,
+                                                   relocations=((SLOT, 1), (0x100000000 + SLOT, 3))))
+                    struct.pack_into("<Q", module, 64 + 16, address)
+                    summary = self.annotate(bytes(module))
+                    listing = self.read(".asm").splitlines()
+                    expected = IMPORT_NAME if address_prefix else SECOND_IMPORT_NAME
+                    self.assertTrue(instruction(listing, r"lea[wlq]?").endswith("; GOT " + expected))
+                    for mnemonic in (r"mov[wlq]?", r"callq?", r"jmpq?"):
+                        line = instruction(listing, mnemonic)
+                        if segment:
+                            self.assertNotIn("; GOT ", line)
+                        else:
+                            self.assertTrue(line.endswith("; GOT " + expected), line)
+                    self.assertIn("0 stubs" if segment else "1 stubs", summary)
 
     def test_none_relocation_does_not_annotate_a_stub_or_call(self):
         module = with_relocation(build_module(), 0x2280, 0, SLOT, 1, 0)
@@ -515,9 +677,17 @@ class AnnotateModuleTests(unittest.TestCase):
     def test_wrong_machine_fails(self):
         self.assert_fails(build_module(machine=0xB7), "not an x86-64 ELF")
 
+    def test_invalid_gnu_hash_bloom_filter_size_fails(self):
+        for bloom_count in (0, 3, 1025):
+            with self.subTest(bloom_count=bloom_count):
+                module = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=bloom_count)
+                self.assert_fails(module, "GNU hash Bloom filter count %d is not a power of two" % bloom_count)
+
 
 class InputProtectionTests(unittest.TestCase):
     def test_cli_rejects_alias_without_success_or_partial_reports(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run this test")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             module = root / "report.exports.txt"
@@ -532,6 +702,24 @@ class InputProtectionTests(unittest.TestCase):
             self.assertEqual(module.read_bytes(), original)
             self.assertFalse((root / "report.imports.txt").exists())
             self.assertFalse((root / "report.asm").exists())
+
+    def test_cli_rejects_invalid_gnu_bloom_size_without_reports(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run this test")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "invalid.prx"
+            invalid = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=3)
+            module.write_bytes(invalid)
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "out"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("GNU hash Bloom filter count 3 is not a power of two", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertFalse((root / "out.imports.txt").exists())
+            self.assertFalse((root / "out.exports.txt").exists())
+            self.assertFalse((root / "out.asm").exists())
 
     def test_all_report_outputs_are_checked_before_any_write(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -583,5 +771,169 @@ class InputProtectionTests(unittest.TestCase):
             self.assertEqual(module.read_bytes(), original)
 
 
+class OutputProtectionTests(unittest.TestCase):
+    def test_windows_readlink_target_prefixes(self):
+        targets = (("\\\\?\\C:\\reports\\exports.txt", "C:\\reports\\exports.txt"),
+                   ("\\\\?\\UNC\\server\\reports\\exports.txt", "\\\\server\\reports\\exports.txt"),
+                   ("report.exports.txt", "report.exports.txt"))
+        for target, expected in targets:
+            with self.subTest(target=target), mock.patch.object(os, "name", "nt"):
+                self.assertEqual(annotate_module.link_target(target), expected)
+            with self.subTest(posix_target=target), mock.patch.object(os, "name", "posix"):
+                self.assertEqual(annotate_module.link_target(target), target)
+
+    def test_dangling_report_aliases_with_nonfollowing_resolve(self):
+        for shape in ("relative", "absolute", "chained", "unrelated"):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                module = root / "input.prx"
+                original = build_module()
+                module.write_bytes(original)
+                imports = root / "report.imports.txt"
+                exports = root / "report.exports.txt"
+                assembly = root / "report.asm"
+                assembly.write_bytes(b"previous disassembly")
+                target = root / "unrelated.txt" if shape == "unrelated" else exports
+                links = {imports: str(target) if shape == "absolute" else target.name}
+                if shape == "chained":
+                    links = {imports: "intermediate", root / "intermediate": exports.name}
+                resolve = Path.resolve
+                is_symlink = Path.is_symlink
+                readlink = os.readlink
+                def nonfollowing_resolve(path, *args, **kwargs):
+                    return path.absolute() if path in links else resolve(path, *args, **kwargs)
+                def simulated_symlink(path):
+                    return path in links or is_symlink(path)
+                def simulated_readlink(path):
+                    return links[path] if path in links else readlink(path)
+                with mock.patch.object(Path, "resolve", nonfollowing_resolve), \
+                     mock.patch.object(Path, "is_symlink", simulated_symlink), \
+                     mock.patch.object(os, "readlink", simulated_readlink):
+                    if shape == "unrelated":
+                        self.assertFalse(annotate_module.same_file(imports, exports))
+                    else:
+                        with self.assertRaisesRegex(annotate_module.ModuleError, "outputs must name different files"):
+                            annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+                self.assertEqual(module.read_bytes(), original)
+                self.assertEqual(assembly.read_bytes(), b"previous disassembly")
+                self.assertFalse(exports.exists())
+
+    def test_hardlinked_reports_are_rejected_before_any_write(self):
+        suffixes = (".imports.txt", ".exports.txt", ".asm")
+        for left, right in ((0, 1), (0, 2), (1, 2)):
+            with self.subTest(left=suffixes[left], right=suffixes[right]), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                module = root / "input.prx"
+                original = build_module()
+                module.write_bytes(original)
+                outputs = [root / ("report" + suffix) for suffix in suffixes]
+                outputs[left].write_bytes(b"previous linked reports")
+                os.link(outputs[left], outputs[right])
+                outputs[3 - left - right].write_bytes(b"previous independent report")
+                previous = [path.read_bytes() for path in outputs]
+                with self.assertRaisesRegex(annotate_module.ModuleError, "outputs must name different files"):
+                    annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+                self.assertEqual(module.read_bytes(), original)
+                self.assertEqual([path.read_bytes() for path in outputs], previous)
+
+    def test_dangling_symlinked_reports_are_rejected_before_any_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            imports = root / "report.imports.txt"
+            exports = root / "report.exports.txt"
+            try:
+                imports.symlink_to(exports)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
+            assembly = root / "report.asm"
+            assembly.write_bytes(b"previous disassembly")
+            with self.assertRaisesRegex(annotate_module.ModuleError, "outputs must name different files"):
+                annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+            self.assertEqual(module.read_bytes(), original)
+            self.assertTrue(imports.is_symlink())
+            self.assertFalse(exports.exists())
+            self.assertEqual(assembly.read_bytes(), b"previous disassembly")
+
+    def test_cli_rejects_report_alias_without_success_output(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU objdump unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            imports = root / "report.imports.txt"
+            imports.write_bytes(b"previous reports")
+            exports = root / "report.exports.txt"
+            os.link(imports, exports)
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("outputs must name different files", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(module.read_bytes(), original)
+            self.assertEqual(imports.read_bytes(), b"previous reports")
+            self.assertEqual(exports.read_bytes(), b"previous reports")
+            self.assertFalse((root / "report.asm").exists())
+
+
+class PathResolutionTests(unittest.TestCase):
+    def test_resolution_errors_are_controlled_before_writing(self):
+        for failure in (RuntimeError("Symlink loop"), OSError("Too many symbolic links")):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                module = root / "input.prx"
+                original = build_module()
+                module.write_bytes(original)
+                report = root / "report.imports.txt"
+                report.write_bytes(b"previous report")
+                with mock.patch.object(Path, "resolve", side_effect=failure), \
+                     mock.patch.object(annotate_module, "gnu_objdump", return_value="objdump"), \
+                     contextlib.redirect_stderr(io.StringIO()) as errors:
+                    with self.assertRaises(SystemExit) as stopped:
+                        annotate_module.main([str(module), "--out", str(root / "report"), "--no-names"])
+                self.assertIn("cannot resolve annotation path", str(stopped.exception))
+                self.assertNotIn("Traceback", errors.getvalue())
+                self.assertEqual(module.read_bytes(), original)
+                self.assertEqual(report.read_bytes(), b"previous report")
+                self.assertFalse((root / "report.exports.txt").exists())
+                self.assertFalse((root / "report.asm").exists())
+
+    def test_looping_report_cli_preserves_existing_files(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU objdump unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            report = root / "report.imports.txt"
+            report.write_bytes(b"previous report")
+            loop = root / "report.asm"
+            try:
+                loop.symlink_to("loopB")
+                (root / "loopB").symlink_to(loop.name)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(str(loop), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(module.read_bytes(), original)
+            self.assertEqual(report.read_bytes(), b"previous report")
+            self.assertFalse((root / "report.exports.txt").exists())
+            self.assertTrue(loop.is_symlink())
+
+
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))

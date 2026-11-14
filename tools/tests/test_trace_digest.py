@@ -60,6 +60,188 @@ def excessive_trace_json(opening, closing):
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class TraceWaitAncestryTests(unittest.TestCase):
+    def test_digest_classifies_each_slice_once(self):
+        events = [complete(1, "Worker.wait" if index % 3 == 0 else "work",
+                           index * 2, 1) for index in range(128)]
+        trace = trace_digest.Trace(events)
+        expected = trace_digest.digest(trace)
+        with mock.patch.object(trace_digest, "is_wait", wraps=trace_digest.is_wait) as check:
+            actual = trace_digest.digest(trace)
+        self.assertEqual(actual, expected)
+        self.assertEqual(check.call_count, len(events))
+
+    def test_wait_ancestry_survives_inner_pops_and_ends_with_parent(self):
+        events = [
+            complete(1, "wait.outer", 0, 100),
+            complete(1, "work.child", 1, 10),
+            complete(1, "work.grandchild", 2, 1),
+            complete(1, "work.sibling", 11, 10),
+            complete(1, "work.after", 100, 10),
+            complete(2, "work.other_thread", 2, 1),
+        ]
+        trace = trace_digest.Trace(list(reversed(events)))
+        self.assertEqual([(entry[2], entry[3], entry[4]) for entry in trace.slices[1]], [
+            ("wait.outer", 0, False),
+            ("work.child", 1, True),
+            ("work.grandchild", 2, True),
+            ("work.sibling", 1, True),
+            ("work.after", 0, False),
+        ])
+        self.assertEqual(trace.slices[2][0][3:], [0, False])
+
+    def test_inner_wait_does_not_leak_into_a_sibling(self):
+        events = [
+            complete(1, "work.outer", 0, 100),
+            complete(1, "wait.inner", 1, 10),
+            complete(1, "work.grandchild", 2, 1),
+            complete(1, "work.sibling", 11, 10),
+        ]
+        trace = trace_digest.Trace(events)
+        self.assertEqual([entry[4] for entry in trace.slices[1]], [False, False, True, False])
+
+    def test_non_wait_ancestry_checks_grow_linearly(self):
+        count = 512
+        events = [complete(1, "work", index, 2 * (count - index)) for index in range(count)]
+        with mock.patch.object(trace_digest, "is_wait", wraps=trace_digest.is_wait) as check:
+            trace = trace_digest.Trace(events)
+        self.assertLessEqual(check.call_count, count)
+        self.assertEqual([entry[3] for entry in trace.slices[1]], list(range(count)))
+        self.assertFalse(any(entry[4] for entry in trace.slices[1]))
+
+
+class GpuOccupancyTests(unittest.TestCase):
+    def trace(self, ranges, begin=0, end=15000, thread="gpu"):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": thread}},
+                  {"name": "present", "ph": "i", "ts": begin, "args": {"present": 1}},
+                  {"name": "present", "ph": "i", "ts": end, "args": {"present": 2}}]
+        for index, (start, duration) in enumerate(ranges):
+            events.append(dict(complete(1, "batch", start, duration), args={"batch": index}))
+        return trace_digest.Trace(events)
+
+    def test_gpu_occupancy_is_the_union_of_clipped_ranges(self):
+        for ranges, expected in (([(0, 10000), (5000, 10000)], 15),
+                                 ([(0, 15000), (3000, 2000)], 15),
+                                 ([(1000, 2000), (6000, 3000)], 5),
+                                 ([(0, 5000), (5000, 10000)], 15),
+                                 ([(-5000, 10000), (3000, 20000)], 15),
+                                 ([(-10000, 5000), (20000, 5000)], 0)):
+            with self.subTest(ranges=ranges):
+                result = trace_digest.digest(self.trace(ranges))
+                gpu = result["threads"][0]
+                self.assertAlmostEqual(gpu["busy_ms_per_frame"], expected)
+                self.assertAlmostEqual(gpu["busy_pct"], expected / 15 * 100)
+                self.assertAlmostEqual(gpu["untraced_ms_per_frame"], 15 - expected)
+                self.assertEqual(gpu["wait_ms_per_frame"], 0)
+
+    def test_overlap_keeps_individual_batch_and_inclusive_slice_durations(self):
+        result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)]))
+        self.assertEqual([batch["ms"] for batch in result["largest_gpu_batches"]], [10, 10])
+        self.assertEqual(result["top_slices_ms_per_frame"], [{"name": "batch", "ms": 20}])
+        self.assertEqual(result["threads"][0]["top"], [{"name": "batch", "ms_per_frame": 15}])
+
+    def test_no_present_bounds_still_union_gpu_ranges(self):
+        trace = self.trace([(0, 10000), (5000, 10000)])
+        trace.presents.clear()
+        self.assertEqual(trace_digest.digest(trace)["threads"][0]["busy_ms_per_frame"], 15)
+
+    def test_cpu_scope_accounting_is_unchanged(self):
+        result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)], thread="worker"))
+        self.assertEqual(result["threads"][0]["busy_ms_per_frame"], 10)
+
+    def test_cli_reports_overlapping_gpu_batches_in_json_and_markdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json"
+            events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}},
+                      complete(1, "batch", 0, 10000), complete(1, "batch", 5000, 10000),
+                      {"name": "present", "ph": "i", "ts": 0, "args": {"present": 1}},
+                      {"name": "present", "ph": "i", "ts": 15000, "args": {"present": 2}}]
+            path.write_text(json.dumps(events), encoding="utf-8")
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        gpu = json.loads(result.stdout)["threads"][0]
+                        self.assertEqual(gpu["busy_pct"], 100)
+                        self.assertEqual(gpu["untraced_ms_per_frame"], 0)
+                    else:
+                        self.assertIn("| gpu | 15.0 (100 %) | 0.0 (0 %) | 0.0 |", result.stdout)
+
+
+class TraceEventLossTests(unittest.TestCase):
+    def marker(self, tid=1, lost=8):
+        return {"name": "trace buffer full", "ph": "i", "ts": 1500, "pid": 7, "tid": tid,
+                "s": "t", "args": {"events_lost": lost}}
+
+    def test_cli_reports_loss_without_an_adjacent_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json.gz"
+            path.write_bytes(gzip.compress(json.dumps({"traceEvents": EVENTS + [self.marker()]}).encode()))
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        digest = json.loads(result.stdout)
+                        self.assertTrue(digest["trace_incomplete"])
+                        self.assertEqual(digest["event_loss"], [{"thread": "queue worker 0x0", "at_ms": 1.5, "events_lost": 8}])
+                        self.assertIsNone(digest["summary"])
+                    else:
+                        self.assertIn("Incomplete trace", result.stdout)
+                        self.assertIn("8 events lost", result.stdout)
+                        self.assertIn("missing slices are not idle time", result.stdout)
+
+    def test_loss_does_not_change_frame_bounds_or_retained_slice_timings(self):
+        expected = trace_digest.digest(trace_digest.Trace(EVENTS), SUMMARY)
+        result = trace_digest.digest(trace_digest.Trace(EVENTS + [self.marker()]), SUMMARY)
+        self.assertTrue(result.pop("trace_incomplete"))
+        result.pop("event_loss")
+        self.assertEqual(result, expected)
+        self.assertFalse(SUMMARY["trace_dropped"])
+
+    def test_summary_loss_is_reported_without_event_markers(self):
+        summary = dict(SUMMARY, trace_dropped=True)
+        result = trace_digest.digest(trace_digest.Trace(EVENTS), summary)
+        self.assertTrue(result["trace_incomplete"])
+        self.assertEqual(result["event_loss"], [])
+        self.assertIn("Incomplete trace", trace_digest.markdown(result))
+
+    def test_markdown_loss_escapes_thread_names(self):
+        for name, escaped in (("a|b", "a&#124;b"), ("<x>", "&lt;x&gt;")):
+            with self.subTest(name=name):
+                metadata = {"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 1, "args": {"name": name}}
+                result = trace_digest.digest(trace_digest.Trace(EVENTS + [metadata, self.marker()]))
+                self.assertEqual(result["event_loss"][0]["thread"], name)
+                markdown = trace_digest.markdown(result)
+                self.assertIn(f"- {escaped}: 8 events lost; buffer full at 1.5 ms", markdown)
+                self.assertNotIn(f"- {name}: 8 events lost", markdown)
+
+    def test_thread_filter_keeps_only_relevant_loss_markers(self):
+        trace = trace_digest.Trace(EVENTS + [self.marker()])
+        trace.select_threads(["presenter"])
+        result = trace_digest.digest(trace)
+        self.assertNotIn("trace_incomplete", result)
+        self.assertNotIn("Incomplete trace", trace_digest.markdown(result))
+        trace = trace_digest.Trace(EVENTS + [self.marker(tid=9)])
+        trace.select_threads(["tid 9"])
+        result = trace_digest.digest(trace)
+        self.assertEqual(result["event_loss"], [{"thread": "tid 9", "at_ms": 1.5, "events_lost": 8}])
+
+    def test_loss_counters_are_validated(self):
+        for lost in (None, True, -1, 1.5, "8"):
+            with self.subTest(lost=lost):
+                with self.assertRaisesRegex(ValueError, "args.events_lost must be a nonnegative integer"):
+                    trace_digest.Trace(EVENTS + [self.marker(lost=lost)])
+
+    def test_zero_loss_does_not_change_the_digest(self):
+        expected = trace_digest.digest(trace_digest.Trace(EVENTS))
+        result = trace_digest.digest(trace_digest.Trace(EVENTS + [self.marker(lost=0)]))
+        self.assertEqual(result, expected)
+
+
 class TraceJsonNestingTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -113,6 +295,43 @@ class TraceJsonNestingTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), original)
 
 class TraceDigestTests(unittest.TestCase):
+
+    def test_summary_symlink_loop_is_reported_without_traceback(self):
+        loop = Path(self.directory.name) / "loop.jsonl"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+            trace_digest.load_summary(loop, self.trace)
+        default = self.trace.with_name("aps5-summary.jsonl")
+        if default.exists():
+            default.unlink()
+        try:
+            default.symlink_to(default.name)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+            trace_digest.load_summary(None, self.trace)
+        for arguments in ([str(self.trace), "--summary", str(loop)], [str(self.trace)]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, trace_digest.__file__, *arguments],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("symbolic link loop", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_folded_counters_follow_the_selected_frame_window(self):
+        events = [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}}
+                  for index, ts in enumerate((0, 10000))]
+        events += [{"name": "worker folded", "ph": "C", "ts": ts, "tid": 1, "args": {"ms": value}}
+                   for ts, value in ((-1, 7), (0, 1.5), (9999, 2), (10000, 11), (20000, 5))]
+        result = trace_digest.digest(trace_digest.Trace(events))
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
+        result = trace_digest.digest(trace_digest.Trace(events[:1] + events[2:]), {"window": {"ms": 10}})
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
+
     def test_summary_jsonl_excessive_nesting_reports_line_without_traceback(self):
         path = Path(self.directory.name) / "deep.jsonl"
         path.write_text('{}\n\n{"extra":' + excessive_trace_json('[', ']') + '}\n', encoding="utf-8")
@@ -151,6 +370,17 @@ class TraceDigestTests(unittest.TestCase):
                             trace_digest.load_intervals(path)
                     self.assertTrue(str(raised.exception).startswith(f"{path}:3: invalid JSON: "), str(raised.exception))
 
+    def test_cli_reports_a_summary_line_without_the_window_duration(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        record = dict(SUMMARY, window={"spec": "frames 600:3"})
+        summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(result.stderr.startswith("FAIL: the summary line has no 'ms' field"), result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_cli_rejects_invalid_summary_records_without_partial_output(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
         explicit = summary.with_name("explicit-\u03a9.jsonl")
@@ -171,6 +401,42 @@ class TraceDigestTests(unittest.TestCase):
                         self.assertEqual(result.stdout, "")
                         self.assertEqual(path.read_bytes(), data)
 
+    def test_summary_jsonl_duplicate_fields_name_the_source_line(self):
+        path = Path(self.directory.name) / "duplicate-summary.jsonl"
+        records = {
+            "commit": '{"commit":"first","commit":"second"}',
+            "p99": '{"frame_ms":{"p99":1,"p99":2}}',
+            "setting": '{"extra":[{"setting":false,"setting":true}]}',
+        }
+        for field, record in records.items():
+            path.write_text("{}\n\n" + record + "\n", encoding="utf-8-sig")
+            for mode in ("capture", "intervals"):
+                with self.subTest(field=field, mode=mode):
+                    with self.assertRaises(ValueError) as raised:
+                        if mode == "capture":
+                            trace_digest.load_summary(path, self.trace)
+                        else:
+                            trace_digest.load_intervals(path)
+                    self.assertEqual(str(raised.exception), f"{path}:3: duplicate JSON field: {field!r}")
+
+    def test_cli_rejects_duplicate_fields_without_partial_output(self):
+        path = self.trace.with_name("aps5-summary.jsonl")
+        encoded = json.dumps(SUMMARY)
+        nested = encoded.replace('"p99": 20.0', '"p99": 1.0, "p99": 20.0')
+        cases = ((encoded[:-1] + ',"commit":"ambiguous"}', [str(self.trace), "--summary", str(path), "--json"]),
+                 (nested, [str(self.trace)]), (nested, [str(path), "--json"]))
+        for record, arguments in cases:
+            original = (record + "\n").encode("utf-8")
+            path.write_bytes(original)
+            with self.subTest(record=record, arguments=arguments):
+                result = subprocess.run([sys.executable, trace_digest.__file__, *arguments],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"{path}:1: duplicate JSON field:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(path.read_bytes(), original)
+
     def test_mixed_summary_jsonl_objects_preserve_selection_and_intervals(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         expected = self.json_output(self.trace)
@@ -184,6 +450,24 @@ class TraceDigestTests(unittest.TestCase):
         path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
         self.assertEqual(trace_digest.load_summary(path, self.trace)["commit"], "latest")
         self.assertEqual(trace_digest.load_summary(path, self.trace.with_suffix(""))["commit"], "alternate")
+
+    def test_owned_draw_interval_counts_are_preserved(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        second = interval_line(30.0, 60.0, 20.0, 5.0)
+        first["owned_draw_counts"] = {"OwnedDraw.arm_attempt": 4, "OwnedDraw.reused": 2}
+        second["owned_draw_counts"] = {"OwnedDraw.arm_attempt": 1}
+        for line in (first, second):
+            trace_digest.validate_interval(line)
+        result = trace_digest.digest_intervals([first, second])
+        self.assertEqual(result["intervals"][0]["owned_draw_counts"], first["owned_draw_counts"])
+        missing = trace_digest.digest_intervals([first, interval_line(30.0, 60.0, 20.0, 5.0)])
+        self.assertIn("| 2 | - | - |", trace_digest.markdown_intervals(missing))
+        text = trace_digest.markdown_intervals(result)
+        self.assertIn("OwnedDraw.arm_attempt", text)
+        self.assertIn("| 2 | 1 | 0 |", text)
+        first["owned_draw_counts"] = {"bad": -1}
+        with self.assertRaises(ValueError):
+            trace_digest.validate_interval(first)
 
     def test_empty_summary_jsonl_files_remain_valid(self):
         path = self.trace.with_name("aps5-summary.jsonl")
@@ -344,6 +628,14 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(thread["folded_ms_per_frame"], 1.5)
         self.assertEqual(thread["untraced_ms_per_frame"], 0)
 
+    def test_presents_sharing_a_timestamp_keep_their_order_even_without_a_present_number(self):
+        trace = trace_digest.Trace([
+            {"name": "present", "ph": "i", "ts": 100, "pid": 7, "tid": 2, "s": "g", "args": {"present": 1}},
+            {"name": "present", "ph": "i", "ts": 100, "pid": 7, "tid": 2, "s": "g", "args": {}},
+            {"name": "present", "ph": "i", "ts": 50, "pid": 7, "tid": 2, "s": "g", "args": {"present": 3}},
+        ])
+        self.assertEqual(trace.presents, [(50, 3), (100, 1), (100, None)])
+
     def test_trace_accepts_event_array_and_empty_document(self):
         trace_from_array = trace_digest.Trace(EVENTS)
         self.assertEqual(len(trace_from_array.presents), 3)
@@ -468,6 +760,29 @@ class TraceDigestTests(unittest.TestCase):
         self.assertAlmostEqual(largest[("Driver.Present", "presenter")], 16.0)
         self.assertAlmostEqual(largest[("Driver.Present.inflight_wait", "presenter")], 14.5)
 
+    def test_persistent_peaks_merge_a_plateau_into_one_stall(self):
+        peaks = trace_digest.persistent_peaks([10, 10, 40, 41, 40, 10, 30, 10, 10, 25, 10])
+        self.assertEqual(peaks, [(3, 31), (6, 20), (9, 15)])
+
+    def test_persistent_peaks_measure_a_shoulder_against_the_saddle(self):
+        self.assertEqual(trace_digest.persistent_peaks([10, 50, 30, 45, 10]), [(1, 40), (3, 15)])
+
+    def test_persistent_peaks_ignore_flat_and_empty_series(self):
+        self.assertEqual(trace_digest.persistent_peaks([]), [])
+        self.assertEqual(trace_digest.persistent_peaks([5]), [])
+        self.assertEqual(trace_digest.persistent_peaks([5, 5, 5]), [])
+        self.assertEqual(trace_digest.persistent_peaks([1, 2, 3]), [(2, 2)])
+
+    def test_persistent_peaks_of_equal_peaks_are_both_reported(self):
+        self.assertEqual(trace_digest.persistent_peaks([9, 20, 9, 20, 9]), [(1, 11), (3, 11)])
+
+    def test_persistent_spikes_in_digest(self):
+        spikes = self.result()["persistent_spikes"]
+        self.assertEqual([spike["present"] for spike in spikes], [601])
+        self.assertAlmostEqual(spikes[0]["ms"], 20.0)
+        self.assertAlmostEqual(spikes[0]["at_ms"], 10.0)
+        self.assertAlmostEqual(spikes[0]["persistence_ms"], 10.0)
+
     def test_markdown_thread_names_cannot_split_table_cells_or_rows(self):
         name = "worker|<gpu>\nrow & more"
         phase = "phase|<tag>\r\nnext"
@@ -484,6 +799,30 @@ class TraceDigestTests(unittest.TestCase):
         self.assertIn("worker&#124;&lt;gpu&gt;<br>row &amp; more", rows[2])
         self.assertIn("phase&#124;&lt;tag&gt;<br>next", rows[2])
 
+    def test_markdown_names_and_metadata_cannot_create_report_sections(self):
+        name = "phase\n**Fake section** <tag> [link](https://example.invalid)"
+        result = self.result()
+        result["summary"]["window"]["spec"] = name
+        result["summary"]["gpu"] = name
+        result["slowest_frames"][0]["slices"][0]["name"] = name
+        result["threads"][0]["top"][0]["name"] = name
+        result["top_slices_ms_per_frame"][0]["name"] = name
+        result["longest_waits"][0]["name"] = name
+        result["stacks"]["self"][0]["frame"] = name
+        report = trace_digest.markdown(result)
+        escaped = "phase<br>&#42;&#42;Fake section&#42;&#42; &lt;tag&gt; &#91;link&#93;(https://example.invalid)"
+        self.assertNotIn("\n**Fake section**", report)
+        self.assertGreaterEqual(report.count(escaped), 7)
+
+    def test_markdown_identity_cannot_start_a_heading_or_list(self):
+        result = self.result()
+        for name, escaped in (("# Heading", "&#35; Heading"), ("- item", "&#45; item"),
+                              ("+ item", "&#43; item"), ("1. item", "&#49;. item"),
+                              ("_emphasis_", "&#95;emphasis&#95;"),
+                              ("OwnedDraw.arm_attempt", "OwnedDraw.arm_attempt"), ("GPU-1", "GPU-1")):
+            with self.subTest(name=name):
+                result["summary"]["gpu"] = name
+                self.assertTrue(trace_digest.markdown(result).splitlines()[1].startswith(escaped + ","))
 
     def test_threads_split_busy_and_wait(self):
         threads = {thread["thread"]: thread for thread in self.result()["threads"]}
@@ -727,6 +1066,7 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(result["slowest_frames"], [])
         self.assertEqual(result["top_slices_ms_per_frame"], [])
         self.assertEqual(result["longest_waits"], [])
+        self.assertEqual(result["persistent_spikes"], [])
 
 
     def test_command_line_markdown_and_json(self):
@@ -734,7 +1074,7 @@ class TraceDigestTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(trace_digest.main([str(self.trace), "--stacks", str(self.stacks)]), 0)
         text = output.getvalue()
-        for heading in ("**Slowest frames**", "**Threads**", "**Largest slices**", "**Longest waits**", "**Worker stacks**"):
+        for heading in ("**Slowest frames**", "**Persistent spikes**", "**Threads**", "**Largest slices**", "**Longest waits**", "**Worker stacks**"):
             self.assertIn(heading, text)
         self.assertLess(len(text.encode("utf-8")), 5000)
         output = io.StringIO()
@@ -775,6 +1115,19 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual([(entry[3], entry[4]) for entry in trace.slices[1]],
                          [(0, False), (1, True), (0, False)])
 
+    def test_interval_input_rejects_stack_samples(self):
+        path = Path(self.directory.name) / "intervals.jsonl"
+        path.write_text("", encoding="utf-8")
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run(
+                    [sys.executable, trace_digest.__file__, str(path), "--stacks", str(self.stacks), *output],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("--stacks requires an event trace, not interval summaries", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_missing_summary_file_is_an_error(self):
         missing = Path(self.directory.name) / "missing.jsonl"
         error = io.StringIO()
@@ -783,6 +1136,21 @@ class TraceDigestTests(unittest.TestCase):
                 trace_digest.main([str(self.trace), "--summary", str(missing)])
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("summary file not found", error.getvalue())
+
+    def test_interval_input_rejects_capture_summary(self):
+        path = Path(self.directory.name) / "intervals.jsonl"
+        path.write_text("", encoding="utf-8")
+        summary = Path(self.directory.name) / "capture.jsonl"
+        summary.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run(
+                    [sys.executable, trace_digest.__file__, str(path), "--summary", str(summary), *output],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("--summary requires an event trace, not interval summaries", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
 
     def test_thread_filter_keeps_frame_bounds_and_capture_summary(self):
         command = [sys.executable, trace_digest.__file__, str(self.trace)]
@@ -835,6 +1203,23 @@ class IntervalDigestTests(unittest.TestCase):
 
     def test_window_lines_are_skipped(self):
         self.assertEqual(len(trace_digest.load_intervals(self.path)), 4)
+
+    def test_intervals_symlink_loop_is_reported_without_traceback(self):
+        loop = Path(self.directory.name) / "loop.jsonl"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+            trace_digest.load_intervals(loop)
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(loop), *output],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("symbolic link loop", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
 
     def test_utf8_bom_intervals_preserve_the_command_line_digest(self):
         expected = trace_digest.digest_intervals(trace_digest.load_intervals(self.path))
@@ -994,6 +1379,19 @@ class IntervalDigestTests(unittest.TestCase):
                 self.assertTrue(all(line.count("|") == 11 for line in rows), rows)
                 cells = [cell.strip() for cell in rows[2].split("|")[1:-1]]
                 self.assertEqual(cells, ["1", "0-30", "1800", "16.6", "18.0", "20.0", "25.0", "5.0", "50 %", escaped + " 7.5"])
+
+    def test_interval_identity_cannot_create_markdown_sections(self):
+        line = interval_line(0.0, 30.0, 20.0, 5.0)
+        name = "GPU\n**Fake section** <tag> [link](https://example.invalid)"
+        line["gpu"] = name
+        result = trace_digest.digest_intervals([line])
+        self.assertEqual(result["identity"]["gpu"], name)
+        report = trace_digest.markdown_intervals(result)
+        self.assertNotIn("\n**Fake section**", report)
+        self.assertIn("GPU<br>&#42;&#42;Fake section&#42;&#42; &lt;tag&gt; &#91;link&#93;(https://example.invalid)", report)
+        line["gpu"] = "  # Heading"
+        self.assertTrue(trace_digest.markdown_intervals(trace_digest.digest_intervals([line])).splitlines()[1]
+                        .startswith("  &#35; Heading,"))
 
     def test_bom_encoded_stacks_load(self):
         with tempfile.TemporaryDirectory() as directory:

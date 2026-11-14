@@ -1,6 +1,8 @@
 import contextlib
 import io
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -50,6 +52,8 @@ class ReferenceErrorTests(unittest.TestCase):
             if image is not None:
                 (providers / "libc.prx").write_bytes(image)
             artifact = root / "evidence"
+            relinker = root / "relinker"
+            relinker.write_bytes(b"relinker")
 
             def stage(args, output):
                 destination = output / "libs"
@@ -57,7 +61,7 @@ class ReferenceErrorTests(unittest.TestCase):
                 runner.stage_libraries(destination, args.build, args.toolchain, ["libc.prx"])
                 return 0
 
-            arguments = ["reference", "--host", "--build", str(root / "build"), "--relinker", sys.executable,
+            arguments = ["reference", "--host", "--build", str(root / "build"), "--relinker", str(relinker),
                          "--toolchain", str(root / "build"), "--output", str(artifact)]
             errors, output = io.StringIO(), io.StringIO()
             with mock.patch.object(sys, "argv", arguments), mock.patch.object(runner, "run", side_effect=stage), \
@@ -89,6 +93,19 @@ class ReferenceErrorTests(unittest.TestCase):
         code, error = self.check_main(fixtures.build_elf([]))
         self.assertEqual(code, 0, error)
         self.assertEqual(error, "")
+
+    def test_an_artifact_path_outside_the_output_encoding_is_printed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build = root / "build"
+            build.mkdir()
+            artifact = root / "вывод"
+            result = subprocess.run([sys.executable, runner.__file__, "--host", "--build", str(build), "--relinker", sys.executable,
+                                     "--toolchain", str(build), "--output", str(artifact)],
+                                    capture_output=True, encoding="utf-8", timeout=20, env={**os.environ, "PYTHONIOENCODING": "ascii"})
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(f"Artifacts: {artifact.resolve()}", result.stdout)
+            self.assertIn("Build the job_manager_reference target first", result.stderr)
 
 
 if __name__ == "__main__":

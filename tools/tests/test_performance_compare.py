@@ -42,6 +42,52 @@ def excessive_json_value(opening, closing):
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class WorkerComparisonTests(unittest.TestCase):
+    def test_worker_changes_are_percentage_points_with_relative_percentages(self):
+        before, after = copy.deepcopy(SUMMARY), copy.deepcopy(SUMMARY)
+        after["worker_busy_pct"] = {"queue worker 0x0": 75.0}
+        report = performance_compare.compare(before, after)
+        self.assertEqual(report["worker_busy_pct"], {"queue worker 0x0": {
+            "baseline": 50.0, "candidate": 75.0, "change": 25.0, "change_pct": 50.0}})
+        self.assertIn("Change (pp)", performance_compare.markdown(report))
+        self.assertTrue(any("percentage points" in note for note in report["notes"]))
+
+    def test_missing_workers_and_zero_baselines_keep_unavailable_changes(self):
+        before, after = copy.deepcopy(SUMMARY), copy.deepcopy(SUMMARY)
+        before["worker_busy_pct"] = {"old": 40.0, "idle": 0.0}
+        after["worker_busy_pct"] = {"new": 30.0, "idle": 20.0}
+        workers = performance_compare.compare(before, after)["worker_busy_pct"]
+        self.assertEqual(list(workers), ["idle", "new", "old"])
+        self.assertEqual(workers["idle"], {"baseline": 0.0, "candidate": 20.0, "change": 20.0, "change_pct": None})
+        for name in ("new", "old"):
+            self.assertIsNone(workers[name]["change"])
+            self.assertIsNone(workers[name]["change_pct"])
+        self.assertIsNone(workers["new"]["baseline"])
+        self.assertIsNone(workers["old"]["candidate"])
+
+    def test_worker_names_are_escaped_in_markdown(self):
+        before, after = copy.deepcopy(SUMMARY), copy.deepcopy(SUMMARY)
+        before["worker_busy_pct"] = after["worker_busy_pct"] = {"worker|<queue>\nnext": 10.0}
+        text = performance_compare.markdown(performance_compare.compare(before, after))
+        self.assertIn("worker&#124;&lt;queue&gt; next", text)
+
+    def test_json_and_markdown_cli_include_workers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("before.jsonl", "after.jsonl")]
+            for path in paths:
+                path.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
+            for flags in ([], ["--json"]):
+                result = subprocess.run([sys.executable, str(Path(performance_compare.__file__)),
+                                         *map(str, paths), *flags], capture_output=True, text=True,
+                                        encoding="utf-8", timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if flags:
+                    self.assertEqual(json.loads(result.stdout)["worker_busy_pct"]["queue worker 0x0"]["change"], 0.0)
+                else:
+                    self.assertIn("queue worker 0x0", result.stdout)
+                    self.assertIn("Change (pp)", result.stdout)
+
+
 class PerformanceCompareTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -553,6 +599,52 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class GraphicsTrackComparisonTests(unittest.TestCase):
+    def test_graphics_track_rates_are_compared_per_present(self):
+        before, after = copy.deepcopy(SUMMARY), copy.deepcopy(SUMMARY)
+        before["graphics_track"] = {"Graphics.RenderPass": 8, "Graphics.RenderPass.Continued": 40,
+                                    "Graphics.Barrier.draw": 80, "Graphics.BarrierMerged.draw": 16,
+                                    "Graphics.Copy": 4, "Graphics.Copy.bytes": 4 * 1024 * 1024}
+        after["graphics_track"] = {"Graphics.RenderPass": 12, "Graphics.RenderPass.Continued": 20,
+                                   "Graphics.Barrier.draw": 120, "Graphics.BarrierMerged.draw": 0,
+                                   "Graphics.Copy": 6, "Graphics.Copy.bytes": 2 * 1024 * 1024}
+        report = performance_compare.compare(before, after)
+        self.assertEqual(report["graphics_track"]["render_passes"],
+                         {"baseline": 2.0, "candidate": 3.0, "change": 1.0, "change_pct": 50.0})
+        self.assertEqual(report["graphics_track"]["continued_draws"],
+                         {"baseline": 10.0, "candidate": 5.0, "change": -5.0, "change_pct": -50.0})
+        self.assertEqual(report["graphics_track"]["barriers"],
+                         {"baseline": 20.0, "candidate": 30.0, "change": 10.0, "change_pct": 50.0})
+        self.assertEqual(report["graphics_track"]["merged_barriers"],
+                         {"baseline": 4.0, "candidate": 0.0, "change": -4.0, "change_pct": -100.0})
+        self.assertEqual(report["graphics_track"]["copies"],
+                         {"baseline": 1.0, "candidate": 1.5, "change": 0.5, "change_pct": 50.0})
+        self.assertEqual(report["graphics_track"]["copy_mib"]["baseline"], 1.0)
+        self.assertEqual(report["graphics_track"]["copy_mib"]["candidate"], 0.5)
+        text = performance_compare.markdown(report)
+        self.assertIn("Graphics track (per present)", text)
+        self.assertIn("| render passes | 2.000 | 3.000 | +1.000 | +50.000 |", text)
+
+    def test_missing_graphics_track_is_unknown_not_zero(self):
+        before, after = copy.deepcopy(SUMMARY), copy.deepcopy(SUMMARY)
+        after["graphics_track"] = {"Graphics.RenderPass": 4}
+        report = performance_compare.compare(before, after)
+        self.assertIsNone(report["graphics_track"]["render_passes"]["baseline"])
+        self.assertIsNone(report["graphics_track"]["render_passes"]["change"])
+        self.assertIn("unknown, not zero", " ".join(report["notes"]))
+
+    def test_absent_graphics_track_adds_no_note_or_table(self):
+        before, after = copy.deepcopy(SUMMARY), copy.deepcopy(SUMMARY)
+        report = performance_compare.compare(before, after)
+        self.assertIsNone(report["graphics_track"]["render_passes"]["baseline"])
+        self.assertNotIn("Graphics track (per present)", performance_compare.markdown(report))
+        self.assertNotIn("unknown, not zero", " ".join(report["notes"]))
+
+    def test_invalid_graphics_track_is_rejected(self):
+        with self.assertRaises(ValueError):
+            performance_compare.validate(dict(SUMMARY, graphics_track={"bad": -1}))
 
 
 if __name__ == "__main__":

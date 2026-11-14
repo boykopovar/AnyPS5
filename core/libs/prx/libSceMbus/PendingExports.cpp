@@ -1,6 +1,7 @@
 #include "prx/libSceMbus/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstring>
 
@@ -86,21 +87,48 @@ int APS5_VABI sceMbusCheckDriverCallback() {
 }
 
 int APS5_VABI sceMbusConvertToLocalDeviceId(std::uint64_t deviceId, std::uint32_t* localId, std::uint32_t* deviceClass) {
-    if (localId != nullptr) *localId = static_cast<std::uint32_t>(deviceId);
-    if (deviceClass != nullptr) *deviceClass = static_cast<std::uint32_t>(deviceId >> 48);
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    if (localId != nullptr) {
+        const auto val = static_cast<std::uint32_t>(deviceId);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(localId, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return invalidArgument;
+    }
+    if (deviceClass != nullptr) {
+        const auto val = static_cast<std::uint32_t>(deviceId >> 48);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(deviceClass, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return invalidArgument;
+    }
     return 0;
 }
 
 int APS5_VABI sceMbusConvertToLocalDeviceId2(std::uint64_t deviceId, std::uint32_t deviceClass, std::uint64_t* localId) {
     if (deviceClass != deviceId >> 48) NotImplemented_nid_no_patch("sceMbusConvertToLocalDeviceId2: a device class other than the identifier's");
-    if (localId != nullptr) *localId = deviceId & 0xFFFFFFFFFFFFull;
+    if (localId != nullptr) {
+        constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+        const auto val = deviceId & 0xFFFFFFFFFFFFull;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(localId, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return invalidArgument;
+    }
     return 0;
 }
 
 int APS5_VABI sceMbusConvertToMbusDeviceId(std::uint64_t localId, std::uint32_t deviceClass, std::uint64_t* deviceId) {
     constexpr auto unconvertibleClass = static_cast<std::int32_t>(0x809B0008u);
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
     const bool convertible = deviceClass == 0x10 || deviceClass == 0x20;
-    if (deviceId != nullptr) *deviceId = convertible ? (static_cast<std::uint64_t>(deviceClass) << 48) | localId : 0;
+    if (deviceId != nullptr) {
+        const auto val = convertible ? (static_cast<std::uint64_t>(deviceClass) << 48) | localId : 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(deviceId, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return invalidArgument;
+    }
     return convertible ? 0 : unconvertibleClass;
 }
 
@@ -335,7 +363,7 @@ int APS5_VABI sceMbusEventBusStatusChangeUnsubscribe(std::uint64_t unusedSlot, s
 }
 
 void APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size) {
-    if (size != 0) std::memset(callbacks, 0, size);
+    if (callbacks != nullptr) std::memset(callbacks, 0, size);
 }
 
 int APS5_VABI sceMbusEventCreate_(std::uint32_t flags, MbusEvent* buffer, std::uint32_t capacity, const MbusEventCallbacks* callbacks, void* userData) {
@@ -404,7 +432,6 @@ int APS5_VABI sceMbusGetSparkState(std::uint64_t deviceId, MbusSparkState* state
 }
 
 int APS5_VABI sceMbusInit() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
