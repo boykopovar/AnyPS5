@@ -823,10 +823,15 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTexturePattern(FontGraphicsFrame* grap
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
     if (gnm == nullptr) return FontGsInvalidParameter;
+    void* record = nullptr;
     const int error = sceFontGraphicsDrawupFillTexturePatternObject(graphicsObject, gnm->fillObject, gnm->mode, format, select,
-                                                                  dimension1, option1, option2, dimension2, output);
+                                                                  dimension1, option1, option2, dimension2, &record);
     if (error != 0) return error;
-    MarkGnmRecord(*output);
+    MarkGnmRecord(record);
+    const int savedErrno2 = errno;
+    const bool copied2 = GuestCopyOut_nid_no_patch(output, &record, sizeof(record));
+    errno = savedErrno2;
+    if (!copied2) return FontGsInvalidParameter;
     return 0;
 }
 

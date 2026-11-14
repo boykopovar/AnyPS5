@@ -653,32 +653,59 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
 
 int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode) {
     constexpr int GuestEinval = 22;
-    if (!result) {
+    FileStream* nullStream = nullptr;
+    const int savedErrno = errno;
+    const bool probed = result && GuestCopyOut_nid_no_patch(result, &nullStream, sizeof(nullStream));
+    errno = savedErrno;
+    if (!probed) {
         SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = nullptr;
     if (!filename || !mode) {
         SonyInvokeConstraintHandler("fopen_s: bad argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = fopen_nid_postfix(filename, mode);
-    return *result ? 0 : errno;
+    FileStream* stream = fopen_nid_postfix(filename, mode);
+    if (!stream) {
+        return errno;
+    }
+    const int openErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(result, &stream, sizeof(stream))) {
+        fclose_nid_postfix(stream);
+        errno = openErrno;
+        SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
+    errno = openErrno;
+    return 0;
 }
 
 int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode, FileStream* stream) {
     constexpr int GuestEinval = 22;
-    if (!result) {
+    FileStream* nullStream = nullptr;
+    const int savedErrno = errno;
+    const bool probed = result && GuestCopyOut_nid_no_patch(result, &nullStream, sizeof(nullStream));
+    errno = savedErrno;
+    if (!probed) {
         SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = nullptr;
     if (!mode || !stream) {
         SonyInvokeConstraintHandler("fopen_s: bad argument", nullptr, GuestEinval);
         return GuestEinval;
     }
-    *result = freopen_nid_postfix(filename, mode, stream);
-    return *result ? 0 : errno;
+    FileStream* reopened = freopen_nid_postfix(filename, mode, stream);
+    if (!reopened) {
+        return errno;
+    }
+    const int reopenErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(result, &reopened, sizeof(reopened))) {
+        errno = reopenErrno;
+        SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
+    errno = reopenErrno;
+    return 0;
 }
 
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
@@ -866,15 +893,35 @@ std::int64_t APS5_VABI ftell_nid_postfix(FileStream* stream) { return ftello_nid
 
 int APS5_VABI fgetpos_nid_postfix(FileStream* stream, std::int64_t* position) {
     if (!position) throw std::invalid_argument("fgetpos: null position");
+    const int savedErrno = errno;
+    std::int64_t current = 0;
+    if (!GuestCopyIn_nid_no_patch(&current, position, sizeof(current)) ||
+        !GuestCopyOut_nid_no_patch(position, &current, sizeof(current))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fgetpos: unwritable position");
+    }
+    errno = savedErrno;
     const auto result = ftello_nid_postfix(stream);
     if (result == -1) return -1;
-    *position = result;
+    const int ftellErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(position, &result, sizeof(result))) {
+        errno = ftellErrno;
+        throw std::invalid_argument("fgetpos: unwritable position");
+    }
+    errno = ftellErrno;
     return 0;
 }
 
 int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* position) {
     if (!position) throw std::invalid_argument("fsetpos: null position");
-    return fseeko_nid_postfix(stream, *position, SEEK_SET);
+    const int savedErrno = errno;
+    std::int64_t target = 0;
+    if (!GuestCopyIn_nid_no_patch(&target, position, sizeof(target))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fsetpos: unreadable position");
+    }
+    errno = savedErrno;
+    return fseeko_nid_postfix(stream, target, SEEK_SET);
 }
 
 void APS5_VABI rewind_nid_postfix(FileStream* stream) {

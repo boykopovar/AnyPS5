@@ -215,6 +215,88 @@ class PublicHeaderPackageTests(unittest.TestCase):
                         self.assertFalse(path.exists())
                 self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
 
+    def test_archive_interrupted_renames_restore_output_and_allow_retry(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        real_replace = Path.replace
+        for existing in (False, True):
+            for operation in (("backup", "promotion") if existing else ("promotion",)):
+                for failing in names:
+                    for after_rename in (False, True):
+                        for kind in (OSError, KeyboardInterrupt):
+                            with self.subTest(existing=existing, operation=operation, failing=failing,
+                                              after_rename=after_rename, exception=kind.__name__), tempfile.TemporaryDirectory() as directory:
+                                output = Path(directory) / "output"
+                                output.mkdir()
+                                sentinel = output / "unrelated.asset"
+                                sentinel.write_bytes(b"keep unrelated asset")
+                                if existing:
+                                    for index, name in enumerate(names):
+                                        target = output / name
+                                        target.write_bytes(("previous " + name).encode())
+                                        os.utime(target, ns=(1_600_000_000_000_000_000 + index,
+                                                            1_600_000_000_000_000_000 + index))
+
+                                def snapshot(path):
+                                    return path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns
+
+                                before = {file.name: snapshot(file) for file in output.iterdir()}
+                                source_before = {file: snapshot(file) for file in self.source.rglob("*") if file.is_file()}
+                                failure = kind("archive rename interrupted")
+
+                                def replace(source, target):
+                                    target = Path(target)
+                                    backup = source == output / failing and target.parent.name == "previous"
+                                    promotion = target == output / failing and source.parent.name.startswith(".headers-")
+                                    if backup if operation == "backup" else promotion:
+                                        if after_rename:
+                                            real_replace(source, target)
+                                        raise failure
+                                    return real_replace(source, target)
+
+                                with patch.object(Path, "replace", replace), self.assertRaises(kind) as caught:
+                                    package_headers.package(self.source, output, "v1")
+                                self.assertIs(caught.exception, failure)
+                                self.assertEqual({file.name: snapshot(file) for file in output.iterdir()}, before)
+                                self.assertEqual({file: snapshot(file) for file in source_before}, source_before)
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    package_headers.package(self.source, output, "v1")
+                                self.assertEqual({file.name for file in output.iterdir()}, {sentinel.name, *names})
+                                self.assertEqual(snapshot(sentinel), before[sentinel.name])
+                                with zipfile.ZipFile(output / names[0]) as archive:
+                                    self.assertEqual(archive.read("LICENSE"), (self.source / "LICENSE").read_bytes())
+                                with tarfile.open(output / names[1]) as archive:
+                                    self.assertEqual(archive.extractfile("LICENSE").read(), (self.source / "LICENSE").read_bytes())
+
+    def test_interrupted_promotion_with_failed_restore_keeps_recovery_files(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        real_replace = Path.replace
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+            previous = {name: ("previous " + name).encode() for name in names}
+            for name, data in previous.items():
+                (output / name).write_bytes(data)
+            (output / "unrelated.asset").write_bytes(b"keep")
+
+            def replace(source, target):
+                target = Path(target)
+                if target == output / names[1] and source.parent.name.startswith(".headers-"):
+                    raise KeyboardInterrupt("second archive promotion interrupted")
+                if target == output / names[1] and source.parent.name == "previous":
+                    raise PermissionError("archive restore blocked")
+                return real_replace(source, target)
+
+            with patch.object(Path, "replace", replace), self.assertRaisesRegex(RuntimeError, "second archive promotion interrupted.*unrestored backups") as caught:
+                package_headers.package(self.source, output, "v1")
+            self.assertIsInstance(caught.exception.__cause__, PermissionError)
+            self.assertEqual((output / names[0]).read_bytes(), previous[names[0]])
+            self.assertEqual((output / "unrelated.asset").read_bytes(), b"keep")
+            recovery = list(output.glob(".headers-*/previous"))
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual((recovery[0] / names[1]).read_bytes(), previous[names[1]])
+            self.assertIn(str(recovery[0]), str(caught.exception))
+            self.assertIn(names[1], str(caught.exception))
+
     def test_archive_restore_failure_preserves_unrestored_backup(self):
         names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
         original_replace = Path.replace
