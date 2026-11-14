@@ -1091,9 +1091,9 @@ static void CheckDirectMemoryQuery() {
     Require(sceKernelDirectMemoryQuery(first + page * 3, 1, &info, sizeof(info)) == 0);
     Require(info.start == second && info.end == second + page && info.memoryType == 1);
     info = {-1, -1, -1};
-    Require(sceKernelDirectMemoryQuery(first, 0, nullptr, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(first, 0, nullptr, sizeof(info)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelDirectMemoryQuery(first, 0, reinterpret_cast<void*>(0x10), sizeof(info)) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelDirectMemoryQuery(-1, 1, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(-1, 1, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
     Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info) - 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
     Require(sceKernelReleaseDirectMemory(first, page * 2) == 0);
