@@ -434,7 +434,7 @@ LibreSsl::BioMethod* APS5_VABI BIO_meth_new_nid_postfix(int type, const char* na
 LibreSsl3EvpPkey* APS5_VABI d2i_PUBKEY_nid_postfix(
     LibreSsl3EvpPkey** output, const unsigned char** input, std::int64_t length);
 int APS5_VABI OBJ_find_sigid_algs_nid_postfix(int signatureNid, int* digestNid, int* keyNid);
-int APS5_VABI ECDSA_do_verify_nid_postfix();
+int APS5_VABI ECDSA_do_verify_nid_postfix(const unsigned char* digest, int digestLength, const LibreSsl3EcdsaSig* signature, EcKey* key);
 const char* APS5_VABI ERR_reason_error_string_nid_postfix(std::uint64_t error);
 int APS5_VABI X509_add1_ext_i2d_nid_postfix();
 int APS5_VABI EC_GROUP_cmp_nid_postfix();
