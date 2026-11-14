@@ -152,5 +152,47 @@ class ValidateFormsTests(unittest.TestCase):
         self.assertIs(isa_profiles.validate_forms(rows), rows)
 
 
+RDNA1 = isa_xml("AMD RDNA 1", instruction("S_MOV_B32", ("ENC_SOP1", 3)) + instruction("V_ADD_F32", ("ENC_VOP2", 3), ("ENC_VOP3", 259)))
+RDNA2 = isa_xml("AMD RDNA 2", instruction("S_MOV_B32", ("ENC_SOP1", 3))
+                + instruction("IMAGE_BVH_INTERSECT_RAY", ("ENC_MIMG", 230))
+                + instruction("IMAGE_BVH64_INTERSECT_RAY", ("ENC_MIMG", 231))
+                + instruction("V_DOT2_F32_F16", ("ENC_VOP3P", 0x1c)))
+
+
+class GenerateGfx1013FormsTests(unittest.TestCase):
+    def test_rdna1_supplies_base_rows_and_rdna2_only_the_bvh_rows(self):
+        with pinned(rdna1=RDNA1, rdna2=RDNA2):
+            forms = isa_profiles.generate_gfx1013_forms(RDNA1, RDNA2)
+        self.assertEqual(forms.count(("S_MOV_B32", "SOP1", "base", 3)), 1)
+        self.assertIn(("V_ADD_F32", "VOP2", "vop3", 259), forms)
+        self.assertIn(("IMAGE_BVH_INTERSECT_RAY", "MIMG", "base", 230), forms)
+        self.assertIn(("IMAGE_BVH64_INTERSECT_RAY", "MIMG", "base", 231), forms)
+        self.assertNotIn("V_DOT2_F32_F16", {name for name, _, _, _ in forms})
+
+    def test_output_is_sorted_and_includes_the_supplemental_table(self):
+        with pinned(rdna1=RDNA1, rdna2=RDNA2):
+            forms = isa_profiles.generate_gfx1013_forms(RDNA1, RDNA2)
+        self.assertEqual(forms, sorted(forms))
+        self.assertIn(("S_STORE_DWORD", "SMEM", "base", 16), forms)
+        self.assertIn(("V_MUL_LO_I32", "VOP3", "base", 363), forms)
+
+    def test_identical_xml_row_and_supplemental_row_are_merged(self):
+        rdna1 = isa_xml("AMD RDNA 1", instruction("S_STORE_DWORD", ("ENC_SMEM", 16)))
+        with pinned(rdna1=rdna1, rdna2=RDNA2):
+            forms = isa_profiles.generate_gfx1013_forms(rdna1, RDNA2)
+        self.assertEqual(forms.count(("S_STORE_DWORD", "SMEM", "base", 16)), 1)
+
+    def test_different_name_on_a_supplemental_opcode_is_rejected(self):
+        rdna1 = isa_xml("AMD RDNA 1", instruction("S_FOO", ("ENC_SMEM", 16)))
+        with pinned(rdna1=rdna1, rdna2=RDNA2), self.assertRaisesRegex(ValueError, "duplicate ISA encoding"):
+            isa_profiles.generate_gfx1013_forms(rdna1, RDNA2)
+
+    def test_architecture_of_each_input_is_checked(self):
+        with self.assertRaisesRegex(ValueError, "expected AMD RDNA 1 XML, got 'AMD RDNA 2'"):
+            isa_profiles.generate_gfx1013_forms(RDNA2, RDNA2)
+        with pinned(rdna1=RDNA1), self.assertRaisesRegex(ValueError, "expected AMD RDNA 2 XML, got 'AMD RDNA 1'"):
+            isa_profiles.generate_gfx1013_forms(RDNA1, RDNA1)
+
+
 if __name__ == "__main__":
     unittest.main()
