@@ -1,4 +1,4 @@
-// Derived from Source/WebCore/html/HTMLMediaElement.cpp (PS5-WebKit-11.x 80f77e94c63e)
+// Derived from Source/WebCore/html/HTMLMediaElement.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2007-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2014 Google Inc. All rights reserved.
