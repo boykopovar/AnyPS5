@@ -201,6 +201,11 @@ void AwaitRegisteredPreparation(PreparedShaders& prepared, std::unique_lock<std:
     if (prepared.failure != nullptr) std::rethrow_exception(prepared.failure);
 }
 
+bool RegisteredPreparationFailed(const ShaderSnapshot& snapshot) {
+    std::lock_guard lock(snapshot.prepared->mutex);
+    return snapshot.prepared->failure != nullptr;
+}
+
 bool CommittedAbi(const ShaderSnapshot& snapshot, std::span<const std::uint64_t> key) {
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
@@ -797,7 +802,7 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
         const auto found = registry->find(snapshot->codeAddress);
         if (found != registry->end()) {
             for (const auto& current : found->second) {
-                if (current->headerAddress == snapshot->headerAddress && current->type == snapshot->type && current->code == snapshot->code && current->header == snapshot->header) {
+                if (current->headerAddress == snapshot->headerAddress && current->type == snapshot->type && current->code == snapshot->code && current->header == snapshot->header && !RegisteredPreparationFailed(*current)) {
                     if (current == found->second.back()) {
                         transaction.Commit();
                         return;
@@ -2667,7 +2672,7 @@ void Driver::RegisterShader(const Shader* shader) {
             const auto found = shaders->find(snapshot.codeAddress);
             if (found != shaders->end()) {
                 for (const auto& current : found->second) {
-                    if (current->headerAddress == snapshot.headerAddress && current->type == snapshot.type && current->code == snapshot.code && current->header == snapshot.header) {
+                    if (current->headerAddress == snapshot.headerAddress && current->type == snapshot.type && current->code == snapshot.code && current->header == snapshot.header && !RegisteredPreparationFailed(*current)) {
                         const auto identical = current;
                         PublishRegisteredShader(shaders, identical);
                         transaction.Commit();

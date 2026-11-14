@@ -24,6 +24,8 @@
 #include <cstring>
 #include <chrono>
 #include <iostream>
+#include <map>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -824,6 +826,48 @@ void SharedCodeHeaders() {
     AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "re-registered earlier header draw failed");
     AgcDriverWaitIdle_nid_postfix();
+}
+
+void RegistrationRetry() {
+    alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    } header;
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    header.shader.specials = &header.specials;
+    header.specials.dispatch_modifier = 0x8000;
+    header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 0}}};
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    const auto previous = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
+    const auto failed = AgcDriver::DriverDetail::RegisteredHeader(*previous, &header.shader);
+    Require(failed != nullptr, "initial registration published no shader");
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    Require(AgcDriver::DriverDetail::RegisteredHeader(*AgcDriver::DriverDetail::Driver::Get().RegisteredShaders(), &header.shader) == failed, "successful registration was prepared again");
+    {
+        std::lock_guard lock(failed->prepared->mutex);
+        failed->prepared->entries.clear();
+        failed->prepared->registeredAbis.clear();
+        failed->prepared->failure = std::make_exception_ptr(std::bad_alloc{});
+    }
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    const auto retried = AgcDriver::DriverDetail::RegisteredHeader(*AgcDriver::DriverDetail::Driver::Get().RegisteredShaders(), &header.shader);
+    Require(retried != nullptr && retried != failed, "repeated registration retained a failed shader snapshot");
+    {
+        std::lock_guard lock(retried->prepared->mutex);
+        Require(retried->prepared->failure == nullptr && !retried->prepared->entries.empty(), "repeated registration did not prepare the shader again");
+    }
+    Require(AgcDriver::DriverDetail::RegisteredHeader(*previous, &header.shader) == failed && failed->prepared->failure != nullptr, "registration retry modified an earlier snapshot");
 }
 
 void RegistrationWithoutSpecials() {
@@ -2130,6 +2174,7 @@ int main(int argc, char** argv) {
         RelocatedHeaders();
         CommittedAbis();
         UnprovenProgramsAtSubmit();
+        RegistrationRetry();
         RegistrationWithoutSpecials();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";
