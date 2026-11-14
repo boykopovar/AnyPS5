@@ -2338,6 +2338,11 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             cube.cube = true;
             modes.push_back(cube);
         }
+        if (image.dimensionQueryOnly && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && image.dimension == RdnaImageDimension::Dim1D) {
+            auto view = mode;
+            view.dimension = RdnaImageDimension::Dim2DMsaa;
+            modes.push_back(view);
+        }
         if (layerRowsCandidate(image) && image.maxArrayLayers != 0u && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto rows = mode;
             rows.dimension = RdnaImageDimension::Dim2D;
