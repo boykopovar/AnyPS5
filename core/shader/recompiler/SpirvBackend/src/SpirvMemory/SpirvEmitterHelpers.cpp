@@ -55,10 +55,9 @@ const ShaderWorkgroupInputInfo* ShaderWorkgroupInput(const SpirvEmitterState& st
 }
 
 std::array<std::uint32_t, 3> WorkgroupLocalSize(const SpirvEmitterState& state, const ShaderWorkgroupInputInfo& workgroup) {
-    const std::uint32_t derivativeDefault = state.requirements.computeDerivatives ? 2u : 1u;
     std::array<std::uint32_t, 3> size {
-        workgroup.threadsNum[0] != 0u ? workgroup.threadsNum[0] : derivativeDefault,
-        workgroup.threadsNum[1] != 0u ? workgroup.threadsNum[1] : derivativeDefault,
+        workgroup.threadsNum[0] != 0u ? workgroup.threadsNum[0] : 1u,
+        workgroup.threadsNum[1] != 0u ? workgroup.threadsNum[1] : 1u,
         workgroup.threadsNum[2] != 0u ? workgroup.threadsNum[2] : 1u};
     if (state.spannedWave) {
         size = {64u, 1u, 1u};
