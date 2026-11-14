@@ -482,6 +482,8 @@ if(BUILD_TESTING)
         add_test(NAME tools_release_notes_check COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_release_notes_check.py)
         set_tests_properties(tools_release_notes_check PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_prepare_release_notes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_prepare_release_notes.py)
         add_test(NAME check_skips_ctest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips_ctest.py)
         set_tests_properties(check_skips_ctest PROPERTIES TIMEOUT 30)
