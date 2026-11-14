@@ -1,3 +1,28 @@
+/*-
+ * Copyright (c) 2005-2011 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <bit>
@@ -601,6 +626,94 @@ TFloat LanczosLogGamma(TFloat x, TLogarithm logarithm, TCoefficient series, TCoe
     return logarithm(sum * root / x) - rest;
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_fmal.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_fmal.c */
+struct ExtendedPair {
+    long double hi;
+    long double lo;
+};
+
+ExtendedPair AddExact(long double a, long double b) {
+    ExtendedPair result;
+    result.hi = a + b;
+    const long double shift = result.hi - a;
+    result.lo = (a - (result.hi - shift)) + (b - shift);
+    return result;
+}
+
+long double AddAdjusted(long double a, long double b) {
+    ExtendedPair sum = AddExact(a, b);
+    if (sum.lo != 0 && (Bits(sum.hi).mantissa & 1) == 0)
+        sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
+    return sum.hi;
+}
+
+long double AddAndDenormalize(long double a, long double b, int scale) {
+    ExtendedPair sum = AddExact(a, b);
+    if (sum.lo != 0) {
+        const ExtendedBits bits = Bits(sum.hi);
+        const int bitsLost = -(bits.signExponent & 0x7fff) - scale + 1;
+        if ((bitsLost != 1) != ((bits.mantissa & 1) != 0))
+            sum.hi = std::nextafter(sum.hi, std::numeric_limits<long double>::infinity() * sum.lo);
+    }
+    return std::ldexp(sum.hi, scale);
+}
+
+ExtendedPair MultiplyExact(long double a, long double b) {
+    constexpr long double Split = 0x1p32L + 1.0L;
+    long double p = a * Split;
+    long double ha = a - p;
+    ha += p;
+    const long double la = a - ha;
+    p = b * Split;
+    long double hb = b - p;
+    hb += p;
+    const long double lb = b - hb;
+    p = ha * hb;
+    const long double q = ha * lb + la * hb;
+    ExtendedPair result;
+    result.hi = p + q;
+    result.lo = p - result.hi + q + la * lb;
+    return result;
+}
+
+long double FmaFarApart(long double x, long double y, long double z, int rounding) {
+    std::feraiseexcept(FE_INEXACT);
+    if (!std::isnormal(z)) std::feraiseexcept(FE_UNDERFLOW);
+    constexpr long double Infinity = std::numeric_limits<long double>::infinity();
+    const bool productPositive = (x > 0.0L) == (y > 0.0L);
+    switch (rounding) {
+    case FE_TONEAREST:
+        return z;
+    case FE_TOWARDZERO:
+        return productPositive == (z > 0.0L) ? z : std::nextafter(z, 0.0L);
+    case FE_DOWNWARD:
+        return productPositive ? z : std::nextafter(z, -Infinity);
+    default:
+        return productPositive ? std::nextafter(z, Infinity) : z;
+    }
+}
+
+long double FmaScaled(long double xs, long double ys, long double zs, int spread, int rounding) {
+    std::fesetround(FE_TONEAREST);
+    volatile long double vxs = xs;
+    const ExtendedPair xy = MultiplyExact(vxs, ys);
+    const ExtendedPair r = AddExact(xy.hi, zs);
+    if (r.hi == 0.0L) {
+        std::fesetround(rounding);
+        volatile long double vzs = zs;
+        return xy.hi + vzs + std::ldexp(xy.lo, spread);
+    }
+    if (rounding != FE_TONEAREST) {
+        std::fesetround(rounding);
+        volatile long double vrlo = r.lo;
+        const long double adj = vrlo + xy.lo;
+        return std::ldexp(r.hi + adj, spread);
+    }
+    const long double adj = AddAdjusted(r.lo, xy.lo);
+    if (spread + std::ilogb(r.hi) > -16383) return std::ldexp(r.hi + adj, spread);
+    return AddAndDenormalize(r.hi, adj, spread);
+}
+
 }
 
 extern "C" {
@@ -690,13 +803,17 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     if (z == 0.0L) return x * y;
     if (!std::isfinite(x) || !std::isfinite(y)) return x * y + z;
     if (!std::isfinite(z)) return z;
-    int xExponent = 0, yExponent = 0, zExponent = 0;
-    std::frexp(x, &xExponent);
-    std::frexp(y, &yExponent);
-    std::frexp(z, &zExponent);
-    if (xExponent + yExponent - zExponent > 2 * std::numeric_limits<long double>::digits) return x * y;
     ErrnoGuard guard;
-    return std::fma(x, y, z);
+    int xExponent = 0, yExponent = 0, zExponent = 0;
+    const long double xs = std::frexp(x, &xExponent);
+    const long double ys = std::frexp(y, &yExponent);
+    long double zs = std::frexp(z, &zExponent);
+    const int rounding = std::fegetround();
+    const int spread = xExponent + yExponent - zExponent;
+    if (spread < -std::numeric_limits<long double>::digits) return FmaFarApart(x, y, z, rounding);
+    if (spread <= std::numeric_limits<long double>::digits * 2) zs = std::ldexp(zs, -spread);
+    else zs = std::copysign(std::numeric_limits<long double>::min(), zs);
+    return FmaScaled(xs, ys, zs, xExponent + yExponent, rounding);
 }
 
 double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : std::floor(x); }
