@@ -1433,7 +1433,7 @@ int APS5_VABI _ZN6icu_6816ICULocaleServiceD0Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_bZ1DVZdIg90_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_bb5xsagH_plus_cs_nid_no_patch();
 int APS5_VABI _ZNK6icu_6813UnicodeString11hasMetaDataEv_nid_postfix();
-int APS5_VABI uprv_strnicmp_nid_postfix();
+int APS5_VABI uprv_strnicmp_nid_postfix(const char* str1, const char* str2, std::uint32_t n);
 int APS5_VABI sceIcuLegacyUnknown_bgX_plus_dtmmGbI_nid_no_patch();
 int APS5_VABI _ZN6icu_686Locale9getCanadaEv_nid_postfix();
 int APS5_VABI _ZN6icu_687CaseMap7toUpperEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix();
