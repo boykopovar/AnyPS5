@@ -592,11 +592,9 @@ int APS5_VABI sceUltConditionVariableWait(void* condition) {
     if (held->_lockCount != 1) throw std::runtime_error("ULT condition wait with a recursively held mutex is not implemented");
     const auto ownerIdentity = held->_ownerIdentity;
     UltConditionWaiter waiter;
+    waiter._tracked = CurrentWaitRecord(waiter._record, 0);
     state->_queue.push_back(&waiter);
     ++state->_waiters;
-    UltWaitRecord conditionRecord;
-    const bool conditionTracked = CurrentWaitRecord(conditionRecord, 0);
-    if (conditionTracked) state->_waiterRecords.push_back(conditionRecord);
     ++held->_conditionWaiters;
     held->_lockCount = 0;
     held->_owner = {};
@@ -622,13 +620,11 @@ int APS5_VABI sceUltConditionVariableWait(void* condition) {
     } catch (...) {
         state->_queue.remove(&waiter);
         --state->_waiters;
-        if (conditionTracked) RemoveWaitRecord(state->_waiterRecords, conditionRecord);
         --held->_conditionWaiters;
         throw;
     }
     state->_queue.remove(&waiter);
     --state->_waiters;
-    if (conditionTracked) RemoveWaitRecord(state->_waiterRecords, conditionRecord);
     --held->_conditionWaiters;
     if (!held->_alive || !state->_alive) return ULT_ERROR_STATE;
     held->_owner = owner;
@@ -1167,7 +1163,11 @@ int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableI
     localInfo.mutex = state->_mutexObject;
     localInfo.waitingThreads = static_cast<std::uint32_t>(state->_queue.size());
     if (!GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo))) return ULT_ERROR_NULL;
-    return WriteWaitRecords(state->_waiterRecords, waitingThreads, capacity);
+    std::vector<UltWaitRecord> records;
+    for (const auto* waiter : state->_queue) {
+        if (waiter->_tracked) records.push_back(waiter->_record);
+    }
+    return WriteWaitRecords(records, waitingThreads, capacity);
 }
 
 int APS5_VABI sceUltGetMutexInfo(void* object, UltMutexInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {

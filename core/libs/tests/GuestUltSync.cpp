@@ -773,7 +773,17 @@ void InfoWaiters() {
     });
     WaitForInfoWaiters<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition);
     CheckWaiterRecord<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition, 0);
+    CHECK(sceUltMutexLock(&mutex) == Ok);
     CHECK(sceUltConditionVariableSignal(&condition) == Ok);
+    UltConditionVariableInfo signaled{};
+    UltWaitingThreadInfo signaledRecord{};
+    std::memset(&signaledRecord, 0xAA, sizeof(signaledRecord));
+    signaledRecord.size = sizeof(UltWaitingThreadInfo);
+    const UltWaitingThreadInfo poisoned = signaledRecord;
+    CHECK(sceUltGetConditionVariableInfo(&condition, &signaled, &signaledRecord, 1) == Ok);
+    CHECK(signaled.waitingThreads == 0);
+    CHECK(std::memcmp(&poisoned, &signaledRecord, sizeof(poisoned)) == 0);
+    CHECK(sceUltMutexUnlock(&mutex) == Ok);
     conditionWaiter.join();
 
     std::thread semaphoreWaiter([&] { CHECK(sceUltSemaphoreAcquire(&semaphore, 1) == Ok); });

@@ -313,6 +313,8 @@ struct UltMutexState {
 struct UltConditionWaiter {
     std::condition_variable _available;
     bool _signaled = false;
+    UltWaitRecord _record;
+    bool _tracked = false;
 };
 
 struct UltConditionState {
@@ -322,7 +324,6 @@ struct UltConditionState {
     bool _alive = true;
     void* _mutexObject = nullptr;
     char _name[32]{};
-    std::vector<UltWaitRecord> _waiterRecords;
 };
 
 struct UltSemaphoreState {
