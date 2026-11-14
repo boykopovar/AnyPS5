@@ -1,5 +1,12 @@
 # libSceFontGs technical debt
 
+### Functional
+
+- [sceFontGraphicsGnmDrawupFillTextureImage](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - returning `FontGsInvalidParameter` (`0x80460002`) when the `output` pointer is unwritable via `GuestCopyOut_nid_no_patch` on initial zeroing or record write-back is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceFontGraphicsGnmDrawupFillTexturePattern](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - returning `FontGsInvalidParameter` (`0x80460002`) when the `output` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceFontGraphicsSequenceGetGnmCommandsForChain](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - returning `FontGsInvalidParameter` (`0x80460002`) when any of the `commands`, `numCommands`, `commands2`, or `numCommands2` pointers is unwritable via `GuestCopyOut_nid_no_patch` on initial zeroing or value write-back is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceFontGraphicsSequenceGetGnmCommandsForSubmit](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - returning `FontGsInvalidParameter` (`0x80460002`) when either the `commands` or `numCommands` pointer is unwritable via `GuestCopyOut_nid_no_patch` on initial zeroing or value write-back is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+
 ### Unknown function info
 
 - [sceFontSelectGraphicsGnm](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - throws for index 0 and returns `nullptr` for other indices. The PS4 10.71 body (offset 0x4090) returns a static backend table for index 0; its entries are not mapped, and the host `libSceFont` graphics device does not consume it.

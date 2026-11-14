@@ -340,12 +340,111 @@ void RunF16Conversions(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) 
     std::printf("sdwa f16-to-f32 wave%u: %u combinations passed\n", waveSize, F16ConversionResults);
 }
 
+constexpr std::uint32_t F32Results = 6u * 3u;
+constexpr std::array<std::uint32_t, 16> RoundingInputs{
+    0x40200000u, 0xc0600000u, 0x478000c0u, 0xc78000c0u,
+    0x3f923456u, 0xbf923456u, 0x409abcdeu, 0xc09abcdeu,
+    0x3fc00000u, 0xbfc00000u, 0x40600000u, 0xc0200000u,
+    0x4a123457u, 0xca123457u, 0x40000000u, 0xc0000000u,
+};
+constexpr std::array<std::uint32_t, 16> FrexpInputs{
+    0x3e800000u, 0xbe800000u, 0x00812345u, 0x80812345u,
+    0x7e923456u, 0xfe923456u, 0x20123456u, 0xa0123456u,
+    0x40200000u, 0xc0600000u, 0x478000c0u, 0xc78000c0u,
+    0x3f923456u, 0xbf923456u, 0x409abcdeu, 0xc09abcdeu,
+};
+alignas(256) std::array<std::uint32_t, Threads> F32Input{};
+alignas(256) std::array<std::uint32_t, Threads * F32Results> F32Output{};
+
+std::uint32_t F32ResultBits(std::uint32_t bits, std::uint32_t opcode) {
+    const auto sign = bits & 0x80000000u;
+    const auto exponent = (bits >> 23u) & 0xffu;
+    if (opcode == 0x3fu) return static_cast<std::uint32_t>(static_cast<std::int32_t>(exponent) - 126);
+    if (opcode == 0x40u) return (bits & 0x807fffffu) | (126u << 23u);
+    Require(exponent >= 127u && exponent <= 149u, "rounding model requires magnitude in [1, 2^23)");
+    const auto shift = 150u - exponent;
+    const auto unit = 1u << shift;
+    const auto significand = (bits & 0x7fffffu) | 0x800000u;
+    auto integer = significand >> shift;
+    const auto fraction = significand & (unit - 1u);
+    if (opcode == 0x20u) {
+        const auto numerator = sign && fraction ? unit - fraction : fraction;
+        if (numerator == 0u) return 0u;
+        const auto msb = static_cast<std::uint32_t>(std::bit_width(numerator) - 1u);
+        return ((127u + msb - shift) << 23u) | ((numerator << (23u - msb)) & 0x7fffffu);
+    }
+    if ((opcode == 0x22u && !sign && fraction) || (opcode == 0x24u && sign && fraction) ||
+        (opcode == 0x23u && (fraction > unit / 2u || (fraction == unit / 2u && (integer & 1u))))) ++integer;
+    return ExactFloatBits(integer, false) | sign;
+}
+
+void RunF32Destinations(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_t waveSize) {
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+        F32Input[lane] = opcode >= 0x3fu ? FrexpInputs[lane % FrexpInputs.size()] : RoundingInputs[lane % RoundingInputs.size()];
+    }
+    F32Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{
+        0x16020081u, 0x160400ffu, F32Results,
+        0xe0302000u, 0x80000401u, 0xbf8c3f70u,
+    };
+    std::uint32_t index = 0u;
+    for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+        for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+            words.insert(words.end(), {
+                0x7e0a02ffu, Garbage,
+                0x7e0a00f9u | (opcode << 9u),
+                4u | (destination << 8u) | (unused << 11u) | (6u << 16u),
+                0xe0702000u | (index * 4u), 0x80010502u,
+            });
+        }
+    }
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u);
+    const auto input = BufferDescriptor(F32Input.data(), static_cast<std::uint32_t>(F32Input.size()));
+    const auto output = BufferDescriptor(F32Output.data(), static_cast<std::uint32_t>(F32Output.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    index = 0u;
+    for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+        for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+            for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+                const auto bits = F32ResultBits(F32Input[lane], opcode);
+                const auto expected = InsertResult(bits, destination, unused);
+                const auto actual = F32Output[lane * F32Results + index];
+                Require(actual == expected, "sdwa f32 opcode " + Hex(opcode) + " wave" + std::to_string(waveSize) +
+                    " lane " + std::to_string(lane) + " destination " + std::to_string(destination) +
+                    " unused " + std::to_string(unused) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            }
+        }
+    }
+    std::printf("sdwa f32 opcode 0x%x wave%u: %u comparisons passed\n", opcode, waveSize, Threads * F32Results);
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 3 && std::string(argv[1]) == "f32") {
+            Require(std::string(argv[2]) == "wave32" || std::string(argv[2]) == "wave64", "expected wave32 or wave64");
+            for (const auto opcode : {0x20u, 0x21u, 0x22u, 0x23u, 0x24u, 0x3fu, 0x40u}) {
+                RunF32Destinations(*device, opcode, std::string(argv[2]) == "wave64" ? 64u : 32u);
+            }
+            return 0;
+        }
         Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "wave64"), "expected no argument or wave64");
         const auto waveSize = argc == 2 ? 64u : 32u;
         for (const bool signedInteger : {false, true}) RunConversions(*device, signedInteger, waveSize);

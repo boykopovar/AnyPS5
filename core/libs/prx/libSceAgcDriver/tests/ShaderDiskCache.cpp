@@ -480,12 +480,15 @@ void verifyResultRoundTrip() {
 
 void verifyElementFlags() {
     ElementFlags flags;
+    flags.reserve(256);
+    require(flags.empty(), "reserving element flags changed their size");
     std::vector<bool> expected;
     for (std::size_t index = 0; index < 70; ++index) {
         flags.push_back(index % 3 == 0);
         expected.push_back(index % 3 == 0);
         require(flags == expected, "element flags differ from a vector after " + std::to_string(index + 1) + " entries");
     }
+    flags.reserve(512);
     const auto copy = flags;
     require(copy == flags && copy.size() == 70 && copy.at(69) && !copy.at(68), "a copy of spilled element flags differs");
     require(std::count(flags.begin(), flags.end(), true) == 24, "spilled element flags do not iterate");
@@ -2332,6 +2335,41 @@ void verifyPlanPayloadDamage(const IrResourcePlan& plan, const std::string& what
     require(rejected != 0u, what + ": no damaged plan was rejected");
 }
 
+void verifyArgumentDeltaBounds() {
+    const auto encodeSecond = [](bool linked) {
+        IrResourcePlan plan;
+        plan.valueStorage.Reserve(2);
+        auto& first = *plan.valueStorage.Create(IrOpcode::Void, IrType::U32, 0u);
+        auto& second = *plan.valueStorage.Create(IrOpcode::Void, IrType::U32, 1u);
+        second.AddArgument(linked ? &first : nullptr);
+        return encodedPlan(plan);
+    };
+    const auto linked = encodeSecond(true);
+    const auto unlinked = encodeSecond(false);
+    require(linked.size() == unlinked.size(), "the linked and unlinked argument plans differ in size");
+    std::size_t offset = linked.size();
+    for (std::size_t index = 0; index < linked.size(); ++index) {
+        if (linked[index] == unlinked[index]) continue;
+        require(offset == linked.size() && linked[index] == std::byte{2} && unlinked[index] == std::byte{0}, "the argument code of the second record is not where the plan layout puts it");
+        offset = index;
+    }
+    require(offset != linked.size(), "the linked and unlinked argument plans encode the same bytes");
+    IrResourcePlan decoded;
+    require(ShaderDiskCache::DecodePlan(linked, decoded), "the two-value plan with one argument does not decode");
+    const auto withCode = [&](const std::vector<std::byte>& code) {
+        auto bytes = std::vector<std::byte>(linked.begin(), linked.begin() + static_cast<std::ptrdiff_t>(offset));
+        bytes.insert(bytes.end(), code.begin(), code.end());
+        bytes.insert(bytes.end(), linked.begin() + static_cast<std::ptrdiff_t>(offset) + 1, linked.end());
+        return bytes;
+    };
+    IrResourcePlan rejected;
+    std::vector<std::byte> maximal(9, std::byte{0xff});
+    maximal.push_back(std::byte{0x01});
+    require(!ShaderDiskCache::DecodePlan(withCode(maximal), rejected), "an argument code of 2^64-1 (delta INT64_MAX) from the second record decodes");
+    require(!ShaderDiskCache::DecodePlan(withCode({std::byte{4}}), rejected), "an argument before the first record decodes");
+    require(!ShaderDiskCache::DecodePlan(withCode({std::byte{3}}), rejected), "an argument past the last record decodes");
+}
+
 void verifyMalformedPlans() {
     const auto rejects = [](const std::string& what, const std::function<void(IrResourcePlan&)>& damage) {
         auto plan = handBuiltPlan();
@@ -2367,6 +2405,7 @@ void verifyMalformedPlans() {
     unblocked.srtReads[0].value = &phi;
     bytes.clear();
     require(!ShaderDiskCache::EncodePlan(unblocked, bytes), "a phi without predecessor blocks was encoded");
+    verifyArgumentDeltaBounds();
 }
 
 void verifySharedPlans() {

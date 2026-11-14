@@ -1,10 +1,13 @@
 #include "prx/libc/include/Api.hpp"
+#include <atomic>
+#include <chrono>
 #include <array>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
 #include <cerrno>
 #include <ctime>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <limits>
@@ -12,11 +15,16 @@
 #include <type_traits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <langinfo.h>
+#include <locale.h>
 #endif
 
+#include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/GuestTimeZoneName.hpp"
@@ -34,8 +42,25 @@ constexpr const char* MONTH_NAMES[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
 constexpr std::size_t ASCTIME_SIZE = sizeof("Sun Jan-2147483648 -2147483648:-2147483648:-2147483648     -2147481748\n");
 constexpr std::int64_t SECONDS_PER_DAY = 86400;
 constexpr std::int64_t DAYS_FROM_MARCH_TO_YEAR_END = 306;
-#if defined(_WIN32) || defined(__APPLE__)
 constexpr std::int64_t CALENDAR_CYCLE_YEARS = 400;
+
+std::int64_t calendarCycles(std::int64_t value, std::int64_t cycle) {
+    return value >= 0 ? value / cycle : -((-(value + 1)) / cycle + 1);
+}
+
+std::int64_t utcSeconds(const std::tm& time) {
+    const std::int64_t years = calendarCycles(time.tm_mon, 12);
+    const std::int64_t month = time.tm_mon - years * 12 + 1;
+    const std::int64_t year = std::int64_t{time.tm_year} + 1900 + years - (month <= 2 ? 1 : 0);
+    const std::int64_t era = calendarCycles(year, CALENDAR_CYCLE_YEARS);
+    const std::int64_t yearOfEra = year - era * CALENDAR_CYCLE_YEARS;
+    const std::int64_t dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5;
+    const std::int64_t dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    const std::int64_t days = era * 146097 + dayOfEra - 719468 + time.tm_mday - 1;
+    return days * SECONDS_PER_DAY + std::int64_t{time.tm_hour} * 3600 + std::int64_t{time.tm_min} * 60 + time.tm_sec;
+}
+
+#if defined(_WIN32) || defined(__APPLE__)
 constexpr std::int64_t CALENDAR_CYCLE_SECONDS = 146097 * SECONDS_PER_DAY;
 #ifdef _WIN32
 constexpr int HOST_ORDINARY_FIRST_YEAR = 70;
@@ -48,10 +73,6 @@ constexpr int HOST_ORDINARY_LAST_YEAR = std::numeric_limits<int>::max();
 constexpr std::int64_t HOST_FIRST_SECOND = -2208988800;
 constexpr std::int64_t HOST_LAST_SECOND = std::numeric_limits<std::int64_t>::max();
 #endif
-
-std::int64_t calendarCycles(std::int64_t value, std::int64_t cycle) {
-    return value >= 0 ? value / cycle : -((-(value + 1)) / cycle + 1);
-}
 
 #ifdef __APPLE__
 bool timeOfLocalSeconds(std::int64_t local, std::int64_t& time) {
@@ -69,17 +90,6 @@ bool timeOfLocalSeconds(std::int64_t local, std::int64_t& time) {
 }
 #endif
 
-std::int64_t utcSeconds(const std::tm& time) {
-    const std::int64_t years = calendarCycles(time.tm_mon, 12);
-    const std::int64_t month = time.tm_mon - years * 12 + 1;
-    const std::int64_t year = std::int64_t{time.tm_year} + 1900 + years - (month <= 2 ? 1 : 0);
-    const std::int64_t era = calendarCycles(year, CALENDAR_CYCLE_YEARS);
-    const std::int64_t yearOfEra = year - era * CALENDAR_CYCLE_YEARS;
-    const std::int64_t dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5;
-    const std::int64_t dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
-    const std::int64_t days = era * 146097 + dayOfEra - 719468 + time.tm_mday - 1;
-    return days * SECONDS_PER_DAY + std::int64_t{time.tm_hour} * 3600 + std::int64_t{time.tm_min} * 60 + time.tm_sec;
-}
 #endif
 
 void copyCalendarFields(const std::tm& host, GuestTm& guest) {
@@ -230,7 +240,12 @@ int& zoneDepth() {
 class ZoneScope {
 public:
     ZoneScope() : lock(zoneMutex()) {
-        if (zoneDepth() == 0) applyGuestZone();
+        if (zoneDepth() == 0) {
+            applyGuestZone();
+#ifdef _WIN32
+            SonyRefreshHostZone_nid_no_patch();
+#endif
+        }
         ++zoneDepth();
     }
 
@@ -362,6 +377,39 @@ IsoWeek isoWeek(const GuestTm& time) {
 template<typename TChar, typename TFormatChar>
 void formatTime(FormatBuffer<TChar>& buffer, const TFormatChar* format, const GuestTm& time);
 
+struct ConversionFormats {
+    std::string dateTime;
+    std::string date;
+    std::string clock;
+};
+
+const ConversionFormats& cConversionFormats() {
+    static const ConversionFormats formats{"%a %b %e %H:%M:%S %Y", "%m/%d/%y", "%H:%M:%S"};
+    return formats;
+}
+
+const ConversionFormats& hostConversionFormats() {
+    static const ConversionFormats formats = [] {
+        ConversionFormats result = cConversionFormats();
+#ifndef _WIN32
+        locale_t host = newlocale(LC_TIME_MASK, "", static_cast<locale_t>(0));
+        if (host != static_cast<locale_t>(0)) {
+            result.dateTime = nl_langinfo_l(D_T_FMT, host);
+            result.date = nl_langinfo_l(D_FMT, host);
+            result.clock = nl_langinfo_l(T_FMT, host);
+            freelocale(host);
+        }
+#endif
+        return result;
+    }();
+    return formats;
+}
+
+const ConversionFormats& conversionFormats() {
+    const char* requested = std::getenv("ANYPS5_TIME_FORMAT");
+    return requested != nullptr && std::string_view(requested) == "host" ? hostConversionFormats() : cConversionFormats();
+}
+
 template<typename TChar>
 void addZoneOffset(FormatBuffer<TChar>& buffer, const GuestTm& time) {
     std::int64_t east = -timezone_nid_postfix + (time.tm_isdst > 0 ? 3600 : 0);
@@ -381,11 +429,11 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'b':
     case 'h': addText(buffer, tableName(time.tm_mon, MONTH_NAMES, MONTH_NAMES, 12)); return true;
     case 'B': addText(buffer, tableName(time.tm_mon, MONTH_FULL_NAMES, MONTH_NAMES, 12)); return true;
-    case 'c': formatTime(buffer, "%a %b %e %H:%M:%S %Y", time); return true;
+    case 'c': formatTime(buffer, conversionFormats().dateTime.c_str(), time); return true;
     case 'C': addNumber(buffer, time.tm_year / 100 + YEAR_BASE / 100, 100, "%02d"); return true;
     case 'd': addNumber(buffer, time.tm_mday, 100, "%02d"); return true;
-    case 'D':
-    case 'x': formatTime(buffer, "%m/%d/%y", time); return true;
+    case 'D': formatTime(buffer, "%m/%d/%y", time); return true;
+    case 'x': formatTime(buffer, conversionFormats().date.c_str(), time); return true;
     case 'e': addNumber(buffer, time.tm_mday, 100, "%2d"); return true;
     case 'F': formatTime(buffer, "%Y-%m-%d", time); return true;
     case 'g': addNumber(buffer, twoDigitYear(isoWeek(time).year), 100, "%02d"); return true;
@@ -401,8 +449,8 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'R': formatTime(buffer, "%H:%M", time); return true;
     case 'S': addNumber(buffer, time.tm_sec, 100, "%02d"); return true;
     case 't': addText(buffer, "\t"); return true;
-    case 'T':
-    case 'X': formatTime(buffer, "%H:%M:%S", time); return true;
+    case 'T': formatTime(buffer, "%H:%M:%S", time); return true;
+    case 'X': formatTime(buffer, conversionFormats().clock.c_str(), time); return true;
     case 'u': addNumber(buffer, time.tm_wday == 0 ? 7 : time.tm_wday, 10, "%d"); return true;
     case 'U': addNumber(buffer, weekOfYear(time, 7), 100, "%02d"); return true;
     case 'V': addNumber(buffer, isoWeek(time).week, 100, "%02d"); return true;
@@ -582,6 +630,23 @@ int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
 #endif
 }
 
+int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {
+    if (ts == nullptr || base != TIME_UTC) return 0;
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const uint64_t hundredNs = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
+    ts->tv_sec = static_cast<std::int64_t>(hundredNs / 10000000ULL);
+    ts->tv_nsec = static_cast<std::int64_t>((hundredNs % 10000000ULL) * 100ULL);
+#else
+    timespec host{};
+    if (clock_gettime(CLOCK_REALTIME, &host) != 0) return 0;
+    ts->tv_sec = host.tv_sec;
+    ts->tv_nsec = host.tv_nsec;
+#endif
+    return TIME_UTC;
+}
+
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0) {
     if (time1 >= time0) return static_cast<double>(static_cast<uint64_t>(time1) - static_cast<uint64_t>(time0));
     return -static_cast<double>(static_cast<uint64_t>(time0) - static_cast<uint64_t>(time1));
@@ -593,11 +658,13 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return gmtime_s_nid_postfix(timer, &result);
 }
 
 GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return localtime_s_nid_postfix(timer, &result);
 }
 
@@ -606,7 +673,10 @@ GuestTm* APS5_VABI localtime_nid_postfix(const int64_t* timer) {
 }
 
 GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("localtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     const ZoneScope zone;
     std::tm host{};
     const int callerError = errno;
@@ -646,7 +716,10 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
 }
 
 GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("gmtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     if (!utcCalendarFields(*timer, *result)) return nullptr;
     result->tm_gmtoff = 0;
     result->tm_zone = "UTC";
@@ -660,6 +733,20 @@ GuestTm* APS5_VABI gmtime_nid_postfix(const int64_t* timer) {
 int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
     const ZoneScope zone;
     std::tm host = toHostTm(*timeptr);
+    if (host.tm_isdst > 0) {
+        const auto local = utcSeconds(host);
+        GuestTm early{};
+        GuestTm late{};
+        constexpr std::int64_t searchSeconds = 12 * 2629746 + SECONDS_PER_DAY;
+        if (utcCalendarFields(local - searchSeconds, early) && utcCalendarFields(local + searchSeconds, late)) {
+            const int saved = *__error_nid_postfix();
+            const auto guess = SonyHostZoneAt_nid_no_patch(local);
+            const auto zone = SonyHostZoneAt_nid_no_patch(local - guess.standardEast - guess.daylight);
+            const auto daylight = SonyHostDaylightAmount_nid_no_patch(local - zone.standardEast - zone.daylight);
+            *__error_nid_postfix() = saved;
+            if (daylight == 0) host.tm_isdst = -1;
+        }
+    }
     host.tm_wday = -1;
     int64_t moved = 0;
 #if defined(_WIN32) || defined(__APPLE__)
@@ -764,16 +851,16 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
     return count - buffer.remaining;
 }
 
-// The guest's CLOCKS_PER_SEC is 1000000: clock() reports process CPU time in microseconds.
+static std::atomic<std::uint64_t (APS5_VABI*)()> g_processTimeSource{nullptr};
+static const auto g_libcLoad = std::chrono::steady_clock::now();
+
+void LibcSetProcessTimeSource_nid_no_patch(std::uint64_t (APS5_VABI* source)()) {
+    g_processTimeSource.store(source);
+}
+
 int64_t APS5_VABI clock_nid_postfix() {
-#ifdef _WIN32
-    FILETIME creation, exit, kernel, user;
-    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) return -1;
-    const auto toTicks = [](const FILETIME& time) { return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; };
-    return static_cast<int64_t>((toTicks(kernel) + toTicks(user)) / 10);
-#else
-    return static_cast<int64_t>(static_cast<double>(std::clock()) * 1000000.0 / CLOCKS_PER_SEC);
-#endif
+    if (const auto source = g_processTimeSource.load()) return static_cast<int64_t>(source());
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - g_libcLoad).count();
 }
 
 int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time) {
