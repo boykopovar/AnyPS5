@@ -3521,6 +3521,8 @@ constexpr std::uint32_t TableFormat16UNorm = 7;
 constexpr std::uint32_t TableFormat8888UNorm = 56;
 constexpr std::uint32_t TableFormat32UInt = 20;
 constexpr std::uint32_t TableFormat16SInt = 12;
+constexpr std::uint32_t TableFormat16Float = 13;
+constexpr std::uint32_t TableFormat32SInt = 21;
 constexpr std::uint32_t TableFormat11_11_10UInt = 34;
 constexpr std::uint32_t TableFormat32_32UInt = 62;
 constexpr std::uint32_t TableType2D = 9;
@@ -6197,6 +6199,28 @@ void verifySelectedRecordDirectOperations() {
     require(mixed->info.images.size() == 2u && std::ranges::all_of(mixed->info.images, [&](const ImageResource& image) { return image.table == NoTable && !mixed->descriptorSources.at(image.source).tableColumn.has_value(); }), "selected record direct operations: a T# sampled and stored was planned through an image table for one of its operations");
     const auto sampled = GetResourcePlan(TableRequest(TableSrtKeyCode, userData));
     require(sampled->info.images.size() == 1u && sampled->info.images[0].table == 0u && sampled->descriptorSources.at(sampled->info.images[0].source).tableColumn->selected, "selected record direct operations: a T# that is only sampled no longer selects its record");
+}
+
+void verifyImageTableUintStorage() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[5];
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    const std::array<std::pair<std::uint32_t, bool>, 5> formats{{{TableFormat16Float, true}, {TableFormat16SInt, true}, {TableFormat32SInt, true}, {TableFormat32UInt, true}, {TableFormat8888UNorm, false}}};
+    for (std::size_t index = 0; index < formats.size(); ++index) guest.heap[index] = TableT(textures[index].bytes.data(), formats[index].first, TableType2D);
+    FillTableSrt(guest, guest.heap.data(), 32u, static_cast<std::uint32_t>(formats.size()));
+    const auto userData = TableUserData(guest);
+    const auto compiled = CompileTable(TableRequest(WithImageOperation(TableWholeCode, 0xf0200f08u, false), userData));
+    const auto* binding = TableBinding(*compiled.result, DescriptorRole::ImageStorageTable);
+    require(binding != nullptr && binding->kind == DescriptorKind::StorageImage && binding->count == formats.size() && binding->imageUintStorage.size() == formats.size(), "image table uint storage: the storage table does not hold one flag per element");
+    for (std::size_t index = 0; index < formats.size(); ++index) {
+        std::size_t found = formats.size();
+        for (std::size_t candidate = 0; candidate < formats.size(); ++candidate) {
+            if (binding->guestDescriptor[candidate * 8u] == guest.heap[index][0]) found = candidate;
+        }
+        require(found < formats.size(), "image table uint storage: a stored element is missing from the table");
+        require(binding->imageUintStorage[found] == formats[index].second, "image table uint storage: the UINT view flag of a written-only element is wrong for its format");
+    }
 }
 
 void verifyEvaluableHeapSamplerDirect() {
@@ -12123,6 +12147,7 @@ int main(int argc, char** argv) {
             verifyImageTableLateKey();
             verifyImageTableUnkeyedAccess();
             verifyImageTableRegistration();
+            verifyImageTableUintStorage();
             verifyScalarAddressRule();
             verifyPointerImageTable();
             verifyPointerTableUnwrittenReuse();
@@ -12236,6 +12261,7 @@ int main(int argc, char** argv) {
         verifySpecializedModuleRelease();
         verifyLayerSpecializationRelease();
         verifyImageTableRegistration();
+        verifyImageTableUintStorage();
         verifyScalarAddressRule();
         verifyPointerImageTable();
         verifyPointerTableUnwrittenReuse();

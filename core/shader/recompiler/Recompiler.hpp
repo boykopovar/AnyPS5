@@ -695,6 +695,7 @@ struct DescriptorBinding {
     ElementFlags imageDepthCompare;
     ElementFlags imageAtomic;
     ElementFlags imageAtomic64;
+    ElementFlags imageUintStorage;
     std::vector<DescriptorImageShape> imageShapes;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
