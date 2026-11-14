@@ -250,6 +250,51 @@ static void TestWebsiteDataStoreConfiguration() {
     WKRelease(config);
 }
 
+static void TestWebsiteDataStore() {
+    const void* defaultStore = WKWebsiteDataStoreGetDefaultDataStore();
+    Require(defaultStore != nullptr);
+    Require(WKGetTypeID(defaultStore) == static_cast<std::uint32_t>(NKWebKit::ObjectType::WebsiteDataStore));
+    Require(WKWebsiteDataStoreGetDefaultDataStore() == defaultStore);
+
+    const void* cookieStore = WKWebsiteDataStoreGetHTTPCookieStore(defaultStore);
+    Require(cookieStore != nullptr);
+    Require(WKGetTypeID(cookieStore) == static_cast<std::uint32_t>(NKWebKit::ObjectType::HTTPCookieStore));
+
+    const void* nonPersistent = WKWebsiteDataStoreCreateNonPersistentDataStore();
+    Require(nonPersistent != nullptr);
+    Require(WKGetTypeID(nonPersistent) == static_cast<std::uint32_t>(NKWebKit::ObjectType::WebsiteDataStore));
+    Require(nonPersistent != defaultStore);
+    const void* nonPersistentCookieStore = WKWebsiteDataStoreGetHTTPCookieStore(nonPersistent);
+    Require(nonPersistentCookieStore != nullptr);
+    Require(nonPersistentCookieStore != cookieStore);
+    WKRelease(nonPersistent);
+
+    const void* config = WKWebsiteDataStoreConfigurationCreate();
+    const void* customStore = WKWebsiteDataStoreCreateWithConfiguration(config);
+    Require(customStore != nullptr);
+    Require(WKGetTypeID(customStore) == static_cast<std::uint32_t>(NKWebKit::ObjectType::WebsiteDataStore));
+    const void* customCookieStore = WKWebsiteDataStoreGetHTTPCookieStore(customStore);
+    Require(customCookieStore != nullptr);
+    WKRelease(customStore);
+    WKRelease(config);
+
+    bool threw = false;
+    try {
+        WKWebsiteDataStoreCreateWithConfiguration(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKWebsiteDataStoreGetHTTPCookieStore(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestWebsitePolicies() {
     const void* policies = WKWebsitePoliciesCreate();
     Require(policies != nullptr);
@@ -458,6 +503,7 @@ int main() {
     TestContextConfiguration();
     TestPageConfiguration();
     TestWebsiteDataStoreConfiguration();
+    TestWebsiteDataStore();
     TestWebsitePolicies();
     TestUserScript();
     TestUserContentController();
