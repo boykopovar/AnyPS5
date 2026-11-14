@@ -2,7 +2,9 @@
 
 ### Functional
 
-- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 117 pending surface, font or rendering exports.
+- [Matrix.cpp](../../../core/libs/prx/libcairo/Matrix.cpp) and [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp) - console behaviour is unmeasured, and the backend differs from the console's in two known ways. PS5 system software 9.00 and later carries Cairo 1.18.0 with three Sony patches ([source](https://www.playstation.com/en-us/oss/ps5/cairo/)) that are not applied here; the one that changes behaviour adds the public status `CAIRO_STATUS_NULL_SURFACE_IMAGE`, which no switched export reaches yet. Sony publishes no pixman source, so the console's pixman version is unknown. The ten matrix and six region exports run [Cairo 1.18.0](https://gitlab.freedesktop.org/cairo/cairo/-/tree/1.18.0) and [pixman 0.42.2](https://gitlab.freedesktop.org/pixman/pixman/-/tree/pixman-0.42.2) from `3rdparty/cairo` and `3rdparty/pixman`, built with the image backend only; 0.42.2 was the newest pixman when Cairo 1.18.0 came out.
+
+- [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp) - a null region or rectangle, which Cairo dereferences, returns `CAIRO_STATUS_NULL_POINTER` from `cairo_region_union_rectangle`, 0 from `cairo_region_num_rectangles` and leaves `cairo_region_get_rectangle` without effect; an `nth` outside the region, which Cairo reads past the array for, returns an empty rectangle. A rectangle with a negative size or a far edge past 32 bits is ignored, and pixman prints an error to stderr. A box wider or taller than `INT32_MAX` overflows a signed subtraction in `cairo_region_get_rectangle`; the result is undefined.
 
 ### Functional image and surface exports
 
@@ -12,13 +14,11 @@
 
 - [PNG stream writing](../../../core/libs/prx/libcairo/Png.cpp) follows Cairo 1.18.0 image formats, subsurface clipping and callback status propagation. The shared encoder buffers the PNG before delivering chunks. Compression and callback chunk sizes can differ from native Cairo, and the encoder's size limit is reported as `CAIRO_STATUS_NO_MEMORY`. Null pointers, unreadable pixels and nonfinite subsurface coordinates have unverified behavior and throw. PS5 behavior remains unmeasured.
 
+- [PNG stream reading](../../../core/libs/prx/libcairo/Png.cpp) uses the shared PNG decoder to create Cairo image surfaces with premultiplied alpha and floating-point formats for 16-bit PNGs. The adapter buffers input through IEND, checks CRCs and reports read errors from the callback. The decoder's malformed-image behavior and callback read sizes can differ from libpng. Original PNG MIME data is unavailable because MIME-data access is not implemented. A null callback throws, and the console version and behavior remain unmeasured.
+
 ### Functional font options
 
 - [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) implements eight font-option lifecycle, antialias and hint-setting helpers with Cairo-compatible owned state and a protected nil object. Tested on Windows and Linux sanitizers.
-
-### Functional regions
-
-- [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp) implements six region lifecycle and rectangle operations with canonical band geometry and Cairo-compatible errors; Windows, Linux sanitizers and native Cairo/Pixman geometry comparisons passed.
 
 ### Functional context and coordinate transforms
 
@@ -44,7 +44,6 @@
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
-| `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
