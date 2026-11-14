@@ -1068,6 +1068,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
     }
     if (source != nullptr && resource.dccAddress != 0 && (keys.has_value() ? *keys : scanKeys()) == DccKeys::ClearSingle) source.reset();
+    if (source != nullptr && resource.dccAddress != 0 && source->Descriptor().dccAddress != resource.dccAddress && (keys.has_value() ? IsDccClear(*keys) : IsDccClear(scanKeys()))) source.reset();
 
     // Otherwise a surface in host-imported memory is viewed through its cached storage image (made
     // here when there is none): its refresh after a CPU or GPU write is a GPU-direct detile from the
@@ -1112,7 +1113,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // after them is current at the generation of a second (memoized) collect. The store marks the
     // surface's DCC keys uncompressed, so the keys are read after it.
     const auto flushStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const bool stagedClear = source != nullptr && resource.dccAddress != 0 && [&] {
+    const bool stagedClear = source != nullptr && source->AnyLayerPending() && resource.dccAddress != 0 && source->Descriptor().dccAddress == resource.dccAddress && [&] {
         const auto observedKeys = keys.has_value() ? *keys : scanKeys();
         return IsDccClear(observedKeys) || observedKeys == DccKeys::ClearSingle;
     }();
@@ -2730,6 +2731,29 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     result.layouts.main = context.descriptorCache->Layout(result.mainKey, descriptions[0], updateAfterBind, bindingFlags[0]);
     if (split) result.layouts.fragment = context.descriptorCache->Layout(result.fragmentKey, descriptions[1], updateAfterBind, bindingFlags[1]);
     return result;
+}
+
+ShaderRecompiler::PipelineIdentity DescribedPipelineIdentity(const ShaderRecompiler::RecompileResult& shader) {
+    const auto hash = shader.spirv.ContentHash();
+    if (hash == ShaderRecompiler::SpirvContentHash{}) return {};
+    ShaderRecompiler::PipelineIdentity identity{hash.low, hash.high};
+    const auto mix = [&](std::uint64_t value) {
+        identity.low = (identity.low ^ value) * 0x9e3779b97f4a7c15ull;
+        identity.low ^= identity.low >> 29u;
+        identity.high = (identity.high ^ (value + 0x7f4a7c159e3779b9ull)) * 0xc2b2ae3d27d4eb4full;
+        identity.high ^= identity.high >> 31u;
+    };
+    mix(shader.specialization.size());
+    for (const auto& constant : shader.specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
+    mix(shader.hostSubgroupSize | (shader.fullSubgroups ? 0x10000u : 0u) | (static_cast<std::uint64_t>(shader.workgroupMemoryDwords) << 32u));
+    mix(shader.bindings.size());
+    for (const auto& binding : shader.bindings) {
+        const bool fixedCapacity = binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable;
+        const std::uint64_t count = fixedCapacity ? 0u : binding.count;
+        mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (count << 48u));
+    }
+    if (identity.Empty()) identity.low = 1;
+    return identity;
 }
 
 void ShaderResources::buildComplete() {

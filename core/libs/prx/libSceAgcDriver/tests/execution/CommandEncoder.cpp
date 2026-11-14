@@ -136,7 +136,7 @@ struct Oracle {
             FakeExpect(commands, "draw " + std::to_string(value) + " 1 " + std::to_string(value / 2) + " 0");
             break;
         case 1:
-            table.cmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipeline>(value + 1));
+            CommandEncoder::Unwrap(table.cmdBindPipeline)(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, Handle<VkPipeline>(value + 1));
             FakeExpect(commands, "pipeline 0 " + std::to_string(value + 1));
             break;
         case 2: {
@@ -146,7 +146,7 @@ struct Oracle {
                 viewports[index] = VkViewport{static_cast<float>(value + index), 0.0f, static_cast<float>(index), 1.0f, 0.0f, 1.0f};
                 text += " " + std::to_string(viewports[index].x) + "," + std::to_string(viewports[index].width);
             }
-            table.cmdSetViewport(commands, 0, static_cast<std::uint32_t>(viewports.size()), viewports.data());
+            CommandEncoder::Unwrap(table.cmdSetViewport)(commands, 0, static_cast<std::uint32_t>(viewports.size()), viewports.data());
             std::fill(viewports.begin(), viewports.end(), VkViewport{});
             FakeExpect(commands, text);
             break;
@@ -211,7 +211,7 @@ struct Oracle {
             const std::uint32_t count = 1 + value % 3;
             std::string text = "mask " + std::to_string(first);
             for (std::uint32_t index = 0; index < count; ++index) text += " " + std::to_string(masks[index]);
-            table.cmdSetColorWriteMask(commands, first, count, masks);
+            CommandEncoder::Unwrap(table.cmdSetColorWriteMask)(commands, first, count, masks);
             std::fill(std::begin(masks), std::end(masks), 0u);
             FakeExpect(commands, text);
             break;
@@ -326,7 +326,7 @@ void RandomProgramRecordsWhatInlineRecords(std::uint32_t seed, bool delays) {
 void EveryCommandOfTheTableIsInterposed() {
     static_assert(std::is_standard_layout_v<DeviceFunctions> && sizeof(DeviceFunctions) % sizeof(void*) == 0, "the table must be a plain array of entry points");
     constexpr std::size_t entries = sizeof(DeviceFunctions) / sizeof(void*);
-    const std::size_t notCommands[]{offsetof(DeviceFunctions, updateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, allocateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, getFenceStatus) / sizeof(void*)};
+    const std::size_t notCommands[]{offsetof(DeviceFunctions, updateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, allocateDescriptorSets) / sizeof(void*), offsetof(DeviceFunctions, getFenceStatus) / sizeof(void*), offsetof(DeviceFunctions, createBuffer) / sizeof(void*), offsetof(DeviceFunctions, destroyBuffer) / sizeof(void*), offsetof(DeviceFunctions, getBufferMemoryRequirements) / sizeof(void*), offsetof(DeviceFunctions, bindBufferMemory) / sizeof(void*), offsetof(DeviceFunctions, allocateMemory) / sizeof(void*), offsetof(DeviceFunctions, freeMemory) / sizeof(void*), offsetof(DeviceFunctions, mapMemory) / sizeof(void*), offsetof(DeviceFunctions, unmapMemory) / sizeof(void*)};
     DeviceFunctions table{};
     void* before[entries];
     for (std::size_t index = 0; index < entries; ++index) before[index] = reinterpret_cast<void*>(&FakeDraw);

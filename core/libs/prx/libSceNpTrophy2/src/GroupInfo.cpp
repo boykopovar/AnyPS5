@@ -72,17 +72,25 @@ int APS5_VABI sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, Np
     (void)handle;
     const auto owner = NpTrophy2::FindContext(context);
     const auto* package = owner ? NpTrophy2::Package(owner->serviceLabel) : nullptr;
+    NpTrophy2GroupDetails localDetails{};
+    NpTrophy2GroupData localData{};
     if (package == nullptr) {
         const std::int32_t normalized_group_id = (group_id < 0 ? NP_TROPHY2_GROUP_ID_BASE : group_id);
-        if (details != nullptr) fillPlaceholderDetails(normalized_group_id, details);
-        if (data != nullptr) fillPlaceholderData(normalized_group_id, data);
-        return SCE_NP_TROPHY2_OK;
+        if (details != nullptr) fillPlaceholderDetails(normalized_group_id, &localDetails);
+        if (data != nullptr) fillPlaceholderData(normalized_group_id, &localData);
+    } else {
+        const auto group = package->groups.find(group_id);
+        if (group == package->groups.end()) {
+            throw std::invalid_argument(std::string(__func__) + ": group " + std::to_string(group_id) + " is not in " + NpTrophy2::PackagePath(owner->serviceLabel));
+        }
+        fillGroup(*package, *owner, group->first, group->second, details != nullptr ? &localDetails : nullptr, data != nullptr ? &localData : nullptr);
     }
-    const auto group = package->groups.find(group_id);
-    if (group == package->groups.end()) {
-        throw std::invalid_argument(std::string(__func__) + ": group " + std::to_string(group_id) + " is not in " + NpTrophy2::PackagePath(owner->serviceLabel));
+    if (details != nullptr && !GuestCopyOut_nid_no_patch(details, &localDetails, sizeof(localDetails))) {
+        APS5_INVALID_ARG_EX;
     }
-    fillGroup(*package, *owner, group->first, group->second, details, data);
+    if (data != nullptr && !GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+        APS5_INVALID_ARG_EX;
+    }
     return SCE_NP_TROPHY2_OK;
 }
 
@@ -93,18 +101,34 @@ int APS5_VABI sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t of
     (void)handle;
     const auto owner = NpTrophy2::FindContext(context);
     const auto* package = owner ? NpTrophy2::Package(owner->serviceLabel) : nullptr;
+    uint32_t written = 0;
+    NpTrophy2GroupDetails localDetails{};
+    NpTrophy2GroupData localData{};
+    const auto copyOut = [&] {
+        return (details_array == nullptr || GuestCopyOut_nid_no_patch(&details_array[written], &localDetails, sizeof(localDetails))) &&
+               (data_array == nullptr || GuestCopyOut_nid_no_patch(&data_array[written], &localData, sizeof(localData)));
+    };
     if (package == nullptr) {
-        const uint32_t out_count = (offset == 0 && limit != 0 ? 1u : 0u);
-        *count = out_count;
-        if (out_count != 0 && details_array != nullptr) fillPlaceholderDetails(NP_TROPHY2_GROUP_ID_BASE, details_array);
-        if (out_count != 0 && data_array != nullptr) fillPlaceholderData(NP_TROPHY2_GROUP_ID_BASE, data_array);
-        return SCE_NP_TROPHY2_OK;
+        if (offset == 0 && limit != 0) {
+            if (details_array != nullptr) fillPlaceholderDetails(NP_TROPHY2_GROUP_ID_BASE, &localDetails);
+            if (data_array != nullptr) fillPlaceholderData(NP_TROPHY2_GROUP_ID_BASE, &localData);
+            if (!copyOut()) {
+                APS5_INVALID_ARG_EX;
+            }
+            written = 1;
+        }
+    } else {
+        auto group = package->groups.begin();
+        std::advance(group, std::min<std::size_t>(offset, package->groups.size()));
+        for (; group != package->groups.end() && written < limit; ++group, ++written) {
+            fillGroup(*package, *owner, group->first, group->second, details_array != nullptr ? &localDetails : nullptr, data_array != nullptr ? &localData : nullptr);
+            if (!copyOut()) {
+                APS5_INVALID_ARG_EX;
+            }
+        }
     }
-    *count = 0;
-    auto group = package->groups.begin();
-    std::advance(group, std::min<std::size_t>(offset, package->groups.size()));
-    for (; group != package->groups.end() && *count < limit; ++group, ++*count) {
-        fillGroup(*package, *owner, group->first, group->second, details_array != nullptr ? &details_array[*count] : nullptr, data_array != nullptr ? &data_array[*count] : nullptr);
+    if (!GuestCopyOut_nid_no_patch(count, &written, sizeof(written))) {
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_TROPHY2_OK;
 }

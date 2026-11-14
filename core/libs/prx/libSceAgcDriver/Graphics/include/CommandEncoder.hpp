@@ -26,6 +26,10 @@ namespace AgcDriver::Graphics {
 
 class CommandEncoder {
 public:
+    template<typename TFunction>
+    static TFunction Unwrap(TFunction function) { return function; }
+    template<typename TFunction>
+    static TFunction Unwrap(const TrackedFunction<TFunction>& function) { return function.function; }
     using Run = void (*)(const std::byte* payload, VkCommandBuffer commands, const DeviceFunctions& functions);
     enum class Wait : std::uint8_t { Quiesce, Settle, Open, Close, Lookup, Direct, Behind, ChunkPool, Teardown, Unwind, OtherSites };
     struct WaitSite {

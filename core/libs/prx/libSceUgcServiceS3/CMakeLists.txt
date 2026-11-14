@@ -1,0 +1,15 @@
+add_library(libSceUgcServiceS3 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceUgcServiceS3 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceUgcServiceS3)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_ugc_service_s3_tests ${LIBS_INCLUDE_DIR}/tests/GuestUgcServiceS3.cpp)
+    target_include_directories(guest_ugc_service_s3_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ugc_service_s3_tests PRIVATE libSceUgcServiceS3 libc)
+    configure_windows_unwind(guest_ugc_service_s3_tests)
+    add_test(NAME guest_ugc_service_s3 COMMAND guest_ugc_service_s3_tests)
+    if(WIN32)
+        set_tests_properties(guest_ugc_service_s3 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUgcServiceS3>")
+    endif()
+endif()

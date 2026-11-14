@@ -19,6 +19,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -32,6 +33,7 @@ class RenderCache;
 class DrawQueue;
 class GraphicsPipelineCache;
 class Recorder;
+class CommandState;
 class DescriptorCache;
 class SamplerCache;
 class ShaderResources;
@@ -100,6 +102,44 @@ struct BdaUnalignedAccess : std::runtime_error {
     std::uint32_t instruction;
 };
 
+void TrackedCommandOutsideCommandState();
+
+class FunctionName {
+public:
+    consteval FunctionName(const char* name) : value(name) {
+        constexpr std::array<std::string_view, 32> tracked{
+            "vkCmdBindPipeline", "vkCmdSetViewport", "vkCmdSetViewportWithCount", "vkCmdSetViewportWithCountEXT",
+            "vkCmdSetScissor", "vkCmdSetScissorWithCount", "vkCmdSetScissorWithCountEXT", "vkCmdSetColorWriteMaskEXT", "vkCmdSetDepthBias",
+            "vkCmdSetDepthBias2EXT", "vkCmdSetDepthBounds", "vkCmdSetCullMode", "vkCmdSetCullModeEXT",
+            "vkCmdSetFrontFace", "vkCmdSetFrontFaceEXT", "vkCmdSetDepthTestEnable", "vkCmdSetDepthTestEnableEXT",
+            "vkCmdSetDepthWriteEnable", "vkCmdSetDepthWriteEnableEXT", "vkCmdSetDepthCompareOp", "vkCmdSetDepthCompareOpEXT",
+            "vkCmdSetDepthBoundsTestEnable", "vkCmdSetDepthBoundsTestEnableEXT", "vkCmdSetStencilTestEnable", "vkCmdSetStencilTestEnableEXT",
+            "vkCmdSetStencilOp", "vkCmdSetStencilOpEXT", "vkCmdSetStencilCompareMask", "vkCmdSetStencilWriteMask",
+            "vkCmdSetStencilReference", "vkCmdBindShadersEXT", "vkCmdExecuteCommands"};
+        for (const auto entry : tracked) {
+            if (entry == name) TrackedCommandOutsideCommandState();
+        }
+    }
+    constexpr const char* Value() const { return value; }
+
+private:
+    const char* value;
+};
+
+template<typename TFunction>
+class TrackedFunction {
+public:
+    TrackedFunction& operator=(TFunction bound) {
+        function = bound;
+        return *this;
+    }
+
+private:
+    friend struct Context;
+    friend class CommandEncoder;
+    TFunction function = nullptr;
+};
+
 // Device entry points resolved once per device (VulkanDevice's State fills it after setup): the
 // loader's vkGetDeviceProcAddr is a name lookup under its global mutex per call, paid at every
 // record site otherwise. Null members (tests, APS5_NO_PROC_TABLE=1) resolve per call (Resolved).
@@ -108,7 +148,7 @@ struct DeviceFunctions {
     PFN_vkCmdCopyBuffer cmdCopyBuffer = nullptr;
     PFN_vkCmdUpdateBuffer cmdUpdateBuffer = nullptr;
     PFN_vkCmdFillBuffer cmdFillBuffer = nullptr;
-    PFN_vkCmdBindPipeline cmdBindPipeline = nullptr;
+    TrackedFunction<PFN_vkCmdBindPipeline> cmdBindPipeline;
     PFN_vkCmdBindDescriptorSets cmdBindDescriptorSets = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
@@ -117,22 +157,22 @@ struct DeviceFunctions {
     PFN_vkCmdEndRenderPass cmdEndRenderPass = nullptr;
     PFN_vkCmdBeginRenderingKHR cmdBeginRendering = nullptr;
     PFN_vkCmdEndRenderingKHR cmdEndRendering = nullptr;
-    PFN_vkCmdSetViewport cmdSetViewport = nullptr;
-    PFN_vkCmdSetScissor cmdSetScissor = nullptr;
-    PFN_vkCmdSetColorWriteMaskEXT cmdSetColorWriteMask = nullptr;
-    PFN_vkCmdSetDepthBounds cmdSetDepthBounds = nullptr;
-    PFN_vkCmdSetDepthBias cmdSetDepthBias = nullptr;
-    PFN_vkCmdSetCullModeEXT cmdSetCullMode = nullptr;
-    PFN_vkCmdSetFrontFaceEXT cmdSetFrontFace = nullptr;
-    PFN_vkCmdSetDepthTestEnableEXT cmdSetDepthTestEnable = nullptr;
-    PFN_vkCmdSetDepthWriteEnableEXT cmdSetDepthWriteEnable = nullptr;
-    PFN_vkCmdSetDepthCompareOpEXT cmdSetDepthCompareOp = nullptr;
-    PFN_vkCmdSetDepthBoundsTestEnableEXT cmdSetDepthBoundsTestEnable = nullptr;
-    PFN_vkCmdSetStencilTestEnableEXT cmdSetStencilTestEnable = nullptr;
-    PFN_vkCmdSetStencilOpEXT cmdSetStencilOp = nullptr;
-    PFN_vkCmdSetStencilCompareMask cmdSetStencilCompareMask = nullptr;
-    PFN_vkCmdSetStencilWriteMask cmdSetStencilWriteMask = nullptr;
-    PFN_vkCmdSetStencilReference cmdSetStencilReference = nullptr;
+    TrackedFunction<PFN_vkCmdSetViewport> cmdSetViewport;
+    TrackedFunction<PFN_vkCmdSetScissor> cmdSetScissor;
+    TrackedFunction<PFN_vkCmdSetColorWriteMaskEXT> cmdSetColorWriteMask;
+    TrackedFunction<PFN_vkCmdSetDepthBounds> cmdSetDepthBounds;
+    TrackedFunction<PFN_vkCmdSetDepthBias> cmdSetDepthBias;
+    TrackedFunction<PFN_vkCmdSetCullModeEXT> cmdSetCullMode;
+    TrackedFunction<PFN_vkCmdSetFrontFaceEXT> cmdSetFrontFace;
+    TrackedFunction<PFN_vkCmdSetDepthTestEnableEXT> cmdSetDepthTestEnable;
+    TrackedFunction<PFN_vkCmdSetDepthWriteEnableEXT> cmdSetDepthWriteEnable;
+    TrackedFunction<PFN_vkCmdSetDepthCompareOpEXT> cmdSetDepthCompareOp;
+    TrackedFunction<PFN_vkCmdSetDepthBoundsTestEnableEXT> cmdSetDepthBoundsTestEnable;
+    TrackedFunction<PFN_vkCmdSetStencilTestEnableEXT> cmdSetStencilTestEnable;
+    TrackedFunction<PFN_vkCmdSetStencilOpEXT> cmdSetStencilOp;
+    TrackedFunction<PFN_vkCmdSetStencilCompareMask> cmdSetStencilCompareMask;
+    TrackedFunction<PFN_vkCmdSetStencilWriteMask> cmdSetStencilWriteMask;
+    TrackedFunction<PFN_vkCmdSetStencilReference> cmdSetStencilReference;
     PFN_vkCmdBindVertexBuffers cmdBindVertexBuffers = nullptr;
     PFN_vkCmdBindIndexBuffer cmdBindIndexBuffer = nullptr;
     PFN_vkCmdDraw cmdDraw = nullptr;
@@ -147,6 +187,14 @@ struct DeviceFunctions {
     PFN_vkUpdateDescriptorSets updateDescriptorSets = nullptr;
     PFN_vkAllocateDescriptorSets allocateDescriptorSets = nullptr;
     PFN_vkGetFenceStatus getFenceStatus = nullptr;
+    PFN_vkCreateBuffer createBuffer = nullptr;
+    PFN_vkDestroyBuffer destroyBuffer = nullptr;
+    PFN_vkGetBufferMemoryRequirements getBufferMemoryRequirements = nullptr;
+    PFN_vkBindBufferMemory bindBufferMemory = nullptr;
+    PFN_vkAllocateMemory allocateMemory = nullptr;
+    PFN_vkFreeMemory freeMemory = nullptr;
+    PFN_vkMapMemory mapMemory = nullptr;
+    PFN_vkUnmapMemory unmapMemory = nullptr;
 };
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
@@ -300,20 +348,35 @@ struct Context {
     VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
-    TFunction Function(const char* name, std::source_location where = std::source_location::current()) const {
-        Require(deviceProc != nullptr, "missing Vulkan device function resolver");
-        ++DeviceProcLookups();
-        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device, where);
-        const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
-        if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
-        return function;
+    TFunction Function(FunctionName name, std::source_location where = std::source_location::current()) const {
+        return lookup<TFunction>(name.Value(), where);
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.
     template<typename TFunction>
-    TFunction Resolved(TFunction DeviceFunctions::*member, const char* name) const {
+    TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name) const {
         if (functions != nullptr && functions->*member != nullptr) return functions->*member;
-        return Function<TFunction>(name);
+        return lookup<TFunction>(name.Value());
+    }
+
+    class ComputeBinder {
+    public:
+        void operator()(VkCommandBuffer commands, VkPipeline pipeline) const {
+            bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        }
+
+    private:
+        friend struct Context;
+        explicit ComputeBinder(PFN_vkCmdBindPipeline function) : bind(function) {}
+        PFN_vkCmdBindPipeline bind;
+    };
+
+    ComputeBinder ComputeBinding() const {
+        return ComputeBinder(tracked(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline"));
+    }
+
+    void BindComputePipeline(VkCommandBuffer commands, VkPipeline pipeline) const {
+        ComputeBinding()(commands, pipeline);
     }
 
     std::uint32_t MemoryType(std::uint32_t mask, VkMemoryPropertyFlags flags) const {
@@ -416,6 +479,26 @@ struct Context {
     std::optional<std::uint32_t> RefusedDeviceMemoryFallback(std::uint32_t mask, std::uint32_t refused) const {
         if (refused >= memory.memoryTypeCount || (memory.memoryHeaps[memory.memoryTypes[refused].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return std::nullopt;
         return HostMemoryType(mask);
+    }
+
+private:
+    friend class CommandState;
+    friend void FillDeviceFunctions(const Context& context, DeviceFunctions& functions);
+
+    template<typename TFunction>
+    TFunction lookup(const char* name, std::source_location where = std::source_location::current()) const {
+        Require(deviceProc != nullptr, "missing Vulkan device function resolver");
+        ++DeviceProcLookups();
+        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device, where);
+        const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
+        if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
+        return function;
+    }
+
+    template<typename TFunction>
+    TFunction tracked(TrackedFunction<TFunction> DeviceFunctions::*member, const char* name) const {
+        if (functions != nullptr && (functions->*member).function != nullptr) return (functions->*member).function;
+        return lookup<TFunction>(name);
     }
 };
 
