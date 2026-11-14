@@ -6,6 +6,7 @@
 #include <sys/mman.h>
 #endif
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -63,11 +64,18 @@ int main() {
         Require(sceImeDialogInit(&param, nullptr) == 0, "a readable buffer opens the dialog");
         Require(sceImeDialogGetStatus() == StatusRunning, "the opened dialog reports Running");
         PositionAndForm form{};
-        Require(sceImeDialogGetPanelPositionAndForm(nullptr) == ErrorNotOpened, "an open dialog rejects a null position and form pointer with ErrorNotOpened");
+        errno = 71;
+        Require(sceImeDialogGetPanelPositionAndForm(nullptr) == ErrorInvalidAddress, "an open dialog rejects a null position and form pointer with ErrorInvalidAddress");
+        Require(errno == 71, "null open position and form check preserves errno");
         for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
             auto* badForm = reinterpret_cast<PositionAndForm*>(address);
-            Require(sceImeDialogGetPanelPositionAndForm(badForm) == ErrorNotOpened, "an open dialog rejects an unmapped position and form pointer with ErrorNotOpened");
+            errno = 71;
+            Require(sceImeDialogGetPanelPositionAndForm(badForm) == ErrorInvalidAddress, "an open dialog rejects an unmapped position and form pointer with ErrorInvalidAddress");
+            Require(errno == 71, "unmapped open position and form check preserves errno");
         }
+        errno = 71;
+        Require(sceImeDialogGetPanelPositionAndForm(reinterpret_cast<PositionAndForm*>(readOnly)) == ErrorInvalidAddress, "an open dialog rejects a read-only position and form page with ErrorInvalidAddress");
+        Require(errno == 71, "read-only open position and form check preserves errno");
         Require(sceImeDialogGetPanelPositionAndForm(&form) == 0, "a running dialog reports its panel position and form");
         Require(form.width == 1920 && form.height == 1080, "the running dialog dimensions match defaults");
         std::uint32_t runningWidth = 0;
@@ -75,7 +83,9 @@ int main() {
         Require(sceImeDialogGetPanelSize(nullptr, &runningWidth, &runningHeight) == 0, "a running dialog reports its panel size");
         Require(runningWidth == 1920 && runningHeight == 1080, "the running panel size matches defaults");
         std::uint32_t readOnlyWidth = 0xdeadbeef;
+        errno = 71;
         Require(sceImeDialogGetPanelSize(nullptr, &readOnlyWidth, reinterpret_cast<uint32_t*>(readOnly)) == ErrorInvalidAddress, "a read-only height page returns ErrorInvalidAddress");
+        Require(errno == 71, "read-only panel height check preserves errno");
         Require(readOnlyWidth == 0xdeadbeef, "the failed height write leaves the width untouched");
         ImeHostInput enter{};
         enter.kind = ImeHostInputKind::Enter;
@@ -97,14 +107,23 @@ int main() {
         auto* badForm = reinterpret_cast<PositionAndForm*>(address);
         Require(sceImeDialogGetPanelPositionAndForm(badForm) == ErrorNotOpened, "a closed dialog rejects an unmapped position and form pointer with ErrorNotOpened");
     }
+    PositionAndForm closedForm{};
+    closedForm.width = 0xdeadbeefu;
+    closedForm.height = 0xcafebabeu;
+    Require(sceImeDialogGetPanelPositionAndForm(&closedForm) == ErrorNotOpened, "a closed dialog rejects a valid position and form pointer with ErrorNotOpened");
+    Require(closedForm.width == 0xdeadbeefu && closedForm.height == 0xcafebabeu, "a closed dialog leaves the position and form output untouched");
     std::uint32_t width = 0xdeadbeef;
     std::uint32_t height = 0xdeadbeef;
     Require(sceImeDialogGetPanelSize(nullptr, nullptr, nullptr) == ErrorInvalidAddress, "null panel size pointers return ErrorInvalidAddress");
     for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
         auto* badWidth = reinterpret_cast<uint32_t*>(address);
+        errno = 71;
         Require(sceImeDialogGetPanelSize(nullptr, badWidth, &height) == ErrorInvalidAddress, "an unmapped panel width pointer returns ErrorInvalidAddress");
+        Require(errno == 71, "unmapped panel width check preserves errno");
         auto* badHeight = reinterpret_cast<uint32_t*>(address);
+        errno = 71;
         Require(sceImeDialogGetPanelSize(nullptr, &width, badHeight) == ErrorInvalidAddress, "an unmapped panel height pointer returns ErrorInvalidAddress");
+        Require(errno == 71, "unmapped panel height check preserves errno");
     }
     Require(width == 0xdeadbeef && height == 0xdeadbeef, "a failed size query leaves both outputs untouched");
     Require(sceImeDialogGetPanelSize(nullptr, &width, &height) == 0, "valid panel size pointers succeed");
