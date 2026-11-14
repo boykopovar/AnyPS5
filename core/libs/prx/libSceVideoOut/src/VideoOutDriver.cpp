@@ -519,6 +519,17 @@ bool VideoOutDriver::HasConfig(int handle) {
     return cfg->opened && !cfg->closing;
 }
 
+int VideoOutDriver::GetBusType(int handle) {
+    std::shared_ptr<VideoOutConfig> cfg;
+    {
+        std::lock_guard lock(mutex);
+        if (handle <= 0 || handle >= VIDEO_OUT_NUM_MAX || contexts[handle] == nullptr) return -1;
+        cfg = contexts[handle];
+    }
+    std::lock_guard cfgLock(cfg->mutex);
+    return cfg->opened && !cfg->closing ? cfg->busType : -1;
+}
+
 int VideoOutDriver::SubmitFlip(int handle, int index, int flipMode, int64_t flipArg) {
     if (LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
     // A title that does not pace on flipPendingNum can run ahead of the presenter now that the queue

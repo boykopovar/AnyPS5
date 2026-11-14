@@ -533,7 +533,7 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         m_events.push_back(event);
         if (event.triggered) ++m_activations;
     }
-    m_cond.NotifyOne();
+    m_cond.NotifyAll();
     WakePollers();
     return EQUEUE_OK;
 }
@@ -563,7 +563,7 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
         }
         if (!was && it->triggered) ++m_activations;
     }
-    m_cond.NotifyOne();
+    m_cond.NotifyAll();
     WakePollers();
     return EQUEUE_OK;
 }
@@ -600,7 +600,7 @@ int KernelEqueuePrivate::EditEvent(uintptr_t ident, int16_t filter, const std::f
         }
     } activation{*this, *it, it->enabled && it->triggered};
     edit(*it);
-    m_cond.NotifyOne();
+    m_cond.NotifyAll();
     WakePollers();
     return EQUEUE_OK;
 }

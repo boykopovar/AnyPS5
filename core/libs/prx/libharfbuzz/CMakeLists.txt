@@ -12,7 +12,7 @@ install(FILES ${harfbuzzSourceDir}/src/ms-use/COPYING DESTINATION licenses/harfb
 
 add_library(libharfbuzz SHARED EXCLUDE_FROM_ALL Export.cpp Buffer.cpp FontFunctions.cpp Layout.cpp)
 target_include_directories(libharfbuzz PUBLIC ${LIBS_INCLUDE_DIR})
-target_link_libraries(libharfbuzz PRIVATE harfbuzz_backend freetype)
+target_link_libraries(libharfbuzz PRIVATE harfbuzz_backend freetype icu_common)
 target_sources(libharfbuzz PRIVATE Lifecycle.cpp)
 configure_windows_unwind(libharfbuzz)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
