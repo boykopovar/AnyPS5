@@ -21,6 +21,9 @@
 #define StrCaseCmp strcasecmp
 #endif
 
+// Derived from Source/WTF/wtf/Assertions.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WTF/wtf/DataLog.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+
 struct WTFLogChannel {
     std::uint8_t state;
     const char* name;
