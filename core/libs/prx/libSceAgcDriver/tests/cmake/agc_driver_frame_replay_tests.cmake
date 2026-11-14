@@ -56,12 +56,14 @@ if(BUILD_TESTING)
             set_tests_properties(agc_driver_frame_replay_rewind_reuse PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
-        add_test(NAME agc_driver_frame_replay_rewind_shared_tail COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> rewind_shared_tail)
-        set_tests_properties(agc_driver_frame_replay_rewind_shared_tail PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77)
-        if(WIN32)
-            set_tests_properties(agc_driver_frame_replay_rewind_shared_tail PROPERTIES ENVIRONMENT_MODIFICATION
-                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-        endif()
+        foreach(mode IN ITEMS rewind_shared_tail rewind_settled_tail)
+            add_test(NAME agc_driver_frame_replay_${mode} COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> ${mode})
+            set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77)
+            if(WIN32)
+                set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endif()
+        endforeach()
         foreach(mode IN ITEMS rewind_store rewind_copy rewind_compute rewind_release rewind_fill rewind_split wait_label fence_reuse busy_queue rewind_page allocation_ranges)
             add_test(NAME agc_driver_frame_replay_${mode} COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> ${mode})
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES

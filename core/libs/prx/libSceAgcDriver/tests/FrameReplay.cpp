@@ -944,14 +944,35 @@ void testSharedRewindTail() {
     check(output->ready.load() == 2, "the flips in both copies of the tail did not run");
 }
 
+
+void testSettledBesideReleasedTail() {
+    const auto layout = allocate();
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    AgcDriverTrackRewindTails_nid_postfix();
+    auto* const control = submitRewound(layout.firstCommands, [](CommandBuffer&) {}, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
+    waitUntil([&] { return parkedOn(control); }, "the queue did not park at the unreleased REWIND");
+    check(AgcDriverHoldSettled_nid_postfix(10000), "the driver did not settle with its queue parked at an unreleased REWIND");
+    release(control);
+    const bool settledUnread = AgcDriverSettled_nid_postfix();
+    AgcDriverReleaseSettled_nid_postfix();
+    check(!settledUnread, "the driver counted as settled while a released REWIND tail was unread, so a replay holding it would wait for a tail its queue cannot copy");
+    const bool settled = AgcDriverHoldSettled_nid_postfix(10000);
+    const bool unread = AgcDriverRewindTailsUnread_nid_postfix();
+    AgcDriverReleaseSettled_nid_postfix();
+    check(settled, "the driver did not settle once its queue could copy the released REWIND tail");
+    check(!unread, "a settled hold was taken while a released REWIND tail was unread");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*layout.label).load() == Done, "the driver did not run the released REWIND tail");
+}
 }
 
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
         {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}};
-    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_page|allocation_ranges]\n");
+    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || mode == "rewind_settled_tail" || rewound.contains(mode)))) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|allocation_ranges]\n");
         return 2;
     }
     int status = 0;
@@ -970,6 +991,7 @@ int main(int argc, char** argv) {
         else if (mode == "rewind") testParkedRewindReplays(argv[1]);
         else if (mode == "rewind_reuse") testRewindTargetReuse(argv[1]);
         else if (mode == "rewind_shared_tail") testSharedRewindTail();
+        else if (mode == "rewind_settled_tail") testSettledBesideReleasedTail();
         else testCaptureAndReplay(argv[1], mode == "pipelines");
     } catch (const Inconclusive& error) {
         std::printf("skipped, %s\n", error.what());
