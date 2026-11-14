@@ -10,12 +10,7 @@ namespace AgcDriver::Graphics {
 VkPipeline TextureDetiler::multisampleUploadPipeline(std::uint32_t elementBytes) {
     const auto key = (1u << 19u) | elementBytes;
     for (const auto& entry : pipelines) if (entry.first == key) return entry.second;
-    if (multisampleUploadModule == VK_NULL_HANDLE) {
-        VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        info.codeSize = sizeof(MULTISAMPLE_UPLOAD_SPV);
-        info.pCode = MULTISAMPLE_UPLOAD_SPV;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &info, nullptr, &multisampleUploadModule), "vkCreateShaderModule multisample upload");
-    }
+    if (multisampleUploadModule == VK_NULL_HANDLE) multisampleUploadModule = CreateShaderModule(context, MULTISAMPLE_UPLOAD_SPV, sizeof(MULTISAMPLE_UPLOAD_SPV), "vkCreateShaderModule multisample upload");
     const VkSpecializationMapEntry entry{0u, 0u, sizeof(elementBytes)};
     const VkSpecializationInfo specialization{1u, &entry, sizeof(elementBytes), &elementBytes};
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};

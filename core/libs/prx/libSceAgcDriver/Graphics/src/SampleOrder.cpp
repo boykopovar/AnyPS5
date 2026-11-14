@@ -285,12 +285,7 @@ private:
     using CopyKey = std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, bool>;
 
     VkShaderModule module(const std::uint32_t* code, std::size_t bytes) {
-        VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        info.codeSize = bytes;
-        info.pCode = code;
-        VkShaderModule created = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &info, nullptr, &created), "vkCreateShaderModule sample order");
-        return created;
+        return CreateShaderModule(context, code, bytes, "vkCreateShaderModule sample order");
     }
 
     void destroyModule(VkShaderModule shader) {
