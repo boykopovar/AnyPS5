@@ -321,27 +321,6 @@ WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* sel
     return WTF::WallTime{self->m_value + other.m_value};
 }
 
-WTF::Seconds APS5_VABI _ZN3WTF7CPUTime16forCurrentThreadEv() {
-#ifdef _WIN32
-    FILETIME creationTime, exitTime, kernelTime, userTime;
-    if (GetThreadTimes(GetCurrentThread(), &creationTime, &exitTime, &kernelTime, &userTime)) {
-        ULARGE_INTEGER k, u;
-        k.LowPart = kernelTime.dwLowDateTime;
-        k.HighPart = kernelTime.dwHighDateTime;
-        u.LowPart = userTime.dwLowDateTime;
-        u.HighPart = userTime.dwHighDateTime;
-        double totalSec = static_cast<double>(k.QuadPart + u.QuadPart) * 1e-7;
-        return WTF::Seconds{totalSec};
-    }
-#elif defined(CLOCK_THREAD_CPUTIME_ID)
-    struct timespec ts;
-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) {
-        return WTF::Seconds{static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9};
-    }
-#endif
-    return WTF::Seconds{0.0};
-}
-
 double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUTime* self, const WTF::CPUTime& reference) {
     double cpuUsageDelta = (self->systemTime.m_value + self->userTime.m_value) - (reference.systemTime.m_value + reference.userTime.m_value);
     double cpuTimeDelta = self->cpuTime.m_value - reference.cpuTime.m_value;
