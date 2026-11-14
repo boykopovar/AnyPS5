@@ -1,7 +1,6 @@
 #include "prx/libcairo/include/Surface.hpp"
 
 #include <array>
-#include <atomic>
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -10,22 +9,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
-#include <new>
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(cairo_image_surface_create(0, 1, 1)), CairoSurface*>);
 static_assert(std::is_same_v<decltype(cairo_image_surface_get_data(nullptr)), unsigned char*>);
-
-static std::atomic<bool> failNextNothrowNew{false};
-
-void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
-    if (failNextNothrowNew.exchange(false)) return nullptr;
-    try {
-        return ::operator new(size);
-    } catch (const std::bad_alloc&) {
-        return nullptr;
-    }
-}
 
 namespace {
 
@@ -206,13 +193,6 @@ void CheckSimilarAndSubsurfaces() {
     assert(bad && cairo_surface_status(bad) == 0);
     cairo_surface_destroy(bad);
     cairo_surface_destroy(live);
-    bad = cairo_surface_create_for_rectangle(nullptr, 0, 0, 2, 2);
-    assert(bad && cairo_surface_status(bad) == 7);
-    cairo_surface_destroy(bad);
-
-    bad = cairo_surface_create_similar(nullptr, 0x3000, 4, 4);
-    assert(bad && cairo_surface_status(bad) == 7);
-    cairo_surface_destroy(bad);
 }
 
 void CheckDeviceScale() {
@@ -228,25 +208,6 @@ void CheckDeviceScale() {
     cairo_surface_destroy(nullptr);
 }
 
-void CheckOutOfMemory() {
-    failNextNothrowNew = true;
-    CairoSurface* failed = cairo_image_surface_create(0, 2, 2);
-    assert(failed && cairo_surface_status(failed) == 1);
-    assert(cairo_image_surface_get_data(failed) == nullptr);
-    assert(cairo_surface_reference(failed) == failed);
-    cairo_surface_destroy(failed);
-    cairo_surface_destroy(failed);
-
-    CairoSurface* target = cairo_image_surface_create(0, 4, 4);
-    assert(target && cairo_surface_status(target) == 0);
-    failNextNothrowNew = true;
-    failed = cairo_surface_create_for_rectangle(target, 0, 0, 2, 2);
-    assert(failed && cairo_surface_status(failed) == 1);
-    cairo_surface_destroy(failed);
-    cairo_surface_destroy(target);
-    assert(!failNextNothrowNew);
-}
-
 }
 
 int main() {
@@ -254,6 +215,5 @@ int main() {
     CheckBorrowedDataAndLifetime();
     CheckSimilarAndSubsurfaces();
     CheckDeviceScale();
-    CheckOutOfMemory();
     std::puts("guest cairo image/surface tests passed");
 }

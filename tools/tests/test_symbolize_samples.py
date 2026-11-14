@@ -595,6 +595,30 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn("13 260.0%  libSceAgcDriver.prx!short", inclusive[0])
         self.assertIn("5 100.0%  libSceAgcDriver.prx!AgcDriver_long_function_name", inclusive[1])
 
+    def test_address_file_rejects_nonhexadecimal_offsets(self):
+        samples = self.root / "bad-address.txt"
+        for offset in ("0xNOTHEX", "0x", "0x101g", "1011"):
+            with self.subTest(offset=offset):
+                samples.write_text(f"# 5 samples\nMy Game.exe {offset} 5 5\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"bad-address\.txt:2:.*hexadecimal offset"):
+                    symbolize_samples.load(samples)
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                         "--libs", str(self.libs)], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("bad-address.txt:2:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+        samples.write_text("# 5 samples\nMy Game.exe 0xABCD 5 5\n", encoding="utf-8")
+        self.assertEqual(symbolize_samples.load(samples).self_counts[("My Game.exe", "0xABCD")], 5)
+
+    def test_collapsed_stack_with_spaced_numeric_module_name_keeps_its_count(self):
+        samples = self.root / "worker.collapsed.txt"
+        stack = "ntdll.dll+0x10;My 2 Game.exe+0x1011"
+        samples.write_text(f"# samples=5 depth=64 truncated=0\n{stack} 5\n", encoding="utf-8")
+        capture = symbolize_samples.load(samples)
+        self.assertEqual(capture.stacks, {stack: 5})
+        self.assertEqual(capture.self_counts, {})
+
     def test_a_symbol_does_not_reach_into_a_later_code_section(self):
         build_pe(self.libs / "two.prx", second_code=True)
         module = symbolize_samples.PeModule(self.libs / "two.prx")

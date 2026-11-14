@@ -840,9 +840,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         Require(sscanf_nid_postfix("\xc3\xa9", "%*ls") == 0 && sscanf_nid_postfix("\x80", "%*ls") == EOF);
         Require(sscanf_nid_postfix("\xc3\xa9", "%*lc") == EOF && sscanf_nid_postfix("a\xc3", "%*ls") == EOF);
         char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
-        bool positional = false;
-        try { sscanf_nid_postfix("a b", "%2$ls", untouched); } catch (const std::runtime_error&) { positional = untouched[0] == u'!'; }
-        Require(positional);
+        Require(sscanf_nid_postfix("a b", "%2$ls", untouched) == 0 && untouched[0] == u'!');
+        Require(sscanf_nid_postfix("5 ab", "%d %1$ls", &number, untouched) == 1 && number == 5 && untouched[0] == u'!');
     }
 #ifndef _WIN32
     char narrow[8] = {};
