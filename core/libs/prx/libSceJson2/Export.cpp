@@ -3211,6 +3211,7 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
 
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
     *self = {};
+    if (!allocParam) return;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.allocation) return;
