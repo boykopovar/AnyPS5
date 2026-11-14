@@ -195,7 +195,7 @@ APS5_EXPORT("BgUMBGvhATU", sceFreeTypeOtOutlineEmboldenXY_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline,
                                                        const FreeType::GuestBitmap* bitmap) {
-    return FT_Outline_Get_Bitmap_nid_postfix(library, outline, bitmap);
+    return FreeTypeOutlineGetBitmap_nid_no_patch(library, outline, bitmap);
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
 
@@ -231,8 +231,9 @@ int APS5_VABI sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch() {
 }
 APS5_EXPORT("DAmwG6U7YIc", sceFreeTypeOtSetMMDesignCoordinates_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtSetRenderer_nid_no_patch(FreeType::GuestLibrary* library, void* renderer, std::uint32_t count,
+                                                   const FreeType::GuestParameter* parameters) {
+    return FreeTypeSetRenderer_nid_no_patch(library, renderer, count, parameters);
 }
 APS5_EXPORT("Yu9oXRVmTTo", sceFreeTypeOtSetRenderer_nid_no_patch);
 
