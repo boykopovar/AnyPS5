@@ -733,7 +733,7 @@ void memoHitPath(AgcDriver::VulkanDevice& device) {
     const bool bench = benchRepeats != nullptr && benchRepeats[0] != '\0';
     const std::size_t repeats = bench ? std::strtoull(benchRepeats, nullptr, 10) : 1000u;
     const std::size_t samples = bench ? 8u : 2u;
-    const bool disabled = !DrawPipelineEnabled() || memoSwitchedOff() || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    const bool disabled = !memoServes();
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     for (const HitCase hitCase : {HitCase{"color", false, false}, HitCase{"color+depth", false, true}, HitCase{"dcc+depth", true, true}}) {
         auto color = colorTarget(hitCase.metadata);
@@ -1033,7 +1033,7 @@ void colorMemoProofBreak(AgcDriver::VulkanDevice& device) {
 }
 
 void cachedDepthOverlap(AgcDriver::VulkanDevice& device) {
-    const bool disabled = !DrawPipelineEnabled() || memoSwitchedOff() || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    const bool disabled = !memoServes();
     const auto color = colorTarget();
     const auto disjoint = depthTarget(true);
     auto onSurface = disjoint;
@@ -1406,7 +1406,7 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
         const ProofFields proof;
         for (int repeat = 0; repeat < 4; ++repeat) draw(device, color, options);
         requireMoved(proof, "", "unchanged repeat");
-        const bool enabled = !memoSwitchedOff();
+        const bool enabled = memoServes();
         Require(!enabled || TargetMemoBuildsForTest() == builds, "an unchanged successful repeat rebuilt the memo");
         AgcDriver::GuestMemory::BreakProofs();
         draw(device, color, options);
