@@ -1,5 +1,6 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
@@ -55,6 +56,8 @@ constexpr std::uintptr_t RUDP_POOL_ALIGNMENT = 8;
 constexpr std::size_t RUDP_STATUS_SIZE = 0xF8;
 constexpr std::size_t RUDP_CONTEXT_STATUS_SIZE = 0x30;
 constexpr std::size_t RUDP_CONTEXT_STATUS_PARENT = 4;
+constexpr std::size_t RUDP_CONTEXT_STATUS_STATE = 0;
+constexpr std::int32_t RUDP_CONTEXT_STATE_LISTENING = 6;
 constexpr std::size_t RUDP_STATUS_CURRENT_CONTEXTS = 0x64;
 constexpr std::size_t RUDP_CONTEXT_BUFFER_STATUS_SIZE = 16;
 constexpr uint16_t RUDP_MAX_SEGMENT_SIZE = 1410;
@@ -225,7 +228,10 @@ int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
     unsigned char report[RUDP_STATUS_SIZE] = {};
     const auto contexts = static_cast<uint32_t>(g_ctx.size());
     std::memcpy(report + RUDP_STATUS_CURRENT_CONTEXTS, &contexts, sizeof(contexts));
-    if (!GuestCopyOut_nid_no_patch(status, report, size)) return RUDP_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
+    errno = savedErrno;
+    if (!copied) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -432,7 +438,13 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, std::size_t size
     }
     unsigned char report[RUDP_CONTEXT_STATUS_SIZE] = {};
     std::memset(report + RUDP_CONTEXT_STATUS_PARENT, 0xFF, sizeof(std::int32_t));
-    std::memcpy(status, report, size);
+    if (g_ctx.at(ctx_id).listening) {
+        std::memcpy(report + RUDP_CONTEXT_STATUS_STATE, &RUDP_CONTEXT_STATE_LISTENING, sizeof(RUDP_CONTEXT_STATE_LISTENING));
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
+    errno = savedErrno;
+    if (!copied) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
