@@ -2954,6 +2954,10 @@ void VulkanDevice::WaitIdle() {
     }
     std::unique_lock presentQueueLock(state->presentQueueMutex, std::defer_lock);
     if (state->presentQueue != VK_NULL_HANDLE) presentQueueLock.lock();
+    std::unique_lock settleQueueLock(state->settleQueueMutex, std::defer_lock);
+    if (state->settleQueue != VK_NULL_HANDLE) settleQueueLock.lock();
+    std::unique_lock sparseQueueLock(state->sparseQueueMutex, std::defer_lock);
+    if (state->sparseQueue != VK_NULL_HANDLE) sparseQueueLock.lock();
     check(state->DeviceFunction<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(state->device), "vkDeviceWaitIdle");
     Graphics::CheckPixelFunctionLds(graphicsContext());
     APS5_LOG_CHARS_OUT_DEBUG("VulkanDevice::WaitIdle complete");
