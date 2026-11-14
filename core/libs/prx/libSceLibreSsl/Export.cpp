@@ -258,11 +258,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
 }
 
 
-int APS5_VABI OBJ_obj2nid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response) {
     if (response != nullptr) NotImplemented_nid_no_patch(__func__);
 }
@@ -354,11 +349,6 @@ int APS5_VABI RSA_generate_key_ex_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -804,11 +794,6 @@ const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t err
     static char unknown[100];
     std::snprintf(unknown, sizeof(unknown), "error number %" PRId64, error);
     return unknown;
-}
-
-int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output) {
