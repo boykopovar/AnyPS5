@@ -3418,7 +3418,11 @@ int APS5_VABI sceUserServiceGetPbtcSundayHoursEnd(void) {
 
 int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t, bool* enabled) {
     if (enabled == nullptr) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
-    *enabled = true;
+    const bool value = true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     return USER_SERVICE_OK;
 }
 

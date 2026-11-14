@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceLibcInternal/include/Statvfs.hpp"
 #include <cstring>
@@ -16,7 +17,10 @@ extern "C" int APS5_VABI fstatvfs_nid_postfix(int descriptor, LibcStatvfs* outpu
         return -1;
     }
     const LibcStatvfs result = StatvfsFromStatfs(volume);
-    std::memcpy(output, &result, sizeof(result));
+    if (!GuestCopyOut_nid_no_patch(output, &result, sizeof(result))) {
+        *error = 14;
+        return -1;
+    }
     *error = saved;
     return 0;
 }
