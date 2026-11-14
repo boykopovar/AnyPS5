@@ -178,6 +178,10 @@ class QueueTests(unittest.TestCase):
 
     def test_long_titles_are_cut(self):
         self.assertEqual(len(pr_ready.clean("a" * 500)), 100)
+        self.assertEqual(pr_ready.clean("a" * 99 + "*b"), "a" * 99 + "\\*")
+
+    def test_backslashes_in_titles_do_not_unescape_markdown(self):
+        self.assertEqual(pr_ready.clean(r"fix: \[click\](https://example.invalid) \*bold\*"), r"fix: \\\[click\\\](https://example.invalid) \\\*bold\\\*")
 
 
 class MainTests(unittest.TestCase):

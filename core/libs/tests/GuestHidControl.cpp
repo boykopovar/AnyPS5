@@ -1,6 +1,7 @@
 #include "prx/libSceHidControl/libSceHidControl.hpp"
 
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -212,6 +213,22 @@ void CheckArguments() {
     Require(sceHidControlSetPswControllerCommunicationMethod(2) == ErrorInvalidArgument, "SetPswControllerCommunicationMethod 2");
 }
 
+void CheckGuestPointerFaults() {
+    std::uint16_t version = 0x1234;
+    std::uint16_t first = 0x5a5a;
+    std::uint16_t second = 0x5a5a;
+    const auto unmapped16 = reinterpret_cast<std::uint16_t*>(0x10);
+    const auto unmappedVersion = reinterpret_cast<const std::uint16_t*>(0x10);
+    errno = 71;
+    Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &version, unmapped16, &second) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeededForMultiDevice unmapped first result");
+    Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &version, &first, unmapped16) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeededForMultiDevice unmapped second result");
+    Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, unmappedVersion, &first, &second) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeededForMultiDevice unmapped version");
+    Require(first == 0 && second == 0, "multi-device zeroes the outputs before the version read fails");
+}
+
 }
 
 int main() {
@@ -231,6 +248,7 @@ int main() {
     Require(sceHidControlInit() == 0, "Init opens /dev/hid");
     Require(sceHidControlInit() == 0, "Init again returns 0");
     CheckArguments();
+    CheckGuestPointerFaults();
     std::filesystem::current_path(original);
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
