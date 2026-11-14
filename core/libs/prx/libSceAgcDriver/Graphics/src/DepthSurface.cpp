@@ -660,6 +660,7 @@ std::optional<DepthPlaneOverwrite> decodeOverwrite(const StorageImageClear& clea
 class DepthSurface;
 std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& surface);
 void noteStalePlane(std::uint64_t begin, std::uint64_t end);
+void retireStencil(DepthSurface& surface);
 std::uint64_t nextPlaneSerial();
 
 class DepthSurface {
@@ -2521,19 +2522,26 @@ PlaneOwners& stencilOwners() {
 void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address, VkImageAspectFlagBits aspect, bool created, VkImageAspectFlags clearAspects) {
     auto& entry = owners[{surface.context.device, address}];
     auto* owner = entry.surface;
-    if (owner != nullptr && owner->active->load(std::memory_order_acquire) && owner != &surface && owner->target.format == surface.target.format && owner->target.samples == surface.target.samples && owner->target.extent.width == surface.target.extent.width && owner->target.extent.height == surface.target.extent.height && (!created || (clearAspects & aspect) == 0)) {
+    const bool compatible = owner != nullptr && owner->active->load(std::memory_order_acquire) && owner != &surface && owner->target.format == surface.target.format && owner->target.samples == surface.target.samples && owner->target.extent.width == surface.target.extent.width && owner->target.extent.height == surface.target.extent.height;
+    if (compatible && (!created || (clearAspects & aspect) == 0)) {
         if ((owner->pendingClear & aspect) != 0) {
             if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) {
                 surface.depthFill = owner->depthFill;
                 surface.depthMark = std::max(surface.depthMark, owner->depthMark);
             } else {
                 surface.stencilFill = owner->stencilFill;
+                if (surface.target.samples == 1u && !surface.stencilFill.has_value()) surface.stencilFill = owner->clearStencil;
                 surface.stencilMark = std::max(surface.stencilMark, owner->stencilMark);
             }
             if (!created || (aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? surface.depthFill.has_value() : surface.stencilFill.has_value())) surface.pendingClear |= aspect;
         } else {
             surface.CopyAspectFrom(*owner, aspect);
         }
+        if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT && surface.StencilMirrorable() && owner->StencilMirrorable()) surface.stencilGeneration = owner->stencilGeneration;
+    }
+    if (compatible && aspect == VK_IMAGE_ASPECT_STENCIL_BIT && surface.StencilMirrorable() && owner->stencilStale) {
+        surface.MarkStencilStale();
+        retireStencil(*owner);
     }
     entry = {&surface, ++planeBinds};
 }
