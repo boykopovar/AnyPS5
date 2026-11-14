@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -179,7 +180,15 @@ int APS5_VABI sceOpusSilkEncEncodeFloatWithPriorityAndTimeout(OpusSilkEncoder* s
 int APS5_VABI sceOpusSilkEncGetAjmContext(const OpusSilkEncoder* state, std::uint32_t* context) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (context == nullptr) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    std::uint32_t value = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xF0, sizeof(value));
+    errno = savedErrno;
+    if (!readable) throw std::runtime_error("OpusSilkEnc: unreadable AJM context");
+    const bool writable = GuestCopyOut_nid_no_patch(context, &value, sizeof(value));
+    errno = savedErrno;
+    if (!writable) throw std::runtime_error("OpusSilkEnc: unwritable AJM context");
+    return 0;
 }
 
 } // extern "C"
