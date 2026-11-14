@@ -145,6 +145,7 @@ std::atomic<std::uint64_t> queuedReadHeld{0};
 // hook for the read site of the last skip; images evictStale dropped (the [hooksync] and [storage] lines).
 std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, staleEvicted{0};
 std::atomic<std::uint64_t> depthCopyTextures{0}, depthCopyRefreshes{0};
+std::atomic<std::uint64_t> reuseLookupsHeld{0}, reuseLookupsChanged{0};
 std::atomic<std::uint64_t> refreshesProved{0};
 std::atomic<std::uint64_t> refreshesProvedPendingKeys{0};
 std::atomic<std::uint64_t> untrackedCompares{0};
@@ -1342,6 +1343,16 @@ bool Texture::refreshBlockCopy() {
 
 Texture::DepthCopyCounts Texture::TakeDepthCopyCounts() {
     return {depthCopyTextures.exchange(0, std::memory_order_relaxed), depthCopyRefreshes.exchange(0, std::memory_order_relaxed)};
+}
+
+bool Texture::ReuseLookupHolds() const {
+    const bool held = reuseLookup().get() == this;
+    (held ? reuseLookupsHeld : reuseLookupsChanged).fetch_add(1, std::memory_order_relaxed);
+    return held;
+}
+
+Texture::ReuseLookupCounts Texture::TakeReuseLookupCounts() {
+    return {reuseLookupsHeld.exchange(0, std::memory_order_relaxed), reuseLookupsChanged.exchange(0, std::memory_order_relaxed)};
 }
 
 bool Texture::CanCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor) {

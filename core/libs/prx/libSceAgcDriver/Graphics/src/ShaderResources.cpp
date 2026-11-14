@@ -3722,7 +3722,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         auto& surface = validatedTextures[i];
         if (!surface.valid) return fail(FastFail::NoRecord);
         if (surface.depth) {
-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
+            if (!textures[i]->HasReuseLookup() && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
         }
         if (textures[i]->Released()) return fail(FastFail::Replaced);
@@ -3863,7 +3863,7 @@ bool ShaderResources::fastRevalidateEach() {
         auto& surface = validatedTextures[i];
         if (!surface.valid) return false;
         if (surface.depth) {
-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
+            if (!textures[i]->HasReuseLookup() && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
             continue;
         }
         if (textures[i]->Released()) return false;
@@ -4090,7 +4090,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
     depthCopyTextures.clear();
     indexElements.assign(textures.size(), {});
     for (std::size_t i = 0; i < textures.size(); ++i) {
-        if (textures[i] != nullptr && textures[i]->IsDepthCopy()) depthCopyTextures.push_back(i);
+        if (textures[i] != nullptr && (textures[i]->IsDepthCopy() || textures[i]->HasReuseLookup())) depthCopyTextures.push_back(i);
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     ranges.reserve(textures.size() + 4);
@@ -4252,7 +4252,7 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
         recorder->Keep(textures[i]);
         textures[i] = std::move(texture);
         depthCopyTextures.erase(std::remove(depthCopyTextures.begin(), depthCopyTextures.end(), i), depthCopyTextures.end());
-        if (textures[i]->IsDepthCopy()) depthCopyTextures.insert(std::lower_bound(depthCopyTextures.begin(), depthCopyTextures.end(), i), i);
+        if (textures[i]->IsDepthCopy() || textures[i]->HasReuseLookup()) depthCopyTextures.insert(std::lower_bound(depthCopyTextures.begin(), depthCopyTextures.end(), i), i);
         const auto first = std::lower_bound(indexImagePositions.begin(), indexImagePositions.end(), i, [](const ImagePosition& entry, std::size_t texture) { return entry.texture < texture; });
         for (auto entry = first; entry != indexImagePositions.end() && entry->texture == i; ++entry) {
             const auto& current = textures[i];
@@ -4408,7 +4408,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const bool ok = revalidateFull(shaders, report);
         noteEpochProof(false, false, false);
         if (ok) {
-            provedEpoch = epoch;
+            provedEpoch = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); }) ? 0 : epoch;
             provedProof = proof;
             provedPending = pending;
         } else {
@@ -4699,10 +4699,21 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         comparedTableSpans.erase(std::remove_if(comparedTableSpans.begin(), comparedTableSpans.end(), [](const auto& span) { return span.second.empty(); }), comparedTableSpans.end());
     }
     if (writeSubscription != nullptr) {
-        for (const auto index : depthCopyTextures) textures[index]->RefreshDepthCopy();
+        for (const auto index : depthCopyTextures) {
+            if (textures[index]->HasReuseLookup()) {
+                if (!textures[index]->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
+            } else {
+                textures[index]->RefreshDepthCopy();
+            }
+        }
     } else {
         for (const auto& texture : textures) {
-            if (texture != nullptr && texture->IsDepthCopy()) texture->RefreshDepthCopy();
+            if (texture == nullptr) continue;
+            if (texture->HasReuseLookup()) {
+                if (!texture->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
+            } else if (texture->IsDepthCopy()) {
+                texture->RefreshDepthCopy();
+            }
         }
     }
     return finish(fast, true);

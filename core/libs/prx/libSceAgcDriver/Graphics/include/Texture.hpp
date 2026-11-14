@@ -130,6 +130,14 @@ public:
     PerUseCopy CopyKind() const { return perUseCopy; }
     bool RefreshedPerUse() const { return perUseCopy == PerUseCopy::RemadePerUse; }
     void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
+    void SetReuseLookup(std::function<std::shared_ptr<Texture>()> lookup) { reuseLookup = std::move(lookup); }
+    bool HasReuseLookup() const { return static_cast<bool>(reuseLookup); }
+    bool ReuseLookupHolds() const;
+    struct ReuseLookupCounts {
+        std::uint64_t held;
+        std::uint64_t changed;
+    };
+    static ReuseLookupCounts TakeReuseLookupCounts();
     bool Released() const { return released.load(std::memory_order_acquire); }
     void MarkReleased() { released.store(true, std::memory_order_release); }
 
@@ -167,6 +175,7 @@ private:
     std::shared_ptr<StorageTexture> storageSource;
     std::unique_ptr<CommandBatch> upload;
     PerUseCopy perUseCopy = PerUseCopy::None;
+    std::function<std::shared_ptr<Texture>()> reuseLookup;
     std::atomic<bool> released{false};
     bool copiedOnce = false;
     bool srgbExpand = false;
