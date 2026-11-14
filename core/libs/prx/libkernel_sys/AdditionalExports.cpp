@@ -1636,10 +1636,6 @@ int APS5_VABI sceKernelAddFGCInfo() {
 }
 
 
-int APS5_VABI sceKernelCreateUuidV7() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceKernelDeleteDynlibEvent() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -323,6 +323,8 @@ void CheckAsyncRequestLifecycle() {
     }
 
     int result = resultSentinel;
+    errno = 71;
+    Require(sceNpPollAsync(unusedAsyncResult, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "poll with unwritable result");
     Require(sceNpPollAsync(unusedAsyncResult, &result) == 0, "poll on a live async request");
     Require(result == SignedOut, "poll must report the signed-out result on a live async request");
     Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
@@ -346,6 +348,8 @@ void CheckWaitAsync() {
         Require(sceNpWaitAsync(id, nullptr) == InvalidArgument, "wait must reject a null result before the id");
     }
     Require(sceNpWaitAsync(liveId, nullptr) == InvalidArgument, "wait must reject a null result for a live request");
+    errno = 71;
+    Require(sceNpWaitAsync(liveId, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "wait with unwritable result");
 
     for (int round = 0; round < 2; ++round) {
         int result = resultSentinel;
@@ -566,6 +570,8 @@ void CheckManagerIntProfileGetters() {
     std::int32_t accountType = 0x5a5a5a5a;
     Require(sceNpManagerIntGetAccountType(-1, &accountType) == InvalidArgument && accountType == 0x5a5a5a5a, "sceNpManagerIntGetAccountType must refuse user id -1");
     Require(sceNpManagerIntGetAccountType(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountType must refuse a null output");
+    errno = 71;
+    Require(sceNpManagerIntGetAccountType(InitialUserId, reinterpret_cast<std::int32_t*>(0x10)) == InvalidArgument && errno == 71, "sceNpManagerIntGetAccountType unwritable output");
     Require(sceNpManagerIntGetAccountType(InitialUserId, &accountType) == SignedOut && accountType == 0, "sceNpManagerIntGetAccountType must zero the account type");
     SentinelBuffer npEnv;
     Require(sceNpManagerIntGetNpEnv(nullptr) == InvalidArgument, "sceNpManagerIntGetNpEnv must refuse a null output");
