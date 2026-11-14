@@ -27,11 +27,26 @@ int CheckConfig(std::int32_t handle, const CameraConfig* config) {
 extern "C" {
 
 int APS5_VABI sceCameraGetConfig(std::int32_t handle, CameraConfig* config) {
-    if (const int error = CheckConfig(handle, config)) return error;
-    config->configType = CONFIG_TYPE1;
+    if (handle < 1 || !config) return SCE_CAMERA_ERROR_PARAM;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    if (!Camera::IsOpen(handle)) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_NOT_OPEN;
+    }
+    CameraConfig localConfig{};
+    localConfig.sizeThis = sizeof(CameraConfig);
+    localConfig.configType = CONFIG_TYPE1;
     const CameraConfigExtension extension{{FORMAT_YUV422, SCALE_FORMAT_Y8, SCALE_FORMAT_Y8, SCALE_FORMAT_Y8}, RESOLUTION_1280X800, FRAMERATE_60, 0, 0, 0, nullptr};
-    config->extension[0] = extension;
-    config->extension[1] = extension;
+    localConfig.extension[0] = extension;
+    localConfig.extension[1] = extension;
+    const bool copied = GuestCopyOut_nid_no_patch(config, &localConfig, sizeof(localConfig));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 
@@ -65,9 +80,21 @@ int APS5_VABI sceCameraGetDeviceConfig(std::int32_t handle, CameraConfig* config
 }
 
 int APS5_VABI sceCameraGetDeviceConfigWithoutHandle(CameraConfig* config) {
-    if (!ValidConfig(config)) return SCE_CAMERA_ERROR_PARAM;
-    if (!Camera::IsOpen()) return SCE_CAMERA_ERROR_NOT_OPEN;
-    *config = {};
+    if (!config) return SCE_CAMERA_ERROR_PARAM;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    if (!Camera::IsOpen()) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_NOT_OPEN;
+    }
+    CameraConfig outConfig{};
+    const bool copied = GuestCopyOut_nid_no_patch(config, &outConfig, sizeof(outConfig));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 

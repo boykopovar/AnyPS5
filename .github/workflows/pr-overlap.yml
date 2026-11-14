@@ -15,6 +15,7 @@ concurrency:
 jobs:
   overlap:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       pull-requests: write
@@ -22,6 +23,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/overlap-state.json

@@ -114,6 +114,7 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/cairo/COPYING-LGPL-2.1", "libs/licenses/cairo-lgpl-2.1.txt"))
         licenses.append((ROOT / "3rdparty/cairo/COPYING-MPL-1.1", "libs/licenses/cairo-mpl-1.1.txt"))
         licenses.append((ROOT / "3rdparty/pixman/COPYING", "libs/licenses/pixman.txt"))
+        licenses.append((ROOT / "3rdparty/libpng/LICENSE", "libs/licenses/libpng.txt"))
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
