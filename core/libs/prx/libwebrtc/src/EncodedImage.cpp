@@ -1,3 +1,4 @@
+/* Derived from api/video/encoded_image.cc and api/video/encoded_image.h@8d78f5de6c27b2c793039989ea381f1428fb0100 */
 /*
  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
  *
