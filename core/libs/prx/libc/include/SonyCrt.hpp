@@ -56,8 +56,8 @@ inline void SonyRefreshHostZone_nid_no_patch() {
 
 inline SonyHostTimeZone SonyHostZoneAt_nid_no_patch(std::int64_t utcTime) {
     std::tm local{};
-#ifdef _WIN32
     constexpr std::int64_t cycleSeconds = 146097LL * 86400LL;
+#ifdef _WIN32
     constexpr std::int64_t lastHostSecond = 32535215999LL;
     const std::int64_t cycles = utcTime >= 0 && utcTime <= lastHostSecond ? 0 : (utcTime >= 0 ? utcTime / cycleSeconds : -((-(utcTime + 1)) / cycleSeconds + 1));
     const std::time_t t = static_cast<std::time_t>(utcTime - cycles * cycleSeconds);
@@ -69,9 +69,13 @@ inline SonyHostTimeZone SonyHostZoneAt_nid_no_patch(std::int64_t utcTime) {
     _get_dstbias(&daylightBias);
     return {-static_cast<std::int64_t>(standardBias), local.tm_isdst > 0 ? -static_cast<std::int64_t>(daylightBias) : 0};
 #else
-    const std::time_t t = static_cast<std::time_t>(utcTime);
+    std::time_t t = static_cast<std::time_t>(utcTime);
     ::tzset();
-    if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    if (localtime_r(&t, &local) == nullptr) {
+        const std::int64_t offset = utcTime % cycleSeconds;
+        t = static_cast<std::time_t>(offset < 0 ? offset + cycleSeconds : offset);
+        if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    }
     const std::int64_t daylight = local.tm_isdst > 0 ? static_cast<std::int64_t>(local.tm_gmtoff) + ::timezone : 0;
     return {static_cast<std::int64_t>(local.tm_gmtoff) - daylight, daylight};
 #endif
