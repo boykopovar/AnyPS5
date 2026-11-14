@@ -119,10 +119,6 @@ std::int64_t APS5_VABI writeIS_nid_postfix(void*, Jxr::BitIo* io) {
     return result;
 }
 
-int APS5_VABI AllocateCodingContextDec_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
     const auto result = WMPAlloc_nid_postfix(reinterpret_cast<void**>(stream), sizeof(Jxr::Stream));
