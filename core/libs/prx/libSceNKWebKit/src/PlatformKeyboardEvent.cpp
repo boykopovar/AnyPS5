@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/platform/PlatformKeyboardEvent.cpp
+// Derived from Source/WebCore/platform/PlatformKeyboardEvent.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2018-2022 Apple Inc. All rights reserved.
  *
@@ -23,7 +23,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/platform/libwpe/PlatformKeyboardEventLibWPE.cpp
+// Derived from Source/WebCore/platform/libwpe/PlatformKeyboardEventLibWPE.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2014 Igalia S.L.
  *
