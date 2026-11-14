@@ -34,6 +34,7 @@ constexpr std::uint32_t LpcmMemorySize = 0x190138;
 constexpr std::uint32_t LpcmParamSize = 0x28;
 constexpr std::uint32_t LpcmInputCapacity = 0x43800;
 constexpr std::uint32_t LpcmOutputCapacity = 0x43800;
+constexpr std::uint32_t LpcmOutputSamples = LpcmOutputCapacity / 4;
 constexpr std::uint32_t LpcmStateOffset = 0xb8;
 constexpr std::uint32_t PtsStep = 450;
 
@@ -130,11 +131,10 @@ int DecodeLpcmBd(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory) {
     const auto* input = static_cast<const std::uint8_t*>(ctrl->pAuInfo->p_au_addr);
     const std::uint32_t width = bitsIndex == 1 ? 2 : 3;
     const std::uint32_t samples = auBytes / width;
-    if (samples * 4 > LpcmOutputCapacity) NotImplemented_nid_no_patch("sceAudiodecCpuDecode: an LPCM frame producing more PCM than the output buffer capacity of the module");
     if (ctrl->pPcmItem->ui_pcm_size < samples * 4) NotImplemented_nid_no_patch("sceAudiodecCpuDecode: a PCM buffer smaller than the decoded frame");
     std::vector<float> output(samples);
     for (std::uint32_t index = 0; index < samples; ++index) {
-        const std::uint8_t* sample = input + index * width;
+        const std::uint8_t* sample = input + (index % LpcmOutputSamples) * width;
         std::uint32_t value = static_cast<std::uint32_t>(sample[0]) << 24 | static_cast<std::uint32_t>(sample[1]) << 16;
         if (width == 3) value |= static_cast<std::uint32_t>(sample[2]) << 8;
         output[index] = LpcmSample(static_cast<std::int32_t>(value));

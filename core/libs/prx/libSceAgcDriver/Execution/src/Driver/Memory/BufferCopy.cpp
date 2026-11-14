@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferCopy.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
@@ -65,6 +66,25 @@ bool MatchesIndexedCopyKernel(std::span<const std::uint32_t> code, const std::ve
     const auto outOfBounds = (userData[3] >> 28u) & 3u;
     const auto type = userData[3] >> 30u;
     return stride(1) == 16 && stride(5) == 16 && stride(9) == 16 && !swizzled(1) && !swizzled(5) && !swizzled(9) && userData[3] == userData[7] && type == 0 && !addTid && outOfBounds == 0 && userData[10] >= 1;
+}
+
+bool MatchesTableCopyKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
+    static const bool enabled = std::getenv("APS5_NO_COPY_HLE") == nullptr;
+    if (!enabled || userData.size() != 2 || compute.numThreads[0] != 64 || compute.numThreads[1] != 1 || compute.numThreads[2] != 1 || !compute.groupIdEnable[0]) return false;
+    static constexpr std::array<std::uint32_t, 11> kernel{0xd7460000u, 0x04010c02u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xe030e000u, 0x80010100u, 0xbf8c3f70u, 0xe0706000u, 0x80020100u, 0xbf810000u};
+    return code.size() >= kernel.size() && std::equal(kernel.begin(), kernel.end(), code.begin());
+}
+
+std::optional<StreamCopy> TableCopyRange(const std::array<std::uint32_t, 8>& table, std::uint32_t groups) {
+    const auto base = [&](std::size_t word) { return table[word] | (static_cast<std::uint64_t>(table[word + 1] & 0xffffu) << 32u); };
+    const auto stride = [&](std::size_t word) { return (table[word + 1] >> 16u) & 0x3fffu; };
+    const auto swizzled = [&](std::size_t word) { return ((table[word + 1] >> 31u) & 1u) != 0; };
+    if (stride(0) != 4 || stride(4) != 4 || swizzled(0) || swizzled(4) || table[3] != 0x00005204u || table[7] != 0x00005204u) return std::nullopt;
+    const auto elements = std::min<std::uint64_t>(std::uint64_t{groups} * 64u, table[6]);
+    if (elements == 0 || elements > table[2]) return std::nullopt;
+    const StreamCopy copy{base(0), base(4), static_cast<std::size_t>(elements) * 4u};
+    if (copy.bytes > (16u << 20u) || copy.source % 4 != 0 || copy.destination % 4 != 0) return std::nullopt;
+    return copy;
 }
 
 std::optional<StreamCopy> IndexedCopyRange(const std::vector<std::uint32_t>& userData, std::uint32_t groups, std::uint32_t count, std::uint32_t sourceOffset, std::uint32_t destinationOffset) {
@@ -144,7 +164,8 @@ bool Driver::knownValueVerify() {
 bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::shared_ptr<VulkanDevice>& localDevice, std::uint64_t programAddress) {
     const bool hashed = matchesCopyKernel(code, userData, compute);
     const bool indexed = !hashed && MatchesIndexedCopyKernel(code, userData, compute);
-    const bool stream = !hashed && !indexed;
+    const bool table = !hashed && !indexed && MatchesTableCopyKernel(code, userData, compute);
+    const bool stream = !hashed && !indexed && !table;
     if (stream && !MatchesStreamCopyKernel(code, userData, compute)) return false;
     const auto started = std::chrono::steady_clock::now();
     static const std::size_t cpuMax = [] {
@@ -157,9 +178,9 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         return text ? static_cast<std::size_t>(std::strtoull(text, nullptr, 10)) : std::numeric_limits<std::size_t>::max();
     }();
     const auto base = [&](std::size_t word) { return userData[word] | (static_cast<std::uint64_t>(userData[word + 1] & 0xffffu) << 32u); };
-    auto source = base(0);
-    auto destination = base(4);
-    const auto record = stream ? std::uint64_t{0} : base(8);
+    auto source = table ? std::uint64_t{0} : base(0);
+    auto destination = table ? std::uint64_t{0} : base(4);
+    const auto record = stream || table ? std::uint64_t{0} : base(8);
     std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
     if ((packet[4] & 0x20u) != 0) {
         for (std::uint32_t axis = 0; axis < 3; ++axis) {
@@ -186,7 +207,29 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         return false;
     };
     std::size_t bytes = 0;
-    if (stream) {
+    if (table) {
+        Graphics::FinishLeaseWork();
+        const auto tableAddress = base(0);
+        const bool tableAccessible = GuestMemory::Accessible(reinterpret_cast<const void*>(tableAddress), 32);
+        bool published = false;
+        if (!tableAccessible || Graphics::Recorder::SnapshotWriteOverlaps(tableAddress, 32) || Graphics::StorageTexture::FlushPending(tableAddress, 32, nullptr, "table copy descriptors", Graphics::PublishScope::Whole, &published) || published || labelPending(tableAddress, 32)) {
+            if (traceCopy()) traceCopyPending(tableAccessible ? "copy descriptors" : "inaccessible copy descriptors", tableAddress, 32, 0, 0, 0, localDevice);
+            countCopy(CopyRecordPending, 0, started, locked);
+            return false;
+        }
+        std::array<std::uint32_t, 8> descriptors{};
+        std::memcpy(descriptors.data(), reinterpret_cast<const void*>(tableAddress), sizeof(descriptors));
+        const auto range = TableCopyRange(descriptors, groups[0]);
+        if (!range || (tableAddress < range->destination + range->bytes && range->destination < tableAddress + 32)) {
+            countCopy(CopyShape, range ? range->bytes : 0, started, locked);
+            return false;
+        }
+        source = range->source;
+        destination = range->destination;
+        bytes = range->bytes;
+        static std::atomic<std::uint64_t> tableCopies{0};
+        if ((tableCopies.fetch_add(1, std::memory_order_relaxed) & 0xfffu) == 0) std::fprintf(stderr, "[copyhle] table copy 0x%llx -> 0x%llx (0x%zx bytes), %llu so far\n", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, static_cast<unsigned long long>(tableCopies.load(std::memory_order_relaxed)));
+    } else if (stream) {
         const auto range = StreamCopyRange(userData, groups[0]);
         if (!range) {
             countCopy(CopyShape, 0, started, locked);
@@ -247,6 +290,7 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
     countCopy(outcome.path, bytes, started, locked, &outcome);
     if (traceCopy() && bytes <= cpuMax && outcome.path != CopyCpu) traceCopyRefused(outcome, source, destination, bytes, localDevice);
     if (outcome.path == CopyNotImported || outcome.path == CopyOverGpuMax) return false;
+    Graphics::NoteCopyDestination(destination, bytes);
 
     if (outcome.path == CopyCpu) noteForeignWriter(destination, destination + bytes, queueId);
     return true;

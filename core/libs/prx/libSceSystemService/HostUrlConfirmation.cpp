@@ -1,11 +1,19 @@
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include <SDL.h>
+#include <cstdlib>
 
 namespace {
 
 constexpr std::size_t WRAP_WIDTH = 96;
 constexpr int BUTTON_CANCEL = 0;
 constexpr int BUTTON_OPEN = 1;
+
+#ifdef __linux__
+bool IsSet(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr && value[0] != '\0';
+}
+#endif
 
 }
 
@@ -20,6 +28,9 @@ std::string HostConfirmationText(const std::string& url) {
 }
 
 bool HostMessageBoxConfirmation::Confirm(const std::string& url) {
+#ifdef __linux__
+    if (!IsSet("DISPLAY") && !IsSet("WAYLAND_DISPLAY")) return false;
+#endif
     const std::string text = HostConfirmationText(url);
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, BUTTON_CANCEL, "Cancel"},

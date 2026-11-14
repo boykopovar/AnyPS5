@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_depth_bias_per_face_unsuppressed COMMAND agc_driver_depth_bias_per_face_tests)
+    set_tests_properties(agc_driver_depth_bias_per_face_unsuppressed PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_STATE_SUPPRESSION=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_depth_bias_per_face_transitions COMMAND agc_driver_depth_bias_per_face_tests)
+    set_tests_properties(agc_driver_depth_bias_per_face_transitions PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_TRANSITIONS=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_bias_per_face_unsuppressed agc_driver_depth_bias_per_face_transitions PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

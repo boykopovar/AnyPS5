@@ -260,6 +260,38 @@ static void CheckTimelocalDst() {
     Require(Equal(failure, expectedFailure), "timelocal failure modified fields other than tm_isdst");
 }
 
+static void CheckTimegm() {
+    constexpr std::array<std::int64_t, 6> timers{0, 1, 86400, 946684800, 1577836800, 2000000000};
+    for (const auto timer : timers) {
+        GuestTm expected{};
+        Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime conversion failed");
+        GuestTm input = expected;
+        input.tm_sec += 60;
+        --input.tm_min;
+        input.tm_wday = -1;
+        input.tm_yday = -1;
+        Require(timegm_nid_postfix(&input) == timer, "timegm returned wrong timestamp");
+        Require(Equal(input, expected), "timegm did not normalize UTC fields");
+    }
+
+    GuestTm leap2000{};
+    leap2000.tm_year = 100;
+    leap2000.tm_mon = 1;
+    leap2000.tm_mday = 29;
+    const std::int64_t leapTimer = timegm_nid_postfix(&leap2000);
+    Require(leapTimer != -1, "timegm rejected leap day in year 2000");
+    Require(leap2000.tm_year == 100 && leap2000.tm_mon == 1 && leap2000.tm_mday == 29, "timegm distorted leap day");
+
+    GuestTm monthOverflow{};
+    monthOverflow.tm_year = 121;
+    monthOverflow.tm_mon = 12;
+    monthOverflow.tm_mday = 5;
+    const std::int64_t normTimer = timegm_nid_postfix(&monthOverflow);
+    Require(normTimer != -1, "timegm rejected month overflow");
+    Require(monthOverflow.tm_year == 122 && monthOverflow.tm_mon == 0 && monthOverflow.tm_mday == 5,
+        "timegm failed to normalize month overflow");
+}
+
 int main() {
     CheckZone("IST-5:30");
     CheckAvailableDaylightHints();
@@ -285,4 +317,5 @@ int main() {
     CheckEquivalentFutureCalendars("Pacific/Kiritimati");
 #endif
     CheckTimelocalDst();
+    CheckTimegm();
 }
