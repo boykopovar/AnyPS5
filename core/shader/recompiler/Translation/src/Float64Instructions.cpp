@@ -13,11 +13,13 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     const bool arithmetic = opcode == IrOpcode::FPAdd64 || opcode == IrOpcode::FPMul64 || opcode == IrOpcode::FPFma64;
     const std::size_t count = IrOpcodeOperandCount(opcode);
     std::array<IrValue*, 3> args{};
+    std::array<IrU32, 2> source{};
     for (std::uint32_t index = 0u; index < count; ++index) {
         const RdnaOperand& operand = sourceAt(inst, index);
         switch (IrOpcodeArgumentType(opcode, index)) {
             case IrType::U64: {
                 const std::array<IrU32, 2> bits = opcode == IrOpcode::FPFrexpExp64 || arithmetic ? flushF64Bits(readF64Bits(operand), 0x40u) : readF64Bits(operand);
+                if (index == 0u) source = bits;
                 args[index] = &ir.ConstructU64(bits[0].Value(), bits[1].Value());
                 break;
             }
@@ -34,6 +36,22 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     }
     RdnaOperand destination = inst.destination;
     if (!floatMode.has_value()) destination.omod = 0u;
+    if (opcode == IrOpcode::ConvertF32F64 && floatMode.has_value() && ((floatMode->floatMode >> 4u) & 2u) == 0u) {
+        const std::uint32_t rounding = floatMode->floatMode & 3u;
+        IrValue& high = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x7fffffffu));
+        IrValue& sign = ir.BitwiseAnd(source[1].Value(), ir.Constant(0x80000000u));
+        const auto below = [&](std::uint64_t limit) -> IrValue& {
+            IrValue& limitHigh = ir.Constant(static_cast<std::uint32_t>(limit >> 32u));
+            return ir.LogicalOr(ir.ULessThan(high, limitHigh), ir.LogicalAnd(ir.IEqual(high, limitHigh), ir.ULessThan(source[0].Value(), ir.Constant(static_cast<std::uint32_t>(limit)))));
+        };
+        IrValue* tiny = &below(rounding == 0u ? 0x380ffffff0000000ull : 0x3810000000000000ull);
+        if (rounding == 1u || rounding == 2u) {
+            IrValue& negative = ir.INotEqual(sign, ir.Constant(0u));
+            IrValue& away = rounding == 1u ? ir.LogicalNot(negative) : negative;
+            tiny = &ir.LogicalOr(ir.LogicalAnd(away, below(0x380fffffe0000001ull)), ir.LogicalAnd(ir.LogicalNot(away), *tiny));
+        }
+        result = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {tiny, &ir.BitCastF32(sign), result});
+    }
     writeOperand(destination, result);
     return true;
 }
