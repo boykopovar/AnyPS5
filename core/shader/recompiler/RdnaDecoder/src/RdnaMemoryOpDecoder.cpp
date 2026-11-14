@@ -67,6 +67,9 @@ constexpr MemoryOpcodeInfo smemOpcodes[] = {
     {0x0au, RdnaOpcode::SBufferLoadDwordx4, 4, 32, false, false, false},
     {0x0bu, RdnaOpcode::SBufferLoadDwordx8, 8, 32, false, false, false},
     {0x0cu, RdnaOpcode::SBufferLoadDwordx16, 16, 32, false, false, false},
+    {0x10u, RdnaOpcode::SStoreDword, 1, 32, false, false, false},
+    {0x11u, RdnaOpcode::SStoreDwordx2, 2, 32, false, false, false},
+    {0x12u, RdnaOpcode::SStoreDwordx4, 4, 32, false, false, false},
 };
 
 constexpr MemoryOpcodeInfo mubufOpcodes[] = {
@@ -577,6 +580,16 @@ bool isDsAtomicOpcode(RdnaOpcode opcode) {
     }
 }
 
+bool isSmemStoreOpcode(RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::SStoreDword:
+        case RdnaOpcode::SStoreDwordx2:
+        case RdnaOpcode::SStoreDwordx4:
+            return true;
+        default: return false;
+    }
+}
+
 bool isDsSrc2Opcode(RdnaOpcode opcode) {
     switch (opcode) {
         case RdnaOpcode::DsAddSrc2U32:
@@ -785,7 +798,16 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    instruction.destination = scalarDestination(sdst);
+    if (isSmemStoreOpcode(instruction.op)) {
+        if (sdst > 105u) {
+            throw std::runtime_error("SMEM store data register is not an SGPR");
+        }
+        instruction.source2 = scalarSource(sdst);
+        instruction.sourceCount = 3;
+    } else {
+        instruction.destination = scalarDestination(sdst);
+        instruction.sourceCount = 2;
+    }
     // The base pair may also be VCC (s106:107), which compilers use as a scratch address register.
     if (sbase * 2u == 106u) {
         RdnaOperand vcc{};
@@ -799,7 +821,6 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
         instruction.source0 = scalarDescriptorBase(sbase * 2u, 2u, "SMEM base register range overflow");
     }
     instruction.source1 = scalarSource(soffsetCode);
-    instruction.sourceCount = 2;
     return instruction;
 }
 

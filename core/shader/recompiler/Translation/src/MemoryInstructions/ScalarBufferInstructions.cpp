@@ -51,6 +51,40 @@ bool TranslationContext::sLoad(const RdnaInstruction& inst, bool raw) {
     return true;
 }
 
+bool TranslationContext::sStore(const RdnaInstruction& inst, bool raw) {
+    const MemoryInfo memory = scalarMemoryInfoFromInstruction(inst, raw);
+    if (!raw) {
+        throw std::runtime_error("SMEM buffer store needs a writable buffer resource");
+    }
+    const std::uint32_t baseCode = inst.source0.kind == RdnaOperandKind::VccLo ? 106u : inst.source0.reg;
+    IrValue* resource = getScalarAddressResource(baseCode);
+    const IrU32 offset = readU32(inst.source1);
+    std::array<IrValue*, 4u> parts{};
+    for (std::uint32_t component = 0u; component < memory.dataDwords; ++component) {
+        parts[component] = &readU32(offsetOperand(inst.source2, component)).Value();
+    }
+    IrOpcode opcode;
+    IrValue* value;
+    switch (memory.dataDwords) {
+    case 1u:
+        opcode = IrOpcode::StoreAddressU32;
+        value = parts[0];
+        break;
+    case 2u:
+        opcode = IrOpcode::StoreAddressU32x2;
+        value = &ir.Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {parts[0], parts[1]});
+        break;
+    case 4u:
+        opcode = IrOpcode::StoreAddressU32x4;
+        value = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {parts[0], parts[1], parts[2], parts[3]});
+        break;
+    default:
+        return false;
+    }
+    (void)ir.Emit(opcode, IrType::Void, {resource, &offset.Value(), &ir.Constant(0u), value, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
+    return true;
+}
+
 bool TranslationContext::sScratchLoad(const RdnaInstruction& /*inst*/) {
     throw std::runtime_error("s_scratch_load not yet implemented: wave-uniform or swizzled scratch layout required");
 }

@@ -84,10 +84,25 @@ static void CheckMissingMemoryInfo() {
     Require(rejected, "validation accepted a memory instruction without memory info");
 }
 
+static void CheckScalarStore() {
+    IrProgram program;
+    Translate(program, {
+        Smem(0x80u, 0x10u, 8u, 0u, 0x20u),
+        Smem(0x88u, 0x11u, 10u, 2u, 0x24u),
+        Smem(0x90u, 0x12u, 12u, 4u, 0x28u),
+    });
+    const auto dump = ProgramToString(program);
+    RequireLines(dump, "StoreAddressU32", {" [pc=0x00000080 off=0x20]"});
+    RequireLines(dump, "StoreAddressU32x2", {" [pc=0x00000088 off=0x24]"});
+    RequireLines(dump, "StoreAddressU32x4", {" [pc=0x00000090 off=0x28]"});
+    Require(Lines(dump, "LoadAddressU32").empty(), dump + "\nexpected no loads from a store");
+}
+
 int main() {
     try {
         CheckOffsets();
         CheckMissingMemoryInfo();
+        CheckScalarStore();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
