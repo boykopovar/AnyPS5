@@ -776,6 +776,10 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12format_errorE_nid_postfix(const LibcException::ExceptionObject* error) { LibcException::SceV2::ThrowCopy(error, LibcException::SceV2::FormatError); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12future_errorE_nid_postfix(const LibcException::SystemErrorObject* error) { LibcException::SceV2::ThrowSystemCopy(error, LibcException::SceV2::FutureError); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const LibcException::SystemErrorObject* failure) { LibcException::SceV2::ThrowSystemCopy(failure, LibcException::SceV2::IosFailure); }
+[[noreturn]] void APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix(const LibcException::SystemErrorObject* self) {
+    if (!self) throw std::invalid_argument("exception object is null");
+    LibcException::SceV2::ThrowSystemCopy(self, _ZTVNSt8ios_base7failureE_nid_postfix);
+}
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code) { LibcException::ThrowCppError(code, LibcException::SceV2::SystemError, true); }
 
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix() { return _Xtime_get_ticks_nid_postfix(); }

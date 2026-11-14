@@ -30,7 +30,6 @@ int APS5_VABI _WFrprep_nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE14do_curr_symbolEv_nid_postfix();
 int APS5_VABI _WLitob_nid_postfix();
 int APS5_VABI _WGetfld_nid_postfix();
-int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix();
 int APS5_VABI _Unlock_spin_lock_nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE11do_groupingEv_nid_postfix();
 int APS5_VABI _Setgloballocale_nid_postfix();
@@ -57,6 +56,5 @@ int APS5_VABI _Strcollx_nid_postfix();
 int APS5_VABI _ZN6Dinkum7threads10lock_errorD1Ev_nid_postfix();
 int APS5_VABI _Wcscollx_nid_postfix();
 int APS5_VABI _Tgamma_nid_postfix();
-int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XranEv_nid_postfix();
 
 }
