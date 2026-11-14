@@ -315,6 +315,29 @@ int main() {
             Write<std::uint64_t>(bytes, 104, 0xd0);
             RejectProgramHeaders(std::move(bytes));
         }},
+        {"load and uncovered SCE RELRO alignment is not a power of two", [] {
+            constexpr std::uint64_t alignments[] = {3, 0x7fffffff, 0xfffffffffffffffb};
+            for (const std::uint32_t type : {1u, 0x61000010u}) {
+                for (const std::uint64_t alignment : alignments) {
+                    auto bytes = Fixture();
+                    Write<std::uint32_t>(bytes, 64, type);
+                    Write<std::uint64_t>(bytes, 112, alignment);
+                    RejectProgramHeaders(std::move(bytes));
+                }
+            }
+        }},
+        {"load and uncovered SCE RELRO alignment of zero, one or a power of two", [] {
+            constexpr std::uint64_t alignments[] = {0, 1, 2, 8, 0x4000};
+            for (const std::uint32_t type : {1u, 0x61000010u}) {
+                for (const std::uint64_t alignment : alignments) {
+                    auto bytes = Fixture();
+                    Write<std::uint32_t>(bytes, 64, type);
+                    Write<std::uint64_t>(bytes, 112, alignment);
+                    const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+                    Require(headers.size() == (type == 0x61000010u ? 2u : 1u) && headers[0].Type == 1 && headers[0].Alignment == alignment);
+                }
+            }
+        }},
         {"covered SCE RELRO file size exceeds memory size", [] {
             RejectProgramHeaders(CoveredRelroFixture(0x240, 64, 32));
         }},
