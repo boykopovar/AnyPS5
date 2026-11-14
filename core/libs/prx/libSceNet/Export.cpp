@@ -1151,6 +1151,8 @@ const KernelSocketPoll::Forwards g_socketForwards{
 
 const bool g_socketForwardsRegistered = (KernelSetSocketForwards_nid_no_patch(&g_socketForwards), true);
 
+constexpr int GuestFcntlGetDescriptorFlags = 1;
+constexpr int GuestFcntlSetDescriptorFlags = 2;
 constexpr int GuestFcntlGetStatus = 3;
 constexpr int GuestFcntlSetStatus = 4;
 constexpr int GuestReadWrite = 2;
@@ -1158,6 +1160,7 @@ constexpr int GuestNonblocking = 4;
 constexpr int GuestStatusFlagsMask = 7;
 
 bool ControlSocketStatusForKernel(int descriptor, int command, int flags, int* result, int* error) {
+    if (command == GuestFcntlGetDescriptorFlags || command == GuestFcntlSetDescriptorFlags) return false;
     bool nonblock = false;
     {
         std::lock_guard lk(g_mutex);

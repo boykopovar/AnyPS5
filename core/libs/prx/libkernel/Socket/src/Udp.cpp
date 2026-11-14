@@ -694,10 +694,13 @@ extern "C" bool GuestSocketIsOpen_nid_no_patch(int descriptor) {
 
 extern "C" int KernelReserveSocketNumber_nid_no_patch(std::uintptr_t native) {
     const int number = ReserveNumber(static_cast<NativeSocket>(native));
-    return number < 0 ? -*__error_nid_postfix() : number;
+    if (number < 0) return -*__error_nid_postfix();
+    File::RememberDescriptor(number, 0);
+    return number;
 }
 
 extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number) {
+    File::ForgetDescriptor(number);
     ReleaseNumber(number);
 }
 

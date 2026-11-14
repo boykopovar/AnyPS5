@@ -1516,9 +1516,22 @@ static void CheckKernelStatusFlags() {
     Require(sceNetGetsockopt(descriptor, 0xffff, 0x1200, &enabled, &length) == 0 && enabled == 0);
     *__error_nid_postfix() = 0;
     Require(fcntl_nid_postfix(descriptor, 4, 0x100) == -1 && *__error_nid_postfix() == 45);
-    *__error_nid_postfix() = 0;
-    Require(fcntl_nid_postfix(descriptor, 1) == -1 && *__error_nid_postfix() == 22);
+    Require(fcntl_nid_postfix(descriptor, 1) == 0);
+    Require(fcntl_nid_postfix(descriptor, 2, 1) == 0);
+    Require(fcntl_nid_postfix(descriptor, 1) == 1);
+    Require(fcntl_nid_postfix(descriptor, 3) == 2);
+    Require(ioctl_nid_postfix(descriptor, 0x20006602, nullptr) == 0);
+    Require(fcntl_nid_postfix(descriptor, 1) == 0);
+    Require(ioctl_nid_postfix(descriptor, 0x20006601, nullptr) == 0);
+    Require(fcntl_nid_postfix(descriptor, 1) == 1);
+    Require(fcntl_nid_postfix(descriptor, 2, 0) == 0);
+    Require(fcntl_nid_postfix(descriptor, 1) == 0);
+    Require(ioctl_nid_postfix(descriptor, 0x20006601, nullptr) == 0);
     Require(close_nid_postfix(descriptor) == 0);
+    const int reused = sceNetSocket("kernel-status-reused", 2, 1, 6);
+    Require(reused == descriptor);
+    Require(fcntl_nid_postfix(reused, 1) == 0);
+    Require(close_nid_postfix(reused) == 0);
 }
 
 static void CheckAddressText(int family, const char* text) {
