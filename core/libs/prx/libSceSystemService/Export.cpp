@@ -560,10 +560,16 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
  }
  constexpr char SystemName[] = "PS5";
  static constexpr char Zeros[256] = {};
- for (std::size_t offset = 0; offset < bufSize; offset += sizeof(Zeros)) {
-  if (!GuestCopyOut_nid_no_patch(buf + offset, Zeros, std::min(sizeof(Zeros), bufSize - offset))) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ const int savedErrno = errno;
+ bool copied = true;
+ for (std::size_t offset = 0; copied && offset < bufSize; offset += sizeof(Zeros)) {
+  copied = GuestCopyOut_nid_no_patch(buf + offset, Zeros, std::min(sizeof(Zeros), bufSize - offset));
  }
- if (!GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName))) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ if (copied) copied = GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
