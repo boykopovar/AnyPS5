@@ -14168,6 +14168,17 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         BuildPipelineStoreKey(legacyKey, context, legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(legacyReplayed, context, legacyDecoded.state, legacyDecoded.vertexInput, layouts.View(), legacyShaders, legacyDecoded.attachmentLayout);
         Require(legacyFlag == original && legacyKey != original && legacyKey == legacyReplayed, "the legacy vertex selection keyed a pipeline by the state flag instead of by its vertex module");
+        {
+            auto shortState = state;
+            shortState.depth.reset();
+            shortState.colors.resize(1);
+            shortState.blends.resize(1);
+            std::vector<std::byte> shortKey, shortAgain, longAgain;
+            BuildPipelineStoreKey(shortKey, context, shortState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            BuildPipelineStoreKey(longAgain, context, state, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            BuildPipelineStoreKey(shortAgain, context, shortState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            Require(!shortKey.empty() && shortKey.size() < original.size() && shortAgain == shortKey && longAgain == original, "a key built after a longer one kept bytes of it");
+        }
         std::vector<std::byte> unclamped, clamped, biased;
         auto clampedState = state;
         clampedState.depthBiasClamp = 1.0f;
