@@ -239,6 +239,7 @@ private:
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool floatTernary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
+    IrValue* directedF32(IrValue& delta, IrValue& coordinate, IrValue& base, bool productZeroSign = false);
     bool ieeeMinMaxF32(const RdnaInstruction& inst, IrOpcode opcode);
     bool minMaxF16(const RdnaInstruction& inst, IrOpcode opcode);
     bool vDivScaleF32(const RdnaInstruction& inst);

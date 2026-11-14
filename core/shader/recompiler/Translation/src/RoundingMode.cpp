@@ -125,17 +125,19 @@ RoundingUse RoundingUseOf(RdnaOpcode opcode) {
     case RdnaOpcode::VSubF32:
     case RdnaOpcode::VSubrevF32:
     case RdnaOpcode::VMulF32:
-    case RdnaOpcode::VMulLegacyF32:
     case RdnaOpcode::VMacF32:
-    case RdnaOpcode::VMullitF32:
     case RdnaOpcode::VFmaF32:
     case RdnaOpcode::VMadmkF32:
     case RdnaOpcode::VMadakF32:
+        return {round32 | denorm32, RoundingUseKind::Directed32};
+    case RdnaOpcode::VMulLegacyF32:
+    case RdnaOpcode::VMullitF32:
     case RdnaOpcode::VFractF32:
     case RdnaOpcode::VDivScaleF32:
     case RdnaOpcode::VDivFixupF32:
         return {round32 | denorm32, RoundingUseKind::Unmodelled};
     case RdnaOpcode::VMadF32:
+        return {round32, RoundingUseKind::Directed32};
     case RdnaOpcode::VMadLegacyF32:
     case RdnaOpcode::VMacLegacyF32:
     case RdnaOpcode::VDivFmasF32:
