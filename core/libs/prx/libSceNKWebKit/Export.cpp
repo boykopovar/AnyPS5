@@ -30770,17 +30770,6 @@ int APS5_VABI _ZNK7WebCore19MediaElementSession22allowsPictureInPictureEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore19ProtectionSpaceBase15isPasswordBasedEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore19ProtectionSpaceBase26receivesCredentialSecurelyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore19ProtectionSpaceBase7isProxyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK7WebCore19ResourceRequestBase10httpOriginEv() {
     NotImplemented_nid_no_patch(__func__);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
 #include <array>
@@ -234,6 +235,15 @@ struct ViewportArguments {
     bool widthWasExplicit{false};
 };
 
+struct ProtectionSpaceBase {
+    NKWebKit::WtfAbi::StringImpl* m_host;
+    NKWebKit::WtfAbi::StringImpl* m_realm;
+    int m_port;
+    std::uint8_t m_serverType;
+    std::uint8_t m_authenticationScheme;
+    bool m_isHashTableDeletedValue;
+};
+
 static_assert(sizeof(IntPoint) == 8);
 static_assert(sizeof(IntSize) == 8);
 static_assert(sizeof(IntRect) == 16);
@@ -284,5 +294,12 @@ static_assert(sizeof(ViewportArguments) == 56);
 static_assert(offsetof(ViewportArguments, width) == 4);
 static_assert(offsetof(ViewportArguments, viewportFit) == 52);
 static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
+static_assert(sizeof(ProtectionSpaceBase) == 24);
+static_assert(offsetof(ProtectionSpaceBase, m_host) == 0);
+static_assert(offsetof(ProtectionSpaceBase, m_realm) == 8);
+static_assert(offsetof(ProtectionSpaceBase, m_port) == 16);
+static_assert(offsetof(ProtectionSpaceBase, m_serverType) == 20);
+static_assert(offsetof(ProtectionSpaceBase, m_authenticationScheme) == 21);
+static_assert(offsetof(ProtectionSpaceBase, m_isHashTableDeletedValue) == 22);
 
 }  // namespace WebCore
