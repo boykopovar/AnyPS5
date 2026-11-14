@@ -9,10 +9,6 @@ int APS5_VABI PEM_read_bio_PUBKEY_nid_postfix() {
 }
 
 
-int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_CTX_set0_chain_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
