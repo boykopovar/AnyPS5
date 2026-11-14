@@ -2,6 +2,8 @@
 
 #include <cstddef>
 
+// Derived from Source/WebCore/crypto/openssl/SerializedCryptoKeyWrapOpenSSL.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+
 namespace {
 
 using ByteVector = NKWebKit::WtfAbi::Vector<unsigned char>;
