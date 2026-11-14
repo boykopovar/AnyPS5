@@ -22,6 +22,7 @@ using AgcDriver::DriverDetail::DrawMiss;
 
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 12> PixelCode{0xf4080100u, 0xfa000000u, 0xf4200202u, 0xfa000000u, 0x7e000208u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 12> DataOnlyPixelCode = PixelCode;
 alignas(16) std::array<std::uint32_t, 4> Table{};
 alignas(16) std::array<float, 4> First{1.0f, 0.0f, 0.0f, 0.0f};
 alignas(16) std::array<float, 4> Moved{1.0f, 0.0f, 0.0f, 0.0f};
@@ -35,6 +36,7 @@ struct Header {
 
 alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
+alignas(8) Header DataOnlyPixelHeader{};
 
 const Shader* Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -53,10 +55,10 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-std::vector<std::uint32_t> DrawFrom(std::initializer_list<const float*> sources) {
+std::vector<std::uint32_t> DrawFrom(std::initializer_list<const float*> sources, const std::uint32_t* tablePointer = Table.data(), const std::uint32_t* pixelCode = PixelCode.data()) {
     const auto color = reinterpret_cast<std::uintptr_t>(ColorMemory.data());
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
-    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
+    const auto pixel = reinterpret_cast<std::uintptr_t>(pixelCode);
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000},
         {0x1b6, 0}, {0x207, 0}, {0x200, 0}, {0x203, 0x800},
@@ -86,7 +88,7 @@ std::vector<std::uint32_t> DrawFrom(std::initializer_list<const float*> sources)
     Append(commands, 0x79, {0x242, 4});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
-    const auto table = reinterpret_cast<std::uintptr_t>(Table.data());
+    const auto table = reinterpret_cast<std::uintptr_t>(tablePointer);
     Append(commands, 0x76, {0x00c, static_cast<std::uint32_t>(table)});
     Append(commands, 0x76, {0x00d, static_cast<std::uint32_t>(table >> 32u)});
     for (const auto* source : sources) {
@@ -132,6 +134,52 @@ void MovedBufferHitsTheCache(bool libraries) {
     Require(again.lookups == 5 && again.hits == 3, mode + ": a draw from the first buffer did not reuse the cached stages (" + std::to_string(again.hits) + " hits)");
 }
 
+void DataOnlyMovedTableAndBufferHitTheCache(bool libraries) {
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(DataOnlyPixelHeader, DataOnlyPixelCode.data(), sizeof(DataOnlyPixelCode), 1);
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    alignas(16) static std::array<std::uint32_t, 4> movedTable{};
+    const auto draw = [&](const float* source, std::uint32_t* table) {
+        const auto address = reinterpret_cast<std::uintptr_t>(source);
+        table[0] = static_cast<std::uint32_t>(address);
+        table[1] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu);
+        table[2] = 16u;
+        table[3] = 0x31016facu;
+        ColorMemory.fill(std::byte{0x40});
+        auto commands = DrawFrom({source}, table, DataOnlyPixelCode.data());
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
+        const auto red = static_cast<std::uint8_t>(source[0] * 255.0f + 0.5f);
+        const std::array<std::uint8_t, 4> expected{red, 0u, 0u, red};
+        std::size_t drawn = 0;
+        for (std::size_t at = 0; at < ColorMemory.size(); at += 4u) {
+            const std::array<std::uint8_t, 4> pixel{static_cast<std::uint8_t>(ColorMemory[at]), static_cast<std::uint8_t>(ColorMemory[at + 1]), static_cast<std::uint8_t>(ColorMemory[at + 2]), static_cast<std::uint8_t>(ColorMemory[at + 3])};
+            if (pixel == std::array<std::uint8_t, 4>{0x40u, 0x40u, 0x40u, 0x40u}) continue;
+            Require(pixel == expected, mode + ": a data-only hit through the moved table and buffer produced a stale or incorrect pixel at " + std::to_string(at / 4u));
+            ++drawn;
+        }
+        Require(drawn != 0u, mode + ": a data-only hit through the moved table and buffer wrote no pixels");
+        return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    };
+    First = {1.0f, 0.0f, 0.0f, 0.0f};
+    Other = {0.5f, 0.0f, 0.0f, 0.0f};
+    const bool verify = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
+    draw(First.data(), Table.data());
+    const auto before = draw(First.data(), Table.data());
+    const auto after = draw(Other.data(), movedTable.data());
+    Require(after.lookups == before.lookups + 1, mode + ": the moved table draw did not run exactly once");
+    Require(after.dataHits == before.dataHits + 1, mode + ": a draw whose table pointer and V# base moved was not a data-only hit (" + std::to_string(after.dataHits - before.dataHits) + " data-only hits, " + std::to_string(after.dataStagesReused - before.dataStagesReused) + " stages reused, " + std::to_string(after.dataStagesCompiled - before.dataStagesCompiled) + " compiled)");
+    if (verify) {
+        Require(after.dataStagesCompiled - before.dataStagesCompiled == 2, mode + ": verify mode did not build both stages for the comparison (" + std::to_string(after.dataStagesCompiled - before.dataStagesCompiled) + " compiled)");
+        Require(after.dataVerified - before.dataVerified == 2, mode + ": verify mode did not compare both rebuilt stages (" + std::to_string(after.dataVerified - before.dataVerified) + " verified)");
+    } else {
+        Require(after.dataStagesCompiled == before.dataStagesCompiled, mode + ": a draw whose table pointer and V# base moved compiled a stage (" + std::to_string(after.dataStagesCompiled - before.dataStagesCompiled) + " compiled)");
+        Require(after.dataStagesReused == before.dataStagesReused + 2, mode + ": a draw whose table pointer and V# base moved reused " + std::to_string(after.dataStagesReused - before.dataStagesReused) + " stages, expected both");
+    }
+}
+
 }
 
 int main() {
@@ -144,6 +192,7 @@ int main() {
         }
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
         MovedBufferHitsTheCache(libraries);
+        DataOnlyMovedTableAndBufferHitTheCache(libraries);
         AgcDriverShutdown_nid_postfix();
         std::cout << "A draw whose buffer moved reused the cached stages " << (libraries ? "with" : "without") << " graphics pipeline libraries\n";
         return 0;

@@ -492,6 +492,22 @@ std::shared_ptr<DispatchVariant> Driver::patchBufferWords(const DispatchVariant&
     return copy;
 }
 
+std::shared_ptr<DispatchVariant> Driver::patchStageDataWords(const DispatchVariant& variant, std::span<const std::pair<std::uint32_t, std::uint32_t>> live) {
+    if (live.empty() || variant.compiled == nullptr) return nullptr;
+    if (!variant.bufferWordBuffers.empty()) return patchBufferWords(variant, live);
+    if (variant.dataPositions.empty() || variant.flatBinding == DispatchVariant::NoFlatBinding || variant.flatBinding >= variant.compiled->bindings.size()) return nullptr;
+    auto copy = cloneVariant(variant);
+    auto words = copy->words;
+    for (const auto& [position, fresh] : live) {
+        if (position >= words.size()) return nullptr;
+        words[position] = fresh;
+    }
+    copy->compiled = patchDataWords(*copy, words);
+    copy->words = std::move(words);
+    copy->dataPatched = true;
+    return copy;
+}
+
 void Driver::applyShaderDataPatches(DispatchVariant& variant) {
     if (variant.shaderDataPatches.empty() && variant.descriptorPatches.empty()) return;
     const bool stored = std::any_of(variant.compiled->bindings.begin(), variant.compiled->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
