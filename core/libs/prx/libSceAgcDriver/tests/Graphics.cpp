@@ -11801,15 +11801,30 @@ void unorm10_11_11TargetTests() {
     for (const auto replace : {0x40010001u, 0x60050001u}) {
         changed.context[0x1e0] = replace;
         const auto replaced = AgcDriver::Graphics::DecodeState(changed);
-        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Unorm10_11_11, "a blend that writes the source color into a 10_11_11 unorm target was refused or kept blending");
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Unorm10_11_11 && replaced.color.mergeBlend == 0u && replaced.color.partialWriteMask == 0u && replaced.blends[0].colorWriteMask == state.blends[0].colorWriteMask, "a blend that writes the source color into a 10_11_11 unorm target was refused or kept blending");
     }
-    changed.context[0x1e0] = 0x40010101u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
-    changed.context[0x1e0] = 0x40010005u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
+    changed.context[0x1e0] = 0x40050504u;
+    for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
+    const auto blended = AgcDriver::Graphics::DecodeState(changed);
+    Require(blended.color.mergeBlend == 0x40000504u && blended.color.partialWriteMask == 0xffffffffu && !blended.blends[0].blendEnable && blended.blends[0].colorWriteMask == 0u, "a source-over blend into a 10_11_11 unorm target did not decode as a blending merge of the whole word");
+    const auto blendedMerges = AgcDriver::Graphics::ExportTargetMerges(blended);
+    Require(blendedMerges.size() == 1u, "the 10_11_11 unorm blend did not produce one target merge");
+    const auto& blendedMerge = blendedMerges.front();
+    Require(blendedMerge.mask == 0xffffffffu && blendedMerge.packing == ColorExportPacking::Unorm10_11_11 && blendedMerge.blendControl == 0x40000504u, "the 10_11_11 unorm blend did not reach the pixel shader's target merge");
+    for (const auto control : {0x40010101u, 0x40010005u}) {
+        auto acceptedQueue = queue;
+        for (std::uint32_t i = 0; i < 4; ++i) acceptedQueue.context[0x105 + i] = 0;
+        acceptedQueue.context[0x1e0] = control;
+        const auto accepted = AgcDriver::Graphics::DecodeState(acceptedQueue);
+        const auto equation = control == 0x40010101u ? 0x40000101u : 0x40000005u;
+        const auto merges = AgcDriver::Graphics::ExportTargetMerges(accepted);
+        Require(accepted.color.mergeBlend == equation && accepted.color.partialWriteMask == 0xffffffffu && !accepted.blends[0].blendEnable && accepted.blends[0].colorWriteMask == 0u && merges.size() == 1u && merges[0].packing == ColorExportPacking::Unorm10_11_11 && merges[0].blendControl == equation && merges[0].mask == 0xffffffffu, "an additive or inverse-source-alpha 10_11_11 unorm blend lost its exact packed merge equation");
+    }
     changed = queue;
     changed.context[0x8e] = 3;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of a 10_11_11 unorm color target");
+    const auto partial = AgcDriver::Graphics::DecodeState(changed);
+    Require(partial.color.partialWriteMask == 0x003fffffu && partial.color.mergeBlend == 0u && partial.blends[0].colorWriteMask == 0u, "a red and green write of a 10_11_11 unorm target did not merge into the word's low 22 bits");
+    Require(AgcDriver::Graphics::PackedWriteMask(ColorExportPacking::Unorm10_11_11, 0xe4u, 4u) == 0xffc00000u, "blue of a 10_11_11 unorm target is not the word's top 10 bits");
     changed.context[0x8e] = 7;
     Require(AgcDriver::Graphics::DecodeState(changed).color.packing == ColorExportPacking::Unorm10_11_11, "an RGB write of a 10_11_11 unorm target was refused");
     for (const auto format : {5u, 6u}) {
