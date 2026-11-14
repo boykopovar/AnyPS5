@@ -6715,6 +6715,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         heapsBegin = space->base.front().begin;
         heapsEnd = space->base.back().end;
     }
+    static std::atomic<int> sparseImports{0};
     for (auto& region : regions) {
         if (!region.pending) continue;
         region.pending = false;
@@ -6747,12 +6748,13 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
                 entry = importAccess(context, state, region.begin, region.end, importRanges(), ImportRequester::Build);
             }
             bool runImport = false;
-            if (entry == nullptr && sparseRun && !region.backed.empty() && region.backed.front().first == region.begin && !WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) {
+            static const bool sparseImport = std::getenv("APS5_NO_SPARSE_HEAP_IMPORT") == nullptr;
+            if (sparseImport && entry == nullptr && sparseRun && !region.backed.empty() && region.backed.front().first == region.begin) {
                 const auto committedEnd = region.backed.back().second;
                 const auto neededEnd = std::min(region.end, std::max(committedEnd, std::max(region.lastView, region.begin) + 4u));
                 const auto covers = [&](const HostImport* candidate) { return candidate != nullptr && candidate->base <= region.begin && candidate->base + candidate->bytes >= neededEnd; };
                 entry = findImport(state, region.begin, neededEnd);
-                if (entry == nullptr && runCovers(importRanges(), region.begin, neededEnd)) entry = importAllocation(context, state, region.begin, importRanges(), ImportRequester::Build);
+                if (entry == nullptr && runCovers(importRanges(), region.begin, neededEnd)) entry = importAllocation(context, state, region.begin, importRanges(), ImportRequester::Build, neededEnd);
                 if (!covers(entry)) entry = nullptr;
                 const auto& lease = importRanges();
                 const auto index = leasedIndexContaining(lease, region.begin);
@@ -6777,6 +6779,10 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
             if (entry != nullptr && !staged && bindableInPlace(HostImportOffset(*entry, region.begin), addressable)) {
                 region.direct = entry;
                 region.runCut = runImport;
+                if (runImport && profile) {
+                    const auto count = sparseImports.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if (count <= 8 || count % 1000 == 0) AgcDriver::ProfilePrint_nid_no_patch("[buffers] sparse heap imported in place: 0x%llx+0x%llx, %d times\n", static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(entry->bytes), count);
+                }
                 region.snapshot.clear();
                 // A buffer UploadPrepare made for a GPU copy is not needed: the import serves the
                 // region in place (Descriptor prefers `direct`), and a kept buffer would count as copied.
