@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include <cerrno>
 #include <chrono>
@@ -882,10 +883,17 @@ static void CheckAllocateDirectMemoryRejectsInvalidArguments() {
 
     void* poolAddr = nullptr;
     Require(sceKernelMemoryPoolReserve(nullptr, page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMemoryPoolReserve(reinterpret_cast<void*>(0x10000), page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, 0, 0, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, 1, 0, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, page, 0x2000, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMemoryPoolReserve(nullptr, page, page - 1, 0, &poolAddr) == SCE_KERNEL_ERROR_EINVAL);
+    errno = 71;
+    Require(sceKernelMemoryPoolReserve(nullptr, page, 0, 0, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceKernelMemoryPoolReserve(reinterpret_cast<void*>(0x10000), page, 0, 0, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
 
     std::int64_t validPhys = -1;
     Require(sceKernelAllocateDirectMemory(0, DIRECT_MEMORY_SIZE, page, 0, 0, &validPhys) == 0);
@@ -1244,8 +1252,16 @@ static void CheckMemoryPoolArguments() {
     KernelMemoryPoolBatchEntry entries[2]{};
     int processed = -1;
     Require(sceKernelMemoryPoolBatch(nullptr, 1, &processed, 0) == einval);
+    Require(sceKernelMemoryPoolBatch(nullptr, 1, nullptr, 0) == einval);
     Require(sceKernelMemoryPoolBatch(entries, -1, &processed, 0) == einval);
     Require(sceKernelMemoryPoolBatch(entries, 0, &processed, 0) == 0 && processed == 0);
+    Require(sceKernelMemoryPoolBatch(entries, 0, nullptr, 0) == 0);
+    errno = 71;
+    Require(sceKernelMemoryPoolBatch(entries, 0, reinterpret_cast<int*>(0x10), 0) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceKernelMemoryPoolBatch(entries, 1, reinterpret_cast<int*>(0x10), 0) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
     for (const std::uint32_t op : {0u, 9u}) {
         entries[0] = {};
         entries[0].op = op;
