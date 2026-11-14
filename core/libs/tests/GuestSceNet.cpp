@@ -539,6 +539,7 @@ static void CheckDefaultRoute() {
         return;
     }
     Require(sceNetConfigGetDefaultRoute(&gateway) == 1);
+    Require(sceNetConfigGetDefaultRoute(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8041130Eu));
     std::array<char, 16> text{};
     Require(sceNetInetNtop(2, &gateway, text.data(), text.size()) == text.data());
     Require(std::strcmp(text.data(), route) == 0);
@@ -647,6 +648,7 @@ static void CheckIfFlags() {
         Require(flags == 0x5a5a5a5a);
     }
     Require(sceNetConfigGetIfFlags(0, nullptr) == static_cast<int>(0x8041130Eu));
+    Require(sceNetConfigGetIfFlags(0, reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8041130Eu));
     Require(sceNetConfigGetIfFlags(10, nullptr) == static_cast<int>(0x8041130Eu));
 }
 
