@@ -2133,8 +2133,7 @@ static double LgammaMsun(double x);
 double APS5_VABI lgamma_r_nid_postfix(double x, int* signgamp) {
     if (signgamp == nullptr) throw std::invalid_argument("lgamma_r: null signgamp");
     const double whole = std::floor(x);
-    if (x == 0) *signgamp = std::signbit(x) ? -1 : 1;
-    else *signgamp = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    *signgamp = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
     const double result = LgammaMsun(x);
     if (std::isinf(result) && std::isfinite(x) && x <= 0 && std::floor(x) == x) errno = ERANGE;
     return result;
