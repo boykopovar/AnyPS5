@@ -75,6 +75,8 @@ bool storageFits(const DepthTarget& target, const GuestTextureResource& descript
 }
 
 std::atomic<bool> directDepthCopy{std::getenv("APS5_NO_DIRECT_DEPTH_COPY") == nullptr};
+std::atomic<bool> forcedDepthUploadImage{false};
+std::atomic<std::uint64_t> depthUploads{0};
 std::atomic<std::uint64_t> directDepthCopies{0};
 
 std::uint32_t aspectCopyBytes(VkFormat format, VkImageAspectFlagBits aspect) {
@@ -1837,6 +1839,40 @@ private:
     std::uint64_t stencilMemory = 0;
     StencilCopy stencilCopy;
     VkImageView transferView = VK_NULL_HANDLE;
+    std::shared_ptr<OwnedImage> depthUpload;
+
+    const std::shared_ptr<OwnedImage>& depthUploadImage() {
+        if (depthUpload != nullptr) return depthUpload;
+        VkImage uploadImage = VK_NULL_HANDLE;
+        VkDeviceMemory uploadMemory = VK_NULL_HANDLE;
+        try {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = hostFormat;
+            info.extent = {target.extent.width, target.extent.height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &uploadImage), "vkCreateImage depth upload");
+            VkMemoryRequirements requirements{};
+            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, uploadImage, &requirements);
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            Check(MemoryAccounting::Allocate(context, allocation, "depth upload", &uploadMemory), "vkAllocateMemory depth upload");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, uploadImage, uploadMemory, 0), "vkBindImageMemory depth upload");
+            depthUpload = std::make_shared<OwnedImage>(context, uploadImage, uploadMemory);
+        } catch (...) {
+            if (uploadImage != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, uploadImage, nullptr);
+            if (uploadMemory != VK_NULL_HANDLE) MemoryAccounting::Free(context, uploadMemory);
+            throw;
+        }
+        return depthUpload;
+    }
 
     VkImageUsageFlags sampleShadowUsage() const {
         return VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (HasStencil(hostFormat) ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0u);
@@ -2089,13 +2125,41 @@ private:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, sourceImage, VK_IMAGE_LAYOUT_GENERAL, plane.staging->Handle(), count, toStorage ? planeRegions.data() : colorRegions.data());
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, plane.staging->Handle(), destinationImage, VK_IMAGE_LAYOUT_GENERAL, count, toStorage ? colorRegions.data() : planeRegions.data());
+        const bool throughUpload = !toStorage && !stencil && DepthUploadImage(context);
+        if (throughUpload) {
+            const auto& upload = depthUploadImage();
+            if (recorder != nullptr) recorder->Keep(upload);
+            const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
+            VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer.image = upload->image;
+            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(hostFormat) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
+            barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, plane.staging->Handle(), upload->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, count, planeRegions.data());
+            VkImageMemoryBarrier toSource = toTransfer;
+            toSource.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toSource.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            toSource.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toSource.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
+            std::vector<VkImageCopy> copies;
+            copies.reserve(planeRegions.size());
+            for (const auto& region : planeRegions) copies.push_back({region.imageSubresource, region.imageOffset, region.imageSubresource, region.imageOffset, region.imageExtent});
+            context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, upload->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destinationImage, VK_IMAGE_LAYOUT_GENERAL, count, copies.data());
+            depthUploads.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, plane.staging->Handle(), destinationImage, VK_IMAGE_LAYOUT_GENERAL, count, toStorage ? colorRegions.data() : planeRegions.data());
+        }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
         if (batch) {
             batch->SubmitAndWait();
             return;
         }
-        Recorder::CountBarriers(Recorder::CommandClass::Copy, 3);
+        Recorder::CountBarriers(Recorder::CommandClass::Copy, throughUpload ? 5 : 3);
         recorder->EndGpuTiming(timing, moved);
     }
 
@@ -2114,6 +2178,7 @@ private:
         depthPlane = {};
         stencilPlane = {};
         releaseStencilCopy();
+        depthUpload.reset();
         mirrorPlane = {};
         stencilMirror = {};
         textures.clear();
@@ -4587,6 +4652,18 @@ void SetDepthTransferPasses(bool enabled) {
 
 std::uint64_t DepthTransferPassCount() {
     return depthTransferPassCount.load(std::memory_order_relaxed);
+}
+
+bool DepthUploadImage(const Context& context) {
+    return context.depthUploadImage || forcedDepthUploadImage.load(std::memory_order_relaxed);
+}
+
+std::uint64_t DepthUploadCount() {
+    return depthUploads.load(std::memory_order_relaxed);
+}
+
+void SetDepthUploadImage(bool enabled) {
+    forcedDepthUploadImage.store(enabled && std::getenv("APS5_NO_DEPTH_UPLOAD_IMAGE") == nullptr, std::memory_order_relaxed);
 }
 
 }
