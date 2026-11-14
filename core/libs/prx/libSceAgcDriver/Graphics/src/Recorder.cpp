@@ -1595,6 +1595,11 @@ void CommandState::Begin(VkCommandBuffer recording, bool suppress) {
     Invalidate();
 }
 
+void CommandState::Continue(VkCommandBuffer recording) {
+    commands = recording;
+    Invalidate();
+}
+
 void CommandState::Invalidate() noexcept {
     valid = 0;
     overwritten = 0;
@@ -2029,6 +2034,7 @@ VkCommandBuffer Recorder::SplitForRun() {
     }
     open->chunks.push_back(open->commands);
     open->commands = next;
+    open->graphicsState.Continue(next);
     open->preludeArmed = true;
     return next;
 }
