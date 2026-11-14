@@ -781,6 +781,24 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
 #endif
 
+    // Debug aid: APS5_DUMP_SPIRV=<hex code address> (or "all") writes the final SPIR-V module to spirv-<stage>-<address>.spv.
+    {
+        static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_SPIRV"); return text ? std::string(text) : std::string(); }();
+        if (!list.empty()) {
+            char address[32];
+            std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
+            if (list == "all" || list.find(address) != std::string::npos) {
+                char path[128];
+                std::snprintf(path, sizeof(path), "spirv-%d-%s.spv", static_cast<int>(request.shader.stage), address);
+                if (auto* file = std::fopen(path, "wb")) {
+                    std::fwrite(result.spirv.data(), sizeof(std::uint32_t), result.spirv.size(), file);
+                    std::fclose(file);
+                    std::fprintf(stderr, "==== SPIR-V 0x%s written to %s\n", address, path);
+                }
+            }
+        }
+    }
+
     return {request.layout, {}, std::move(static_cast<CompiledBindingLayout&>(bindings)), std::move(result)};
 }
 
