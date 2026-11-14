@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestGs.hpp"
+#include "prx/libkernel/Pthread/include/MeasuredStack.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -842,6 +843,50 @@ static std::size_t HostStackReserve() {
     }();
     return reserve;
 }
+
+#ifdef __APPLE__
+static std::uintptr_t ReadStackPointer() {
+    std::uintptr_t rsp = 0;
+#if defined(__x86_64__)
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+#elif defined(__aarch64__)
+    __asm__ volatile("mov %0, sp" : "=r"(rsp));
+#else
+    rsp = reinterpret_cast<std::uintptr_t>(&rsp);
+#endif
+    return rsp;
+}
+
+struct HostCallDepthProbe {
+    std::size_t depth = 0;
+};
+
+static void* MeasureHostCallDepth(void* argument) {
+    auto* probe = static_cast<HostCallDepthProbe*>(argument);
+    const auto rsp = ReadStackPointer();
+    std::uintptr_t low = 0;
+    std::uintptr_t high = 0;
+    if (HostStackLimits(&low, &high) && high > rsp)
+        probe->depth = static_cast<std::size_t>(high - rsp);
+    return nullptr;
+}
+
+static std::size_t HostCallDepth() {
+    static const std::size_t depth = [] {
+        HostCallDepthProbe probe;
+        pthread_t thread{};
+        if (const int created = pthread_create(&thread, nullptr, MeasureHostCallDepth, &probe); created != 0)
+            throw std::system_error(created, std::generic_category(), "Measuring the host call depth");
+        if (const int joined = pthread_join(thread, nullptr); joined != 0)
+            throw std::system_error(joined, std::generic_category(), "Measuring the host call depth");
+        if (probe.depth == 0)
+            throw std::runtime_error("Cannot measure the host call depth");
+        const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        return probe.depth + page;
+    }();
+    return depth;
+}
+#endif
 #endif
 
 void ThreadLifecycle::SetThreadDtors(thread_dtors_func_t callback) {
@@ -943,6 +988,25 @@ asm(".text\n"
     .cfi_endproc
 )" APS5_ASM_FUNCTION_END("Aps5CallGuestEntry_nid_no_patch"));
 
+#ifdef __APPLE__
+[[gnu::noinline]] static void* CallGuestOnMeasuredStack(PthreadPrivate* self, PthreadEntry entry, void* arg) {
+    const auto rsp = ReadStackPointer();
+    std::uintptr_t hostLow = 0;
+    std::uintptr_t hostHigh = 0;
+    if (!HostStackLimits(&hostLow, &hostHigh))
+        throw std::runtime_error("Cannot query the host thread stack");
+    const auto window = MeasureGuestStackWindow(hostLow, hostHigh, rsp, self->stackSize, HOST_STACK_MARGIN);
+    if (window.high == 0)
+        throw std::runtime_error("The measured guest stack does not keep the host reserve");
+    self->stackAddress = reinterpret_cast<void*>(window.low);
+    self->stackSize = static_cast<std::size_t>(window.high - window.low);
+    RegisterStack(self);
+    void* const result = Aps5CallGuestEntry_nid_no_patch(entry, arg);
+    __asm__ volatile("" : : "r"(result) : "memory");
+    return result;
+}
+#endif
+
 static void RunThread(std::unique_ptr<ThreadArgs> args) {
     APS5_LOG_OUT("RunThread entry=0x%llx arg=%p self=%p", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(args->entry)), args->arg, static_cast<void*>(args->self));
     const auto entry = args->entry;
@@ -952,7 +1016,9 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     TimedWait::BindThreadWaitState(&self->waitCount);
     CurrentGuestState().current = self;
     asm volatile("fldcw %0" : : "m"(GUEST_THREAD_FPU_CONTROL));
+#ifndef __APPLE__
     RegisterStack(self);
+#endif
     sigprocmask_nid_postfix(3, &args->guestSignalMask, nullptr);
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
@@ -973,7 +1039,11 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
 #endif
+#ifdef __APPLE__
+    finishThread(self, CallGuestOnMeasuredStack(self, entry, arg));
+#else
     finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
+#endif
     CurrentGuestState().current = nullptr;
 }
 
@@ -1241,11 +1311,15 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (detached)
         ReleaseThread(published);
 #else
-    const auto reserve = HostStackReserve();
+#ifdef __APPLE__
+    const auto aboveGuest = HostCallDepth();
+#else
+    const auto aboveGuest = HostStackReserve();
+#endif
     const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<std::size_t>::max() - reserve - HOST_STACK_MARGIN - page)
+    if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<std::size_t>::max() - aboveGuest - HOST_STACK_MARGIN - page)
         throw std::runtime_error("scePthreadCreate: invalid stack size");
-    const std::size_t nativeStack = (p->stackSize + reserve + HOST_STACK_MARGIN + page - 1) / page * page;
+    const std::size_t nativeStack = (p->stackSize + aboveGuest + HOST_STACK_MARGIN + page - 1) / page * page;
     sigset_t creatorMask;
     pthread_sigmask(SIG_SETMASK, nullptr, &creatorMask);
     args->signalMask = creatorMask;
