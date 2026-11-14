@@ -1479,7 +1479,6 @@ int APS5_VABI sceIcuLegacyUnknown_cnOOldSo8jc_nid_no_patch();
 int APS5_VABI ulist_reset_keyword_values_iterator_nid_postfix();
 int APS5_VABI ucnv_isFixedWidth_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_cs7AdQAdbbo_nid_no_patch();
-int APS5_VABI uprv_tzset_nid_postfix();
 int APS5_VABI _ZN6icu_6820CheckedArrayByteSink15GetAppendBufferEiiPciPi_nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString9setToUTF8ENS_11StringPieceE_nid_postfix();
 int APS5_VABI _ZN6icu_6816ReorderingBuffer19appendSupplementaryEihR10UErrorCode_nid_postfix();

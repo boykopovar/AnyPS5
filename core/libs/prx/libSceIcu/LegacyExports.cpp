@@ -6324,10 +6324,6 @@ int APS5_VABI sceIcuLegacyUnknown_cs7AdQAdbbo_nid_no_patch() {
 }
 APS5_EXPORT("cs7AdQAdbbo", sceIcuLegacyUnknown_cs7AdQAdbbo_nid_no_patch);
 
-int APS5_VABI uprv_tzset_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6820CheckedArrayByteSink15GetAppendBufferEiiPciPi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
