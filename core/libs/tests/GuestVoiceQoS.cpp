@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "prx/libSceVoiceQoS/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -131,6 +132,10 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSGetRemoteEndpoint(connection + 100, &queriedRemote) == argumentInvalid);
     Require(sceVoiceQoSGetLocalEndpoint(connection, &queriedLocal) == 0 && queriedLocal == local);
     Require(sceVoiceQoSGetRemoteEndpoint(connection, &queriedRemote) == 0 && queriedRemote == remote);
+    errno = 71;
+    Require(sceVoiceQoSGetLocalEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
+    Require(sceVoiceQoSGetRemoteEndpoint(connection, reinterpret_cast<std::int32_t*>(0x10)) == argumentInvalid);
+    Require(errno == 71 && queriedLocal == local && queriedRemote == remote);
     std::int32_t duplicate = -1;
     Require(sceVoiceQoSConnect(&duplicate, local, remote) == 0 && duplicate > 0 && duplicate != connection);
     Require(sceVoiceQoSDisconnect(duplicate) == 0);
@@ -156,6 +161,11 @@ int main(int argc, char** argv) {
     std::vector<std::uint8_t> packet(1024, 0);
     std::uint32_t packetSize = static_cast<std::uint32_t>(packet.size());
     Require(sceVoiceQoSReadPacket(connection, packet.data(), &packetSize) == 0 && packetSize == 0);
+    errno = 71;
+    Require(sceVoiceQoSReadPacket(connection, packet.data(), reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
+    Require(sceVoiceQoSConnect(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), local, remote) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSReadPacket(connection, nullptr, &packetSize) == argumentInvalid);
     Require(sceVoiceQoSReadPacket(connection, packet.data(), nullptr) == argumentInvalid);
     Require(sceVoiceQoSReadPacket(connection + 100, packet.data(), &packetSize) == argumentInvalid);
@@ -196,6 +206,9 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSReadPacket(connection, packet.data(), &packetSize) == notInitialized);
     Require(sceVoiceQoSWritePacket(connection, packet.data(), &packetSize) == notInitialized);
     Require(sceVoiceQoSInit(memory.data(), 0x40000, appType) == 0);
+    errno = 71;
+    Require(sceVoiceQoSCreateLocalEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), 1, 0, 0) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == argumentInvalid);
     Require(sceVoiceQoSEnd() == 0);
     Require(sceVoiceQoSEnd() == notInitialized);

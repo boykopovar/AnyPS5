@@ -172,6 +172,14 @@ class SanitizerReportTests(unittest.TestCase):
                          {"fiber": "stack switch", "both": "shared   reason"})
         self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {"racy": "interceptor gap"})
 
+    def test_utf8_bom_does_not_change_the_first_known_test_name(self):
+        known = self.write("\ufefffiber address stack switch\n", "known.txt")
+        self.assertEqual(sanitizer_report.load_known(known, ["address"]), {"fiber": "stack switch"})
+        self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {})
+        junit = self.write(suite(case("fiber", "fail", '<failure message=""/>')))
+        self.assertEqual(self.run_main(junit, "--known", known, "--sanitizer", "address")[0], 0)
+        self.assertEqual(self.run_main(junit, "--known", known, "--sanitizer", "thread")[0], 1)
+
     def test_known_failures_move_to_their_own_table_and_keep_the_run_passing(self):
         found = {"fiber": "failed", "new_bug": "failed", "ok": "passed"}
         text, failing = sanitizer_report.summarize("ASan", found, {"fiber": "guest stack | switch"})
@@ -240,6 +248,26 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(sanitizer_report.first_report("start\n/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2\n"),
                          "/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2")
         self.assertEqual(sanitizer_report.first_report("FAIL: plain assertion\n"), "")
+
+    def test_first_report_keeps_source_paths_with_spaces(self):
+        locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
+                     "/build \u03a9 folder/src/value.cpp:12:3")
+        for location in locations:
+            report = location + ": runtime error: signed integer overflow"
+            with self.subTest(location=location):
+                self.assertEqual(sanitizer_report.first_report("startup log\n" + report + "\nstack frame\n"), report)
+
+    def test_cli_keeps_source_paths_in_json_and_markdown(self):
+        report = r"D:\build folder\src\value.cpp:12:3: runtime error: shift exponent 64"
+        junit = self.write(suite(case("overflow", "fail", '<failure/><system-err>' + html.escape(report) + '</system-err>')))
+        original = junit.read_bytes()
+        summary = self.write("existing summary\n", "summary.md")
+        code, stdout, stderr = self.run_main(junit, "--json", "--summary", summary)
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout)["tests"][0]["report"], report)
+        self.assertIn("| `overflow` | " + report + " |", summary.read_text(encoding="utf-8"))
+        self.assertEqual(junit.read_bytes(), original)
 
     def test_first_report_is_shortened(self):
         report = sanitizer_report.first_report("SUMMARY: AddressSanitizer: " + "x" * 400)
