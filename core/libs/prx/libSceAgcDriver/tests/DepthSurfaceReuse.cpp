@@ -658,6 +658,10 @@ void TestUnmappedStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void ForgetFixturePages(std::uintptr_t address, std::size_t bytes) {
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, bytes);
+}
+
 void TestReadOnlyStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
     constexpr std::size_t bytes = 1024 * 1024;
@@ -671,6 +675,7 @@ void TestReadOnlyStalePlaneFlush(const Context& context) {
     Require(mapping.get() != MAP_FAILED, "cannot map a read-only depth plane");
 #endif
     const auto address = (reinterpret_cast<std::uintptr_t>(mapping.get()) + 65535u) & ~std::uintptr_t{65535u};
+    ForgetFixturePages(reinterpret_cast<std::uintptr_t>(mapping.get()), bytes);
     constexpr VkExtent2D extent{256, 256};
     const auto planeBytes = DepthSliceBytes(extent, 4u);
     Require(!AgcDriver::GuestMemory::CommittedRanges(address, planeBytes).empty(), "a read-only depth plane must remain readable");
@@ -711,12 +716,14 @@ void TestPartiallyResidentPlanes(const Context& context) {
     Require(mapping.get() != MAP_FAILED, "cannot reserve partially resident depth planes");
 #endif
     const auto base = (reinterpret_cast<std::uintptr_t>(mapping.get()) + hole - 1u) & ~std::uintptr_t{hole - 1u};
+    ForgetFixturePages(reinterpret_cast<std::uintptr_t>(mapping.get()), bytes);
     const auto commit = [&](std::uintptr_t address, std::size_t length) {
 #ifdef _WIN32
         Require(VirtualAlloc(reinterpret_cast<void*>(address), length, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot map a partially resident depth page");
 #else
         Require(mprotect(reinterpret_cast<void*>(address), length, PROT_READ | PROT_WRITE) == 0, "cannot map a partially resident depth page");
 #endif
+        ForgetFixturePages(address, length);
     };
     constexpr VkExtent2D extent{256, 256};
     const auto depthBytes = DepthSliceBytes(extent, 4u);
@@ -729,6 +736,7 @@ void TestPartiallyResidentPlanes(const Context& context) {
     Require(end <= reinterpret_cast<std::uintptr_t>(mapping.get()) + bytes, "the partially resident fixture does not fit its reservation");
     commit(depth, depthBytes - hole);
     commit(stencil, stencilBytes);
+    Require(AgcDriver::GuestMemory::CommittedRanges(depth + depthBytes - hole, hole).empty(), "the unmapped page of the partially resident fixture must read as unmapped");
     const auto refused = [&](const DepthTarget& target, std::string_view expected) {
         try {
             static_cast<void>(DepthSurfaceView(context, target));
