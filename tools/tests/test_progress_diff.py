@@ -67,6 +67,11 @@ class SymbolSetTests(unittest.TestCase):
         row = self.row({"name": "G", "todo_names": ["q", "b"]}, {"name": "G", "todo_names": ["m", "a"]})
         self.assertEqual(row["todo_names"], {"added": ["a", "m"], "removed": ["b", "q"]})
 
+    def test_absent_state_key_counts_as_no_symbols(self):
+        row = self.row({"name": "G"}, {"name": "G", "inert_names": ["e"]})
+        self.assertEqual(row["inert_names"], {"added": ["e"], "removed": []})
+        self.assertEqual(row["done_names"], {"added": [], "removed": []})
+
 
 if __name__ == "__main__":
     unittest.main()
