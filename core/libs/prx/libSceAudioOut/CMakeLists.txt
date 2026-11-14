@@ -18,7 +18,11 @@ target_include_directories(libSceAudioOut PRIVATE
         ${LIBS_INCLUDE_DIR}
         ${ANYPS5_SDL2_INCLUDE_DIR}
 )
-target_link_libraries(libSceAudioOut PRIVATE libc libkernel libScePad SDL2-static)
+if(APPLE)
+    target_link_libraries(libSceAudioOut PRIVATE libc libkernel libScePad libSceAgcDriver)
+else()
+    target_link_libraries(libSceAudioOut PRIVATE libc libkernel libScePad SDL2-static)
+endif()
 configure_windows_unwind(libSceAudioOut)
 
 if(BUILD_TESTING)
@@ -320,6 +324,9 @@ if(BUILD_TESTING)
     target_include_directories(audio_out2_timing_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_compile_definitions(audio_out2_timing_tests PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(audio_out2_timing_tests PRIVATE libSceAudioOut libc)
+    if(APPLE)
+        target_link_libraries(audio_out2_timing_tests PRIVATE libSceAgcDriver)
+    endif()
     configure_windows_unwind(audio_out2_timing_tests)
     add_test(NAME audio_out2_timing COMMAND audio_out2_timing_tests)
     if(WIN32)
