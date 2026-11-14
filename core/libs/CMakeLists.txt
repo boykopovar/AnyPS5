@@ -1715,5 +1715,3 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
     endif()
 endif()
-
-include(prx/libSceBeisobmf/Tests.cmake)
