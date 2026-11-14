@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -55,7 +56,7 @@ int APS5_VABI sceIcuLegacyUnknown__minus_JE46LEGd1Q_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown__minus_JdpmhDLKFk_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown__minus_ONE6xozIpM_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown__minus_PUXbMD1aIo_nid_no_patch();
-int APS5_VABI uprv_int32Comparator_nid_postfix();
+std::int32_t APS5_VABI uprv_int32Comparator_nid_postfix(const void* context, const void* left, const void* right);
 int APS5_VABI _ZN6icu_6810UnicodeSet12applyPatternERNS_21RuleCharacterIteratorEPKNS_11SymbolTableERNS_13UnicodeStringEjMS0_FRS0_iEiR10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6817UCharsTrieBuilder18buildUnicodeStringE22UStringTrieBuildOptionRNS_13UnicodeStringER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_687UVector12setElementAtEii_nid_postfix();

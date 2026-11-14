@@ -223,10 +223,6 @@ int APS5_VABI sceIcuLegacyUnknown__minus_PUXbMD1aIo_nid_no_patch() {
 }
 APS5_EXPORT("-PUXbMD1aIo", sceIcuLegacyUnknown__minus_PUXbMD1aIo_nid_no_patch);
 
-int APS5_VABI uprv_int32Comparator_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6810UnicodeSet12applyPatternERNS_21RuleCharacterIteratorEPKNS_11SymbolTableERNS_13UnicodeStringEjMS0_FRS0_iEiR10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
