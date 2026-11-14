@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +21,7 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+constexpr int ErrorParameter = static_cast<int>(0x809f0000u);
 
 static std::vector<char> Read(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
@@ -46,6 +48,15 @@ int main(int argc, char**) {
     setup.user_id = 7531;
     setup.memory_size = original.size() + 5;
     SaveDataMemorySetupResult result{};
+    SaveDataMemorySetup2 badSetup{};
+    badSetup.user_id = 9999;
+    badSetup.memory_size = 16;
+    errno = 71;
+    Require(sceSaveDataSetupSaveDataMemory2(reinterpret_cast<const SaveDataMemorySetup2*>(0x10), &result) == ErrorParameter);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceSaveDataSetupSaveDataMemory2(&badSetup, reinterpret_cast<SaveDataMemorySetupResult*>(0x10)) == ErrorParameter);
+    Require(errno == 71);
     int exitCode = 0;
     if (argc > 1) {
         SaveDataParam param{};
