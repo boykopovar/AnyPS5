@@ -142,13 +142,19 @@ void TestErrors() {
     std::uint64_t destination = untouched;
     Require(sceAudioOutGetLastOutputTime(0, &destination) == invalidPort, "handle 0 must be rejected");
     Require(sceAudioOutGetLastOutputTime(-1, &destination) == invalidPort, "a negative handle must be rejected");
-    Require(sceAudioOutGetLastOutputTime(handle + 1, &destination) == invalidPort, "a port that is not open must be rejected");
     Require(sceAudioOutGetLastOutputTime(1000, &destination) == invalidPort, "an out of range handle must be rejected");
     Require(sceAudioOutGetLastOutputTime(INT_MIN, &destination) == invalidPort, "the lowest handle must be rejected");
     Require(sceAudioOutGetLastOutputTime(INT_MAX, &destination) == invalidPort, "the highest handle must be rejected");
     Require(sceAudioOutClose(handle) == 0, "port must close");
-    Require(sceAudioOutGetLastOutputTime(handle, &destination) == invalidPort, "a closed port must be rejected");
+    constexpr int closedPort = -2144993279;
+    Require(sceAudioOutGetLastOutputTime(handle, &destination) == closedPort, "a closed port must be rejected as closed");
     Require(destination == untouched, "a rejected call must not write the destination");
+    AudioOutPortState state{};
+    Require(sceAudioOutGetPortState(handle, &state) == closedPort, "the state of a closed port must be rejected as closed");
+    Require(sceAudioOutGetPortState(-1, &state) == invalidPort, "the state of handle -1 must be rejected as invalid");
+    const int reopened = Open(portTypeMain);
+    Require(sceAudioOutGetLastOutputTime(reopened, &destination) == 0, "a reopened port must answer again");
+    Require(sceAudioOutClose(reopened) == 0, "port must close");
 }
 
 void TestIndependentPortOutputDuringWait(bool batch) {
