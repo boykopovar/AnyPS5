@@ -112,6 +112,7 @@ struct ImageResource {
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
     bool remappedDepth1D = false;
+    bool gathered = false;
     bool layerRowsCompatible = true;
     bool layerRows = false;
     std::uint32_t maxArrayLayers = 0u;

@@ -3055,10 +3055,11 @@ int reverse_lookup(int rid, const sockaddr* address, NativeLength addressLength,
     if (!initialize_sockets()) return fail(5);
     std::uint64_t generation = 0;
     if (const int error = begin_lookup(rid, &Resolver::abort_aton, generation)) return error;
-    std::vector<char> name(static_cast<std::size_t>(len));
+    std::array<char, NI_MAXHOST> name{};
+    const auto capacity = std::min<std::size_t>(static_cast<std::size_t>(len), name.size());
     const auto reverseLookup = g_resolverReverseLookupForTests.load();
-    const int result = reverseLookup ? reverseLookup(address, static_cast<std::size_t>(addressLength), name.data(), name.size())
-                                     : ::getnameinfo(address, addressLength, name.data(), static_cast<NativeLength>(len), nullptr, 0, NI_NAMEREQD);
+    const int result = reverseLookup ? reverseLookup(address, static_cast<std::size_t>(addressLength), name.data(), capacity)
+                                     : ::getnameinfo(address, addressLength, name.data(), static_cast<NativeLength>(capacity), nullptr, 0, NI_NAMEREQD);
     if (result != 0) {
         set_errno(result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT);
         log_soft(func, "host reverse DNS lookup failed");

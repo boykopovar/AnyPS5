@@ -87,6 +87,28 @@ void WorkBufferSize() {
     Require(scePfsGetWorkBufferSize() == 0xed0d8);
 }
 
+void Pread() {
+    PfsHeader header = HeaderV2(4, 0x80000, 0x200);
+    std::array<std::uint8_t, 0x1000> buffer{};
+    std::array<std::uint8_t, 0x200> work{};
+    FillBytes(buffer.data(), buffer.size(), 0xa5);
+    errno = 71;
+    Require(scePfsPread(nullptr, 0x1000, 0, &header, work.data()) == InvalidArgument);
+    Require(scePfsPread(nullptr, 0, 0, nullptr, nullptr) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0, 0xffffffffffffffffULL, nullptr, nullptr) == 0);
+    Require(scePfsPread(buffer.data(), 0x1000, 0x1000000000000ULL, &header, work.data()) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0x1000, 0, nullptr, work.data()) == InvalidArgument);
+    Require(scePfsPread(buffer.data(), 0x1000, 0, &header, nullptr) == InvalidArgument);
+    header.magic = 0;
+    Require(scePfsPread(buffer.data(), 0x1000, 0, &header, work.data()) == UnsupportedFormat);
+    header = HeaderV2(4, 0x80000, 0x200);
+    Require(scePfsPread(buffer.data(), 0x2000, 0x7f000, &header, work.data()) == OutOfRange);
+    Require(scePfsPread(buffer.data(), 0x1000, 0x90000, &header, work.data()) == OutOfRange);
+    Require(scePfsPread(buffer.data(), 0xfffffffffffff000ULL, 0x1000, &header, work.data()) == OutOfRange);
+    Require(errno == 71);
+    for (std::uint8_t byte : buffer) Require(byte == 0xa5);
+}
+
 void HeaderReadCommand() {
     std::array<std::uint64_t, 8> command{};
     FillBytes(command.data(), command.size() * 8, 0xa5);
@@ -335,6 +357,7 @@ void ValidateV3() {
 int main() {
     UncompressedSize();
     WorkBufferSize();
+    Pread();
     HeaderReadCommand();
     BlockTableReadCommand();
     BlockTableReadCommandV3();
