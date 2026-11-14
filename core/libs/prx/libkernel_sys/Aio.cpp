@@ -92,10 +92,20 @@ int Fail(int error) {
 }
 
 template <typename Field>
-bool Store(GuestAiocb* user, Field GuestAiocb::*member, Field value) {
+std::uintptr_t Address(const GuestAiocb* user, Field GuestAiocb::*member) {
     static const GuestAiocb layout{};
     const auto offset = reinterpret_cast<std::uintptr_t>(&(layout.*member)) - reinterpret_cast<std::uintptr_t>(&layout);
-    return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(user) + offset), &value, sizeof(value));
+    return reinterpret_cast<std::uintptr_t>(user) + offset;
+}
+
+template <typename Field>
+bool Store(GuestAiocb* user, Field GuestAiocb::*member, Field value) {
+    return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(Address(user, member)), &value, sizeof(value));
+}
+
+std::int64_t Fetch(const GuestAiocb* user, std::int64_t GuestAiocb::*member) {
+    std::int64_t value = 0;
+    return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(Address(user, member)), sizeof(value)) ? value : -1;
 }
 
 void Run(Job& job) {
@@ -228,11 +238,11 @@ int APS5_VABI aio_fsync_nid_postfix(int operation, GuestAiocb* aiocb) {
 int APS5_VABI aio_error_nid_postfix(const GuestAiocb* aiocb) {
     auto& aio = Instance();
     std::lock_guard lock(aio.lock);
-    if (!aio.used || aiocb == nullptr) return GuestEinval;
+    if (!aio.used) return GuestEinval;
     for (const auto& job : aio.all) {
         if (job->user == aiocb) return ReadyError(job).value_or(GuestEinprogress);
     }
-    if (aiocb->status == -1) return static_cast<int>(aiocb->error);
+    if (Fetch(aiocb, &GuestAiocb::status) == -1) return static_cast<int>(Fetch(aiocb, &GuestAiocb::error));
     return GuestEinval;
 }
 
@@ -248,6 +258,7 @@ std::int64_t APS5_VABI aio_return_nid_postfix(GuestAiocb* aiocb) {
 
 int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, const KernelTimespec* timeout) {
     if (count < 0 || count > static_cast<int>(QueuePerProcess)) return Fail(GuestEinval);
+    if (count > 0 && list == nullptr) return Fail(GuestEfault);
     std::optional<std::uint64_t> deadline;
     if (timeout != nullptr) {
         const auto wait = WaitTime(*timeout);
@@ -274,13 +285,24 @@ int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, 
 }
 
 std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const KernelTimespec* timeout) {
-    if (result != nullptr) *result = nullptr;
+    KernelTimespec localTimeout{};
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localTimeout, timeout, sizeof(localTimeout))) {
+            return Fail(GuestEfault);
+        }
+    }
+    if (result != nullptr) {
+        GuestAiocb* nullCb = nullptr;
+        if (!GuestCopyOut_nid_no_patch(result, &nullCb, sizeof(nullCb))) {
+            return Fail(GuestEfault);
+        }
+    }
     std::optional<std::uint64_t> deadline;
     bool poll = false;
     if (timeout != nullptr) {
-        poll = timeout->tv_sec == 0 && timeout->tv_nsec == 0;
+        poll = localTimeout.tv_sec == 0 && localTimeout.tv_nsec == 0;
         if (!poll) {
-            const auto wait = WaitTime(*timeout);
+            const auto wait = WaitTime(localTimeout);
             if (!wait) return Fail(GuestEinval);
             deadline = TimedWait::NowNanos() + static_cast<std::uint64_t>(wait->count());
         }
@@ -293,7 +315,12 @@ std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const K
         if (!deadline) aio.changed.Wait(lock);
         else if (!aio.changed.WaitUntil(lock, *deadline) && aio.done.empty()) return Fail(GuestEagain);
     }
-    if (result != nullptr) *result = aio.done.front()->user;
+    if (result != nullptr) {
+        GuestAiocb* user = aio.done.front()->user;
+        if (!GuestCopyOut_nid_no_patch(result, &user, sizeof(user))) {
+            return Fail(GuestEfault);
+        }
+    }
     return Consume(aio, aio.done.begin());
 }
 

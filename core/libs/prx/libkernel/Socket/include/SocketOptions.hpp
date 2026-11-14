@@ -30,6 +30,7 @@ struct SocketOptionState {
 };
 
 bool NativeListening(std::uintptr_t native, bool& listening);
+int SendBufferSize(SocketOptionState& state, int family, int type);
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length);
 int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, void* value, std::uint32_t* length);
 int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, const void* value, std::uint32_t length);
