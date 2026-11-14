@@ -577,19 +577,30 @@ void testFlowPackets() {
     check(called.words[3] == 0x0f2fffffu, "unchained INDIRECT_BUFFER control word mismatch");
     Storage compute;
     sceAgcAcbJump(&compute.buffer, 1, target, 0x10);
-    check(compute.words[0] == 0xc0023f00u && compute.words[3] == 0x1f300010u, "compute jumps did not chain");
-    Storage rejected;
-    rejected.words.fill(0xa5a5a5a5u);
-    const auto rejectedWords = rejected.words;
-    const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 2, 0, target, 1); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 4, target, 1); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 0, target, 0x100000u); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcAcbJump(&rejected.buffer, 0, reinterpret_cast<const std::uint32_t*>(0x1002ull), 1); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(compute.words[0] == 0xc0023f00u && compute.words[3] == 0x1f900010u, "compute jumps did not chain");
+    struct ConsoleJump {
+        bool compute;
+        std::uint8_t mode;
+        std::uint8_t cachePolicy;
+        std::uintptr_t target;
+        std::uint32_t size;
+        std::array<std::uint32_t, 3> words;
+    };
+    const std::array<ConsoleJump, 6> consoleJumps{{
+        {true, 1, 0x11, 0x22222222u, 0x33333333u, {0x22222220u, 0u, 0x1f933333u}},
+        {true, 1, 1, 2u, 3u, {0u, 0u, 0x1f900003u}},
+        {true, 1, 0x22, 0x3333333344444444ull, 0u, {0x44444444u, 0x33333333u, 0x2f900000u}},
+        {false, 0x11, 0x22, 0x33333333u, 0x44444444u, {0x33333330u, 0u, 0x2f344444u}},
+        {false, 1, 2, 3u, 4u, {0u, 0u, 0x2f300004u}},
+        {false, 0x22, 0x44, 0u, 0u, {0u, 0u, 0x0f200000u}},
+    }};
+    for (const auto& item : consoleJumps) {
+        Storage storage;
+        const auto* jumpTarget = reinterpret_cast<const std::uint32_t*>(item.target);
+        const auto* packet = item.compute ? sceAgcAcbJump(&storage.buffer, item.cachePolicy, jumpTarget, item.size) : sceAgcDcbJump(&storage.buffer, item.mode, item.cachePolicy, jumpTarget, item.size);
+        check(packet == storage.words.data() && packet[0] == 0xc0023f00u && std::equal(item.words.begin(), item.words.end(), packet + 1), "jump packet does not match the console's");
+        check(storage.buffer.cursor_up == storage.words.data() + 4, "jump cursor mismatch");
+    }
     check(sceAgcDcbJumpGetSize() == 16 && sceAgcAcbJumpGetSize() == 16, "jump packet sizes");
     Storage stall;
     sceAgcDcbStallCommandBufferParser(&stall.buffer);

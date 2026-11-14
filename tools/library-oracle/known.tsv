@@ -25,9 +25,6 @@ agcbuild_AcbEventWrite_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbJump_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbJump_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbJump_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
@@ -102,9 +99,6 @@ agcbuild_DcbDrawIndirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbGetLodStats_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbGetLodStats_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbGetLodStats_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbJump_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbJump_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbJump_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
 agcbuild_DcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
 agcbuild_DcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
