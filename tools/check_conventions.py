@@ -481,7 +481,7 @@ class Check:
                 elif line.startswith("-"):
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
-                path = line[6:]
+                path = line[6:].removesuffix("\t")
         result = subprocess.run(["git", "grep", "--no-color", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
                                 capture_output=True, encoding="utf-8", errors="replace")
         reads = set()
