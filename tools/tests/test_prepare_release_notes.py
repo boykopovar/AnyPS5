@@ -178,6 +178,49 @@ class PrepareDistinctPathTests(ReleaseNotesCase):
                         self.assertEqual([path.read_bytes() for path in paths], before)
 
 
+class PrepareDestinationTests(ReleaseNotesCase):
+    def link(self, name, target):
+        path = self.root / name
+        try:
+            path.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"cannot create symbolic link: {error}")
+        return path
+
+    def test_directory_destination_is_rejected_before_the_other_output_is_written(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        for blocked in ("body", "full"):
+            with self.subTest(blocked=blocked):
+                directory = self.root / f"{blocked}-case"
+                directory.mkdir()
+                body, full = directory / "body.md", directory / "full.md"
+                destination = body if blocked == "body" else full
+                destination.mkdir()
+                with self.assertRaises(IsADirectoryError):
+                    prepare_release_notes.prepare_notes(self.source, body, full)
+                self.assertEqual([path.name for path in directory.iterdir()], [destination.name])
+
+    def test_symbolic_link_loop_destination_is_a_value_error_and_nothing_is_written(self):
+        loop = self.link("loop", "loop2")
+        self.link("loop2", "loop")
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        with self.assertRaisesRegex(ValueError, "symbolic link loop"):
+            prepare_release_notes.resolve_output_path(loop)
+        with self.assertRaisesRegex(ValueError, "symbolic link loop"):
+            prepare_release_notes.prepare_notes(self.source, loop, self.full)
+        self.assertFalse(self.full.exists())
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ["loop", "loop2", "notes.json"])
+
+    def test_dangling_symbolic_link_destination_is_written_through_to_its_target(self):
+        link = self.link("body-link", "missing.md")
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        self.assertEqual(prepare_release_notes.resolve_output_path(link),
+                         Path(os.path.realpath(self.root / "missing.md")))
+        prepare_release_notes.prepare_notes(self.source, link, self.full)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual((self.root / "missing.md").read_bytes(), b"## New Contributors\n* a\n")
+
+
 class ReleaseBodyTests(unittest.TestCase):
     def test_notes_at_or_below_limit_are_returned_unchanged(self):
         short = "## What's Changed\n- entry\n"
