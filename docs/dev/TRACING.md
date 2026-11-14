@@ -13,6 +13,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_AUDIOOUT2` | AudioOut2 context and port parameters, attributes, pushes, queue polls and periodic queue summaries. |
 | `APS5_TRACE_CALLS` | On Windows, Linux and macOS, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
 | `APS5_TRACE_CALLS_FILE` | With `APS5_TRACE_CALLS`, a file rewritten every 10 seconds with every traced import called so far, most called first: number of calls, library and import name. |
+| `APS5_TRACE_CALLS_GRAPH_FILE` | With `APS5_TRACE_CALLS`, a versioned JSON file rewritten every 10 seconds with bounded per-import callsite counts, consumer and actual provider image names and offsets. Use `tools/runtime_call_graph.py` to summarize it. |
 | `APS5_TRACE_EXIT` | Guest `exit` and `_Exit` calls and process-exit backtraces. |
 | `APS5_TRACE_FIBER` | Fiber initialization, switches and returns. |
 | `APS5_TRACE_MEMORY` | Direct-memory allocation, mapping and protection operations. |

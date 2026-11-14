@@ -666,6 +666,9 @@ if(BUILD_TESTING)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_timeline.py)
         set_tests_properties(pad_timeline PROPERTIES TIMEOUT 20)
+        add_test(NAME runtime_call_graph COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_runtime_call_graph.py)
+        set_tests_properties(runtime_call_graph PROPERTIES TIMEOUT 20)
         function(register_check_compile_remaining_tests)
             if(TEST check_compile)
                 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS

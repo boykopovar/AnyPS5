@@ -637,6 +637,13 @@ To list every import a title calls during a run that ends without a crash, also 
 3866 libSceAgc.prx 57labkp+rSQ
 ```
 
+To see the runtime call graph, set `APS5_TRACE_CALLS_GRAPH_FILE` to a JSON path as well. Each edge identifies the consumer image and return-site offset, the imported library and name, the host image that contains the resolved function, and the number of calls observed at that site. The graph includes only traced imports that ran; it does not infer which uncalled static imports would resolve. It records at most 65,536 distinct sites, probes up to 256 table slots per event, and reports events it could not record. If either address cannot be mapped to a loaded image, that image's module and offset are `null` while its raw address remains in the file. The graph is rewritten every 10 seconds and can be summarized with `python tools/runtime_call_graph.py <graph.json>`.
+
+```
+APS5_TRACE_CALLS=all APS5_TRACE_CALLS_GRAPH_FILE=call-graph.json ./app
+python tools/runtime_call_graph.py call-graph.json --provider libSceAudioOut.guest.prx
+```
+
 Limits are listed in the [libc](../dev/debt/libc.md) and [relinker](../dev/debt/relinker.md) technical debt.
 
 ### Performance overlay

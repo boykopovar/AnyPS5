@@ -740,6 +740,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_AFFINITY` | presence | `core/libs/prx/libc/include/CpuTopology.hpp` |  | prints a line naming the role, tid and mask of every thread pinning |
 | `APS5_TRACE_CALLS` | string | `core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp` |  | comma-separated libraries (or all) whose guest calls are traced; an empty import-library label uses the defining host module filename when it can be found |
 | `APS5_TRACE_CALLS_FILE` | string | `core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp` |  | file rewritten every 10 seconds with each traced import called so far and its number of calls |
+| `APS5_TRACE_CALLS_GRAPH_FILE` | string | `core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp` |  | optional versioned JSON rewritten every 10 seconds with bounded per-caller-site counts and the loaded consumer/provider image offsets for traced imports |
 | `APS5_TRACE_EXIT` | presence | `core/libs/prx/libc/src/Process.cpp` |  | prints a backtrace of the caller of exit, _Exit and the process-exit path |
 | `APS5_TRACE_SSE4A` | presence | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | prints each emulated SSE4a instruction once per rip |
 | `APS5_VERIFY_DIRECT_COLLECT` | presence | `core/libs/prx/libc/include/WindowsMappings.hpp` |  | queries the regions of each private-memory collect read from the allocation map and throws when that collect succeeded over memory that is no longer committed private |

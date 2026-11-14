@@ -1880,6 +1880,7 @@ if(BUILD_TESTING)
         target_link_libraries(guest_call_trace_tests PRIVATE libc)
         configure_windows_unwind(guest_call_trace_tests)
         add_test(NAME guest_call_trace COMMAND guest_call_trace_tests)
+        set_tests_properties(guest_call_trace PROPERTIES TIMEOUT 30)
         add_test(NAME guest_call_trace_abort COMMAND guest_call_trace_tests abort)
         if(WIN32)
             set_tests_properties(guest_call_trace guest_call_trace_abort PROPERTIES ENVIRONMENT_MODIFICATION
