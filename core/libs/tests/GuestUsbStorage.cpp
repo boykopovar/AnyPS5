@@ -706,6 +706,42 @@ void TestUnregisterDuringDispatch(const FakeHost& host) {
     Require(sceUsbStorageTerm() == 0, "terminate after unregistrations during dispatch");
 }
 
+void TestUnmappedOutputs(const FakeHost& host) {
+    Inject(host, true, false);
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize for unmapped output checks");
+    auto* const badDevices = reinterpret_cast<std::uint32_t*>(0x10);
+    auto* const badCount = reinterpret_cast<std::int32_t*>(0x10);
+    auto* const badFd = reinterpret_cast<std::int32_t*>(0x10);
+    auto* const badSize = reinterpret_cast<std::uint64_t*>(0x10);
+    auto* const badBuffer = reinterpret_cast<void*>(0x10);
+    auto* const badBytesRead = reinterpret_cast<std::uint64_t*>(0x10);
+    std::uint32_t devices[UsbStorage::MaxDevices]{};
+    std::int32_t count = -1;
+    errno = 71;
+    Require(sceUsbStorageGetDeviceList(badDevices, &count) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped devices buffer in sceUsbStorageGetDeviceList without clobbering errno");
+    Require(sceUsbStorageGetDeviceList(devices, badCount) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped count pointer in sceUsbStorageGetDeviceList without clobbering errno");
+    std::int32_t fd = -1;
+    std::uint64_t bufferSize = 0;
+    Require(sceUsbStorageGetdentsOpen(0, badFd, &bufferSize) == UsbStorage::InvalidArgument,
+            "reject unmapped fd pointer in sceUsbStorageGetdentsOpen");
+    Require(sceUsbStorageGetdentsOpen(0, &fd, badSize) == UsbStorage::InvalidArgument,
+            "reject unmapped bufferSize pointer in sceUsbStorageGetdentsOpen");
+    Require(sceUsbStorageGetdentsOpen(0, &fd, &bufferSize) == 0, "open getdents scan for unmapped read checks");
+    std::uint64_t bytesRead = 0;
+    std::vector<std::uint8_t> buffer(bufferSize, 0);
+    errno = 71;
+    Require(sceUsbStorageGetdentsRead(fd, badBuffer, bufferSize, &bytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped buffer in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsRead(fd, buffer.data(), buffer.size(), badBytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped bytesRead in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsRead(-999, buffer.data(), buffer.size(), badBytesRead) == UsbStorage::InvalidArgument && errno == 71,
+            "reject unmapped bytesRead on missing fd in sceUsbStorageGetdentsRead without clobbering errno");
+    Require(sceUsbStorageGetdentsClose(fd) == 0, "close getdents scan after unmapped read checks");
+    Require(sceUsbStorageTerm() == 0, "terminate after unmapped output checks");
+}
+
 void TestSysfsScan(const FakeHost& host) {
     WriteMounts(host, FirstLine(host) + SecondLine(host) + MountLine("8_1", "/", host.root / "media" / "efi", "rw", "vfat") +
                           MountLine("8_49", "/", host.root / "media", "rw", "ext4") + MountLine("8_17", "/Music", host.root / "media" / "bound", "rw", "vfat"));
@@ -743,6 +779,7 @@ int main() {
     TestPassthroughOff(host);
     SetPassthrough(true);
     TestDevices(host);
+    TestUnmappedOutputs(host);
     TestHotplug(host);
     TestRootChange(host);
     TestUnregisterDuringDispatch(host);
