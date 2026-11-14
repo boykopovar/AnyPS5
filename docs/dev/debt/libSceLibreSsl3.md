@@ -159,7 +159,6 @@
 | `X509_digest` | `k1AHUWet-oU` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
-| `unknown` | `qGsc6uT6p1E` |
 | `X509_add1_ext_i2d` | `s8WMaKNjwvE` |
 | `EC_GROUP_cmp` | `sENJFZ7WbLU` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
