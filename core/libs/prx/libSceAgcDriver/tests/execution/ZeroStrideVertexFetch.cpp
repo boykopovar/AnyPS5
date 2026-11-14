@@ -187,6 +187,8 @@ int main() {
             Check(value);
         }
         DescriptorDiagnostics(*device);
+        const auto scratch = AgcDriver::Graphics::ThreadVertexPlanScratch();
+        Require(!scratch.busy && scratch.resting == 0 && scratch.capacity != 0, "the draws left this thread's vertex plan scratch free, empty and in use");
         std::puts("zero-stride vertex fetch tests passed");
         return 0;
     } catch (const std::exception& error) {
