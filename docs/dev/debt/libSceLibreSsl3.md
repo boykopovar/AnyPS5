@@ -7,6 +7,7 @@
 - [`X509_set_version`](../../../core/libs/prx/libSceLibreSsl3/src/X509.cpp) follows LibreSSL 4.0.0 `crypto/x509/x509_set.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_set.c) and the `X509_CINF` layout in its `x509_local.h`. Versions outside 0 to 2 return 0 without mutation; a missing version integer is allocated from the guest heap, the encoding is marked modified, and the value is set through `ASN1_INTEGER_set`. A null certificate returns 0 and null certificate info, undefined upstream, throws. The 104-byte `X509_CINF` layout and the `enc.modified` offset 96 are not measured on the console.
 ### Functional
 
+- [ERR_load_X509_strings, ERR_load_PEM_strings and OpenSSL_add_all_digests](../../../core/libs/prx/libSceLibreSsl3/src/ErrorStringLoaders.cpp) (libSceLibreSsl3) - do not register the reason strings and digests that LibreSSL loads in `x509_err.c`, `pem_err.c` and `c_all.c`, because no lookup reads those registries: `EVP_get_digestbyname` uses the always-populated static table in [src/DigestNames.cpp](../../../core/libs/prx/libSceLibreSsl3/src/DigestNames.cpp), `ERR_load_crypto_strings` is empty ([Export.cpp](../../../core/libs/prx/libSceLibreSsl3/Export.cpp)), and the `ERR_*_error_string` lookups return null ([src/ErrorStrings.cpp](../../../core/libs/prx/libSceLibreSsl3/src/ErrorStrings.cpp)). Firmware 13.42 `libSceLibreSsl3.sprx` also returns immediately: bodies at `0xc37b0`, `0x989d0` and `0x10100` are a lone `ret`, read from the [disassembly](https://github.com/boykopovar/AnyPS5/pull/15591) and not run on a console; LibreSSL declares all three `void (void)`.
 - [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - reads the cached public key from the certificate-info key structure; a null certificate, info or key returns null, and a null cached key with encoded SPKI data throws `NotImplemented_nid_no_patch` until SPKI decoding exists. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [AUTHORITY_KEYID_free and X509_CRL_free](../../../core/libs/prx/libSceLibreSsl3/src/X509ItemFree.cpp#L6) - not measured on a PS5; non-null object disposal remains unsupported and throws before dereference. The null no-op follows LibreSSL 4.0.0 [`AUTHORITY_KEYID_free`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_akeya.c#L124-L128), [`X509_CRL_free`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_crl.c#L507-L511) and their [`ASN1_item_free` dispatcher](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/tasn_fre.c#L72-L99).
 - [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1 as LibreSSL does (OpenSSL 1.1 returns 0); null key, input or output throws where LibreSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
@@ -108,7 +109,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 56 still-unimplemented callable exports: 52 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 53 still-unimplemented callable exports: 49 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -124,7 +125,6 @@
 | `tls_read` | `7RvDjfy4gUA` |
 | `EC_POINT_set_affine_coordinates_GFp` | `8AGfaSvdDq4` |
 | `unknown` | `A-Hs-8mau+8` |
-| `ERR_load_X509_strings` | `A0lZtFjhcTw` |
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
@@ -133,8 +133,6 @@
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
 | `X509_CRL_get0_by_cert` | `LdGe2IfIlpI` |
-| `ERR_load_PEM_strings` | `M7ze0mz2jQM` |
-| `OpenSSL_add_all_digests` | `O9Thca3enw8` |
 | `unknown` | `PBYz0kpXwg8` |
 | `X509_new` | `PNfwr3s6dEs` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
