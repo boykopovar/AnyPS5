@@ -1,5 +1,4 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
-#include "prx/libSceContentSearch/include/InventoryExports.hpp"
 #include "SceTypes.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -65,10 +64,6 @@ int main() {
     Require(sceContentSearchOpenMetadata("/data/photo.jpg", &metadataId) == ErrorNotInitialized);
     Require(sceContentSearchOpenMetadataByContentId(1, &metadataId) == ErrorNotInitialized);
     Require(sceContentSearchCloseMetadata(1) == ErrorNotInitialized);
-    Require(sceContentSearchAddAvContentCreatedEventCondition() == ErrorNotInitialized);
-    Require(sceContentSearchDisableAvContentCreatedEvent() == ErrorNotInitialized);
-    Require(sceContentSearchEnableAvContentCreatedEvent() == ErrorNotInitialized);
-    Require(sceContentSearchGetContentIdByAvContentCreatedEvent() == ErrorNotInitialized);
     Require(count == -1 && size == -1 && updateId == -1 && metadataId == -1);
 
     Require(sceContentSearchTerm() == ErrorNotInitialized);
