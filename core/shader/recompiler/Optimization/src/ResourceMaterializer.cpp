@@ -1884,12 +1884,15 @@ std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const Image
     return value;
 }
 
-std::vector<bool> reducingSamplers(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
-    std::vector<bool> reducing(info.images.size(), false);
+ElementFlags reducingSamplers(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
+    ElementFlags reducing(info.images.size());
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table != NoTable) continue;
         const auto& words = snapshot.samplers.at(pair.sampler).dwords;
-        if (reducesBetweenTexels(words[0], words[2])) reducing.at(pair.image) = true;
+        if (reducesBetweenTexels(words[0], words[2])) {
+            static_cast<void>(reducing.at(pair.image));
+            reducing[pair.image] = true;
+        }
     }
     return reducing;
 }
@@ -1903,7 +1906,7 @@ struct ResolutionMemoEntry {
     std::uint64_t memoKey = 0;
     std::vector<ImageTableColumnSnapshot> tables;
     std::vector<ImageTableColumnSnapshot> nested;
-    std::vector<bool> reducing;
+    ElementFlags reducing;
     std::shared_ptr<const ResolvedImageTables> resolved;
     std::size_t footprint = 0;
 };
@@ -1958,6 +1961,26 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     if (tables.tables.size() != count) throw std::runtime_error("image table snapshot disagrees with the static tables");
     if (info.runtimeImageModes.size() != info.images.size()) throw std::runtime_error("prepared runtime image modes are missing");
     if (count > (Abi::MaxMapWords - Abi::HeaderWords) / Abi::TableWords) throw std::runtime_error("image table map exceeds its word budget");
+    std::size_t mapWords = static_cast<std::size_t>(Abi::HeaderWords) + static_cast<std::size_t>(Abi::TableWords) * count;
+    std::size_t distinctImages = 0;
+    for (const auto& image : info.images) {
+        if (image.table == NoTable) continue;
+        const auto& column = tables.tables.at(image.table);
+        const auto keys = std::min<std::size_t>(column.keys, column.codes.size());
+        const auto distinct = std::min<std::size_t>(keys, column.words.size());
+        mapWords += keys + static_cast<std::size_t>(Abi::ImageRecordWords) * distinct;
+        distinctImages += distinct;
+    }
+    for (const auto& sampler : info.samplers) {
+        if (sampler.table == NoTable) continue;
+        const auto& column = tables.tables.at(sampler.table);
+        const auto keys = std::min<std::size_t>(column.keys, column.codes.size());
+        const auto distinct = std::min<std::size_t>(keys, column.words.size()) + 1u;
+        mapWords += keys + static_cast<std::size_t>(Abi::SamplerRecordWords) * distinct + distinct;
+    }
+    out.map.reserve(std::min<std::size_t>(mapWords + distinctImages, Abi::MaxMapWords));
+    out.elements.reserve(std::min<std::size_t>(distinctImages, Abi::ImageElementBudget));
+    out.poison.reserve(4u);
     out.map.assign(Abi::HeaderWords + Abi::TableWords * count, 0u);
     const auto growMap = [&](std::size_t words) {
         if (out.map.size() > Abi::MaxMapWords || words > Abi::MaxMapWords - out.map.size()) throw std::runtime_error("image table map exceeds its word budget");
@@ -2195,7 +2218,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
 
 std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
     if (snapshot.tables.tables.empty()) {
-        static const auto none = std::make_shared<const ResolvedImageTables>();
+        struct EmptyTablesStorage {};
+        auto& none = HostThreadLocal<std::shared_ptr<const ResolvedImageTables>, EmptyTablesStorage>();
+        if (!none) none = std::make_shared<const ResolvedImageTables>();
         static_cast<void>(ResolveImageTables(info, snapshot, memoKey));
         return none;
     }
