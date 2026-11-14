@@ -94,13 +94,17 @@ Registers run(const Bytes& instruction, const Registers& input) {
     Bytes code{0xC5, 0xFE, 0x6F, 0x07, 0xC5, 0xFE, 0x6F, 0x4F, 0x20, 0xC5, 0xFE, 0x6F, 0x57, 0x40, 0x48, 0x8D, 0x47, 0x60};
     code.insert(code.end(), instruction.begin(), instruction.end());
     code.insert(code.end(), {0xC5, 0xFE, 0x7F, 0x07, 0xC5, 0xF8, 0x77, 0xC3});
-    auto* page = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (page == MAP_FAILED) throw std::runtime_error("Cannot allocate the twin execution page");
+    const auto entry = LoweringExecution::AppendHostEntry(code);
+    auto* page = LoweringExecution::AllocatePages(4096);
+    if (!page) throw std::runtime_error("Cannot allocate the twin execution page");
     std::memcpy(page, code.data(), code.size());
-    if (mprotect(page, 4096, PROT_READ | PROT_EXEC) != 0) throw std::runtime_error("Cannot make the twin execution page executable");
+    if (!LoweringExecution::ProtectPages(page, 4096, true, false)) {
+        LoweringExecution::FreePages(page, 4096);
+        throw std::runtime_error("Cannot make the twin execution page executable");
+    }
     auto state = input;
-    reinterpret_cast<void (*)(Registers*)>(page)(&state);
-    munmap(page, 4096);
+    LoweringExecution::Call(page, entry, &state);
+    LoweringExecution::FreePages(page, 4096);
     return state;
 }
 
@@ -157,7 +161,7 @@ void execution() {
 
 #else
 
-void execution() { std::cout << "AVX2 twin execution checks require a Linux/macOS x86-64 build\n"; }
+void execution() { std::cout << "AVX2 twin execution checks require an x86-64 Linux, macOS or Windows build\n"; }
 
 #endif
 
