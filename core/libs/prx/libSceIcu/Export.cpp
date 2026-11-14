@@ -115,62 +115,6 @@ int APS5_VABI u_releaseDefaultConverter_nid_postfix() {
 }
 
 
-int APS5_VABI ubrk_close() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_countAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_current() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_first() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_following() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_getAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_getRuleStatus() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_isBoundary() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_last() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_next() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_open() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_preceding() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_previous() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ubrk_setText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ubrk_setUText() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -239,14 +183,6 @@ int APS5_VABI ucurr_openISOCurrencies() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udata_setCommonData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI udata_setFileAccess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_addLikelySubtags() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -291,17 +227,8 @@ int APS5_VABI unorm2_getNFKDInstance() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ures_getByKey() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI ures_getStringByKey() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI ures_open() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI utext_openConstUnicodeString() {
     NotImplemented_nid_no_patch(__func__);
