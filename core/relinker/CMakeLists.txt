@@ -918,6 +918,12 @@ if(BUILD_TESTING)
         add_test(NAME macos_gs_traps COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_gs_traps.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_gs_traps PROPERTIES TIMEOUT 60)
+        add_test(NAME macos_guest_gs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_gs.py $<TARGET_FILE:relinker>)
+        set_tests_properties(macos_guest_gs PROPERTIES TIMEOUT 60)
+        if(APPLE)
+            set_tests_properties(macos_guest_gs PROPERTIES RUN_SERIAL TRUE)
+        endif()
         add_test(NAME macos_fixed_base COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_fixed_base.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_host_libc COMMAND ${Python3_EXECUTABLE}

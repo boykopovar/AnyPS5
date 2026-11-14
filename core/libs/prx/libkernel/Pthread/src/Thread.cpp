@@ -80,7 +80,7 @@ struct ThreadArgs {
     PthreadEntry entry;
     void* arg;
     PthreadPrivate* self;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     std::uint64_t gsBase = 0;
 #endif
 #ifndef _WIN32
@@ -967,7 +967,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
 #endif
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     GuestGsSet_nid_no_patch(args->gsBase);
 #endif
     args.reset();
@@ -1230,8 +1230,10 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
     sigprocmask_nid_postfix(1, nullptr, &args->guestSignalMask);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     args->gsBase = GuestGsGet_nid_no_patch();
+#endif
+#ifdef _WIN32
     SYSTEM_INFO system{};
     GetSystemInfo(&system);
     if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<unsigned>::max() - HOST_STACK_MARGIN - system.dwPageSize)
