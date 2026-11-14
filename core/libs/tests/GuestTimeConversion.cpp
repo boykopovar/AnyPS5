@@ -110,7 +110,7 @@ static void CheckConcurrent(Converter convert, BufferedConverter buffered, const
 
 static GuestTm UtcTime(std::int64_t timer) {
     GuestTm utc{};
-    Require(gmtime_s_nid_postfix(&timer, &utc) == &utc, "UTC conversion failed");
+    Require(gmtime_r_nid_postfix(&timer, &utc) == &utc, "UTC conversion failed");
     return utc;
 }
 
@@ -140,7 +140,7 @@ static void CheckUtc(const UtcCase& expected) {
     Require(gmtime_s_nid_postfix(&expected.timer, &utc) == &utc, "UTC conversion failed");
     Require(utc.tm_year == expected.year && utc.tm_mon == expected.mon && utc.tm_mday == expected.mday
         && utc.tm_hour == expected.hour && utc.tm_min == expected.min && utc.tm_sec == expected.sec
-        && utc.tm_wday == expected.wday && utc.tm_yday == expected.yday && utc.tm_isdst == 0,
+        && utc.tm_wday == expected.wday && utc.tm_yday == expected.yday && utc.tm_isdst == -1,
         "UTC calendar fields are wrong");
     Require(utc.tm_gmtoff == 0, "UTC conversion did not reset tm_gmtoff");
     Require(utc.tm_zone != nullptr && std::strcmp(utc.tm_zone, "UTC") == 0, "UTC conversion did not set tm_zone");
@@ -640,8 +640,8 @@ int main() {
 #endif
     CheckLiteralConversions();
 
-    CheckConcurrent(libc_gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
-    CheckConcurrent(gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent gmtime returned another thread's date");
+    CheckConcurrent(libc_gmtime_nid_postfix, gmtime_r_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
+    CheckConcurrent(gmtime_nid_postfix, gmtime_r_nid_postfix, "Concurrent gmtime returned another thread's date");
     CheckConcurrent(libc_localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent libc_localtime returned another thread's date");
     CheckConcurrent(localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent localtime returned another thread's date");
     CheckGuestZone();

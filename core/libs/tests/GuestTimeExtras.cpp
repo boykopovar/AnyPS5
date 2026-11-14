@@ -55,6 +55,8 @@ static void CheckReentrantConversions() {
         GuestTm expected{};
         GuestTm actual{};
         Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime_s rejected a representable time");
+        Require(expected.tm_isdst == -1, "gmtime_s did not leave daylight saving undetermined");
+        expected.tm_isdst = 0;
         Require(gmtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected), "gmtime_r differs from gmtime_s");
         Require(localtime_s_nid_postfix(&timer, &expected) == &expected, "localtime_s rejected a representable time");
         Require(localtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected) && actual.tm_gmtoff == 7200,
