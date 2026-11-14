@@ -213,8 +213,22 @@ def generate(probes, catalog_digest, output_dir):
             rows = "".join(" ".join(f"0x{word:08x}" for word in row["input"]) + "\n"
                            for row in probe["rows"])
             (case / "rows.txt").write_text(rows, encoding="utf-8")
-        for probe, destination in zip(probes, destinations):
-            os.replace(stage / probe["id"], destination)
+        promoted = []
+        try:
+            for probe, destination in zip(probes, destinations):
+                os.replace(stage / probe["id"], destination)
+                promoted.append(destination)
+        except OSError as promotion_error:
+            rollback_errors = []
+            for destination in reversed(promoted):
+                try:
+                    shutil.rmtree(destination)
+                except OSError as error:
+                    rollback_errors.append(error)
+            if rollback_errors:
+                details = "; ".join(str(error) for error in rollback_errors)
+                raise RuntimeError(f"Probe catalog promotion failed: {promotion_error}; rollback failed: {details}") from promotion_error
+            raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     return destinations
