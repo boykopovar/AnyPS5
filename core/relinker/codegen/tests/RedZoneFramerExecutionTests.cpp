@@ -33,12 +33,19 @@ void require(const bool condition, const std::string& message) {
 constexpr std::size_t kArenaBytes = 0x10000;
 constexpr std::size_t kStubBase = 0x4000;
 constexpr std::size_t kRunnerBase = 0xc000;
+constexpr std::size_t kProbeBase = kRunnerBase - 0x100;
 constexpr std::uint8_t kClobber = 0xa5;
 constexpr std::uint64_t kA = 0x1111, kB = 0x2222, kC = 0x3333, kD = 0x4444;
 
 std::uint8_t* arena = nullptr;
 volatile std::sig_atomic_t steps = 0;
 volatile std::sig_atomic_t outsideSteps = 0;
+volatile std::sig_atomic_t calibratingSingleStep = 0;
+constexpr int kCalibrationInstructions = 128;
+
+struct SteppingDegraded : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 #ifdef _WIN32
 DWORD steppingThread = 0;
@@ -61,7 +68,7 @@ LONG CALLBACK clobberBelowRsp(EXCEPTION_POINTERS* exception) {
         outsideSteps = outsideSteps + 1;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
-    std::memset(reinterpret_cast<void*>(registers.Rsp - 0x80), kClobber, 0x80);
+    if (!calibratingSingleStep) std::memset(reinterpret_cast<void*>(registers.Rsp - 0x80), kClobber, 0x80);
     registers.EFlags |= 0x100u;
     steps = steps + 1;
     return EXCEPTION_CONTINUE_EXECUTION;
@@ -77,7 +84,8 @@ void clobberBelowRsp(int, siginfo_t*, void* context) {
         outsideSteps = outsideSteps + 1;
         return;
     }
-    std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(registers[REG_RSP]) - 0x80), kClobber, 0x80);
+    if (!calibratingSingleStep)
+        std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(registers[REG_RSP]) - 0x80), kClobber, 0x80);
     steps = steps + 1;
 }
 #endif
@@ -229,6 +237,35 @@ std::vector<Leaf> framedLeaves() {
             0xff, 0xc9, 0x75, 0xed, 0x48, 0x8b, 0x54, 0x24, 0x38,
             0x48, 0x83, 0xc4, 0x40, 0x5b, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f, 0x5d, 0xc3,
         }, 4 * (kB + 2 * kA)},
+        {"leaf transferring a red-zone spill through xmm4 with movq", frameless({
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0xf3, 0x0f, 0x7e, 0x64, 0x24, 0xf0,
+            0xf3, 0x0f, 0x7e, 0xc4, 0x66, 0x48, 0x0f, 0x7e, 0xc0,
+        }), kA},
+    };
+}
+
+std::vector<Leaf> skippedDirectRspLeaves() {
+    return {
+        {"leaf reading rsp through vmovq", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x48, 0x89, 0x74, 0x24, 0xf0,
+            0xc4, 0xe1, 0xf9, 0x6e, 0xc4, 0xc4, 0xc1, 0xf9, 0x7e, 0xc0, 0x49, 0x8b, 0x00,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
+        {"leaf reading rsp through pinsrq", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x48, 0x89, 0x74, 0x24, 0xf0,
+            0x66, 0x48, 0x0f, 0x3a, 0x22, 0xc4, 0x01, 0x66, 0x49, 0x0f, 0x3a, 0x16, 0xc0, 0x01, 0x49, 0x8b, 0x00,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
+        {"leaf reading rsp through movbe", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x4c, 0x8d, 0x4c, 0x24, 0xf0,
+            0x49, 0x0f, 0x38, 0xf1, 0x21, 0x4d, 0x0f, 0x38, 0xf0, 0x01, 0x48, 0x89, 0x74, 0x24, 0xf0, 0x49, 0x8b, 0x00,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
+        {"leaf writing rsp through immediate imul", {
+            0x53, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x4c, 0x8d, 0x4c, 0x24, 0xf0,
+            0x4d, 0x8d, 0x41, 0x10, 0x4d, 0x89, 0x01, 0x49, 0x6b, 0x21, 0x01, 0x48, 0x8b, 0x04, 0x24,
+            0x48, 0x83, 0xc4, 0x10, 0x5b, 0xc3,
+        }, kA},
     };
 }
 
@@ -375,7 +412,7 @@ Framing load(const Image& image, const bool frame) {
         const auto at = static_cast<std::size_t>(site.Address - base);
         require(std::equal(site.OriginalBytes.begin(), site.OriginalBytes.end(), arena + at), "a framed site's bytes changed before it was patched");
         cursor = (cursor + 15) / 16 * 16;
-        require(cursor + site.Body.size() <= kRunnerBase, "the stubs do not fit before the runner");
+        require(cursor + site.Body.size() <= kProbeBase, "the stubs do not fit before the calibration probe");
         auto* stub = arena + cursor;
         std::copy(site.Body.begin(), site.Body.end(), stub);
         Codegen::ApplyStubRelocations(std::span<std::uint8_t>(stub, site.ReturnBranchOffset), site.Relocations, site.Address, base + cursor, site.Offset);
@@ -406,11 +443,29 @@ Run run(const std::size_t start, const bool clobber) {
     const auto result = entry(reinterpret_cast<std::uint64_t>(arena + start), kA, kB, kC, kD, clobber ? 1 : 0);
 #ifdef _WIN32
     singleStepping = false;
-    require(steppingFinished == clobber, "single-stepping did not finish at the runner's return point");
+    require(steppingFinished == clobber || calibratingSingleStep, "single-stepping did not finish at the runner's return point");
 #endif
     require(outsideSteps == 0, "single-stepping escaped the generated code");
     require(clobber || steps == 0, "single-stepping ran without the clobber requested");
     return {result, static_cast<int>(steps)};
+}
+
+void calibrateSingleStep() {
+    std::fill_n(arena + kProbeBase, kCalibrationInstructions, std::uint8_t{0x90});
+    arena[kProbeBase + kCalibrationInstructions] = 0xc3;
+    calibratingSingleStep = 1;
+    const Run result = run(kProbeBase, true);
+    calibratingSingleStep = 0;
+    if (result.Steps < kCalibrationInstructions)
+        throw SteppingDegraded("the host delivered only " + std::to_string(result.Steps) + " single-step traps for " +
+                               std::to_string(kCalibrationInstructions) + " straight-line instructions");
+}
+
+Run clobberedRun(const std::size_t start) {
+    calibrateSingleStep();
+    const Run result = run(start, true);
+    calibrateSingleStep();
+    return result;
 }
 
 std::string hex(const std::uint64_t value) {
@@ -430,7 +485,7 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
             continue;
         }
         plain.push_back(run(image.Starts[index], false));
-        clobbered.push_back(run(image.Starts[index], true));
+        clobbered.push_back(clobberedRun(image.Starts[index]));
         require(plain.back().Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf returned " + hex(plain.back().Result) + " without the clobber, not " + hex(leaves[index].Expected));
         require(clobbered.back().Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run");
         require(clobbered.back().Result != leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf survived writes below rsp, so the case proves nothing");
@@ -443,13 +498,27 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
             continue;
         }
         const auto calm = run(image.Starts[index], false);
-        const auto framed = run(image.Starts[index], true);
+        const auto framed = clobberedRun(image.Starts[index]);
         require(calm.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(calm.Result) + " without the clobber, not " + hex(leaves[index].Expected));
         require(framed.Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run over the framed leaf");
         require(framed.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(framed.Result) + " under writes below rsp, not " + hex(leaves[index].Expected));
         std::cout << leaves[index].Name << ": unframed " << hex(plain[index].Result) << " alone and " << hex(clobbered[index].Result) << " under the clobber (" << clobbered[index].Steps << " steps); framed " << hex(framed.Result) << " under the clobber (" << framed.Steps << " steps)\n";
     }
     return framing.Report;
+}
+
+void verifySkippedLeaves(const std::vector<Leaf>& leaves) {
+    const auto image = place(leaves);
+    const auto framing = load(image, true);
+    for (std::size_t index = 0; index < leaves.size(); ++index) {
+        const auto executed = run(image.Starts[index], false);
+        require(executed.Result == leaves[index].Expected,
+                std::string(leaves[index].Name) + ": returned " + hex(executed.Result) + " after framing pass, not " + hex(leaves[index].Expected));
+    }
+    require(framing.Report.RedZoneFunctions == leaves.size() && framing.Report.Framed == 0 && framing.Sites.empty() && framing.Displacements.empty(),
+            "a leaf with a direct rsp operand was framed");
+    require(framing.Report.Skipped.at("other use of rsp") == leaves.size(),
+            "not every leaf with a direct rsp operand was skipped as another use of rsp");
 }
 
 }
@@ -469,8 +538,12 @@ int main() {
         require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
         const auto widened = runLeaves(widenedLeaves());
         require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
+        verifySkippedLeaves(skippedDirectRspLeaves());
         std::cout << "red-zone framer execution tests passed\n";
         return 0;
+    } catch (const SteppingDegraded& error) {
+        std::cout << "skipped: " << error.what() << '\n';
+        return 77;
     } catch (const std::exception& error) {
         std::cerr << "red-zone framer execution tests failed: " << error.what() << '\n';
         return 1;
