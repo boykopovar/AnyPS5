@@ -314,7 +314,6 @@ int APS5_VABI WKCookieManagerGetHostnamesWithCookies();
 int APS5_VABI WKCookieManagerSetClient();
 int APS5_VABI WKCookieManagerStartObservingCookieChanges();
 int APS5_VABI WKCookieManagerStopObservingCookieChanges();
-int APS5_VABI WKFormSubmissionListenerContinue();
 int APS5_VABI WKFrameCanShowMIMEType();
 int APS5_VABI WKFrameCopyMIMEType();
 int APS5_VABI WKFrameCopyProvisionalURL();
