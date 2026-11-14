@@ -13597,6 +13597,36 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
+void pipelineStoreRenderingModeTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto rendering = mockContext();
+    rendering.device = makeHandle<VkDevice>();
+    rendering.graphicsPipelineLibrary = true;
+    rendering.pipelineLinkTimeOptimization = false;
+    rendering.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    auto passes = rendering;
+    passes.graphicsPipelineLibrary = false;
+    passes.deviceProc = sampleLocationProc;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 211;
+    fragment.variantId = 212;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    std::array<std::uint32_t, 1> mainKey{41}, fragmentKey{42};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+    auto dynamic = CachedPipeline(rendering, State{}, VertexInputLayout{}, resources, shaders);
+    auto renderPass = CachedPipeline(passes, State{}, VertexInputLayout{}, resources, shaders);
+    Require(dynamic != renderPass, "the pipeline store gave a render-pass context the pipeline it built for dynamic rendering on the same device");
+    Require(CachedPipeline(rendering, State{}, VertexInputLayout{}, resources, shaders) == dynamic && CachedPipeline(passes, State{}, VertexInputLayout{}, resources, shaders) == renderPass, "the pipeline store did not keep one pipeline per rendering mode");
+    ClearCachedPipelines(rendering.device);
+    ClearPipelineLibraries(rendering.device);
+    dynamic.reset();
+    renderPass.reset();
+    Require(mock.live == 0, "pipeline store rendering mode tests leaked Vulkan objects");
+}
+
 // The pipeline store's bound without a GPU: 1536 configurations cycled through the default 1024
 // entries keep coming back after their eviction, so the bound doubles and a later pass finds every
 // pipeline resident; a bound set with APS5_PIPELINE_STORE_ENTRIES never moves.
@@ -14847,6 +14877,10 @@ int main(int argc, char** argv) {
             std::cout << "a touched pipeline is returned as a hit and stays recently used\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-rendering-mode") {
+            pipelineStoreRenderingModeTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-lazy-buffer-pool") {
             pipelineStoreLazyBufferPoolTests();
             std::cout << "cached pipelines survive lazy buffer pool creation\n";
@@ -15156,6 +15190,7 @@ int main(int argc, char** argv) {
         stateTests();
         unitFlagsTests();
         pipelineStoreLazyBufferPoolTests();
+        pipelineStoreRenderingModeTests();
         retainedPixelStageTests();
         pipelineLibrarySetTests();
         pipelineLibraryClearWaitsForBuildTests();

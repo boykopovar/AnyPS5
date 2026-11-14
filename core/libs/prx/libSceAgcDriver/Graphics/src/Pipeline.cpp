@@ -1117,6 +1117,7 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
     const auto capacity = 512 + sizeof(State) + sizeof(Context) + shaders.size() * 64 + input.bindings.size() * sizeof(VkVertexInputBindingDescription) + input.attributes.size() * sizeof(VkVertexInputAttributeDescription) + resources.mainKey.size_bytes() + resources.fragmentKey.size_bytes() + state.blends.size() * sizeof(VkPipelineColorBlendAttachmentState) + state.colors.size() * 64;
     KeyWriter key(storage, capacity);
     append(key, context.device);
+    append(key, context.graphicsPipelineLibrary);
     append(key, attachmentLayout);
     append(key, shaders.size());
     for (const auto& shader : shaders) {
