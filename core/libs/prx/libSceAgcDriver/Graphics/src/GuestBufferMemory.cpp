@@ -4865,14 +4865,7 @@ std::uint64_t HostImportsSettled() {
     return settledImports.load(std::memory_order_relaxed);
 }
 
-const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
-    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
-    ensurePinWaiter();
-    auto& state = Imports();
-    std::lock_guard lock(state.mutex);
-#ifdef _WIN32
-    settleUnwatchedImports(context, state);
-#endif
+static const HostImport* hostImportSettled(const Context& context, HostImports& state, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state)) {
         if (recentImportsEnabled()) {
@@ -4890,6 +4883,36 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
     return importAccess(context, state, address, address + bytes, lease, requester);
+}
+
+const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
+    ensurePinWaiter();
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+#ifdef _WIN32
+    settleUnwatchedImports(context, state);
+#endif
+    return hostImportSettled(context, state, address, bytes, requester);
+}
+
+const HostImport* HostImportForCached(const Context& context, std::uint64_t address, std::size_t bytes, HostImportLookupCache& cache) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
+    ensurePinWaiter();
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+#ifdef _WIN32
+    settleUnwatchedImports(context, state);
+#endif
+    if (cache.import != nullptr && cache.address == address && cache.bytes == bytes && cache.epoch == state.epoch && cache.inserts == state.inserted && !importsStale(context, state)) {
+        cache.import->lastUse = ++state.useCounter;
+        cache.import->lastUse = ++state.useCounter;
+        return cache.import;
+    }
+    const auto* entry = hostImportSettled(context, state, address, bytes, ImportRequester::Access);
+    if (entry != nullptr && !importsStale(context, state)) cache = {entry, address, bytes, state.epoch, state.inserted};
+    else cache = {};
+    return entry;
 }
 
 void RequireGpuLockBeforeImports(const char* where) {
