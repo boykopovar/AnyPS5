@@ -1717,3 +1717,9 @@ if(BUILD_TESTING)
 endif()
 
 include(prx/libSceBeisobmf/Tests.cmake)
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    add_test(NAME prx_tls_model COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_prx_tls_model.py
+        ${UNPATCHED_DIR} $<AND:$<BOOL:${ANYPS5_C_HAS_TLS_DESCRIPTORS}>,$<BOOL:${ANYPS5_CXX_HAS_TLS_DESCRIPTORS}>>)
+    set_tests_properties(prx_tls_model PROPERTIES TIMEOUT 60)
+endif()

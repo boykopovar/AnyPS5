@@ -31,6 +31,9 @@ function(add_jpeg_decoder target runtimeTarget)
                 -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
                 -DCMAKE_APPLE_SILICON_PROCESSOR=${CMAKE_APPLE_SILICON_PROCESSOR})
         endif()
+        if(ANYPS5_C_HAS_TLS_DESCRIPTORS)
+            list(APPEND jpeg_turbo_platform_args -DCMAKE_C_FLAGS=-mtls-dialect=gnu2)
+        endif()
         ExternalProject_Add(jpeg_turbo_external
             SOURCE_DIR "${PROJECT_SOURCE_DIR}/3rdparty/libjpeg-turbo"
             BINARY_DIR "${CMAKE_BINARY_DIR}/libjpeg-turbo-build"
