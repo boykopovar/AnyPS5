@@ -115,6 +115,7 @@ static void CheckScalarAtomic() {
     Require(Lines(dump, "LoadAddressU32").empty(), dump + "\nexpected no global loads from an LDS atomic");
     Require(dump.find("SetScalarRegister s6") != std::string::npos, dump + "\nexpected the 32-bit old value in s6");
     Require(dump.find("SetScalarRegister s10") != std::string::npos, dump + "\nexpected the 64-bit old value in s10");
+    ValidateProgram(program, false);
 }
 
 int main() {
