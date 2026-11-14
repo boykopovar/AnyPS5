@@ -8,9 +8,6 @@
 namespace ShaderRecompiler {
 
 void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin) {
-    if (program.WaveSize() != 64u) {
-        throw std::runtime_error(std::string(begin ? "s_subvector_loop_begin" : "s_subvector_loop_end") + " in a wave" + std::to_string(program.WaveSize()) + " shader is not measured, only wave64 subvector loops are supported");
-    }
     if (inst.destination.kind != RdnaOperandKind::ScalarRegister) {
         throw std::runtime_error(std::string(begin ? "s_subvector_loop_begin" : "s_subvector_loop_end") + " with a destination that is not an SGPR is not measured");
     }
