@@ -1,6 +1,7 @@
 # libSceIcu technical debt
 
 - [Binary property sets](../../../core/libs/prx/libSceIcu/Set.cpp) expose immutable borrowed ranges through the existing guest `USet` API. Properties that require ICU data files still throw. Ranges follow the bundled Unicode version, and console behavior is unmeasured.
+- [ISO comment output](../../../core/libs/prx/libSceIcu/Character.cpp) keeps the existing empty-comment and ICU error-status behavior, while reading status and writing the terminator/status through checked guest memory access. Unreadable status, nonwritable status when an update is needed, and nonwritable output fail through `NotImplemented_nid_no_patch` instead of dereferencing guest addresses; a null status still returns unchanged. Checked calls preserve `errno`. These invalid-pointer failure paths are host safety behavior, not PS5-measured error codes.
 
 ### Functional locale parsing and metadata
 
