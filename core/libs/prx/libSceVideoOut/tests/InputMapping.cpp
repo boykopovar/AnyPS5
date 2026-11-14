@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -80,6 +81,9 @@ void settingsParse() {
     bool crossOnF = false;
     for (const auto& binding : configuration.bindings) crossOnF = crossOnF || (binding.control == Pad::InputControl::Button && binding.button == Pad::PadButton::Cross && binding.key == SDL_SCANCODE_F);
     require(crossOnF, "bindings are read alongside settings");
+    useConfig("LeftStickDeadzone = -0\nRightStickDeadzone = -00\n");
+    const auto signedZero = Pad::LoadInputMapping();
+    require(signedZero.settings.leftStickDeadzonePercent == 0 && signedZero.settings.rightStickDeadzonePercent == 0, "a signed zero deadzone reads as 0");
 }
 
 void settingsReject() {
@@ -146,7 +150,7 @@ void padStatusBinding() {
     }
     require(padStatus == 1, "the pad status has more than one default input");
     require(onF9 == 1, "another default binding uses F9");
-    require(Pad::InputMapping.size() == 43, "the default bindings changed besides the pad status and host volume keys");
+    require(Pad::InputMapping.size() == 44, "the default bindings changed besides the pad status, host volume and reload keys");
     useConfig("ShowPadStatus = KEY:F4\n");
     const auto moved = Pad::LoadInputMapping();
     require(padStatusBindingsOn(moved, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(moved, SDL_SCANCODE_F9) == 0, "the pad status key moves to another key");
@@ -389,6 +393,25 @@ void stickModifier() {
     require(rejects("StickModifierScale = 0.5\nStickModifierScale = 0.6\n"), "a stick modifier scale given twice is rejected");
 }
 
+void wheelTilt() {
+    const auto tiltBindings = [](const Pad::InputConfiguration& configuration, Pad::PadButton button, int tilt) {
+        return std::count_if(configuration.bindings.begin(), configuration.bindings.end(), [button, tilt](const Pad::InputBinding& binding) {
+            return binding.control == Pad::InputControl::Button && binding.button == button && binding.wheelTilt == tilt && binding.wheelDirection == 0 &&
+                binding.key == SDL_SCANCODE_UNKNOWN && binding.mouseButton == Pad::MouseButton::None;
+        });
+    };
+    useConfig("Cross = KEY:F\n");
+    auto configuration = Pad::LoadInputMapping();
+    require(std::none_of(configuration.bindings.begin(), configuration.bindings.end(), [](const Pad::InputBinding& binding) { return binding.wheelTilt != 0; }), "no action tilts the wheel by default");
+    useConfig("Left = WHEEL:Left\nRight = WHEEL:right\nRight = WHEEL:RIGHT\nCross = WHEEL:Left\n");
+    configuration = Pad::LoadInputMapping();
+    require(tiltBindings(configuration, Pad::PadButton::Left, -1) == 1, "WHEEL:Left tilts the wheel left");
+    require(tiltBindings(configuration, Pad::PadButton::Right, 1) == 1, "WHEEL:Right tilts the wheel right once despite a repeated line");
+    require(tiltBindings(configuration, Pad::PadButton::Cross, -1) == 1, "a wheel tilt maps to any pad button");
+    require(rejects("LeftStickLeft = WHEEL:Left\n"), "a wheel tilt cannot move a stick");
+    require(rejects("Up = WHEEL:Sideways\n"), "an unknown wheel direction is rejected");
+}
+
 void keyboardRamp() {
     useConfig("Cross = KEY:F\n");
     require(Pad::LoadInputMapping().settings.keyboardRampMs == 0.0, "the keyboard ramp defaults to 0");
@@ -410,6 +433,59 @@ void triggerRamp() {
     require(rejects("TriggerRampMs = -5\n"), "a negative trigger ramp is rejected");
     require(rejects("TriggerRampMs = 2500\n"), "a trigger ramp above 2000 is rejected");
     require(rejects("TriggerRampMs = 10\ntriggerrampms = 20\n"), "a trigger ramp given twice is rejected");
+}
+
+void writeProfile(const std::string& titleId, const std::string& text) {
+    std::ofstream file(root / Pad::InputProfileName(titleId), std::ios::binary | std::ios::trunc);
+    file << text;
+    require(file.good(), "write the input profile");
+}
+
+bool crossOnKey(const Pad::InputConfiguration& configuration, SDL_Scancode key) {
+    std::size_t crossBindings = 0;
+    bool onKey = false;
+    for (const auto& binding : configuration.bindings) {
+        if (binding.control != Pad::InputControl::Button || binding.button != Pad::PadButton::Cross || binding.key == SDL_SCANCODE_UNKNOWN) continue;
+        ++crossBindings;
+        onKey = onKey || binding.key == key;
+    }
+    return crossBindings == 1 && onKey;
+}
+
+void profileNames() {
+    require(Pad::InputProfileName("PPSA00001") == "anyps5-input.PPSA00001.ini", "a title ID names its profile");
+    require(Pad::InputProfileName("CUSA_01-x") == "anyps5-input.CUSA_01-x.ini", "underscores and dashes are allowed");
+    require(Pad::InputProfileName("").empty(), "an empty title ID has no profile");
+    require(Pad::InputProfileName("../PPSA00001").empty(), "a title ID with a path separator has no profile");
+    require(Pad::InputProfileName("PPSA00001.ini").empty(), "a title ID with a dot has no profile");
+    require(Pad::InputProfileName(std::string(Pad::MaxTitleIdLength + 1, 'A')).empty(), "a title ID over the length limit has no profile");
+}
+
+void profileOverridesShared() {
+    useConfig("MouseSensitivity = 2\nCross = KEY:F\n");
+    writeProfile("PPSA00001", "MouseSensitivity = 4\nMouseCurve = 2\nCross = KEY:G\n");
+    const auto profiled = Pad::LoadInputMapping("PPSA00001");
+    require(profiled.settings.mouseSensitivity == 4.0 && profiled.settings.mouseCurve == 2.0, "a profile overrides and adds settings");
+    require(crossOnKey(profiled, SDL_SCANCODE_G), "a profile replaces the bindings of an action it lists");
+    const auto other = Pad::LoadInputMapping("PPSA00002");
+    require(other.settings.mouseSensitivity == 2.0 && other.settings.mouseCurve == 1.0 && crossOnKey(other, SDL_SCANCODE_F), "another title keeps the shared file");
+    const auto none = Pad::LoadInputMapping();
+    require(none.settings.mouseSensitivity == 2.0 && crossOnKey(none, SDL_SCANCODE_F), "no title ID keeps the shared file");
+    writeProfile("PPSA00001", "MouseCurve = 3\n");
+    const auto partial = Pad::LoadInputMapping("PPSA00001");
+    require(partial.settings.mouseSensitivity == 2.0 && partial.settings.mouseCurve == 3.0 && crossOnKey(partial, SDL_SCANCODE_F), "a profile keeps what it does not list");
+    writeProfile("PPSA00001", "MouseSensitivity = 4\n");
+    require(Pad::LoadInputMapping("PPSA00001").settings.mouseSensitivity == 4.0, "a profile may set a setting the shared file also sets");
+    writeProfile("PPSA00001", "MouseCurve = 9\n");
+    std::string message;
+    try {
+        Pad::LoadInputMapping("PPSA00001");
+    } catch (const std::runtime_error& error) {
+        message = error.what();
+    }
+    require(message.find("anyps5-input.PPSA00001.ini:1") != std::string::npos, "an invalid profile names its file and line");
+    require(Pad::LoadInputMapping("PPSA00002").settings.mouseCurve == 1.0, "an invalid profile does not affect other titles");
+    std::filesystem::remove(root / Pad::InputProfileName("PPSA00001"));
 }
 
 std::size_t toggleMouseBindings(const Pad::InputConfiguration& configuration, SDL_Scancode key, Pad::MouseButton button) {
@@ -456,6 +532,155 @@ void deadzoneShapesSticks() {
     require(rejected, "an out-of-range deadzone is rejected");
 }
 
+void snapshotSwap() {
+    Pad::InputConfiguration first;
+    first.settings.mouseSensitivity = 2.0;
+    Pad::InputMappingStore store(first);
+    const auto before = store.Snapshot();
+    const auto generation = store.Generation();
+    Pad::InputConfiguration second;
+    second.settings.mouseSensitivity = 3.0;
+    store.Publish(second);
+    require(before->settings.mouseSensitivity == 2.0, "a snapshot taken before a publish keeps its values");
+    require(store.Snapshot()->settings.mouseSensitivity == 3.0, "a publish replaces the snapshot");
+    require(store.Snapshot() != before, "readers get a new snapshot pointer after a publish");
+    require(store.Generation() == generation + 1, "a publish advances the generation");
+    require(store.Snapshot()->bindings.size() == 0 && store.Snapshot()->settings.mouseSensitivity == 3.0, "the published configuration is stored whole");
+}
+
+bool applyText(Pad::InputConfiguration& configuration, const std::string& text, std::string& message) {
+    std::istringstream stream(text);
+    try {
+        Pad::ApplyInputMapping(configuration, stream, "test.ini");
+    } catch (const std::runtime_error& error) {
+        message = error.what();
+        return false;
+    }
+    return true;
+}
+
+Pad::InputConfiguration defaultConfiguration() {
+    return Pad::InputConfiguration{{Pad::InputMapping.begin(), Pad::InputMapping.end()}, {}};
+}
+
+bool sameBinding(const Pad::InputBinding& left, const Pad::InputBinding& right) {
+    return left.key == right.key && left.mouseButton == right.mouseButton && left.control == right.control && left.button == right.button && left.wheelDirection == right.wheelDirection;
+}
+
+bool sameConfiguration(const Pad::InputConfiguration& left, const Pad::InputConfiguration& right) {
+    if (left.bindings.size() != right.bindings.size()) return false;
+    for (std::size_t index = 0; index < left.bindings.size(); ++index) {
+        if (!sameBinding(left.bindings[index], right.bindings[index])) return false;
+    }
+    const auto& a = left.settings;
+    const auto& b = right.settings;
+    return a.leftStickDeadzonePercent == b.leftStickDeadzonePercent && a.rightStickDeadzonePercent == b.rightStickDeadzonePercent && a.mouseSensitivity == b.mouseSensitivity && a.mouseVerticalScale == b.mouseVerticalScale && a.mouseCurve == b.mouseCurve && a.mouseDeadzoneOffset == b.mouseDeadzoneOffset && a.mouseMaxSpeed == b.mouseMaxSpeed && a.mouseSmoothingMs == b.mouseSmoothingMs && a.mouseDecayMs == b.mouseDecayMs && a.stickModifierScale == b.stickModifierScale && a.keyboardRampMs == b.keyboardRampMs && a.triggerRampMs == b.triggerRampMs && a.mouseControlsRightStick == b.mouseControlsRightStick;
+}
+
+void parserValidText() {
+    auto configuration = defaultConfiguration();
+    std::string message;
+    require(applyText(configuration, "Cross = KEY:F\nMouseSensitivity = 2\n", message), "a valid text is accepted");
+    require(crossOnKey(configuration, SDL_SCANCODE_F) && configuration.settings.mouseSensitivity == 2.0, "a valid text is applied");
+    require(applyText(configuration, "", message) && crossOnKey(configuration, SDL_SCANCODE_F), "an empty text keeps the configuration");
+}
+
+void parserInvalidText() {
+    const std::array<std::string, 4> bad{"Cross KEY:F\n", "NoSuchAction = KEY:F\n", "Cross = KEY:NoSuchKey\n", "MouseSensitivity = fast\n"};
+    for (const auto& text : bad) {
+        auto configuration = defaultConfiguration();
+        std::string message;
+        require(!applyText(configuration, text, message), "an invalid text is rejected");
+        require(message.find("test.ini:1") != std::string::npos, "an invalid line names the source and the line");
+    }
+    auto configuration = defaultConfiguration();
+    std::string message;
+    require(!applyText(configuration, "Cross = KEY:F\nMouseCurve = 9\n", message), "an invalid second line is rejected");
+    require(message.find("test.ini:2") != std::string::npos, "the second line is named");
+}
+
+void parserPartialText() {
+    auto configuration = defaultConfiguration();
+    std::string message;
+    require(!applyText(configuration, "Cross = KEY:F\nCircle = KEY:", message), "a text cut inside a source is rejected");
+    require(message.find("test.ini:2") != std::string::npos, "the cut line is named");
+    require(!applyText(configuration, "Cross = KEY:F\nCircle", message), "a text cut before the equals sign is rejected");
+    require(message.find("test.ini:2") != std::string::npos, "a line without a separator is named");
+    auto copy = defaultConfiguration();
+    require(!applyText(copy, "MouseSensitivity = 4\nCross = KEY:", message), "a truncated text is rejected");
+    require(copy.settings.mouseSensitivity == 4.0, "a failed text leaves the lines before the error applied, so callers parse into a copy and swap only on success");
+}
+
+void reloadInputMappingAction() {
+    useConfig("Cross = KEY:F\n");
+    const auto keys = keysFor(Pad::InputControl::ReloadInputMapping);
+    require(keys.size() == 1 && keys[0] == SDL_SCANCODE_F1, "F1 is the only default ReloadInputMapping key");
+    useConfig("ReloadInputMapping = KEY:F3\nreloadinputmapping = key:f2\n");
+    const auto moved = keysFor(Pad::InputControl::ReloadInputMapping);
+    require(moved.size() == 2 && hasKey(moved, SDL_SCANCODE_F3) && hasKey(moved, SDL_SCANCODE_F2) && !hasKey(moved, SDL_SCANCODE_F1), "a ReloadInputMapping line replaces F1 and keeps alternates");
+    require(rejects("ReloadInputMapping = MOUSE:Left\n"), "ReloadInputMapping refuses a mouse button");
+    require(rejects("ReloadInputMapping = WHEEL:Up\n"), "ReloadInputMapping refuses the mouse wheel");
+}
+
+void reloadErrorNamesLine() {
+    useConfig("Cross = KEY:F\nMouseCurve = 9\n");
+    auto configuration = defaultConfiguration();
+    const auto before = configuration;
+    std::string error;
+    require(!Pad::TryLoadInputMapping("", configuration, error), "a reload of an invalid file fails");
+    require(error.find("anyps5-input.ini:2") != std::string::npos && error.find("mouse curve") != std::string::npos, "a reload error names the file, the line and the reason");
+    require(sameConfiguration(configuration, before), "a failed reload does not touch the target configuration");
+    useConfig("Cross = KEY:F\n");
+    require(Pad::TryLoadInputMapping("", configuration, error) && crossOnKey(configuration, SDL_SCANCODE_F), "a valid file reloads");
+}
+
+std::uint32_t padChordOf(const Pad::InputConfiguration& configuration, Pad::InputControl control) {
+    for (const auto& binding : configuration.bindings) {
+        if (binding.control == control && binding.padButtons != 0) return binding.padButtons;
+    }
+    return 0;
+}
+
+void padChordParse() {
+    useConfig("ToggleFullscreen = PAD:Options+R1\nScreenshot = pad:l1\n");
+    const auto configuration = Pad::LoadInputMapping();
+    const auto fullscreen = static_cast<std::uint32_t>(Pad::PadButton::Options) | static_cast<std::uint32_t>(Pad::PadButton::R1);
+    require(padChordOf(configuration, Pad::InputControl::ToggleFullscreen) == fullscreen, "a pad chord is a mask of its buttons");
+    require(padChordOf(configuration, Pad::InputControl::Screenshot) == static_cast<std::uint32_t>(Pad::PadButton::L1), "a single pad button is a chord");
+    require(keysFor(Pad::InputControl::ToggleFullscreen).size() == 0, "a pad chord does not bind a key");
+    useConfig("ReloadInputMapping = PAD:L1\n");
+    require(padChordOf(Pad::LoadInputMapping(), Pad::InputControl::ReloadInputMapping) == static_cast<std::uint32_t>(Pad::PadButton::L1), "ReloadInputMapping takes a pad chord");
+    require(rejects("Cross = PAD:L1\n"), "a pad chord cannot trigger a pad button");
+    require(rejects("ToggleMouse = PAD:L1\n"), "a pad chord cannot trigger ToggleMouse");
+    require(rejects("ToggleFullscreen = PAD:Options+\n"), "a pad chord with an empty button is rejected");
+    require(rejects("ToggleFullscreen = PAD:+R1\n"), "a pad chord with a leading plus is rejected");
+    require(rejects("ToggleFullscreen = PAD:Nope\n"), "a pad chord with an unknown button is rejected");
+    require(rejects("ToggleFullscreen = PAD:\n"), "an empty pad chord is rejected");
+}
+
+void watchStampsAndDebounce() {
+    useConfig("Cross = KEY:F\n");
+    const auto first = Pad::InputMappingFileStamp("");
+    require(first.shared.present && !first.profile.present, "the shared file has a stamp and a missing profile has none");
+    Pad::InputMappingWatch watch(first);
+    require(!watch.Poll(first), "an unchanged file is not reloaded");
+    useConfig("Cross = KEY:G\nMouseCurve = 2\n");
+    const auto changed = Pad::InputMappingFileStamp("");
+    require(changed != first, "a rewritten file changes its stamp");
+    require(!watch.Poll(changed), "a change waits one poll before it is reloaded");
+    require(watch.Poll(changed), "a settled change is reloaded once");
+    require(!watch.Poll(changed), "a reloaded change is not reloaded again");
+    useConfig("Cross = KEY:H\n");
+    const auto moving = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(moving), "a file still being written is not reloaded");
+    useConfig("Cross = KEY:HH\nCircle = KEY:J\n");
+    const auto settled = Pad::InputMappingFileStamp("");
+    require(!watch.Poll(settled), "a change in the middle of a write restarts the wait");
+    require(watch.Poll(settled), "the last version is reloaded once it settles");
+    std::filesystem::remove(root / "anyps5-input.ini");
+    require(!Pad::InputMappingFileStamp("").shared.present, "a removed file has no stamp");
+}
+
 }
 
 int main() try {
@@ -464,6 +689,7 @@ int main() try {
     settingsDefault();
     settingsParse();
     settingsReject();
+    wheelTilt();
     performanceOverlayBinding();
     screenshotBinding();
     padStatusBinding();
@@ -483,10 +709,20 @@ int main() try {
     stickModifier();
     keyboardRamp();
     triggerRamp();
+    profileNames();
+    profileOverridesShared();
     toggleMouseDefaults();
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();
+    snapshotSwap();
+    parserValidText();
+    parserInvalidText();
+    parserPartialText();
+    reloadInputMappingAction();
+    reloadErrorNamesLine();
+    padChordParse();
+    watchStampsAndDebounce();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;

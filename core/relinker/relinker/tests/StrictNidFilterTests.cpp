@@ -127,6 +127,124 @@ void addressSizeOverrideImport() {
     require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x100002000ull}, "RIP-relative import lost its full 64-bit address");
 }
 
+std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input);
+
+void ripDisplacementOverflowUnderflowBounds() {
+    constexpr auto maxVaddr = std::numeric_limits<std::uint64_t>::max();
+
+    auto input = fixture();
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x2000));
+    emit(input, 6, {0xC3});
+    const auto callUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {callUnderflow};
+    const std::vector<Relinker::NidReference> callUnderflowRefs = {{"live", {}, 7, 0x300, callUnderflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{callUnderflow}, "Call RIP-relative displacement underflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(callUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed call RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(0x1000));
+    emit(input, 6, {0xC3});
+    const auto callOverflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {callOverflow};
+    const std::vector<Relinker::NidReference> callOverflowRefs = {{"live", {}, 7, 0x300, callOverflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{callOverflow}, "Call RIP-relative displacement overflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(callOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed call RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x25});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x2000));
+    emit(input, 6, {0xC3});
+    const auto jmpUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {jmpUnderflow};
+    const std::vector<Relinker::NidReference> jmpUnderflowRefs = {{"live", {}, 7, 0x300, jmpUnderflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{jmpUnderflow}, "Jump RIP-relative displacement underflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(jmpUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed jump RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x25});
+    write(input.Text, 2, static_cast<std::int32_t>(0x1000));
+    emit(input, 6, {0xC3});
+    const auto jmpOverflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {jmpOverflow};
+    const std::vector<Relinker::NidReference> jmpOverflowRefs = {{"live", {}, 7, 0x300, jmpOverflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{jmpOverflow}, "Jump RIP-relative displacement overflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(jmpOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed jump RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x48, 0x8D, 0x05});
+    write(input.Text, 3, static_cast<std::int32_t>(-0x2000));
+    emit(input, 7, {0xC3});
+    const auto leaUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {leaUnderflow};
+    const std::vector<Relinker::NidReference> leaUnderflowRefs = {{"live", {}, 7, 0x300, leaUnderflow, 0}};
+    const auto leaUnderflowResult = AnalyzeStrictReachability(input);
+    require(leaUnderflowResult.ImportSlots == std::set<std::uint64_t>{leaUnderflow}, "LEA RIP-relative displacement underflow did not retain its import");
+    require(leaUnderflowResult.AddressTakenRoots == 1, "LEA RIP-relative displacement underflow did not add an address-taken root");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(leaUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed LEA RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x48, 0x8D, 0x05});
+    write(input.Text, 3, static_cast<std::int32_t>(0x1000));
+    emit(input, 7, {0xC3});
+    const auto leaOverflow = static_cast<std::uint64_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {leaOverflow};
+    const std::vector<Relinker::NidReference> leaOverflowRefs = {{"live", {}, 7, 0x300, leaOverflow, 0}};
+    const auto leaOverflowResult = AnalyzeStrictReachability(input);
+    require(leaOverflowResult.ImportSlots == std::set<std::uint64_t>{leaOverflow}, "LEA RIP-relative displacement overflow did not retain its import");
+    require(leaOverflowResult.AddressTakenRoots == 1, "LEA RIP-relative displacement overflow did not add an address-taken root");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(leaOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed LEA RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x1006));
+    emit(input, 6, {0xC3});
+    input.ImportSlots = {0};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0}, "RIP-relative displacement to address 0 was not resolved");
+
+    constexpr auto maxTarget = std::numeric_limits<std::uint64_t>::max();
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxTarget - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(26));
+    emit(input, 6, {0xC3});
+    input.ImportSlots = {maxTarget};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{maxTarget}, "RIP-relative displacement to maximum address was not resolved");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x67, 0xFF, 0x15});
+    write(input.Text, 3, static_cast<std::int32_t>(-0x2000));
+    emit(input, 7, {0xC3});
+    const auto eipWrappedTarget = static_cast<std::uint32_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {eipWrappedTarget};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{eipWrappedTarget}, "EIP-relative displacement underflow did not wrap modulo 2^32");
+}
+
 void callbackAndRelocationRoots() {
     auto input = fixture();
     ripOperand(input, 0, {0x48, 0x8D, 0x3D}, 0x1020);
@@ -390,6 +508,114 @@ std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input) {
     write<std::uint64_t>(bytes, 160, 0x100);
     std::copy(input.Text.begin(), input.Text.end(), bytes.begin() + 0x200);
     return bytes;
+}
+
+void filterSegmentRelativeImports() {
+    for (const std::uint8_t segment : {0x00, 0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65}) {
+        for (const bool address32 : {false, true}) {
+            for (const std::uint8_t operation : {0x15, 0x25, 0x8b, 0x8d}) {
+                auto input = fixture();
+                input.Text.assign(32, 0);
+                input.TextVaddr = 0x100001000ull;
+                input.Entries = {input.TextVaddr};
+                input.ImportSlots = {0x2000, 0x100002000ull};
+                std::vector<std::uint8_t> instruction;
+                instruction.reserve(15);
+                if (segment != 0) instruction.push_back(segment);
+                if (address32) instruction.push_back(0x67);
+                if (operation == 0x8b || operation == 0x8d)
+                    instruction.insert(instruction.end(), {0x48, operation, 0x05});
+                else
+                    instruction.insert(instruction.end(), {0xff, operation});
+                const auto displacementOffset = instruction.size();
+                instruction.resize(displacementOffset + 4);
+                const auto next = instruction.size();
+                write(instruction, displacementOffset, static_cast<std::int32_t>(0x100002000ull - input.TextVaddr - next));
+                std::copy(instruction.begin(), instruction.end(), input.Text.begin());
+                input.Text[next] = 0xc3;
+                const auto target = address32 ? 0x2000ull : 0x100002000ull;
+                const bool resolved = operation == 0x8d || (segment != 0x64 && segment != 0x65);
+                const auto expected = resolved ? std::set<std::uint64_t>{target} : input.ImportSlots;
+                require(AnalyzeStrictReachability(input).ImportSlots == expected,
+                        "Strict filter lost a possible segment-relative import");
+                auto bytes = elfFixture(input);
+                write<std::uint16_t>(bytes, 56, 3);
+                write<std::uint32_t>(bytes, 176, 1);
+                write<std::uint32_t>(bytes, 180, 6);
+                write<std::uint64_t>(bytes, 184, 0x380);
+                write<std::uint64_t>(bytes, 192, 0x100002000ull);
+                write<std::uint64_t>(bytes, 208, 0x80);
+                write<std::uint64_t>(bytes, 216, 0x80);
+                const std::vector<Relinker::NidReference> references = {
+                    {"low", {}, 6, 0x300, 0x2000, 0}, {"high", {}, 6, 0x318, 0x100002000ull, 0}};
+                for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
+                    const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr);
+                    std::set<std::uint64_t> keptSlots;
+                    for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
+                    require(keptSlots == expected, "ELF filter lost a possible segment-relative import");
+                }
+            }
+        }
+    }
+}
+
+void segmentRelativeBaseAndReachability() {
+    for (const std::uint8_t segment : {0x64, 0x65}) {
+        for (const bool address32 : {false, true}) {
+            for (const bool relative : {false, true}) {
+                auto input = fixture();
+                std::vector<std::uint8_t> instruction{segment};
+                instruction.reserve(15);
+                if (address32) instruction.push_back(0x67);
+                instruction.insert(instruction.end(), {0x48, 0x8b});
+                if (relative) {
+                    instruction.push_back(0x05);
+                    const auto displacementOffset = instruction.size();
+                    instruction.resize(displacementOffset + 4);
+                    write(instruction, displacementOffset, static_cast<std::int32_t>(0x2000 - input.TextVaddr - 16 - instruction.size()));
+                } else {
+                    instruction.push_back(0x00);
+                }
+                std::copy(instruction.begin(), instruction.end(), input.Text.begin() + 16);
+                input.Text[16 + instruction.size()] = 0xc3;
+                input.Text[0] = 0xc3;
+                const std::vector<Relinker::NidReference> references = {
+                    {"zeroBase", {}, 6, 0x300, 0x2000, 0}, {"nonzeroBase", {}, 6, 0x318, 0x2008, 0}};
+                for (const bool reachable : {false, true}) {
+                    if (reachable) input.Entries[0] = input.TextVaddr + 16;
+                    const auto expected = reachable ? input.ImportSlots : std::set<std::uint64_t>{};
+                    const auto analysis = AnalyzeStrictReachability(input);
+                    require(analysis.ImportSlots == expected, "Strict filter lost unknown-base imports or treated dead access as live");
+                    const auto bytes = elfFixture(input);
+                    for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
+                        const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr);
+                        std::set<std::uint64_t> keptSlots;
+                        for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
+                        require(keptSlots == expected, "ELF filter lost unknown-base imports or treated dead access as live");
+                        if (reachable) {
+                            for (const std::uint64_t segmentBase : {0, 8}) {
+                                const auto linearAddress = segmentBase + 0x2000;
+                                require(keptSlots.contains(linearAddress), "Valid zero/nonzero-base import access was removed");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (const auto opcode : {std::vector<std::uint8_t>{0x48, 0x8b, 0xc0}, std::vector<std::uint8_t>{0x0f, 0x1f, 0x00}}) {
+        for (const std::uint8_t segment : {0x64, 0x65}) {
+            auto input = fixture();
+            input.Text[0] = segment;
+            std::copy(opcode.begin(), opcode.end(), input.Text.begin() + 1);
+            input.Text[opcode.size() + 1] = 0xc3;
+            require(AnalyzeStrictReachability(input).ImportSlots.empty(), "Non-memory segment prefix disabled strict filtering");
+            const auto bytes = elfFixture(input);
+            const std::vector<Relinker::NidReference> references = {{"dead", {}, 6, 0x300, 0x2000, 0}};
+            require(Relinker::MakeUnusedNidFilter()->Filter(references, bytes, input.Text, input.TextVaddr).empty(),
+                    "Non-memory segment prefix disabled CFG filtering");
+        }
+    }
 }
 
 void filterCallbackDataImports() {
@@ -1166,6 +1392,57 @@ void negativeRelativeRelocationTarget() {
             "Strict filter rejected a valid relative relocation target address");
 }
 
+void absoluteFunctionSymbols() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    importThunk(input, 16, 0x2000);
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 4);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x40);
+    write<std::uint64_t>(bytes, 216, 0x40);
+    write<std::uint64_t>(bytes, 224, 8);
+    write<std::uint32_t>(bytes, 232, 0x61000000);
+    write<std::uint32_t>(bytes, 236, 4);
+    write<std::uint64_t>(bytes, 240, 0x500);
+    write<std::uint64_t>(bytes, 264, 0x500);
+    write<std::uint64_t>(bytes, 272, 0x500);
+    write<std::uint64_t>(bytes, 280, 0x10);
+    write<std::int64_t>(bytes, 0x300, 0x61000039);
+    write<std::uint64_t>(bytes, 0x308, 0x100);
+    write<std::int64_t>(bytes, 0x310, 0x6100003B);
+    write<std::uint64_t>(bytes, 0x318, 24);
+    write<std::int64_t>(bytes, 0x320, 0x6100003F);
+    write<std::uint64_t>(bytes, 0x328, 48);
+    const std::vector<Relinker::NidReference> references = {{"dead", {}, 6, 0x900, 0x2000, 0}};
+
+    write<std::uint8_t>(bytes, 0x61C, 0x12);
+    write<std::uint16_t>(bytes, 0x61E, 1);
+    write<std::uint64_t>(bytes, 0x620, 0x1010);
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
+            "Strict filter dropped an import used by a regular exported function");
+
+    for (const std::uint8_t binding : {std::uint8_t{1}, std::uint8_t{2}}) {
+        for (const std::uint64_t constant : {std::uint64_t{0x123456789}, std::uint64_t{0x1010}, std::uint64_t{0}}) {
+            write<std::uint8_t>(bytes, 0x61C, static_cast<std::uint8_t>((binding << 4) | 2));
+            write<std::uint16_t>(bytes, 0x61E, 0xFFF1);
+            write<std::uint64_t>(bytes, 0x620, constant);
+            require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).empty(),
+                    "Strict filter treated an SHN_ABS function symbol as a code entry point");
+        }
+    }
+
+    write<std::uint8_t>(bytes, 0x61C, 0x1A);
+    write<std::uint16_t>(bytes, 0x61E, 0xFFF1);
+    write<std::uint64_t>(bytes, 0x620, 0x123456789);
+    requireFailure([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr); },
+                   "Strict filter accepted an SHN_ABS IFUNC symbol");
+}
+
 }
 
 int main() {
@@ -1175,6 +1452,7 @@ int main() {
         conditionalTailCall();
         fallthroughAfterZeroPadding();
         addressSizeOverrideImport();
+        ripDisplacementOverflowUnderflowBounds();
         callbackAndRelocationRoots();
         registerImportCall();
         mergedJumpTable();
@@ -1186,6 +1464,8 @@ int main() {
         vectorInstructionLengths();
         exceptionLandingPads();
         exceptionDataWithoutPersonality();
+        filterSegmentRelativeImports();
+        segmentRelativeBaseAndReachability();
         filterCallbackDataImports();
         filterAndPltCompaction();
         relativeTableTargetsBounds();
@@ -1195,6 +1475,7 @@ int main() {
         duplicatePointerRelocations();
         constructorArrayBounds();
         negativeRelativeRelocationTarget();
+        absoluteFunctionSymbols();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

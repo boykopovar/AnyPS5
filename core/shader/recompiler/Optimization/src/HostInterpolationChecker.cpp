@@ -64,7 +64,22 @@ bool sameParameter(const IrValue& left, const IrValue& right) {
     return left.Argument(0)->Resolve()->ImmediateU32() == right.Argument(0)->Resolve()->ImmediateU32() && left.Argument(1)->Resolve()->ImmediateU32() == right.Argument(1)->Resolve()->ImmediateU32();
 }
 
-bool exact(const IrValue& inst, const IrProgram& program, const ShaderPixelInputInfo& pixel, std::vector<IrValue*>& selects) {
+std::uint32_t firstVertexInputs(const IrProgram& program, const ShaderPixelInputInfo& pixel) {
+    std::uint32_t firstVertex = 0;
+    std::uint32_t other = 0;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() != IrOpcode::GetInterpolationParameter && inst->Opcode() != IrOpcode::GetInterpolationParameterF16) continue;
+            const auto input = inst->Argument(0)->Resolve()->ImmediateU32();
+            if (input >= 32u || !pixel.InputIsPassthrough(input) || pixel.InputIsDefault(input)) continue;
+            const bool vertexZero = inst->Opcode() == IrOpcode::GetInterpolationParameter && inst->Argument(2)->Resolve()->ImmediateU32() == 2u;
+            (vertexZero ? firstVertex : other) |= 1u << input;
+        }
+    }
+    return firstVertex & ~other;
+}
+
+bool exact(const IrValue& inst, const IrProgram& program, const ShaderPixelInputInfo& pixel, std::uint32_t firstVertex, std::vector<IrValue*>& selects) {
     if (inst.Opcode() == IrOpcode::InterpolateHostP1) {
         return usesAll(inst, [&](const IrValue& user, std::size_t operand) {
             if (user.Opcode() == IrOpcode::InterpolateHostP2 && operand == 3u) return true;
@@ -75,7 +90,7 @@ bool exact(const IrValue& inst, const IrProgram& program, const ShaderPixelInput
     }
     if (inst.Opcode() == IrOpcode::GetInterpolationParameter) {
         const auto input = inst.Argument(0)->Resolve()->ImmediateU32();
-        return pixel.InputIsDefault(input) || (inst.Argument(2)->Resolve()->ImmediateU32() == 2u && pixel.InputIsFlat(input));
+        return pixel.InputIsDefault(input) || (inst.Argument(2)->Resolve()->ImmediateU32() == 2u && (pixel.InputIsFlat(input) || (input < 32u && (firstVertex >> input & 1u) != 0u)));
     }
     if (inst.Opcode() != IrOpcode::InterpolateHostP2) return true;
     const auto* partial = partialOf(inst);
@@ -85,7 +100,7 @@ bool exact(const IrValue& inst, const IrProgram& program, const ShaderPixelInput
     return isBarycentric(*lookThrough(partial->Argument(2)), kind, 0u) && isBarycentric(*lookThrough(inst.Argument(2)), kind, 1u);
 }
 
-bool sharesSlots(const IrProgram& program, const ShaderPixelInputInfo& pixel) {
+bool sharesSlots(const IrProgram& program, const ShaderPixelInputInfo& pixel, std::uint32_t firstVertex) {
     constexpr std::uint32_t unassigned = 3u;
     std::array<std::uint32_t, 32> interpolation {};
     interpolation.fill(unassigned);
@@ -95,7 +110,7 @@ bool sharesSlots(const IrProgram& program, const ShaderPixelInputInfo& pixel) {
             if (inst->Opcode() != IrOpcode::GetAttribute && inst->Opcode() != IrOpcode::GetInterpolationParameter) continue;
             const auto input = inst->Argument(0)->Resolve()->ImmediateU32();
             if (input >= pixel.inputNum || pixel.InputIsDefault(input)) continue;
-            const auto mode = pixel.InputIsFlat(input) ? 2u : pixel.InputIsLinear(input, metadata.pixelLinearInputs, metadata.pixelPerspectiveInputs) ? 1u : 0u;
+            const auto mode = pixel.InputIsFlat(input) || (input < 32u && (firstVertex >> input & 1u) != 0u) ? 2u : pixel.InputIsLinear(input, metadata.pixelLinearInputs, metadata.pixelPerspectiveInputs) ? 1u : 0u;
             auto& slot = interpolation[pixel.InputSlot(input)];
             if (slot != unassigned && slot != mode) return true;
             slot = mode;
@@ -106,14 +121,16 @@ bool sharesSlots(const IrProgram& program, const ShaderPixelInputInfo& pixel) {
 
 }
 
-bool HostInterpolationChecker::Lower(IrProgram& program, const ShaderPixelInputInfo& pixel, bool barycentricBuiltins) const {
+bool HostInterpolationChecker::Lower(IrProgram& program, const ShaderPixelInputInfo& pixel, bool barycentricBuiltins, bool firstVertexFlat) const {
+    if ((program.Metadata().pixelLinearInputs & program.Metadata().pixelPerspectiveInputs) != 0u) return false;
+    const auto firstVertex = firstVertexFlat ? firstVertexInputs(program, pixel) : 0u;
     std::vector<IrValue*> selects;
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
-            if (!exact(*inst, program, pixel, selects)) return false;
+            if (!exact(*inst, program, pixel, firstVertex, selects)) return false;
         }
     }
-    if (sharesSlots(program, pixel)) return false;
+    if (sharesSlots(program, pixel, firstVertex)) return false;
     for (auto* select : selects) select->ReplaceAllUsesWith(select->Argument(2));
     for (const auto& block : program.Blocks()) {
         auto& instructions = block->Instructions();
@@ -141,7 +158,9 @@ bool HostInterpolationChecker::Lower(IrProgram& program, const ShaderPixelInputI
             (kind == StageInputKind::BaryCoordSmooth ? smooth : noPerspective) = true;
         }
     }
-    return !(smooth && noPerspective);
+    if (smooth && noPerspective) return false;
+    program.Metadata().pixelFirstVertexInputs = firstVertex;
+    return true;
 }
 
 }

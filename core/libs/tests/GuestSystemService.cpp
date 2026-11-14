@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -108,6 +109,12 @@ void TestBigAppList(TList list) {
     Require(list(nullptr, 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(appIds, 2, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(nullptr, 0, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(list(reinterpret_cast<std::int32_t*>(0x10), 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    errno = 71;
+    Require(list(appIds, 2, reinterpret_cast<std::uint32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(appIds[0] == Sentinel && appIds[1] == Sentinel && count == 0xdeadbeefu);
 }
 
@@ -127,6 +134,26 @@ void TestRunningAppUser() {
     TestRunningAppAnswer<std::int32_t>(sceLncUtilGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<std::int32_t>(sceSystemServiceGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<std::int32_t>(sceShellCoreUtilGetUserFocus, USER_SERVICE_INITIAL_USER_ID, Sentinel, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+void TestShellCoreUtilLeafCalls() {
+    sceShellCoreUtilLaunchByUriParamInit(nullptr);
+    Require(sceShellCoreUtilDebugGetNumberOfCffItems(nullptr) == static_cast<int>(0x80e30005u));
+    for (const unsigned char fill : {static_cast<unsigned char>(0xaa), static_cast<unsigned char>(0x00), static_cast<unsigned char>(0xff)}) {
+        unsigned char buffer[24];
+        std::memset(buffer, fill, sizeof(buffer));
+        sceShellCoreUtilLaunchByUriParamInit(buffer + 8);
+        const unsigned char launched[8] = {0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+        Require(std::memcmp(buffer + 8, launched, sizeof(launched)) == 0);
+        for (std::size_t i = 0; i < sizeof(buffer); ++i) Require(i >= 8 && i < 16 ? true : buffer[i] == fill);
+
+        std::memset(buffer, fill, sizeof(buffer));
+        Require(sceShellCoreUtilDebugGetNumberOfCffItems(reinterpret_cast<std::uint32_t*>(buffer + 8)) == 0);
+        std::uint32_t count = 0;
+        std::memcpy(&count, buffer + 8, sizeof(count));
+        Require(count == 50);
+        for (std::size_t i = 0; i < sizeof(buffer); ++i) Require(i >= 8 && i < 12 ? true : buffer[i] == fill);
+    }
 }
 
 void TestRunningAppState() {
@@ -223,6 +250,7 @@ void TestGpuLoadEmulationMode() {
 }
 
 int main() {
+    TestShellCoreUtilLeafCalls();
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReportAbnormalTermination(nullptr) == SYSTEM_SERVICE_OK);
@@ -314,7 +342,9 @@ int main() {
     Require(status.event_num == 0 && !status.is_system_ui_overlaid && !status.is_in_background_execution && !status.is_vr_play_area_overlaid);
     for (unsigned char byte : status.reserved) Require(byte == 0);
     Require(sceSystemServiceGetDisplaySafeAreaInfo(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
     Require(sceSystemServiceGetDisplaySafeAreaInfo(reinterpret_cast<SystemServiceDisplaySafeAreaInfo*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     SystemServiceDisplaySafeAreaInfo safeArea;
     std::memset(&safeArea, 0x5a, sizeof(safeArea));
     Require(sceSystemServiceGetDisplaySafeAreaInfo(&safeArea) == SYSTEM_SERVICE_OK);
@@ -327,10 +357,10 @@ int main() {
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableNoticeScreenSkipFlagAutoSet() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceHideSplashScreen() == SYSTEM_SERVICE_OK);
-    Require(sceSystemServiceReceiveEvent(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceReceiveEvent(nullptr) == SYSTEM_SERVICE_ERROR_NO_EVENT);
     SystemServiceEvent event;
     event.event_type = 7;
-    Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT);
+    Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT && event.event_type == 7);
     TestRunningBigApp();
     TestRunningAppUser();
     TestRunningAppState();

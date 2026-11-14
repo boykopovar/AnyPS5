@@ -1,5 +1,6 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <iomanip>
 #include <limits>
@@ -108,7 +109,34 @@ bool sameValue(const IrValue* left, const IrValue* right) {
     return false;
 }
 
-bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, const IrValue* right, std::vector<std::pair<const IrValue*, const IrValue*>>& visited) {
+class VisitedPairs {
+public:
+    using Pair = std::pair<const IrValue*, const IrValue*>;
+
+    [[nodiscard]] bool Contains(const Pair& entry) const {
+        const std::size_t inlined = std::min(count, Inline);
+        if (std::find(items.begin(), items.begin() + inlined, entry) != items.begin() + inlined) return true;
+        return std::find(spill.begin(), spill.end(), entry) != spill.end();
+    }
+
+    void Add(const Pair& entry) {
+        if (count < Inline) {
+            items[count++] = entry;
+            return;
+        }
+        spill.push_back(entry);
+        ++count;
+    }
+
+private:
+    static constexpr std::size_t Inline = 16;
+
+    std::array<Pair, Inline> items;
+    std::vector<Pair> spill;
+    std::size_t count = 0;
+};
+
+bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, const IrValue* right, VisitedPairs& visited) {
     if (left != nullptr) {
         left = left->Resolve();
     }
@@ -131,10 +159,10 @@ bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, con
         return false;
     }
     const auto entry = std::make_pair(left, right);
-    if (std::find(visited.begin(), visited.end(), entry) != visited.end()) {
+    if (visited.Contains(entry)) {
         return true;
     }
-    visited.push_back(entry);
+    visited.Add(entry);
     if (isRuntimeRead(left->Opcode())) {
         const auto leftIndex = left->Flags<MemoryFlags>().index;
         const auto rightIndex = right->Flags<MemoryFlags>().index;
@@ -743,30 +771,91 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
         fail("value IR contains an unreachable block");
     }
 
-    std::vector<std::vector<bool>> dominators(blockOrder.size(), std::vector<bool>(blockOrder.size(), true));
-    dominators.front().assign(blockOrder.size(), false);
-    dominators.front().front() = true;
-    bool changed = true;
-    while (changed) {
+    const auto blockCount = blockOrder.size();
+    std::vector<std::size_t> postNumber(blockCount, 0);
+    std::vector<std::size_t> reversePostOrder;
+    reversePostOrder.reserve(blockCount);
+    {
+        std::vector<bool> visited(blockCount, false);
+        std::vector<std::pair<std::size_t, std::size_t>> walk{{0u, 0u}};
+        visited.front() = true;
+        while (!walk.empty()) {
+            const auto [blockIndex, next] = walk.back();
+            const auto& successors = blockOrder[blockIndex]->Successors();
+            if (next < successors.size()) {
+                ++walk.back().second;
+                const auto successor = blockIndices.at(successors[next]);
+                if (!visited[successor]) {
+                    visited[successor] = true;
+                    walk.push_back({successor, 0u});
+                }
+                continue;
+            }
+            postNumber[blockIndex] = reversePostOrder.size();
+            reversePostOrder.push_back(blockIndex);
+            walk.pop_back();
+        }
+        std::reverse(reversePostOrder.begin(), reversePostOrder.end());
+    }
+    constexpr std::size_t noDominator = std::numeric_limits<std::size_t>::max();
+    std::vector<std::size_t> immediateDominator(blockCount, noDominator);
+    immediateDominator.front() = 0u;
+    const auto intersect = [&](std::size_t left, std::size_t right) {
+        while (left != right) {
+            while (postNumber[left] < postNumber[right]) left = immediateDominator[left];
+            while (postNumber[right] < postNumber[left]) right = immediateDominator[right];
+        }
+        return left;
+    };
+    for (bool changed = true; changed;) {
         changed = false;
-        for (std::size_t blockIndex = 1; blockIndex < blockOrder.size(); blockIndex++) {
-            std::vector<bool> next(blockOrder.size(), true);
+        for (const auto blockIndex : reversePostOrder) {
+            if (blockIndex == 0u) {
+                continue;
+            }
+            std::size_t candidate = noDominator;
             for (const auto* predecessor : blockOrder[blockIndex]->Predecessors()) {
                 const auto predecessorIndex = blockIndices.at(predecessor);
-                for (std::size_t candidate = 0; candidate < next.size(); candidate++) {
-                    next[candidate] = next[candidate] && dominators[predecessorIndex][candidate];
+                if (immediateDominator[predecessorIndex] == noDominator) {
+                    continue;
                 }
+                candidate = candidate == noDominator ? predecessorIndex : intersect(predecessorIndex, candidate);
             }
-            next[blockIndex] = true;
-            if (next != dominators[blockIndex]) {
-                dominators[blockIndex] = std::move(next);
+            if (candidate != immediateDominator[blockIndex]) {
+                immediateDominator[blockIndex] = candidate;
                 changed = true;
             }
         }
     }
 
+    std::vector<std::vector<std::size_t>> dominatedChildren(blockCount);
+    for (std::size_t blockIndex = 1; blockIndex < blockCount; blockIndex++) {
+        dominatedChildren[immediateDominator[blockIndex]].push_back(blockIndex);
+    }
+    std::vector<std::size_t> enterNumber(blockCount, 0);
+    std::vector<std::size_t> leaveNumber(blockCount, 0);
+    {
+        std::size_t clock = 0;
+        std::vector<std::pair<std::size_t, std::size_t>> walk{{0u, 0u}};
+        enterNumber.front() = clock++;
+        while (!walk.empty()) {
+            const auto [blockIndex, next] = walk.back();
+            if (next < dominatedChildren[blockIndex].size()) {
+                ++walk.back().second;
+                const auto child = dominatedChildren[blockIndex][next];
+                enterNumber[child] = clock++;
+                walk.push_back({child, 0u});
+                continue;
+            }
+            leaveNumber[blockIndex] = clock++;
+            walk.pop_back();
+        }
+    }
+
     const auto dominates = [&](const IrBlock* definition, const IrBlock* use) {
-        return dominators[blockIndices.at(use)][blockIndices.at(definition)];
+        const auto definitionIndex = blockIndices.at(definition);
+        const auto useIndex = blockIndices.at(use);
+        return enterNumber[definitionIndex] <= enterNumber[useIndex] && leaveNumber[useIndex] <= leaveNumber[definitionIndex];
     };
     const auto controlDominates = [&](IrValue* value, const IrBlock* use) {
         return value == nullptr || value->Parent() == nullptr || value->Parent() == use || dominates(value->Parent(), use);
@@ -816,7 +905,7 @@ void ResolveControlFlowIdentities(IrProgram& program) {
 }
 
 bool EquivalentValue(const IrResourcePlan& program, const IrValue* left, const IrValue* right) {
-    std::vector<std::pair<const IrValue*, const IrValue*>> visited;
+    VisitedPairs visited;
     return equivalentValueImpl(program, left, right, visited);
 }
 

@@ -189,22 +189,22 @@ std::uint32_t SpirvValueEmitContext::ShuffleInHalf(const IrValue& inst, std::siz
 }
 
 std::uint32_t SpirvValueEmitContext::Result(const IrValue& inst) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        return found->second;
+    if (const auto* found = definitions.Find(&inst)) {
+        return *found;
     }
     const auto id = state.module.AllocateId();
-    definitions.emplace(&inst, id);
+    definitions.Emplace(&inst, id);
     return id;
 }
 
 std::uint32_t SpirvValueEmitContext::Define(const IrValue& inst, std::uint32_t value) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        if (found->second != value) {
-            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), found->second, value);
+    if (const auto* found = definitions.Find(&inst)) {
+        if (*found != value) {
+            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), *found, value);
         }
-        return found->second;
+        return *found;
     }
-    definitions.emplace(&inst, value);
+    definitions.Emplace(&inst, value);
     return value;
 }
 
@@ -263,6 +263,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.supportedCapabilities = target.supportedCapabilities;
     state.supportedExtensions = target.supportedExtensions;
     state.nonConstantImageOffsets = target.nonConstantImageOffsets;
+    state.shaderImageMinLod = target.shaderImageMinLod;
     state.narrowSubgroupClock = target.narrowSubgroupClock;
     state.float64DenormPreserve = target.float64DenormPreserve;
     state.depthRangeRemap = target.depthRangeRemap;
@@ -284,6 +285,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.fusedExactArithmetic = target.fusedExactArithmetic;
     state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
     state.ldsLockFences = target.ldsLockFences;
+    state.float16WidenNans = target.float16WidenNans;
+    state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
@@ -341,7 +344,9 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         info->fullSubgroups = state.spannedWave;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
+        info->scratchPoolSlotDwords = ScratchPoolActive(state) ? ScratchPoolSlotDwords(state) : 0u;
     }
+    VerifyScratchPoolReturns(state, words);
     return words;
 }
 

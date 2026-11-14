@@ -306,7 +306,7 @@ bool Condition::waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
 
 void Condition::NotifyOne() {
     if (Coarse()) {
-        coarse.notify_one();
+        if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_one();
         return;
     }
     std::lock_guard lock(queueLock);
@@ -318,7 +318,7 @@ void Condition::NotifyOne() {
 
 void Condition::NotifyAll() {
     if (Coarse()) {
-        coarse.notify_all();
+        if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_all();
         return;
     }
     std::lock_guard lock(queueLock);
@@ -443,11 +443,11 @@ void Unpark(const void* key) {
 #else
 
 void Condition::NotifyOne() {
-    coarse.notify_one();
+    if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_one();
 }
 
 void Condition::NotifyAll() {
-    coarse.notify_all();
+    if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_all();
 }
 
 namespace {
@@ -697,7 +697,9 @@ void SleepNanos(std::uint64_t nanos) {
     struct timespec req{};
     req.tv_sec = static_cast<time_t>(nanos / 1000000000ULL);
     req.tv_nsec = static_cast<long>(nanos % 1000000000ULL);
+    const int savedErrno = errno;
     while (nanosleep(&req, &req) == -1 && errno == EINTR) {}
+    errno = savedErrno;
 #endif
 }
 

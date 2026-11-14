@@ -2,15 +2,25 @@
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <cmath>
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstdarg>
 #include <cstdint>
+#include <condition_variable>
 #include <cstring>
+#include <cerrno>
 #include <mutex>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace {
 
@@ -25,8 +35,22 @@ constexpr std::uint64_t SystemMagic = [] {
 
 struct SystemState {
     std::uint64_t magic;
+    void* cpuMemory;
+    std::size_t cpuMemorySize;
+    std::uint32_t index;
     std::uint32_t frameSamples;
     std::uint32_t maxSources;
+    std::uint32_t maxMaterials;
+    std::uint32_t pathCapacityPerSource;
+    float propagationSpeed;
+};
+
+struct SystemLockState {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::thread::id owner;
+    std::size_t depth = 0;
+    bool destroying = false;
 };
 
 enum class Kind { Room, Portal, Source, Material, Path };
@@ -44,10 +68,16 @@ struct PathState {
 struct Registry {
     std::mutex mutex;
     std::unordered_set<AudioPropagationHandle> systems;
+    std::vector<AudioPropagationHandle> systemOrder;
+    std::array<bool, 64> systemIndices{};
+    std::unordered_map<AudioPropagationHandle, std::shared_ptr<SystemLockState>> systemLocks;
     std::unordered_map<AudioPropagationHandle, Object> objects;
     std::unordered_map<AudioPropagationHandle, Object> orphans;
     std::unordered_map<AudioPropagationHandle, std::array<AudioPropagationHandle, MaxPaths>> sourcePaths;
     std::unordered_map<AudioPropagationHandle, PathState> paths;
+    std::mutex reportMutex;
+    std::condition_variable reportChanged;
+    std::array<std::array<ReportRegistration, 8>, 2> reportHandlers{};
     AudioPropagationHandle next = 1;
 };
 
@@ -55,6 +85,29 @@ Registry& registry() {
     static Registry state;
     return state;
 }
+
+struct ActiveReportCallbacksTag {};
+
+std::vector<ReportRegistration*>& activeReportCallbacks() {
+    return HostThreadLocal<std::vector<ReportRegistration*>, ActiveReportCallbacksTag>();
+}
+
+struct ActiveReportCall {
+    Registry& state;
+    ReportRegistration& registration;
+
+    ActiveReportCall(Registry& currentState, ReportRegistration& currentRegistration)
+        : state(currentState), registration(currentRegistration) {
+        activeReportCallbacks().push_back(&registration);
+    }
+
+    ~ActiveReportCall() {
+        activeReportCallbacks().pop_back();
+        std::lock_guard lock(state.reportMutex);
+        --registration.activeCalls;
+        state.reportChanged.notify_all();
+    }
+};
 
 void require(bool condition, const char* function) {
     if (!condition) throw std::invalid_argument(std::string(function) + ": invalid argument");
@@ -129,38 +182,63 @@ void requireNoPropagation(bool none, const char* function) {
     if (!none) throw std::runtime_error(std::string(function) + ": rays or audio paths are outside the no-propagation model");
 }
 
+template <typename T>
+bool copyGuestIn(T& dst, const T* src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&dst, src, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool copyGuestOut(T* dst, const T& src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
 
 std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const SystemOptions* options, AudioPropagationSystemMemory* outMemory) {
     if (!options || !outMemory) return ErrorNullPointer;
-    if (outMemory->desc.id != SystemMemoryId || outMemory->desc.size != SystemMemorySize) return static_cast<std::int32_t>(0x8A700007);
-    outMemory->p_cpu_mem = nullptr;
-    outMemory->size_cpu_mem = 0;
-    outMemory->p_gpu_mem = nullptr;
-    outMemory->size_gpu_mem = 0;
-    if (options->desc.id != SystemOptionsId || options->desc.size != SystemOptionsSize) return static_cast<std::int32_t>(0x8A700007);
-    if (options->maxSources == 0 || options->maxSources > 64 || options->maxMaterials == 0 || options->maxMaterials > 64 || options->parameter24 != 6 || options->reflectionOrder == 0 || options->reflectionOrder > 2) return ErrorInvalidArgument;
-    const auto frameSamples = options->frameSamples;
+    AudioPropagationSystemMemory localMemory{};
+    if (!copyGuestIn(localMemory, outMemory)) return ErrorNullPointer;
+    if (localMemory.desc.id != SystemMemoryId || localMemory.desc.size != SystemMemorySize) return static_cast<std::int32_t>(0x8A700007);
+    SystemOptions localOptions{};
+    if (!copyGuestIn(localOptions, options)) return ErrorNullPointer;
+    localMemory.p_cpu_mem = nullptr;
+    localMemory.size_cpu_mem = 0;
+    localMemory.p_gpu_mem = nullptr;
+    localMemory.size_gpu_mem = 0;
+    if (!copyGuestOut(outMemory, localMemory)) return ErrorNullPointer;
+    if (localOptions.desc.id != SystemOptionsId || localOptions.desc.size != SystemOptionsSize) return static_cast<std::int32_t>(0x8A700007);
+    if (localOptions.maxSources == 0 || localOptions.maxSources > 64 || localOptions.maxMaterials == 0 || localOptions.maxMaterials > 64 || localOptions.parameter24 != 6 || localOptions.reflectionOrder == 0 || localOptions.reflectionOrder > 2) return ErrorInvalidArgument;
+    const auto frameSamples = localOptions.frameSamples;
     if (frameSamples != 256 && frameSamples != 512 && frameSamples != 1024 && frameSamples != 2048 && frameSamples != 4096) return ErrorInvalidArgument;
-    if (!(options->propagationSpeed > 0x1p-23f) || options->propagationSpeed > 1372.0f || !(options->maxPathLength > 0x1p-23f) || options->maxPathLength > 1372.0f || options->flags > 31 || ((options->flags & 1) && frameSamples != 512)) return ErrorInvalidArgument;
-    if (options->flags & 1) throw std::runtime_error(std::string(__func__) + ": GPU memory requirements depend on an unsupported native runtime query");
-    const std::uint64_t sources = options->maxSources;
-    const std::uint64_t paths = sources * (options->reflectionOrder == 1 ? 6 : 36);
-    const float delaySeconds = options->maxPathLength / options->propagationSpeed;
+    if (!(localOptions.propagationSpeed > 0x1p-23f) || localOptions.propagationSpeed > 1372.0f || !(localOptions.maxPathLength > 0x1p-23f) || localOptions.maxPathLength > 1372.0f || localOptions.flags > 31 || ((localOptions.flags & 1) && frameSamples != 512)) return ErrorInvalidArgument;
+    if (localOptions.flags & 1) throw std::runtime_error(std::string(__func__) + ": GPU memory requirements depend on an unsupported native runtime query");
+    const std::uint64_t sources = localOptions.maxSources;
+    const std::uint64_t paths = sources * (localOptions.reflectionOrder == 1 ? 6 : 36);
+    const float delaySeconds = localOptions.maxPathLength / localOptions.propagationSpeed;
     const float delaySamples = delaySeconds * 48000.0f;
     const auto delayCapacity = static_cast<std::uint64_t>(std::ceil(delaySamples));
-    std::uint64_t bytes = sources * 1024 + paths * (32 * (options->reflectionOrder + 2) + 8928);
+    std::uint64_t bytes = sources * 1024 + paths * (32 * (localOptions.reflectionOrder + 2) + 8928);
     bytes += frameSamples == 256 ? 2048 : 4 * frameSamples;
     bytes += 4 * delayCapacity * sources;
     bytes += bytes & 15;
-    bytes += 160 * paths + 12352 + 4208 * options->maxMaterials;
-    if (frameSamples == 256) bytes += sources * ((options->flags & 2) ? 36896 : 16416);
-    if (options->flags & 4) bytes += 2000656;
-    if (options->flags & 8) bytes += 288 * paths;
-    if (options->flags & 16) bytes += 144 * paths;
-    outMemory->size_cpu_mem = bytes + 5368 - ((bytes & 15) ^ 8);
+    bytes += 160 * paths + 12352 + 4208 * localOptions.maxMaterials;
+    if (frameSamples == 256) bytes += sources * ((localOptions.flags & 2) ? 36896 : 16416);
+    if (localOptions.flags & 4) bytes += 2000656;
+    if (localOptions.flags & 8) bytes += 288 * paths;
+    if (localOptions.flags & 16) bytes += 144 * paths;
+    localMemory.p_cpu_mem = nullptr;
+    localMemory.size_cpu_mem = bytes + 5368 - ((bytes & 15) ^ 8);
+    localMemory.p_gpu_mem = nullptr;
+    localMemory.size_gpu_mem = 0;
+    if (!copyGuestOut(outMemory, localMemory)) return ErrorNullPointer;
     return 0;
 }
 
@@ -175,16 +253,47 @@ std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const SystemOptions* opti
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     require(!state.systems.contains(address), __func__);
-    *static_cast<SystemState*>(memory->p_cpu_mem) = SystemState{SystemMagic, options->frameSamples, options->maxSources};
+    const auto freeIndex = std::find(state.systemIndices.begin(), state.systemIndices.end(), false);
+    if (freeIndex == state.systemIndices.end()) return static_cast<std::int32_t>(0x8A700006);
+    const auto index = static_cast<std::uint32_t>(freeIndex - state.systemIndices.begin());
+    *static_cast<SystemState*>(memory->p_cpu_mem) = SystemState{
+        SystemMagic,
+        memory->p_cpu_mem,
+        memory->size_cpu_mem,
+        index,
+        options->frameSamples,
+        options->maxSources,
+        options->maxMaterials,
+        options->reflectionOrder == 1 ? 6u : 36u,
+        options->propagationSpeed,
+    };
     state.systems.insert(address);
+    state.systemOrder.push_back(address);
+    state.systemIndices[index] = true;
+    state.systemLocks.emplace(address, std::make_shared<SystemLockState>());
     *outSystem = address;
     return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle system) {
     auto& state = registry();
+    std::shared_ptr<SystemLockState> systemLock;
+    {
+        std::lock_guard lock(state.mutex);
+        requireSystem(state, system, __func__);
+        systemLock = state.systemLocks.at(system);
+    }
+    {
+        std::unique_lock systemGuard(systemLock->mutex);
+        if (systemLock->destroying) return ErrorInvalidHandle;
+        if (systemLock->owner == std::this_thread::get_id()) return ErrorInvalidArgument;
+        systemLock->destroying = true;
+        systemLock->changed.notify_all();
+        systemLock->changed.wait(systemGuard, [&] { return systemLock->depth == 0; });
+    }
     std::lock_guard lock(state.mutex);
-    requireSystem(state, system, __func__);
+    const auto lockFound = state.systemLocks.find(system);
+    if (lockFound == state.systemLocks.end() || lockFound->second != systemLock || !liveSystem(state, system)) return ErrorInvalidHandle;
     std::erase_if(state.paths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.sourcePaths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.objects, [&](const auto& entry) {
@@ -192,6 +301,10 @@ std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle s
         if (entry.second.kind != Kind::Path) state.orphans.insert(entry);
         return true;
     });
+    const auto& configuration = *reinterpret_cast<const SystemState*>(system);
+    state.systemIndices[configuration.index] = false;
+    std::erase(state.systemOrder, system);
+    state.systemLocks.erase(system);
     reinterpret_cast<SystemState*>(system)->magic = 0;
     state.systems.erase(system);
     return 0;
@@ -320,7 +433,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagati
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
     require(count != nullptr, __func__);
-    *count = MaxPaths;
+    if (!copyGuestOut(count, static_cast<std::uint32_t>(MaxPaths))) return ErrorNullPointer;
     return 0;
 }
 
@@ -331,7 +444,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHan
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!outPath) return ErrorNullPointer;
     if (index >= MaxPaths) return ErrorInvalidArgument;
-    *outPath = state.sourcePaths.at(source)[index];
+    if (!copyGuestOut(outPath, state.sourcePaths.at(source)[index])) return ErrorNullPointer;
     return 0;
 }
 
@@ -340,7 +453,7 @@ std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandl
     std::lock_guard lock(state.mutex);
     requireObject(state, path, Kind::Path, __func__);
     require(count != nullptr, __func__);
-    *count = state.paths.at(path).data.pointCount;
+    if (!copyGuestOut(count, state.paths.at(path).data.pointCount)) return ErrorNullPointer;
     return 0;
 }
 
@@ -427,12 +540,110 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
 }
 
 int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagationHandle handle, std::int32_t result, std::int32_t operation, const char* function, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    require(category < 2, __func__);
+
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, format);
+#else
+    std::va_list arguments;
+    va_start(arguments, format);
+#endif
+
+    ReportInfo info{};
+    info.size = sizeof(info);
+    info.handle = handle;
+    info.category = category;
+    info.result = result;
+    info.operation = operation;
+    info.function = function;
+    info.format = format;
+    static_assert(sizeof(arguments) == sizeof(info.arguments));
+    std::memcpy(&info.arguments, &arguments, sizeof(info.arguments));
+
+    struct Invocation {
+        ReportRegistration* registration;
+        std::uint64_t generation;
+        ReportHandler handler;
+        void* userData;
+    };
+    auto& state = registry();
+    std::vector<Invocation> invocations;
+    {
+        std::lock_guard lock(state.reportMutex);
+        for (auto& registration : state.reportHandlers[category]) {
+            if (registration.handler) invocations.push_back({&registration, registration.generation, registration.handler, registration.userData});
+        }
+    }
+    for (const auto& invocation : invocations) {
+        auto& registration = *invocation.registration;
+        {
+            std::lock_guard lock(state.reportMutex);
+            if (registration.generation != invocation.generation || registration.handler != invocation.handler || registration.userData != invocation.userData) continue;
+            ++registration.activeCalls;
+        }
+        ActiveReportCall activeCall(state, registration);
+        ReportInfo handlerInfo = info;
+        invocation.handler(&handlerInfo, invocation.userData);
+    }
+#ifdef _WIN32
+    __builtin_sysv_va_end(arguments);
+#else
+    va_end(arguments);
+#endif
     return 0;
 }
 
 int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uint32_t count) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!attributes) return ErrorNullPointer;
+    if (!count) return ErrorInvalidArgument;
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const Attribute& attribute = attributes[index];
+        if (!attribute.value) return ErrorNullPointer;
+        if (attribute.id > 0x10000) {
+            const bool handle = attribute.id == 0x10001 || attribute.id == 0x20000;
+            if (!handle && attribute.id - 0x10002 >= 4) return ErrorInvalidArgument;
+            if (attribute.valueSize != (attribute.id == 0x20000 ? 8 : 16)) return ErrorInvalidArgument;
+            if (handle) {
+                const auto* rooms = reinterpret_cast<const AudioPropagationHandle*>(attribute.value);
+                const std::size_t roomCount = attribute.id == 0x10001 ? 2 : 1;
+                for (std::size_t slot = 0; slot < roomCount; ++slot) {
+                    const auto room = rooms[slot];
+                    if (attribute.id == 0x20000 && room == 0) continue;
+                    const auto found = state.objects.find(room);
+                    if (found == state.objects.end() || found->second.kind != Kind::Room || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+                }
+            }
+        } else if (attribute.id <= 7) {
+            constexpr std::array<std::size_t, 8> sizes{16, 16, 16, 16, 24, 8, 16, 8};
+            if (attribute.valueSize != sizes[attribute.id]) return ErrorInvalidArgument;
+        } else if (attribute.id == 10) {
+            NotImplemented_nid_no_patch(__func__);
+        } else if (attribute.id != 0x10000 || attribute.valueSize != 16) {
+            return ErrorInvalidArgument;
+        }
+    }
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const Attribute& attribute = attributes[index];
+        auto* value = reinterpret_cast<std::uint32_t*>(const_cast<void*>(attribute.value));
+        switch (attribute.id) {
+            case 0: value[0] = 0; value[1] = 0; value[2] = 0; break;
+            case 1: value[0] = 0; value[1] = 0; value[2] = 0x3f800000; break;
+            case 2: value[0] = 3; value[1] = 0x42c80000; value[2] = 0x3f800000; value[3] = 0x3f800000; break;
+            case 3: value[0] = 0x3f800000; value[1] = 0x41f00000; value[2] = 0x3f333333; value[3] = 0x43870000; break;
+            case 4: std::memset(value, 0, 16); break;
+            case 5: value[0] = 0; break;
+            case 6:
+            case 7: value[0] = 0; value[1] = 0; break;
+            case 0x10001: std::memset(value, 0, 16); break;
+            case 0x10002: value[0] = 0x3f000000; value[1] = 0x3f000000; value[2] = 0x3f000000; break;
+            case 0x10003: value[0] = 0; value[1] = 0; value[2] = 0x3f800000; break;
+            case 0x10004: value[0] = 0; value[1] = 0x3f800000; value[2] = 0; break;
+            default: return ErrorInvalidArgument;
+        }
+    }
     return 0;
 }
 
@@ -442,32 +653,121 @@ int APS5_VABI sceAudioPropagationSourceQueryInfo(AudioPropagationHandle source, 
 }
 
 int APS5_VABI sceAudioPropagationSystemLock(AudioPropagationHandle system) {
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = registry();
+    std::shared_ptr<SystemLockState> systemLock;
+    {
+        std::lock_guard lock(state.mutex);
+        const auto found = state.systemLocks.find(system);
+        if (found == state.systemLocks.end() || !liveSystem(state, system)) return ErrorInvalidHandle;
+        systemLock = found->second;
+    }
+    std::unique_lock lock(systemLock->mutex);
+    const auto currentThread = std::this_thread::get_id();
+    systemLock->changed.wait(lock, [&] { return systemLock->destroying || systemLock->depth == 0 || systemLock->owner == currentThread; });
+    if (systemLock->destroying) return ErrorInvalidHandle;
+    systemLock->owner = currentThread;
+    ++systemLock->depth;
     return 0;
 }
 
 int APS5_VABI sceAudioPropagationSystemQueryInfo(AudioPropagationHandle system, SystemInfo* info, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    if (!liveSystem(state, system) || !info || size != sizeof(SystemInfo)) return ErrorInvalidHandle;
+    const auto& configuration = *reinterpret_cast<const SystemState*>(system);
+    SystemInfo localInfo{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localInfo, info, sizeof(localInfo));
+    errno = savedErrno;
+    if (!read) return ErrorInvalidHandle;
+    localInfo.cpuMemory = configuration.cpuMemory;
+    localInfo.cpuMemorySize = configuration.cpuMemorySize;
+    localInfo.index = configuration.index;
+    localInfo.frameSamples = configuration.frameSamples;
+    localInfo.parameter24 = 1;
+    localInfo.maxSources = configuration.maxSources;
+    localInfo.maxMaterials = configuration.maxMaterials;
+    localInfo.pathCapacityPerSource = configuration.pathCapacityPerSource;
+    localInfo.propagationSpeed = configuration.propagationSpeed;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidHandle;
     return 0;
 }
 
 int APS5_VABI sceAudioPropagationReportRegisterHandler(std::uint32_t category, ReportHandler handler, void* userData, ReportRegistration** registration) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (category >= 2) return -4;
+    if (!handler) return -2;
+    auto& state = registry();
+    std::lock_guard lock(state.reportMutex);
+    for (auto& slot : state.reportHandlers[category]) {
+        if (!slot.handler && slot.activeCalls == 0) {
+            slot.userData = userData;
+            slot.handler = handler;
+            ++slot.generation;
+            if (registration) {
+                if (!copyGuestOut(registration, &slot)) {
+                    slot.userData = nullptr;
+                    slot.handler = nullptr;
+                    --slot.generation;
+                    return -1;
+                }
+            }
+            return 0;
+        }
+    }
+    return -3;
 }
 
 int APS5_VABI sceAudioPropagationReportUnregisterHandler(ReportRegistration* registration) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!registration) return -1;
+    auto& state = registry();
+    std::unique_lock lock(state.reportMutex);
+    for (auto& category : state.reportHandlers) {
+        for (auto& slot : category) {
+            if (&slot == registration && slot.handler) {
+                slot.handler = nullptr;
+                slot.userData = nullptr;
+                const auto activeHere = static_cast<std::size_t>(std::count(activeReportCallbacks().begin(), activeReportCallbacks().end(), &slot));
+                state.reportChanged.wait(lock, [&] { return slot.activeCalls <= activeHere; });
+                return 0;
+            }
+        }
+    }
+    return -1;
 }
 
 int APS5_VABI sceAudioPropagationSystemEnumHandles(AudioPropagationHandle* handles, std::uint32_t capacity) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!handles && capacity != 0) return ErrorInvalidArgument;
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto total = static_cast<std::uint32_t>(state.systemOrder.size());
+    if (handles) {
+        const auto copied = std::min(capacity, total);
+        for (std::uint32_t index = 0; index < copied; ++index) {
+            handles[index] = state.systemOrder[state.systemOrder.size() - index - 1];
+        }
+    }
+    return static_cast<int>(total);
 }
 
 int APS5_VABI sceAudioPropagationSystemUnlock(AudioPropagationHandle system) {
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = registry();
+    std::shared_ptr<SystemLockState> systemLock;
+    {
+        std::lock_guard lock(state.mutex);
+        const auto found = state.systemLocks.find(system);
+        if (found == state.systemLocks.end() || !liveSystem(state, system)) return ErrorInvalidHandle;
+        systemLock = found->second;
+    }
+    {
+        std::lock_guard lock(systemLock->mutex);
+        if (systemLock->owner != std::this_thread::get_id() || systemLock->depth == 0) return ErrorInvalidArgument;
+        if (--systemLock->depth == 0) {
+            systemLock->owner = std::thread::id{};
+            systemLock->changed.notify_all();
+        }
+    }
     return 0;
 }
 

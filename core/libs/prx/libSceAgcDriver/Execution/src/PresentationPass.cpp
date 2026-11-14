@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/PresentationPassFrag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/PresentationPassVert_spv.h"
@@ -117,6 +118,18 @@ VkExtent2D PresentationPass::DumpExtent(std::uint32_t width, std::uint32_t heigh
     return {(width + stride - 1) / stride, (height + stride - 1) / stride};
 }
 
+VkSubpassDependency PresentationPass::ExitDependency(VkImageLayout finalLayout) {
+    VkSubpassDependency dependency{0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0, 0};
+    if (finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        dependency.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dependency.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    } else if (finalLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        dependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    }
+    return dependency;
+}
+
 void PresentationPass::Release(std::size_t index) noexcept {
     if (index >= slots.size()) return;
     auto& slot = slots[index];
@@ -181,10 +194,9 @@ const PresentationPass::Target& PresentationPass::target(VkFormat format, VkImag
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &reference;
-        const bool transfer = finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         const VkSubpassDependency dependencies[2] = {
             {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, blended ? VkAccessFlags{VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT} : VkAccessFlags{0}, blended ? VkAccessFlags{VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT} : VkAccessFlags{VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT}, 0},
-            {0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, transfer ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, transfer ? VK_ACCESS_TRANSFER_READ_BIT : VkAccessFlags{0}, 0},
+            ExitDependency(finalLayout),
         };
         VkRenderPassCreateInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
         renderPassInfo.attachmentCount = 1;
@@ -349,10 +361,11 @@ void PresentationPass::draw(VkCommandBuffer commands, const Slot& slot, const Ta
     begin.framebuffer = framebuffer;
     begin.renderArea = {{0, 0}, extent};
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
-    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &scissor);
+    Graphics::CommandState state;
+    state.Begin(commands, false);
+    state.BindPipeline(context, entry.pipeline, 0);
+    state.SetViewport(context, {0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f});
+    state.SetScissor(context, scissor);
     context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, 0, nullptr);
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);
     context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
@@ -364,6 +377,7 @@ VkFramebuffer PresentationPass::destinationFramebuffer(Slot& slot, const Target&
     for (const auto layout : {initialLayout, finalLayout}) {
         if (layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         if (layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
     }
     const auto view = createView(destination, format, usage);
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
@@ -380,10 +394,19 @@ VkFramebuffer PresentationPass::destinationFramebuffer(Slot& slot, const Target&
 void PresentationPass::RecordPresent(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout) {
     Graphics::Require(index < slots.size() && slots[index].source != VK_NULL_HANDLE, "presentation pass slot has no source");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation pass destination is unavailable");
+    recordInto(commands, index, destination, format, colorSpace, extent, finalLayout, ComputeContainRect_nid_postfix(slots[index].width, slots[index].height, extent.width, extent.height));
+}
+
+void PresentationPass::RecordStage(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout) {
+    Graphics::Require(index < slots.size() && slots[index].source != VK_NULL_HANDLE, "presentation pass slot has no source");
+    Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "presentation pass destination is unavailable");
+    recordInto(commands, index, destination, format, colorSpace, extent, finalLayout, AspectFitRect{0, 0, extent.width, extent.height});
+}
+
+void PresentationPass::recordInto(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout, const AspectFitRect& rect) {
     auto& slot = slots[index];
     const auto& entry = target(format, finalLayout);
     const auto framebuffer = destinationFramebuffer(slot, entry, destination, format, extent, VK_IMAGE_LAYOUT_UNDEFINED, finalLayout);
-    const auto rect = ComputeContainRect_nid_postfix(slot.width, slot.height, extent.width, extent.height);
     const bool hdr10 = colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
     Graphics::Require(colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR || (hdr10 && (slot.mode & ModePq) != 0 && TenBitFormat(format)), "presentation pass presents only PQ display buffers to a 10-bit HDR10 destination");
     const std::uint32_t mode = (hdr10 ? slot.mode & ~ModePq : slot.mode) | (TenBitFormat(format) ? ModeKeepTenBit : 0u);

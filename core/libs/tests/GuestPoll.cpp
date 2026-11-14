@@ -66,6 +66,45 @@ static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     change.fflags = fflags;
     return change;
 }
+static void PollsSocketsShutForReading() {
+    constexpr int UnixDomain = 1, Stream = 1;
+    for (const bool queued : {true, false}) {
+        int pair[2];
+        Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+        if (queued) Require(send_nid_postfix(pair[1], "abc", 3, 0) == 3);
+        Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        GuestPollDescriptor entry{pair[0], static_cast<short>(In | ReadNormal), -1};
+        Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & (In | ReadNormal)) == (In | ReadNormal));
+        if (!queued) Require(entry.revents == (In | ReadNormal));
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    }
+    for (const bool duplicated : {false, true}) {
+        int pair[2];
+        Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+        const int watched = duplicated ? dup_nid_postfix(pair[0]) : pair[0];
+        Require(watched >= 0);
+        GuestPollDescriptor entry{watched, In, -1};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread shutter([&pair] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        });
+        const int ready = poll_nid_postfix(&entry, 1, 5000);
+        const auto waited = std::chrono::steady_clock::now() - start;
+        shutter.join();
+        Require(ready == 1 && entry.revents == In);
+        Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+        if (duplicated) Require(close_nid_postfix(watched) == 0);
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    }
+    int pair[2];
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    Require(shutdown_nid_postfix(pair[0], 2) == 0);
+    GuestPollDescriptor both{pair[0], static_cast<short>(In | Out), -1};
+    Require(poll_nid_postfix(&both, 1, 0) == 1 && both.revents == (In | Hup));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+
 static void PollsKqueues(int socket) {
     const int queue = kqueue_nid_postfix();
     Require(queue >= 0);
@@ -303,7 +342,41 @@ static void PollsAStreamWhosePeerClosed() {
     for (const int descriptor : {client, server, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 
-#ifndef _WIN32
+static void PollsAResetStream() {
+    const int listener = socket_nid_postfix(2, 1, 0);
+    Require(listener >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0 && listen_nid_postfix(listener, 2) == 0);
+
+    int client = socket_nid_postfix(2, 1, 0);
+    Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
+    int server = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(server >= 0 && close_nid_postfix(client) == 0);
+    GuestPollDescriptor wait{server, In, 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == In);
+    wait = {server, static_cast<short>(In | Out), 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == (In | Out));
+    Require(close_nid_postfix(server) == 0);
+
+    client = socket_nid_postfix(2, 1, 0);
+    Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
+    server = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(server >= 0);
+    const std::int32_t abortive[2] = {1, 0};
+    Require(setsockopt_nid_postfix(client, 0xffff, 0x80, abortive, sizeof(abortive)) == 0 && close_nid_postfix(client) == 0);
+    wait = {server, In, 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == (In | Hup));
+    wait = {server, 0, 0};
+    Require(poll_nid_postfix(&wait, 1, 0) == 1 && wait.revents == Hup);
+    wait = {server, static_cast<short>(In | Out), 0};
+    Require(poll_nid_postfix(&wait, 1, 0) == 1 && wait.revents == (In | Hup));
+    char byte = 0;
+    Require(recv_nid_postfix(server, &byte, 1, 0) == -1 && *__error_nid_postfix() == 54);
+    for (const int descriptor : {server, listener}) Require(close_nid_postfix(descriptor) == 0);
+}
+
 static void PollsAHungUpSocketWithoutPollout() {
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0);
@@ -325,15 +398,90 @@ static void PollsAHungUpSocketWithoutPollout() {
     Require(poll_nid_postfix(&hungUp, 1, 1000) == 1 && hungUp.revents == (In | Hup));
     Require(close_nid_postfix(server) == 0 && close_nid_postfix(listener) == 0);
 }
-#endif
 
+static void PollsAPipeClosedDuringTheWait() {
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        int pair[2]{-1, -1};
+        Require(pipe_nid_postfix(pair) == 0);
+        int result = 0;
+        short revents = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestPollDescriptor entry{pair[0], In, 0};
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 20);
+            revents = entry.revents;
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + (attempt % 20) * 100));
+        Require(close_nid_postfix(pair[0]) == 0);
+        waiter.join();
+        Require(close_nid_postfix(pair[1]) == 0);
+        Require(result == 0 || (result == 1 && (revents & Invalid) != 0));
+    }
+}
+
+static void PollsASocketClosedDuringTheWait() {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const int socket = socket_nid_postfix(2, 2, 0);
+        Require(socket >= 0);
+        int result = 0;
+        short revents = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestPollDescriptor entry{socket, In, 0};
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 200);
+            revents = entry.revents;
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + attempt * 100));
+        Require(close_nid_postfix(socket) == 0);
+        waiter.join();
+        Require(result == 1 && revents == Invalid);
+    }
+}
+
+static void RejectsReadinessAfterSocketClose() {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const int receiver = socket_nid_postfix(2, 2, 0);
+        Require(receiver >= 0);
+        std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+        const int alias = dup_nid_postfix(receiver);
+        Require(alias >= 0);
+        const NativeSocket sender = ::socket(AF_INET, SOCK_DGRAM, 0);
+        Require(sender != NativeInvalid);
+        sockaddr_in destination{};
+        destination.sin_family = AF_INET;
+        std::memcpy(&destination.sin_port, address.data() + 2, 2);
+        std::memcpy(&destination.sin_addr, address.data() + 4, 4);
+        GuestPollDescriptor entry{receiver, In, 0};
+        std::atomic<bool> started{false};
+        int result = -1;
+        std::thread waiter([&] {
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 200);
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        Require(close_nid_postfix(receiver) == 0);
+        Require(::sendto(sender, "x", 1, 0, reinterpret_cast<const sockaddr*>(&destination), sizeof(destination)) == 1);
+        waiter.join();
+        CloseNative(sender);
+        Require(close_nid_postfix(alias) == 0);
+        Require(result == 1 && entry.revents == Invalid);
+    }
+}
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
-#ifndef _WIN32
+    PollsAResetStream();
+    PollsAPipeClosedDuringTheWait();
     PollsAHungUpSocketWithoutPollout();
-#endif
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0 && listener < 1024);
     std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
@@ -433,4 +581,7 @@ int main() {
     Require(std::chrono::steady_clock::now() - inputStart >= std::chrono::milliseconds(25));
     PollsKqueues(listener);
     Require(close_nid_postfix(listener) == 0);
+    PollsASocketClosedDuringTheWait();
+    RejectsReadinessAfterSocketClose();
+    PollsSocketsShutForReading();
 }
