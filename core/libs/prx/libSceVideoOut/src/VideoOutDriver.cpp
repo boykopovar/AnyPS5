@@ -653,7 +653,7 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
         require(req.cfg->lastFlipVblank <= std::numeric_limits<uint64_t>::max() - interval, "flip interval overflow");
         const auto target = req.cfg->lastFlipVblank + interval;
         timing.Mark("validate");
-        req.cfg->vblankCond.wait(lock, req.cfg->shutdownToken, [&] { return req.cfg->vblankStatus.count >= target || req.cfg->failure || req.cfg->closing; });
+        if (!AgcDriver::ConfiguredUnpacedFlips()) req.cfg->vblankCond.wait(lock, req.cfg->shutdownToken, [&] { return req.cfg->vblankStatus.count >= target || req.cfg->failure || req.cfg->closing; });
         timing.Mark("vblank_wait");
         req.cfg->CheckAlive();
         if (req.cfg->Closed()) {

@@ -792,6 +792,20 @@ void frameLimitTests() {
     require(content.below.size() >= 2 && content.below[content.below.size() - 2] == "TITLE: PPSA01234  PRESENT: FIFO_LATEST_READY" && content.below.back() == "FPS LIMIT: 59.9", "the longest present mode and a limit are not drawn on their own lines");
 }
 
+void unpacedFlipsTests() {
+    AgcDriver::OverlayDetailSample sample;
+    sample.title = "PPSA01234";
+    sample.presentMode = "immediate";
+    const auto shows = [](const AgcDriver::OverlayContent& content) { return std::count(content.below.begin(), content.below.end(), std::string("UNPACED FLIPS")); };
+    require(shows(AgcDriver::ComposeOverlayDetails(sample)) == 0, "UNPACED FLIPS is drawn while the flips wait for the vblank");
+    sample.unpacedFlips = true;
+    const auto alone = AgcDriver::ComposeOverlayDetails(sample);
+    require(shows(alone) == 1 && alone.below.back() == "UNPACED FLIPS" && alone.below[alone.below.size() - 2] == "TITLE: PPSA01234  PRESENT: IMMEDIATE", "unpaced flips are not drawn on a line of their own after TITLE and PRESENT");
+    sample.fpsLimit = 144.0;
+    const auto limited = AgcDriver::ComposeOverlayDetails(sample);
+    require(shows(limited) == 1 && limited.below.back() == "UNPACED FLIPS" && limited.below[limited.below.size() - 2] == "FPS LIMIT: 144", "unpaced flips are not drawn after the frame limit");
+}
+
 void operatingSystemTests() {
     const auto parsed = AgcDriver::ParseCommitCharge("MemTotal:       16318412 kB\nCommitLimit:     8159204 kB\nCommitted_AS:   12345678 kB\nVmallocTotal:   34359738367 kB\n");
     require(parsed && parsed->used == 12345678ull * 1024 && parsed->budget == 8159204ull * 1024, "Committed_AS and CommitLimit are not read from /proc/meminfo's text");
@@ -992,6 +1006,7 @@ int main() {
         hitRateTests();
         presentModeTests();
         frameLimitTests();
+        unpacedFlipsTests();
         operatingSystemTests();
         addressCopyFoldTests();
         driverSourceTests();

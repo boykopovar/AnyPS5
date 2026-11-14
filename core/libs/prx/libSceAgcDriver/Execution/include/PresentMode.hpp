@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -11,7 +12,12 @@
 
 namespace AgcDriver {
 
-inline VkPresentModeKHR SelectPresentMode(const char* requested, std::span<const VkPresentModeKHR> supported) {
+inline VkPresentModeKHR SelectPresentMode(const char* requested, std::span<const VkPresentModeKHR> supported, bool unpaced = false) {
+    if (requested == nullptr && unpaced) {
+        for (const VkPresentModeKHR preferred : {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR}) {
+            if (std::find(supported.begin(), supported.end(), preferred) != supported.end()) return preferred;
+        }
+    }
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     if (requested != nullptr) {
         const std::string_view name(requested);

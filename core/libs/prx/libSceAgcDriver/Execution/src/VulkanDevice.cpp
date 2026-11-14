@@ -2740,7 +2740,12 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         std::vector<VkPresentModeKHR> presentModes(presentModeCount);
         check(getPresentModes(selected, state->surface, &presentModeCount, presentModes.data()), "vkGetPhysicalDeviceSurfacePresentModesKHR");
         presentModes.resize(presentModeCount);
-        state->presentMode = SelectPresentMode(std::getenv("ANYPS5_PRESENT_MODE"), presentModes);
+        state->presentMode = SelectPresentMode(std::getenv("ANYPS5_PRESENT_MODE"), presentModes, ConfiguredUnpacedFlips());
+        if (ConfiguredUnpacedFlips()) {
+            const auto mode = OverlayPresentModeName(state->presentMode);
+            const bool refreshBound = state->presentMode == VK_PRESENT_MODE_FIFO_KHR || state->presentMode == VK_PRESENT_MODE_FIFO_LATEST_READY_KHR;
+            std::fprintf(stderr, "[present] APS5_UNPACED_FLIPS=1: flips do not wait for the vblank; the swapchain presents with %.*s%s\n", static_cast<int>(mode.size()), mode.data(), refreshBound ? ", which still waits for the display's refresh (set ANYPS5_PRESENT_MODE=immediate or mailbox)" : "");
+        }
         require((surface.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) != 0, "surface does not support color attachment images");
         VkSwapchainCreateInfoKHR swapchain{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
         swapchain.surface = state->surface;
@@ -4438,7 +4443,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (overlay) {
         if (!state->overlay) state->overlay = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
-        state->overlay->NotePresent(std::chrono::steady_clock::now(), clearOnly ? VkExtent2D{} : VkExtent2D{width, height}, OverlayPresentInfo{std::exchange(state->presentedAddress, 0), state->presentMode, presentCounters.acquireDrops, ConfiguredFrameLimit() ? ConfiguredFrameLimit()->FramesPerSecond() : 0.0});
+        state->overlay->NotePresent(std::chrono::steady_clock::now(), clearOnly ? VkExtent2D{} : VkExtent2D{width, height}, OverlayPresentInfo{std::exchange(state->presentedAddress, 0), state->presentMode, presentCounters.acquireDrops, ConfiguredFrameLimit() ? ConfiguredFrameLimit()->FramesPerSecond() : 0.0, ConfiguredUnpacedFlips()});
         state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || upscaled || plane != nullptr || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     } else if (!drawn && !upscaled && plane == nullptr && !keyboard && !padStatusShown) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;

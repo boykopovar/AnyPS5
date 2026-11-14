@@ -206,6 +206,7 @@ struct OverlayDetailSample {
     std::string title;
     std::string presentMode;
     std::optional<double> fpsLimit;
+    bool unpacedFlips = false;
 };
 
 struct OverlayHits {
@@ -223,6 +224,7 @@ struct OverlayPresentInfo {
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
     std::uint64_t acquireDrops = 0;
     double fpsLimit = 0.0;
+    bool unpacedFlips = false;
 };
 
 struct OverlayTraceFigures {
