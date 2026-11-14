@@ -49,6 +49,7 @@
 #include "SampleLod_spv.h"
 #include "BufferUpdate_spv.h"
 #include "SampleArray_spv.h"
+#include "SampleImportOrigin_spv.h"
 #include "Cover_vert_spv.h"
 #include "Cover_frag_spv.h"
 #include "VertexRange_vert_spv.h"
@@ -938,6 +939,51 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
             Require(CompletePendingCpuWrites(context, copiedAddress, 4), "a CPU-copied write in a mixed producer was not completed");
             Require(*completed == 1 && pending.empty(), "the required CPU write-back did not release the mixed producer");
         }
+    }
+    {
+        TextureDetiler detiler(context);
+        auto imageContext = context;
+        imageContext.detiler = &detiler;
+        TextureCache textureCache(imageContext);
+        imageContext.textureCache = &textureCache;
+        Buffer readback(context, 8, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        struct Clear {
+            const Context& context;
+            Recorder& recorder;
+            ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+        } clear{context, recorder};
+        ShaderRecompiler::RecompileResult imageProgram;
+        ShaderRecompiler::DescriptorBinding imageBinding;
+        imageBinding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        imageBinding.descriptorSet = 0;
+        imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        imageBinding.count = 1;
+        imageBinding.imageSamplers = {0};
+        imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+        imageProgram.bindings.push_back(imageBinding);
+        const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
+        recorder.Sync();
+        const auto savedWord = *block;
+        SampledFromStorageForTest(false);
+        struct Restore {
+            std::uint32_t* block;
+            std::uint32_t word;
+            ~Restore() { SampledFromStorageForTest(true); *block = word; }
+        } restore{block, savedWord};
+        update(direct, 7);
+        const auto importedBefore = SampledTexturesImported();
+        const auto submissionsBefore = recorder.Submissions();
+        auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
+        Require(SampledTexturesImported() == importedBefore + 1, "a sampled surface with a pending GPU write was not uploaded from its host import");
+        Require(recorder.Submissions() == submissionsBefore, "the sampled lookup waited for the GPU write instead of uploading after it");
+        Require(sampled->SampledTextures().size() == 1, "the sampled lookup made no texture");
+        recorder.Keep(sampled);
+        recorder.Sync();
+        Require(*block == savedWord + 7, "the GPU write the sampled texture follows did not land");
+        std::cout << "sampled surface over a pending GPU write: uploaded from its host import without a wait: ok\n";
+        sampled.reset();
     }
     {
         TextureDetiler detiler(context);
@@ -13528,6 +13574,136 @@ void expectRed(float got, float want, const char* what) {
     if (std::abs(got - want) > 1.5f / 255.0f) throw std::runtime_error(std::string(what) + ": read " + std::to_string(got) + ", expected " + std::to_string(want));
 }
 
+bool sampledImportPiecesTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (context.hostImportAlignment == 0 || !context.nullDescriptors || !AgcDriver::GuestMemory::WriteWatched()) return false;
+    recorder.Sync();
+    const auto unit = static_cast<std::size_t>(std::max<VkDeviceSize>(65536u, context.hostImportAlignment));
+    const auto bytes = 4u * unit;
+    auto* block = static_cast<std::byte*>(AllocateWatched(bytes, unit));
+    Require(block != nullptr, "cannot allocate sampled import pieces memory");
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        std::byte* block;
+        std::size_t bytes;
+        ~Release() {
+            recorder.Sync();
+            ClearCachedTextures(context.device);
+            SampledFromStorageForTest(true);
+            SetHostImportRangeWindow(64ull << 20u);
+            GuestAllocations::Mutation().Remove(block);
+            ClearHostImports(context.device);
+            recorder.Sync();
+            ReleaseWatched(block, bytes);
+        }
+    } release{context, recorder, block, bytes};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    GuestAllocations::Mutation().Add(block, bytes, true, true, true);
+    SetHostImportRangeWindow(unit);
+    ClearHostImports(context.device);
+    recorder.Sync();
+    for (std::size_t half = 0; half < 8; ++half) std::memset(block + half * unit / 2, static_cast<int>(16 + half * 16), unit / 2);
+    for (const auto window : {0u, 2u}) Require(HostImportFor(context, address + window * unit, 1) != nullptr, "cannot import a sampled texture window");
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache cache(context);
+    context.textureCache = &cache;
+    SampledFromStorageForTest(false);
+    SampleProgram center(context, recorder, SAMPLE_ARRAY_SPV);
+    SampleProgram origin(context, recorder, SAMPLE_IMPORT_ORIGIN_SPV);
+    struct Drain { Recorder& recorder; ~Drain() { recorder.Sync(); } } drain{recorder};
+    constexpr std::uint32_t width = 128;
+    const auto height = static_cast<std::uint32_t>(unit / (width * 4u));
+    const auto request = [&](std::uint64_t begin) {
+        ShaderRecompiler::RecompileResult program;
+        ShaderRecompiler::DescriptorBinding binding;
+        binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        binding.descriptorSet = 0;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        binding.count = 1;
+        binding.imageSamplers = {0};
+        binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2DArray;
+        binding.guestDescriptor = {static_cast<std::uint32_t>(begin >> 8u), static_cast<std::uint32_t>(begin >> 40u) | (56u << 20u) | (((width - 1u) & 3u) << 30u), ((width - 1u) >> 2u) | ((height - 1u) << 14u), 0xd0000facu, 2u, 0u, 0u, 0u};
+        Require(DescribeSurface(DecodeTextureResource(binding.guestDescriptor)).guestBytes == 3u * unit, "sampled import pieces fixture has the wrong array size");
+        program.bindings.push_back(std::move(binding));
+        return program;
+    };
+    const auto check = [&](const std::shared_ptr<ShaderResources>& resources, std::size_t offset, std::uint32_t phase) {
+        Require(resources->SampledTextures().size() == 1, "sampled import pieces produced no texture");
+        const auto& texture = resources->SampledTextures().front();
+        recorder.Keep(resources);
+        for (std::size_t layer = 0; layer < 3; ++layer) {
+            const auto firstHalf = (offset + layer * unit) / (unit / 2u);
+            const auto centerHalf = (offset + layer * unit + (height / 2u * width + width / 2u) * 4u) / (unit / 2u);
+            expectRed(origin.Red(texture->View(), texture->Layout(), 0, static_cast<float>(layer)), (16u + firstHalf * 16u + phase * 4u) / 255.0f, "an imported array layer starts with another source's texel");
+            expectRed(center.Red(texture->View(), texture->Layout(), 0, static_cast<float>(layer)), (16u + centerHalf * 16u + phase * 4u) / 255.0f, "an imported array layer sampled across an import boundary incorrectly");
+        }
+    };
+    const auto partialProgram = request(address);
+    const CompiledShader partialShader{ShaderRecompiler::ShaderStage::Compute, &partialProgram, 0};
+    Require(ExistingHostImportCopies(context, address, 3u * unit).empty(), "a gapped import set produced a partial copy plan");
+    Require(ExistingHostImportCopies(context, address, 0).empty(), "an empty texture range produced import copies");
+    Require(ExistingHostImportCopies(context, UINT64_MAX - 7u, 16u).empty(), "an overflowing texture range produced import copies");
+    const auto partialCommands = recorder.Commands();
+    RecordMemoryBarrier(context, partialCommands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    for (const auto half : {0u, 1u, 4u, 5u}) {
+        const auto begin = address + half * unit / 2u;
+        const auto* imported = ExistingHostImportFor(context, begin, unit / 2u);
+        Require(imported != nullptr, "a gapped sampled texture lost an imported window");
+        const auto value = static_cast<std::uint32_t>(16u + half * 16u) * 0x01010101u;
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(partialCommands, imported->buffer, HostImportOffset(*imported, begin), unit / 2u, value);
+    }
+    recorder.NotePendingWrite(address, 3u * unit);
+    static_cast<void>(AgcDriver::GuestMemory::MarkPossiblyWritten(address, 3u * unit));
+    const auto beforePartial = SampledTexturesImported();
+    auto partial = std::make_shared<ShaderResources>(context, partialShader);
+    Require(SampledTexturesImported() == beforePartial, "a gapped import set was accepted for a sampled texture");
+    check(partial, 0, 0);
+    partial.reset();
+    ClearCachedTextures(context.device);
+    ClearHostImports(context.device);
+    recorder.Sync();
+    for (std::size_t window = 0; window < 4; ++window) {
+        const auto* imported = HostImportFor(context, address + window * unit, 1);
+        Require(imported != nullptr && imported->base == address + window * unit && imported->bytes == unit, "the sampled texture windows were not imported separately");
+    }
+    for (std::uint32_t phase = 0; phase < 2; ++phase) {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        for (std::size_t half = 0; half < 8; ++half) {
+            const auto begin = address + half * unit / 2u;
+            const auto* imported = ExistingHostImportFor(context, begin, unit / 2u);
+            Require(imported != nullptr, "a sampled texture half lost its existing import");
+            const auto value = static_cast<std::uint32_t>(16u + half * 16u + phase * 4u) * 0x01010101u;
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, imported->buffer, HostImportOffset(*imported, begin), unit / 2u, value);
+        }
+        recorder.NotePendingWrite(address, bytes);
+        static_cast<void>(AgcDriver::GuestMemory::MarkPossiblyWritten(address, bytes));
+        const auto submissions = recorder.Submissions();
+        std::vector<std::shared_ptr<ShaderResources>> uploaded;
+        std::shared_ptr<DeviceBuffer> scratch;
+        for (const auto offset : {std::size_t{0}, unit / 2u}) {
+            Require(ExistingHostImportFor(context, address + offset, 3u * unit) == nullptr, "the sampled array unexpectedly fits one import");
+            const auto program = request(address + offset);
+            const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+            const auto before = SampledTexturesImported();
+            auto resources = std::make_shared<ShaderResources>(context, shader);
+            Require(SampledTexturesImported() == before + 1, "a sampled array spanning existing imports was not uploaded on the GPU");
+            Require(recorder.Submissions() == submissions, "a sampled array waited for its imported GPU writes");
+            const auto reused = recorder.UploadScratchBuffer(Recorder::UploadScratch::Tiled, 3u * unit);
+            Require(scratch == nullptr || scratch == reused, "consecutive imported uploads did not reuse tiled scratch");
+            scratch = reused;
+            uploaded.push_back(std::move(resources));
+        }
+        for (std::size_t index = 0; index < uploaded.size(); ++index) check(uploaded[index], index * unit / 2u, phase);
+    }
+    std::cout << "sampled import pieces: gapped fallback, consecutive scratch reuse, boundary texels and repeated writes passed\n";
+    return true;
+}
+
 void minLodTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (!context.imageViewMinLod) {
@@ -16403,6 +16579,9 @@ int main(int argc, char** argv) {
             const auto before = Recorder::StoreCounts().stores;
             storeRunTests(device, recorder);
             return Recorder::StoreCounts().stores != before ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--sampled-import-pieces") {
+            return sampledImportPiecesTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--copied-direct-only") {
             copiedDirectOrderingTests(device, recorder);

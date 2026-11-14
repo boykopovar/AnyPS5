@@ -4919,6 +4919,28 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
     return findImport(state, address, address + bytes);
 }
 
+std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return {};
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (importsStale(context, state)) return {};
+    std::vector<HostImportCopy> copies;
+    const auto end = address + bytes;
+    for (auto cursor = address; cursor < end;) {
+        const auto* entry = peekImport(state, cursor, cursor + 1);
+        if (entry == nullptr) return {};
+        const auto next = std::min(end, entry->base + entry->bytes);
+        copies.push_back({entry->buffer, HostImportOffset(*entry, cursor), next - cursor});
+        cursor = next;
+    }
+    auto cursor = address;
+    for (const auto& copy : copies) {
+        static_cast<void>(findImport(state, cursor, cursor + copy.bytes));
+        cursor += copy.bytes;
+    }
+    return copies;
+}
+
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes) {
 #ifdef _WIN32
     if (context.hostImportAlignment != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address && GuestMemory::GpuMutex().HeldByThisThread()) {

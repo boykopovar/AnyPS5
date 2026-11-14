@@ -36,6 +36,28 @@ endif()
 set_target_properties(agc_driver_recorder_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_recorder_tests)
 
+set(agcSampleImportOriginHeader ${agcTestShaderGeneratedRoot}/SampleImportOrigin_spv.h)
+set(agcSampleImportOriginSpv ${agcTestShaderGeneratedRoot}/SampleImportOrigin.spv)
+add_custom_command(
+        OUTPUT "${agcSampleImportOriginHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcSampleImportOriginSpv}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/SampleImportOrigin.comp"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSampleImportOriginSpv} -DOUTPUT=${agcSampleImportOriginHeader}
+        -DSYMBOL=SAMPLE_IMPORT_ORIGIN_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/SampleImportOrigin.comp" glslang-standalone
+        VERBATIM
+)
+target_sources(agc_driver_recorder_tests PRIVATE "${agcSampleImportOriginHeader}")
+if(BUILD_TESTING)
+    add_test(NAME agc_sampled_import_pieces COMMAND agc_driver_recorder_tests --sampled-import-pieces)
+    set_tests_properties(agc_sampled_import_pieces PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "SYNC-HAZARD|VUID-"
+        ENVIRONMENT "VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT")
+    if(WIN32)
+        set_tests_properties(agc_sampled_import_pieces PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 if(BUILD_TESTING)
     set_target_properties(agc_driver_recorder_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_recorder_device_selection COMMAND agc_driver_recorder_tests --device-selection-only)
