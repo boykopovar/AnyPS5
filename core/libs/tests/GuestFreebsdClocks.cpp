@@ -384,6 +384,12 @@ static void CalendarConversionsFollowTheHostZone() {
     RequireZone("BRT+3", summer, -10800, 0, 0);
     RequireZone("EST5EDT", winter, -18000, 3600, 0);
     RequireZone("EST5EDT", summer, -18000, 3600, 3600);
+    constexpr std::int64_t cycle = 146097LL * 86400LL;
+    for (const std::int64_t cycles : {700000000LL, -700000000LL}) {
+        RequireZone("IST-5:30", winter + cycles * cycle, 19800, 0, 0);
+        RequireZone("EST5EDT", winter + cycles * cycle, -18000, 3600, 0);
+        RequireZone("EST5EDT", summer + cycles * cycle, -18000, 3600, 3600);
+    }
     SetTimeZone("UTC0");
 }
 

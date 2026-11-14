@@ -6,12 +6,14 @@
 #include "tests/TemporaryFile.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <locale>
 #include <optional>
 #include <random>
 #include <stdexcept>
@@ -158,6 +160,50 @@ void testDamagedRecords() {
     }
 }
 
+class GroupedNumbers : public std::numpunct<char> {
+protected:
+    char do_thousands_sep() const override { return ','; }
+    std::string do_grouping() const override { return "\3"; }
+};
+
+class ScopedNumberLocale {
+public:
+    ScopedNumberLocale() : previous(std::locale::global(std::locale(std::locale::classic(), new GroupedNumbers))) {}
+    ~ScopedNumberLocale() { std::locale::global(previous); }
+
+private:
+    std::locale previous;
+};
+
+void testLocaleIndependentRecords() {
+    {
+        ScopedNumberLocale locale;
+        NpTrophy2::TrophyStore trophies("locale");
+        check(trophies.Unlock(InitialUser, 1000, 1234, UINT64_MAX), "a trophy was not saved under a grouped number locale");
+        check(trophies.Unlock(InitialUser, 1000, 0, 0), "a second trophy was not saved under a grouped number locale");
+        NpTrophy2::StatStore stats("locale");
+        stats.Set(InitialUser, 1000, UINT64_MAX, UINT64_MAX);
+        check(stats.Raise(InitialUser, 1000, 1000, 1234567) == 1234567, "a statistic was not raised under a grouped number locale");
+        check(stats.Raise(InitialUser, 1000, 1000, 7654321) == 7654321, "a statistic was not updated under a grouped number locale");
+        stats.Set(InitialUser, 1000, 0, 0);
+        NpTrophy2::TrophyStore restartedTrophies("locale");
+        NpTrophy2::StatStore restartedStats("locale");
+        check(!throws([&] {
+            check(restartedTrophies.UnlockTick(InitialUser, 1000, 1234) == UINT64_MAX && restartedTrophies.UnlockTick(InitialUser, 1000, 0) == 0,
+                  "trophy values changed after reopening under a grouped number locale");
+            check(restartedStats.Value(InitialUser, 1000, UINT64_MAX) == UINT64_MAX && restartedStats.Value(InitialUser, 1000, 1000) == 7654321 &&
+                      restartedStats.Value(InitialUser, 1000, 0) == 0,
+                  "statistic values changed after reopening under a grouped number locale");
+        }), "a saved record could not be reopened under a grouped number locale");
+    }
+    check(read("locale/268435456_1000.txt") == "0 0\n1234 18446744073709551615\n", "trophy records contain localized numbers");
+    check(read("locale/268435456_1000.stats.txt") == "0 0\n1000 7654321\n18446744073709551615 18446744073709551615\n", "statistic records contain localized numbers");
+    NpTrophy2::TrophyStore restartedTrophies("locale");
+    NpTrophy2::StatStore restartedStats("locale");
+    check(restartedTrophies.UnlockCount(InitialUser, 1000) == 2 && restartedStats.Value(InitialUser, 1000, 1000) == 7654321,
+          "records did not survive a number locale change");
+}
+
 struct Seen {
     std::vector<NpTrophy2Unlock> unlocks;
 };
@@ -281,6 +327,45 @@ void testPostedUnlockRules() {
 
 }
 
+template <typename TAction>
+bool refusesKeepingErrno(TAction action) {
+    errno = 71;
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+void testUnwritableOutputs() {
+    int context = 0;
+    check(sceNpTrophy2CreateContext(&context, InitialUser, 4, 0) == 0, "a context for the title's trophy data was not created");
+    auto* bad = reinterpret_cast<void*>(0x10);
+    NpTrophy2GameDetails gameDetails{};
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGameInfo(context, 1, static_cast<NpTrophy2GameDetails*>(bad), nullptr); }), "unwritable game details were taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGameInfo(context, 1, &gameDetails, static_cast<NpTrophy2GameData*>(bad)); }), "unwritable game data was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfo(context, 1, -1, static_cast<NpTrophy2GroupDetails*>(bad), nullptr); }), "unwritable group details were taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfo(context, 1, -1, nullptr, static_cast<NpTrophy2GroupData*>(bad)); }), "unwritable group data was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfo(context, 1, 1, static_cast<NpTrophy2Details*>(bad), nullptr); }), "unwritable trophy details were taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfo(context, 1, 1, nullptr, static_cast<NpTrophy2Data*>(bad)); }), "unwritable trophy data was taken");
+
+    std::uint32_t count = 99;
+    NpTrophy2GroupDetails groups[1]{};
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, static_cast<NpTrophy2GroupDetails*>(bad), nullptr, &count); }), "an unwritable group details array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, groups, static_cast<NpTrophy2GroupData*>(bad), &count); }), "an unwritable group data array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, groups, nullptr, static_cast<std::uint32_t*>(bad)); }), "an unwritable group count was taken");
+    NpTrophy2Details trophies[4]{};
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, static_cast<NpTrophy2Details*>(bad), nullptr, &count); }), "an unwritable trophy details array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, trophies, static_cast<NpTrophy2Data*>(bad), &count); }), "an unwritable trophy data array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, trophies, nullptr, static_cast<std::uint32_t*>(bad)); }), "an unwritable trophy count was taken");
+    check(count == 99, "a refused query wrote the count");
+
+    check(sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, trophies, nullptr, &count) == 0 && count == 4 && trophies[3].trophy_id == 3, "the trophy list is not reported after the refusals");
+    check(sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, groups, nullptr, &count) == 0 && count == 1 && groups[0].group_id == -1, "the group list is not reported after the refusals");
+    check(sceNpTrophy2DestroyContext(context) == 0, "the context was not destroyed");
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-store-" + std::to_string(std::random_device{}()));
@@ -289,8 +374,10 @@ int main() {
     write("app0/sce_sys/param.json", R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})");
     testPersistence();
     testDamagedRecords();
+    testLocaleIndependentRecords();
     testQueries();
     testPostedUnlockRules();
+    testUnwritableOutputs();
     testListenerRemovalWaitsForItsCallback();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
