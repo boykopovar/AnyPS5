@@ -1147,6 +1147,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUsbStorageDialog>")
     endif()
 
+    add_test_executable(guest_userservice_foreground_null_tests tests/GuestUserServiceGetForegroundUserNull.cpp)
+    target_include_directories(guest_userservice_foreground_null_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_userservice_foreground_null_tests PRIVATE libSceUserService libc)
+    configure_windows_unwind(guest_userservice_foreground_null_tests)
+    add_test(NAME guest_userservice_foreground_null COMMAND guest_userservice_foreground_null_tests)
+    if(WIN32)
+        set_tests_properties(guest_userservice_foreground_null PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+
     add_test_executable(guest_game_live_streaming_tests tests/GuestGameLiveStreaming.cpp)
     target_include_directories(guest_game_live_streaming_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_game_live_streaming_tests PRIVATE libSceGameLiveStreaming libc)
