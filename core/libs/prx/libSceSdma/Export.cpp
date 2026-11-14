@@ -318,7 +318,7 @@ int APS5_VABI sceSdmaKickQueue(void* handle) {
 }
 
 int APS5_VABI sceSdmaOpen(void** handle, void* buffer, std::uint32_t size, const SdmaOpenParam* param) {
-    if (!param || size < MinimumWorkingBuffer || !buffer || param->engine - 12 >= 8) return SdmaErrorInvalidArgument;
+    if (!handle || !param || size < MinimumWorkingBuffer || !buffer || param->engine - 12 >= 8) return SdmaErrorInvalidArgument;
     std::lock_guard lock(g_mutex);
     SdmaSlot& slot = g_slots[param->engine];
     if (slot.open) return SdmaErrorBusy;
