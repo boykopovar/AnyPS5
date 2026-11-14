@@ -236,7 +236,7 @@ std::size_t ReverseFind(const Text& text, const Text& match, unsigned index) {
     }
 }
 
-Text CString(const char* string, const char* function) {
+Text NullTerminated(const char* string, const char* function) {
     if (!string) throw std::invalid_argument(function);
     return {string, static_cast<unsigned>(std::strlen(string)), true};
 }
@@ -339,7 +339,7 @@ std::size_t APS5_VABI _ZNK3WTF10StringImpl21findIgnoringASCIICaseERKS0_j(const S
 
 bool APS5_VABI _ZNK3WTF10StringView8containsEPKc(const StringView* self, const char* string) {
     const Text text = Require(self, __func__);
-    return FindCommon(text, CString(string, __func__), 0) != NotFound;
+    return FindCommon(text, NullTerminated(string, __func__), 0) != NotFound;
 }
 
 bool APS5_VABI _ZN3WTF10protocolIsENS_10StringViewEPKc(StringView string, const char* protocol) {
