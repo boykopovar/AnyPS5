@@ -486,6 +486,7 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
             return nullptr;
         }
+        module->owned = path != nullptr;
 #ifdef __linux__
         if (path) InitializeLinuxGuestModule(module->native);
 #endif
@@ -573,7 +574,9 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
 #elif defined(__APPLE__)
         mutation.UnregisterImage(module->loadBias);
 #else
-        mutation.UnregisterImage(reinterpret_cast<const void*>(static_cast<link_map*>(module->native)->l_addr));
+        link_map* map = nullptr;
+        if (::dlinfo(module->native, RTLD_DI_LINKMAP, &map) != 0 || map == nullptr) { Error("dlclose: cannot identify the module image"); return -1; }
+        mutation.UnregisterImage(reinterpret_cast<const void*>(map->l_addr));
 #endif
     }
     {
