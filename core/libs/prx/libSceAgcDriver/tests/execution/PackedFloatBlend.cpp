@@ -500,6 +500,10 @@ int OverdrawBenchmark() {
         std::puts("skipped, the device lacks fragmentShaderPixelInterlock or shaderStorageImageReadWithoutFormat");
         return VulkanTestSkipped;
     }
+    if (!TargetHasCapability(device->Target(), spv::CapabilityStorageImageReadWithoutFormat)) {
+        std::puts("skipped, the device lacks shaderStorageImageReadWithoutFormat");
+        return VulkanTestSkipped;
+    }
     constexpr std::uint32_t Side = 2048;
     constexpr std::uint32_t Layers = 64;
     constexpr std::uint32_t Rounds = 9;
@@ -629,6 +633,10 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         if (!TargetHasCapability(device->Target(), spv::CapabilityFragmentShaderPixelInterlockEXT)) {
             std::puts("skipped, the device lacks fragmentShaderPixelInterlock");
+            return VulkanTestSkipped;
+        }
+        if (!TargetHasCapability(device->Target(), spv::CapabilityStorageImageReadWithoutFormat)) {
+            std::puts("skipped, the device lacks shaderStorageImageReadWithoutFormat");
             return VulkanTestSkipped;
         }
         const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);

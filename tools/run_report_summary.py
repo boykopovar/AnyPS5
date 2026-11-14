@@ -10,8 +10,19 @@ def text(value):
     return "".join(character if character.isprintable() else " " for character in value)
 
 
+def number_text(value):
+    return str(value) if type(value) in (int, float) else "unknown"
+
+
 def count_text(value, noun):
-    return f"{value} {noun}{'' if value == 1 else 's'}"
+    return f"{number_text(value)} {noun}{'' if value == 1 else 's'}"
+
+
+def total_count(items, key):
+    counts = [item.get(key, 0) for item in items if isinstance(item, dict)]
+    if any(type(count) not in (int, float) for count in counts):
+        return None
+    return sum(counts)
 
 
 def render(report):
@@ -38,9 +49,9 @@ def render(report):
 
     result = text(run.get("exit"))
     if run.get("exitCode") is not None:
-        result += f" (exit code {run['exitCode']})"
+        result += f" (exit code {number_text(run['exitCode'])})"
     lines.append(f"Result: {result}")
-    lines.append(f"Progress: {text(run.get('stage'))} after {run.get('seconds', 'unknown')} seconds")
+    lines.append(f"Progress: {text(run.get('stage'))} after {number_text(run.get('seconds'))} seconds")
 
     frames = run.get("framesPresented")
     if coverage.get("milestones"):
@@ -56,11 +67,12 @@ def render(report):
 
     gpu = system.get("gpu")
     gpu_name = gpu.get("name") if isinstance(gpu, dict) else None
-    system_summary = [text(system.get("os")).capitalize(), text(system.get("osVersion"))]
+    os_name = text(system.get("os"))
+    system_summary = [{"linux": "Linux", "windows": "Windows", "macos": "macOS"}.get(os_name, os_name), text(system.get("osVersion"))]
     if system.get("cpu"):
         system_summary.append(text(system["cpu"]))
     if system.get("ramGiB") is not None:
-        system_summary.append(f"{system['ramGiB']} GiB RAM")
+        system_summary.append(f"{number_text(system['ramGiB'])} GiB RAM")
     if gpu_name:
         system_summary.append(text(gpu_name))
     lines.append("System: " + ", ".join(system_summary))
@@ -74,7 +86,7 @@ def render(report):
 
     if coverage.get("missing"):
         functions = missing.get("functions", [])
-        calls = sum(item.get("calls", 0) for item in functions if isinstance(item, dict))
+        calls = total_count(functions, "calls")
         lines.append(f"Missing functions: {count_text(calls, 'call')} across {count_text(len(functions), 'function')}")
         for item in functions[:5]:
             if isinstance(item, dict):
@@ -86,16 +98,17 @@ def render(report):
         lines.append("Missing functions: not collected")
 
     if coverage.get("shaders"):
-        lines.append(f"Shaders: {shaders.get('compiled', 0)} compiled, {count_text(shaders.get('failed', 0), 'failure')}")
+        lines.append(f"Shaders: {number_text(shaders.get('compiled', 0))} compiled, {count_text(shaders.get('failed', 0), 'failure')}")
     else:
         lines.append("Shaders: compilation data was not collected")
     if coverage.get("unsupported"):
         unsupported = shaders.get("unsupported", [])
-        total = sum(item.get("count", 0) for item in unsupported if isinstance(item, dict))
+        total = total_count(unsupported, "count")
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
         for item in unsupported[:5]:
             if isinstance(item, dict):
-                instruction = item.get("opcode") or item.get("opcodeValue") or "unknown instruction"
+                opcode_value = item.get("opcodeValue")
+                instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
                 lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
         if truncated.get("unsupported", 0):
             lines.append(f"  - {count_text(truncated['unsupported'], 'additional instruction')} omitted")
@@ -113,11 +126,16 @@ def render(report):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Print a readable summary of a local AnyPS5 run report.")
     parser.add_argument("report", type=Path, help="path to anyps5-report.json")
     args = parser.parse_args()
     try:
         report = json.loads(args.report.read_text(encoding="utf-8"))
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
         print(render(report))
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError, KeyError) as error:
         print(f"run_report_summary: {error}", file=sys.stderr)

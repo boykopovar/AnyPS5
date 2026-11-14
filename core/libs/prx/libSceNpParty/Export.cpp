@@ -28,7 +28,12 @@ std::atomic<bool> g_handlerRegistered{false};
 
 template <typename T>
 bool ReadGuest(const void* base, std::size_t offset, T& value) {
-    return GuestCopyIn_nid_no_patch(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value));
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value))) {
+        errno = savedErrno;
+        return false;
+    }
+    return true;
 }
 
 bool GuestRangeIsZero(const void* base, std::size_t offset, std::size_t bytes) {
@@ -246,7 +251,12 @@ int APS5_VABI sceNpPartyInitialize(const void* param) {
     std::lock_guard lock(g_handlerMutex);
     if (!param) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     std::uint32_t version = 0;
-    if (!GuestCopyIn_nid_no_patch(&version, param, sizeof(version)) || version == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&version, param, sizeof(version))) {
+        errno = savedErrno;
+        return NP_PARTY_ERROR_INVALID_ARGUMENT;
+    }
+    if (version == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) return NP_PARTY_ERROR_ALREADY_INITIALIZED;
     g_version.store(version);
@@ -268,11 +278,18 @@ int APS5_VABI sceNpPartyLeave(std::uint16_t userId, const NpPartyLeaveParam* par
     if (userId == 0) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     if (param != nullptr) {
         NpPartyLeaveParam local = {};
-        if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return NP_PARTY_ERROR_INVALID_ARGUMENT;
+        const int savedErrno = errno;
+        if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) {
+            errno = savedErrno;
+            return NP_PARTY_ERROR_INVALID_ARGUMENT;
+        }
         if (local.size > 0x800) return NP_PARTY_ERROR_INVALID_ARGUMENT;
         if (local.data != nullptr && local.size != 0) {
             std::uint8_t buffer[0x800];
-            if (!GuestCopyIn_nid_no_patch(buffer, local.data, local.size)) return NP_PARTY_ERROR_INVALID_ARGUMENT;
+            if (!GuestCopyIn_nid_no_patch(buffer, local.data, local.size)) {
+                errno = savedErrno;
+                return NP_PARTY_ERROR_INVALID_ARGUMENT;
+            }
         }
     }
     return NP_PARTY_ERROR_NOT_IN_PARTY;

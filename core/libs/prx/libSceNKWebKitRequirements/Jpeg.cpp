@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -153,7 +154,9 @@ static boolean HostResyncToRestart(j_decompress_ptr cinfo, int desired) {
     auto* gsrc = b->guest_cinfo->src;
     if (gsrc->resync_to_restart) {
         SyncSourceToGuest(b, gsrc);
+        b->guest_cinfo->unread_marker = cinfo->unread_marker;
         int32_t ret = gsrc->resync_to_restart(b->guest_cinfo, desired);
+        cinfo->unread_marker = b->guest_cinfo->unread_marker;
         b->host_src.next_input_byte = gsrc->next_input_byte;
         b->host_src.bytes_in_buffer = static_cast<size_t>(gsrc->bytes_in_buffer);
         return ret ? TRUE : FALSE;
@@ -207,10 +210,15 @@ static void APS5_VABI DefaultGuestFormatMessage_nid_no_patch(NKWebKit::GuestComm
     jpeg_std_error(&dummy_err);
     dummy.err = &dummy_err;
     dummy_err.msg_code = cinfo->err->msg_code;
-    for (int i = 0; i < 8; ++i) {
-        dummy_err.msg_parm.i[i] = cinfo->err->msg_parm.i[i];
-    }
+    dummy_err.jpeg_message_table = cinfo->err->jpeg_message_table;
+    dummy_err.last_jpeg_message = cinfo->err->last_jpeg_message;
+    dummy_err.addon_message_table = cinfo->err->addon_message_table;
+    dummy_err.first_addon_message = cinfo->err->first_addon_message;
+    dummy_err.last_addon_message = cinfo->err->last_addon_message;
+    static_assert(sizeof(dummy_err.msg_parm) == sizeof(cinfo->err->msg_parm));
+    std::memcpy(&dummy_err.msg_parm, &cinfo->err->msg_parm, sizeof(dummy_err.msg_parm));
     dummy_err.format_message(reinterpret_cast<j_common_ptr>(&dummy), buffer);
+    std::memcpy(&cinfo->err->msg_parm, &dummy_err.msg_parm, sizeof(dummy_err.msg_parm));
 }
 
 static void APS5_VABI DefaultGuestResetErrorMgr_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
@@ -246,6 +254,7 @@ static void SyncGuestToHost(JpegBinding* b) {
     h->raw_data_out = g->raw_data_out ? TRUE : FALSE;
     h->dct_method = static_cast<J_DCT_METHOD>(g->dct_method);
     h->do_fancy_upsampling = g->do_fancy_upsampling ? TRUE : FALSE;
+    h->CCIR601_sampling = g->CCIR601_sampling ? TRUE : FALSE;
     h->do_block_smoothing = g->do_block_smoothing ? TRUE : FALSE;
     h->quantize_colors = g->quantize_colors ? TRUE : FALSE;
     h->dither_mode = static_cast<J_DITHER_MODE>(g->dither_mode);
@@ -351,8 +360,6 @@ static void ForwardError(JpegBinding* b) {
         for (int i = 0; i < 8; ++i) {
             g->err->msg_parm.i[i] = b->host_err.msg_parm.i[i];
         }
-        g->err->num_warnings = b->host_err.num_warnings;
-        g->err->trace_level = b->host_err.trace_level;
         if (g->err->error_exit) {
             g->err->error_exit(reinterpret_cast<NKWebKit::GuestCommonPtr>(g));
         }
@@ -578,6 +585,7 @@ int APS5_VABI jpeg_resync_to_restart_nid_postfix(NKWebKit::GuestJpegDecompress* 
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
     int ret = 0;
     SyncGuestToHost(b);
+    b->host_cinfo.unread_marker = cinfo->unread_marker;
     if (!RunGuarded(b, [&] { ret = jpeg_resync_to_restart(&b->host_cinfo, desired); })) {
         HandleException(b);
         return 0;
