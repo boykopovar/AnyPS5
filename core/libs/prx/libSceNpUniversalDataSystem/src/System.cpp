@@ -1,4 +1,5 @@
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
+#include <cerrno>
 #include <cinttypes>
 #include <cstddef>
 #include <cstdint>
@@ -29,7 +30,13 @@ int APS5_VABI sceNpUniversalDataSystemGetMemoryStat(NpUniversalDataSystemMemoryS
     if (stat == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    *stat = {};
+    const NpUniversalDataSystemMemoryStat zero{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) {
+        APS5_INVALID_ARG_EX;
+    }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -37,7 +44,13 @@ int APS5_VABI sceNpUniversalDataSystemGetStorageStat(int context, NpUniversalDat
     if (stat == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    *stat = {};
+    const NpUniversalDataSystemStorageStat zero{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) {
+        APS5_INVALID_ARG_EX;
+    }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
