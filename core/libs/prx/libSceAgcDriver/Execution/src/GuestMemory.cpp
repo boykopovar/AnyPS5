@@ -3482,6 +3482,33 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
     CopyGuestBytes(destination.data(), source, destination.size());
 }
 
+#ifdef _WIN32
+namespace {
+
+// Windows write-watch reports a read that faults in a demand-zero page as a write (#18281), so the
+// driver's reads take known-zero pages as zeros without touching them. Nothing is reset: a guest
+// store after the decision still reports. Visits (offset, bytes, zero) runs of the range in order.
+template <class Visit>
+void splitKnownZero(std::uintptr_t source, std::size_t bytes, Visit&& visit) {
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> zero;
+    GuestArena::GuestArenaKnownZero_nid_no_patch(source, bytes, [](void* context, std::uintptr_t first, std::uintptr_t last) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(first, last); }, &zero);
+    std::size_t done = 0;
+    for (const auto& [first, last] : zero) {
+        const auto offset = static_cast<std::size_t>(first - source);
+        if (offset > done) visit(done, offset - done, false);
+        visit(offset, static_cast<std::size_t>(last - first), true);
+        done = static_cast<std::size_t>(last - source);
+    }
+    if (done < bytes) visit(done, bytes - done, false);
+}
+
+bool zeroBytes(const std::byte* bytes, std::size_t count) {
+    return std::all_of(bytes, bytes + count, [](std::byte value) { return value == std::byte{0}; });
+}
+
+}
+#endif
+
 #ifdef ANYPS5_ENABLE_ASAN
 [[gnu::no_sanitize("address")]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     using UnalignedWord [[gnu::aligned(1), gnu::may_alias]] = std::uint64_t;
@@ -3496,7 +3523,16 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
 }
 #else
 void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+#ifdef _WIN32
+    auto* to = static_cast<unsigned char*>(destination);
+    const auto* from = static_cast<const unsigned char*>(source);
+    splitKnownZero(reinterpret_cast<std::uintptr_t>(source), bytes, [&](std::size_t offset, std::size_t count, bool zero) {
+        if (zero) std::memset(to + offset, 0, count);
+        else std::memcpy(to + offset, from + offset, count);
+    });
+#else
     std::memcpy(destination, source, bytes);
+#endif
 }
 #endif
 
@@ -3535,9 +3571,15 @@ void visitReadablePages(std::byte* destination, std::uint64_t source, std::size_
 
 void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_t bytes) {
 #ifdef _WIN32
-    if (GuestArena::GuestArenaCopyOwned_nid_no_patch(source, destination, bytes)) return;
-    visitReadablePages(destination, source, bytes, [&](std::size_t offset, std::size_t count, bool read) {
-        if (!read) std::memset(destination + offset, 0, count);
+    splitKnownZero(static_cast<std::uintptr_t>(source), bytes, [&](std::size_t at, std::size_t length, bool zero) {
+        if (zero) {
+            std::memset(destination + at, 0, length);
+            return;
+        }
+        if (GuestArena::GuestArenaCopyOwned_nid_no_patch(source + at, destination + at, length)) return;
+        visitReadablePages(destination + at, source + at, length, [&](std::size_t offset, std::size_t count, bool read) {
+            if (!read) std::memset(destination + at + offset, 0, count);
+        });
     });
 #else
     std::memcpy(destination, reinterpret_cast<const void*>(source), bytes);
@@ -3546,21 +3588,30 @@ void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_
 
 bool equalsCommittedBytes(std::uint64_t address, const std::byte* expected, std::size_t bytes) {
 #ifdef _WIN32
-    bool same = false;
-    if (GuestArena::GuestArenaCompareOwned_nid_no_patch(address, expected, bytes, &same)) return same;
     constexpr std::size_t ChunkBytes = 64 * PageBytes;
     struct CompareChunkStorage {};
     auto& current = HostThreadLocal<std::vector<std::byte>, CompareChunkStorage>();
     if (current.size() < ChunkBytes) current.resize(ChunkBytes);
-    for (std::size_t done = 0; done < bytes; done += ChunkBytes) {
-        const auto count = std::min(ChunkBytes, bytes - done);
-        bool equal = true;
-        visitReadablePages(current.data(), address + done, count, [&](std::size_t offset, std::size_t length, bool read) {
-            if (read && equal && std::memcmp(current.data() + offset, expected + done + offset, length) != 0) equal = false;
-        });
-        if (!equal) return false;
-    }
-    return true;
+    bool equal = true;
+    splitKnownZero(static_cast<std::uintptr_t>(address), bytes, [&](std::size_t at, std::size_t span, bool zero) {
+        if (!equal) return;
+        if (zero) {
+            equal = zeroBytes(expected + at, span);
+            return;
+        }
+        bool same = false;
+        if (GuestArena::GuestArenaCompareOwned_nid_no_patch(address + at, expected + at, span, &same)) {
+            equal = same;
+            return;
+        }
+        for (std::size_t done = at; equal && done < at + span; done += ChunkBytes) {
+            const auto count = std::min(ChunkBytes, at + span - done);
+            visitReadablePages(current.data(), address + done, count, [&](std::size_t offset, std::size_t length, bool read) {
+                if (read && equal && std::memcmp(current.data() + offset, expected + done + offset, length) != 0) equal = false;
+            });
+        }
+    });
+    return equal;
 #else
     return std::memcmp(reinterpret_cast<const void*>(address), expected, bytes) == 0;
 #endif
@@ -3617,7 +3668,15 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     // Each run's page state is consulted right before its bytes are compared.
     const bool queried = describePages(static_cast<std::uintptr_t>(address), bytes.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
+#ifdef _WIN32
+        else splitKnownZero(run.begin, static_cast<std::size_t>(run.end - run.begin), [&](std::size_t offset, std::size_t length, bool zero) {
+            const auto* expected = bytes.data() + (run.begin - address) + offset;
+            if (outcome != Compare::Equal) return;
+            if (zero ? !zeroBytes(expected, length) : std::memcmp(reinterpret_cast<const void*>(run.begin + offset), expected, length) != 0) outcome = Compare::Differs;
+        });
+#else
         else if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
+#endif
         return outcome == Compare::Equal;
     });
     return queried ? outcome : Compare::Unmapped;
