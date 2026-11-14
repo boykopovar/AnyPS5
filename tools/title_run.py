@@ -367,7 +367,9 @@ def render_markdown(summary, previous=None):
     parts = [machine["os"], machine["gpu"], machine["driver"] and f"driver {machine['driver']}", machine["cpu"] and f"CPU {machine['cpu']}"]
     known = ", ".join(part for part in parts if part)
     header += f". {known}." if known else "."
-    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {summary['seconds']} s each."
+    lengths = sorted({title["seconds"] for title in summary["titles"].values() if "seconds" in title}) or [summary["seconds"]]
+    length = f"{lengths[0]} to {lengths[-1]}" if len(lengths) > 1 else lengths[0]
+    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {length} s each."
     lines = [header, ""]
     lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
     if lacking:
