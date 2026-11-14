@@ -1,5 +1,9 @@
 # libSceSystemGesture technical debt
 
+### Functional
+
+- [sceSystemGestureGetPrimitiveTouchEventByIndex, sceSystemGestureGetPrimitiveTouchEventByPrimitiveID, sceSystemGestureGetPrimitiveTouchEvents, sceSystemGestureGetTouchEvents and sceSystemGestureGetTouchRecognizerInformation](../../../core/libs/prx/libSceSystemGesture/Export.cpp) (libSceSystemGesture) - returning `0x80890001` (`SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT`) when output buffer or count pointers are unwritable is a defensive host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Silent stubs
 
 - [System gesture recognizers](../../../core/libs/prx/libSceSystemGesture/Export.cpp) (libSceSystemGesture) - `sceSystemGestureGetTouchEvents`, `GetTouchEventsCount`, `GetTouchEventByIndex`, `GetTouchEventByEventID` and the recognizer append, remove, reset and update calls report that no recognizer ever matches, so a title receives primitive touch events but no tap, drag, hold, pinch, rotation or flick event. Handle and pointer arguments are still checked across all query entry points. `sceSystemGestureGetTouchRecognizerInformation` returns the gesture type and rectangle given to `sceSystemGestureCreateTouchRecognizer` or `UpdateTouchRecognizerRectangle`, stored in the title's recognizer buffer in a layout private to this file, and always reports `updated_time` 0 because no recognizer is ever updated with input. It throws for a recognizer that was not created by `sceSystemGestureCreateTouchRecognizer` or has no rectangle, since the console's result in those cases is not known
