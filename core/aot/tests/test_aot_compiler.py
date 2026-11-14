@@ -260,15 +260,21 @@ def reject(options, directory):
         ["--args", "7"], ["--args", "-1"], ["--args", "1junk"], ["--opt", "4"],
         ["--opt", "bad"], ["--triple", "not-a-target"], ["--function", "missing"],
         ["--unknown", "value"], ["--emit-llvm"], ["--emit-llvm", output],
+        ["--emit-llvm", directory / "missing" / "out.ll"],
+        ["--emit-asm", directory / "missing" / "out.s"],
+        ["--emit-asm", directory / "out.s", "--emit-llvm", directory / "missing" / "out.ll"],
         ["--output", source], ["--output", directory], ["--output", directory / "missing" / "out.o"],
     ):
-        run([*base, *extra], success=False)
+        output.write_bytes(sentinel)
+        result = run([*base, *extra], success=False)
+        if not result.stderr.strip() or output.read_bytes() != sentinel or list(directory.glob("*.tmp")):
+            raise AssertionError("CLI/output rejection must diagnose the error, preserve existing output and clean temporary files")
     run([options.compiler, "--input", source, "--output", output], success=False)
     if source.with_name(source.name.upper()).exists():
         alias = directory / "alias.o"
         result = run([*base, "--output", alias, "--emit-llvm", directory / "ALIAS.O"], success=False)
-        if not result.stderr.strip() or (alias.exists() and alias.read_bytes().startswith(b";")):
-            raise AssertionError("Aliased outputs must fail without replacing the object with IR")
+        if not result.stderr.strip() or alias.exists() or list(directory.glob("*.tmp")):
+            raise AssertionError("Aliased outputs must fail before publishing any output")
     source.write_bytes(elf(b"\x48\x89\xf8\xc3"))
     run([*base, "--args", "0"], success=False)
     print(f"Rejected {len(invalid_inputs)} invalid or unsupported inputs and invalid CLI/output requests")

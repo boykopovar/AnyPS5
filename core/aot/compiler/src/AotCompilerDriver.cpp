@@ -21,6 +21,7 @@ namespace {
 struct Output {
     std::filesystem::path Path;
     llvm::SmallVector<char, 0> Bytes;
+    llvm::SmallString<256> Temporary;
 };
 
 std::string DefaultTriple() {
@@ -58,7 +59,7 @@ void ValidatePaths(const CompilerOptions& options) {
 
 Output Emit(llvm::Module& module, llvm::TargetMachine& machine,
     const std::filesystem::path& path, llvm::CodeGenFileType type) {
-    Output output{path, {}};
+    Output output{path, {}, {}};
     llvm::raw_svector_ostream stream(output.Bytes);
     auto copy = llvm::CloneModule(module);
     llvm::legacy::PassManager passes;
@@ -72,29 +73,36 @@ Output Emit(llvm::Module& module, llvm::TargetMachine& machine,
     return output;
 }
 
-void Write(const Output& output) {
+void Stage(Output& output) {
     int descriptor = -1;
     llvm::SmallString<256> temporary;
     auto error = llvm::sys::fs::createUniqueFile(output.Path.string() + ".%%%%%%.tmp", descriptor, temporary);
     if (error) {
         throw std::runtime_error("Cannot create output " + output.Path.string() + ": " + error.message());
     }
-    struct Cleanup {
-        llvm::SmallString<256>& Path;
-        ~Cleanup() { llvm::sys::fs::remove(Path); }
-    } cleanup{temporary};
+    output.Temporary = temporary;
     llvm::raw_fd_ostream stream(descriptor, true);
     stream.write(output.Bytes.data(), output.Bytes.size());
     stream.close();
     if (stream.has_error()) {
         error = stream.error();
         stream.clear_error();
-        throw std::runtime_error("Cannot write output: " + error.message());
+        throw std::runtime_error("Cannot write output " + output.Path.string() + ": " + error.message());
     }
-    error = llvm::sys::fs::rename(temporary, output.Path.string());
-    if (error) {
-        throw std::runtime_error("Cannot replace output: " + error.message());
+}
+
+std::filesystem::path Parent(const std::filesystem::path& path) {
+    return path.has_parent_path() ? path.parent_path() : std::filesystem::path(".");
+}
+
+bool CaseInsensitiveCollision(const Output& left, const Output& right) {
+    if (!llvm::StringRef(left.Path.filename().string()).equals_insensitive(right.Path.filename().string()) ||
+        !std::filesystem::equivalent(Parent(left.Path), Parent(right.Path))) {
+        return false;
     }
+    std::string current(left.Temporary.data(), left.Temporary.size());
+    std::string probe = current.substr(0, current.size() - 3) + "TMP";
+    return std::filesystem::exists(probe) && std::filesystem::equivalent(current, probe);
 }
 
 } // namespace
@@ -145,14 +153,39 @@ CompilationStatistics AotCompilerDriver::Compile(const CompilerOptions& options)
             outputs.push_back(Emit(*lifted.Module, *machine, options.OutputAssemblyPath, llvm::CodeGenFileType::AssemblyFile));
         }
         if (!options.OutputLlvmIrPath.empty()) {
-            Output output{options.OutputLlvmIrPath, {}};
+            Output output{options.OutputLlvmIrPath, {}, {}};
             llvm::raw_svector_ostream stream(output.Bytes);
             lifted.Module->print(stream, nullptr);
             outputs.push_back(std::move(output));
         }
-        for (const auto& output : outputs) {
+        struct Cleanup {
+            std::vector<Output>& Outputs;
+            ~Cleanup() {
+                for (const auto& output : Outputs) {
+                    if (!output.Temporary.empty()) {
+                        llvm::sys::fs::remove(output.Temporary);
+                    }
+                }
+            }
+        } cleanup{outputs};
+        for (auto& output : outputs) {
             ValidatePaths(options);
-            Write(output);
+            Stage(output);
+        }
+        for (size_t i = 0; i < outputs.size(); ++i) {
+            for (size_t j = i + 1; j < outputs.size(); ++j) {
+                if (CaseInsensitiveCollision(outputs[i], outputs[j])) {
+                    throw std::runtime_error("Input and output paths must be distinct");
+                }
+            }
+        }
+        ValidatePaths(options);
+        for (auto& output : outputs) {
+            auto error = llvm::sys::fs::rename(output.Temporary, output.Path.string());
+            if (error) {
+                throw std::runtime_error("Cannot replace output " + output.Path.string() + ": " + error.message());
+            }
+            output.Temporary.clear();
         }
         statistics.Success = true;
     } catch (const std::exception& exception) {
