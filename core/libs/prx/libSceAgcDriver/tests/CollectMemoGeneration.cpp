@@ -420,6 +420,55 @@ void CheckLaterThreadReusesWalk() {
     Require(stage.load() == 3, "a walk made after another thread's ordering point did not answer that thread");
 }
 
+void CheckAdoptedEpochReusesWalk() {
+    const auto address = Base + 66 * Block;
+    const auto probe = address + 3 * Page;
+    std::atomic<int> stage{0};
+    std::uint64_t leader = 0;
+    std::uint64_t observed = 0;
+    bool reused = false;
+    bool hidden = false;
+    bool kept = false;
+    bool found = false;
+    bool fresh = false;
+    std::thread follower([&] {
+        BumpCollectEpoch();
+        const auto own = HeldCollectEpoch();
+        stage.store(1);
+        while (stage.load() != 2) std::this_thread::yield();
+        AdoptCollectEpoch(leader);
+        const bool adopted = own < leader && HeldCollectEpoch() == leader;
+        Store(probe);
+        const auto before = OsWalks();
+        reused = adopted && CollectWrites(address, Block) != 0 && OsWalks() == before;
+        hidden = UnchangedSince(probe & ~(Page - 1), Page, observed);
+        BumpCollectEpoch();
+        const auto newer = HeldCollectEpoch();
+        AdoptCollectEpoch(leader);
+        kept = HeldCollectEpoch() == newer;
+        const auto again = OsWalks();
+        found = CollectWrites(address, Block) != 0 && OsWalks() > again && !UnchangedSince(probe & ~(Page - 1), Page, observed);
+    });
+    while (stage.load() != 1) std::this_thread::yield();
+    BumpCollectEpoch();
+    leader = HeldCollectEpoch();
+    Require(CollectWrites(address, Block) != 0, "the leader's collect failed");
+    observed = TrackerGeneration();
+    stage.store(2);
+    follower.join();
+    std::thread unbumped([&] {
+        AdoptCollectEpoch(leader);
+        const auto before = OsWalks();
+        fresh = HeldCollectEpoch() == leader && CollectWrites(address, Block) != 0 && OsWalks() == before;
+    });
+    unbumped.join();
+    Require(reused, "a thread that took another thread's epoch walked a range that thread had walked in it");
+    Require(hidden, "a collect in a taken epoch found a store made after the walk that answered it");
+    Require(kept, "taking an older epoch moved a thread's epoch back");
+    Require(found, "a thread's own newer epoch reused a walk made before it and hid a store");
+    Require(fresh, "a thread that never bumped did not reuse a walk made in the epoch it took");
+}
+
 void CheckEarlierWalkDoesNotAnswerLaterEpoch() {
     const auto address = Base + 49 * Block + 2 * Page;
     BumpCollectEpoch();
@@ -657,6 +706,7 @@ int main(int argc, char** argv) {
         CheckOwnersShareOneWalk();
         CheckRunsAreWalkedOnce();
         CheckLaterThreadReusesWalk();
+        CheckAdoptedEpochReusesWalk();
         CheckEarlierWalkDoesNotAnswerLaterEpoch();
         CheckHitDuringWalkReturnsStable();
         CheckNoHitBeforePublication(1);

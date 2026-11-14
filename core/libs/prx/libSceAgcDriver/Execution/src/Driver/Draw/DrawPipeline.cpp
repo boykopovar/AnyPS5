@@ -183,6 +183,7 @@ void DrawFinisher::Enqueue(Job job) {
 
 void DrawFinisher::Enqueue(Job job, Pending held) {
     finisherProducer = true;
+    const auto epoch = GuestMemory::HeldCollectEpoch();
     constexpr std::size_t depth = 16;
     struct ReclaimStorage {};
     auto& reclaim = HostThreadLocal<std::vector<Job>, ReclaimStorage>();
@@ -193,6 +194,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
     if (jobs.size() >= depth && GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw finisher full while the enqueuing thread holds the GPU lock");
     idle.wait(lock, [&] { return jobs.size() < depth; });
     jobs.push_back(std::move(job));
+    epochs.push_back(epoch);
     pending.push_back(std::move(held));
     outstanding.fetch_add(1, std::memory_order_release);
     if (!running) {
@@ -212,6 +214,7 @@ void DrawFinisher::run() {
     for (;;) {
         Job* job = nullptr;
         bool failed = false;
+        std::uint64_t epoch = 0;
         SpinUntil(HandoffSpinWindow(), [&] { return outstanding.load(std::memory_order_acquire) != 0; });
         {
             std::unique_lock lock(mutex);
@@ -219,8 +222,10 @@ void DrawFinisher::run() {
             wake.wait(lock, [&] { return !jobs.empty(); });
             sleeping = false;
             job = &jobs.front();
+            epoch = epochs.front();
             failed = failure != nullptr;
         }
+        if (DrawPipeline::SharedCollectEpoch()) GuestMemory::AdoptCollectEpoch(epoch);
         std::exception_ptr error;
         try {
             if (!failed) (*job)();
@@ -231,6 +236,7 @@ void DrawFinisher::run() {
         if (error != nullptr && failure == nullptr) failure = error;
         ran.push_back(std::move(jobs.front()));
         jobs.pop_front();
+        epochs.pop_front();
         pending.pop_front();
         outstanding.fetch_sub(1, std::memory_order_release);
         idle.notify_all();
@@ -292,10 +298,16 @@ std::atomic<std::uint64_t>& DrawPipeline::EpochToken() {
 }
 
 void DrawPipeline::FollowEpoch(std::uint64_t token) {
+    if (SharedCollectEpoch()) return;
     static thread_local std::uint64_t followed = 0;
     if (followed == token) return;
     followed = token;
     GuestMemory::BumpCollectEpoch();
+}
+
+bool DrawPipeline::SharedCollectEpoch() {
+    static const bool shared = std::getenv("APS5_NO_SHARED_COLLECT_EPOCH") == nullptr;
+    return shared;
 }
 
 unsigned DrawPipeline::Committers() {
@@ -341,6 +353,7 @@ void DrawPipeline::EnqueueStore(Commit commit, std::uint64_t address, std::vecto
 }
 
 void DrawPipeline::enqueue(Item item) {
+    item.collectEpoch = GuestMemory::HeldCollectEpoch();
     if (DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) DrawFinisher::Get().Drain();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     struct ReclaimStorage {};
@@ -447,6 +460,7 @@ void DrawPipeline::run() {
     for (;;) {
         Commit* commit = nullptr;
         bool isDraw = false;
+        std::uint64_t epoch = 0;
         SpinUntil(HandoffSpinWindow(), [&] { return outstanding.load(std::memory_order_acquire) != 0; });
         {
             std::unique_lock lock(mutex);
@@ -456,7 +470,9 @@ void DrawPipeline::run() {
             if (items.empty()) break;
             commit = stopped ? nullptr : &items.front().commit;
             isDraw = items.front().draw;
+            epoch = items.front().collectEpoch;
         }
+        if (SharedCollectEpoch()) GuestMemory::AdoptCollectEpoch(epoch);
         const auto start = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         std::exception_ptr fatal;
         bool failed = false;

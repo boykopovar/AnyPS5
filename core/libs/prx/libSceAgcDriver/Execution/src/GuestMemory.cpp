@@ -2279,8 +2279,15 @@ std::uint64_t UnwatchSerial() {
 }
 
 void AdoptLatestCollectEpoch() {
-    const auto latest = lastBumpedEpoch.load(std::memory_order_acquire);
-    if (latest > HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get()) HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(latest);
+    AdoptCollectEpoch(lastBumpedEpoch.load(std::memory_order_acquire));
+}
+
+void AdoptCollectEpoch(std::uint64_t epoch) {
+    if (epoch > HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get()) HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(epoch);
+}
+
+std::uint64_t HeldCollectEpoch() {
+    return HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get();
 }
 
 std::uint64_t CollectEpochBumps() {
