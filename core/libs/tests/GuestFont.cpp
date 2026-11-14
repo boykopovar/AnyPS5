@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -901,6 +902,9 @@ int main() {
     std::uint32_t glyphCode = 1;
     Require(sceFontGetCharGlyphCode(font, 'A', &glyphCode) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH && glyphCode == 0);
     Require(sceFontGetCharGlyphCode(font, 'A', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetCharGlyphCode(font, 'A', reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     glyphCode = 1;
     Require(sceFontGetCharGlyphCode(nullptr, 'A', &glyphCode) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && glyphCode == 0);
     glyphCode = 1;
