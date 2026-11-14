@@ -2736,11 +2736,7 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
                 if (entry.revents) ++ready;
                 continue;
             }
-            if (entry.descriptor <= 2) {
-                entry.revents = static_cast<short>(entry.descriptor == 0 ? 0 : entry.events & GuestPollWritable);
-                if (entry.revents) ++ready;
-                continue;
-            }
+            const int savedError = errno;
 #ifdef _WIN32
             short revents = 0;
             if (!PipeReadiness(entry.descriptor, entry.events, revents))
@@ -2748,6 +2744,12 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             if (!IsPipe(entry.descriptor, entry.events))
 #endif
             {
+                if (entry.descriptor <= 2) {
+                    errno = savedError;
+                    entry.revents = static_cast<short>(entry.descriptor == 0 ? 0 : entry.events & GuestPollWritable);
+                    if (entry.revents) ++ready;
+                    continue;
+                }
                 if (!DescriptorIsOpen_nid_no_patch(entry.descriptor)) {
                     entry.revents = GuestPollInvalid;
                     ++ready;

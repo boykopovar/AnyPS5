@@ -24,6 +24,7 @@
 
 #ifndef _WIN32
 #include <poll.h>
+#include <sys/stat.h>
 #endif
 
 namespace {
@@ -46,6 +47,19 @@ std::atomic<KernelSocketPoll::OptionGetter> g_socketOptionGetter{nullptr};
 std::atomic<KernelSocketPoll::StatusControl> g_socketStatusControl{nullptr};
 std::atomic<KernelSocketPoll::IoctlControl> g_socketIoctlControl{nullptr};
 std::atomic<KernelSocketPoll::NativeLookup> g_socketNativeLookup{nullptr};
+
+bool StandardPipe(int descriptor) {
+    const int savedError = errno;
+#ifdef _WIN32
+    short revents = 0;
+    const bool pipe = DescriptorIsOpen_nid_no_patch(descriptor) && GuestSockets::PipeReady(descriptor, 0, revents);
+#else
+    struct stat status{};
+    const bool pipe = ::fstat(descriptor, &status) == 0 && S_ISFIFO(status.st_mode);
+#endif
+    errno = savedError;
+    return pipe;
+}
 
 bool DescriptorSet(const void* set, int descriptor) {
     return set != nullptr && ((static_cast<const std::uint64_t*>(set)[descriptor / 64] >> (descriptor % 64)) & 1u) != 0;
@@ -238,7 +252,7 @@ static int SelectDescriptors(int nfds, void* readfds, void* writefds, void* exce
             requested.push_back({descriptor, events, 0});
         } else if (File::IsRandomDevice(descriptor)) devices.push_back({descriptor, events, static_cast<short>((events & KernelSocketPoll::Readable) != 0 ? KernelSocketPoll::Readable : events)});
         else if (File::IsVnode(descriptor)) devices.push_back({descriptor, events, static_cast<short>(events & (KernelSocketPoll::Readable | KernelSocketPoll::Writable))});
-        else if (descriptor <= 2) devices.push_back({descriptor, events, static_cast<short>(descriptor == 0 ? 0 : events & KernelSocketPoll::Writable)});
+        else if (descriptor <= 2 && !StandardPipe(descriptor)) devices.push_back({descriptor, events, static_cast<short>(descriptor == 0 ? 0 : events & KernelSocketPoll::Writable)});
         else {
             net.entries.push_back({descriptor, events, 0});
             net.slots.push_back(requested.size());

@@ -3,7 +3,10 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
+#include <fcntl.h>
+#include <io.h>
 #else
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -18,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -157,6 +161,132 @@ static void PollsFilesAndDirectories(int socket) {
     Require(mixed[0].revents == 0 && mixed[1].revents == Out && mixed[2].revents == ReadNormal);
     Require(close_nid_postfix(directory) == 0 && close_nid_postfix(file) == 0);
     Require(rmdir_nid_postfix(directoryPath.c_str()) == 0 && unlink_nid_postfix(filePath.c_str()) == 0);
+}
+
+
+template<typename TAction>
+static void WithStandardPipe(int descriptor, bool writing, TAction action) {
+    const int saved = dup_nid_postfix(descriptor);
+    int ends[2];
+    Require(pipe_nid_postfix(ends) == 0);
+    for (int& end : ends) {
+        if (end > 2) continue;
+        const int duplicate = fcntl_nid_postfix(end, 0, 3);
+        Require(duplicate > 2 && close_nid_postfix(end) == 0);
+        end = duplicate;
+    }
+#ifndef _WIN32
+    if (writing) Require(fcntl_nid_postfix(ends[1], 4, 4) == 0);
+#endif
+    const int source = ends[writing ? 1 : 0];
+    int other = ends[writing ? 0 : 1];
+    const int mapped = dup2_nid_postfix(source, descriptor);
+    const int sourceClosed = close_nid_postfix(source);
+    std::exception_ptr failure;
+    if (mapped == descriptor && sourceClosed == 0) {
+        try {
+            action(other);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }
+    const int restored = saved >= 0 ? dup2_nid_postfix(saved, descriptor) : close_nid_postfix(descriptor);
+    const int savedClosed = saved >= 0 ? close_nid_postfix(saved) : 0;
+    const int otherClosed = other >= 0 ? close_nid_postfix(other) : 0;
+    Require(mapped == descriptor && sourceClosed == 0);
+    Require(restored == (saved >= 0 ? descriptor : 0) && savedClosed == 0 && otherClosed == 0);
+    if (failure) std::rethrow_exception(failure);
+}
+
+static void StandardDescriptorPipe(int descriptor) {
+    std::array<int, 4> ready{};
+    std::array<short, 4> events{};
+    std::int64_t wrote = -1, consumed = -1, eof = -1;
+    int closed = -1;
+    char byte = 0;
+    WithStandardPipe(descriptor, false, [&](int& writer) {
+        GuestPollDescriptor input{descriptor, static_cast<short>(In | ReadNormal | Priority), -1};
+        ready[0] = poll_nid_postfix(&input, 1, 0);
+        events[0] = input.revents;
+        wrote = write_nid_postfix(writer, "x", 1);
+        ready[1] = poll_nid_postfix(&input, 1, 0);
+        events[1] = input.revents;
+        if (wrote == 1) consumed = read_nid_postfix(descriptor, &byte, 1);
+        ready[2] = poll_nid_postfix(&input, 1, 0);
+        events[2] = input.revents;
+        closed = close_nid_postfix(writer);
+        writer = -1;
+        ready[3] = poll_nid_postfix(&input, 1, 0);
+        events[3] = input.revents;
+        if (closed == 0) eof = read_nid_postfix(descriptor, &byte, 1);
+    });
+    if (ready[1] != 1) std::fprintf(stderr, "poll redirected pipe input failed: descriptor=%d ready=%d events=%d\n", descriptor, ready[1], events[1]);
+    Require(wrote == 1 && consumed == 1 && byte == 'x' && closed == 0 && eof == 0);
+    Require(ready == std::array<int, 4>{0, 1, 0, 1});
+    Require(events == std::array<short, 4>{0, In | ReadNormal, 0, In | ReadNormal | Hup});
+
+    int writable = -1, full = -1, ended = -1, readerClosed = -1;
+    short writableEvents = -1, fullEvents = -1, endedEvents = -1;
+    std::int64_t queued = 0;
+    WithStandardPipe(descriptor, true, [&](int& reader) {
+        GuestPollDescriptor output{descriptor, Out, -1};
+        writable = poll_nid_postfix(&output, 1, 0);
+        writableEvents = output.revents;
+#ifndef _WIN32
+        std::array<char, 256> block{};
+        for (int attempts = 0; attempts < 4096 && poll_nid_postfix(&output, 1, 0) == 1; ++attempts) {
+            const auto count = write_nid_postfix(descriptor, block.data(), block.size());
+            if (count <= 0) break;
+            queued += count;
+        }
+        full = poll_nid_postfix(&output, 1, 0);
+        fullEvents = output.revents;
+#endif
+        readerClosed = close_nid_postfix(reader);
+        reader = -1;
+        ended = poll_nid_postfix(&output, 1, 0);
+        endedEvents = output.revents;
+    });
+    Require(writable == 1 && writableEvents == Out && readerClosed == 0);
+#ifndef _WIN32
+    Require(queued > 0 && queued < (1 << 20) && full == 0 && fullEvents == 0);
+#endif
+    Require(ended == 1 && endedEvents == Hup);
+}
+
+static void ConsoleFallback() {
+    const int saved = dup_nid_postfix(0);
+#ifdef _WIN32
+    const int device = ::_open("NUL", _O_RDONLY);
+#else
+    const int device = ::open("/dev/null", O_RDONLY);
+#endif
+    Require(device >= 0);
+    const int mapped = dup2_nid_postfix(device, 0);
+    const int deviceClosed = device != 0 ? close_nid_postfix(device) : 0;
+    GuestPollDescriptor console[3]{{0, static_cast<short>(In | ReadNormal | Out), -1}, {1, static_cast<short>(In | Out | WriteBand), -1}, {2, Out, -1}};
+    GuestPollDescriptor input{0, In, -1};
+    int consoleReady = -1, inputReady = -1;
+    std::chrono::steady_clock::duration waited{};
+    std::exception_ptr failure;
+    if (mapped == 0 && deviceClosed == 0) {
+        try {
+            consoleReady = poll_nid_postfix(console, 3, 0);
+            const auto start = std::chrono::steady_clock::now();
+            inputReady = poll_nid_postfix(&input, 1, 30);
+            waited = std::chrono::steady_clock::now() - start;
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }
+    const int restored = saved >= 0 ? dup2_nid_postfix(saved, 0) : close_nid_postfix(0);
+    const int savedClosed = saved >= 0 ? close_nid_postfix(saved) : 0;
+    Require(mapped == 0 && deviceClosed == 0 && restored == 0 && savedClosed == 0);
+    if (failure) std::rethrow_exception(failure);
+    Require(consoleReady == 2);
+    Require(console[0].revents == 0 && console[1].revents == Out && console[2].revents == Out);
+    Require(inputReady == 0 && input.revents == 0);
+    Require(waited >= std::chrono::milliseconds(25));
 }
 
 static void StandardDescriptorFile(int descriptor) {
@@ -444,6 +574,7 @@ static void RejectsReadinessAfterSocketClose() {
 }
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
+    for (const int descriptor : {0, 1, 2}) StandardDescriptorPipe(descriptor);
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
     PollsAPipeClosedDuringTheWait();
@@ -540,13 +671,7 @@ int main() {
         Require(poll_nid_postfix(mixed, 2, -1) == 1 && mixed[0].revents == 0 && mixed[1].revents == Out);
         Require(close_nid_postfix(random) == 0);
     }
-    GuestPollDescriptor console[3]{{0, static_cast<short>(In | ReadNormal | Out), -1}, {1, static_cast<short>(In | Out | WriteBand), -1}, {2, Out, -1}};
-    Require(poll_nid_postfix(console, 3, 0) == 2);
-    Require(console[0].revents == 0 && console[1].revents == Out && console[2].revents == Out);
-    GuestPollDescriptor input{0, In, -1};
-    const auto inputStart = std::chrono::steady_clock::now();
-    Require(poll_nid_postfix(&input, 1, 30) == 0 && input.revents == 0);
-    Require(std::chrono::steady_clock::now() - inputStart >= std::chrono::milliseconds(25));
+    ConsoleFallback();
     PollsKqueues(listener);
     Require(close_nid_postfix(listener) == 0);
     PollsASocketClosedDuringTheWait();

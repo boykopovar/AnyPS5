@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <string>
 #include <thread>
 #include <vector>
@@ -84,6 +85,96 @@ static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     change.flags = flags;
     change.fflags = fflags;
     return change;
+}
+
+
+template<typename TAction>
+static void WithStandardPipe(int descriptor, bool writing, TAction action) {
+    const int saved = dup_nid_postfix(descriptor);
+    int ends[2];
+    Require(pipe_nid_postfix(ends) == 0);
+    for (int& end : ends) {
+        if (end > 2) continue;
+        const int duplicate = fcntl_nid_postfix(end, 0, 3);
+        Require(duplicate > 2 && close_nid_postfix(end) == 0);
+        end = duplicate;
+    }
+#ifndef _WIN32
+    if (writing) Require(fcntl_nid_postfix(ends[1], 4, 4) == 0);
+#endif
+    const int source = ends[writing ? 1 : 0];
+    int other = ends[writing ? 0 : 1];
+    const int mapped = dup2_nid_postfix(source, descriptor);
+    const int sourceClosed = close_nid_postfix(source);
+    std::exception_ptr failure;
+    if (mapped == descriptor && sourceClosed == 0) {
+        try {
+            action(other);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }
+    const int restored = saved >= 0 ? dup2_nid_postfix(saved, descriptor) : close_nid_postfix(descriptor);
+    const int savedClosed = saved >= 0 ? close_nid_postfix(saved) : 0;
+    const int otherClosed = other >= 0 ? close_nid_postfix(other) : 0;
+    Require(mapped == descriptor && sourceClosed == 0);
+    Require(restored == (saved >= 0 ? descriptor : 0) && savedClosed == 0 && otherClosed == 0);
+    if (failure) std::rethrow_exception(failure);
+}
+
+static int StandardPipeReady(int descriptor, bool writing, bool& present) {
+    GuestDescriptorSet set{};
+    set.Add(descriptor);
+    const GuestTimeval zero{};
+    const int ready = select_nid_postfix(descriptor + 1, writing ? nullptr : set.words.data(),
+        writing ? set.words.data() : nullptr, nullptr, &zero);
+    present = set.Has(descriptor);
+    return ready;
+}
+
+static void StandardDescriptorPipe(int descriptor) {
+    std::array<int, 4> ready{};
+    std::array<bool, 4> present{};
+    std::int64_t wrote = -1, consumed = -1, eof = -1;
+    int closed = -1;
+    char byte = 0;
+    WithStandardPipe(descriptor, false, [&](int& writer) {
+        ready[0] = StandardPipeReady(descriptor, false, present[0]);
+        wrote = write_nid_postfix(writer, "x", 1);
+        ready[1] = StandardPipeReady(descriptor, false, present[1]);
+        if (wrote == 1) consumed = read_nid_postfix(descriptor, &byte, 1);
+        ready[2] = StandardPipeReady(descriptor, false, present[2]);
+        closed = close_nid_postfix(writer);
+        writer = -1;
+        ready[3] = StandardPipeReady(descriptor, false, present[3]);
+        if (closed == 0) eof = read_nid_postfix(descriptor, &byte, 1);
+    });
+    if (ready[1] != 1) std::fprintf(stderr, "select redirected pipe input failed: descriptor=%d ready=%d set=%d\n", descriptor, ready[1], present[1]);
+    Require(wrote == 1 && consumed == 1 && byte == 'x' && closed == 0 && eof == 0);
+    Require(ready == std::array<int, 4>{0, 1, 0, 1});
+    Require(present == std::array<bool, 4>{false, true, false, true});
+#ifndef _WIN32
+    int writable = -1, full = -1, ended = -1, readerClosed = -1;
+    bool writableSet = false, fullSet = false, endedSet = false;
+    std::int64_t queued = 0;
+    WithStandardPipe(descriptor, true, [&](int& reader) {
+        writable = StandardPipeReady(descriptor, true, writableSet);
+        std::array<char, 256> block{};
+        bool present = false;
+        for (int attempts = 0; attempts < 4096 && StandardPipeReady(descriptor, true, present) == 1; ++attempts) {
+            const auto count = write_nid_postfix(descriptor, block.data(), block.size());
+            if (count <= 0) break;
+            queued += count;
+        }
+        full = StandardPipeReady(descriptor, true, fullSet);
+        readerClosed = close_nid_postfix(reader);
+        reader = -1;
+        ended = StandardPipeReady(descriptor, true, endedSet);
+    });
+    Require(writable == 1 && writableSet && readerClosed == 0);
+    Require(queued > 0 && queued < (1 << 20) && full == 0 && !fullSet);
+    Require(ended == 1 && endedSet);
+#endif
 }
 
 static void StandardDescriptorFile(int descriptor) {
@@ -216,6 +307,7 @@ static void ClosesDuringAWait() {
 int main() {
     BadPointersFault();
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
+    for (const int descriptor : {0, 1, 2}) StandardDescriptorPipe(descriptor);
     Kqueues();
     SocketsShutForReading();
     ClosesDuringAWait();
