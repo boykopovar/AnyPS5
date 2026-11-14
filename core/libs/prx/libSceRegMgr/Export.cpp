@@ -1,4 +1,5 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -101,14 +102,17 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
-        size_t stringLength = 0;
-        while (stringLength < length && value[stringLength] != '\0') ++stringLength;
-        const bool changed = it == entries_.end() || it->second.strVal.size() != stringLength ||
-                             it->second.strVal.compare(0, stringLength, value, stringLength) != 0;
+        std::vector<char> bytes(length);
+        const int savedErrno = errno;
+        const bool copied = length == 0 || GuestCopyIn_nid_no_patch(bytes.data(), value, length);
+        errno = savedErrno;
+        if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
+        std::string text(bytes.begin(), std::find(bytes.begin(), bytes.end(), '\0'));
+        const bool changed = it == entries_.end() || it->second.strVal != text;
         RegEntry& entry = entries_[key];
         entry.type = TypeStr;
         entry.intVal = 0;
-        entry.strVal.assign(value, stringLength);
+        entry.strVal = std::move(text);
         entry.binVal.clear();
         if (changed) changed_[key] = 0xff;
         return 0;
