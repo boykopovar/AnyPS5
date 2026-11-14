@@ -28,6 +28,7 @@ constexpr auto PortWithoutDevice = static_cast<std::int32_t>(0x804e0803u);
 constexpr auto InvalidPort = static_cast<std::int32_t>(0x804e0804u);
 constexpr auto InvalidArgument = static_cast<std::int32_t>(0x804e0805u);
 constexpr auto PortNotFound = static_cast<std::int32_t>(0x804e0807u);
+constexpr auto NeverStarted = static_cast<std::int32_t>(0x804e080au);
 constexpr auto MemorySizeVersion = static_cast<std::int32_t>(0x804e080fu);
 constexpr std::int32_t ThreadPriorityHighest = 256;
 constexpr std::int32_t ThreadPriorityLowest = 767;
@@ -47,6 +48,7 @@ struct Voice {
     std::mutex mutex;
     bool initialized = false;
     bool started = false;
+    bool everStarted = false;
     std::int32_t appType = 0;
     bool mutedAll = false;
     std::deque<std::uint32_t> freePorts;
@@ -134,6 +136,7 @@ int APS5_VABI sceVoiceStart(const VoiceStartParam* param) {
     const std::uint32_t memorySize = voice.appType == 0x10000000 || voice.appType == 0x20000000 ? 0x40000 : 0xc0000;
     if (param->mem_size != memorySize) return static_cast<std::int32_t>(0x804e0806u);
     voice.started = true;
+    voice.everStarted = true;
     return 0;
 }
 
@@ -152,6 +155,7 @@ int APS5_VABI sceVoiceEnd_nid_postfix(void) {
     voice.ports.clear();
     voice.connections.clear();
     voice.started = false;
+    voice.everStarted = false;
     voice.appType = 0;
     voice.mutedAll = false;
     voice.initialized = false;
@@ -285,6 +289,10 @@ int APS5_VABI sceVoiceGetPortInfo(uint32_t port_id, VoicePortInfo* info) {
     if (port_id > 127) return InvalidPort;
     if (info == nullptr) return InvalidArgument;
     const auto& port = RequirePort(voice, port_id, __func__);
+    if (!voice.everStarted) {
+        std::memset(info, 0, sizeof(*info));
+        return NeverStarted;
+    }
     info->port_type = port.type;
     info->state = PortStateReady;
     info->byte_count = 0;
@@ -379,20 +387,25 @@ int APS5_VABI sceVoiceGetResourceInfo(VoiceResourceInfo* info) {
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return NotInitialized;
     if (info == nullptr) return InvalidArgument;
+    VoiceResourceInfo localInfo{};
     switch (voice.appType) {
     case 4:
-        *info = {0, 0, 4, 5};
+        localInfo = {0, 0, 4, 5};
         break;
     case 0x08000000:
     case 0x10000000:
-        *info = {15, 4, 4, 4};
+        localInfo = {15, 4, 4, 4};
         break;
     case 0x20000000:
-        *info = {7, 4, 4, 4};
+        localInfo = {7, 4, 4, 4};
         break;
     default:
         Fail(__func__, "unsupported initialization mode");
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 
