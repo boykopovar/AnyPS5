@@ -173,6 +173,56 @@ std::uint32_t DefineBdaSpanLoadFunction(SpirvEmitterState& state, bool coherent)
     return function;
 }
 
+constexpr std::uint32_t BdaRangeCacheEntries = 4;
+
+std::uint32_t BdaRangeType(SpirvEmitterState& state) {
+    return state.module.Type(spv::OpTypeVector, TypeScalarU64(state), 3u);
+}
+
+std::uint32_t EmitCachedBdaTranslation(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto range = BdaRangeType(state);
+    const auto part = [&](std::uint32_t value, std::uint32_t index) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u64, result, value, index);
+        return result;
+    };
+    const auto choose = [&](std::uint32_t condition, std::uint32_t first, std::uint32_t second) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, range, result, Select(state, u64, condition, part(first, 0u), part(second, 0u)), Select(state, u64, condition, part(first, 1u), part(second, 1u)), Select(state, u64, condition, part(first, 2u), part(second, 2u)));
+        return result;
+    };
+    const auto translate = [&](std::uint32_t found) { return Binary(state, spv::OpIAdd, u64, part(found, 2u), Binary(state, spv::OpISub, u64, address, part(found, 0u))); };
+    const auto end = Binary(state, spv::OpIAdd, u64, address, Unary(state, spv::OpUConvert, u64, bytes));
+    std::array<std::uint32_t, BdaRangeCacheEntries> entries{};
+    auto chosen = state.module.Constant(spv::OpConstantNull, range);
+    auto hit = ConstantBool(state, false);
+    for (std::uint32_t index = 0; index < BdaRangeCacheEntries; ++index) {
+        entries[index] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, range, entries[index], state.bdaRangeCache[index]);
+        const auto inside = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpUGreaterThanEqual, boolean, address, part(entries[index], 0u)), Binary(state, spv::OpULessThanEqual, boolean, end, part(entries[index], 1u)));
+        chosen = choose(inside, entries[index], chosen);
+        hit = Binary(state, spv::OpLogicalOr, boolean, hit, inside);
+    }
+    hit = Binary(state, spv::OpLogicalAnd, boolean, hit, Binary(state, spv::OpUGreaterThan, boolean, end, address));
+    return EmitValueIfElse(state, hit, u64, [&] { return translate(chosen); }, [&] {
+        const auto found = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, range, found, state.bdaAnchorFunction, address, bytes, instruction);
+        const auto mapped = Binary(state, spv::OpINotEqual, boolean, part(found, 1u), BdaConstant(state, 0u));
+        EmitIfCondition(state, mapped, [&] {
+            const auto victim = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, u32, victim, state.bdaRangeCache[BdaRangeCacheEntries]);
+            for (std::uint32_t index = 0; index < BdaRangeCacheEntries; ++index) {
+                state.module.AddFunction(spv::OpStore, state.bdaRangeCache[index], choose(Binary(state, spv::OpIEqual, boolean, victim, ConstantU32(state, index)), found, entries[index]));
+            }
+            state.module.AddFunction(spv::OpStore, state.bdaRangeCache[BdaRangeCacheEntries], Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpIAdd, u32, victim, ConstantU32(state, 1u)), ConstantU32(state, BdaRangeCacheEntries - 1u)));
+        });
+        return Select(state, u64, mapped, translate(found), BdaConstant(state, 0u));
+    });
+}
+
 std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent, std::uint32_t loader) {
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
@@ -199,8 +249,13 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent,
     const auto firstBytes = Binary(state, spv::OpShiftLeftLogical, u32, first, ConstantU32(state, 2u));
     const auto firstAddress = AddBdaSignedOffset(state, address, Binary(state, spv::OpIAdd, u32, offset, firstBytes), instruction);
     const auto span = Binary(state, spv::OpISub, u32, Binary(state, spv::OpShiftLeftLogical, u32, Binary(state, spv::OpIAdd, u32, last, ConstantU32(state, 1u)), ConstantU32(state, 2u)), firstBytes);
-    const auto physical = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionCall, u64, physical, state.bdaProbeFunction, firstAddress, span, instruction);
+    auto physical = 0u;
+    if (state.bdaRangeCache[0] != 0) {
+        physical = EmitCachedBdaTranslation(state, firstAddress, span, instruction);
+    } else {
+        physical = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, u64, physical, state.bdaProbeFunction, firstAddress, span, instruction);
+    }
     const auto mapped = Binary(state, spv::OpINotEqual, boolean, physical, BdaConstant(state, 0u));
     const auto wide = Binary(state, spv::OpLogicalAnd, boolean, mapped, Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, physical)));
     const auto isUsed = [&](std::uint32_t dword) {
@@ -335,6 +390,13 @@ void DefineBdaDwordReadFunctions(SpirvEmitterState& state) {
 
 void DefineBdaSpanReadFunctions(SpirvEmitterState& state) {
     if (state.bdaProbeFunction == 0) return;
+    static const bool rangeCache = std::getenv("APS5_NO_BDA_RANGE_CACHE") == nullptr;
+    if (rangeCache) {
+        DefineBdaAnchorFunction(state);
+        const auto range = BdaRangeType(state);
+        for (std::uint32_t index = 0; index < BdaRangeCacheEntries; ++index) state.bdaRangeCache[index] = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, range), spv::StorageClassPrivate, state.module.Constant(spv::OpConstantNull, range));
+        state.bdaRangeCache[BdaRangeCacheEntries] = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), spv::StorageClassPrivate, ConstantU32(state, 0u));
+    }
     const auto& memory = state.program.Resources().memoryInfo;
     const bool coherentAccesses = std::any_of(memory.begin(), memory.end(), [](const MemoryInfo& info) { return info.coherent; });
     const bool stops = state.bdaStopsInvocations;
