@@ -704,6 +704,9 @@ static void CheckRemoteController(int handle) {
     Require(scePadIsRemoteController(handle + 1, &remote) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadIsRemoteController(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(remote);
+    errno = 71;
+    Require(scePadIsRemoteController(handle, reinterpret_cast<bool*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadIsRemoteController(handle, &remote) == PAD_OK);
     Require(!remote);
 }
@@ -993,6 +996,9 @@ static void CheckTriggerEffect(int user, int handle) {
     Require(scePadGetTriggerEffectState(0, &info) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetTriggerEffectState(0, nullptr) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetTriggerEffectState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetTriggerEffectState(handle, reinterpret_cast<PadTriggerEffectStateInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetTriggerEffectState(handle, &info) == PAD_OK);
     std::array<std::uint8_t, 120> param{};
     const auto command = [&](int trigger, std::uint32_t mode, const std::array<std::uint8_t, 3>& data) {

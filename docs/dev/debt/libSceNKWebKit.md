@@ -49,6 +49,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [AffineTransform::blend](../../../core/libs/prx/libSceNKWebKit/src/WebCoreAffineTransform.cpp) (libSceNKWebKit) - not compared with a console module: the device's WebKit revision is unverified. It follows pinned WebKit [AffineTransform.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WebCore/platform/graphics/transforms/AffineTransform.cpp#L353-L448) (`blend` with its unexported `decompose` and `recompose`), whose `void blend(const AffineTransform&, double)` matches the export name; the file is unchanged from the revision of the constructors entry. Rotations go through the existing `rotate` export, which converts degrees as `d * (pi / 180)` where WebKit computes `d * pi / 180`, so results can differ in the last bits. A zero `xScale` or `yScale` divides by zero and yields non-finite values, as in WebKit. Closes when: compared with a console module.
 
+- [VelocityData history and dump](../../../core/libs/prx/libSceNKWebKit/src/WebCoreVelocityData.cpp) (libSceNKWebKit) - not compared with a console module: the device's WebKit revision is unverified. The 88-byte `HistoricalVelocityData` and 24-byte `VelocityData` (returned through the hidden result pointer) follow pinned [VelocityData.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/VelocityData.h#L38-L87), checked with `static_assert`; the code follows [VelocityData.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/VelocityData.cpp#L33-L83). The inline [`dumpProperty`](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/TextStream.h#L88-L95) makes a temporary `WTF::String` of each name; the dump appends the same characters from a C string. Closes when: compared with a console module.
+
 - [PAL::SessionID exports](../../../core/libs/prx/libSceNKWebKit/src/PalSessionID.cpp) have no console ABI or behavior verification. They follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/PAL/pal/SessionID.cpp). The generators throw after `enableGenerationProtection` instead of reproducing the `RELEASE_ASSERT` crash. Closes when: compared with a console module.
 - [bmalloc::FreeList exports](../../../core/libs/prx/libSceNKWebKit/src/BmallocFreeList.cpp) have no console ABI or behavior verification. The 32-byte layout and field writes follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/bmalloc/bmalloc/FreeList.cpp), which compiles only without libpas; that the console build has libpas off is inferred from the PlayStation build options and the exported symbols. A null `self` throws instead of reproducing invalid memory access. Closes when: compared with a console module.
 
@@ -3285,7 +3287,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22GraphicsLayerTransformC1Ev` | `4yaTIedbZwQ` |
 | `_ZN7WebCore22GraphicsLayerTransformC2Ev` | `bOwxkVkQ5uA` |
 | `_ZN7WebCore22HTMLFormControlElement13setFormActionERKN3WTF10AtomStringE` | `KyEyVSdTW7U` |
-| `_ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE` | `TJbM4gtL7mU` |
 | `_ZN7WebCore22JSDeprecatedCSSOMValue9toWrappedERN3JSC2VMENS1_7JSValueE` | `fF6UuzMinKo` |
 | `_ZN7WebCore22MutableStyleProperties25ensureCSSStyleDeclarationEv` | `pGV40iopOv0` |
 | `_ZN7WebCore22MutableStylePropertiesD1Ev` | `7S5wcWqncYU` |
@@ -4236,7 +4237,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE` | `vrqGZr3Opv8` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_11EventRegionE` | `eUaXBqzdC0Y` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_12FilterEffectE` | `oIrASpTTrW8` |
-| `_ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE` | `BTXZgU0oot8` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_14TimingFunctionE` | `y3GWJqWbvIo` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_15FilterOperationE` | `bP1QOJouxCM` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_15VisiblePositionE` | `at-9g8ayvfA` |
