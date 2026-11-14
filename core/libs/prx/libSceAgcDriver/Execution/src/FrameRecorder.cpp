@@ -467,6 +467,17 @@ std::uint64_t FrameRecorder::blockSince(std::uint64_t block) const {
     return covered == FrameCaptureWriter::BlockBytes ? std::max(mark, since) : mark;
 }
 
+void FrameRecorder::MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks) {
+    std::ranges::sort(blocks);
+    std::size_t merged = 0;
+    for (const auto& block : blocks) {
+        const bool aligned = block.first % 4 == 0 && block.second % 4 == 0 && merged != 0 && blocks[merged - 1].first % 4 == 0 && blocks[merged - 1].second % 4 == 0;
+        if (aligned && block.first < blocks[merged - 1].second) blocks[merged - 1].second = std::max(blocks[merged - 1].second, block.second);
+        else blocks[merged++] = block;
+    }
+    blocks.resize(merged);
+}
+
 void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
     auto& driver = DriverDetail::Driver::Get();
@@ -494,13 +505,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             offset += bytes;
         }
     }
-    std::ranges::sort(blocks);
-    std::size_t merged = 0;
-    for (const auto& block : blocks) {
-        if (merged != 0 && block.first < blocks[merged - 1].second) blocks[merged - 1].second = std::max(blocks[merged - 1].second, block.second);
-        else blocks[merged++] = block;
-    }
-    blocks.resize(merged);
+    MergeOverlappingBlocks(blocks);
     std::vector<std::array<std::uint64_t, 4>> parked;
     for (const auto& wait : driver.AwaitedWaits()) {
         if (wait.bytes == 0) parked.push_back({wait.address, 0, 0, 0});

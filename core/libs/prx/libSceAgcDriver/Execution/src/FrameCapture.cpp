@@ -20,6 +20,10 @@ static_assert(std::endian::native == std::endian::little, "frame captures are st
 
 constexpr std::size_t ChunkHeaderBytes = 64;
 
+std::array<std::uint64_t, 2> hashDelta(std::span<const std::byte> bytes) {
+    return {XXH64(bytes.data(), bytes.size(), 0), XXH64(bytes.data(), bytes.size(), 0x9e3779b97f4a7c15ull)};
+}
+
 void requireCapture(bool condition, std::string_view reason) {
     if (!condition) throw std::runtime_error("frame capture: " + std::string(reason));
 }
@@ -202,7 +206,7 @@ std::string_view FrameCallName(FrameCallKind kind) {
     throw std::runtime_error("frame capture: unknown call kind " + std::to_string(static_cast<std::uint32_t>(kind)));
 }
 
-FrameCaptureWriter::FrameCaptureWriter(const std::filesystem::path& directory, int level) : directory(directory), level(level) {
+FrameCaptureWriter::FrameCaptureWriter(const std::filesystem::path& directory, int level, DeltaHash deltaHash) : directory(directory), level(level), deltaHash(deltaHash != nullptr ? deltaHash : hashDelta) {
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     requireCapture(!error && std::filesystem::is_directory(directory), "cannot create the directory " + directory.string());
@@ -290,11 +294,10 @@ void FrameCaptureWriter::WriteDelta(std::uint64_t group, std::uint64_t completed
         chunk.address = address + at;
         chunk.bytes = part.size();
         const auto key = std::pair{chunk.address, chunk.bytes};
-        const auto hash = XXH64(part.data(), part.size(), 0);
-        const auto check = XXH64(part.data(), part.size(), 0x9e3779b97f4a7c15ull);
+        const auto [hash, check] = deltaHash(part);
         {
             std::lock_guard lock(mutex);
-            if (const auto found = deltaPayloads.find(key); found != deltaPayloads.end() && found->second.hash == hash && found->second.check == check) {
+            if (const auto found = deltaPayloads.find(key); found != deltaPayloads.end() && found->second.hash == hash && found->second.check == check && storedEqual(found->second, part)) {
                 chunk.compressedBytes = found->second.compressedBytes;
                 writeChunk(chunk, {}, found->second.offset);
                 sharedBytes += chunk.bytes;
@@ -375,6 +378,22 @@ std::uint64_t FrameCaptureWriter::writeChunk(const FrameMemoryChunk& chunk, std:
     const auto payloadOffset = memoryOffset + ChunkHeaderBytes;
     memoryOffset = payloadOffset + payload.size();
     return payloadOffset;
+}
+
+bool FrameCaptureWriter::storedEqual(const DeltaPayload& payload, std::span<const std::byte> bytes) {
+    memory.flush();
+    requireCapture(memory.good(), "cannot write " + (directory / MemoryName).string());
+    if (!storedMemory.is_open()) storedMemory.open(directory / MemoryName, std::ios::binary);
+    requireCapture(storedMemory.is_open(), "cannot read back " + (directory / MemoryName).string());
+    storedCompressed.resize(static_cast<std::size_t>(payload.compressedBytes));
+    storedMemory.clear();
+    storedMemory.seekg(static_cast<std::streamoff>(payload.offset));
+    storedMemory.read(reinterpret_cast<char*>(storedCompressed.data()), static_cast<std::streamsize>(storedCompressed.size()));
+    requireCapture(storedMemory.good(), "cannot read back " + (directory / MemoryName).string());
+    storedBytesRead.resize(bytes.size());
+    const auto written = ZSTD_decompress(storedBytesRead.data(), storedBytesRead.size(), storedCompressed.data(), storedCompressed.size());
+    requireCapture(ZSTD_isError(written) == 0, std::string("zstd: ") + ZSTD_getErrorName(written));
+    return written == bytes.size() && std::memcmp(storedBytesRead.data(), bytes.data(), bytes.size()) == 0;
 }
 
 std::vector<std::byte> FrameCaptureWriter::compress(std::span<const std::byte> bytes) const {

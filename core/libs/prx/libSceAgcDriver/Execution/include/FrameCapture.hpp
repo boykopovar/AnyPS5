@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_FRAMECAPTURE_HPP
 
 #include "SceShaders.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -88,7 +89,9 @@ public:
     static constexpr std::size_t BlockBytes = 64u * 1024u;
     static constexpr std::size_t ChunkBytes = 4u * 1024u * 1024u;
 
-    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1);
+    using DeltaHash = std::array<std::uint64_t, 2> (*)(std::span<const std::byte> bytes);
+
+    explicit FrameCaptureWriter(const std::filesystem::path& directory, int level = 1, DeltaHash deltaHash = nullptr);
     FrameCaptureWriter(const FrameCaptureWriter&) = delete;
     FrameCaptureWriter& operator=(const FrameCaptureWriter&) = delete;
 
@@ -114,6 +117,7 @@ private:
 
     std::uint64_t writeChunk(const FrameMemoryChunk& chunk, std::span<const std::byte> payload, std::uint64_t sharedOffset = 0);
     std::vector<std::byte> compress(std::span<const std::byte> bytes) const;
+    bool storedEqual(const DeltaPayload& payload, std::span<const std::byte> bytes);
 
     std::filesystem::path directory;
     int level;
@@ -125,6 +129,10 @@ private:
     std::uint64_t sharedBytes = 0;
     std::uint64_t memoryOffset = 0;
     std::map<std::pair<std::uint64_t, std::uint64_t>, DeltaPayload> deltaPayloads;
+    DeltaHash deltaHash = nullptr;
+    std::ifstream storedMemory;
+    std::vector<std::byte> storedCompressed;
+    std::vector<std::byte> storedBytesRead;
     bool finished = false;
 };
 

@@ -31,6 +31,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -963,7 +964,13 @@ void testUnchangedSectionStoredOnce(const std::filesystem::path& tool) {
         }
         check(samples.size() >= 2 && samples.front().group != samples.back().group, "the unchanged section block was not sampled in two groups after GPU work");
         for (const auto& sample : samples) check(sample.offset == samples.front().offset, "the unchanged section block was stored again in a later group");
-        check(reader.Header().find("\"shared_delta_bytes\":0,") == std::string::npos, "the capture header counts no shared delta bytes: " + reader.Header());
+        std::set<std::uint64_t> payloads;
+        std::uint64_t shared = 0;
+        for (const auto& chunk : reader.Chunks()) {
+            if (chunk.kind == FrameMemoryKind::Delta && !payloads.insert(chunk.offset).second) shared += chunk.bytes;
+        }
+        const auto counted = reader.Header().find("\"shared_delta_bytes\":" + std::to_string(shared) + ",");
+        check(shared >= samples.size() - 1 && counted != std::string::npos, "the capture header does not count the " + std::to_string(shared) + " shared delta bytes: " + reader.Header());
         const auto dumped = replayed(tool, capture, word, 4);
         std::uint32_t value = 0;
         std::memcpy(&value, dumped.data(), sizeof(value));

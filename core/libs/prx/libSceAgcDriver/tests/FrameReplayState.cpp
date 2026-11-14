@@ -604,6 +604,16 @@ void testVersionOneRefused(const std::filesystem::path& directory) {
     check(std::all_of(bytes, bytes + Size, [](std::byte value) { return value == std::byte{0x55}; }), "the replay restored memory before refusing the calls format 1 capture");
 }
 
+void testMergedBlocks() {
+    using Blocks = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+    Blocks aligned{{0x20000, 0x30000}, {0x10000, 0x20000}, {0x18000, 0x28000}, {0x30000, 0x40000}};
+    AgcDriver::FrameRecorder::MergeOverlappingBlocks(aligned);
+    check(aligned == Blocks{{0x10000, 0x30000}, {0x30000, 0x40000}}, "aligned overlapping blocks are not merged into their union, or touching blocks are");
+    Blocks unaligned{{0x10000, 0x20000}, {0x1fffe, 0x20006}, {0x20002, 0x20010}, {0x20004, 0x20008}};
+    AgcDriver::FrameRecorder::MergeOverlappingBlocks(unaligned);
+    check(unaligned == Blocks{{0x10000, 0x20000}, {0x1fffe, 0x20006}, {0x20002, 0x20010}, {0x20004, 0x20008}}, "a block with an unaligned edge was merged, so its GPU-stored words would be kept whole");
+}
+
 void testEopTokens() {
     Frames frames;
     auto output = std::make_shared<ReplayOutput>(frames);
@@ -1286,6 +1296,7 @@ int main(int argc, char** argv) {
         else if (mode == "calls_v1") testVersionOneRefused(directory);
         else if (mode == "trace_window") testTraceWindow(directory);
         else if (mode == "tokens") testEopTokens();
+        else if (mode == "merge_blocks") testMergedBlocks();
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();

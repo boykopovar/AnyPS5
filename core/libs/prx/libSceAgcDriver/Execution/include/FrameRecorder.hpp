@@ -52,6 +52,7 @@ public:
         if (notingGpuStores.load(std::memory_order_relaxed)) Active()->noteGpuFill(address, bytes, pattern);
     }
     void RewindTailFlips(std::uint64_t flips);
+    static void MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks);
 
 private:
     enum class State { Waiting, Recording, Done };
