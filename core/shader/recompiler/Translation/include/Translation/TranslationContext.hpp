@@ -17,6 +17,7 @@ public:
 
     void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components);
     void TranslateInstruction(const RdnaInstruction& instruction);
+    void SetBufferLdsSize(std::uint32_t bytes) { bufferLdsBytes = bytes; }
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
     void SetFloatMode(const std::optional<ShaderFloatMode>& mode) {
         declaredFloatMode = mode;
@@ -395,6 +396,7 @@ private:
     bool emitInterpolation(const RdnaInstruction& inst);
     bool emitMemory(const RdnaInstruction& inst);
 
+    std::uint32_t bufferLdsBytes = 0u;
     IrProgram& program;
     const ShaderPixelInputInfo* pixelInput = nullptr;
     bool fragmentShaderBarycentricEnabled = false;
