@@ -15,6 +15,9 @@ namespace {
 
 constexpr std::int64_t OutOfMemory = -101;
 constexpr std::int64_t UnsupportedFormat = -106;
+constexpr std::int64_t FileError = -102;
+constexpr const char* FilePath = "guest_jxr_factory_file.bin";
+constexpr const char* MissingPath = "guest_jxr_factory_missing.bin";
 
 bool failAllocation = false;
 int liveBlocks = 0;
@@ -151,12 +154,77 @@ void Codecs() {
     Require(factory->release(&factory) == 0 && !factory, "codec factory release fails");
 }
 
+bool HasFileSlots(const Jxr::Stream* stream) {
+    return stream->end && stream->read && stream->write && stream->setPosition && stream->getPosition && stream->close;
+}
+
+void FileStreams() {
+    void* raw = nullptr;
+    Require(PKCreateFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "factory creation fails");
+    auto* factory = static_cast<Jxr::Factory*>(raw);
+    const int blocks = liveBlocks;
+    std::remove(FilePath);
+    std::remove(MissingPath);
+
+    auto* stream = reinterpret_cast<Jxr::Stream*>(1);
+    Require(factory->createStreamFromFilename(&stream, FilePath, "w+b") == 0 && stream, "file stream creation fails");
+    Require(liveBlocks == blocks + 1, "file stream is not one guest block");
+    Require(stream->state[0] != 0 && stream->state[1] == 0 && stream->state[2] == 0 && stream->state[3] == 0, "file stream state");
+    Require(stream->memory == 0, "file stream is marked as memory");
+    Require(HasFileSlots(stream), "file stream slots");
+    const std::array<std::uint8_t, 6> data{9, 8, 7, 6, 5, 4};
+    std::array<std::uint8_t, 6> read{};
+    std::size_t position = 99;
+    Require(stream->write(stream, data.data(), data.size()) == 0, "file stream write");
+    Require(stream->getPosition(stream, &position) == 0 && position == 6, "file stream position after write");
+    Require(stream->setPosition(stream, 2) == 0 && stream->read(stream, read.data(), 4) == 0, "file stream read");
+    Require(std::memcmp(read.data(), data.data() + 2, 4) == 0, "file stream read data");
+    Require(stream->end(stream) == 0, "file stream end before EOF");
+    Require(stream->read(stream, read.data(), 1) == FileError && stream->end(stream) != 0, "file stream end at EOF");
+    Require(stream->close(&stream) == 0 && !stream, "file stream close");
+    Require(liveBlocks == blocks, "file stream close leaks");
+
+    stream = nullptr;
+    Require(factory->createStreamFromFilename(&stream, FilePath, "rb") == 0 && stream && HasFileSlots(stream), "file stream reopen fails");
+    read = {};
+    Require(stream->read(stream, read.data(), read.size()) == 0 && read == data, "file stream content is not kept");
+    Require(stream->write(stream, data.data(), 1) == FileError, "read-only file stream writes");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "read-only file stream close");
+
+    stream = reinterpret_cast<Jxr::Stream*>(1);
+    Require(factory->createStreamFromFilename(&stream, MissingPath, "rb") == FileError, "missing file code");
+    Require(stream && stream != reinterpret_cast<Jxr::Stream*>(1) && stream->state[0] == 0 && HasFileSlots(stream), "missing file stream");
+    Require(liveBlocks == blocks + 1, "missing file stream is not kept");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "missing file stream close");
+    Require(factory->createStreamFromFilename(&stream, FilePath, "z") == FileError && stream && stream->state[0] == 0, "invalid mode code");
+    Require(stream->close(&stream) == 0 && !stream && liveBlocks == blocks, "invalid mode stream close");
+
+    failAllocation = true;
+    stream = reinterpret_cast<Jxr::Stream*>(1);
+    Require(factory->createStreamFromFilename(&stream, MissingPath, "wb") == OutOfMemory && !stream, "file stream allocation failure code");
+    failAllocation = false;
+    Require(std::remove(MissingPath) != 0, "file is opened after the allocation fails");
+
+    RequireInvalidArgument([&] { factory->createStreamFromFilename(nullptr, FilePath, "rb"); }, "null file stream pointer is accepted");
+    Require(liveBlocks == blocks, "null file stream pointer allocates");
+    Require(factory->createStreamFromFilename(&stream, FilePath, "rb") == 0 && stream, "file stream for close checks");
+    auto* close = stream->close;
+    RequireInvalidArgument([&] { close(nullptr); }, "null close pointer is accepted");
+    Jxr::Stream* empty = nullptr;
+    RequireInvalidArgument([&] { close(&empty); }, "null stream is closed");
+    Require(close(&stream) == 0 && !stream && liveBlocks == blocks, "file stream close after checks");
+
+    Require(std::remove(FilePath) == 0, "file stream file is missing");
+    Require(factory->release(&factory) == 0 && !factory, "factory release fails");
+}
+
 }
 
 int main() {
     InitializeHeap();
     Factory();
     Codecs();
+    FileStreams();
     Require(liveBlocks == 0, "blocks leaked");
     return 0;
 }
