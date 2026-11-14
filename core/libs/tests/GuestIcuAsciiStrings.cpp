@@ -22,9 +22,19 @@ void TestIsASCIILetter() {
         Require((uprv_isASCIILetter_nid_postfix(static_cast<char>(value)) != 0) == (std::isalpha(value) != 0), "isASCIILetter agrees with the C locale");
 }
 
+void TestToUpper() {
+    for (int value = 0; value < 256; ++value) {
+        const bool lower = value >= 'a' && value <= 'z';
+        Require(uprv_toupper_nid_postfix(static_cast<char>(value)) == (lower ? static_cast<char>(value - 32) : static_cast<char>(value)), "toupper maps a-z only");
+    }
+    for (int value = 0; value < 128; ++value)
+        Require(uprv_toupper_nid_postfix(static_cast<char>(value)) == static_cast<char>(std::toupper(value)), "toupper agrees with the C locale");
+}
+
 }
 
 int main() {
     TestIsASCIILetter();
+    TestToUpper();
     return 0;
 }
