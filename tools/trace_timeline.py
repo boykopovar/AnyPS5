@@ -113,6 +113,9 @@ def main(arguments=None):
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     try:
         sys.exit(main())
     except (EOFError, OSError, ValueError, zlib.error) as error:

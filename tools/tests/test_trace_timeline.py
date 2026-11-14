@@ -1,5 +1,6 @@
 import gzip
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -83,6 +84,17 @@ class TimelineTests(unittest.TestCase):
         missing = subprocess.run([sys.executable, str(tool), str(Path(self.tmp.name) / "none.json.gz")], capture_output=True, text=True)
         self.assertEqual(missing.returncode, 2)
         self.assertIn("FAIL", missing.stderr)
+
+    def test_the_cli_names_a_non_ascii_output_on_a_cp1252_console(self):
+        path = Path(self.tmp.name) / "a.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        out = Path(self.tmp.name) / "日本.html"
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+        done = subprocess.run([sys.executable, "-X", "utf8=0", trace_timeline.__file__, str(path), "-o", str(out)],
+                              env=env, capture_output=True)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", errors="replace"))
+        self.assertIn(f"wrote {out}", done.stdout.decode("utf-8"))
 
     def test_the_cli_accepts_only_finite_nonnegative_window_bounds(self):
         path = Path(self.tmp.name) / "a.json.gz"
