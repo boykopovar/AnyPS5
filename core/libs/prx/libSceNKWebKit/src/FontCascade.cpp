@@ -1,3 +1,5 @@
+// Derived from Source/WebCore/platform/graphics/FontCascade.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WebCore/platform/graphics/FontCascade.cpp@73a35b43be7ae44c084885bd3fa4b403e59723c8
 /*
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)

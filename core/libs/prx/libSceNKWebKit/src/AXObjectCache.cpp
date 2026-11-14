@@ -1,3 +1,4 @@
+// Derived from Source/WebCore/accessibility/AXObjectCache.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2008-2022 Apple Inc. All rights reserved.
  *
