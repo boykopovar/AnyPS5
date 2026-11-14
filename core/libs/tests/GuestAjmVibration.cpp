@@ -17,7 +17,7 @@ void Require(bool value, const char* message) {
 void Submit(std::uint32_t context, const AjmBatchInfo& info) {
     AjmBatchError error{};
     std::uint32_t id = 0;
-    Require(sceAjmBatchStart(context, &info, 0, &error, &id) == 0 && sceAjmBatchWait(context, id, 0, &error) == 0, "batch submit");
+    Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0 && sceAjmBatchWait(context, id, 0, &error) == 0, "batch submit");
 }
 
 std::array<std::uint8_t, 4> Config(unsigned channels) {

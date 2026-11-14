@@ -28,6 +28,9 @@ struct WVorbisSetupPacketParameter {
     std::size_t outputSize;
 };
 
+constexpr int SCE_AJM_PRIORITY_MIN = 20;
+constexpr int SCE_AJM_PRIORITY_MAX = 100;
+
 extern "C" {
 
 int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const void* pcmInput, size_t pcmInputSize, void* bitstreamOutput, size_t bitstreamOutputSize, void* result);
