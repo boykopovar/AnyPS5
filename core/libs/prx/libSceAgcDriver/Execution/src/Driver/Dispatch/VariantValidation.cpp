@@ -107,6 +107,13 @@ bool Driver::vouchedValidation() {
     return enabled;
 }
 
+namespace {
+bool verifyPendingSerialSkip() {
+    static const bool verify = std::getenv("APS5_VERIFY_PENDING_SERIAL_SKIP") != nullptr;
+    return verify;
+}
+}
+
 EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live) {
     if (live != nullptr) live->clear();
     if (DrawPipeline::Active()) {
@@ -144,7 +151,15 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
     auto pendingSerial = Graphics::StorageTexture::PendingSerial();
     auto forget = GuestMemory::ForgetSerial();
 
-    if (Graphics::StorageTexture::AnyPendingOverlaps(runs) || Graphics::AnyShadowedOverlaps(runs)) {
+    const bool wholeRuns = vouched.empty();
+    bool pendingOverlaps = false;
+    if (!wholeRuns || variant.cleanPendingSerial.load(std::memory_order_acquire) != pendingSerial) {
+        pendingOverlaps = Graphics::StorageTexture::AnyPendingOverlaps(runs);
+        if (wholeRuns && !pendingOverlaps) variant.cleanPendingSerial.store(pendingSerial, std::memory_order_release);
+    } else if (verifyPendingSerialSkip()) {
+        if (Graphics::StorageTexture::AnyPendingOverlaps(runs)) throw std::runtime_error("APS5_VERIFY_PENDING_SERIAL_SKIP: a dispatch variant skipped its pending image check at an unchanged serial while a pending image overlaps its runs");
+    }
+    if (pendingOverlaps || Graphics::AnyShadowedOverlaps(runs)) {
         vouched.clear();
         for (const auto& region : regions) {
             if (Graphics::StorageTexture::FlushPending(region.guestAddress, region.bytes.size(), nullptr, "dispatch-cache entry")) ++imagesFlushed;
