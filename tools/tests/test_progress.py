@@ -271,7 +271,7 @@ class ProgressTests(unittest.TestCase):
         after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=50001, todo=50000)
         self.assertEqual(progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
                                           self.report_snapshot(after)["libraries"])[0],
-                         "\U0001f4c8 **System libraries**: 50.0% (+0.001%, +1 implemented functions)")
+                         "\U0001f4c8 **System libraries**: 50.0% (+0.001%, +1 implemented function)")
         reverted = progress.compare("System libraries", "Library", "functions", self.report_snapshot(after)["libraries"],
                                     self.report_snapshot(before)["libraries"])[0]
         self.assertTrue(reverted.startswith("\U0001f4c9 **System libraries**: 50.0% (-0.001%, "))
@@ -288,7 +288,7 @@ class ProgressTests(unittest.TestCase):
         after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=2, todo=10000000)
         headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
                                     self.report_snapshot(after)["libraries"])[0]
-        self.assertIn("(+<0.0001%, +1 implemented functions)", headline)
+        self.assertIn("(+<0.0001%, +1 implemented function)", headline)
 
     def test_percent_change_is_n_a_when_a_percentage_is_missing(self):
         self.assertEqual(progress.percent_change(None, 50), "n/a")
