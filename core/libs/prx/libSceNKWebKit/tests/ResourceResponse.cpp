@@ -270,6 +270,116 @@ static void TestHTTP09() {
     Require(!_ZNK7WebCore20ResourceResponseBase8isHTTP09Ev(&response));
 }
 
+static double Freshness(const ResourceResponseBase& response, double responseTime) {
+    return _ZN7WebCore37computeFreshnessLifetimeForHTTPFamilyERKNS_16ResourceResponseEN3WTF8WallTimeE(response, WTF::WallTime{responseTime}).m_value;
+}
+
+static void TestFreshnessLifetime() {
+    auto http = Make("http://a/");
+    auto file = Make("file:///a");
+    ResponseFixture fixture;
+    auto& response = fixture.response;
+    response.url.impl = &file;
+    response.url.bits = 1 | (4 << 6);
+    fixture.Set(HTTPHeaderName::CacheControl, Text("max-age=60"));
+    Require(Freshness(response, 1000) == 0);
+
+    response.url.impl = &http;
+    fixture.Set(HTTPHeaderName::Date, Text("Sun, 06 Nov 1994 08:49:07 GMT"));
+    fixture.Set(HTTPHeaderName::Expires, Text("Sun, 06 Nov 1994 08:49:37 GMT"));
+    Require(Freshness(response, 0) == 60);
+    fixture.Set(HTTPHeaderName::CacheControl, Text("no-cache"));
+    Require(Freshness(response, 0) == 30);
+    fixture.Set(HTTPHeaderName::Date, Text(""));
+    Require(Freshness(response, 784111777 + 100) == -100);
+    Require(Freshness(response, 784111777 - 15) == 15);
+
+    fixture.Set(HTTPHeaderName::Expires, Text(""));
+    Require(Freshness(response, 784111777) == 0);
+    fixture.Set(HTTPHeaderName::LastModified, Text("Sun, 06 Nov 1994 07:49:37 GMT"));
+    Require(Freshness(response, 784111777) == 360);
+    fixture.Set(HTTPHeaderName::Date, Text("Sun, 06 Nov 1994 08:49:37 GMT"));
+    Require(Freshness(response, 0) == 360);
+    response.httpStatusCode = 301;
+    Require(Freshness(response, 0) == 31536000);
+    response.httpStatusCode = 410;
+    Require(Freshness(response, 0) == 31536000);
+    response.httpStatusCode = 404;
+    Require(Freshness(response, 0) == 360);
+    fixture.Set(HTTPHeaderName::Expires, Text("Sun, 06 Nov 1994 08:50:37 GMT"));
+    response.httpStatusCode = 301;
+    Require(Freshness(response, 0) == 60);
+    fixture.Set(HTTPHeaderName::CacheControl, Text("max-age=5"));
+    Require(Freshness(response, 0) == 5);
+    response.url.bits = 0;
+    Require(Freshness(response, 0) == 0);
+}
+
+static void SetUncommon(ResponseFixture& fixture, std::u16string_view name, std::string_view value) {
+    _ZN7WebCore20ResourceResponseBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&fixture.response, Text(name), Text(value));
+}
+
+static String Uncommon(const ResponseFixture& fixture, std::string_view name) {
+    return _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(&fixture.response.httpHeaderFields, Text(name));
+}
+
+static void TestRevalidationHeaders() {
+    ResponseFixture cached;
+    cached.Set(HTTPHeaderName::ContentType, Text("text/html"));
+    cached.Set(HTTPHeaderName::ETag, Text("\"old\""));
+    cached.Set(HTTPHeaderName::CacheControl, Text("max-age=10"));
+    SetUncommon(cached, u"X-Custom", "old");
+
+    ResponseFixture validating;
+    validating.Set(HTTPHeaderName::ContentType, Text("text/plain"));
+    validating.Set(HTTPHeaderName::ETag, Text("\"new\""));
+    validating.Set(HTTPHeaderName::LastModified, Text("Sun, 06 Nov 1994 08:49:37 GMT"));
+    validating.Set(HTTPHeaderName::KeepAlive, Text("timeout=5"));
+    validating.Set(HTTPHeaderName::XFrameOptions, Text("DENY"));
+    validating.Set(HTTPHeaderName::XContentTypeOptions, Text("nosniff"));
+    validating.Set(HTTPHeaderName::CacheControl, Text("max-age=60"));
+    validating.Set(HTTPHeaderName::ContentSecurityPolicy, Text("default-src 'self'"));
+    validating.Set(HTTPHeaderName::Vary, Text("Accept"));
+    SetUncommon(validating, u"x-CUSTOM", "new");
+    SetUncommon(validating, u"X-WebKit-Foo", "ignored");
+    SetUncommon(validating, u"X-WEBKIT-Bar", "ignored");
+    SetUncommon(validating, u"X-Content-Foo", "ignored");
+    SetUncommon(validating, u"Content-Foo", "ignored");
+    SetUncommon(validating, u"CONTENT-SECURITY-Extra", "kept");
+    SetUncommon(validating, u"X-Other", "1");
+
+    _ZN7WebCore38updateResponseHeadersAfterRevalidationERNS_16ResourceResponseERKS0_(cached.response, validating.response);
+
+    Require(Contents(cached.Get(HTTPHeaderName::ContentType)) == u"text/html");
+    Require(Contents(cached.Get(HTTPHeaderName::ETag)) == u"\"old\"");
+    Require(!cached.Get(HTTPHeaderName::LastModified).impl);
+    Require(!cached.Get(HTTPHeaderName::KeepAlive).impl);
+    Require(!cached.Get(HTTPHeaderName::XFrameOptions).impl);
+    Require(!cached.Get(HTTPHeaderName::XContentTypeOptions).impl);
+    Require(Contents(cached.Get(HTTPHeaderName::CacheControl)) == u"max-age=60");
+    Require(Contents(cached.Get(HTTPHeaderName::ContentSecurityPolicy)) == u"default-src 'self'");
+    Require(Contents(cached.Get(HTTPHeaderName::Vary)) == u"Accept");
+    Require(cached.response.httpHeaderFields.common.size == 5);
+
+    const auto& uncommon = cached.response.httpHeaderFields.uncommon;
+    Require(uncommon.size == 3);
+    Require(Contents(uncommon.buffer[0].key) == u"X-Custom");
+    Require(Contents(uncommon.buffer[0].value) == u"new");
+    Require(Contents(uncommon.buffer[1].key) == u"CONTENT-SECURITY-Extra");
+    Require(Contents(uncommon.buffer[1].value) == u"kept");
+    Require(Contents(uncommon.buffer[2].key) == u"X-Other");
+    Require(Contents(Uncommon(cached, "x-other")) == u"1");
+    Require(!Uncommon(cached, "X-WebKit-Foo").impl);
+    Require(!Uncommon(cached, "Content-Foo").impl);
+    Require(validating.response.httpHeaderFields.uncommon.size == 7);
+    Require(Contents(validating.Get(HTTPHeaderName::ContentType)) == u"text/plain");
+
+    ResponseFixture empty;
+    _ZN7WebCore38updateResponseHeadersAfterRevalidationERNS_16ResourceResponseERKS0_(cached.response, empty.response);
+    Require(cached.response.httpHeaderFields.common.size == 5);
+    Require(uncommon.size == 3);
+}
+
 int main() {
     TestFields();
     TestHTTPFamily();
@@ -278,6 +388,8 @@ int main() {
     TestTimes();
     TestDisposition();
     TestHTTP09();
+    TestFreshnessLifetime();
+    TestRevalidationHeaders();
     TestNull();
     return 0;
 }
