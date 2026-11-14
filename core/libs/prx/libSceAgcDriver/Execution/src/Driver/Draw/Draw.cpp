@@ -43,6 +43,12 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
+bool verifyDecodeReuse() {
+    static const bool verify = std::getenv("APS5_VERIFY_DECODE_REUSE") != nullptr;
+    return verify;
+}
+
+
 struct RecycledRingWordsStorage {};
 
 std::shared_ptr<ShaderRecompiler::HeapStageWords> RecycledRingWords() {
@@ -1001,7 +1007,14 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             }
         }
         if (words->vertexAttributes.empty()) return words;
-        decodeVertexInfo(i);
+        if (!vertexInfos[i] || graphics.stages.mesh) {
+            decodeVertexInfo(i);
+        } else if (verifyDecodeReuse()) {
+            const auto kept = vertexInfos[i];
+            decodeVertexInfo(i);
+            if (!vertexInfos[i] || !sameVertexInfo(*vertexInfos[i], *kept))
+                throw std::runtime_error("APS5_VERIFY_DECODE_REUSE: a ring hit's vertex stage info decoded on the finisher differs from the queue worker's");
+        }
         require(vertexInfos[i].has_value(), "a ring vertex hit has no vertex stage info");
         const auto& vertex = *vertexInfos[i];
         for (auto& attribute : words->vertexAttributes) {
