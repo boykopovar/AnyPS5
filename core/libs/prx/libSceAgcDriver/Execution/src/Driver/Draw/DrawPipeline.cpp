@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
@@ -204,6 +206,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
 
 void DrawFinisher::run() {
     PerformanceTrace::BindThread("draw finisher");
+    ReserveFinisherCore();
     for (;;) {
         Job* job = nullptr;
         bool failed = false;
@@ -263,7 +266,7 @@ std::size_t DrawPipeline::Depth() {
     static const std::size_t depth = [] {
         const char* text = std::getenv("APS5_PIPELINED_DRAWS");
         if (std::getenv("APS5_LOCKED_DRAW_PREPARE") != nullptr || std::getenv("APS5_DRAW_DRAIN") != nullptr || std::getenv("APS5_DRAIN_ALL") != nullptr || std::getenv("APS5_NO_WORDWISE_CAPTURE") != nullptr) return std::size_t{0};
-        if (text == nullptr) return std::size_t{8};
+        if (text == nullptr) return std::size_t{32};
         const auto value = std::strtoull(text, nullptr, 10);
         return value == 0 ? std::size_t{0} : value == 1 ? std::size_t{8} : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
     }();
@@ -369,7 +372,7 @@ void DrawPipeline::enqueue(Item item) {
     items.push_back(std::move(item));
     outstanding.fetch_add(1, std::memory_order_release);
     if (!thread.joinable()) {
-        thread = std::thread([this] {
+        thread = Libc::StartHostThread([this] {
             GuestMemory::MarkProofThread();
             run();
         });
@@ -431,6 +434,7 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 void DrawPipeline::run() {
     PerformanceTrace::BindThread("draw committer");
+    ReserveCommitterCore();
     StartCommitterSampler();
     for (;;) {
         Commit* commit = nullptr;

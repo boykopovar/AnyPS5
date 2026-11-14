@@ -1,6 +1,8 @@
 #include "prx/libSceCesCs/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -484,6 +486,7 @@ int encodeGb(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length
 
 constexpr uint8_t GB18030_2000_TAG[8] = {'G', 'B', '1', '8', '-', '0', '0', 0};
 constexpr uint8_t GB18030_2005_TAG[8] = {'G', 'B', '1', '8', '-', '0', '5', 0};
+constexpr uint8_t GB18030_2022_TAG[8] = {'G', 'B', '1', '8', '-', '2', '2', 0};
 constexpr uint32_t GB_CELLS = 126 * 190;
 
 struct Gb18030Tables {
@@ -502,6 +505,7 @@ struct Gb18030Range {
 
 constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, false, 1};
 constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true, 3};
+constexpr Gb18030Tables GB18030_2022{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true, 3};
 constexpr Gb18030Range GB18030_RANGES[6] = {
     {0, false, false, false}, {1, true, false, false}, {2, false, false, false}, {3, true, false, false}, {5, true, true, false}, {7, true, true, true},
 };
@@ -518,6 +522,7 @@ const Gb18030Tables* gb18030Tables(const void* profile) {
     if (profile == nullptr) return nullptr;
     if (hasSheetTag(profile, GB18030_2000_TAG)) return &GB18030_2000;
     if (hasSheetTag(profile, GB18030_2005_TAG)) return &GB18030_2005;
+    if (hasSheetTag(profile, GB18030_2022_TAG)) return &GB18030_2022;
     return nullptr;
 }
 
@@ -1007,34 +1012,35 @@ int decodeJis2004(bool sjis, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& le
             code = 0xFF61 + (lead - 0xA1);
             return 0;
         }
-        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return rejectLead(length);
+        if (mbcsMax < 2) return needBytes(2, length);
         int row = 0;
         int cell = 0;
-        if (!sjisToJis(lead, mbcs[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+        if (!sjisToJis(lead, mbcs[1], row, cell)) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         if (row <= 94) code = JisX0213::PLANE1[(row - 1) * 94 + (cell - 1)];
         else code = JisX0213::PLANE2[(JIS_X0213_PLANE2_ROWS[row - 95] - 1) * 94 + (cell - 1)];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (lead == 0x8E) {
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return needBytes(2, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         code = 0xFF61 + (mbcs[1] - 0xA1);
         return 0;
     }
     if (lead == 0x8F) {
-        if (mbcsMax < 3) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        if (stopsAtNul(mbcs, mbcsMax, 1, 3, length)) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 3) return needBytes(3, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return rejectTrail(mbcs[1], 3, length);
         length = 3;
         const uint32_t cell = (mbcs[1] - 0xA1) * 94 + (mbcs[2] - 0xA1);
         code = isJisX0213Plane2Row(mbcs[1] - 0xA0) ? JisX0213::PLANE2[cell] : JisX0212::TO_UCS2[cell];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
-    if (lead < 0xA1 || lead > 0xFE) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    if (lead < 0xA1 || lead > 0xFE) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
+    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return rejectTrail(mbcs[1], 2, length);
     length = 2;
     code = JisX0213::PLANE1[(lead - 0xA1) * 94 + (mbcs[1] - 0xA1)];
     return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
@@ -2227,6 +2233,31 @@ int APS5_VABI sceCesGbUcsProfileSetSbcs(void* p, const void* sbcs) {
     return setSheetSbcs(p, sbcs, isGb(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::GbT1988)});
 }
 
+int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
+    const int savedErrno = errno;
+    if (!p || !sbcs || !isIso2022(p)) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    const std::initializer_list<const uint8_t*> accepted = {
+        singleByteProfile(SingleByte::Ascii),
+        singleByteProfile(SingleByte::JisX0201Roman),
+        singleByteProfile(SingleByte::JisX0201)
+    };
+    if (std::find(accepted.begin(), accepted.end(), static_cast<const uint8_t*>(sbcs)) == accepted.end()) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    const uint8_t index = sbcProfileIndex(sbcs);
+    if (index == 0) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    static_cast<uint8_t*>(p)[8] = index;
+    errno = savedErrno;
+    return 0;
+}
+
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, EUC_JP_TAG, sizeof(EUC_JP_TAG));
@@ -2774,6 +2805,17 @@ void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void* sheet) {
     return sheet;
 }
 
+void* APS5_VABI sceCesUcsProfileInitGb18030_2022(void* sheet) {
+    const int savedErrno = errno;
+    if (!sheet) {
+        errno = savedErrno;
+        return nullptr;
+    }
+    initGbSheet(sheet, GB18030_2022_TAG, GB18030_2022.defaultRange, 1);
+    errno = savedErrno;
+    return sheet;
+}
+
 int APS5_VABI sceCesGbUcsProfileSet4ByteCharRange(void* profile, int range) {
     if (!profile || isEucCn(profile) || isGbk(profile)) return CES_ERROR_INVALID_PROFILE;
     if (!isGb18030(profile)) throw std::runtime_error("sceCesGbUcsProfileSet4ByteCharRange: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
@@ -3113,19 +3155,37 @@ void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
 
 int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs) {
     if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte, a native JIS sequence, nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
-    if (ucs) *ucs = 0;
+    if (ucs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(ucs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesJiscsToUcs: a profile other than the eight JIS profiles is not implemented");
     uint32_t code = 0;
     const int result = jiscsToUnicode(profile, jiscs, code);
     if (result != 0) return result;
     if (!ucs) return CES_ERROR_INVALID_DST_BUFFER;
-    *ucs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(ucs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 
 int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs) {
-    if (jiscs) *jiscs = 0;
+    if (jiscs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(jiscs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!isScalar(ucs)) return CES_ERROR_ILLEGAL_CODE;
     if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
     if (!profile) return CES_ERROR_INVALID_PROFILE;
@@ -3135,7 +3195,11 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;
     if (!jiscs) return CES_ERROR_INVALID_DST_BUFFER;
-    *jiscs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(jiscs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 

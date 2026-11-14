@@ -21,11 +21,14 @@ import unwrap_self
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
-TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict}
+TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
+REPORT_FILE = "anyps5-report.json"
+SHADER_COUNTS = ("compiled", "failed", "cacheHits")
+UNSUPPORTED_KEYS = ("encoding", "opcode", "opcodeValue", "modifiers")
 
 
 def pad_text(pad, sequence):
@@ -79,7 +82,10 @@ def load_titles(path):
         for key, value in entry.items():
             if key not in TITLE_FIELDS:
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
-            if not isinstance(value, TITLE_FIELDS[key]):
+            if key == "seconds":
+                if type(value) is not int or value < 1:
+                    raise ValueError(f"{path}: {title_id}: seconds must be a positive integer")
+            elif not isinstance(value, TITLE_FIELDS[key]):
                 raise ValueError(f"{path}: {title_id}: {key} must be {TITLE_FIELDS[key].__name__}")
             if key in ("pad", "files"):
                 try:
@@ -105,7 +111,7 @@ def relink_args(entry, platform):
     return args
 
 
-ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission")
+ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission|Failed to load module:")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
 
@@ -136,15 +142,53 @@ def read_summary(path):
             "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", "")}
 
 
+def section(document, name):
+    value = document.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def read_report(path):
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict) or document.get("format") != "anyps5-report":
+        return None
+    coverage, run, shaders = section(document, "coverage"), section(document, "run"), section(document, "shaders")
+    missing, truncated = section(document, "missing"), section(document, "truncated")
+    functions, unsupported = missing.get("functions"), shaders.get("unsupported")
+    functions = [entry for entry in functions if isinstance(entry, dict)] if isinstance(functions, list) else functions
+    unsupported = [entry for entry in unsupported if isinstance(entry, dict)] if isinstance(unsupported, list) else unsupported
+    return {"averageFps": run.get("averageFps"),
+            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
+            "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
+            "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
+            "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
+
+
+def take_report(work, run_dir):
+    source = work / REPORT_FILE
+    if not source.is_file():
+        return None
+    shutil.move(str(source), str(run_dir / REPORT_FILE))
+    return read_report(run_dir / REPORT_FILE)
+
+
 def frame_is_uniform(path, tolerance=8):
     data = path.read_bytes()
+    if data[:2] != b"BM":
+        return None
     try:
         offset = struct.unpack_from("<I", data, 10)[0]
+        header_size = struct.unpack_from("<I", data, 14)[0]
         width, height = struct.unpack_from("<ii", data, 18)
+        planes = struct.unpack_from("<H", data, 26)[0]
         bits = struct.unpack_from("<H", data, 28)[0]
+        compression = struct.unpack_from("<I", data, 30)[0]
     except struct.error:
         return None
-    if bits not in (24, 32):
+    if (header_size < 40 or offset < 14 + header_size or width <= 0 or height == 0 or
+            planes != 1 or compression != 0 or bits not in (24, 32)):
         return None
     channels = bits // 8
     stride = (width * channels + 3) & ~3
@@ -199,6 +243,124 @@ def compare(summary, previous):
     return regressions, improvements
 
 
+def last_run(title):
+    return title["runs"][-1]
+
+
+def pair(before, now):
+    return {"before": before, "now": now}
+
+
+def fps_of(run):
+    return None if run.get("outcome") == "relink-failed" else run.get("fps")
+
+
+def report_field(run, name):
+    return (run.get("report") or {}).get(name)
+
+
+def shader_count(run, name):
+    return (report_field(run, "shaders") or {}).get(name)
+
+
+def distinct(entries, keys):
+    return None if entries is None else len({json.dumps([entry.get(name) for name in keys]) for entry in entries})
+
+
+def tally(entries, keys, count):
+    totals = {}
+    for entry in entries:
+        key = json.dumps([entry.get(name) for name in keys])
+        value = entry.get(count)
+        totals[key] = totals.get(key, 0) + (value if isinstance(value, int) else 0)
+    return totals
+
+
+def diff_entries(before, now, keys, count):
+    if before is None or now is None:
+        return None
+    left, right = tally(before, keys, count), tally(now, keys, count)
+
+    def fields(key, **values):
+        return {**dict(zip(keys, json.loads(key))), **values}
+
+    return {"onlyBefore": [fields(key, **{count: left[key]}) for key in sorted(left) if key not in right],
+            "onlyNow": [fields(key, **{count: right[key]}) for key in sorted(right) if key not in left],
+            "both": [fields(key, before=left[key], now=right[key]) for key in sorted(left) if key in right]}
+
+
+def missing_functions(run):
+    return report_field(run, "missing")
+
+
+def truncated_functions(run):
+    return (report_field(run, "truncated") or {}).get("functions")
+
+
+def unsupported_instructions(run):
+    return report_field(run, "unsupported")
+
+
+def truncated_unsupported(run):
+    return (report_field(run, "truncated") or {}).get("unsupported")
+
+
+def compare_runs(summary, previous):
+    compared = {}
+    for title_id in sorted(set(summary["titles"]) & set(previous["titles"])):
+        before, now = last_run(previous["titles"][title_id]), last_run(summary["titles"][title_id])
+        compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now)),
+                              "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
+                              "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS},
+                              "missingFunctions": diff_entries(missing_functions(before), missing_functions(now), ("library", "name"), "calls"),
+                              "missingFunctionsCount": pair(distinct(missing_functions(before), ("library", "name")), distinct(missing_functions(now), ("library", "name"))),
+                              "missingFunctionsTruncated": pair(truncated_functions(before), truncated_functions(now)),
+                              "unsupportedInstructions": diff_entries(unsupported_instructions(before), unsupported_instructions(now), UNSUPPORTED_KEYS, "count"),
+                              "unsupportedInstructionsCount": pair(distinct(unsupported_instructions(before), UNSUPPORTED_KEYS),
+                                                                   distinct(unsupported_instructions(now), UNSUPPORTED_KEYS)),
+                              "unsupportedInstructionsTruncated": pair(truncated_unsupported(before), truncated_unsupported(now))}
+    return compared
+
+
+def display(value):
+    if value is None:
+        return "not recorded"
+    return f"{value:.1f}" if isinstance(value, float) else str(value)
+
+
+def label(entry):
+    if "name" in entry:
+        return f"{entry['library']}/{entry['name']}" if entry.get("library") else entry["name"]
+    return f"{entry.get('opcode') or 'unnamed'} ({entry.get('encoding') or 'unknown encoding'}, opcode value {entry.get('opcodeValue')})"
+
+
+def names(entries):
+    return ", ".join(label(entry) for entry in entries)
+
+
+def render_compare(compared):
+    columns = ["Title", "ID", "Measure", "Before", "Now"]
+    lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    details = []
+    for title_id, title in compared.items():
+        measures = [("FPS", title["fps"]), ("Average FPS (report)", title["averageFps"]),
+                    ("Shaders compiled", title["shaders"]["compiled"]), ("Shaders failed", title["shaders"]["failed"]),
+                    ("Shader cache hits", title["shaders"]["cacheHits"])]
+        for label, key in (("Missing functions", "missingFunctions"), ("Unsupported instructions", "unsupportedInstructions")):
+            diff = title[key]
+            measures.append((label, title[key + "Count"]))
+            if diff and (diff["onlyBefore"] or diff["onlyNow"] or diff["both"]):
+                details.append(f"{title['name']} ({title_id}), {label.lower()}: only before: {names(diff['onlyBefore']) or 'none'}; "
+                               f"only now: {names(diff['onlyNow']) or 'none'}; in both: {len(diff['both'])}")
+        for label, values in measures:
+            lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
+    return lines + [""] + details
+
+
+def compare_json(summary, previous):
+    return json.dumps({"format": "title-run-compare", "version": 1, "titles": compare_runs(summary, previous)}, indent=2)
+
+
 def render_markdown(summary, previous=None):
     build, machine = summary["build"], summary["machine"]
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
@@ -231,10 +393,12 @@ def render_markdown(summary, previous=None):
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
         lines.append("| " + " | ".join(row) + " |")
+    if previous and (compared := compare_runs(summary, previous)):
+        lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
 
 
-def discover(directories):
+def discover(directories, wanted=()):
     found = {}
     for directory in directories:
         for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
@@ -247,6 +411,8 @@ def discover(directories):
                 raise ValueError(f"{param}: no titleId")
             if not TITLE_ID.fullmatch(title_id):
                 raise ValueError(f"{param}: titleId {title_id!r} is not a title ID")
+            if wanted and title_id not in wanted:
+                continue
             if title_id in found:
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
@@ -257,7 +423,9 @@ def discover(directories):
 
 def unwrap_or_copy(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
-    if source.read_bytes()[:4] == b"\x7fELF":
+    with source.open("rb") as stream:
+        magic = stream.read(4)
+    if magic == b"\x7fELF":
         shutil.copyfile(source, target)
     else:
         unwrap_self.unwrap(source, target)
@@ -527,10 +695,12 @@ def collect_frames(work, destination):
 
 def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     run_dir.mkdir(parents=True)
+    (work / REPORT_FILE).unlink(missing_ok=True)
     inherited = {key: value for key, value in os.environ.items() if key not in ("ANYPS5_SHADER_CACHE_DIR", "ANYPS5_NO_SHADER_CACHE", "APS5_PAD_INPUT_FILE")}
-    env = {**inherited, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
+    env = {**inherited, "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
            "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
            "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
+    env.setdefault("SDL_AUDIODRIVER", "dummy")
     pad_file, queued = work / "pad-input.txt", None
     if pad:
         pad_file.unlink(missing_ok=True)
@@ -558,13 +728,14 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     text = "".join((run_dir / name).read_text(encoding="utf-8", errors="replace") for name in ("stdout.log", "stderr.log"))
     summary_path = run_dir / "aps5-summary.jsonl"
     summary = read_summary(summary_path)
+    report = take_report(work, run_dir)
     frames = collect_frames(work, run_dir / "frames")
     uniform = frame_is_uniform(run_dir / "frames" / frames[-1]) if frames else None
     age = ended - summary_path.stat().st_mtime if summary_path.is_file() else None
     cpu = re.search(r"host CPU (.+?): has", text)
     return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
-            "warnings": warning_counts(text), "frames": frames, "gpu": summary["gpu"], "driver": summary["driver"],
+            "warnings": warning_counts(text), "frames": frames, "report": report, "gpu": summary["gpu"], "driver": summary["driver"],
             "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}
 
 
@@ -606,6 +777,9 @@ def write_summary(output, summary):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
@@ -614,15 +788,25 @@ def main(argv=None):
     parser.add_argument("--runs", type=positive, default=2)
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
-    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run")
+    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run; the comparison uses the last run of each title in both")
+    parser.add_argument("--json", action="store_true", help="with --compare, print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
+    parser.add_argument("--smoke", action="store_true", help="run the titles marked \"smoke\" in titles.json")
     args = parser.parse_args(argv)
+    if args.smoke and args.ids:
+        parser.error("--smoke takes no title IDs")
     args.out = args.out or args.build / "title-runs"
+    if args.json and not args.compare:
+        parser.error("--json needs --compare")
     previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     titles = load_titles(args.titles)
-    found = discover(args.games)
+    if args.smoke:
+        args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
+        if not args.ids:
+            raise SystemExit(f"no title in {args.titles} is marked smoke")
+    found = discover(args.games, args.ids)
     ids = args.ids or sorted(found)
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
@@ -661,7 +845,7 @@ def main(argv=None):
                 log = (work / "relink.log").read_text(encoding="utf-8", errors="replace")
                 result = {"outcome": "relink-failed", "exit_code": None, "seconds": 0, "presents": 0, "fps": 0.0,
                           "first_error": first_error(log) or last_line(log),
-                          "warnings": {}, "frames": []}
+                          "warnings": {}, "frames": [], "report": None}
             else:
                 result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}), entry.get("pad"))
                 for key in ("os", "gpu", "driver", "cpu"):
@@ -674,7 +858,10 @@ def main(argv=None):
     write_summary(output, summary)
     report = render_markdown(summary, previous)
     (output / "summary.md").write_text(report, encoding="utf-8")
-    print(report)
+    if args.json:
+        print(compare_json(summary, previous))
+    else:
+        print(report)
     print(f"written to {output}")
     return 0
 

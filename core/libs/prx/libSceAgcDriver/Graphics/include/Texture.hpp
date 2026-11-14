@@ -486,6 +486,7 @@ public:
     static const char* CopyRefusal(const Context& context, const StorageTexture* destination, const StorageTexture& source, std::uint64_t address);
     VkImage Image() const { return image; }
     const GuestTextureResource& Descriptor() const { return descriptor; }
+    std::size_t GuestCopyCapacity() const { return original.capacity(); }
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
     VkFormat ImageFormat() const { return imageFormat; }
@@ -527,6 +528,7 @@ public:
     std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
+    bool AnyLayerPending() const;
 
 private:
     std::atomic<std::uint64_t> provedEpoch{0};
@@ -588,6 +590,7 @@ private:
     void applyStoredSave(std::uint64_t ticket, const std::vector<std::uint32_t>& units);
     void cancelStoredSave(std::uint32_t unit);
     void cancelStoredSaves();
+    void releaseUnheldOriginal();
     // Lets the batches holding the saves of the units `layers` selects (every unit for none) complete.
     void awaitStoredSave(const std::vector<bool>* layers);
     bool guestBytesSettled() const;
@@ -648,7 +651,7 @@ private:
     // else from the import (`discard`: the image has no layout yet, a whole-surface first upload).
     // The write-back retiles into the import's unit shadow where a slab takes the piece
     // (`shadowed` receives those guest ranges, `imported` the pieces written to the import).
-    std::uint64_t uploadWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false);
+    std::uint64_t uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false);
     std::uint64_t writeBackWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> keep, std::uint64_t firstStored, std::uint64_t lastStored, std::vector<ShadowedRange>& shadowed, std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported, Buffer* save = nullptr);
     struct DrawnRect {
         std::uint32_t left = 0;
