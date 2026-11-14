@@ -487,10 +487,6 @@ int APS5_VABI _ZNK6icu_6810ICUService6getKeyERNS_13ICUServiceKeyEPNS_13UnicodeSt
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_toupper_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_1LicYZSc3Q8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

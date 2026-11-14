@@ -118,7 +118,7 @@ int APS5_VABI _ZNK6icu_6813UnicodeString11lastIndexOfEPKDsiiii_nid_postfix();
 int APS5_VABI ucptrie_internalSmallU8Index_nid_postfix();
 int APS5_VABI _ZN6icu_6822UCharCharacterIteratorC2Ev_nid_postfix();
 int APS5_VABI _ZNK6icu_6810ICUService6getKeyERNS_13ICUServiceKeyEPNS_13UnicodeStringEPKNS_17ICUServiceFactoryER10UErrorCode_nid_postfix();
-int APS5_VABI uprv_toupper_nid_postfix();
+char APS5_VABI uprv_toupper_nid_postfix(char c);
 int APS5_VABI sceIcuLegacyUnknown_1LicYZSc3Q8_nid_no_patch();
 int APS5_VABI _ZN6icu_686LocaleC2EOS0__nid_postfix();
 int APS5_VABI ucnv_fixFileSeparator_nid_postfix();
