@@ -170,11 +170,6 @@ int APS5_VABI mdbg_service_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI mount_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI openintr_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2106,11 +2101,6 @@ int APS5_VABI sysc_m00_nid_postfix(void) {
 }
 
 int APS5_VABI sysc_s00_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI unmount_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

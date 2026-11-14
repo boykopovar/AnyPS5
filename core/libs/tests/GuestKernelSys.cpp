@@ -371,6 +371,9 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldload_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return mount_nid_postfix(paths.Unreadable(), "/mnt", 0, nullptr); });
+    *__error_nid_postfix() = 0;
+    Require(unmount_nid_postfix(paths.Unreadable(), 0) == -1 && Error() == 1);
     posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
     posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
     const std::int32_t statVersion = 1056;
@@ -1713,6 +1716,19 @@ int main() {
     Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
+    for (const int flags : {0, 1, 0x80000, 0x8000000, -1}) {
+        for (const char* path : {static_cast<const char*>(nullptr), reinterpret_cast<const char*>(0x10), "", "/", "/missing", "/dev"}) {
+            *__error_nid_postfix() = 0;
+            Require(unmount_nid_postfix(path, flags) == -1 && Error() == 1);
+        }
+    }
+    Require(unmount_nid_postfix(("/" + std::string(1024, 'p')).c_str(), 0) == -1 && Error() == 1);
+    Require(mount_nid_postfix(nullptr, "/mnt", 0, nullptr) == -1 && Error() == 14);
+    Require(mount_nid_postfix(reinterpret_cast<const char*>(0x10), "/mnt", 0, nullptr) == -1 && Error() == 14);
+    Require(mount_nid_postfix("", "/mnt", 0, nullptr) == -1 && Error() == 2);
+    Require(mount_nid_postfix("", nullptr, -1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 2);
+    Require(mount_nid_postfix(std::string(16, 'f').c_str(), "/mnt", 0, nullptr) == -1 && Error() == 63);
+    Require(mount_nid_postfix(("/" + std::string(1024, 'p')).c_str(), "/mnt", 0, nullptr) == -1 && Error() == 63);
     std::array<unsigned char, 2080> fileStatus{};
     const auto kldstatFails = [&](int fileid, std::int32_t version, int error) {
         fileStatus.fill(0xA5);

@@ -924,6 +924,23 @@ int APS5_VABI swapon_nid_postfix(const char* name) {
     return static_cast<int>(Fail(GuestEnotblk));
 }
 
+int APS5_VABI mount_nid_postfix(const char* type, const char* path, int flags, void* data) {
+    constexpr std::size_t MaxFileSystemName = 16;
+    (void)path;
+    (void)flags;
+    (void)data;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(type, MaxFileSystemName, copy)) return static_cast<int>(Fail(error));
+    if (copy.empty()) return static_cast<int>(Fail(GuestEnoent));
+    throw std::runtime_error("mount: mounting the file system " + copy + " is not supported");
+}
+
+int APS5_VABI unmount_nid_postfix(const char* path, int flags) {
+    (void)path;
+    (void)flags;
+    return static_cast<int>(Fail(GuestEperm));
+}
+
 static int CreateSymlinkAt(const char* target, int dirfd, const char* created) {
     std::string targetCopy, createdCopy;
     if (const int error = CopyPath(target, targetCopy)) return static_cast<int>(Fail(error));
