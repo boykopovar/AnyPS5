@@ -3486,6 +3486,17 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
     CopyGuestBytes(destination.data(), source, destination.size());
 }
 
+std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes) {
+    if (bytes != sizeof(std::uint32_t) && bytes != sizeof(std::uint64_t)) throw std::invalid_argument("a guest label is 4 or 8 bytes");
+    GuardRead(address, bytes);
+    FlushGpuWrites(address, bytes);
+    const TimedAccess timed(CounterRead, bytes);
+    CountReadCaller(__builtin_return_address(0));
+    CheckRange(reinterpret_cast<const void*>(address), bytes, bytes);
+    if (bytes == sizeof(std::uint64_t)) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
+    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+}
+
 #ifdef ANYPS5_ENABLE_ASAN
 [[gnu::no_sanitize("address")]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     using UnalignedWord [[gnu::aligned(1), gnu::may_alias]] = std::uint64_t;
