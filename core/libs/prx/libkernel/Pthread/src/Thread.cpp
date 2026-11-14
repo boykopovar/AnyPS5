@@ -1573,9 +1573,9 @@ int APS5_VABI scePthreadGetname(Pthread thread, char* name) {
 }
 
 int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) {
-    if (!thread || !prio) return SCE_KERNEL_ERROR_EINVAL;
-    auto registered = LockRegisteredGuestThread(thread);
-    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
+    if (!prio) return SCE_KERNEL_ERROR_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return SCE_KERNEL_ERROR_ESRCH;
     *prio = thread->priority.load(std::memory_order_relaxed);
     return SCE_OK;
 }
