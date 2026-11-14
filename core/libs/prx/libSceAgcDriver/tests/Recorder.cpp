@@ -943,6 +943,51 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
         imageContext.detiler = &detiler;
         TextureCache textureCache(imageContext);
         imageContext.textureCache = &textureCache;
+        Buffer readback(context, 8, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        struct Clear {
+            const Context& context;
+            Recorder& recorder;
+            ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+        } clear{context, recorder};
+        ShaderRecompiler::RecompileResult imageProgram;
+        ShaderRecompiler::DescriptorBinding imageBinding;
+        imageBinding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        imageBinding.descriptorSet = 0;
+        imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        imageBinding.count = 1;
+        imageBinding.imageSamplers = {0};
+        imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+        imageProgram.bindings.push_back(imageBinding);
+        const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
+        recorder.Sync();
+        const auto savedWord = *block;
+        SampledFromStorageForTest(false);
+        struct Restore {
+            std::uint32_t* block;
+            std::uint32_t word;
+            ~Restore() { SampledFromStorageForTest(true); *block = word; }
+        } restore{block, savedWord};
+        update(direct, 7);
+        const auto importedBefore = SampledTexturesImported();
+        const auto submissionsBefore = recorder.Submissions();
+        auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
+        Require(SampledTexturesImported() == importedBefore + 1, "a sampled surface with a pending GPU write was not uploaded from its host import");
+        Require(recorder.Submissions() == submissionsBefore, "the sampled lookup waited for the GPU write instead of uploading after it");
+        Require(sampled->SampledTextures().size() == 1, "the sampled lookup made no texture");
+        recorder.Keep(sampled);
+        recorder.Sync();
+        Require(*block == savedWord + 7, "the GPU write the sampled texture follows did not land");
+        std::cout << "sampled surface over a pending GPU write: uploaded from its host import without a wait: ok\n";
+        sampled.reset();
+    }
+    {
+        TextureDetiler detiler(context);
+        auto imageContext = context;
+        imageContext.detiler = &detiler;
+        TextureCache textureCache(imageContext);
+        imageContext.textureCache = &textureCache;
         Buffer readback(context, 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         struct Clear {
             const Context& context;
