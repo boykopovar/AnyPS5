@@ -179,6 +179,11 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
     return {base, context.Arg(*handle, 2u), stride, word3, both(state, nonzero(state, stride), nonzero(state, field(state, word1, 31u, 1u))), index, valid};
 }
 
+bool AlignsRawDwordAddress(SpirvValueEmitContext& context, const IrValue& instruction) {
+    const auto& memory = context.Memory(instruction);
+    return memory.kind == ResourceKind::Buffer && !memory.formatted && memory.dataBits == 32u && BufferAccessOf(instruction.Opcode()) != BufferAccess::Atomic;
+}
+
 RuntimeAddress byteAddress(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t offset, std::uint32_t bytes) {
     auto& state = context.state;
     const auto u32 = TypeU32(state);
@@ -199,7 +204,8 @@ RuntimeAddress byteAddress(SpirvValueEmitContext& context, const IrValue& instru
     const auto offsetLsb = Binary(state, spv::OpBitwiseAnd, u32, offset, constant(3u));
     const auto swizzled = add(mul(add(mul(indexMsb, resource.stride), offsetMsb), indices), add(Binary(state, spv::OpShiftLeftLogical, u32, indexLsb, constant(2u)), offsetLsb));
     const auto linear = add(mul(resource.index, resource.stride), offset);
-    const auto byte = add(Select(state, u32, resource.swizzle, swizzled, linear), soffset);
+    auto byte = add(Select(state, u32, resource.swizzle, swizzled, linear), soffset);
+    if (AlignsRawDwordAddress(context, instruction)) byte = Binary(state, spv::OpBitwiseAnd, u32, byte, constant(~3u));
     const auto mode = field(state, resource.word3, 28u, 2u);
     const auto indexInBounds = less(resource.index, resource.records);
     const auto structured = both(state, indexInBounds, less(offset, resource.stride));
@@ -216,7 +222,8 @@ RuntimeAddress address(SpirvValueEmitContext& context, const IrValue& instructio
     const auto offset = Binary(state, spv::OpIAdd, TypeU32(state), resource.offset != 0u ? resource.offset : context.Arg(instruction, 2u), ConstantU32(state, resource.offset != 0u ? componentOffset : context.Memory(instruction).offset + componentOffset));
     const auto bytesAddress = byteAddress(context, instruction, resource, offset, ConstantU32(state, bytes));
     if (!context.Memory(instruction).gpuDescriptor) return bytesAddress;
-    return {AddBdaAddress(context, instruction, resource.base, Unary(state, spv::OpUConvert, TypeScalarU64(state), bytesAddress.guest), false), bytesAddress.inBounds};
+    const auto base = AlignsRawDwordAddress(context, instruction) ? Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), resource.base, BdaConstant(state, ~3ull)) : resource.base;
+    return {AddBdaAddress(context, instruction, base, Unary(state, spv::OpUConvert, TypeScalarU64(state), bytesAddress.guest), false), bytesAddress.inBounds};
 }
 
 MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue& instruction, bool wide = false, bool plainLoad = false) {
@@ -266,7 +273,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     auto& state = context.state;
     const auto access = directAccess(context, instruction, false, !context.Memory(instruction).coherent);
     const auto index = directWordIndex(state, access, address);
-    const auto misalignment = baseMisalignment(context, instruction);
+    const auto misalignment = AlignsRawDwordAddress(context, instruction) ? ConstantU32(state, 0u) : baseMisalignment(context, instruction);
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
@@ -351,7 +358,7 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
     const auto access = directAccess(context, instruction);
     const auto u32 = TypeU32(state);
     const auto index = directWordIndex(state, access, address);
-    const auto misalignment = baseMisalignment(context, instruction);
+    const auto misalignment = AlignsRawDwordAddress(context, instruction) ? ConstantU32(state, 0u) : baseMisalignment(context, instruction);
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, u32, unaligned, next, index);

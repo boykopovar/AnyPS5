@@ -1529,7 +1529,8 @@ void verifyBufferAlignmentSpecialization() {
         request.userData[0] = 0x10000000u + offset;
         const auto unaligned = Recompile(request.request);
         require(unaligned.variantId == aligned.variantId && diskMisses() == misses, "base alignment repeated static shader preparation");
-        require(countAtomics(unaligned) == 2u, "unaligned DWORD store did not split into two atomic updates");
+        require(countAtomics(unaligned) == 0u, "unaligned DWORD store kept unaligned atomic updates");
+        require(unaligned.spirv.data() == aligned.spirv.data(), "unaligned raw DWORD store specialized the module");
         request.userData[0] += 0x10000u;
         const auto relocated = Recompile(request.request);
         require(unaligned.spirv.data() == relocated.spirv.data(), "relocation with unchanged alignment rebuilt the buffer specialization");

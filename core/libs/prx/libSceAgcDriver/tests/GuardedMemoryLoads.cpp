@@ -371,11 +371,11 @@ int main() {
     run("coherent buffer high word", [] {
         const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
         expectReads(test, false, true, 8, {2});
-        expectReads(test, false, true, 8, {2, 3}, 64, 1);
-        expectReads(test, false, true, 60, {}, 64, 1);
+        expectReads(test, false, true, 8, {2}, 64, 1);
+        expectReads(test, false, true, 60, {15}, 64, 1);
         expectReads(test, true, true, 8, {2, 2});
-        expectReads(test, true, true, 8, {2, 3}, 64, 1);
-        expectReads(test, true, true, 60, {Unreachable, Unreachable}, 64, 1);
+        expectReads(test, true, true, 8, {2, 2}, 64, 1);
+        expectReads(test, true, true, 60, {15, 15}, 64, 1);
     });
     run("exact robust loads read what the checked variant reads", [] {
         const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
