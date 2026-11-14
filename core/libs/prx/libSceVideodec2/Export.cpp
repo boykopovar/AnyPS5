@@ -817,7 +817,8 @@ void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frame
     const auto picture = decoder.pictures.find(frameBuffer);
     if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
     const auto& stored = picture->second;
-    *header = {stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8};
+    const PictureHeader localHeader{stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8};
+    if (!CopyOutGuest(header, localHeader)) throw std::runtime_error("Videodec2: invalid argument pointer");
 }
 
 void Videodec2Vp9PictureInfo_nid_no_patch(std::uint64_t handle, const void* frameBuffer, Vp9PictureInfo* info) {
@@ -831,7 +832,7 @@ void Videodec2Vp9PictureInfo_nid_no_patch(std::uint64_t handle, const void* fram
     if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
     auto snapshot = picture->second.vp9;
     snapshot.thisSize = sizeof(*info);
-    *info = snapshot;
+    if (!CopyOutGuest(info, snapshot)) throw std::runtime_error("Videodec2: invalid argument pointer");
 }
 
 }

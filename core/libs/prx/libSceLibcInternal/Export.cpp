@@ -680,11 +680,6 @@ int APS5_VABI _CWcsxfrm_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Call_onceEx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Closreg_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -703,11 +698,6 @@ int APS5_VABI _Daysto_nid_postfix(int year, int month) {
 }
 
 int APS5_VABI _Deletegloballocale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Do_call_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -866,11 +856,6 @@ int APS5_VABI _Getctyptab_nid_postfix() {
 }
 
 int APS5_VABI _Getdst_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Geterrno_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

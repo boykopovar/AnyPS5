@@ -4,9 +4,7 @@
 #include <cstdint>
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstring>
-#include <cerrno>
 #include <stdexcept>
 #include <chrono>
 #include <thread>
@@ -201,18 +199,28 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  if (info == nullptr) {
   return PAD_ERROR_INVALID_ARG;
  }
- std::memset(info, 0, sizeof(*info));
- if (SpecialHandle(handle)) return PAD_OK;
- info->touchPadInfo.pixelDensity = 44.86f;
- info->touchPadInfo.resolution.x = kTouchPadWidth;
- info->touchPadInfo.resolution.y = kTouchPadHeight;
- info->stickInfo.deadZoneLeft = 13;
- info->stickInfo.deadZoneRight = 13;
- info->connectionType = PAD_CONNECTION_TYPE_LOCAL;
+ PadControllerInformation localInfo{};
+ if (SpecialHandle(handle)) {
+  const int savedErrno = errno;
+  const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+  errno = savedErrno;
+  if (!copied) return PAD_ERROR_INVALID_ARG;
+  return PAD_OK;
+ }
+ localInfo.touchPadInfo.pixelDensity = 44.86f;
+ localInfo.touchPadInfo.resolution.x = kTouchPadWidth;
+ localInfo.touchPadInfo.resolution.y = kTouchPadHeight;
+ localInfo.stickInfo.deadZoneLeft = 13;
+ localInfo.stickInfo.deadZoneRight = 13;
+ localInfo.connectionType = PAD_CONNECTION_TYPE_LOCAL;
  const bool connected = Pad::IsConnected(PortOf(handle));
- info->connectedCount = connected ? 1 : 0;
- info->connected = connected;
- info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
+ localInfo.connectedCount = connected ? 1 : 0;
+ localInfo.connected = connected;
+ localInfo.deviceClass = PAD_DEVICE_CLASS_STANDARD;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -292,7 +300,11 @@ int APS5_VABI scePadGetControllerBusType(int handle, int* busType) {
  if (busType == nullptr) return PAD_ERROR_INVALID_ARG;
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
- *busType = PAD_CONNECT_TYPE_BLUETOOTH;
+ const int type = PAD_CONNECT_TYPE_BLUETOOTH;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(busType, &type, sizeof(type));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -583,7 +595,11 @@ int APS5_VABI scePadGetAccessibilityControllerState(int handle, std::uint32_t* s
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (state == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    *state = 0;
+    const std::uint32_t controllerState = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &controllerState, sizeof(controllerState));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
 
@@ -765,7 +781,11 @@ int APS5_VABI scePadGetControllerType(std::int32_t handle, std::int32_t* type) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (type == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    *type = SpecialHandle(handle) ? PAD_CONTROLLER_TYPE_UNKNOWN : PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    const std::int32_t controllerType = SpecialHandle(handle) ? PAD_CONTROLLER_TYPE_UNKNOWN : PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(type, &controllerType, sizeof(controllerType));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
 
