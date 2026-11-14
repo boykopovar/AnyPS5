@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/platform/sql/SQLiteDatabaseTracker.cpp
+// Derived from Source/WebCore/platform/sql/SQLiteDatabaseTracker.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2010, 2012 Apple Inc. All Rights Reserved.
  *
@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/platform/sql/SQLiteDatabaseTrackerClient.h
+// Derived from Source/WebCore/platform/sql/SQLiteDatabaseTrackerClient.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2010 Apple Inc. All Rights Reserved.
  *
