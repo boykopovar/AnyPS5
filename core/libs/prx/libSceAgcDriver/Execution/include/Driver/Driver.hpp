@@ -198,6 +198,8 @@ private:
     void dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments = 0);
     void verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffset, ShaderRecompiler::RecompileRequest request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const DispatchVariant& variant, std::span<const std::uint32_t> liveWords, const ShaderRecompiler::RecompileResult& patched);
     static bool drawEntries();
+    bool drawEntriesThisDraw();
+    static std::atomic<std::uint64_t>& drawCacheUseful();
     static bool drawDataHits();
     static bool verifyDrawDataHits();
     static bool drawStageDataHits();
