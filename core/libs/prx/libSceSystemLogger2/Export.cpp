@@ -51,6 +51,14 @@ std::uint64_t currentNetworkTick() {
     return UNIX_EPOCH_TICK + static_cast<std::uint64_t>(now);
 }
 
+template <typename T>
+bool store(void* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 bool fitsName(const char* name, std::size_t limit) {
     if (!name) return false;
     std::string text;
@@ -152,9 +160,10 @@ int APS5_VABI sceSystemLogger2GetTimestamp(SceSystemLogger2Timestamp* timestamp)
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return NOT_INITIALIZED;
     if (!timestamp) return INVALID_ARGUMENT;
-    std::memset(timestamp, 0, sizeof(*timestamp));
-    timestamp->tick = currentNetworkTick();
-    std::memcpy(timestamp->clockSource, "networkClock", sizeof("networkClock"));
+    SceSystemLogger2Timestamp local{};
+    local.tick = currentNetworkTick();
+    std::memcpy(local.clockSource, "networkClock", sizeof("networkClock"));
+    if (!store(timestamp, local)) return INVALID_ARGUMENT;
     return 0;
 }
 
@@ -166,9 +175,12 @@ int APS5_VABI sceSystemLogger2IsAvailableMonitor(void) {
 int APS5_VABI sceSystemLogger2GetEventStatus(const char* eventName, std::uint64_t* status) {
     std::lock_guard lock(loggerMutex);
     if (!eventName || !status) return INVALID_ARGUMENT;
-    const std::size_t length = strnlen(eventName, EVENT_STATUS_NAME_LIMIT + 1);
-    if (length == 0 || length > EVENT_STATUS_NAME_LIMIT) return INVALID_ARGUMENT;
-    *status = 0;
+    std::string name;
+    const int savedErrno = errno;
+    const int copied = CopyGuestString_nid_no_patch(eventName, EVENT_STATUS_NAME_LIMIT + 1, name);
+    errno = savedErrno;
+    if (copied != 0 || name.empty() || name.size() > EVENT_STATUS_NAME_LIMIT) return INVALID_ARGUMENT;
+    if (!store(status, std::uint64_t{0})) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
@@ -178,7 +190,7 @@ int APS5_VABI sceSystemLogger2SetEventAsyncInternal(const void* event, std::uint
     if (!event || !status) return INVALID_ARGUMENT;
     const int result = validateEvent(static_cast<const std::uint8_t*>(event));
     if (result != 0) return result;
-    *status = 0;
+    if (!store(status, std::uint32_t{0})) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
