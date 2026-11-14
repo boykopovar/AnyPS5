@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
+#include "prx/libSceNKWebKit/include/LocalizedStringsExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
 #include "prx/libSceNKWebKit/include/ContentTypeExports.hpp"

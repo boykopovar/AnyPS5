@@ -18976,10 +18976,6 @@ int APS5_VABI _ZN7WebCore15isEndOfDocumentERKNS_15VisiblePositionE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15localizedStringEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15makeSimpleRangeERKNS_5RangeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -20861,10 +20857,6 @@ int APS5_VABI _ZN7WebCore18pluginScriptObjectEPN3JSC14JSGlobalObjectEPNS_13JSHTM
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore18pluginTooSmallTextEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore18throwThisTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEPKcS6_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -22316,10 +22308,6 @@ int APS5_VABI _ZN7WebCore22identifierToByteStringERN3JSC14JSGlobalObjectERKNS0_1
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22multipleFileUploadTextEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22startOfEditableContentERKNS_15VisiblePositionE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -23574,10 +23562,6 @@ int APS5_VABI _ZN7WebCore32serializationForRenderTreeAsTextERKNS_5ColorE() {
 }
 
 int APS5_VABI _ZN7WebCore32throwArgumentMustBeFunctionErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEjPKcS6_S6_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore32useBlockedPlugInContextMenuTitleEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
