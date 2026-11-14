@@ -2402,7 +2402,7 @@ struct LayeredSlice {
 class LayeredDepthStorage {
 public:
     LayeredDepthStorage(const Context& context, const GuestTextureResource& resource, const DepthTarget& base, std::uint32_t bytesPerTexel, std::uint32_t firstLayer, std::uint32_t layers) : context(context), base(base), extent(base.extent), bytesPerTexel(bytesPerTexel), firstLayer(firstLayer), layers(layers) {
-        const auto bytes = DescribeSurface(resource).guestBytes;
+        const auto bytes = SurfaceGuestBytes(resource);
         layerPitchBytes = DescribeSurface(resource).GuestLayerOffset(1);
         StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(bytes), nullptr, "storage image creation", PublishScope::None);
         storage = StorageTexture::Create(context, *context.detiler, resource, 0);
@@ -3173,12 +3173,12 @@ GuestTextureResource stencilResource(const DepthTarget& target) {
 }
 
 std::uint64_t DepthSurface::MirrorBytes() const {
-    if (mirrorBytes == 0) mirrorBytes = DescribeSurface(mirrorResource(target)).guestBytes;
+    if (mirrorBytes == 0) mirrorBytes = SurfaceGuestBytes(mirrorResource(target));
     return mirrorBytes;
 }
 
 std::uint64_t DepthSurface::StencilMirrorBytes() const {
-    if (stencilMirrorBytes == 0) stencilMirrorBytes = DescribeSurface(stencilResource(target)).guestBytes;
+    if (stencilMirrorBytes == 0) stencilMirrorBytes = SurfaceGuestBytes(stencilResource(target));
     return stencilMirrorBytes;
 }
 

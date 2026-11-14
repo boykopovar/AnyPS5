@@ -479,7 +479,7 @@ const ImageMemoEntry& decodedImage(VkDevice device, std::span<const std::uint32_
     if (slot.device == device && slot.allocation == allocation && std::equal(words.begin(), words.end(), slot.words.begin())) return slot;
     slot.device = VK_NULL_HANDLE;
     slot.resource = DecodeTextureResource(words);
-    slot.guestBytes = DescribeSurface(slot.resource).guestBytes;
+    slot.guestBytes = SurfaceGuestBytes(slot.resource);
     slot.allocation = allocation;
     slot.components = ViewComponents(slot.resource);
     std::copy(words.begin(), words.end(), slot.words.begin());
@@ -1021,7 +1021,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         const auto window = ViewedArrayWindow(resource, false);
         if (window.baseAddress != resource.baseAddress || resource.dccAddress == 0) return window;
         if (ViewedArrayWindow(resource, true).baseAddress == resource.baseAddress) return window;
-        if (TextureClearKeys(resource, guestBytes != 0 ? guestBytes : DescribeSurface(resource).guestBytes) != DccKeys::Uncompressed) return window;
+        if (TextureClearKeys(resource, guestBytes != 0 ? guestBytes : SurfaceGuestBytes(resource)) != DccKeys::Uncompressed) return window;
         return ViewedArrayWindow(resource, true);
     };
     if (const auto window = viewedWindow(); window.baseAddress != resource.baseAddress) {
@@ -1030,7 +1030,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] sampled array view 0x%llx (%ux%u format %u, dimension %d, slices %u..%u) served from its viewed slices at 0x%llx; %llu such views\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.dimension), resource.baseArray, resource.depthOrLastArray, static_cast<unsigned long long>(window.baseAddress), static_cast<unsigned long long>(count));
         return cachedTexture(context, words, window, components, 0, depthCompare, VK_IMAGE_VIEW_TYPE_2D, layerRows);
     }
-    if (guestBytes == 0) guestBytes = DescribeSurface(resource).guestBytes;
+    if (guestBytes == 0) guestBytes = SurfaceGuestBytes(resource);
     if (guestBytes >= (1ull << 30u)) {
         static std::atomic<std::uint64_t> large{0};
         const auto count = large.fetch_add(1) + 1;
@@ -1514,7 +1514,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     const auto viewed = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     if (viewed.baseAddress != requested.baseAddress) guestBytes = 0;
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
-    const auto viewedBytes = guestBytes != 0 ? guestBytes : DescribeSurface(viewed).guestBytes;
+    const auto viewedBytes = guestBytes != 0 ? guestBytes : SurfaceGuestBytes(viewed);
     RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access");
     if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     if (viewedBytes >= (1ull << 30u)) {
@@ -1565,7 +1565,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (TextureCountersReported()) counters.storageHits.fetch_add(1, std::memory_order_relaxed);
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
         } else {
-            if (guestBytes == 0) guestBytes = DescribeSurface(resource).guestBytes;
+            if (guestBytes == 0) guestBytes = SurfaceGuestBytes(resource);
             bool flushed = false;
             auto handOver = StorageTexture::PrepareCreation(context, resource, guestBytes, std::move(detached), flushed);
             if (flushed && profile) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
@@ -1899,7 +1899,7 @@ std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, con
     if (disabled || stored == nullptr) return nullptr;
     const auto viewed = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
-    const auto viewedBytes = DescribeSurface(viewed).guestBytes;
+    const auto viewedBytes = SurfaceGuestBytes(viewed);
     RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access");
     if (DepthSurfaceStorage(context, {}, viewed, 0) != nullptr) return nullptr;
     if (DepthPlanesStale()) static_cast<void>(FlushDepthPlanes(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), DepthPlaneScope::Overlapped));
@@ -5819,7 +5819,7 @@ bool ShaderResources::precollectImages() {
             if (sampled ? !IsNullSampledTextureResource(words) : !IsNullTextureResource(words)) {
                 const auto* memo = words.size() == 8 ? &decodedImage(context.device, words) : nullptr;
                 record.resource = memo != nullptr ? memo->resource : DecodeTextureResource(words);
-                record.guestBytes = memo != nullptr ? memo->guestBytes : DescribeSurface(record.resource).guestBytes;
+                record.guestBytes = memo != nullptr ? memo->guestBytes : SurfaceGuestBytes(record.resource);
                 record.generation = GuestMemory::CollectWrites(record.resource.baseAddress, static_cast<std::size_t>(record.guestBytes));
                 record.decoded = true;
                 if (record.sampled && !noRecords && words.size() == 8 && (binding.imageDepthCompare.empty() || !binding.imageDepthCompare.at(element))) {
@@ -5955,7 +5955,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             Require(!layerRows || (resource.baseArray <= resource.depthOrLastArray && resource.depthOrLastArray - resource.baseArray >= context.limits.maxImageArrayLayers), "a 1D array within maxImageArrayLayers was bound as rows of a 2D image");
             if (!firstLayer && !depth1D && !firstSample && !layerRows && !MatchesGuestDimension(*binding.imageShape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the shader's declared image shape (shape " + std::to_string(static_cast<int>(*binding.imageShape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
             const VkComponentMapping components = ViewComponents(resource);
-            const auto guestBytes = record != nullptr && record->decoded ? record->guestBytes : DescribeSurface(resource).guestBytes;
+            const auto guestBytes = record != nullptr && record->decoded ? record->guestBytes : SurfaceGuestBytes(resource);
             CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
             if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
             std::shared_ptr<Texture> texture;
@@ -6048,7 +6048,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         }
         const auto mip = std::min(resource.baseLevel + mipOffset, resource.mipCount - 1u);
         Require(resource.minLod <= mip * 256u, "guest storage texture descriptor clamps its minimum LOD above the level it addresses, which is not implemented");
-        const auto guestBytes = record != nullptr && record->decoded ? record->guestBytes : DescribeSurface(resource).guestBytes;
+        const auto guestBytes = record != nullptr && record->decoded ? record->guestBytes : SurfaceGuestBytes(resource);
         CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
         if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
         // Images the shader only reads have nothing to store back.
@@ -6404,7 +6404,7 @@ void ShaderResources::resolveImageTables() {
                 decoded.rejected = "AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")";
                 return decoded;
             }
-            decoded.guestBytes = DescribeSurface(resource).guestBytes;
+            decoded.guestBytes = SurfaceGuestBytes(resource);
             if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) {
                 decoded.rejected = "AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped";
                 return decoded;
@@ -6428,7 +6428,7 @@ void ShaderResources::resolveImageTables() {
             std::copy(sampledWords.begin(), sampledWords.end(), sampled.words.begin());
             if (sampledWords.data() != words.data()) {
                 sampled.resource = DecodeTextureResource(sampledWords);
-                sampled.guestBytes = DescribeSurface(sampled.resource).guestBytes;
+                sampled.guestBytes = SurfaceGuestBytes(sampled.resource);
             }
             CompletePendingCpuWrites(context, sampled.resource.baseAddress, static_cast<std::size_t>(sampled.guestBytes));
             if (sampled.resource.dccAddress != 0) CompletePendingCpuWrites(context, sampled.resource.dccAddress, DccKeyBytes(sampled.guestBytes));
@@ -6782,7 +6782,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     forEachImageElement(*deferredCompute.program, [&](const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t, std::span<const std::uint32_t> words) {
         if (IsNullTextureResource(words)) return;
         const auto resource = DecodeTextureResource(words);
-        const auto guestBytes = DescribeSurface(resource).guestBytes;
+        const auto guestBytes = SurfaceGuestBytes(resource);
         consider(resource.format, resource.baseAddress, guestBytes, binding.kind == ShaderRecompiler::DescriptorKind::SampledImage);
         considerKeys(resource.dccAddress, guestBytes);
     });
@@ -6791,7 +6791,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
         for (std::size_t element = 0; element < binding.guestDescriptor.size() / 8u; ++element) {
             try {
                 const auto resource = DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(element * 8u, 8u));
-                const auto guestBytes = DescribeSurface(resource).guestBytes;
+                const auto guestBytes = SurfaceGuestBytes(resource);
                 consider(resource.format, resource.baseAddress, guestBytes, true);
                 considerKeys(resource.dccAddress, guestBytes);
             } catch (const std::runtime_error&) {
