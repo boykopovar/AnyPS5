@@ -142,6 +142,9 @@ void CheckFrames() {
     Require(sceCameraGetFrameData(0, &frame) == ErrorParam, "reading handle 0 must be rejected");
     Require(sceCameraIsValidFrameData(0, &frame) == ErrorParam, "validating handle 0 must be rejected");
     Require(sceCameraIsValidFrameData(1, nullptr) == ErrorParam, "validating a null frame must be rejected");
+    errno = 71;
+    Require(sceCameraIsValidFrameData(1, reinterpret_cast<const CameraFrameData*>(0x10)) == ErrorParam, "validating unreadable frame rejected");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckClose() {
