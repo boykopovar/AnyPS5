@@ -1,6 +1,13 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
+
+struct LibcCollationState {
+    const std::uint16_t* tables[16];
+};
+
+static_assert(sizeof(LibcCollationState) == 128);
 
 extern "C" {
 
@@ -33,8 +40,8 @@ int APS5_VABI _Getfld_nid_postfix();
 int APS5_VABI _Getfloat_nid_postfix();
 int APS5_VABI _Getgloballocale_nid_postfix();
 int APS5_VABI _Getint_nid_postfix();
-int APS5_VABI _Getpcostate_nid_postfix();
-int APS5_VABI _Getpwcostate_nid_postfix();
+LibcCollationState* APS5_VABI _Getpcostate_nid_postfix();
+LibcCollationState* APS5_VABI _Getpwcostate_nid_postfix();
 int APS5_VABI _Getpwctrtab_nid_postfix();
 int APS5_VABI _Getpwctytab_nid_postfix();
 int APS5_VABI _Getstr_nid_postfix();
