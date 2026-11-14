@@ -8812,10 +8812,6 @@ int APS5_VABI _ZNK7WebCore17FrameLoaderClient32isServiceWorkerFrameLoaderClientE
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16scriptNameToCodeERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore26IdentityTransformOperationC1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -17274,10 +17270,6 @@ int APS5_VABI _ZN7WebCore12SettingsBase26setMinimumDOMTimerIntervalEN3WTF7Second
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12SettingsBase33platformDefaultMediaSourceEnabledEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12SettingsBase44setMediaContentTypesRequiringHardwareSupportERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -22309,10 +22301,6 @@ int APS5_VABI _ZN7WebCore22MutableStylePropertiesD1Ev() {
 }
 
 int APS5_VABI _ZN7WebCore22MutableStylePropertiesD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore22ResourceLoadStatistics20reduceTimeResolutionEN3WTF8WallTimeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

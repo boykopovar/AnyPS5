@@ -2158,7 +2158,6 @@ int APS5_VABI _ZN7WebCore8Settings48setICECandidateFilteringEnabledInspectorOver
 int APS5_VABI _ZN7WebCore9DOMWindow5closeEv();
 int APS5_VABI _ZN7WebCore11DisplayList8FillPathD0Ev();
 int APS5_VABI _ZNK7WebCore17FrameLoaderClient32isServiceWorkerFrameLoaderClientEv();
-int APS5_VABI _ZN7WebCore16scriptNameToCodeERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore26IdentityTransformOperationC1Ev();
 int APS5_VABI WKBundleClearAllDatabases();
 int APS5_VABI libSceNKWebKitLegacyUnknown_vwiXpS6cE1w_nid_no_patch();
