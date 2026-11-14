@@ -18,10 +18,6 @@ std::uint8_t ByteExtremum(const void* first, const void* last, bool minimum) {
 
 extern "C" {
 
-int APS5_VABI _ZNSt8__sce_v215_Thrd_sleep_forEm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_atomic_notify_multi_direct_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

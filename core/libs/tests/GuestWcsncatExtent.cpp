@@ -90,4 +90,22 @@ int main() {
             }
         }
     }
+    for (std::size_t size : {256, 512, 1024}) {
+        auto* source = input.At<char16_t>(size + 1);
+        for (std::size_t i = 0; i < size; ++i) source[i] = static_cast<char16_t>(0x200 + i);
+        source[size] = 0;
+
+        auto* destination = output.At<char16_t>(size + 1);
+        std::memset(destination - 8, 0xa5, (size + 9) * sizeof(char16_t));
+        destination[0] = 0;
+
+        Require(wcsncat_nid_postfix(destination, source, size) == destination);
+        Require(std::char_traits<char16_t>::length(destination) == size);
+        Require(std::char_traits<char16_t>::compare(destination, source, size) == 0);
+        Prefix(destination);
+
+        Require(wcsncat_nid_postfix(destination, source, 0) == destination);
+        Require(std::char_traits<char16_t>::length(destination) == size);
+        Prefix(destination);
+    }
 }

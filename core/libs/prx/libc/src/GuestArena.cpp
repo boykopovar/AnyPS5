@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/HostRegionIndex.hpp"
 #include "prx/libc/include/WindowsMappings.hpp"
 #include <algorithm>
 #include <atomic>
@@ -216,6 +217,7 @@ private:
             cursor = regionEnd;
         }
         _hostRegions = _holes;
+        if (std::getenv("APS5_NO_HOST_REGION_INDEX") == nullptr) _hostIndex.Build(_hostRegions);
         _holes.emplace_back(SystemReservedStart, SystemReservedEnd);
         for (const auto& [holeStart, holeEnd] : _holes) _used.emplace(holeStart, holeEnd);
         _base = ArenaStart;
@@ -370,6 +372,7 @@ private:
     std::map<std::uintptr_t, std::uintptr_t> _used;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _holes;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostRegions;
+    HostRegionIndex _hostIndex;
     void RequireAllocatable(std::size_t alignment) const {
         if (_base == 0) throw std::runtime_error("guest address space arena is unavailable");
         if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest arena alignment");
@@ -408,11 +411,10 @@ public:
     std::size_t Size() const { return _end - _base; }
     bool WriteWatched() const { return _writeWatched; }
     bool OverlapsHostRegion(std::uintptr_t start, std::size_t bytes) const {
-        for (const auto& [regionStart, regionEnd] : _hostRegions) {
-            if (regionStart < start + bytes && start < regionEnd) return true;
-        }
-        return false;
+        return _hostIndex.Overlaps(_hostRegions, start, bytes);
     }
+    const std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& HostRegions() const { return _hostRegions; }
+    bool HostRegionIndexActive() const { return _hostIndex.Active(); }
 
 #ifndef _WIN32
     void ReleaseHostRegion(const void* pointer, std::size_t bytes) {
@@ -703,6 +705,19 @@ bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_
     return Arena::Get().OverlapsHostRegion(address, bytes);
 }
 
+std::size_t GuestArenaHostRegions_nid_no_patch(std::uintptr_t* regions, std::size_t capacity) {
+    const auto& list = Arena::Get().HostRegions();
+    for (std::size_t index = 0; index < list.size() && index < capacity; ++index) {
+        regions[2 * index] = list[index].first;
+        regions[2 * index + 1] = list[index].second;
+    }
+    return list.size();
+}
+
+bool GuestArenaHostRegionIndexActive_nid_no_patch() {
+    return Arena::Get().HostRegionIndexActive();
+}
+
 std::uint64_t GuestArenaCommitGeneration_nid_postfix() {
     return commitGeneration.load(std::memory_order_acquire);
 }
@@ -797,6 +812,14 @@ void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t by
 
 void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count) {
     WindowsMappings::Get().ComparedPages(address, bytes, pages, count, true);
+}
+
+void GuestArenaKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes, void (*zero)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+    WindowsMappings::Get().KnownZero(address, bytes, zero, context);
+}
+
+void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().ForgetKnownZero(address, bytes);
 }
 
 void GuestArenaForgetSection_nid_postfix(void* section) {

@@ -1,10 +1,16 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+
+#include <limits>
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
 
+static_assert(offsetof(LibreSslSslInternal, exData) == 272);
 static_assert(sizeof(LibreSslSslInternal) == 432);
 static_assert(offsetof(LibreSslSslInternal, rwstate) == 156);
 static_assert(offsetof(LibreSslSslInternal, shutdown) == 168);
@@ -139,6 +145,49 @@ const Ssl3StateInternal* Ssl3Internal(const LibreSslSsl& connection, const char*
     return state->internal;
 }
 
+constexpr int MinimumNodes = 4;
+constexpr int CryptoLibrary = 15;
+constexpr int AnyFunction = 0xfff;
+constexpr int MallocFailure = 65;
+
+LibreSslStack* NewExDataStack() {
+    auto* const stack = static_cast<LibreSslStack*>(malloc_nid_postfix(sizeof(LibreSslStack)));
+    if (!stack) return nullptr;
+    stack->data = static_cast<char**>(malloc_nid_postfix(MinimumNodes * sizeof(char*)));
+    if (!stack->data) {
+        free_nid_postfix(stack);
+        return nullptr;
+    }
+    for (int index = 0; index < MinimumNodes; ++index) stack->data[index] = nullptr;
+    stack->num = 0;
+    stack->sorted = 0;
+    stack->numAlloc = MinimumNodes;
+    stack->comp = nullptr;
+    return stack;
+}
+
+void ValidateExDataStack(const LibreSslStack* stack, const char* function) {
+    if (!stack->data || stack->num < 0 || stack->numAlloc < MinimumNodes || stack->num > stack->numAlloc) {
+        NotImplemented_nid_no_patch(function);
+    }
+}
+
+bool PushExData(LibreSslStack* stack, void* value, const char* function) {
+    ValidateExDataStack(stack, function);
+    if (stack->numAlloc - stack->num <= 1) {
+        if (stack->numAlloc > std::numeric_limits<int>::max() / 2) NotImplemented_nid_no_patch(function);
+        auto* const grown = static_cast<char**>(realloc_nid_postfix(stack->data,
+            static_cast<std::size_t>(stack->numAlloc) * 2 * sizeof(char*)));
+        if (!grown) return false;
+        stack->data = grown;
+        stack->numAlloc *= 2;
+    }
+    stack->data[stack->num] = static_cast<char*>(value);
+    ++stack->num;
+    stack->sorted = 0;
+    return true;
+}
+
 }
 
 extern "C" {
@@ -157,6 +206,14 @@ void* APS5_VABI SSL_get_wbio_nid_postfix(const LibreSslSsl* ssl) {
 
 int APS5_VABI SSL_version_nid_postfix(const LibreSslSsl* ssl) {
     return Connection(ssl, __func__).version;
+}
+
+int APS5_VABI SSL_check_private_key_nid_postfix(const LibreSslSsl* ssl) {
+    if (!ssl) {
+        LibreSslPutError_nid_no_patch(20, 0xfff, 67);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI SSL_get_verify_result_nid_postfix(const LibreSslSsl* ssl) {
@@ -245,6 +302,29 @@ std::int64_t APS5_VABI SSL_ctrl_nid_postfix(LibreSslSsl* ssl, int command, std::
     default:
         NotImplemented_nid_no_patch(("SSL_ctrl: command " + std::to_string(command)).c_str());
     }
+}
+
+int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value) {
+    LibreSslSslInternal& internal = Internal(ssl, __func__);
+    auto* stack = static_cast<LibreSslStack*>(internal.exData.stack);
+    if (!stack) {
+        stack = NewExDataStack();
+        if (!stack) {
+            LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+            return 0;
+        }
+        internal.exData.stack = stack;
+    } else {
+        ValidateExDataStack(stack, __func__);
+    }
+    while (stack->num <= index) {
+        if (!PushExData(stack, nullptr, __func__)) {
+            LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+            return 0;
+        }
+    }
+    if (index >= 0 && index < stack->num) stack->data[index] = static_cast<char*>(value);
+    return 1;
 }
 
 }

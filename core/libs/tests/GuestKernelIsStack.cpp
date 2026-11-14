@@ -87,4 +87,6 @@ int main() {
     Require(start == nullptr && end == nullptr);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page) == SCE_OK);
     Require(sceKernelIsStack(mapped, &start, &end) == SCE_KERNEL_ERROR_EACCES);
+    Require(sceKernelIsStack(reinterpret_cast<void*>(~std::uintptr_t{0}), &start, &end) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelIsStack(nullptr, &start, &end) == SCE_KERNEL_ERROR_EACCES);
 }
