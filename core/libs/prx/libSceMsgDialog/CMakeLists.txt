@@ -1,6 +1,6 @@
-add_library(libSceMsgDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
-target_include_directories(libSceMsgDialog PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceMsgDialog PRIVATE libSceIme libc)
+add_library(libSceMsgDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/HostMessageBox.cpp)
+target_include_directories(libSceMsgDialog PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+target_link_libraries(libSceMsgDialog PRIVATE libSceIme libc SDL2-static)
 configure_windows_unwind(libSceMsgDialog)
 
 if(BUILD_TESTING)
@@ -13,6 +13,11 @@ if(BUILD_TESTING)
     target_include_directories(msg_dialog_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
     configure_host_test_executable(msg_dialog_text_tests)
     add_test(NAME msg_dialog_text COMMAND msg_dialog_text_tests)
+
+    add_test_executable(msg_dialog_host_box_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/HostMessageBox.cpp)
+    target_include_directories(msg_dialog_host_box_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(msg_dialog_host_box_tests)
+    add_test(NAME msg_dialog_host_box COMMAND msg_dialog_host_box_tests)
 
     add_test_executable(msg_dialog_request_tests ${LIBS_INCLUDE_DIR}/tests/MsgDialogRequest.cpp)
     target_include_directories(msg_dialog_request_tests PRIVATE ${LIBS_INCLUDE_DIR})
