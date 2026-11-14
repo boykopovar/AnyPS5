@@ -1137,6 +1137,11 @@ const KernelSocketPoll::Forwards g_socketForwards{
     [](int descriptor, void* address, std::uint32_t* length) {
         return ErrorOf(sceNetGetsockname(descriptor, address, length));
     },
+    [](int descriptor, void* address, std::uint32_t* length, int* error) {
+        const int accepted = sceNetAccept(descriptor, address, length);
+        *error = ErrorOf(accepted);
+        return accepted;
+    },
     [](int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error) {
         const std::int64_t result = sceNetSendto(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
         *error = ErrorOf(result);

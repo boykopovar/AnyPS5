@@ -139,7 +139,7 @@ struct Stream {
     int accepted;
 };
 
-static Stream OpenStream(bool net) {
+static Stream OpenStream(bool net, std::uint32_t peerCapacity = 16) {
     Stream stream{Open(net, 1), Open(net, 1), -1};
     Require(stream.listener >= 0 && stream.client >= 0);
     std::array<unsigned char, 16> local{16, 2, 0, 0, 127, 0, 0, 1};
@@ -148,8 +148,18 @@ static Stream OpenStream(bool net) {
     Require(getsockname_nid_postfix(stream.listener, local.data(), &size) == 0);
     Require((net ? sceNetListen(stream.listener, 1) : listen_nid_postfix(stream.listener, 1)) == 0);
     Require((net ? sceNetConnect(stream.client, local.data(), 16) : connect_nid_postfix(stream.client, local.data(), 16)) == 0);
-    stream.accepted = net ? sceNetAccept(stream.listener, nullptr, nullptr) : accept_nid_postfix(stream.listener, nullptr, nullptr);
+    std::array<unsigned char, 16> acceptedPeer;
+    acceptedPeer.fill(0xa5);
+    size = peerCapacity;
+    if (net) {
+        Require(Failed(accept_nid_postfix(stream.listener, acceptedPeer.data(), nullptr), 14));
+        Require(Failed(accept_nid_postfix(stream.listener, acceptedPeer.data(), reinterpret_cast<std::uint32_t*>(1)), 14));
+    }
+    stream.accepted = accept_nid_postfix(stream.listener, acceptedPeer.data(), &size);
     Require(stream.accepted >= 0);
+    Require(size == peerCapacity && acceptedPeer[1] == 2 && (acceptedPeer[2] | acceptedPeer[3]) != 0);
+    if (peerCapacity == acceptedPeer.size()) Require(acceptedPeer[4] == 127 && acceptedPeer[7] == 1);
+    for (auto i = peerCapacity; i < acceptedPeer.size(); ++i) Require(acceptedPeer[i] == 0xa5);
     std::array<unsigned char, 16> peer{};
     size = peer.size();
     Require(getpeername_nid_postfix(stream.client, peer.data(), &size) == 0);
@@ -239,6 +249,8 @@ int main() {
         CheckConnectedDatagramTransfer(net);
         CheckStreamTransfer(net);
     }
+    const auto shortPeer = OpenStream(true, 4);
+    Require(Close(true, shortPeer.accepted) == 0 && Close(true, shortPeer.client) == 0 && Close(true, shortPeer.listener) == 0);
     CheckUnknownDescriptor();
     return 0;
 }
