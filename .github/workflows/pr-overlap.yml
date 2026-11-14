@@ -32,6 +32,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        shell: bash
         run: |
           out=$RUNNER_TEMP/overlap
           state=$RUNNER_TEMP/overlap-state.json
@@ -60,7 +61,7 @@ jobs:
             [ "$(jq -r --arg pr "$pr" '.[$pr] // empty' "$state")" = "$hash" ] && continue
             prev=$pr
             comment=$(retry gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
-              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1)
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | awk 'NR==1')
             id=$(jq -r '.[0] // empty' <<< "${comment:-null}")
             if [ -s "$file" ]; then
               [ "$(jq -r '.[1]' <<< "${comment:-null}" | unpinned)" = "$(unpinned < "$file")" ] && continue
