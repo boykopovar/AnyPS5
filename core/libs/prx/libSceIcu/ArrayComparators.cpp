@@ -7,9 +7,6 @@
 // ICU and its data are distributed under the Unicode licence:
 //   https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/LICENSE
 //
-// ICU computes `*left - *right` in int32_t, which overflows for some inputs.
-// That is undefined in C++, so this file does the subtraction unsigned and
-// converts the result back, which is what ICU's two's-complement builds produce.
 
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 
