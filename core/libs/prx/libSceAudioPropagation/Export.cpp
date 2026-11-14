@@ -476,7 +476,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropaga
     const auto found = state.objects.find(source);
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!rays || !paths) return ErrorNullPointer;
-    if (rayCount != 6 || reflectionOrder == 0 || pathCount == 0) return ErrorInvalidArgument;
+    if (rayCount > 6 || reflectionOrder == 0 || pathCount == 0) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
