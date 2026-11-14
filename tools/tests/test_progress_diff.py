@@ -102,5 +102,24 @@ class PercentageTests(unittest.TestCase):
         self.assertEqual(result["shaders"]["baseline_percent"], 50)
 
 
+class MainErrorTests(unittest.TestCase):
+    def run_main(self, base_text, head_text):
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base.json", Path(directory) / "head.json"
+            base.write_text(base_text, encoding="utf-8")
+            head.write_text(head_text, encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                progress_diff.main([str(base), str(head)])
+            return raised.exception.code, stdout.getvalue(), stderr.getvalue()
+
+    def test_invalid_json_is_a_parser_error_with_exit_code_2(self):
+        code, stdout, stderr = self.run_main(json.dumps(snapshot()), "{")
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("error:", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
