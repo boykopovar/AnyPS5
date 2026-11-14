@@ -1048,6 +1048,19 @@ void TestCalloutSelfTermination() {
     Require(context.initialized == 0, "the restarted context terminates from another thread");
 }
 
+void TestCalloutFarDeadline() {
+    NpCalloutContext context {};
+    NpCallout callout {};
+    Require(sceNpCalloutInitCtx(&context, "np-far", 0x4000, 0, 0) == 0, "a callout context starts for a far deadline");
+    Require(sceNpCalloutStartOnCtx64(&context, &callout, UINT64_MAX, RecordUnexpected, nullptr) == 0,
+        "a callout with the largest delay is queued");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    int wasPending = 0;
+    Require(sceNpCalloutStopOnCtx(&context, &callout, &wasPending) == 0 && wasPending == 1,
+        "a callout whose deadline would overflow is not run at once");
+    sceNpCalloutTermCtx(&context);
+}
+
 bool Equals(const char* actual, const char* expected) {
     return std::strcmp(actual, expected) == 0;
 }
@@ -1331,6 +1344,11 @@ void TestJsonParser() {
     const std::size_t cut = escaped.find("\\n") + 1;
     Require(ParseJson(&strings, escaped, {cut, 2, escaped.size() - cut - 2}) == 0 && joined() == decoded,
         "an escape and a UTF-8 sequence split between calls still decode");
+    const std::string stray = "{\"s\":\"\xE6" "A\"}";
+    const std::string strayDecoded = "5 0 0 s - -1|6 0 0 s 4:\xE6" "A -1";
+    Require(ParseJson(&strings, stray) == 0 && joined() == strayDecoded, "a lead byte that the next byte does not continue is decoded alone");
+    Require(ParseJson(&strings, stray, {7, 2, 1}) == 0 && joined() == strayDecoded,
+        "a lead byte split from the bytes that do not continue it keeps the bytes after it");
 
     const NpJsonRule anyElement[] = {{2, nullptr, 1}, {0, "", 0}};
     const NpJsonRule* deepLevels[] = {anyElement};
@@ -1970,6 +1988,7 @@ int main() {
     TestHexAndCopies();
     TestCallouts();
     TestCalloutSelfTermination();
+    TestCalloutFarDeadline();
     TestIds();
     TestJid();
     TestLanguagesAndDebugIds();
