@@ -9108,7 +9108,7 @@ void sampleLocationGridFallbackTests() {
         }
         ClearPipelineLibraries(context.device);
         Require(mock.live == 0, "sample location grid fallback tests leaked Vulkan objects");
-        Require(pipelineSampleLocations.size() == (libraries ? 2u : 1u) && passSampleLocations.size() == (libraries ? 0u : depth ? 2u : 1u), "the pipeline or render pass did not take its sample locations once per library or attachment");
+        Require(pipelineSampleLocations.size() == (libraries ? 2u : 1u) && passSampleLocations.empty(), "the pipeline did not take its sample locations once per library, or the render pass begin carried sample locations");
         auto uses = pipelineSampleLocations;
         uses.insert(uses.end(), passSampleLocations.begin(), passSampleLocations.end());
         return uses;

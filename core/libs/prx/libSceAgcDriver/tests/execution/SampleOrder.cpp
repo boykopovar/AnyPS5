@@ -1435,6 +1435,52 @@ int RecipeDepthLocations(AgcDriver::VulkanDevice& device) {
     return 0;
 }
 
+int RenderPassDepthLocations(AgcDriver::VulkanDevice& device) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    ClearTargets clearTargets{device, context.device};
+    constexpr std::uint32_t samples = 2u;
+    if ((context.limits.framebufferColorSampleCounts & samples) == 0u || (context.limits.framebufferDepthSampleCounts & samples) == 0u || !DepthSampleable(context, VK_FORMAT_D32_SFLOAT, samples)) {
+        std::printf("skipped, the device has no 2x color and sampleable 2x depth targets\n");
+        return VulkanTestSkipped;
+    }
+    if ((context.sampleLocationSampleCounts & samples) == 0u || !AgcDriver::Graphics::SampleLocationsCompatibleDepth(context, VK_FORMAT_D32_SFLOAT, samples)) {
+        std::printf("skipped, the device has no custom sample locations at 2 samples\n");
+        return VulkanTestSkipped;
+    }
+    const auto locations = UniformLocations(VillageLocations, 0u);
+    if (std::getenv("APS5_NO_PIPELINE_CACHE") == nullptr || std::getenv("APS5_NO_DRAW_RECIPE") == nullptr) {
+        std::printf("skipped, the pipeline store and draw recipes do not key the rendering mode: run with APS5_NO_PIPELINE_CACHE=1 and APS5_NO_DRAW_RECIPE=1\n");
+        return VulkanTestSkipped;
+    }
+    auto passes = context;
+    passes.graphicsPipelineLibrary = false;
+    std::optional<Rendered> reference;
+    if (context.graphicsPipelineLibrary) {
+        reference = RenderCheckerboard(device, context, samples, 0u, locations);
+        CheckScene(*reference, samples, "dynamic rendering");
+    } else {
+        std::printf("the device draws through render passes only: the render pass runs are compared with each other\n");
+    }
+    constexpr std::size_t runs = 4u;
+    std::size_t differences = 0;
+    for (std::size_t run = 0; run < runs; ++run) {
+        const auto rendered = RenderCheckerboard(device, passes, samples, 1u + run, locations);
+        const auto what = "render pass run " + std::to_string(run);
+        CheckScene(rendered, samples, what);
+        if (!reference) {
+            reference = rendered;
+            continue;
+        }
+        const auto color = Differences(reference->color, rendered.color, samples, what + ", color", true);
+        const auto depth = Differences(reference->depth, rendered.depth, samples, what + ", depth", true);
+        std::printf("%s at %ux%u, 2x, pixel (0,0)'s locations in every pixel: %zu color and %zu depth samples differ from the reference\n", what.c_str(), ReferenceExtent.width, ReferenceExtent.height, color, depth);
+        differences += color + depth;
+    }
+    Require(differences == 0u, "a 2x draw at custom sample locations through render passes did not render like the reference, bit for bit, in every run");
+    std::puts("a 2x draw at custom sample locations renders through render passes like the reference, bit for bit, in every run");
+    return 0;
+}
+
 int Bench(AgcDriver::VulkanDevice& device, VkExtent2D extent, std::uint32_t samples, std::uint32_t frames) {
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     if ((context.limits.framebufferColorSampleCounts & samples) == 0u || (context.limits.framebufferDepthSampleCounts & samples) == 0u) {
@@ -1524,6 +1570,7 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         if (mode == "--grid-reference") return GridReference(*device);
         if (mode == "--recipe-depth-locations") return RecipeDepthLocations(*device);
+        if (mode == "--render-pass-depth-locations") return RenderPassDepthLocations(*device);
         if (mode == "--bench") {
             VkExtent2D extent{1920u, 2160u};
             if (argc > 2) Require(std::sscanf(argv[2], "%ux%u", &extent.width, &extent.height) == 2, "--bench takes WIDTHxHEIGHT");
