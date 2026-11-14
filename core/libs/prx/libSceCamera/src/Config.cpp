@@ -1,4 +1,6 @@
+#include <cerrno>
 #include <cstdint>
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceCamera/libSceCamera.hpp"
 #include "prx/libSceCamera/include/Camera.hpp"
 
@@ -43,9 +45,22 @@ int APS5_VABI sceCameraSetConfigInternal(std::int32_t handle, const CameraConfig
 }
 
 int APS5_VABI sceCameraGetDeviceConfig(std::int32_t handle, CameraConfig* config) {
-    if (const int error = CheckConfig(handle, config)) return error;
-    *config = {};
-    config->sizeThis = sizeof(CameraConfig);
+    if (handle < 1 || !config) return SCE_CAMERA_ERROR_PARAM;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    if (!Camera::IsOpen(handle)) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_NOT_OPEN;
+    }
+    CameraConfig outConfig{};
+    outConfig.sizeThis = sizeof(CameraConfig);
+    const bool copied = GuestCopyOut_nid_no_patch(config, &outConfig, sizeof(outConfig));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 

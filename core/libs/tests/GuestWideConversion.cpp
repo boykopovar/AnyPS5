@@ -142,6 +142,15 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"0xg", u"%x", &value) == 0, "%x prefix without digits is a matching failure");
     void* pointer = nullptr;
     Require(swscanf_s_nid_postfix(u"0x7ffe12345678 5", u"%p%d", &pointer, &first) == 2 && reinterpret_cast<std::uintptr_t>(pointer) == 0x7ffe12345678u && first == 5, "%p takes no size");
+    int counted = -7;
+    Require(swscanf_s_nid_postfix(u"12 34", u"%d%*n%d", &first, &second) == 2 && first == 12 && second == 34, "%*n stores nothing and takes no argument");
+    Require(swscanf_s_nid_postfix(u"12 34", u"%d%5n%d", &first, &counted, &second) == 2 && counted == 2 && second == 34, "%n ignores a width");
+    Require(swscanf_s_nid_postfix(u"12345", u"%0d%n", &first, &counted) == 1 && first == 12345 && counted == 5, "a zero width is no width");
+    counted = -7;
+    first = -7;
+    Require(swscanf_s_nid_postfix(u"", u"%n%d", &counted, &first) == 0 && counted == 0 && first == -7, "%n before an input failure returns 0");
+    Require(swscanf_s_nid_postfix(u"  ", u"%*n%d", &first) == 0 && first == -7, "%*n before an input failure returns 0");
+    Require(swscanf_nid_postfix(u"", u"%n%d", &counted, &first) == 0, "swscanf %n before an input failure returns 0");
 
     char16_t text[6] = {u'?'};
     Require(swscanf_s_nid_postfix(u"hello world", u"%ls", text, std::size_t{6}) == 1 && std::u16string(text) == u"hello", "%ls fits");

@@ -192,6 +192,33 @@ class AbSplitTests(unittest.TestCase):
         row = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0).replace("0x2000 x4 5ms", "draw 0x2000 x3 30ms 0x2000 x4 5ms"))
         self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
 
+    def test_drawset_ids_are_not_program_keys(self):
+        text = gputime(400.0, 40.0, 8.0).replace(
+            "0x2000 x4 5ms", "drawset 0x1000 x3 30ms drawset 0x3000 x4 5ms 0x2000 x4 5ms")
+        row = ab_split.parse_report("gputime", text)
+        self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
+        self.assertEqual(row["total"], 400.0)
+        self.assertEqual(row["classes"], {"staging-in": 8.0, "present-blit": 4.0})
+
+    def test_program_metrics_leave_out_drawset_time(self):
+        lines = [line.replace("0x2000 x4 5ms", "0x2000 x4 5ms drawset 0x1000 x9 90ms") for line in log()]
+        result = ab_split.split(lines, ["0x1000"])
+        self.assertAlmostEqual(result["phases"][0]["metrics"]["0x1000 ms/present"], 1.0)
+
+    def test_drawsets_occupy_top_twelve_slots(self):
+        for count in (1, 6, 12):
+            with self.subTest(drawsets=count):
+                entries = [f"drawset 0x{index:x} x1 1ms" for index in range(1, count + 1)]
+                entries += [f"0x{index:x} x1 1ms" for index in range(count + 1, 13)]
+                text = gputime(400.0, 40.0, 8.0)
+                text = text.split("by program:")[0] + "by program: " + " ".join(entries) + "; by class:"
+                row = ab_split.parse_report("gputime", text)
+                self.assertTrue(row["programs_truncated"])
+                self.assertEqual(set(row["programs"]), {f"0x{index:x}" for index in range(count + 1, 13)})
+                phase = {"settled": None, "end": None, "reports": {name: [] for name, _ in ab_split.KINDS}}
+                phase["reports"]["gputime"] = [row]
+                self.assertNotIn("0xff ms/present", ab_split.metrics(phase, ["0xff"], []))
+
     def test_program_metrics_leave_out_draw_variant_time(self):
         lines = [line.replace("0x2000 x4 5ms", "0x2000 x4 5ms draw 0x1000 x9 90ms") for line in log()]
         result = ab_split.split(lines, ["0x1000"])
@@ -200,6 +227,32 @@ class AbSplitTests(unittest.TestCase):
     def test_dropped_presents_count_as_frames(self):
         row = ab_split.parse_report("present", present(90.0, 10.0, presents=30, dropped=10))
         self.assertEqual(row, {"frames": 40, "busy": 90.0, "gaps": 10.0})
+
+    def test_dropped_gpu_ranges_in_a_counted_report_refuse_the_comparison(self):
+        lines = log()
+        index = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 settled"))
+        index = next(i for i in range(index, len(lines)) if lines[i].startswith("[gputime]"))
+        index = next(i for i in range(index + 1, len(lines)) if lines[i].startswith("[gputime]"))
+        lines[index] = lines[index].replace("0 ranges dropped", "3 ranges dropped")
+        with self.assertRaisesRegex(ValueError, "GPU timing ranges were dropped"):
+            ab_split.split(lines, ["0x1000"], ["staging-in"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "dropped.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            for script, flags in (("ab_split.py", []), ("ab_split.py", ["--json"]), ("ab_split_csv.py", [])):
+                with self.subTest(script=script, flags=flags):
+                    run = subprocess.run([sys.executable, str(Path(ab_split.__file__).with_name(script)), str(path), *flags],
+                                         capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertNotEqual(run.returncode, 0)
+                    self.assertEqual(run.stdout, "")
+                    self.assertIn("GPU timing ranges were dropped", run.stderr)
+                    self.assertNotIn("Traceback", run.stderr)
+
+    def test_dropped_gpu_ranges_outside_counted_reports_are_ignored(self):
+        lines = log()
+        index = next(i for i, line in enumerate(lines) if line.startswith("[gputime]"))
+        lines[index] = lines[index].replace("0 ranges dropped", "3 ranges dropped")
+        self.assertTrue(ab_split.split(lines)["metrics"])
 
     def test_unrecognised_reports_are_skipped(self):
         self.assertIsNone(ab_split.parse_report("gputime", "[gputime] disabled"))
@@ -340,5 +393,22 @@ class AbSplitTests(unittest.TestCase):
         for lines in cases:
             with self.subTest(lines=lines), self.assertRaises(ValueError):
                 ab_split.read_log(lines)
+
+    def test_mismatched_settlement_cannot_silently_change_phase_means(self):
+        for replacement in ("phase B 0 settled", "phase A 7 settled"):
+            with self.subTest(replacement=replacement):
+                lines = [line.replace("phase A 0 settled", replacement) for line in log()]
+                with self.assertRaisesRegex(ValueError, "settled does not match active phase"):
+                    ab_split.split(lines)
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "mismatched.log"
+                    path.write_text("".join(lines), encoding="utf-8")
+                    for script, flags in (("ab_split.py", []), ("ab_split.py", ["--json"]), ("ab_split_csv.py", [])):
+                        run = subprocess.run([sys.executable, str(Path(ab_split.__file__).with_name(script)), str(path), *flags],
+                                             capture_output=True, text=True, encoding="utf-8", timeout=5)
+                        self.assertEqual(run.returncode, 2)
+                        self.assertEqual(run.stdout, "")
+                        self.assertIn("settled does not match active phase", run.stderr)
+                        self.assertNotIn("Traceback", run.stderr)
 if __name__ == "__main__":
     unittest.main()
