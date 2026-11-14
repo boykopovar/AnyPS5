@@ -473,20 +473,24 @@ void DrawPipeline::run() {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);
         }
-        std::lock_guard lock(mutex);
-        countWrites(items.front().writes, false);
-        const auto kindIndex = static_cast<std::size_t>(items.front().kind);
-        kindCommits[kindIndex].fetch_add(1, std::memory_order_relaxed);
-        kindNs[kindIndex].fetch_add(spent, std::memory_order_relaxed);
-        retired.push_back(std::move(items.front()));
-        items.pop_front();
-        retiredItems.fetch_add(1, std::memory_order_release);
-        ++commits;
-        commitNs += spent;
-        if (failed) ++commitErrors;
-        if (fatal != nullptr && failure == nullptr) failure = fatal;
-        outstanding.fetch_sub(1, std::memory_order_release);
-        if (idleWaiters != 0 && (items.empty() || items.size() <= resumeAt)) idle.notify_all();
+        bool emptied = false;
+        {
+            std::lock_guard lock(mutex);
+            countWrites(items.front().writes, false);
+            const auto kindIndex = static_cast<std::size_t>(items.front().kind);
+            kindCommits[kindIndex].fetch_add(1, std::memory_order_relaxed);
+            kindNs[kindIndex].fetch_add(spent, std::memory_order_relaxed);
+            retired.push_back(std::move(items.front()));
+            items.pop_front();
+            retiredItems.fetch_add(1, std::memory_order_release);
+            ++commits;
+            commitNs += spent;
+            if (failed) ++commitErrors;
+            if (fatal != nullptr && failure == nullptr) failure = fatal;
+            emptied = outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1;
+            if (idleWaiters != 0 && (items.empty() || items.size() <= resumeAt)) idle.notify_all();
+        }
+        if (emptied && this == &Queue0()) Driver::Get().WakeDormantQueue0();
     }
     runningCommitters.fetch_sub(1, std::memory_order_acq_rel);
 }
