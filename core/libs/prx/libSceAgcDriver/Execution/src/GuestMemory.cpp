@@ -3483,7 +3483,7 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
 }
 
 #ifdef ANYPS5_ENABLE_ASAN
-[[gnu::no_sanitize("address")]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+[[gnu::no_sanitize_address]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
     using UnalignedWord [[gnu::aligned(1), gnu::may_alias]] = std::uint64_t;
     auto* to = static_cast<unsigned char*>(destination);
     const auto* from = static_cast<const unsigned char*>(source);
