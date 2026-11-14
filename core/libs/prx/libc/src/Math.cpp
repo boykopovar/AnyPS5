@@ -173,6 +173,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -1449,8 +1450,6 @@ long double APS5_VABI cbrtl_nid_postfix(long double x) {
     t = t + t * r;
     return t * scale;
 }
-long double APS5_VABI erfl_nid_postfix(long double x) { return std::erf(x); }
-long double APS5_VABI erfcl_nid_postfix(long double x) { return std::erfc(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
 long double APS5_VABI log1pl_nid_postfix(long double x) { return std::log1p(x); }
 long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
@@ -4375,6 +4374,130 @@ static long double TanhlMsun(long double x) {
     const double sign = signExponent < 0 ? -1 : 1;
     return sign * TanhlMagnitude(x, exponent);
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/s_erfl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_erfl.c */
+/* Converted to long double by Steven G. Kargl. */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static constexpr long double ErflPp[] = {
+    0x8375d410a6db446cp-66L, -0xa46c7d09ec3d0cecp-65L, -0x9b31e66325576f86p-68L,
+    -0x804ac72c9a0b97ddp-70L, -0x9f42bcbc3d5a601dp-75L, -0x9ec4ad6193470693p-79L,
+};
+static constexpr long double ErflQq[] = {
+    1.0L, 0xdb4b8eb713188d6bp-65L, 0xa5750835b2459bd1p-67L,
+    0x8b85d6bd6a90b51cp-70L, 0x87332f82cff4ff96p-74L, 0x83466cb6bf9dca00p-79L,
+    0xf5bf98c2f996bf63p-87L,
+};
+static constexpr long double ErflPa[] = {
+    0xe8211158da02c692p-90L, 0xd488f89f36988618p-65L, -0xece74f8c63fa3942p-67L,
+    0xc8d31e020727c006p-67L, 0x985d5d5fafb0551fp-68L, -0xa5b6c4854d2f5452p-71L,
+    0x85c8d58fe3993a47p-71L, 0xddbfbc23677b35cfp-76L,
+};
+static constexpr long double ErflQa[] = {
+    1.0L, 0xb8a977896f5eff3fp-64L, 0x9fcd662c3d4eac86p-64L,
+    0x9d0b618eac67ba07p-65L, 0x881a4293f6d6c92dp-66L, 0xbab144f07dea45bfp-68L,
+    0xa6c34ba438bdc900p-70L, 0x8fa866dc20717a91p-72L,
+};
+static constexpr long double ErflRa[] = {
+    -0xa1a091e0fb4f335ap-70L, -0xc2b0d045ae37df6bp-64L, -0xf2cec3ee7da636c5p-60L,
+    -0x813cc205395adc7dp-56L, -0x8737c8b7b4062c2fp-54L, -0x8ffe5383c08d4943p-53L,
+    -0x983573e64d5015a9p-53L, -0x92a794e763a6d4dbp-54L, -0xd5ad1fae77c3d9a3p-57L,
+    -0x934c1a247807bb9cp-61L,
+};
+static constexpr long double ErflSa[] = {
+    1.0L, 0xd342f90012bb1189p-59L, 0x839be13d9d5da883p-55L,
+    0x9f8cba6d1ae1b24bp-53L, 0xcaa83f403713e33ep-52L, 0x8796aff2f3c47968p-51L,
+    0xb6ef97f9c753157bp-52L, 0xe02aee5f83773d1cp-54L, 0xc82b83855b88e07ep-57L,
+    0x92f030aefadf28adp-62L,
+};
+static constexpr long double ErflRb[] = {
+    -0xa1a091cf43abcd26p-70L, -0xd19d2df1cbb8da0ap-64L, -0x9a4dd1383e5daf5bp-59L,
+    -0xbff0ae9fc0751de6p-56L, -0xdde08465310b472bp-54L, -0xe796e1d38c8c70a9p-53L,
+    -0xbaf655a76e0ab3b5p-53L, -0x95d21e3e75503c21p-55L,
+};
+static constexpr long double ErflSb[] = {
+    1.0L, 0x814487ed823c8cbdp-58L, 0xbe4bfbb1301304bep-55L,
+    0x809c4ade46b927c7p-52L, 0xa55284359f3395a8p-51L, 0xbcfa72da9b820874p-51L,
+    0x9d09a35988934631p-52L, 0xd675bbe542c159fap-56L,
+};
+static constexpr long double ErflRc[] = {
+    -0xa1a091cf437a17adp-70L, -0xbe79c5a978122b00p-64L, -0xdb26f9bbe31a2794p-60L,
+    -0xb5f69a38f5747ac8p-57L, -0xd79676d970d0a21ap-56L, -0xfe528153c45ec97cp-57L,
+};
+static constexpr long double ErflSc[] = {
+    1.0L, 0xc5e8cd46d5604a96p-59L, 0xc5f0f5a5484520ebp-56L,
+    0x964e3c7b34db9170p-54L, 0x99be1b89faa0596ap-54L, 0xf80dfcbf37ffc5eap-57L,
+};
+static constexpr long double ErflEfx = 0x8375d410a6db446cp-66L;
+static constexpr long double ErflEfx8 = 0x8375d410a6db446cp-63L;
+static constexpr long double ErflErx = 0xd7bb3d0000000000p-64L;
+
+static long double ErflPolynomial(std::span<const long double> coefficients, long double z) {
+    long double result = coefficients.back();
+    for (std::size_t index = coefficients.size() - 1; index-- > 0;) result = coefficients[index] + z * result;
+    return result;
+}
+
+static long double ErflSmallRatio(long double z) { return ErflPolynomial(ErflPp, z) / ErflPolynomial(ErflQq, z); }
+
+static long double ErflNearOneRatio(long double s) { return ErflPolynomial(ErflPa, s) / ErflPolynomial(ErflQa, s); }
+
+static long double ErflTail(long double ax) {
+    const long double s = 1 / (ax * ax);
+    long double ratio;
+    if (ax < 2.85715) ratio = ErflPolynomial(ErflRa, s) / ErflPolynomial(ErflSa, s);
+    else if (ax < 7) ratio = ErflPolynomial(ErflRb, s) / ErflPolynomial(ErflSb, s);
+    else ratio = ErflPolynomial(ErflRc, s) / ErflPolynomial(ErflSc, s);
+    const long double z = static_cast<float>(ax);
+    return ExplMsun(-z * z - 0.5625) * ExplMsun((z - ax) * (z + ax) + ratio);
+}
+
+static long double ErflMsun(long double x) {
+    const std::uint16_t signExponent = SplitExtended(x).signExponent;
+    if ((signExponent & 0x7fff) == 0x7fff) return (1 - ((signExponent >> 15) << 1)) + 1 / x;
+    const long double ax = std::fabs(x);
+    if (ax < 0.84375) {
+        if (ax >= 0x1p-34L) return x + x * ErflSmallRatio(x * x);
+        if (ax < 0x1p-16373L) return (8 * x + ErflEfx8 * x) / 8;
+        return x + ErflEfx * x;
+    }
+    if (ax < 1.25) {
+        const long double ratio = ErflNearOneRatio(ax - 1);
+        return x >= 0 ? ErflErx + ratio : -ErflErx - ratio;
+    }
+    if (ax >= 7) return x >= 0 ? 1 - ExplTiny : ExplTiny - 1;
+    const long double r = ErflTail(ax);
+    return x >= 0 ? 1 - r / ax : r / ax - 1;
+}
+
+static long double ErfclSmall(long double x, long double ax) {
+    if (ax < 0x1p-34L) return 1 - x;
+    const long double y = ErflSmallRatio(x * x);
+    if (ax < 0.25L) return 1 - (x + x * y);
+    return 0.5 - (x * y + (x - 0.5));
+}
+
+static long double ErfclMsun(long double x) {
+    const std::uint16_t signExponent = SplitExtended(x).signExponent;
+    if ((signExponent & 0x7fff) == 0x7fff) return ((signExponent >> 15) << 1) + 1 / x;
+    const long double ax = std::fabs(x);
+    if (ax < 0.84375L) return ErfclSmall(x, ax);
+    if (ax < 1.25L) {
+        const long double ratio = ErflNearOneRatio(ax - 1);
+        return x >= 0 ? (1 - ErflErx) - ratio : 1 + (ErflErx + ratio);
+    }
+    if (ax >= 108) return x > 0 ? ExplTiny * ExplTiny : 2 - ExplTiny;
+    if (x < -7) return 2 - ExplTiny;
+    const long double r = ErflTail(ax);
+    return x > 0 ? r / ax : 2 - r / ax;
+}
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_fmod.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_fmod.c */
 /*
  * ====================================================
@@ -4763,6 +4886,8 @@ long double APS5_VABI sinhl_nid_postfix(long double x) { return SinhlMsun(x); }
 long double APS5_VABI coshl_nid_postfix(long double x) { return CoshlMsun(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return TanhlMsun(x); }
 long double APS5_VABI expl_nid_postfix(long double x) { return ExplMsun(x); }
+long double APS5_VABI erfl_nid_postfix(long double x) { return ErflMsun(x); }
+long double APS5_VABI erfcl_nid_postfix(long double x) { return ErfclMsun(x); }
 /*-
  * Copyright (c) 2005-2008 David Schultz <das@FreeBSD.ORG>
  * All rights reserved.
