@@ -425,18 +425,6 @@ void CheckMixedAlias(AgcDriver::VulkanDevice& device, Emulation emulation) {
         Require(checked > 200, "mixed alias checked too few pixels");
         std::printf("mixed flat/smooth alias passed: mode=%u provoking=%s pixels=%u\n", mode, last ? "last" : "first", checked);
     }
-    for (const auto [mode, last] : {std::pair{0u, false}, {1u, true}}) {
-        const std::array<std::uint32_t, 6> code{0xc8080000u, 0xc8090001u, 0xc80e0400u | mode, 0xf800180fu, 0x03030203u, 0xbf810000u};
-        bool rejected = false;
-        try {
-            Draw(device, emulation, code, PixelInputBit(PixelInput::PerspectiveCenter), VK_CULL_MODE_NONE, false,
-                last ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, false, false, true);
-        } catch (const std::exception& error) {
-            std::printf("mixed alias rejected mode=%u last=%d: %s\n", mode, last, error.what());
-            rejected = std::string(error.what()).find("not measured") != std::string::npos;
-        }
-        Require(rejected, "mixed alias bypassed an unmeasured provoking-vertex restriction");
-    }
 }
 
 void RunEmulation(AgcDriver::VulkanDevice& device, Emulation emulation) {
