@@ -116,6 +116,9 @@ void CheckedOpen() {
     Check(fopen_s_nid_postfix(&stream, "plain.txt", "z") == GuestEinval && stream == nullptr);
     Check(fopen_s_nid_postfix(&stream, "missing.txt", "r") == GuestEnoent && stream == nullptr);
     Check(fopen_s_nid_postfix(&stream, "plain.txt", "r") == 0 && stream != nullptr && fclose_nid_postfix(stream) == 0);
+    errno = 71;
+    Check(fopen_s_nid_postfix(reinterpret_cast<FileStream**>(0x10), "plain.txt", "r") == GuestEinval);
+    Check(errno == 71);
 }
 
 void CheckedReopen() {
@@ -125,6 +128,12 @@ void CheckedReopen() {
     Check(stream != nullptr);
     void* const previousHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordViolation));
     Check(freopen_s_nid_postfix(nullptr, "plain.txt", "r", stream) == GuestEinval && Reported("fopen_s: bad FILE ** argument"));
+    errno = 71;
+    Check(freopen_s_nid_postfix(reinterpret_cast<FileStream**>(0x10), "plain.txt", "r", stream) == GuestEinval && Reported("fopen_s: bad FILE ** argument"));
+    Check(errno == 71);
+    errno = 71;
+    Check(fopen_s_nid_postfix(reinterpret_cast<FileStream**>(0x10), "plain.txt", "r") == GuestEinval && Reported("fopen_s: bad FILE ** argument"));
+    Check(errno == 71);
     Check(freopen_s_nid_postfix(&result, nullptr, "r", stream) == GuestEnotsup && result == nullptr && violations == 0);
     result = sentinel;
     Check(freopen_s_nid_postfix(&result, "plain.txt", nullptr, stream) == GuestEinval && result == nullptr && Reported("fopen_s: bad argument"));

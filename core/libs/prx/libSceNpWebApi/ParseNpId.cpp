@@ -3,8 +3,10 @@
 // Derived from shadPS4 src/core/libraries/np/np_web_api/np_web_api.cpp@2183807e592b36d4440384878165b43d930c1dee
 
 #include "prx/libSceNpWebApi/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -62,10 +64,14 @@ int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpId* npId) {
         }
     }
     if (npId) {
-        std::memset(npId, 0, sizeof(*npId));
-        std::memcpy(npId->handle.data, handle.data(), std::min<std::size_t>(handle.size(), 16));
-        std::memcpy(npId->opt, opt.data(), std::min<std::size_t>(opt.size(), sizeof(npId->opt)));
-        npId->reserved[0] = 0x01;
+        NpId local{};
+        std::memcpy(local.handle.data, handle.data(), std::min<std::size_t>(handle.size(), 16));
+        std::memcpy(local.opt, opt.data(), std::min<std::size_t>(opt.size(), sizeof(local.opt)));
+        local.reserved[0] = 0x01;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(npId, &local, sizeof(local));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     }
     return 0;
 }

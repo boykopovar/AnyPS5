@@ -1,5 +1,6 @@
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -20,6 +21,8 @@
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceGnmDriver/include/CommandStream.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 namespace {
 
@@ -126,6 +129,19 @@ struct FrameStart {
         size = static_cast<std::uint32_t>(DefaultState(at, 0x6000000) - words);
     }
 };
+
+constexpr std::array<std::uint32_t, 118> BaseHardwareState200 = [] {
+    constexpr auto& neo = GnmNeo::HardwareState200;
+    static_assert(neo[7] == 0x219 && neo[10] == 0x21a && neo[13] == 0x215);
+    static_assert(neo[116] == 0xc0026900u && neo[117] == 0xeb && neo[120] == 0xc0036900u);
+    static_assert(neo[128] == 0xc0017900u && neo[129] == 0x40000258u);
+    std::array<std::uint32_t, 118> base{};
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < 6; ++i) base[out++] = neo[i];
+    for (std::size_t i = 12; i < 116; ++i) base[out++] = neo[i];
+    for (std::size_t i = 120; i < 128; ++i) base[out++] = neo[i];
+    return base;
+}();
 
 std::mutex g_submitMutex;
 bool g_frameStarted = false;
@@ -408,6 +424,16 @@ std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState175(std::uint32_t* cmd
     at = Emit(at, OpClearState, {0});
     at = Emit(at, OpAcquireMem, {0x2ec47fc0u, 0xffffffffu, 0, 0, 0, 10});
     at = DefaultState(at, 0x6020000);
+    Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
+    return HwInitPacketWords;
+}
+
+std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState200_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (size < HwInitPacketWords) return 0;
+    const bool neo = sceKernelIsNeoMode() != 0;
+    auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), cmd);
+    if (neo) at = std::copy(GnmNeo::HardwareState200.begin(), GnmNeo::HardwareState200.end(), at);
+    else at = std::copy(BaseHardwareState200.begin(), BaseHardwareState200.end(), at);
     Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
     return HwInitPacketWords;
 }
