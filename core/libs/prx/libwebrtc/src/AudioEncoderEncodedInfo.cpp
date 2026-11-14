@@ -41,21 +41,16 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libwebrtc/include/ModuleStorage.hpp"
 #include "prx/libc/include/Api.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
-#include <new>
 #include <stdexcept>
 
 namespace {
 
 constexpr int CodecTypeOther = 0;
-constexpr std::size_t BigAllocationBytes = 0x1000;
-constexpr std::size_t BigAllocationPadding = 0x27;
-constexpr std::uintptr_t BigAllocationAlignment = 0x20;
-
 std::size_t RedundantCount(const WebRtcAudioEncodedInfo* info) {
     return static_cast<std::size_t>(info->redundantEnd - info->redundantBegin);
 }
@@ -64,32 +59,15 @@ std::size_t RedundantCapacity(const WebRtcAudioEncodedInfo* info) {
     return static_cast<std::size_t>(info->redundantCapacity - info->redundantBegin);
 }
 
-void* AllocateStorage(std::size_t bytes) {
-    const bool big = bytes >= BigAllocationBytes;
-    void* raw = malloc_nid_postfix(big ? bytes + BigAllocationPadding : bytes);
-    if (!raw)
-        throw std::bad_alloc();
-    if (!big)
-        return raw;
-    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + BigAllocationPadding) & ~(BigAllocationAlignment - 1);
-    reinterpret_cast<void**>(aligned)[-1] = raw;
-    return reinterpret_cast<void*>(aligned);
-}
-
 void FreeRedundant(WebRtcAudioEncodedInfo* info) {
-    if (info->redundantBegin) {
-        void* storage = info->redundantBegin;
-        if (RedundantCapacity(info) * sizeof(WebRtcAudioEncodedInfoLeaf) >= BigAllocationBytes)
-            storage = static_cast<void**>(storage)[-1];
-        free_nid_postfix(storage);
-    }
+    WebRtcModuleStorage::Free(info->redundantBegin, RedundantCapacity(info) * sizeof(WebRtcAudioEncodedInfoLeaf));
     info->redundantBegin = nullptr;
     info->redundantEnd = nullptr;
     info->redundantCapacity = nullptr;
 }
 
 void AllocateRedundant(WebRtcAudioEncodedInfo* info, std::size_t count) {
-    auto* leaves = static_cast<WebRtcAudioEncodedInfoLeaf*>(AllocateStorage(count * sizeof(WebRtcAudioEncodedInfoLeaf)));
+    auto* leaves = static_cast<WebRtcAudioEncodedInfoLeaf*>(WebRtcModuleStorage::Allocate(count * sizeof(WebRtcAudioEncodedInfoLeaf)));
     info->redundantBegin = leaves;
     info->redundantEnd = leaves;
     info->redundantCapacity = leaves + count;
