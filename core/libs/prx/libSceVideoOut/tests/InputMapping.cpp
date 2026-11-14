@@ -634,7 +634,6 @@ void reloadErrorNamesLine() {
     require(Pad::TryLoadInputMapping("", configuration, error) && crossOnKey(configuration, SDL_SCANCODE_F), "a valid file reloads");
 }
 
-<<<<<<< HEAD
 std::uint32_t padChordOf(const Pad::InputConfiguration& configuration, Pad::InputControl control) {
     for (const auto& binding : configuration.bindings) {
         if (binding.control == control && binding.padButtons != 0) return binding.padButtons;
