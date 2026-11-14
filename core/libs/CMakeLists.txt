@@ -579,6 +579,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_appinstutil_declarations PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAppInstUtil>")
     endif()
+    add_test_executable(guest_fios_directory_exists_tests tests/GuestFiosDirectoryExists.cpp)
+    target_include_directories(guest_fios_directory_exists_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_fios_directory_exists_tests PRIVATE libSceFios2 libkernel libc)
+    configure_windows_unwind(guest_fios_directory_exists_tests)
+    add_test(NAME guest_fios_directory_exists COMMAND guest_fios_directory_exists_tests)
+    set_tests_properties(guest_fios_directory_exists PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fios_directory_exists PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
+    endif()
     add_test_executable(guest_kernel_sys_pwrite_tests tests/GuestKernelSysPwrite.cpp
         nid/src/NidCompute.cpp nid/src/Sha1.cpp)
     target_include_directories(guest_kernel_sys_pwrite_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
