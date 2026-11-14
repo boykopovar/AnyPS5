@@ -76,6 +76,7 @@ constexpr FormatEntry kFormatLookup[] = {
     {134, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, false},
     {136, VK_FORMAT_B4G4R4A4_UNORM_PACK16, 2, false},
     {141, VK_FORMAT_D24_UNORM_S8_UINT, 4, false},
+    {146, VK_FORMAT_D32_SFLOAT_S8_UINT, 8, false},
     {169, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8, true},
     {170, VK_FORMAT_BC1_RGBA_SRGB_BLOCK, 8, true},
     {171, VK_FORMAT_BC2_UNORM_BLOCK, 16, true},
@@ -163,10 +164,25 @@ bool SampledDepth24S8(const Context& context) {
     return ok;
 }
 
+bool SampledDepth32S8(const Context& context) {
+    static AgcDriver::Mutex mutex;
+    static std::map<VkPhysicalDevice, bool> supported;
+    static const bool forcedOff = std::getenv("APS5_NO_D32S8") != nullptr;
+    std::lock_guard lock(mutex);
+    if (const auto found = supported.find(context.physical); found != supported.end()) return found->second;
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, VK_FORMAT_D32_SFLOAT_S8_UINT, &properties);
+    constexpr auto required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    const bool ok = !forcedOff && (properties.optimalTilingFeatures & required) == required;
+    supported.emplace(context.physical, ok);
+    return ok;
+}
+
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
     if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if (format == ShaderRecompiler::IrBufferFormat::Format8_24UNorm && !SampledDepth24S8(context)) return VK_FORMAT_R32_SFLOAT;
+    if (format == ShaderRecompiler::IrBufferFormat::FormatX24_8_32Float && !SampledDepth32S8(context)) return VK_FORMAT_R32_SFLOAT;
     if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
     return ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format)));
 }

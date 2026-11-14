@@ -94,6 +94,7 @@ enum class IrBufferFormat : std::uint32_t {
     Format1_5_5_5UNorm = 135,
     Format4_4_4_4UNorm = 136,
     Format8_24UNorm = 141,
+    FormatX24_8_32Float = 146,
     Fmask8_S2_F1 = 156,
     Fmask8_S4_F1 = 157,
     Fmask8_S8_F1 = 158,
