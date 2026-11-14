@@ -347,7 +347,11 @@ int APS5_VABI sceVoiceReadFromOPort(uint32_t output_port_id, void* data, uint32_
     if (output_port_id > 127) return InvalidPort;
     if (data == nullptr || size == nullptr) return InvalidArgument;
     if (IsInput(RequirePort(voice, output_port_id, __func__).type)) Fail(__func__, "port is not an output port");
-    *size = 0;
+    const std::uint32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(size, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 

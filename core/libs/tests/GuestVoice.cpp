@@ -229,6 +229,9 @@ int main() {
     Require(sceVoiceReadFromOPort(output, data, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(output, nullptr, nullptr) == invalidArgument);
     Require(sceVoiceReadFromOPort(output, data, &size) == 0 && size == 0);
+    errno = 71;
+    Require(sceVoiceReadFromOPort(output, data, reinterpret_cast<uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     size = sizeof(data);
     Require(sceVoiceWriteToIPort(input, nullptr, &size, 0) == invalidArgument);
     Require(sceVoiceWriteToIPort(input, data, nullptr, 0) == invalidArgument);
