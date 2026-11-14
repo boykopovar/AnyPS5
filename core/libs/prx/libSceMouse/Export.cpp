@@ -136,17 +136,11 @@ int APS5_VABI sceMouseExtensionSetConfig(std::int32_t handle, const void* config
 }
 
 int APS5_VABI sceMouseExtensionSetCursor(std::int32_t handle, std::int32_t cursor) {
-    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (const int error = Mouse::CheckHandle(handle)) return error;
-    static_cast<void>(cursor);
-    NotImplemented_nid_no_patch(__func__);
+    return Mouse::SetCursor(handle, cursor);
 }
 
 int APS5_VABI sceMouseExtensionGetCursor(std::int32_t handle, void* cursor) {
-    if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (cursor == nullptr) return MOUSE_ERROR_INVALID_ARG;
-    if (const int error = Mouse::CheckHandle(handle)) return error;
-    NotImplemented_nid_no_patch(__func__);
+    return Mouse::GetCursor(handle, static_cast<std::int32_t*>(cursor));
 }
 
 int APS5_VABI sceMouseExtensionScalePosition(std::uint16_t* position, std::uint16_t scale) {

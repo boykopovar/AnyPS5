@@ -291,6 +291,8 @@ struct alignas(8) UlthreadRuntimeObject {
     std::uint8_t bytes[4096];
 };
 
+std::atomic<int> gUnwritableSelf{0};
+std::atomic<int> gUnwritableSelfErrno{0};
 std::atomic<void*> gSelf{nullptr};
 std::atomic<int> gYield{-1};
 std::atomic<bool> gPastExit{false};
@@ -298,6 +300,9 @@ std::atomic<bool> gRelease{false};
 
 std::int32_t APS5_VABI ExitingEntry(std::uint64_t status) {
     void* self = nullptr;
+    errno = 71;
+    gUnwritableSelf = sceUltUlthreadGetSelf(reinterpret_cast<void**>(0x10));
+    gUnwritableSelfErrno = errno;
     if (sceUltUlthreadGetSelf(&self) == Ok) gSelf = self;
     gYield = sceUltUlthreadYield();
     sceUltUlthreadExit(static_cast<std::int32_t>(status));
@@ -332,6 +337,7 @@ void Ulthreads() {
     std::int32_t status = 0;
     CHECK(sceUltUlthreadJoin(&first, &status) == Ok);
     CHECK(status == 42 && gSelf.load() == &first && gYield.load() == Ok && !gPastExit.load());
+    CHECK(gUnwritableSelf.load() == Null && gUnwritableSelfErrno.load() == 71);
     UlthreadObject second{};
     gSelf = nullptr;
     CHECK(sceUltUlthreadCreate(&second, "tryjoin", ExitingEntry, 7, context, sizeof(context), &runtime, nullptr, 0) == Ok);
