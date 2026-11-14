@@ -181,7 +181,7 @@ The Linux HTTP URI locale regression needs an ISO-8859-1 locale. With tests enab
 
 ## ThreadSanitizer
 
-A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tools/tsan-suppressions.txt`, which silences reports from Mesa's lavapipe, the LLVM it compiles shaders with, and PulseAudio: those system libraries are not instrumented, so ThreadSanitizer cannot see their locking. Guest memory written by the emulated GPU while a guest thread polls it, such as labels and fences, is shared without C++ atomics on purpose, as on the console, so ThreadSanitizer also reports those accesses.
+A ThreadSanitizer build runs its tests with `TSAN_OPTIONS=suppressions=$PWD/tools/tsan-suppressions.txt`, which silences reports from Mesa's lavapipe, the LLVM it compiles shaders with, and PulseAudio: those system libraries are not instrumented, so ThreadSanitizer cannot see their locking. The driver polls labels and fences with acquire loads, but guest memory is still written with plain stores, such as copies and replay restores, as on the console, so ThreadSanitizer also reports those stores against the polls.
 
 ## Quick syntax checks
 

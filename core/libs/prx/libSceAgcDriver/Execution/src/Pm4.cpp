@@ -656,8 +656,7 @@ bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
     const auto awaitedBytes = WaitAwaitedBytes(packet);
     const auto source = address(packet[2] & (awaitedBytes == 8 ? ~7u : ~3u), packet[3]);
-    const std::uint64_t value = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(source) : *reinterpret_cast<const volatile std::uint32_t*>(source);
-    return waitCompares(packet, wide, value);
+    return waitCompares(packet, wide, LoadLabel(source, awaitedBytes));
 }
 
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value) {

@@ -479,8 +479,8 @@ bool Driver::awaitsTitle(std::uint64_t awaited) const {
 
 bool Driver::stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited) {
     const auto shape = slot.shape.load(std::memory_order_relaxed);
-    if (shape == 0) return (*reinterpret_cast<const volatile std::uint32_t*>(awaited) & Pm4::RewindValid) == 0;
-    const std::uint64_t value = shape >> 32u == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+    if (shape == 0) return (Pm4::LoadLabel(awaited, 4) & Pm4::RewindValid) == 0;
+    const std::uint64_t value = Pm4::LoadLabel(awaited, shape >> 32u == 8 ? 8 : 4);
     return !Pm4::WaitCompares(static_cast<std::uint32_t>(shape), slot.reference.load(std::memory_order_relaxed), slot.mask.load(std::memory_order_relaxed), value);
 }
 
@@ -1024,8 +1024,8 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
         if (std::find(submission.labelWrites.begin(), submission.labelWrites.end(), dword) != submission.labelWrites.end()) return;
         if (worker != workers.end() && worker->second.unfinishedWrites.contains(dword)) return;
     }
-    std::uint64_t value = *reinterpret_cast<const volatile std::uint32_t*>(address);
-    if (bytes == 8) value |= static_cast<std::uint64_t>(*reinterpret_cast<const volatile std::uint32_t*>(address + 4)) << 32u;
+    std::uint64_t value = Pm4::LoadLabel(address, 4);
+    if (bytes == 8) value |= Pm4::LoadLabel(address + 4, 4) << 32u;
     if (Pm4::WaitComparesValue(packet, value)) submission.heldAtSubmit.insert(cursor);
 }
 
