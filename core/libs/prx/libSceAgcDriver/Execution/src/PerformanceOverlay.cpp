@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/System/include/ThermalSensors.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <algorithm>
@@ -455,6 +456,7 @@ OverlayContent ComposeOverlay(const OverlayStatistics& statistics, bool gpu, boo
     const auto latest = statistics.Latest();
     if (latest.draws != 0 || latest.dispatches != 0) content.below.push_back("DRAWS: " + FormatOverlayCount(statistics.DrawsPerFrame()) + "  DISPATCH: " + FormatOverlayCount(statistics.DispatchesPerFrame()));
     if (latest.pipelines != 0) content.below.push_back("SHADERS: " + FormatOverlayCount(static_cast<double>(statistics.PipelinesInWindow())) + "  TOTAL: " + FormatOverlayCount(static_cast<double>(latest.pipelines)));
+    if (details.cpuCelsius) content.below.push_back("CPU: " + std::to_string(*details.cpuCelsius) + " C");
     if (details.vram) content.below.push_back("VRAM: " + FormatOverlayGigabytes(details.vram->used) + "/" + FormatOverlayGigabytes(details.vram->budget) + " GB");
     if (details.ram) content.below.push_back("RAM: " + FormatOverlayGigabytes(*details.ram) + " GB");
     if (details.display.width != 0 && details.display.height != 0 && details.window.width != 0 && details.window.height != 0) {
@@ -608,6 +610,13 @@ std::string_view OverlayPresentModeName(VkPresentModeKHR mode) {
 
 bool OverlaySampleDue(std::optional<OverlayStatistics::Clock::time_point> sampledAt, OverlayStatistics::Clock::time_point now) {
     return !sampledAt || now - *sampledAt >= std::chrono::seconds(1);
+}
+
+std::optional<int> ReadOverlayCpuCelsius() {
+    int celsius[3] = {-1, -1, -1};
+    ReadThermalSensors_nid_no_patch("/sys/class", celsius);
+    if (celsius[0] < 0) return std::nullopt;
+    return celsius[0];
 }
 
 std::optional<OverlayMemory> ReadVramBudget(const Graphics::Context& context) {
@@ -915,6 +924,7 @@ void PerformanceOverlay::NotePresent(OverlayStatistics::Clock::time_point at, Vk
     if (OverlaySampleDue(sampledAt, at)) {
         details.vram = ReadVramBudget(context);
         details.ram = ReadProcessPrivateBytes();
+        details.cpuCelsius = ReadOverlayCpuCelsius();
         sampledAt = at;
     }
     details.display = display;
