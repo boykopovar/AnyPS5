@@ -286,6 +286,13 @@ class ReportTests(unittest.TestCase):
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
+    def test_render_markdown_states_the_run_length_of_the_titles(self):
+        for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
+            with self.subTest(lengths=lengths):
+                now = summary({f"PPSA0000{index}": {"name": "Game", "version": "1", "seconds": seconds, "runs": [run("rendering")]}
+                               for index, seconds in enumerate(lengths)})
+                self.assertIn(f" 2 runs per title, {stated}\n", title_run.render_markdown(now))
+
     def test_render_markdown_skips_runs_without_an_error(self):
         now = summary({"PPSA01325": {"name": "Playroom", "version": "01.905.000",
                                      "runs": [run("stalled"), run("crashed", "warm", error="vkQueueSubmit recorder: Vulkan result -4")]}})
