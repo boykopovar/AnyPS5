@@ -5,10 +5,17 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -61,6 +68,82 @@ static void TestTouchRecognizerInformation(std::int32_t handle, int invalidArgum
     Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, &withoutRectangle, &area) == 0);
     Require(sceSystemGestureGetTouchRecognizerInformation(handle, &withoutRectangle, &information) == 0);
     Require(SameRectangle(information.rectangle, area));
+}
+
+static void TestRectangleGuestMemory(std::int32_t handle, int invalidArgument, int invalidHandle) {
+#ifdef _WIN32
+    SYSTEM_INFO hostInfo{};
+    GetSystemInfo(&hostInfo);
+    const std::size_t page = hostInfo.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    const auto page = static_cast<std::size_t>(pageSize);
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+    Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    const SystemGestureRectangle area{10.0f, 20.0f, 30.0f, 40.0f, {}};
+    const SystemGestureRectangle moved{50.0f, 60.0f, 70.0f, 80.0f, {}};
+    SystemGestureTouchRecognizer recognizer{};
+    Require(sceSystemGestureCreateTouchRecognizer(handle, &recognizer, 2, &area, nullptr) == 0);
+    const auto original = recognizer;
+    for (const auto offset : {page, page - sizeof(SystemGestureRectangle) / 2}) {
+        const auto* bad = reinterpret_cast<const SystemGestureRectangle*>(memory + offset);
+        Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle + 1, &recognizer, bad) == invalidHandle);
+        errno = EDOM;
+        Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, &recognizer, bad) == invalidArgument && errno == EDOM);
+        Require(std::memcmp(&recognizer, &original, sizeof(original)) == 0);
+    }
+    auto* exactRectangle = reinterpret_cast<SystemGestureRectangle*>(memory + page - sizeof(moved));
+    std::memcpy(exactRectangle, &moved, sizeof(moved));
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+    errno = EDOM;
+    Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, &recognizer, exactRectangle) == 0 && errno == EDOM);
+    Require(std::memcmp(exactRectangle, &moved, sizeof(moved)) == 0);
+    SystemGestureTouchRecognizerInformation information{};
+    Require(sceSystemGestureGetTouchRecognizerInformation(handle, &recognizer, &information) == 0);
+    Require(SameRectangle(information.rectangle, moved));
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0);
+#endif
+    auto* exactRecognizer = reinterpret_cast<SystemGestureTouchRecognizer*>(memory + page - sizeof(recognizer));
+    std::memcpy(exactRecognizer, &original, sizeof(original));
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+    errno = EDOM;
+    Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, exactRecognizer, &moved) == invalidArgument && errno == EDOM);
+    Require(std::memcmp(exactRecognizer, &original, sizeof(original)) == 0);
+    for (const auto offset : {page, page - sizeof(std::uint64_t)}) {
+        errno = EDOM;
+        Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, reinterpret_cast<SystemGestureTouchRecognizer*>(memory + offset), &moved) == invalidArgument && errno == EDOM);
+    }
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0);
+#endif
+    Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, exactRecognizer, &moved) == 0);
+    Require(sceSystemGestureGetTouchRecognizerInformation(handle, exactRecognizer, &information) == 0);
+    Require(SameRectangle(information.rectangle, moved));
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(memory, page * 2) == 0);
+#endif
 }
 
 static PadData TouchReport(std::uint64_t timestamp, std::initializer_list<std::array<std::uint16_t, 3>> touches) {
@@ -323,6 +406,7 @@ int main() {
 
     Require(sceSystemGestureDebugGetVersion() == 0x6a00);
     TestTouchRecognizerInformation(handle, invalidArgument, invalidHandle);
+    TestRectangleGuestMemory(handle, invalidArgument, invalidHandle);
     TestPrimitiveTouchEvents(handle, invalidArgument, invalidHandle, indexOutOfArray);
     TestCreateTouchRecognizer(handle, invalidArgument, invalidHandle);
     std::array<std::int32_t, 7> otherHandles{};

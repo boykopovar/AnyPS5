@@ -425,10 +425,6 @@ int APS5_VABI _ZN9Inspector31NetworkBackendDispatcherHandler20LoadResourceCallba
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl12readFromFileEiPci() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC14ProtoCallFrame9codeBlockEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -588,10 +584,6 @@ int APS5_VABI _ZNK9Inspector15RemoteInspector26listingForAutomationTargetERKNS_2
 }
 
 int APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1693,10 +1685,6 @@ int APS5_VABI _ZN3WTF6StringC2EPKh() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF7CPUTime3getEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF7RunLoop6isMainEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1722,10 +1710,6 @@ int APS5_VABI _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2
 }
 
 int APS5_VABI _ZN3WTF8JSONImpl5Value12escapeStringERNS_13StringBuilderENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF8pageMaskEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

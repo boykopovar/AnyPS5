@@ -16,7 +16,7 @@ void ResolveRelativePtr(T*& field) {
 }
 
 bool GetProgramAddressRegisterOffset(std::uint8_t type, std::uint32_t& loOffset);
-int PatchProgramAddressRegister(ShaderRegister* regs, std::uint32_t numRegs, std::uint8_t type, std::uint64_t base);
+int PatchProgramAddressRegister(ShaderRegister* regs, std::uint32_t numRegs, std::uint8_t type, std::uint64_t base, std::uint64_t previousBase = 0);
 std::uint32_t GraphicsPrimTypeToGsOut(std::uint32_t primType);
 std::uint32_t ShaderSemanticWord(const ShaderSemantic& s);
 std::uint32_t ApplyInterpolantDefaultValue(std::uint32_t value, std::uint32_t psWord);

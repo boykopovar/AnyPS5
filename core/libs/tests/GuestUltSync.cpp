@@ -391,6 +391,19 @@ void CheckUnsupportedInfo(TQuery query, void* object, std::uint32_t capacity = 4
 }
 
 template<typename TInfo, typename TQuery>
+void CheckWaiterRecord(TQuery query, void* object, std::int32_t waitValue) {
+    TInfo info;
+    std::memset(&info, 0xEE, sizeof(info));
+    UltWaitingThreadInfo waiter;
+    std::memset(&waiter, 0xAA, sizeof(waiter));
+    waiter.size = sizeof(UltWaitingThreadInfo);
+    CHECK(query(object, &info, &waiter, 1) == Ok);
+    CHECK(info.size == sizeof(TInfo));
+    CHECK(waiter.size == sizeof(UltWaitingThreadInfo));
+    CHECK(waiter.thread != nullptr && waiter.threadType == 1 && waiter.waitValue == waitValue);
+}
+
+template<typename TInfo, typename TQuery>
 void CheckWaitingRecordSizes(TQuery query, void* object) {
     TInfo info;
     UltWaitingThreadInfo waiters[4];
@@ -680,8 +693,7 @@ void QueueWaiters() {
     WaitForQueueWaiters(queueObj, &info, 0, 1);
     CHECK(info.queuedItems == 0);
     std::memset(waiters, 0xAA, sizeof(waiters));
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 1);
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj);
+    CheckWaiterRecord<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 1);
     CHECK(sceUltGetQueueInfo(queueObj, &info, waiters, 0) == Ok);
     const auto* waiterBytes = reinterpret_cast<const std::uint8_t*>(waiters);
     for (std::size_t index = 0; index < sizeof(waiters); ++index) CHECK(waiterBytes[index] == 0xAA);
@@ -699,8 +711,7 @@ void QueueWaiters() {
     std::thread pusher([&] { pushResult.store(sceUltQueuePush(queueObj, item)); });
     WaitForQueueWaiters(queueObj, &info, 1, 0);
     CHECK(info.queuedItems == 2);
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 1);
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj);
+    CheckWaiterRecord<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 2);
     CHECK(sceUltGetQueueInfo(queueObj, &info, waiters, 0) == Ok);
     CHECK(info.waitingPushers == 1);
     CHECK(info.waitingPoppers == 0);
@@ -746,10 +757,11 @@ void InfoWaiters() {
         CHECK(sceUltMutexUnlock(&mutex) == Ok);
     });
     WaitForInfoWaiters<UltMutexInfo>(sceUltGetMutexInfo, &mutex);
-    CheckUnsupportedInfo<UltMutexInfo>(sceUltGetMutexInfo, &mutex, 1);
-    CheckUnsupportedInfo<UltMutexInfo>(sceUltGetMutexInfo, &mutex);
+    CheckWaiterRecord<UltMutexInfo>(sceUltGetMutexInfo, &mutex, 0);
     CHECK(sceUltMutexUnlock(&mutex) == Ok);
     mutexWaiter.join();
+    UltMutexInfo mutexAfter{};
+    CHECK(sceUltGetMutexInfo(&mutex, &mutexAfter, nullptr, 0) == Ok && mutexAfter.waitingThreads == 0);
 
     std::thread conditionWaiter([&] {
         CHECK(sceUltMutexLock(&mutex) == Ok);
@@ -760,15 +772,23 @@ void InfoWaiters() {
         CHECK(sceUltMutexUnlock(&mutex) == Ok);
     });
     WaitForInfoWaiters<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition);
-    CheckUnsupportedInfo<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition, 1);
-    CheckUnsupportedInfo<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition);
+    CheckWaiterRecord<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition, 0);
+    CHECK(sceUltMutexLock(&mutex) == Ok);
     CHECK(sceUltConditionVariableSignal(&condition) == Ok);
+    UltConditionVariableInfo signaled{};
+    UltWaitingThreadInfo signaledRecord{};
+    std::memset(&signaledRecord, 0xAA, sizeof(signaledRecord));
+    signaledRecord.size = sizeof(UltWaitingThreadInfo);
+    const UltWaitingThreadInfo poisoned = signaledRecord;
+    CHECK(sceUltGetConditionVariableInfo(&condition, &signaled, &signaledRecord, 1) == Ok);
+    CHECK(signaled.waitingThreads == 0);
+    CHECK(std::memcmp(&poisoned, &signaledRecord, sizeof(poisoned)) == 0);
+    CHECK(sceUltMutexUnlock(&mutex) == Ok);
     conditionWaiter.join();
 
     std::thread semaphoreWaiter([&] { CHECK(sceUltSemaphoreAcquire(&semaphore, 1) == Ok); });
     WaitForInfoWaiters<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore);
-    CheckUnsupportedInfo<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore, 1);
-    CheckUnsupportedInfo<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore);
+    CheckWaiterRecord<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore, 0);
     CHECK(sceUltSemaphoreRelease(&semaphore, 1) == Ok);
     semaphoreWaiter.join();
 
