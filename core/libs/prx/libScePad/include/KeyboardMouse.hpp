@@ -20,7 +20,6 @@ inline constexpr double MouseRateGapSeconds = 0.05;
 inline constexpr double MouseSmoothingReports = 3.0;
 inline constexpr double MouseSmoothingLimitMs = 30.0;
 inline constexpr std::chrono::milliseconds ShakeHalfPeriod{50};
-inline constexpr std::chrono::milliseconds TurboPeriod{100};
 inline constexpr float ShakeAcceleration = 2.0f * 9.80665f;
 inline constexpr float ShakeAngularVelocity = 6.0f;
 inline constexpr double MouseGyroRadiansPerCount = 0.001;

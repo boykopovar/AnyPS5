@@ -142,8 +142,9 @@ bool Pad::KeyboardMouse::active(std::size_t index) const {
     const auto mode = configuration.bindings[index].mode;
     if (mode == InputMode::Toggle) return latched[index];
     if (mode != InputMode::Turbo || !pressed[index]) return pressed[index];
+    const auto period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / configuration.settings.turboRateHz));
     const auto elapsed = std::max(lastAdvance - pressedAt[index], Clock::duration::zero());
-    return elapsed % TurboPeriod < TurboPeriod / 2;
+    return elapsed % period < period / 2;
 }
 
 Pad::KeyboardMouse::StickInput Pad::KeyboardMouse::stickInput() const {
