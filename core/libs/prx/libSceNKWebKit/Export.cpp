@@ -15542,14 +15542,6 @@ int APS5_VABI _ZN3WTF8CollatorD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF8JSONImpl10ObjectBase6removeERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF8JSONImpl6Object6createEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF8WordLock10unlockSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -28665,14 +28657,6 @@ int APS5_VABI _ZNK3WTF8Collator11collateUTF8EPKcS2_() {
 }
 
 int APS5_VABI _ZNK3WTF8Collator7collateENS_10StringViewES1_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF8JSONImpl10ObjectBase10memoryCostEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF8JSONImpl10ObjectBase9getStringERKNS_6StringERS2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
