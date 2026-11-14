@@ -7,7 +7,7 @@ from pathlib import Path
 
 TEST_OUTPUT = r"tests[\\/]"
 SCOPE_START = {"if", "foreach", "while", "function", "macro", "block"}
-COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
+COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|set_property|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
 ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|[^\s()]+', re.S)
 LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=literal_equals)\]'
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
@@ -18,6 +18,23 @@ SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
 EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
 COMPILE_FLAG = re.compile(r"(?:^|\s)[-/]c(?:\s|$)")
+
+CPP_TOKEN = re.compile(
+    r'(?P<comment>//[^\n]*|/\*[\s\S]*?\*/)'
+    r'|(?P<raw>(?:u8|u|U|L)?R"(?P<delimiter>[^\s()\\]{0,16})\([\s\S]*?\)(?P=delimiter)")'
+    r'|(?P<string>(?:u8|u|U|L)?"(?:\\[\s\S]|[^"\\])*")'
+    r"|(?P<char>(?:u8|u|U|L)?'(?:\\[\s\S]|[^'\\])*')"
+    r"|(?P<code>(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S)")
+
+def cpp_source(text, keep_strings=False):
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+
+    def mask(match):
+        if match.group("code") is not None or keep_strings and match.group("string") is not None:
+            return match.group()
+        return re.sub(r"[^\n]", " ", match.group())
+
+    return CPP_TOKEN.sub(mask, text)
 
 
 def ninja(build):
@@ -82,8 +99,11 @@ def skipped_libraries(build):
     enabled = False
     for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         name, _, value = line.partition(":")
+        on = value.partition("=")[2].strip().upper() in ("ON", "1", "TRUE", "YES", "Y")
+        if name in ("ANYPS5_RELINKER_ONLY", "ANYPS5_BUILD_WASM") and on:
+            return None
         if name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
-            enabled = enabled or value.partition("=")[2].strip().upper() in ("ON", "1", "TRUE", "YES", "Y")
+            enabled = enabled or on
     return set(SANITIZER_SKIPPED_LIBRARIES) if enabled else set()
 
 
@@ -99,7 +119,7 @@ def unbuilt_exports(root, sources, skipped=()):
             text = source.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for name in INCLUDED_SOURCE.findall(text):
+        for name in INCLUDED_SOURCE.findall(cpp_source(text, keep_strings=True)):
             included = (source.parent / name).resolve()
             if included not in built_sources and included.is_file():
                 built_sources.add(included)
@@ -111,7 +131,7 @@ def unbuilt_exports(root, sources, skipped=()):
             continue
         if any(part in ("tests", "test") for part in relative.parts[1:-1]) or file.resolve() in built_sources:
             continue
-        if EXPORTED.search(file.read_text(encoding="utf-8", errors="replace")):
+        if EXPORTED.search(cpp_source(file.read_text(encoding="utf-8", errors="replace"))):
             unbuilt.append(Path("core/libs/prx") / relative)
     return unbuilt
 
@@ -256,6 +276,43 @@ def workflow_run_lines(content):
         parents.append((key_indent, key))
 
 
+def disabled_properties(command, arguments):
+    if command == "set_tests_properties" and "PROPERTIES" in arguments:
+        properties = arguments.index("PROPERTIES")
+        values = arguments[properties + 1:]
+        for key, value in zip(values[::2], values[1::2]):
+            if key == "DISABLED":
+                yield arguments[:properties], "replace", value
+    elif command == "set_property" and arguments[:1] == ["TEST"] and "PROPERTY" in arguments:
+        properties = arguments.index("PROPERTY")
+        names = arguments[1:properties]
+        if "DIRECTORY" in names or arguments[properties + 1:properties + 2] != ["DISABLED"]:
+            return
+        mode = "string" if "APPEND_STRING" in names else "append" if "APPEND" in names else "replace"
+        yield [name for name in names if name not in {"APPEND", "APPEND_STRING"}], mode, ";".join(arguments[properties + 2:])
+
+
+def disabled_value(current, mode, value):
+    if "${" in value or "$<" in value:
+        return None, False
+    if mode == "replace":
+        return value, is_disabled(value)
+    if not value:
+        return current
+    raw, _ = current
+    if raw is None:
+        return None, False
+    if mode == "string":
+        updated = raw + value
+    else:
+        updated = raw + ";" + value if raw else value
+    return updated, is_disabled(updated)
+
+
+def is_disabled(value):
+    return value is not None and value.upper() in ("1", "ON", "YES", "TRUE", "Y")
+
+
 def run_scripts(root, files):
     run = set()
     for name in files:
@@ -284,30 +341,27 @@ def run_scripts(root, files):
                     else:
                         test_name = arguments[0]
                         arguments = arguments[1:]
-                    tests.append([test_name, arguments, False, scopes[:]])
-                elif command == "set_tests_properties" and "PROPERTIES" in arguments:
-                    properties = arguments.index("PROPERTIES")
-                    values = arguments[properties + 1:]
-                    for key, value in zip(values[::2], values[1::2]):
-                        if key == "DISABLED":
-                            for test in tests:
-                                if test[0] in arguments[:properties]:
-                                    exclusive = False
-                                    for left, right in zip(test[3], scopes):
-                                        if left[0] != right[0] or left[2] in {"foreach", "while", "function", "macro"}:
-                                            break
-                                        if left[1] != right[1]:
-                                            exclusive = True
-                                            break
-                                    if exclusive:
-                                        continue
-                                    disabled = value.upper() in ("1", "ON", "YES", "TRUE", "Y")
-                                    if test[3][:len(scopes)] == scopes:
-                                        test[2] = disabled
-                                    elif not disabled:
-                                        test[2] = False
-            for _, arguments, disabled, _ in tests:
-                if not disabled:
+                    tests.append([test_name, arguments, ("", False), scopes[:]])
+                elif command in {"set_tests_properties", "set_property"}:
+                    for names, mode, value in disabled_properties(command, arguments):
+                        for test in tests:
+                            if test[0] in names:
+                                exclusive = False
+                                for left, right in zip(test[3], scopes):
+                                    if left[0] != right[0] or left[2] in {"foreach", "while", "function", "macro"}:
+                                        break
+                                    if left[1] != right[1]:
+                                        exclusive = True
+                                        break
+                                if exclusive:
+                                    continue
+                                updated = disabled_value(test[2], mode, value)
+                                if test[3][:len(scopes)] == scopes:
+                                    test[2] = updated
+                                elif updated != test[2]:
+                                    test[2] = None, test[2][1] and updated[1]
+            for _, arguments, value, _ in tests:
+                if not value[1]:
                     run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
         elif name.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
             for line in workflow_run_lines((Path(root) / name).read_text(encoding="utf-8", errors="replace")):
@@ -357,7 +411,7 @@ def main(argv=None):
         every = sorted(built(args.build))
         run = registered(args.build)
         skipped = skipped_libraries(args.build)
-        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
+        unbuilt = None if skipped is None else unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:
@@ -378,7 +432,7 @@ def main(argv=None):
         return 1
     for name in sorted(set(unrun) & KNOWN_UNRUN):
         print(f"note: {name} is built and not run, as recorded")
-    for name in sorted(skipped):
+    for name in sorted(skipped or ()):
         print(f"note: {name} is not built in this ASan/TSan configuration")
     for name in stale:
         print(f"error: {name} is run by ctest now; remove it from KNOWN_UNRUN")
@@ -394,7 +448,7 @@ def main(argv=None):
         return 1
     print(f"{len(every)} test executable(s), {len(unrun)} built and not run as recorded, none new")
     if unbuilt is None:
-        print("no core/libs/prx source is compiled in this build; library sources were not checked")
+        print("the core/libs/prx libraries are not part of this build; library sources were not checked")
     else:
         print("every core/libs/prx source that defines an APS5_VABI function is compiled")
     return 0

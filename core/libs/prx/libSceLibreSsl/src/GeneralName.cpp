@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/OcspResponse.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,10 @@ static_assert(sizeof(LibreSslGeneralName) == 16);
 static_assert(offsetof(LibreSslGeneralName, value) == 8);
 static_assert(sizeof(Asn1String) == 24);
 static_assert(sizeof(LibreSslAsn1Object) == 40);
+static_assert(sizeof(LibreSslOcspResponse) == 16);
+static_assert(offsetof(LibreSslOcspResponse, responseBytes) == 8);
+static_assert(sizeof(LibreSslOcspResponseBytes) == 16);
+static_assert(offsetof(LibreSslOcspResponseBytes, response) == 8);
 
 namespace {
 
@@ -98,6 +103,27 @@ void FreeObject(LibreSslAsn1Object* object) {
     if (object->flags & DynamicObject) free_nid_postfix(object);
 }
 
+bool InvalidOwnedString(const Asn1String* string) {
+    return string && string->data && !(string->flags & Asn1StringNdef) && string->length < 0;
+}
+
+void CheckResponseBytes(const LibreSslOcspResponseBytes* bytes) {
+    if (!bytes) return;
+    if (InvalidOwnedString(bytes->response))
+        throw std::invalid_argument("OCSP_RESPONSE_free: negative owned string length");
+    const auto* object = bytes->responseType;
+    if (object && (object->flags & DynamicData) && object->data && object->length < 0)
+        throw std::invalid_argument("OCSP_RESPONSE_free: negative owned object length");
+}
+
+void ReleaseResponseBytes(LibreSslOcspResponseBytes* bytes) {
+    FreeString(bytes->response);
+    bytes->response = nullptr;
+    FreeObject(bytes->responseType);
+    bytes->responseType = nullptr;
+    free_nid_postfix(bytes);
+}
+
 void FreeAny(Asn1Type* any) {
     if (!any) return;
     if (any->value) {
@@ -180,6 +206,35 @@ void APS5_VABI GENERAL_NAMES_free_nid_postfix(LibreSslStack* names) {
     sk_pop_free_nid_postfix(names, +[](void* pointer) APS5_VABI {
         GENERAL_NAME_free_nid_postfix(static_cast<LibreSslGeneralName*>(pointer));
     });
+}
+
+void LibreSslWipe_nid_no_patch(void* pointer, std::size_t size) {
+    Wipe(pointer, size);
+}
+
+void LibreSslAsn1StringFree_nid_no_patch(Asn1String* string) {
+    FreeString(string);
+}
+
+void LibreSslOcspResponseBytesFree_nid_no_patch(LibreSslOcspResponseBytes* bytes) {
+    if (!bytes) return;
+    CheckResponseBytes(bytes);
+    ReleaseResponseBytes(bytes);
+}
+
+void APS5_VABI OCSP_RESPONSE_free_nid_postfix(LibreSslOcspResponse* response) {
+    if (!response) return;
+    auto* bytes = static_cast<LibreSslOcspResponseBytes*>(response->responseBytes);
+    if (InvalidOwnedString(response->responseStatus))
+        throw std::invalid_argument("OCSP_RESPONSE_free: negative owned string length");
+    CheckResponseBytes(bytes);
+    if (bytes) {
+        ReleaseResponseBytes(bytes);
+        response->responseBytes = nullptr;
+    }
+    FreeString(response->responseStatus);
+    response->responseStatus = nullptr;
+    free_nid_postfix(response);
 }
 
 }

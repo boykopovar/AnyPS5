@@ -1,7 +1,9 @@
 import argparse
 import bisect
 import collections
+import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -139,10 +141,12 @@ class PeModule:
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
-            start, _, _, _, characteristics = self.sections[section - 1]
+            start, section_size, _, _, characteristics = self.sections[section - 1]
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
+                continue
+            if value >= section_size:
                 continue
             if name[:4] == b"\0\0\0\0":
                 offset = struct.unpack_from("<I", name, 4)[0]
@@ -291,6 +295,7 @@ def read_headers(lines):
 class Samples:
     def __init__(self):
         self.headers = {}
+        self.capture_format = None
         self.stacks = collections.Counter()
         self.self_counts = collections.Counter()
         self.inclusive = collections.Counter()
@@ -302,6 +307,12 @@ def load(path, thread=None):
     samples = Samples()
     samples.headers = read_headers(lines)
     current = None
+
+    def record_format(kind, number):
+        if samples.capture_format is not None and samples.capture_format != kind:
+            raise ValueError(f"{path}:{number}: cannot mix collapsed-stack and address records")
+        samples.capture_format = kind
+
     for number, line in enumerate(lines, 1):
         parts = line.split()
         if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples" and parts[1].isdigit():
@@ -310,12 +321,16 @@ def load(path, thread=None):
         if line.startswith("#") or not line.strip():
             continue
         if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples" and parts[1].isdigit() and parts[3].isdigit():
+            record_format("address", number)
             current = parts[1]
             if thread is None or current == thread:
                 samples.total["threads"] += int(parts[3])
             continue
         fields = line.strip().rsplit(None, 3)
-        if len(fields) == 4 and fields[1].startswith("0x") and fields[2].isdigit() and fields[3].isdigit():
+        if len(fields) == 4 and fields[2].isdigit() and fields[3].isdigit():
+            if re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is None:
+                raise ValueError(f"{path}:{number}: expected a hexadecimal offset after the module name")
+            record_format("address", number)
             if thread is not None and current is None:
                 raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
             if thread is None or current == thread:
@@ -325,6 +340,7 @@ def load(path, thread=None):
         frames, _, count = line.rpartition(" ")
         if not frames or not count.isdigit():
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        record_format("collapsed", number)
         if thread is not None:
             raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
         samples.stacks[frames] += int(count)
@@ -337,15 +353,38 @@ def subtract(later, earlier):
     return collections.Counter({key: count for key, count in result.items() if count > 0})
 
 
+def validate_window(later, earlier):
+    modules = {name for samples in (earlier, later) for counts in (samples.self_counts, samples.inclusive) for name, _ in counts}
+    for samples in (earlier, later):
+        for frames in samples.stacks:
+            for frame in frames.split(";"):
+                name, separator, _ = frame.partition("+0x")
+                if separator:
+                    modules.add(name)
+    for name in sorted(modules):
+        key = name.lower()
+        if key not in later.headers or key not in earlier.headers:
+            raise ValueError(f"{name}: matching-window validation needs module records in both captures")
+        if later.headers[key] is False or earlier.headers[key] is False:
+            raise ValueError(f"{name}: multiple sampled modules share this name, so their identities cannot be matched")
+        if later.headers[key] != earlier.headers[key]:
+            raise ValueError(f"{name}: module identity differs between captures")
+    for name in ("stacks", "self_counts", "inclusive", "total"):
+        before, after = getattr(earlier, name), getattr(later, name)
+        if any(count < 0 for count in after.values()) or any(count < 0 or after[key] < count for key, count in before.items()):
+            raise ValueError(f"{name}: cumulative sample counters decreased between captures")
+
+
 def window(later, earlier):
     result = Samples()
     result.headers = dict(later.headers)
+    result.capture_format = later.capture_format or earlier.capture_format
     for name in ("stacks", "self_counts", "inclusive", "total"):
         setattr(result, name, subtract(getattr(later, name), getattr(earlier, name)))
     return result
 
 
-def summarize(symbolizer, samples, top):
+def sample_counts(symbolizer, samples):
     self_counts = collections.Counter()
     inclusive = collections.Counter()
     total = 0
@@ -362,6 +401,11 @@ def summarize(symbolizer, samples, top):
         for (module, offset), count in samples.inclusive.items():
             inclusive[symbolizer.frame(f"{module}+{offset}")] += count
         total = samples.total["threads"] or samples.total["samples"] or sum(samples.self_counts.values())
+    return total, self_counts, inclusive
+
+
+def summarize(symbolizer, samples, top):
+    total, self_counts, inclusive = sample_counts(symbolizer, samples)
     lines = [f"{total} samples"]
     for title, counter in (("self", self_counts), ("inclusive", inclusive)):
         if not counter:
@@ -370,6 +414,16 @@ def summarize(symbolizer, samples, top):
         for name, count in counter.most_common(top):
             lines.append(f"  {count:8d} {100.0 * count / total if total else 0.0:5.1f}%  {name}")
     return lines
+
+
+def json_report(symbolizer, samples, top):
+    total, self_counts, inclusive = sample_counts(symbolizer, samples)
+    return {"samples": total,
+            "self": [{"symbol": name, "count": count} for name, count in self_counts.most_common(top)],
+            "inclusive": [{"symbol": name, "count": count} for name, count in inclusive.most_common(top)],
+            "modules": [{"name": name, "candidate_accepted": module is not None, "identity_recorded": name.lower() in samples.headers,
+                         "identity_matches": module is not None and samples.headers.get(name.lower()) == (module.size, module.timestamp)}
+                        for name, module in sorted(symbolizer.modules.items())]}
 
 
 def main(argv=None):
@@ -385,7 +439,15 @@ def main(argv=None):
     parser.add_argument("--demangle", action="store_true", help="demangle C++ names with c++filt when it is on PATH")
     parser.add_argument("--thread", help="keep only this thread of an APS5_SAMPLE_THREADS file")
     parser.add_argument("--unverified", action="store_true", help="also symbolize modules the samples have no '# module' record for")
+    parser.add_argument("--json", action="store_true", help="write counts, symbols and module identity status as JSON; --out still writes collapsed stacks")
+
+    parser.add_argument("--require-matching-window", action="store_true",
+                        help="with --since, require matching module records and nondecreasing cumulative counters; records cannot prove a common process")
     args = parser.parse_args(argv)
+    if args.top < 1:
+        parser.error("--top must be positive")
+    if args.require_matching_window and not args.since:
+        parser.error("--require-matching-window needs --since")
     try:
         return symbolize(parser, args)
     except (OSError, ValueError) as error:
@@ -404,7 +466,15 @@ def symbolize(parser, args):
     if args.out and not samples.stacks:
         parser.error("--out needs a collapsed-stack file")
     if args.since:
-        samples = window(samples, load(args.since, args.thread))
+        earlier = load(args.since, args.thread)
+        if samples.capture_format and earlier.capture_format and samples.capture_format != earlier.capture_format:
+            raise ValueError(f"{args.since}: sample captures use different data formats")
+        if args.require_matching_window:
+            try:
+                validate_window(samples, earlier)
+            except ValueError as error:
+                parser.error(str(error))
+        samples = window(samples, earlier)
     if args.out and samples.stacks:
         referenced_modules = {name.lower() for name, _ in samples.self_counts}
         referenced_modules.update(name.lower() for name, _ in samples.inclusive)
@@ -431,8 +501,11 @@ def symbolize(parser, args):
         if module_output_alias:
             parser.error("symbolized output must be separate from module inputs")
     symbolizer = Symbolizer(args.libs, samples.headers, args.demangle, warn=lambda text: print("warning: " + text, file=sys.stderr), unverified=args.unverified)
-    for line in summarize(symbolizer, samples, args.top):
-        print(line)
+    if args.json:
+        print(json.dumps(json_report(symbolizer, samples, args.top), ensure_ascii=True))
+    else:
+        for line in summarize(symbolizer, samples, args.top):
+            print(line)
     if args.out:
         if not samples.stacks:
             parser.error("--out needs a collapsed-stack file")

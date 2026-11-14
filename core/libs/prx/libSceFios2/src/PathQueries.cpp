@@ -2,6 +2,9 @@
 #include "Runtime.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <filesystem>
+#include <limits>
 
 namespace {
 
@@ -31,9 +34,54 @@ bool ExistsSync(SceFiosOp op) {
     return op >= 0 && Fios::SyncCount(op) == 1;
 }
 
+int ComparePaths(const char* left, const char* right, std::size_t count, bool limited) {
+    std::string first;
+    std::string second;
+    if (left == nullptr || right == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+    const int firstError = CopyGuestString_nid_no_patch(left, SCE_FIOS_PATH_MAX, first);
+    const int secondError = CopyGuestString_nid_no_patch(right, SCE_FIOS_PATH_MAX, second);
+    if (firstError == 14 || secondError == 14) return SCE_FIOS_ERROR_BAD_PTR;
+    if (firstError != 0 || secondError != 0) return SCE_FIOS_ERROR_PATH_TOO_LONG;
+    if (!limited) count = std::numeric_limits<std::size_t>::max();
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto a = static_cast<unsigned char>(first[i]);
+        const auto b = static_cast<unsigned char>(second[i]);
+        if (a != b) return static_cast<int>(a) - static_cast<int>(b);
+        if (a == 0) return 0;
+    }
+    return 0;
+}
+
 }
 
 extern "C" {
+
+std::size_t APS5_VABI sceFiosPathNormalize(char* output, const char* path, std::size_t capacity) {
+    std::string input;
+    if (output == nullptr || path == nullptr) return static_cast<std::size_t>(SCE_FIOS_ERROR_BAD_PTR);
+    const int copyError = CopyGuestString_nid_no_patch(path, SCE_FIOS_PATH_MAX, input);
+    if (copyError == 14) return static_cast<std::size_t>(SCE_FIOS_ERROR_BAD_PTR);
+    if (copyError != 0) return static_cast<std::size_t>(SCE_FIOS_ERROR_PATH_TOO_LONG);
+    std::replace(input.begin(), input.end(), '\\', '/');
+    std::string normalized = std::filesystem::path(input).lexically_normal().generic_string();
+    if (normalized.empty()) normalized = ".";
+    while (normalized.size() > 1 && normalized.back() == '/') normalized.pop_back();
+    if (normalized.size() + 1 > capacity) {
+        const char terminator = 0;
+        if (capacity != 0 && !Fios::CopyOut(output, &terminator, 1)) return static_cast<std::size_t>(SCE_FIOS_ERROR_BAD_PTR);
+        return capacity + 1;
+    }
+    if (!Fios::CopyOut(output, normalized.c_str(), normalized.size() + 1)) return static_cast<std::size_t>(SCE_FIOS_ERROR_BAD_PTR);
+    return normalized.size() + 1;
+}
+
+int APS5_VABI sceFiosPathcmp(const char* left, const char* right) {
+    return ComparePaths(left, right, 0, false);
+}
+
+int APS5_VABI sceFiosPathncmp(const char* left, const char* right, std::size_t count) {
+    return ComparePaths(left, right, count, true);
+}
 
 SceFiosOp APS5_VABI sceFiosExists(const SceFiosOpAttr* attr, const char* path, bool* outExists) {
     return QueryExists(attr, path, outExists, Kind::Any);
