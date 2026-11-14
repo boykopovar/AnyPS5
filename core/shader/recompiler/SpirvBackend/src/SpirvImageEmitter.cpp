@@ -569,7 +569,39 @@ std::uint32_t MirroredUnnormalizedCoord(SpirvValueEmitContext& ctx, const Sample
         const auto mirrors = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, axes, ConstantU32(state, 1u << index)), ConstantU32(state, 0u));
         const auto negative = Binary(state, spv::OpFOrdLessThan, boolean, x, ConstantF32(state, 0u));
         const auto below = Unary(state, spv::OpBitcast, f32, Binary(state, spv::OpISub, u32, Unary(state, spv::OpBitcast, u32, Unary(state, spv::OpFNegate, f32, x)), ConstantU32(state, 1u)));
-        values[index] = Select(state, f32, Binary(state, spv::OpLogicalAnd, boolean, mirrors, negative), below, x);
+        const auto folded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, folded, GlslStd450(state), GLSLstd450FMax, Select(state, f32, negative, below, x), ConstantF32(state, 0x3f000000u));
+        values[index] = Select(state, f32, mirrors, folded, x);
+    }
+    if (components == 1u) return values[0];
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), result, values[0], values[1]);
+    return result;
+}
+
+std::uint32_t HalfBorderUnnormalizedCoord(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, std::uint32_t coord, std::uint32_t axes) {
+    auto& state = ctx.state;
+    const auto f32 = TypeF32(state);
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto components = setup.dimensionInfo.spatialComponents;
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(state, access.image.dimension), size, LoadSampledImageDescriptor(state, access.mem.resource), ConstantU32(state, 0u));
+    std::array<std::uint32_t, 2> values{};
+    for (std::uint32_t index = 0; index < components; ++index) {
+        auto x = coord;
+        auto extent = size;
+        if (components != 1u) {
+            x = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, f32, x, coord, index);
+            extent = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, u32, extent, size, index);
+        }
+        const auto clamped = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, clamped, GlslStd450(state), GLSLstd450FClamp, x, ConstantF32(state, 0u), Unary(state, spv::OpConvertUToF, f32, extent));
+        const auto halfBorder = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, axes, ConstantU32(state, 1u << index)), ConstantU32(state, 0u));
+        values[index] = Select(state, f32, halfBorder, clamped, x);
     }
     if (components == 1u) return values[0];
     const auto result = state.module.AllocateId();
@@ -1920,9 +1952,10 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
         if (!mirrors) return emitDirectSample(coord, mask, arguments, sampleOpcode);
         const auto axes = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MirrorUnnormalizedBase + mem.sampler, 0u);
-        const auto mirrored = Binary(state, spv::OpINotEqual, TypeBool(state), axes, ConstantU32(state, 0u));
-        return EmitValueIfElse(state, mirrored, resultType, [&] {
-            return emitDirectSample(MirroredUnnormalizedCoord(ctx, setup, coord, axes), mask, arguments, sampleOpcode);
+        const auto halfBorderAxes = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HalfBorderUnnormalizedBase + mem.sampler, 0u);
+        const auto addressed = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), axes, halfBorderAxes), ConstantU32(state, 0u));
+        return EmitValueIfElse(state, addressed, resultType, [&] {
+            return emitDirectSample(HalfBorderUnnormalizedCoord(ctx, access, setup, MirroredUnnormalizedCoord(ctx, setup, coord, axes), halfBorderAxes), mask, arguments, sampleOpcode);
         }, [&] {
             return emitDirectSample(coord, mask, arguments, sampleOpcode);
         });

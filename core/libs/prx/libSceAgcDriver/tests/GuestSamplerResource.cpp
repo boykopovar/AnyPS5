@@ -470,6 +470,29 @@ void RunGuestSamplerResourceTests() {
         requireUnnormalized(decoded, clamp == 1u ? "unnormalized S# with clamp mode 1" : "unnormalized S# with clamp mode 3");
         Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && decoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "unnormalized clamp mode " + std::to_string(clamp) + " must decode to clamp-to-edge after the shader mirrors the coordinate");
     }
+    for (std::uint32_t type = 0; type < borders.size(); ++type) {
+        Fields mirroredBorder = unnormalizedBase;
+        mirroredBorder.clampX = 7;
+        mirroredBorder.clampY = type == 0u ? 2u : 7u;
+        mirroredBorder.borderColorType = type;
+        const auto decoded = DecodeSamplerResource(pack(mirroredBorder), true);
+        requireUnnormalized(decoded, "unnormalized S# with clamp mode 7");
+        Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && decoded.addressModeV == (type == 0u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER) && decoded.borderColor == borders[type], "unnormalized clamp mode 7 must decode to clamp-to-border after the shader mirrors the coordinate");
+    }
+    for (const std::uint32_t clamp : {4u, 5u}) {
+        for (const std::uint32_t magFilter : {0u, 1u}) {
+            Fields halfBorder = unnormalizedBase;
+            halfBorder.clampX = clamp;
+            halfBorder.clampY = clamp;
+            halfBorder.xyMagFilter = magFilter;
+            halfBorder.xyMinFilter = 1u - magFilter;
+            halfBorder.borderColorType = 2;
+            const auto decoded = DecodeSamplerResource(pack(halfBorder), true);
+            requireUnnormalized(decoded, clamp == 4u ? "unnormalized S# with clamp mode 4" : "unnormalized S# with clamp mode 5");
+            const auto expected = magFilter == 1u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            Require(decoded.addressModeU == expected && decoded.addressModeV == expected && decoded.borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, "unnormalized clamp mode " + std::to_string(clamp) + " must decode to clamp-to-border with a bilinear and clamp-to-edge with a point magnification filter");
+        }
+    }
     Fields unnormalizedBiased = unnormalizedBase;
     unnormalizedBiased.lodBiasRaw = 256;
     unnormalizedBiased.lodBiasSec = 8;
