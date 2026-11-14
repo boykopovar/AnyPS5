@@ -6930,9 +6930,11 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     requireGuestBuffers(moved);
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || (usesBda && !spaceReuse)) return {};
     prepareFaultSlot();
+    auto split = guestMemory.SplitInPlaceReads();
+    const bool sharedOnly = split && split->own.empty();
     thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* readsSlot = nullptr;
     auto& reads = ShaderRecompiler::ThreadOwned(readsSlot);
-    guestMemory.InPlaceReads(reads);
+    if (!sharedOnly) guestMemory.InPlaceReads(reads);
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
     const auto uploadLimit = DrawUploadLimit();
     std::size_t totalSnapshotBytes = 0;
@@ -6966,7 +6968,14 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             size = override->size;
         } else {
             if (movedOnly || !item.guest || item.written || guestMemory.WritesOverlap(item.address, item.size)) continue;
-            const bool direct = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return item.address >= range.first && item.address < range.second && item.size <= range.second - item.address; });
+            const bool direct = [&] {
+                if (sharedOnly) {
+                    const auto& ranges = *split->space;
+                    const auto found = std::partition_point(ranges.begin(), ranges.end(), [&](const auto& range) { return range.second <= item.address; });
+                    return found != ranges.end() && found->first <= item.address && item.address < found->second && item.size <= found->second - item.address;
+                }
+                return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return item.address >= range.first && item.address < range.second && item.size <= range.second - item.address; });
+            }();
             if (!direct || recorder.PendingWriteOverlaps(item.address, item.size)) continue;
         }
         const auto begin = address - item.adjustment;
