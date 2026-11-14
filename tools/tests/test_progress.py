@@ -290,6 +290,13 @@ class ProgressTests(unittest.TestCase):
                                     self.report_snapshot(after)["libraries"])[0]
         self.assertIn("(+<0.0001%, +1 implemented function)", headline)
 
+    def test_report_keeps_plural_unit_for_two_changed_functions(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=1, todo=10000000)
+        after = dict(self.report_library("libScePad", ["A", "B", "C"], ["T"]), done=3, todo=10000000)
+        headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                    self.report_snapshot(after)["libraries"])[0]
+        self.assertIn("+2 implemented functions)", headline)
+
     def test_percent_change_is_n_a_when_a_percentage_is_missing(self):
         self.assertEqual(progress.percent_change(None, 50), "n/a")
         self.assertEqual(progress.percent_change(50, None), "n/a")
