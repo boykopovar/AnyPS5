@@ -241,6 +241,9 @@ int main() {
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && !muted);
     Require(sceVoiceSetMuteFlagAll(true) == 0);
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && muted);
+    errno = 71;
+    Require(sceVoiceGetMuteFlag(input, reinterpret_cast<bool*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceVoiceSetMuteFlagAll(false) == 0);
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && !muted);
     Require(sceVoiceGetMuteFlag(output, &muted) == 0 && muted);
