@@ -149,7 +149,7 @@
 - [sceAudioOutGetHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetSimulatedHandleStatusInfo2](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutChangeAppModuleState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutGetSimulatedHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature; the body returns the fixed value 0x809B00FF without throwing, which AnyPS5's test in `tests/AudioOutInfo.cpp` expects as "not supported". The console's return is not measured.
+- [sceAudioOutGetSimulatedHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature; the body returns the fixed value 0x809B00FF without throwing, which AnyPS5's test in `core/libs/prx/libSceAudioOut/tests/AudioOutInfo.cpp` expects as "not supported". The console's return is not measured.
 - [sceAudioOutGetSimulatedBusUsableStatusByBusType](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutAttachToApplicationByPid](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutDetachFromApplicationByPid](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
