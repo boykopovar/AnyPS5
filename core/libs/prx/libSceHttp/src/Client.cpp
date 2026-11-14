@@ -448,6 +448,7 @@ struct HttpClientState : Aps5HttpClient {
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
                     if (name == "last-modified" || name == "date") value = CanonicalDate(std::move(value), responseTime);
                     const auto [found, inserted] = headers.emplace(name, value);
+                    if (!inserted && name == "transfer-encoding") throw HttpFailure("repeated HTTP transfer coding fields");
                     if (!inserted && found->second != value &&
                         (name != "content-length" || ContentLength(found->second) != ContentLength(value))) throw HttpFailure("conflicting HTTP headers");
                 }

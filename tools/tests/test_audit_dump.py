@@ -805,6 +805,15 @@ class AuditDumpTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_main(self.dump, "--relinker", self.root / "missing.exe", "--libs", "libs")
 
+    def test_errors_name_a_non_ascii_dump_on_a_cp1252_console(self):
+        dump = self.root / "日本"
+        dump.mkdir()
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+        result = subprocess.run([sys.executable, "-X", "utf8=0", audit_dump.__file__, str(dump),
+                                 "--relinker", str(self.relinker), "--libs", "libs"], env=env, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"{dump}: no eboot.bin", result.stderr.decode("utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

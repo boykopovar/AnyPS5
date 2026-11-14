@@ -69,4 +69,19 @@ int main() {
     Require((kernelUuidBytes[8] & 0xc0) == 0x80);
     Require((kernelUuidBytes[10] & 0x01) == 0);
     Require(std::memcmp(&kernelUuidBytes[10], first[0].node, sizeof(first[0].node)) == 0);
+
+    Require(sceKernelCreateUuidV7(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateUuidV7(reinterpret_cast<std::uint8_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    std::array<std::uint8_t, 16> versionSeven{};
+    std::array<std::uint8_t, 16> otherVersionSeven{};
+    const auto before = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    Require(sceKernelCreateUuidV7(versionSeven.data()) == 0);
+    Require(sceKernelCreateUuidV7(otherVersionSeven.data()) == 0);
+    const auto after = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    std::uint64_t milliseconds = 0;
+    for (int index = 0; index < 6; ++index) milliseconds = (milliseconds << 8) | versionSeven[index];
+    Require(milliseconds + 1000 >= before && milliseconds <= after + 1000);
+    Require((versionSeven[6] >> 4) == 7 && (versionSeven[8] & 0xc0) == 0x80);
+    Require((otherVersionSeven[6] >> 4) == 7 && (otherVersionSeven[8] & 0xc0) == 0x80);
+    Require(std::memcmp(&versionSeven[6], &otherVersionSeven[6], 10) != 0);
 }
