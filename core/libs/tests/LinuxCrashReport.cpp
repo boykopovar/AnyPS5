@@ -170,6 +170,8 @@ void Scenario(const std::string& name) {
         failStackInstall = name == "stack-failure";
         failStackQuery = name == "stack-query-failure";
         Load();
+        failStackInstall = 0;
+        failStackQuery = 0;
         struct sigaction action{};
         Check(sigaction(SIGILL, nullptr, &action) == 0 && action.sa_handler == SimpleHandler, "failed setup changed saved handler\n");
         raise(SIGILL);
@@ -236,6 +238,22 @@ void Scenario(const std::string& name) {
         for (std::size_t index = 0; index < 8400; index += 2)
             Check(mprotect(static_cast<char*>(mapping) + index * page, page, PROT_READ) == 0, "cannot split mapping fixture\n");
         Trap();
+    }
+    if (name == "mappings-late-executable") {
+        const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, page * 8401, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(mapping != MAP_FAILED, "cannot reserve late executable fixture\n");
+        for (std::size_t index = 0; index < 8400; index += 2)
+            Check(mprotect(static_cast<char*>(mapping) + index * page, page, PROT_READ) == 0, "cannot split late executable fixture\n");
+        const int file = memfd_create("anyps5-late-executable", MFD_CLOEXEC);
+        Check(file >= 0 && ftruncate(file, static_cast<off_t>(page)) == 0, "cannot create late executable fixture\n");
+        auto* instruction = static_cast<unsigned char*>(mapping) + 8400 * page;
+        Check(mmap(instruction, page, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) == instruction, "cannot map late executable fixture\n");
+        close(file);
+        instruction[0] = 0x0f;
+        instruction[1] = 0x0b;
+        Check(mprotect(instruction, page, PROT_READ | PROT_EXEC) == 0, "cannot protect late executable fixture\n");
+        reinterpret_cast<void (*)()>(instruction)();
     }
     if (name == "interrupted") {
         interruptWrite.store(true, std::memory_order_release);
@@ -384,6 +402,9 @@ int main(int argc, char** argv) {
         Expect(Has(run("sent", SIGSEGV), "[libc] fatal SIGSEGV (code 0)"), "sent signal report missing");
         Expect(Has(run("overflow", SIGSEGV), "[libc] fatal SIGSEGV"), "alternate-stack overflow report missing");
         Expect(Has(run("mappings", SIGILL), "mappings truncated after 4096 entries"), "mapping truncation missing");
+        const auto lateExecutable = run("mappings-late-executable", SIGILL);
+        Expect(Has(lateExecutable, "mappings truncated after 4096 entries"), "late executable mapping did not exceed capacity");
+        Expect(Has(lateExecutable, "memfd:anyps5-late-executable (deleted)+0x0"), "late executable mapping missing from fault report");
     } else if (group == "handlers") {
         for (const char* name : {"simple", "siginfo", "nodefer", "recover", "caller-stack"}) {
             const auto result = run(name, 0);

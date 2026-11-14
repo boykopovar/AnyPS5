@@ -1,6 +1,7 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -111,6 +112,9 @@ void CheckOpenParameters() {
     Require(sceAudio3dPortOpen(1, &defaults, &id) == INVALID_PARAMETER, "user id must be the system user");
     Require(sceAudio3dPortOpen(SYSTEM_USER, nullptr, &id) == INVALID_PARAMETER, "null parameters");
     Require(sceAudio3dPortOpen(SYSTEM_USER, &defaults, nullptr) == INVALID_PARAMETER, "null port id");
+    errno = 71;
+    Require(sceAudio3dPortOpen(SYSTEM_USER, reinterpret_cast<const Audio3dOpenParameters*>(std::uintptr_t{0x10}), &id) == INVALID_PARAMETER, "unreadable parameters");
+    Require(errno == 71 && id == 7, "parameter copy failure preserves errno and id");
     auto rejects = [&](auto change, const char* message) {
         Audio3dOpenParameters parameters = defaults;
         change(parameters);
@@ -119,6 +123,7 @@ void CheckOpenParameters() {
     };
     rejects([](auto& p) { p.size_this = 0x30; }, "unknown parameter size");
     rejects([](auto& p) { p.size_this = 0x21; }, "parameter size is not masked");
+    rejects([](auto& p) { p.size_this = 0x100000020ULL; }, "oversized parameter size");
     rejects([](auto& p) { p.rate = 1; }, "only 48 kHz");
     rejects([](auto& p) { p.granularity = 0x80; }, "granularity below 256");
     rejects([](auto& p) { p.granularity = 0x180; }, "granularity not a multiple of 256");
@@ -145,6 +150,15 @@ void CheckOpenClose() {
     parameters.size_this = 0x28;
     parameters.num_beds = 2;
     Require(Open(parameters, &id) == 0 && id == 0, "open hands out port 0");
+    auto* const badPtr = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    Require(sceAudio3dPortGetAttributesSupported(0, badPtr, nullptr) == INVALID_PARAMETER, "unwritable attributes pointer with null count");
+    std::uint32_t numAttributes = 0;
+    errno = 71;
+    Require(sceAudio3dPortGetAttributesSupported(0, badPtr, &numAttributes) == INVALID_PARAMETER, "unwritable attributes pointer");
+    Require(errno == 71 && numAttributes == 3, "attributes copy failure preserves errno and earlier count");
+    errno = 71;
+    Require(sceAudio3dPortGetAttributesSupported(0, nullptr, badPtr) == INVALID_PARAMETER, "unwritable numAttributes pointer");
+    Require(errno == 71, "attribute count copy failure preserves errno");
     std::uint32_t second = 7;
     Require(Open(parameters, &second) == OUT_OF_RESOURCES && second == 7, "only one port");
     std::uint32_t level = 0;
@@ -153,6 +167,12 @@ void CheckOpenClose() {
     Require(sceAudio3dPortClose(0) == 0, "close");
     Require(sceAudio3dPortClose(0) == INVALID_PORT, "double close");
     Require(sceAudio3dPortGetQueueLevel(0, &level, nullptr) == INVALID_PORT, "closed port");
+    errno = 71;
+    Require(Open(parameters, badPtr) == INVALID_PARAMETER, "open with unwritable id pointer");
+    Require(errno == 71, "port id copy failure preserves errno");
+    id = 7;
+    Require(Open(parameters, &id) == 0 && id == 0, "open hands out port 0 after rejected id pointer");
+    Require(sceAudio3dPortClose(0) == 0, "close after rejected id pointer");
 }
 
 void CheckPortWrappers() {
@@ -255,6 +275,9 @@ void CheckObjects() {
     std::uint32_t id = 7;
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     Require(sceAudio3dObjectReserve(0, nullptr) == INVALID_PARAMETER, "null object id");
+    errno = 71;
+    Require(sceAudio3dObjectReserve(0, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable object id");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dObjectReserve(1, &object) == INVALID_PORT && object == 7, "reserve on port 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "first object is 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 2, "second object is 2");
@@ -281,6 +304,10 @@ void CheckQueue() {
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     CheckAttributes();
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
+    errno = 71;
+    Require(sceAudio3dPortGetQueueLevel(0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == INVALID_PARAMETER, "unwritable level");
+    Require(sceAudio3dPortGetQueueLevel(0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable available");
+    Require(errno == 71, "errno preserved");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
     std::uint32_t level = 99;
@@ -623,6 +650,10 @@ void CheckPs4Process() {
     Require(sceAudio3dInitialize(0) == 0, "initialize in a PS4 process");
     Require(sceAudio3dInitialize(1) == NOT_READY, "a repeated initialize in a PS4 process is NOT_READY before the reserved check");
     Require(sceAudio3dInitialize(0) == NOT_READY, "a repeated initialize in a PS4 process is NOT_READY");
+    std::uint32_t badParameterId = 7;
+    errno = 71;
+    Require(sceAudio3dPortOpen(SYSTEM_USER, reinterpret_cast<const Audio3dOpenParameters*>(std::uintptr_t{0x10}), &badParameterId) == INVALID_PARAMETER, "PS4 unreadable parameters");
+    Require(errno == 71 && badParameterId == 7, "PS4 parameter copy failure preserves errno and id");
     const Audio3dOpenParameters defaults = Defaults();
     std::uint32_t id = 7;
     auto open = [&](auto change) {

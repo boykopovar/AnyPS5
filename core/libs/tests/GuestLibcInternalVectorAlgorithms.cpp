@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/VectorAlgorithms.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cfloat>
 #include <cmath>
 #include <cstddef>
@@ -11,7 +12,9 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
+#include <xmmintrin.h>
 
 namespace {
 
@@ -142,8 +145,8 @@ void CheckSignedZero() {
     const T values[] = {T(0), -T(0), T(0), -T(0)};
     const auto* base = reinterpret_cast<const unsigned char*>(values);
     const auto* end = base + sizeof(values);
-    Require(SameBits(Api<T>::Min(base, end), T(0)), "the first zero wins a minimum tie");
-    Require(SameBits(Api<T>::Max(base, end), T(0)), "the first zero wins a maximum tie");
+    Require(SameBits(Api<T>::Min(base, end), -T(0)), "the vector reduction selects the last lane's zero for minimum");
+    Require(SameBits(Api<T>::Max(base, end), -T(0)), "the vector reduction selects the last lane's zero for maximum");
     Require(Api<T>::MinElement(base, end) == base, "the first zero is the smallest element");
     Require(Api<T>::MaxElement(base, end) == base, "the first zero is the largest element");
     const MinMaxPointers pair = Api<T>::MinMaxElement(base, end);
@@ -153,7 +156,8 @@ void CheckSignedZero() {
     Require(SameBits(both.maximum, T(0)), "the value form keeps the first equal zero as the maximum");
     const T negativeFirst[] = {-T(0), T(0)};
     const auto* negativeBase = reinterpret_cast<const unsigned char*>(negativeFirst);
-    Require(SameBits(Api<T>::Min(negativeBase, negativeBase + sizeof(negativeFirst)), -T(0)), "a leading negative zero is kept");
+    const T expectedZero = sizeof(T) == 4 ? -T(0) : T(0);
+    Require(SameBits(Api<T>::Min(negativeBase, negativeBase + sizeof(negativeFirst)), expectedZero), "the scalar and packed paths retain their zero selection order");
 }
 
 template <typename T>
@@ -181,8 +185,6 @@ void CheckNaN() {
         values[position] = quiet;
         const auto* base = reinterpret_cast<const unsigned char*>(values);
         const auto* end = base + sizeof(values);
-        Require(Throws([&] { Api<T>::Min(base, end); }), "minimum rejects a NaN");
-        Require(Throws([&] { Api<T>::Max(base, end); }), "maximum rejects a NaN");
         Require(Throws([&] { Api<T>::MinMax(base, end); }), "minmax rejects a NaN");
         Require(Throws([&] { Api<T>::MinElement(base, end); }), "minimum element rejects a NaN");
         Require(Throws([&] { Api<T>::MaxElement(base, end); }), "maximum element rejects a NaN");
@@ -190,10 +192,10 @@ void CheckNaN() {
     }
     T negativeNaN[2] = {T(1), -std::numeric_limits<T>::quiet_NaN()};
     const auto* negativeBase = reinterpret_cast<const unsigned char*>(negativeNaN);
-    Require(Throws([&] { Api<T>::Min(negativeBase, negativeBase + sizeof(negativeNaN)); }), "a negative NaN is rejected");
+    Require(Throws([&] { Api<T>::MinMax(negativeBase, negativeBase + sizeof(negativeNaN)); }), "a negative NaN is rejected by minmax");
     T signaling[2] = {T(1), std::numeric_limits<T>::signaling_NaN()};
     const auto* signalingBase = reinterpret_cast<const unsigned char*>(signaling);
-    Require(Throws([&] { Api<T>::Max(signalingBase, signalingBase + sizeof(signaling)); }), "a signaling NaN is rejected");
+    Require(Throws([&] { Api<T>::MinMax(signalingBase, signalingBase + sizeof(signaling)); }), "a signaling NaN is rejected by minmax");
 }
 
 template <typename T>
@@ -224,6 +226,118 @@ void CheckInvalidRanges() {
     Require(Throws([&] { Api<T>::Min(nullptr, nullptr); }), "an empty null range is rejected for minimum");
 }
 
+template<typename TValue>
+using ValueBits = std::conditional_t<sizeof(TValue) == 4, std::uint32_t, std::uint64_t>;
+
+template<typename TValue>
+struct NativeValueCase {
+    bool special;
+    std::vector<ValueBits<TValue>> values;
+    ValueBits<TValue> minimum;
+    ValueBits<TValue> maximum;
+    unsigned int minimumFlags;
+    unsigned int maximumFlags;
+    unsigned int control;
+};
+
+template<typename TValue>
+std::vector<NativeValueCase<TValue>> NativeValueCases() {
+    if constexpr (sizeof(TValue) == 4) {
+        return {
+            {false, {0x80000000ULL}, 0x80000000ULL, 0x80000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x00000000ULL, 0x80000000ULL}, 0x00000000ULL, 0x00000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x00000000ULL, 0x00000000ULL, 0x80000000ULL}, 0x00000000ULL, 0x00000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x80000000ULL}, 0x80000000ULL, 0x80000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x80000000ULL}, 0x00000000ULL, 0x00000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x80000000ULL}, 0x80000000ULL, 0x80000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x80000000ULL}, 0x00000000ULL, 0x00000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x00000000ULL, 0x80000000ULL}, 0x00000000ULL, 0x00000000ULL, 0u, 0u, 0x1f80u},
+            {true, {0x7fc12345ULL}, 0x7fc12345ULL, 0x7fc12345ULL, 0u, 0u, 0x1f80u},
+            {true, {0x7fc12345ULL, 0xc0400000ULL}, 0x7fc12345ULL, 0x7fc12345ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7fc12345ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL}, 0xc0400000ULL, 0xbf800000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7fc12345ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL, 0x00000000ULL}, 0xc0400000ULL, 0x00000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7f812345ULL}, 0x7f812345ULL, 0x7f812345ULL, 0u, 0u, 0x1f80u},
+            {true, {0x7f812345ULL, 0xc0400000ULL}, 0x7f812345ULL, 0x7f812345ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7f812345ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL}, 0xc0400000ULL, 0xbf800000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7f812345ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL, 0x00000000ULL}, 0xc0400000ULL, 0x00000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x00000001ULL}, 0x00000001ULL, 0x00000001ULL, 0u, 0u, 0x1f80u},
+            {true, {0x00000001ULL, 0xc0400000ULL}, 0xc0400000ULL, 0x00000001ULL, 2u, 2u, 0x1f80u},
+            {true, {0x00000001ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL}, 0xc0400000ULL, 0x00000001ULL, 2u, 2u, 0x1f80u},
+            {true, {0x00000001ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL, 0x00000000ULL}, 0xc0400000ULL, 0x00000001ULL, 2u, 2u, 0x1f80u},
+            {true, {0xc0800000ULL, 0x7fc12345ULL}, 0xc0800000ULL, 0xc0800000ULL, 1u, 1u, 0x1f80u},
+            {true, {0xc0800000ULL, 0xc0400000ULL, 0xc0000000ULL, 0x7fc12345ULL}, 0x7fc12345ULL, 0x7fc12345ULL, 1u, 1u, 0x1f80u},
+            {true, {0xc0800000ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL, 0x7fc12345ULL}, 0xc0800000ULL, 0xbf800000ULL, 1u, 1u, 0x1f80u},
+            {true, {0xc0800000ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL, 0x00000000ULL, 0x3f800000ULL, 0x40000000ULL, 0x40400000ULL, 0x7fc12345ULL}, 0xc0800000ULL, 0x40400000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7f800000ULL, 0xc0400000ULL, 0xc0000000ULL, 0xbf800000ULL, 0x00000000ULL, 0x3f800000ULL, 0x40000000ULL}, 0xc0400000ULL, 0x7f800000ULL, 0u, 0u, 0x1f80u},
+            {true, {0xff854321ULL, 0x3f800000ULL, 0x7f812345ULL, 0x80000000ULL, 0x7fc12345ULL, 0xbf800000ULL, 0xff854321ULL}, 0xbf800000ULL, 0x3f800000ULL, 1u, 1u, 0x1fc0u},
+            {true, {0xff854321ULL, 0x3f800000ULL, 0x7f812345ULL, 0x80000000ULL, 0x7fc12345ULL, 0xbf800000ULL, 0xff854321ULL}, 0xbf800000ULL, 0x3f800000ULL, 1u, 1u, 0x9f80u},
+            {true, {0xff854321ULL, 0x3f800000ULL, 0x7f812345ULL, 0x80000000ULL, 0x7fc12345ULL, 0xbf800000ULL, 0xff854321ULL}, 0xbf800000ULL, 0x3f800000ULL, 1u, 1u, 0x9fc0u},
+        };
+    } else {
+        return {
+            {false, {0x8000000000000000ULL}, 0x8000000000000000ULL, 0x8000000000000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x0000000000000000ULL, 0x8000000000000000ULL}, 0x8000000000000000ULL, 0x8000000000000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x0000000000000000ULL, 0x0000000000000000ULL, 0x8000000000000000ULL}, 0x0000000000000000ULL, 0x0000000000000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x8000000000000000ULL}, 0x8000000000000000ULL, 0x8000000000000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x8000000000000000ULL}, 0x0000000000000000ULL, 0x0000000000000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x8000000000000000ULL}, 0x8000000000000000ULL, 0x8000000000000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x8000000000000000ULL}, 0x0000000000000000ULL, 0x0000000000000000ULL, 0u, 0u, 0x1f80u},
+            {false, {0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000000ULL, 0x8000000000000000ULL}, 0x0000000000000000ULL, 0x0000000000000000ULL, 0u, 0u, 0x1f80u},
+            {true, {0x7ff8123456789abcULL}, 0x7ff8123456789abcULL, 0x7ff8123456789abcULL, 0u, 0u, 0x1f80u},
+            {true, {0x7ff8123456789abcULL, 0xc008000000000000ULL}, 0xc008000000000000ULL, 0xc008000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7ff8123456789abcULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL}, 0xc008000000000000ULL, 0xbff0000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7ff8123456789abcULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL, 0x0000000000000000ULL}, 0xc008000000000000ULL, 0x0000000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7ff0123456789abcULL}, 0x7ff0123456789abcULL, 0x7ff0123456789abcULL, 0u, 0u, 0x1f80u},
+            {true, {0x7ff0123456789abcULL, 0xc008000000000000ULL}, 0xc008000000000000ULL, 0xc008000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7ff0123456789abcULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL}, 0xc008000000000000ULL, 0xbff0000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7ff0123456789abcULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL, 0x0000000000000000ULL}, 0xc008000000000000ULL, 0x0000000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x0000000000000001ULL}, 0x0000000000000001ULL, 0x0000000000000001ULL, 0u, 0u, 0x1f80u},
+            {true, {0x0000000000000001ULL, 0xc008000000000000ULL}, 0xc008000000000000ULL, 0x0000000000000001ULL, 2u, 2u, 0x1f80u},
+            {true, {0x0000000000000001ULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL}, 0xc008000000000000ULL, 0x0000000000000001ULL, 2u, 2u, 0x1f80u},
+            {true, {0x0000000000000001ULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL, 0x0000000000000000ULL}, 0xc008000000000000ULL, 0x0000000000000001ULL, 2u, 2u, 0x1f80u},
+            {true, {0xc010000000000000ULL, 0x7ff8123456789abcULL}, 0x7ff8123456789abcULL, 0x7ff8123456789abcULL, 1u, 1u, 0x1f80u},
+            {true, {0xc010000000000000ULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0x7ff8123456789abcULL}, 0x7ff8123456789abcULL, 0x7ff8123456789abcULL, 1u, 1u, 0x1f80u},
+            {true, {0xc010000000000000ULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL, 0x7ff8123456789abcULL}, 0xc010000000000000ULL, 0xbff0000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0xc010000000000000ULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL, 0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x4000000000000000ULL, 0x4008000000000000ULL, 0x7ff8123456789abcULL}, 0xc010000000000000ULL, 0x4008000000000000ULL, 1u, 1u, 0x1f80u},
+            {true, {0x7ff0000000000000ULL, 0xc008000000000000ULL, 0xc000000000000000ULL, 0xbff0000000000000ULL, 0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x4000000000000000ULL}, 0xc008000000000000ULL, 0x7ff0000000000000ULL, 0u, 0u, 0x1f80u},
+            {true, {0xfff023456789abcdULL, 0x3ff0000000000000ULL, 0x7ff0123456789abcULL, 0x8000000000000000ULL, 0x7ff8123456789abcULL, 0xbff0000000000000ULL, 0xfff023456789abcdULL}, 0xbff0000000000000ULL, 0x3ff0000000000000ULL, 1u, 1u, 0x1fc0u},
+            {true, {0xfff023456789abcdULL, 0x3ff0000000000000ULL, 0x7ff0123456789abcULL, 0x8000000000000000ULL, 0x7ff8123456789abcULL, 0xbff0000000000000ULL, 0xfff023456789abcdULL}, 0xbff0000000000000ULL, 0x3ff0000000000000ULL, 1u, 1u, 0x9f80u},
+            {true, {0xfff023456789abcdULL, 0x3ff0000000000000ULL, 0x7ff0123456789abcULL, 0x8000000000000000ULL, 0x7ff8123456789abcULL, 0xbff0000000000000ULL, 0xfff023456789abcdULL}, 0xbff0000000000000ULL, 0x3ff0000000000000ULL, 1u, 1u, 0x9fc0u},
+        };
+    }
+}
+
+template<typename TValue>
+void CheckNativeValueCases(bool special) {
+    const auto savedControl = _mm_getcsr();
+    for (const auto& test : NativeValueCases<TValue>()) {
+        if (test.special != special) continue;
+        const auto byteCount = test.values.size() * sizeof(TValue);
+        for (std::size_t sample = 0; sample < sizeof(TValue) * 2; ++sample) {
+            const auto offset = sample % sizeof(TValue);
+            const unsigned int stickyFlags = sample < sizeof(TValue) ? 0u : 0x20u;
+            std::vector<unsigned char> storage(byteCount + sizeof(TValue));
+            auto* first = storage.data() + offset;
+            const auto* last = first + byteCount;
+            std::memcpy(first, test.values.data(), byteCount);
+            _mm_setcsr(test.control | stickyFlags);
+            const auto minimum = Api<TValue>::Min(first, last);
+            const auto minimumState = _mm_getcsr();
+            Require(std::bit_cast<ValueBits<TValue>>(minimum) == test.minimum, "native minimum value bits");
+            Require((minimumState & 0x3fu) == (test.minimumFlags | stickyFlags), "native minimum floating-point flags");
+            Require((minimumState & ~0x3fu) == test.control, "minimum preserves floating-point controls");
+            _mm_setcsr(test.control | stickyFlags);
+            const auto maximum = Api<TValue>::Max(first, last);
+            const auto maximumState = _mm_getcsr();
+            Require(std::bit_cast<ValueBits<TValue>>(maximum) == test.maximum, "native maximum value bits");
+            Require((maximumState & 0x3fu) == (test.maximumFlags | stickyFlags), "native maximum floating-point flags");
+            Require((maximumState & ~0x3fu) == test.control, "maximum preserves floating-point controls");
+            Require(std::memcmp(first, test.values.data(), byteCount) == 0, "native extrema preserve input");
+        }
+    }
+    _mm_setcsr(savedControl);
+}
+
 template <typename T>
 void CheckType() {
     CheckSequences<T>();
@@ -237,7 +351,15 @@ void CheckType() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2) {
+        const std::string mode = argv[1];
+        if (mode != "native-zero" && mode != "native-special") return 2;
+        CheckNativeValueCases<float>(mode == "native-special");
+        CheckNativeValueCases<double>(mode == "native-special");
+        return 0;
+    }
+    if (argc != 1) return 2;
     CheckType<float>();
     CheckType<double>();
     return 0;

@@ -16,8 +16,8 @@ constexpr std::uint32_t RemotePlayPortFlag = 1;
 
 extern "C" {
 
-int APS5_VABI sceNpRemotePlaySessionSignalingCreateJoinSession() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingCreateJoinSession(const char* sessionId, std::uint32_t* groupId, std::uint32_t* connectionId) {
+    return sceNpSessionSignalingCreateJoinActivate(sessionId, groupId, connectionId);
 }
 
 int32_t APS5_VABI sceNpRemotePlaySessionSignalingGetConnectionStatus(std::uint32_t contextId, std::uint32_t connectionId, std::int32_t* status, std::uint32_t* peerAddress, std::uint16_t* peerPort) {
@@ -29,7 +29,12 @@ int32_t APS5_VABI sceNpRemotePlaySessionSignalingGetConnectionStatus(std::uint32
     if (result < 0) {
         return result;
     }
-    *status = value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) {
+        return ErrorInvalidArgument;
+    }
     return 0;
 }
 
@@ -46,9 +51,16 @@ int32_t APS5_VABI sceNpRemotePlaySessionSignalingGetLocalNetInfo(std::uint32_t c
     if (result < 0) {
         return result;
     }
-    info->localAddress = local.localAddress;
-    info->mappedAddress = local.mappedAddress;
-    info->mappedPort = local.mappedPort;
+    NpRemotePlaySessionSignalingLocalNetInfo localOut{};
+    localOut.localAddress = local.localAddress;
+    localOut.mappedAddress = local.mappedAddress;
+    localOut.mappedPort = local.mappedPort;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localOut, sizeof(localOut));
+    errno = savedErrno;
+    if (!copied) {
+        return ErrorInvalidArgument;
+    }
     return 0;
 }
 
@@ -74,13 +86,24 @@ int APS5_VABI sceNpRemotePlaySessionSignalingInitialize(const SessionSignalingIn
     if (param == nullptr) {
         return ErrorInvalidArgument;
     }
-    const SessionSignalingInitParam copy{param->userId, param->poolSize, param->affinityMask, param->threadPriority,
-        param->stackSize};
+    SessionSignalingInitParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) {
+        return ErrorInvalidArgument;
+    }
+    const SessionSignalingInitParam copy{
+        localParam.userId,
+        localParam.poolSize,
+        localParam.affinityMask,
+        localParam.threadPriority,
+        localParam.stackSize};
     return sceNpSessionSignalingInitializeWithPort(&copy, RemotePlayPort, RemotePlayPortFlag);
 }
 
-int APS5_VABI sceNpRemotePlaySessionSignalingJoinSession() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingJoinSession(const char* sessionId, const void* param, std::uint32_t* groupId, std::uint32_t* connectionId) {
+    return sceNpSessionSignalingJoinActivate(sessionId, param, groupId, connectionId);
 }
 
 int APS5_VABI sceNpRemotePlaySessionSignalingLeaveSession(std::uint32_t contextId) {

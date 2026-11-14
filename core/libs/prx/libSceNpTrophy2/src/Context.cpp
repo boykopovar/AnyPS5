@@ -27,12 +27,14 @@ Contexts& contexts() {
 
 }
 
-int CreateContext(std::int32_t userId, std::uint32_t serviceLabel) {
+bool CreateContext(std::int32_t userId, std::uint32_t serviceLabel, int* context) {
     auto& table = contexts();
     std::lock_guard lock(table.mutex);
-    const int context = table.next++;
-    table.owners[context] = {userId, serviceLabel};
-    return context;
+    const int id = table.next;
+    if (!GuestCopyOut_nid_no_patch(context, &id, sizeof(id))) return false;
+    ++table.next;
+    table.owners[id] = {userId, serviceLabel};
+    return true;
 }
 
 void DestroyContext(int context) {
@@ -58,7 +60,9 @@ int APS5_VABI sceNpTrophy2CreateContext(int* context, int user_id, uint32_t serv
         APS5_INVALID_ARG_EX;
     }
     (void)options;
-    *context = NpTrophy2::CreateContext(user_id, service_label);
+    if (!NpTrophy2::CreateContext(user_id, service_label, context)) {
+        APS5_INVALID_ARG_EX;
+    }
     return SCE_NP_TROPHY2_OK;
 }
 

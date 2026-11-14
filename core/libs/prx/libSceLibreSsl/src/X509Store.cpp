@@ -111,11 +111,14 @@ bool Push(Stack* stack, void* element, const char* function) {
     return true;
 }
 
+using LookupCallback = int (APS5_VABI*)(LibreSslX509Lookup*);
+using LookupFree = void (APS5_VABI*)(LibreSslX509Lookup*);
+
 void FreeLookup(LibreSslX509Lookup* lookup, bool shutdown, const char* function) {
     if (!lookup) NotImplemented_nid_no_patch(function);
     const auto* method = lookup->method;
-    if (shutdown && method && method->shutdown) NotImplemented_nid_no_patch("X509_LOOKUP shutdown callback");
-    if (method && method->free) NotImplemented_nid_no_patch("X509_LOOKUP free callback");
+    if (shutdown && method && method->shutdown) reinterpret_cast<LookupCallback>(method->shutdown)(lookup);
+    if (method && method->free) reinterpret_cast<LookupFree>(method->free)(lookup);
     free_nid_postfix(lookup);
 }
 
@@ -228,15 +231,24 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
         }
     }
     if (!method) throw std::invalid_argument(std::string(__func__) + ": null method");
-    if (method->newItem) NotImplemented_nid_no_patch("X509_LOOKUP new_item callback");
     auto* lookup = static_cast<LibreSslX509Lookup*>(malloc_nid_postfix(sizeof(LibreSslX509Lookup)));
     if (!lookup) return nullptr;
     lookup->init = 0;
     lookup->skip = 0;
     lookup->method = method;
     lookup->methodData = nullptr;
+    lookup->storeContext = nullptr;
+    if (method->newItem && !reinterpret_cast<LookupCallback>(method->newItem)(lookup)) {
+        free_nid_postfix(lookup);
+        return nullptr;
+    }
     lookup->storeContext = store;
-    if (Push(lookupMethods, lookup, __func__)) return lookup;
+    try {
+        if (Push(lookupMethods, lookup, __func__)) return lookup;
+    } catch (...) {
+        FreeLookup(lookup, false, __func__);
+        throw;
+    }
     FreeLookup(lookup, false, __func__);
     return nullptr;
 }

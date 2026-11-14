@@ -1,4 +1,5 @@
 #include "prx/libSceHttp/include/Http.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #ifdef _WIN32
@@ -7,6 +8,7 @@
 #endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttp/src/Cookies.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include <atomic>
@@ -31,9 +33,6 @@ struct RequestStatusRegistration {
 };
 static std::mutex g_statusMutex;
 static std::map<int, RequestStatusRegistration> g_statusCallbacks;
-
-static_assert(sizeof(HttpCookieStats) == 32);
-static_assert(offsetof(HttpCookieStats, peakUsedBytes) == 16);
 
 static_assert(sizeof(HttpMemoryPoolStats) == 24);
 static_assert(offsetof(HttpMemoryPoolStats, peakUsedSize) == 8);
@@ -152,8 +151,8 @@ int APS5_VABI sceHttpAuthCacheFlush(int httpCtxId) {
 
 int APS5_VABI sceHttpCookieFlush(int httpCtxId) {
     std::lock_guard lock(g_stateMutex);
-    if (g_contexts.empty()) return ERROR_BEFORE_INIT;
     if (!g_contexts.contains(httpCtxId)) return ERROR_INVALID_ID;
+    ClearHttpCookieJar(httpCtxId);
     return 0;
 }
 
@@ -603,8 +602,15 @@ int APS5_VABI sceHttpsGetSslError(int id, int* err_num, uint32_t* detail) {
     if (err_num == nullptr || detail == nullptr) {
         return ERROR_INVALID_VALUE;
     }
-    *err_num = 0;
-    *detail = 0;
+    const int zeroErr = 0;
+    const uint32_t zeroDetail = 0;
+    const int savedErrno = errno;
+    const bool copiedErr = GuestCopyOut_nid_no_patch(err_num, &zeroErr, sizeof(zeroErr));
+    const bool copiedDetail = GuestCopyOut_nid_no_patch(detail, &zeroDetail, sizeof(zeroDetail));
+    errno = savedErrno;
+    if (!copiedErr || !copiedDetail) {
+        return ERROR_INVALID_VALUE;
+    }
     return 0;
 }
 
@@ -737,11 +743,6 @@ int APS5_VABI sceHttpGetEpollId(std::int32_t id, std::int32_t* epollId, void** u
     return 0;
 }
 
-int APS5_VABI sceHttpGetCookie(int contextId, const char* url, char* cookie, std::size_t* requiredSize, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable) {
     if (!HttpInitialised()) return ERROR_BEFORE_INIT;
     if (!enable) return ERROR_INVALID_VALUE;
@@ -751,49 +752,17 @@ int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable) {
     return 0;
 }
 
-int APS5_VABI sceHttpAddCookie(int contextId, const char* url, const char* cookie, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttpSetCookieSendCallback(std::int32_t id, HttpCookieSendCallback callback, void* userArg) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceHttpCookieExport(int contextId, void* buffer, std::size_t size, std::size_t* requiredSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ExportHttpCookies(contextId, buffer, size, requiredSize);
 }
 
 int APS5_VABI sceHttpCookieImport(int contextId, const void* buffer, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttpSetCookieTotalMaxSize(int contextId, std::uint32_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttpSetCookieMaxSize(int contextId, std::uint32_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttpSetCookieMaxNum(int contextId, std::uint32_t count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttpSetCookieMaxNumPerDomain(int contextId, std::uint32_t count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttpGetCookieStats(int id, HttpCookieStats* stats) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ImportHttpCookies(contextId, buffer, size);
 }
 
 int APS5_VABI sceHttpSetPriorityOption(int id, int priority) {

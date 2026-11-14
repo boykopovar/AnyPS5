@@ -4,6 +4,7 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
+#include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -279,6 +280,15 @@ void testPs4Buffers() {
         if (field == 2) invalid.option = 1;
         rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
     }
+    auto strictColorimetry = changed;
+    strictColorimetry.option = 8;
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &strictColorimetry) == 0, "the legacy change with option 8 (strict colorimetry) failed");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].attribute.option == 8, "the legacy change did not store option 8");
+    }
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "the legacy change back to option 0 failed");
+    unchanged();
     for (int field = 0; field < 3; ++field) {
         auto invalid = changed;
         const int error = field == 0 ? VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO : field == 1 ? VIDEO_OUT_ERROR_INVALID_PITCH : VIDEO_OUT_ERROR_INVALID_TILING_MODE;
@@ -328,6 +338,19 @@ void testPs4Buffers() {
         check(cfg->flipStatus.currentBuffer == 0 && cfg->flipStatus.flipArg == 8 && cfg->flipStatus.flipPendingNum == 0, "the changed legacy flip status is wrong");
     }
     AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
+    void* const fifth[1] = {storage.data() + 98304};
+    auto strictTiled = tiled;
+    strictTiled.option = 8;
+    check(sceVideoOutRegisterBuffers(handle, 4, fifth, 1, &strictTiled) == 3, "the PS4 tiled buffer with option 8 (strict colorimetry) was not registered as set 3");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[3].attribute.option == 8, "the PS4 buffer option 8 was not stored");
+        auto plain = cfg->groups[3];
+        plain.attribute.option = 0;
+        const auto strict = DescribeVideoOutBuffer(cfg->buffers[4], cfg->groups[3]);
+        const auto same = DescribeVideoOutBuffer(cfg->buffers[4], plain);
+        check(strict.address == same.address && strict.pixelFormat == same.pixelFormat && strict.width == same.width && strict.height == same.height && strict.tilingMode == same.tilingMode && strict.pitchInPixel == same.pitchInPixel && strict.dccAddress == same.dccAddress && strict.dccClearColor == same.dccClearColor && strict.alignment == same.alignment && strict.tilingMode == AgcDriver::DisplayTilingGcn, "the PS4 buffer with option 8 is not described as the same buffer with option 0");
+    }
     sceVideoOutClose(handle);
     const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
     raw.fill(0xaa);
@@ -633,6 +656,28 @@ void testControls() {
     check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
     check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
+    check(sceVideoOutSysGetBus(handle) == VIDEO_OUT_BUS_TYPE_MAIN, "the main port's bus is not main");
+    check(sceVideoOutSysGetBus(0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a null handle");
+    check(sceVideoOutSysGetBus(handle + 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a port that is not open");
+    check(sceVideoOutSysGetBus(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported for a negative handle");
+    check(sceVideoOutSysGetBus(6) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a bus was reported past the last port");
+    constexpr int invalidIndex = static_cast<int>(0x80290001u);
+    check(sceVideoOutSysAddSetModeEvent2(queue, 2, nullptr) == invalidIndex, "set mode subscription on index 2 was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, -1, nullptr) == invalidIndex, "set mode subscription on a negative index was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "set mode subscription on an unopened port was accepted");
+    check(sceVideoOutSysAddSetModeEvent2(queue, 0, &mode) == 0, "set mode subscription on the main port failed");
+    check(owner->GetTriggeredEvents(&event, 1) == 1 && event.udata == &mode && sceVideoOutGetEventId(&event) == VIDEO_OUT_EVENT_SET_MODE, "set mode event missing");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->outputModeEvents.size() == 1, "set mode subscription was not recorded");
+    }
+    check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "set mode unsubscription failed");
+    std::uint32_t pipeline[8];
+    std::fill_n(pipeline, 8, 0xdeadbeefu);
+    check(sceVideoOutGetPipelineStatus(nullptr, 0) == static_cast<int>(0x80290002u), "a null pipeline status was accepted");
+    check(sceVideoOutGetPipelineStatus(pipeline, 1) == static_cast<int>(0x80290002u), "a nonzero pipeline reservation was accepted");
+    check(sceVideoOutGetPipelineStatus(pipeline, 0) == static_cast<int>(0x802900FFu), "the pipeline query did not report the device error");
+    check(pipeline[0] == 0xdeadbeefu && pipeline[7] == 0xdeadbeefu, "the pipeline status wrote on failure");
     check(sceVideoOutAddVblankEvent(queue, handle, nullptr) == 0 && sceVideoOutAddVblankEvent(queue, handle, &settings) == 0, "vblank subscription failed");
     {
         std::lock_guard lock(cfg->mutex);
@@ -669,6 +714,19 @@ void testControls() {
         check(!cfg->groups[3].occupied && !cfg->buffers[15].Occupied(), "a refused registration past the last buffer registered something");
     }
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffers with set reserved pointers were rejected");
+    check(sceVideoOutAddFlipEvent(queue, handle, &settings) == 0, "flip event subscription failed");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->flipEvents.size() == 1, "flip event subscription was not recorded");
+    }
+    check(sceVideoOutDeleteFlipEvent(queue, handle) == 0, "flip event unsubscription failed");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->flipEvents.empty(), "flip event unsubscription did not clear registration");
+    }
+    check(sceVideoOutDeleteFlipEvent(queue, handle) == 0, "duplicate flip event unsubscription failed");
+    expectFailure([&] { sceVideoOutDeleteFlipEvent(0, handle); });
+    check(sceVideoOutDeleteFlipEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event unsubscription on an invalid handle was accepted");
     constexpr int slotOccupied = static_cast<int>(0x80290010u);
     VideoOutBuffers again{storage.data(), nullptr, {nullptr, nullptr}};
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &again, 1, &attribute, 0, nullptr) == slotOccupied, "a registration over a registered set and its buffers did not fail with SLOT_OCCUPIED");
@@ -696,6 +754,8 @@ void testControls() {
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0x100000000ull, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0x100000000ull); });
+    check(sceVideoOutVrrPegToFixedRate(-1, 0, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR peg on handle -1 was not refused");
+    check(sceVideoOutVrrUnpegFromFixedRate(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR unpeg on handle -1 was not refused");
     sceVideoOutClose(handle);
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 0); });
     expectFailure([&] { sceVideoOutVrrUnpegFromFixedRate(handle); });
@@ -1171,19 +1231,61 @@ void testLabels(bool overlay) {
 void testUnopenedEventRegistration() {
     KernelEqueue eq = 0;
     check(sceKernelCreateEqueue(&eq, "unopened") == 0, "the event queue was not created");
-    check(sceVideoOutAddFlipEvent(eq, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on an unopened port was accepted");
-    check(sceVideoOutAddVblankEvent(eq, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event on an unopened port was accepted");
-    check(sceVideoOutDeleteFlipEvent(eq, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on an unopened port was accepted");
-    check(sceVideoOutDeleteVblankEvent(eq, 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on an unopened port was accepted");
+    for (int unopened : {-1, 0, 1, 2, 0x7FFFFFFF}) {
+        check(sceVideoOutAddFlipEvent(eq, unopened, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on an unopened port was accepted");
+        check(sceVideoOutAddVblankEvent(eq, unopened, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event on an unopened port was accepted");
+        check(sceVideoOutAddPreVblankStartEvent(eq, unopened, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "pre-vblank event on an unopened port was accepted");
+        check(sceVideoOutAddOutputModeEvent(eq, unopened, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode event on an unopened port was accepted");
+        check(sceVideoOutAddVrrActiveStatusEvent(eq, unopened, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vrr active status event on an unopened port was accepted");
+        check(sceVideoOutDeleteFlipEvent(eq, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on an unopened port was accepted");
+        check(sceVideoOutDeleteVblankEvent(eq, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on an unopened port was accepted");
+        check(sceVideoOutDeletePreVblankStartEvent(eq, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "pre-vblank event deletion on an unopened port was accepted");
+        check(sceVideoOutDeleteOutputModeEvent(eq, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode event deletion on an unopened port was accepted");
+        check(sceVideoOutDeleteVrrActiveStatusEvent(eq, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vrr active status event deletion on an unopened port was accepted");
+        check(sceVideoOutAddFlipEvent(0, unopened, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "unopened handle check did not take precedence over null event queue");
+        check(sceVideoOutDeleteFlipEvent(0, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "unopened handle check did not take precedence on delete");
+    }
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    expectFailure([&] { sceVideoOutAddFlipEvent(0, handle, nullptr); });
+    expectFailure([&] { sceVideoOutDeleteFlipEvent(0, handle); });
+    expectFailure([&] { sceVideoOutAddVblankEvent(0, handle, nullptr); });
+    expectFailure([&] { sceVideoOutDeleteVblankEvent(0, handle); });
+    expectFailure([&] { sceVideoOutAddPreVblankStartEvent(0, handle, nullptr); });
+    expectFailure([&] { sceVideoOutDeletePreVblankStartEvent(0, handle); });
+    expectFailure([&] { sceVideoOutAddOutputModeEvent(0, handle, nullptr); });
+    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
+    expectFailure([&] { sceVideoOutAddVrrActiveStatusEvent(0, handle, nullptr); });
+    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
+
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == 0, "flip event on an open port was refused");
     check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == 0, "vblank event on an open port was refused");
+    check(sceVideoOutAddPreVblankStartEvent(eq, handle, nullptr) == 0, "pre-vblank event on an open port was refused");
+    check(sceVideoOutAddOutputModeEvent(eq, handle, nullptr) == 0, "output mode event on an open port was refused");
+    check(sceVideoOutAddVrrActiveStatusEvent(eq, handle, nullptr) == 0, "vrr active status event on an open port was refused");
+
     check(sceVideoOutDeleteFlipEvent(eq, handle) == 0, "registered flip event was not deleted");
     check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "registered vblank event was not deleted");
+    check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == 0, "registered pre-vblank event was not deleted");
+    check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "registered output mode event was not deleted");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "registered vrr active status event was not deleted");
+
+    check(sceVideoOutDeleteFlipEvent(eq, handle) == 0, "duplicate flip event deletion on an open port failed");
+    check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "duplicate vblank event deletion on an open port failed");
+    check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == 0, "duplicate pre-vblank event deletion on an open port failed");
+    check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "duplicate output mode event deletion on an open port failed");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "duplicate vrr active status event deletion on an open port failed");
+
     sceVideoOutClose(handle);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on a closed port was accepted");
+    check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event on a closed port was accepted");
+    check(sceVideoOutAddPreVblankStartEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "pre-vblank event on a closed port was accepted");
+    check(sceVideoOutAddOutputModeEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode event on a closed port was accepted");
+    check(sceVideoOutAddVrrActiveStatusEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vrr active status event on a closed port was accepted");
     check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on a closed port was accepted");
     check(sceVideoOutDeleteVblankEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on a closed port was accepted");
+    check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "pre-vblank event deletion on a closed port was accepted");
+    check(sceVideoOutDeleteOutputModeEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode event deletion on a closed port was accepted");
+    check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vrr active status event deletion on a closed port was accepted");
     check(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
     LibcRunShutdown_nid_postfix();
 }
@@ -1324,6 +1426,12 @@ void testFreshHandleCalls() {
     check(raw == expected, "a fresh handle's flip status differs from the measured bytes");
     check(sceVideoOutGetFlipStatus(handle, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a null flip status output was accepted");
     check(sceVideoOutIsFlipPending(handle) == 0, "a fresh handle reported a pending flip");
+    expectFailure([&] { sceVideoOutSubmitFlip(handle, 0, 1, 0); });
+    expectFailure([&] { sceVideoOutSubmitFlip(handle, 16, 1, 0); });
+    expectFailure([&] { sceVideoOutSubmitFlip(handle, -3, 1, 0); });
+    expectFailure([&] { sceVideoOutSubmitFlip(handle, 0, 0, 0); });
+    expectFailure([&] { sceVideoOutSubmitFlip(handle, 0, 7, 0); });
+    expectFailure([&] { sceVideoOutSubmitFlip(-1, 0, 1, 0); });
 
     const std::uint32_t image[64 * 64] = {};
     check(sceVideoOutCursorEnable(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a cursor was enabled without an image address");
@@ -1361,6 +1469,9 @@ void testFreshHandleCalls() {
     check(sceVideoOutSetFlipMaster(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle was made flip master");
     check(sceVideoOutClearFlipMaster(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's flip master was cleared");
     check(sceVideoOutClose(handle) == 0, "the fresh handle was not closed");
+    check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == VIDEO_OUT_ERROR_INVALID_HANDLE, "closed handle flip status was accepted");
+    check(sceVideoOutIsFlipPending(handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "closed handle pending flip was accepted");
+    expectFailure([&] { sceVideoOutSubmitFlip(handle, 0, 1, 0); });
     LibcRunShutdown_nid_postfix();
 }
 

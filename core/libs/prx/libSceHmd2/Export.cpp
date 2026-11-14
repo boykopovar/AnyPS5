@@ -99,6 +99,13 @@ std::uint32_t CompiledSdkVersion() {
     return version;
 }
 
+bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
 std::int32_t GetDeviceInformation(Hmd2::DeviceInformation* info) {
     const int savedErrno = errno;
     if (!info) return Hmd2::ParameterNull;
@@ -351,13 +358,21 @@ int APS5_VABI sceHmd2ReprojectionSetMirroringOption(const Hmd2::MirroringOption*
 }
 
 int APS5_VABI sceHmd2ReprojectionSetParam(std::uint32_t bufferSetId, std::uint64_t frameId, const Hmd2::ReprojectionParameter* parameter, std::uint64_t reserved) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)bufferSetId;
+    (void)frameId;
+    (void)reserved;
+    if (parameter == nullptr) return Hmd2::VideoOutInvalidAddress;
+    return Hmd2::VideoOutInvalidIndex;
 }
 
 int APS5_VABI sceHmd2ReprojectionSetParamWithBuffer(std::uint32_t bufferSetId, std::uint64_t frameId, const Hmd2::ReprojectionBufferedParameter* parameter, std::uint64_t reserved) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)bufferSetId;
+    (void)frameId;
+    (void)reserved;
+    std::lock_guard lock(reprojectionMutex);
+    if (reprojectionState != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (parameter == nullptr) return Hmd2::ParameterNull;
+    return Hmd2::VideoOutInvalidIndex;
 }
 
 int APS5_VABI sceHmd2ReprojectionSetRenderConfig(std::uint64_t flags, std::uint64_t reserved, std::uint64_t reserved2) {
@@ -885,15 +900,16 @@ APS5_EXPORT("W-ZIlUXcrNA", Hmd2CheckSecondThenError1002);
 std::int32_t APS5_VABI Hmd2WriteStateTwo(void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x02, 0x00, 0x00, 0x00, 0x00};
-    std::memcpy(a0, bytes, sizeof bytes);
+    if (!CopyGuestOut(a0, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("omimgG5itSs", Hmd2WriteStateTwo);
 
 std::int32_t APS5_VABI Hmd2WriteSize0x2000Align0x100(std::uint64_t* a0, std::uint64_t* a1) {
     if (a0 == nullptr || a1 == nullptr) return Hmd2::ParameterNull;
-    *a0 = 0x2000;
-    *a1 = 0x100;
+    static constexpr std::uint64_t val0 = 0x2000;
+    static constexpr std::uint64_t val1 = 0x100;
+    if (!CopyGuestOut(a0, &val0, sizeof val0) || !CopyGuestOut(a1, &val1, sizeof val1)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("6PeHcAaKYg8", Hmd2WriteSize0x2000Align0x100);
@@ -901,7 +917,7 @@ APS5_EXPORT("6PeHcAaKYg8", Hmd2WriteSize0x2000Align0x100);
 std::int32_t APS5_VABI Hmd2WriteFourConstants(void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0xe1, 0xf0, 0x74, 0x3c, 0xd8, 0xf0, 0x74, 0x3c, 0x1f, 0xf1, 0x74, 0x3c, 0xd8, 0xf0, 0x74, 0x3c};
-    std::memcpy(a0, bytes, sizeof bytes);
+    if (!CopyGuestOut(a0, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("yur+xPdWPAg", Hmd2WriteFourConstants);
@@ -910,7 +926,7 @@ std::int32_t APS5_VABI Hmd2WriteSixHalvesThenInvalidHandle(std::uint64_t a0, voi
     (void)a0;
     if (a1 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f};
-    std::memcpy(a1, bytes, sizeof bytes);
+    if (!CopyGuestOut(a1, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::InvalidHandle, __func__);
 }
 APS5_EXPORT("RnieDDp5ge4", Hmd2WriteSixHalvesThenInvalidHandle);
@@ -920,7 +936,7 @@ std::int32_t APS5_VABI Hmd2WriteTwelveHalvesThenInvalidHandle(std::uint64_t a0, 
     (void)a0;
     if (a1 == nullptr) return Hmd2::ParameterNull;
     static constexpr std::uint8_t bytes[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    std::memcpy(a1, bytes, sizeof bytes);
+    if (!CopyGuestOut(a1, bytes, sizeof bytes)) return Hmd2::ParameterNull;
     return BeforeInitialize(Hmd2::InvalidHandle, __func__);
 }
 APS5_EXPORT("b0H-n-tUk0U", Hmd2WriteTwelveHalvesThenInvalidHandle);
