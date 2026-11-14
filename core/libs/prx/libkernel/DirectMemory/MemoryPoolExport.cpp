@@ -147,7 +147,10 @@ int APS5_VABI sceKernelMemoryPoolReserve(void* addr_in, size_t len, size_t align
  const int savedErrnoAfter = errno;
  const bool copied = GuestCopyOut_nid_no_patch(addr_out, &reserved, sizeof(reserved));
  errno = savedErrnoAfter;
- if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+ if (!copied) {
+  munmap_nid_postfix(reserved, len);
+  return SCE_KERNEL_ERROR_EFAULT;
+ }
  return 0;
 }
 
