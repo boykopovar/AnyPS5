@@ -313,6 +313,51 @@ void StagingChunkTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
+struct DeviceHeapFull {
+    DeviceHeapFull() { AgcDriver::Graphics::SetDeviceHeapFullForTests(true); }
+    ~DeviceHeapFull() { AgcDriver::Graphics::SetDeviceHeapFullForTests(false); }
+    DeviceHeapFull(const DeviceHeapFull&) = delete;
+    DeviceHeapFull& operator=(const DeviceHeapFull&) = delete;
+};
+
+void FullDeviceHeapTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t FilledBlocks = 300;
+    GuestHeap read(false, 1, JoinedBytes * 2);
+    GuestHeap written(true);
+    const OutputBlock output;
+    for (std::uint64_t block = 1; block < FilledBlocks; ++block) read.Store(block * Block + 8, 0x11u);
+    for (std::uint32_t thread = 0; thread * ThreadStride < Block; ++thread) read.Store(thread * ThreadStride, Pattern(thread));
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    const DeviceHeapFull full;
+    Dispatch(device, read, written, output);
+    const auto held = AgcDriver::Graphics::HeapMirrorsWithin(read.Address(), read.Address() + JoinedBytes * 2);
+    Require(held.mirrors == 1 && held.bytes == FilledBlocks * Block, "resident heap mirror: a device heap reported full refused the new slab of a heap mirror while the heap mirrors held far less than there is to evict (" + std::to_string(held.mirrors) + " mirrors holding " + std::to_string(held.bytes >> 10u) + " KiB, expected 1 holding " + std::to_string((FilledBlocks * Block) >> 10u) + " KiB)");
+    CheckReads(output, "a device heap reported full", false);
+}
+
+struct HeapMirrorSlabReserve {
+    explicit HeapMirrorSlabReserve(std::uint64_t bytes) { AgcDriver::Graphics::SetHeapMirrorSlabReserveForTests(bytes); }
+    ~HeapMirrorSlabReserve() { AgcDriver::Graphics::SetHeapMirrorSlabReserveForTests(0); }
+    HeapMirrorSlabReserve(const HeapMirrorSlabReserve&) = delete;
+    HeapMirrorSlabReserve& operator=(const HeapMirrorSlabReserve&) = delete;
+};
+
+void FullDeviceHeapPastReserveTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t FilledBlocks = 300;
+    GuestHeap read(false, 1, JoinedBytes * 2);
+    GuestHeap written(true);
+    const OutputBlock output;
+    for (std::uint64_t block = 1; block < FilledBlocks; ++block) read.Store(block * Block + 8, 0x22u);
+    for (std::uint32_t thread = 0; thread * ThreadStride < Block; ++thread) read.Store(thread * ThreadStride, Pattern(thread));
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    const HeapMirrorSlabReserve reserve(1);
+    const DeviceHeapFull full;
+    Dispatch(device, read, written, output);
+    const auto held = AgcDriver::Graphics::HeapMirrorsWithin(read.Address(), read.Address() + JoinedBytes * 2);
+    Require(held.mirrors == 1 && held.bytes == FilledBlocks * Block, "resident heap mirror: a device heap reported full refused the new slab of a heap mirror while the live slabs were past the refusal gate and the heap mirrors held less than the shrink step (" + std::to_string(held.mirrors) + " mirrors holding " + std::to_string(held.bytes >> 10u) + " KiB, expected 1 holding " + std::to_string((FilledBlocks * Block) >> 10u) + " KiB)");
+    CheckReads(output, "a device heap reported full past the slab refusal gate", false);
+}
+
 void StorageImageZeroStoreTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(true);
     GuestHeap written(true);
@@ -623,6 +668,8 @@ int main() {
             if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);
         }
+        if (sparse) FullDeviceHeapTests(*device);
+        if (sparse) FullDeviceHeapPastReserveTests(*device);
         std::puts("resident heap mirror tests passed");
         return 0;
     } catch (const std::exception& error) {
