@@ -742,6 +742,15 @@ int GnmSurfaceInit(void* surface, const void* config) {
     return 0;
 }
 
+template <typename T>
+bool WriteGuestOut(T* pointer, const T& value) {
+    if (pointer == nullptr) return true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(pointer, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 const FontGnmSurface* ReadGnmSurface(const void* surface) {
     const auto* const gnm = static_cast<const FontGnmSurface*>(surface);
     if (gnm->tag != FontGnmSurfaceTag || gnm->head == nullptr || gnm->initialized != 1 || gnm->busy != 0) return nullptr;
@@ -823,30 +832,34 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTexturePattern(FontGraphicsFrame* grap
 
 int APS5_VABI sceFontGraphicsSequenceGetGnmCommandsForChain(FontGraphicsCanvasSequence* sequence, void** commands,
                                                           std::uint32_t* numCommands, void** commands2, std::uint32_t* numCommands2) {
-    if (commands != nullptr) *commands = nullptr;
-    if (numCommands != nullptr) *numCommands = 0;
-    if (commands2 != nullptr) *commands2 = nullptr;
-    if (numCommands2 != nullptr) *numCommands2 = 0;
+    const bool zeroedCommands = WriteGuestOut(commands, static_cast<void*>(nullptr));
+    const bool zeroedNumCommands = WriteGuestOut(numCommands, std::uint32_t{0});
+    const bool zeroedCommands2 = WriteGuestOut(commands2, static_cast<void*>(nullptr));
+    const bool zeroedNumCommands2 = WriteGuestOut(numCommands2, std::uint32_t{0});
+    if (!zeroedCommands || !zeroedNumCommands || !zeroedCommands2 || !zeroedNumCommands2) return FontGsInvalidParameter;
     int error = 0;
     const bool outputs = commands != nullptr && numCommands != nullptr && commands2 != nullptr && numCommands2 != nullptr;
     const auto* const gnm = CheckSequence(sequence, outputs, error);
     if (gnm == nullptr) return error;
-    *commands = const_cast<void*>(gnm->first);
-    *numCommands = gnm->firstSize >> 2;
-    *commands2 = const_cast<void*>(gnm->second);
-    *numCommands2 = gnm->secondCount;
+    const bool wroteCommands = WriteGuestOut(commands, const_cast<void*>(gnm->first));
+    const bool wroteNumCommands = WriteGuestOut(numCommands, static_cast<std::uint32_t>(gnm->firstSize >> 2));
+    const bool wroteCommands2 = WriteGuestOut(commands2, const_cast<void*>(gnm->second));
+    const bool wroteNumCommands2 = WriteGuestOut(numCommands2, gnm->secondCount);
+    if (!wroteCommands || !wroteNumCommands || !wroteCommands2 || !wroteNumCommands2) return FontGsInvalidParameter;
     return 0;
 }
 
 int APS5_VABI sceFontGraphicsSequenceGetGnmCommandsForSubmit(FontGraphicsCanvasSequence* sequence, void** commands,
                                                            std::uint32_t* numCommands) {
-    if (commands != nullptr) *commands = nullptr;
-    if (numCommands != nullptr) *numCommands = 0;
+    const bool zeroedCommands = WriteGuestOut(commands, static_cast<void*>(nullptr));
+    const bool zeroedNumCommands = WriteGuestOut(numCommands, std::uint32_t{0});
+    if (!zeroedCommands || !zeroedNumCommands) return FontGsInvalidParameter;
     int error = 0;
     const auto* const gnm = CheckSequence(sequence, commands != nullptr && numCommands != nullptr, error);
     if (gnm == nullptr) return error;
-    *commands = const_cast<void*>(gnm->first);
-    *numCommands = gnm->firstSize;
+    const bool wroteCommands = WriteGuestOut(commands, const_cast<void*>(gnm->first));
+    const bool wroteNumCommands = WriteGuestOut(numCommands, gnm->firstSize);
+    if (!wroteCommands || !wroteNumCommands) return FontGsInvalidParameter;
     return 0;
 }
 
