@@ -145,6 +145,10 @@ struct PthreadPrivate {
     std::atomic<bool> inWait{false};
     std::atomic<int> pendingException{0};
     std::atomic<bool> suspended{false};
+    std::atomic<std::uint32_t> parked{0};
+    std::atomic<std::uint32_t> parkEpoch{0};
+    std::atomic<bool> started{false};
+    std::atomic<bool> osParked{false};
     bool createdSuspended = false;
     std::atomic<int> schedPolicy{1};
     int inheritSched = 4;
@@ -209,6 +213,10 @@ extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread);
 extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);
 #endif
 extern "C" void ResumeAllGuestThreads_nid_no_patch();
+extern "C" int SuspendGuestThread_nid_no_patch(PthreadPrivate* thread);
+extern "C" void ParkCurrentGuestThread_nid_no_patch();
+bool RequestGuestThreadPark(PthreadPrivate* thread);
+void ReleaseGuestThreadPark(PthreadPrivate* thread);
 bool LiveGuestThreadExists(std::int64_t tid);
 struct LiveGuestThreadName {
     std::int64_t tid;

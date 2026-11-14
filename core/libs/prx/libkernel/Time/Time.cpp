@@ -366,6 +366,7 @@ static void CancellableSleep(std::uint64_t nanos) {
 static void SleepUntilComplete(std::uint64_t nanos) {
     ThreadCancel::Check();
     SleepWake::Sleep(nanos);
+    ParkCurrentGuestThread_nid_no_patch();
     ThreadCancel::Check();
 }
 
