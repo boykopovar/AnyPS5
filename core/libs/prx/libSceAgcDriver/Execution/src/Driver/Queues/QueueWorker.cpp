@@ -99,6 +99,13 @@ void Driver::wakeQueueZeroForCompletions() {
     changed.notify_all();
 }
 
+void Driver::WakeDormantQueue0() {
+    std::lock_guard lock(mutex);
+    if (!queue0Dormant.load(std::memory_order_relaxed)) return;
+    idleEpoch.fetch_add(1, std::memory_order_release);
+    changed.notify_all();
+}
+
 std::uint64_t Driver::submitFlipWork(std::uint32_t queue) {
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
