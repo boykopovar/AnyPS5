@@ -444,6 +444,8 @@ bool AppleCompact(_Unwind_Context& context, Frame& frame, Lookup& query) {
     frame.lsda = entry.hasLsda ? base + entry.lsdaOffset : 0;
     frame.returnRegister = 16;
     context.region = frame.functionStart;
+    context.regionEnd = frame.functionEnd;
+    context.segment = base;
     context.lsda = frame.lsda;
     context.personality = frame.personality;
     context.textBase = base;
