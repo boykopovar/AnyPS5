@@ -151,6 +151,7 @@ void TestRejectedArguments() {
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, reinterpret_cast<std::uint64_t*>(0x10), &scatterState) == invalidPointer);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferReset(reinterpret_cast<Apr::CommandBufferObject*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
     alignas(8) std::uint64_t target = 0;
     Require(sceAmprCommandBufferWriteAddress_04_00(nullptr, &target, 0x1122334455667788ull, 0) == invalidArgument);

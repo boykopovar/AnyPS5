@@ -20,6 +20,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -571,6 +572,13 @@ void CheckSigreturn() {
     }
     Require(sigreturnPasses == 4 && RoundingAndMasks(sigreturnMxcsr) == 0x1f80 && !blocked);
     _mm_setcsr(savedMxcsr);
+}
+
+void CheckReboot() {
+    for (const int options : {std::numeric_limits<std::int32_t>::min(), -1, 0, 1, 2, 0x10000, std::numeric_limits<std::int32_t>::max()}) {
+        *__error_nid_postfix() = 73;
+        Require(reboot_nid_postfix(options) == -1 && Error() == 1);
+    }
 }
 
 void CheckSchedSetscheduler() {
@@ -1407,6 +1415,7 @@ int main() {
     CheckAmmWrittenWaitsRun();
     CheckAmmMapperCalls();
     CheckAmmWaitConcurrentSubmits();
+    CheckReboot();
     CheckSchedSetscheduler();
     CheckSigreturn();
     CheckKernelEnvironment();
@@ -2222,6 +2231,10 @@ int main() {
     Require(fchown_nid_postfix(-1, 1, 0) == -1 && Error() == 9);
     Require(fchown_nid_postfix(-1, 0, 1) == -1 && Error() == 9);
     Require(fchown_nid_postfix(-1, 1, 1) == -1 && Error() == 9);
+    const int fchownKqueueDescriptor = kqueue_nid_postfix();
+    Require(fchownKqueueDescriptor >= 0);
+    Require(fchown_nid_postfix(fchownKqueueDescriptor, 0, 0) == -1 && Error() == 22);
+    Require(close_nid_postfix(fchownKqueueDescriptor) == 0);
     bool fchownThrew = false;
     try { fchown_nid_postfix(base, 1, 0); } catch (const std::exception&) { fchownThrew = true; }
     Require(fchownThrew);

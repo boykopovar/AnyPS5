@@ -1,9 +1,11 @@
 #include "prx/libSceXml/include/InventoryExports.hpp"
 #include "prx/libSceXml/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceXml/src/AttributeList.hpp"
 #include "prx/libSceXml/src/Document.hpp"
 #include "prx/libSceXml/src/DocumentBuilder.hpp"
 #include "prx/libSceXml/src/Node.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -135,20 +137,27 @@ int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(XmlHan
     if (self->impl != nullptr) return XmlAlreadyInitialized;
     if (parameter == nullptr) return XmlErrorInvalidParameter;
     if (g_xmlActiveInitializers > 0) return XmlAlreadyInitialized;
-    if (parameter->allocator == nullptr) throw std::invalid_argument("sce::Xml::Initializer::initialize: null allocator");
-    void* impl = XmlAllocate(parameter->allocator, XmlInitializerImplSize, parameter->userData);
+    XmlInitParameter localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, parameter, sizeof(localParam))) {
+        errno = savedErrno;
+        return XmlErrorInvalidParameter;
+    }
+    errno = savedErrno;
+    if (localParam.allocator == nullptr) throw std::invalid_argument("sce::Xml::Initializer::initialize: null allocator");
+    void* impl = XmlAllocate(localParam.allocator, XmlInitializerImplSize, localParam.userData);
     if (impl == nullptr) return XmlErrorNoMemory;
-    std::memcpy(impl, parameter, XmlInitializerImplSize);
+    std::memcpy(impl, &localParam, XmlInitializerImplSize);
     self->impl = impl;
-    auto* wrapper = static_cast<XmlAllocatorWrapper*>(XmlAllocate(parameter->allocator, XmlAllocatorWrapperSize, parameter->userData));
+    auto* wrapper = static_cast<XmlAllocatorWrapper*>(XmlAllocate(localParam.allocator, XmlAllocatorWrapperSize, localParam.userData));
     if (wrapper == nullptr) {
         XmlTerminate(self);
         return XmlErrorNoMemory;
     }
-    *wrapper = {nullptr, parameter->allocator};
+    *wrapper = {nullptr, localParam.allocator};
     g_xmlAllocatorWrapper = wrapper;
-    g_xmlEngineAllocator = parameter->allocator;
-    g_xmlEngineUserData = parameter->userData;
+    g_xmlEngineAllocator = localParam.allocator;
+    g_xmlEngineUserData = localParam.userData;
     const int result = XmlEngineAcquire();
     if (result < 0) return result;
     ++g_xmlActiveInitializers;

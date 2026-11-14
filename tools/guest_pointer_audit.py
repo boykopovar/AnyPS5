@@ -183,8 +183,9 @@ def main(argv=None):
     parser.add_argument("libraries", nargs="*", help="library directories under core/libs/prx (default: all)")
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
     args = parser.parse_args(argv)
-    names = args.libraries or sorted(path.name for path in PRX.iterdir() if path.is_dir())
-    missing = [name for name in names if not (PRX / name).is_dir()]
+    available = {path.name for path in PRX.iterdir() if path.is_dir() and not path.is_symlink()}
+    names = args.libraries or sorted(available)
+    missing = [name for name in names if name not in available]
     if missing:
         parser.error(f"not a library under core/libs/prx: {', '.join(missing)}")
     report = audit([PRX / name for name in names])
