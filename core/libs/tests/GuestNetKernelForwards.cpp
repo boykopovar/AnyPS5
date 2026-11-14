@@ -5,9 +5,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <thread>
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -185,10 +187,52 @@ static void CheckStreamWaitAll(bool net) {
     Require(recvfrom_nid_postfix(stream.accepted, peeked, sizeof(peeked), peek, nullptr, nullptr) == 2);
     Require(std::memcmp(peeked, "ef", 2) == 0);
     Require(sendto_nid_postfix(stream.client, "g", 1, 0, nullptr, 0) == 1);
-    Require((net ? sceNetShutdown(stream.client, 1) : shutdown_nid_postfix(stream.client, 1)) == 0);
+    Require(Failed(shutdown_nid_postfix(stream.client, 3), 22));
+    Require(shutdown_nid_postfix(stream.client, 1) == 0);
     char rest[8]{};
     Require(recvfrom_nid_postfix(stream.accepted, rest, sizeof(rest), WaitAll, nullptr, nullptr) == 3);
     Require(std::memcmp(rest, "efg", 3) == 0);
+    Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
+}
+
+static void CheckFailedShutdown() {
+    const int socket = Open(true, 1);
+    Require(socket >= 0);
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    Require(KernelFindSocketNative_nid_no_patch(socket, &owner, &native));
+    const auto state = std::static_pointer_cast<KernelSocketPoll::NativeOwner>(owner);
+    for (const int how : {0, 1, 2}) {
+        Require(Failed(shutdown_nid_postfix(socket, how), 57));
+        Require(state->shutdownFlags.load() == 0);
+    }
+    Require(Close(true, socket) == 0);
+}
+
+static void CheckShutdownPoll(bool net, int how) {
+    using namespace std::chrono_literals;
+    const auto stream = OpenStream(net);
+    constexpr short Readable = 0x0001;
+    constexpr short HangUp = 0x0010;
+    std::promise<void> enteringPoll;
+    auto entered = enteringPoll.get_future();
+    std::packaged_task<short()> poll([&] {
+        GuestPollDescriptor entry{stream.accepted, Readable, 0};
+        enteringPoll.set_value();
+        Require(poll_nid_postfix(&entry, 1, 2000) == 1);
+        return entry.revents;
+    });
+    auto ready = poll.get_future();
+    std::thread reader(std::move(poll));
+    entered.wait();
+    Require(ready.wait_for(50ms) == std::future_status::timeout);
+    Require(shutdown_nid_postfix(how == 1 ? stream.client : stream.accepted, how) == 0);
+    reader.join();
+    Require((ready.get() & (Readable | HangUp)) != 0);
+    if (how == 1) {
+        char byte = 0;
+        Require(recvfrom_nid_postfix(stream.accepted, &byte, 1, 0, nullptr, nullptr) == 0);
+    }
     Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
 }
 
@@ -236,9 +280,12 @@ int main() {
         CheckDatagram(net);
         CheckArguments(net);
         CheckStreamWaitAll(net);
+        CheckShutdownPoll(net, 1);
+        CheckShutdownPoll(net, 0);
         CheckConnectedDatagramTransfer(net);
         CheckStreamTransfer(net);
     }
+    CheckFailedShutdown();
     CheckUnknownDescriptor();
     return 0;
 }
