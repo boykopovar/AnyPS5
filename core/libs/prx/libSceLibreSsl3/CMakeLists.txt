@@ -765,6 +765,19 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_x509_item_free_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509ItemFree.cpp)
+    target_include_directories(guest_libressl3_x509_item_free_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_item_free_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_x509_item_free_tests)
+    add_test(NAME guest_libressl3_x509_item_free COMMAND guest_libressl3_x509_item_free_tests)
+    set_tests_properties(guest_libressl3_x509_item_free PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_item_free PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_libressl3_pkey_context_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyContext.cpp)
     target_include_directories(guest_libressl3_pkey_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl3_pkey_context_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc mbedcrypto)
@@ -777,6 +790,8 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509ItemFree.cpp)
+
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspFindStatus.cpp)
 
 if(BUILD_TESTING)
@@ -788,6 +803,21 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_ocsp_find_status PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_libressl3_ocsp_find_status PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyDer.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_key_der_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/KeyDer.cpp)
+    target_include_directories(guest_libressl3_key_der_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_key_der_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc mbedcrypto)
+    configure_windows_unwind(guest_libressl3_key_der_tests)
+    add_test(NAME guest_libressl3_key_der COMMAND guest_libressl3_key_der_tests)
+    set_tests_properties(guest_libressl3_key_der PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_key_der PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()

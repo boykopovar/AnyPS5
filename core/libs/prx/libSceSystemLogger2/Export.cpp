@@ -4,11 +4,14 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <mutex>
+#include <string>
 
 namespace {
 
@@ -49,55 +52,78 @@ std::uint64_t currentNetworkTick() {
 }
 
 bool fitsName(const char* name, std::size_t limit) {
-    return strnlen(name, limit + 1) <= limit;
+    if (!name) return false;
+    std::string text;
+    const int savedErrno = errno;
+    const int result = CopyGuestString_nid_no_patch(name, limit + 1, text);
+    errno = savedErrno;
+    return result == 0 && text.size() <= limit;
 }
 
 bool validClockSource(const char* source) {
-    return std::memcmp(source, "networkClock", sizeof("networkClock")) == 0
-        || std::memcmp(source, "secureClock", sizeof("secureClock")) == 0
-        || std::memcmp(source, "NONE", sizeof("NONE")) == 0;
+    if (!source) return false;
+    char clock[sizeof("networkClock")];
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(clock, source, sizeof(clock));
+    errno = savedErrno;
+    return copied && (std::memcmp(clock, "networkClock", sizeof("networkClock")) == 0
+        || std::memcmp(clock, "secureClock", sizeof("secureClock")) == 0
+        || std::memcmp(clock, "NONE", sizeof("NONE")) == 0);
+}
+
+const void* field(const void* record, std::size_t offset) {
+    const auto base = reinterpret_cast<std::uintptr_t>(record);
+    if (offset > std::numeric_limits<std::uintptr_t>::max() - base) return nullptr;
+    return reinterpret_cast<const void*>(base + offset);
 }
 
 template <typename T>
-T load(const std::uint8_t* record, std::size_t offset) {
-    T value{};
-    std::memcpy(&value, record + offset, sizeof(value));
-    return value;
+bool load(const std::uint8_t* record, std::size_t offset, T& value) {
+    const void* const address = field(record, offset);
+    if (!address) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, address, sizeof(value));
+    errno = savedErrno;
+    return copied;
 }
 
 int validateEvent(const std::uint8_t* record) {
-    const char* clockSource = reinterpret_cast<const char*>(record + EVENT_CLOCK_OFFSET);
+    const char* clockSource = static_cast<const char*>(field(record, EVENT_CLOCK_OFFSET));
     if (!validClockSource(clockSource)) return INVALID_ARGUMENT;
-    if (!fitsName(reinterpret_cast<const char*>(record + EVENT_NAME_OFFSET), NAME_LIMIT)) return INVALID_ARGUMENT;
-    if (!fitsName(reinterpret_cast<const char*>(record + EVENT_ENTRY_OFFSET), NAME_LIMIT)) return INVALID_ARGUMENT;
-    if (load<std::uint32_t>(record, EVENT_COUNT_OFFSET) > EVENT_ENTRY_LIMIT) return INVALID_ARGUMENT;
+    if (!fitsName(static_cast<const char*>(field(record, EVENT_NAME_OFFSET)), NAME_LIMIT)) return INVALID_ARGUMENT;
+    if (!fitsName(static_cast<const char*>(field(record, EVENT_ENTRY_OFFSET)), NAME_LIMIT)) return INVALID_ARGUMENT;
+    std::uint32_t count = 0;
+    if (!load(record, EVENT_COUNT_OFFSET, count) || count > EVENT_ENTRY_LIMIT) return INVALID_ARGUMENT;
     return 0;
 }
 
 int validateEventEx(const std::uint8_t* record) {
-    const char* clockSource = reinterpret_cast<const char*>(record + EVENT_CLOCK_OFFSET);
+    const char* clockSource = static_cast<const char*>(field(record, EVENT_CLOCK_OFFSET));
     if (!validClockSource(clockSource)) return INVALID_ARGUMENT;
-    if (!fitsName(reinterpret_cast<const char*>(record + EVENT_NAME_OFFSET), NAME_LIMIT)) return INVALID_ARGUMENT;
-    if (!fitsName(reinterpret_cast<const char*>(record + EVENT_EX_NAME_OFFSET), NAME_LIMIT)) return INVALID_ARGUMENT;
-    const std::uint32_t count = load<std::uint32_t>(record, EVENT_COUNT_OFFSET);
-    if (count > EVENT_ENTRY_LIMIT) return INVALID_ARGUMENT;
+    if (!fitsName(static_cast<const char*>(field(record, EVENT_NAME_OFFSET)), NAME_LIMIT)) return INVALID_ARGUMENT;
+    if (!fitsName(static_cast<const char*>(field(record, EVENT_EX_NAME_OFFSET)), NAME_LIMIT)) return INVALID_ARGUMENT;
+    std::uint32_t count = 0;
+    if (!load(record, EVENT_COUNT_OFFSET, count) || count > EVENT_ENTRY_LIMIT) return INVALID_ARGUMENT;
     for (std::uint32_t index = 0; index < count; ++index) {
         const std::size_t base = EVENT_ENTRY_OFFSET + index * EVENT_ENTRY_STRIDE;
-        const char* name = load<const char*>(record, base);
+        const char* name = nullptr;
+        if (!load(record, base, name)) return INVALID_ARGUMENT;
         if (name && !fitsName(name, EVENT_ENTRY_NAME_LIMIT)) return INVALID_ARGUMENT;
-        const char* language = load<const char*>(record, base + (EVENT_ENTRY_LANGUAGE_OFFSET - EVENT_ENTRY_OFFSET));
+        const char* language = nullptr;
+        if (!load(record, base + (EVENT_ENTRY_LANGUAGE_OFFSET - EVENT_ENTRY_OFFSET), language)) return INVALID_ARGUMENT;
         if (language && !fitsName(language, EVENT_ENTRY_LANGUAGE_LIMIT)) return INVALID_ARGUMENT;
     }
     return 0;
 }
 
 int validateEventEx2(const std::uint8_t* record) {
-    const char* clockSource = reinterpret_cast<const char*>(record + EVENT_CLOCK_OFFSET);
+    const char* clockSource = static_cast<const char*>(field(record, EVENT_CLOCK_OFFSET));
     if (!validClockSource(clockSource)) return INVALID_ARGUMENT;
-    if (!fitsName(reinterpret_cast<const char*>(record + EVENT_NAME_OFFSET), NAME_LIMIT)) return INVALID_ARGUMENT;
-    if (!fitsName(reinterpret_cast<const char*>(record + EVENT_EX2_NAME_OFFSET), NAME_LIMIT)) return INVALID_ARGUMENT;
-    if (load<std::uint32_t>(record, EVENT_COUNT_OFFSET) > EVENT_ENTRY_LIMIT) return INVALID_ARGUMENT;
-    if (!fitsName(reinterpret_cast<const char*>(record + EVENT_DETAIL_OFFSET), EVENT_DETAIL_LIMIT)) return INVALID_ARGUMENT;
+    if (!fitsName(static_cast<const char*>(field(record, EVENT_NAME_OFFSET)), NAME_LIMIT)) return INVALID_ARGUMENT;
+    if (!fitsName(static_cast<const char*>(field(record, EVENT_EX2_NAME_OFFSET)), NAME_LIMIT)) return INVALID_ARGUMENT;
+    std::uint32_t count = 0;
+    if (!load(record, EVENT_COUNT_OFFSET, count) || count > EVENT_ENTRY_LIMIT) return INVALID_ARGUMENT;
+    if (!fitsName(static_cast<const char*>(field(record, EVENT_DETAIL_OFFSET)), EVENT_DETAIL_LIMIT)) return INVALID_ARGUMENT;
     return 0;
 }
 
@@ -183,7 +209,8 @@ int APS5_VABI sceSystemLogger2SetRnpsEventAsync(const void* event) {
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return NOT_INITIALIZED;
     if (!event) return INVALID_ARGUMENT;
-    if (load<std::uintptr_t>(static_cast<const std::uint8_t*>(event), EVENT_RNPS_TOKEN_OFFSET) == 0) {
+    std::uintptr_t token = 0;
+    if (!load(static_cast<const std::uint8_t*>(event), EVENT_RNPS_TOKEN_OFFSET, token) || token == 0) {
         return INVALID_ARGUMENT;
     }
     const int result = validateEvent(static_cast<const std::uint8_t*>(event));

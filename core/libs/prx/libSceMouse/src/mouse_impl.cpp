@@ -20,6 +20,9 @@ bool opened = false;
 int openedUser = 0;
 std::uint32_t extensionConfig = 0;
 std::uint8_t extensionFlags = 0;
+std::int32_t extensionCursor = 0;
+std::uint32_t handType = 0;
+std::uint32_t pointerSpeed = 0;
 bool connected = true;
 std::uint32_t buttons = 0;
 constexpr std::array<std::int64_t, 4> SCREEN_WIDTHS{1280, 1920, 2560, 3840};
@@ -144,6 +147,7 @@ int Open(int userId, std::int32_t type, std::int32_t index, const MouseOpenParam
     openedUser = userId;
     extensionConfig = 0;
     extensionFlags = 0;
+    extensionCursor = 0;
     buttons = 0;
     head = 0;
     count = 0;
@@ -151,6 +155,8 @@ int Open(int userId, std::int32_t type, std::int32_t index, const MouseOpenParam
     absoluteX = 0;
     absoluteY = 0;
     highPrecision = 0;
+    handType = 0;
+    pointerSpeed = 0;
     fractionX = 0.0f;
     fractionY = 0.0f;
     MouseData initial{};
@@ -221,6 +227,43 @@ int SetExtensionConfig(std::int32_t handle, const std::uint8_t* config) {
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
     std::memcpy(&extensionConfig, local.data(), sizeof(extensionConfig));
     extensionFlags = local[4];
+    return MOUSE_OK;
+}
+
+int SetCursor(std::int32_t handle, std::int32_t cursor) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    extensionCursor = cursor;
+    return MOUSE_OK;
+}
+
+int GetCursor(std::int32_t handle, std::int32_t* cursor) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (cursor == nullptr) return MOUSE_ERROR_INVALID_ARG;
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(cursor, &extensionCursor, sizeof(extensionCursor));
+    errno = savedErrno;
+    return written ? MOUSE_OK : MOUSE_ERROR_INVALID_ARG;
+}
+
+int SetHandType(std::int32_t handle, std::uint32_t type) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    if (type > MOUSE_MAX_HAND_TYPE) return MOUSE_ERROR_INVALID_ARG;
+    handType = type;
+    return MOUSE_OK;
+}
+
+int SetPointerSpeed(std::int32_t handle, std::uint32_t speed) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    if (speed > MOUSE_MAX_POINTER_SPEED) return MOUSE_ERROR_INVALID_ARG;
+    pointerSpeed = speed;
     return MOUSE_OK;
 }
 

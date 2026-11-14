@@ -20,7 +20,6 @@ POSTFIXES = ("_nid_postfix", "_nid_no_patch_cut", "_nid_no_patch")
 DISAMBIG = "_nid_disambig"
 NID_PATTERN = "[A-Za-z0-9+\\-]{11}"
 VABI = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
-TABLE_ENTRY = re.compile(r"sprx_dlsym\s*\(\s*__handle\s*,\s*\"(" + NID_PATTERN + r")\"")
 DEFINE = re.compile(r"#define\s+(\w+)\s*\(\s*(\w+)\s*\)([^\n]*)")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
@@ -91,7 +90,28 @@ def parse_export_table(path):
         raise GapError(f"{path}: cannot read export table: {error.strerror or error}") from error
     nids = []
     seen = set()
-    for match in TABLE_ENTRY.finditer(text):
+    text = joined_lines(text)
+    tokens = []
+    directive_end = 0
+    for token in nid_names.CPP_TOKEN.finditer(text):
+        if token.start() < directive_end or token.group("comment") is not None:
+            continue
+        if (token.group("code") is not None and token.group() == "#"
+                and not text[text.rfind("\n", 0, token.start()) + 1:token.start()].strip()):
+            end = text.find("\n", token.end())
+            directive_end = len(text) if end < 0 else end
+            continue
+        tokens.append(token)
+    for index, token in enumerate(tokens[:-4]):
+        if token.group("code") is None or token.group() != "sprx_dlsym":
+            continue
+        opening, handle, comma, literal = tokens[index + 1:index + 5]
+        if (opening.group() != "(" or handle.group() != "__handle" or comma.group() != ","
+                or literal.group("string") is None):
+            continue
+        match = re.fullmatch(r'"(' + NID_PATTERN + r')"', literal.group())
+        if match is None:
+            continue
         nid = match.group(1)
         if nid not in seen:
             seen.add(nid)
