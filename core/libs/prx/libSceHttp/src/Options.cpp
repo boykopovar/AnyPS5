@@ -1,6 +1,7 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttp/src/GuestAccess.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstddef>
@@ -108,7 +109,7 @@ int APS5_VABI sceHttpGetAutoRedirect(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->autoRedirect ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->autoRedirect ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -117,7 +118,7 @@ int APS5_VABI sceHttpGetNonblock(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->nonblock ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->nonblock ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -130,7 +131,7 @@ int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->acceptEncodingGzip ? 1 : 0;
+    if (!HttpGuest::Store(enable, options->acceptEncodingGzip ? 1 : 0)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -144,8 +145,8 @@ int APS5_VABI sceHttpGetEpoll(int id, HttpEpollHandle* epoll, void** argument) {
     if (!epoll) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *epoll = options->epoll;
-    if (argument) *argument = options->epollArgument;
+    if (!HttpGuest::Store(epoll, options->epoll)) return ERROR_INVALID_VALUE;
+    if (argument && !HttpGuest::Store(argument, options->epollArgument)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
