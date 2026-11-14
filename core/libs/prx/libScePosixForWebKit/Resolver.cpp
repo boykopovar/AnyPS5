@@ -18,9 +18,12 @@
 #include <cstdint>
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <stdexcept>
 #include <cerrno>
+#include <climits>
 #include <new>
 #include <string>
 #include <type_traits>
@@ -272,6 +275,85 @@ bool CopyHostEntry(const GuestResolver::HostEntry& source, GuestResolver::HostEn
     *pointer = nullptr;
     return true;
 }
+
+[[noreturn]] void NullHostName() {
+    throw std::invalid_argument("getnameinfo: null host buffer for a link-level address");
+}
+
+bool FormatOverflows(char* out, std::size_t size) {
+    if (size == 0 || size - 1 <= static_cast<std::size_t>(INT_MAX)) return false;
+    *out = '\0';
+    errno = 84;
+    return true;
+}
+
+int HexName(const unsigned char* bytes, std::size_t size, char* host, std::size_t hostLength) {
+    if (!host) NullHostName();
+    char* out = host;
+    *out = '\0';
+    for (std::size_t index = 0; index < size; ++index) {
+        if (FormatOverflows(out, hostLength)) {
+            *host = '\0';
+            return 6;
+        }
+        const int written = std::snprintf(out, hostLength, "%s%02x", index ? ":" : "", bytes[index]);
+        if (written < 0 || static_cast<std::size_t>(written) >= hostLength) {
+            *host = '\0';
+            return 6;
+        }
+        out += written;
+        hostLength -= static_cast<std::size_t>(written);
+    }
+    return 0;
+}
+
+int LinkName(const unsigned char* address, char* host, std::size_t hostLength) {
+    std::uint16_t index;
+    std::memcpy(&index, address + 2, sizeof(index));
+    const unsigned type = address[4], nameLength = address[5], addressLength = address[6], selectorLength = address[7];
+    const unsigned char* data = address + 8;
+    if (!nameLength && !addressLength && !selectorLength) {
+        if (!host) NullHostName();
+        if (FormatOverflows(host, hostLength)) return 6;
+        const int written = std::snprintf(host, hostLength, "link#%d", index);
+        if (static_cast<std::size_t>(written) >= hostLength) {
+            *host = '\0';
+            return 6;
+        }
+        return 0;
+    }
+    if (nameLength && !addressLength) {
+        if (!host) NullHostName();
+        if (nameLength >= hostLength) {
+            *host = '\0';
+            return 6;
+        }
+        std::memcpy(host, data, nameLength);
+        host[nameLength] = '\0';
+        return 0;
+    }
+    if (type == 0x90) {
+        if (addressLength < 8) return 5;
+        return HexName(data + nameLength, 8, host, hostLength);
+    }
+    return HexName(data + nameLength, addressLength, host, hostLength);
+}
+
+int LocalName(const unsigned char* address, char* host, std::size_t hostLength) {
+    if (!host || !hostLength) return 0;
+    const auto pathLength = static_cast<std::size_t>(static_cast<int>(address[0]) - 2);
+    if (pathLength + 1 > hostLength) {
+        *host = '\0';
+        return 6;
+    }
+    if (const auto size = pathLength + 1) {
+        const auto* path = reinterpret_cast<const char*>(address + 2);
+        const auto copied = static_cast<std::size_t>(std::find(path, path + size - 1, '\0') - path);
+        std::memcpy(host, path, copied);
+        host[copied] = '\0';
+    }
+    return 0;
+}
 }
 
 extern "C" {
@@ -446,23 +528,20 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
 }
 
 int APS5_VABI getnameinfo_nid_postfix(const void* address, std::uint32_t length,
-    char* host, std::uint32_t hostLength, char* service, std::uint32_t serviceLength, int flags) {
-    // PS5 sockaddr begins with byte-sized length and family. The host's does not.
-    if (!address || length < 2) return 5;
-    if ((!host && hostLength) || (!service && serviceLength)) return 4;
-    if ((flags & ~0x1f) != 0) return 3;
+    char* host, std::size_t hostLength, char* service, std::size_t serviceLength, int flags) {
+    if (!address) return 4;
     const auto* bytes = static_cast<const unsigned char*>(address);
     sockaddr_storage native{};
     socklen_t nativeLength;
     if (bytes[1] == 2) {
-        if (length < 16 || bytes[0] != 16) return 5;
+        if (length != 16) return 4;
         auto& v4 = reinterpret_cast<sockaddr_in&>(native);
         v4.sin_family = AF_INET;
         std::memcpy(&v4.sin_port, bytes + 2, 2);
         std::memcpy(&v4.sin_addr, bytes + 4, 4);
         nativeLength = sizeof(v4);
     } else if (bytes[1] == 28) {
-        if (length < 28 || bytes[0] != 28) return 5;
+        if (length != 28) return 4;
         auto& v6 = reinterpret_cast<sockaddr_in6&>(native);
         v6.sin6_family = AF_INET6;
         std::memcpy(&v6.sin6_port, bytes + 2, 2);
@@ -470,29 +549,63 @@ int APS5_VABI getnameinfo_nid_postfix(const void* address, std::uint32_t length,
         std::memcpy(&v6.sin6_addr, bytes + 8, 16);
         std::memcpy(&v6.sin6_scope_id, bytes + 24, 4);
         nativeLength = sizeof(v6);
-    } else return 5;
-    int nativeFlags = 0;
-    if (flags & 1) nativeFlags |= NI_NOFQDN;
-    if (flags & 2) nativeFlags |= NI_NUMERICHOST;
-    if (flags & 4) nativeFlags |= NI_NAMEREQD;
-    if (flags & 8) nativeFlags |= NI_NUMERICSERV;
-    if (flags & 16) nativeFlags |= NI_DGRAM;
-    if (!Ready()) return 4;
-    // Stage results so host-specific short-buffer errors do not leak into the
-    // guest ABI, and neither guest output is partially modified on overflow.
-    char resolvedHost[NI_MAXHOST]{};
-    char resolvedService[NI_MAXSERV]{};
+    } else if (bytes[1] == 1) {
+        if (length > 106 || length <= 2) return 4;
+        if (service && serviceLength) *service = '\0';
+        return LocalName(bytes, host, hostLength);
+    } else if (bytes[1] == 18) {
+        if (length <= 8) return 4;
+        if (service && serviceLength) *service = '\0';
+        return LinkName(bytes, host, hostLength);
+    } else {
+        return 5;
+    }
     const bool wantHost = host && hostLength;
     const bool wantService = service && serviceLength;
-    const int error = ::getnameinfo(reinterpret_cast<const sockaddr*>(&native), nativeLength,
-        wantHost ? resolvedHost : nullptr, wantHost ? sizeof(resolvedHost) : 0,
-        wantService ? resolvedService : nullptr, wantService ? sizeof(resolvedService) : 0, nativeFlags);
+    if (!wantHost && !wantService) return 0;
+    if (!Ready()) return 4;
+    int nativeFlags = 0;
+    if (flags & 8) nativeFlags |= NI_NUMERICSERV;
+    if (flags & 16) nativeFlags |= NI_DGRAM;
+    char resolvedHost[NI_MAXHOST]{};
+    char resolvedService[NI_MAXSERV]{};
+    const auto resolve = [&](int hostFlags) {
+        return ::getnameinfo(reinterpret_cast<const sockaddr*>(&native), nativeLength,
+            wantHost ? resolvedHost : nullptr, wantHost ? sizeof(resolvedHost) : 0,
+            wantService ? resolvedService : nullptr, wantService ? sizeof(resolvedService) : 0, nativeFlags | hostFlags);
+    };
+    const bool lookup = wantHost && !(flags & 2);
+    bool numeric = !lookup;
+    int error = resolve(lookup ? NI_NAMEREQD : NI_NUMERICHOST);
+    if (error && lookup) {
+        numeric = true;
+        error = resolve(NI_NUMERICHOST);
+    }
     if (error) return GuestError(error);
-    if ((wantHost && std::strlen(resolvedHost) >= hostLength) ||
-        (wantService && std::strlen(resolvedService) >= serviceLength)) return 14;
-    if (wantHost) std::memcpy(host, resolvedHost, std::strlen(resolvedHost) + 1);
-    if (wantService) std::memcpy(service, resolvedService, std::strlen(resolvedService) + 1);
-    return 0;
+    if (wantService) {
+        const auto size = std::strlen(resolvedService) + 1;
+        if (size > serviceLength) return 6;
+        std::memcpy(service, resolvedService, size);
+    }
+    if (!wantHost) return 0;
+    if (numeric && (flags & 4)) return 8;
+    const auto size = std::strlen(resolvedHost) + 1;
+    if (size <= hostLength) {
+        std::memcpy(host, resolvedHost, size);
+        return 0;
+    }
+    if (!numeric) return 6;
+    if (bytes[1] == 2) {
+        if (flags & 2) return 6;
+        errno = 28;
+        return 11;
+    }
+    const auto addressSize = std::strcspn(resolvedHost, "%") + 1;
+    if (addressSize < size && addressSize <= hostLength) {
+        std::memcpy(host, resolvedHost, addressSize - 1);
+        host[addressSize - 1] = '\0';
+    }
+    return 14;
 }
 
 const char* APS5_VABI gai_strerror_nid_postfix(int error) {
