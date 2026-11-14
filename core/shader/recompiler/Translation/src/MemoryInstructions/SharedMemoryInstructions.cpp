@@ -29,11 +29,18 @@ MemoryInfo sharedMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 
 }
 
+IrU32 TranslationContext::dsAddress(const RdnaInstruction& inst) {
+    const IrU32 address = readU32(inst.source0);
+    if (!inst.gds) return address;
+    IrValue& base = ir.ShiftRightLogical(readU32(makeM0Operand()).Value(), ir.Constant(16u));
+    return IrU32(ir.IAdd(address.Value(), base));
+}
+
 bool TranslationContext::dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     memory.flushDenormals = floatAtomicFlush(opcode);
     memory.flushDenormalResults = opcode == IrOpcode::SharedAtomicFAdd32 && (!floatMode.has_value() || ((floatMode->floatMode >> 5u) & 1u) == 0u);
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     const IrU32 value = readU32(inst.source1);
     IrValue& active = ir.GetExec();
     IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &value.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
@@ -50,7 +57,7 @@ bool TranslationContext::dsWrxchg2(const RdnaInstruction& inst) {
     first.componentCount = width;
     MemoryInfo second = first;
     second.offset = first.secondaryOffset;
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     const auto data = [&](const RdnaOperand& operand) { return width == 2u ? &readU64(operand).Value() : &readU32(operand).Value(); };
     IrValue* firstValue = data(inst.source1);
     IrValue* secondValue = data(inst.source2);
@@ -114,7 +121,7 @@ void TranslationContext::writeSharedU32(std::uint32_t width, IrU32 address, cons
 
 bool TranslationContext::dsRead(const RdnaInstruction& inst) {
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     if (memory.dataBits == 32u) {
         const std::uint32_t width = memory.dataDwords;
         IrValue* loaded = loadSharedU32(width, address, memory, inst.programCounter);
@@ -133,7 +140,7 @@ bool TranslationContext::dsRead(const RdnaInstruction& inst) {
 bool TranslationContext::dsRead2(const RdnaInstruction& inst) {
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     const std::uint32_t width = memory.dataDwords / 2u;
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     MemoryInfo first = memory;
     first.dataDwords = width;
     first.componentCount = width;
@@ -158,7 +165,7 @@ bool TranslationContext::dsWrite(const RdnaInstruction& inst) {
     for (std::uint32_t index = 0u; index < width; ++index) {
         values[index] = &readU32(offsetOperand(inst.source1, index)).Value();
     }
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     if (memory.dataBits == 32u) {
         writeSharedU32(width, address, values, memory, inst.programCounter);
         return true;
@@ -173,7 +180,7 @@ bool TranslationContext::dsWrite(const RdnaInstruction& inst) {
 bool TranslationContext::dsWrite2(const RdnaInstruction& inst) {
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     const std::uint32_t width = memory.dataDwords / 2u;
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     std::array<IrValue*, 4> firstValues{};
     std::array<IrValue*, 4> secondValues{};
     for (std::uint32_t index = 0u; index < width; ++index) {
@@ -214,7 +221,7 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
 bool TranslationContext::dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     memory.flushDenormals = floatAtomicFlush(opcode);
-    const IrU32 address = readU32(inst.source0);
+    const IrU32 address = dsAddress(inst);
     const IrU32 data0 = readU32(inst.source1);
     const IrU32 data1 = readU32(inst.source2);
     IrValue& active = ir.GetExec();
