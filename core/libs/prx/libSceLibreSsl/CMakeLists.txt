@@ -24,9 +24,10 @@ if(BUILD_TESTING)
     target_link_libraries(guest_libressl_bn_tests PRIVATE libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl_bn_tests)
     add_test(NAME guest_libressl_bn COMMAND guest_libressl_bn_tests)
-    set_tests_properties(guest_libressl_bn PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_libressl_bn_allocator COMMAND guest_libressl_bn_tests --allocator)
+    set_tests_properties(guest_libressl_bn guest_libressl_bn_allocator PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_libressl_bn PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_libressl_bn guest_libressl_bn_allocator PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 

@@ -472,6 +472,7 @@ def module_dirs(entry):
     return [relink[index + 1] for index in range(len(relink) - 1) if relink[index] == "--module-dir"]
 
 
+STANDARD_MODULE_DIRS = ("sce_module", "sce_modules", "prx")
 MODULE_MAGICS = (b"\x7fELF", b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")
 
 
@@ -484,7 +485,7 @@ def stage_inputs(package, entry, source):
     (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
-    for directory in ["sce_module", *module_dirs(entry)]:
+    for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
         if not (package / directory).is_dir():
             continue
         (source / directory).mkdir(parents=True, exist_ok=True)
