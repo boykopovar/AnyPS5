@@ -1822,13 +1822,13 @@ if(BUILD_TESTING)
     endif()
     add_test_executable(file_streams_tests ${LIBS_INCLUDE_DIR}/tests/FileStreams.cpp)
     target_include_directories(file_streams_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(file_streams_tests PRIVATE libc)
+    target_link_libraries(file_streams_tests PRIVATE libc libkernel)
     configure_windows_unwind(file_streams_tests)
     add_test(NAME file_streams COMMAND file_streams_tests file_streams.tmp)
     set_tests_properties(file_streams PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(file_streams PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test_executable(guest_stream_buffer_host_write_tests ${LIBS_INCLUDE_DIR}/tests/GuestStreamBufferHostWrite.cpp)
         target_include_directories(guest_stream_buffer_host_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_stream_buffer_host_write_tests PRIVATE libkernel libc)
@@ -1860,10 +1860,22 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_freopen_host_log PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        add_test(NAME guest_freopen_host_log_keep_return_stdout COMMAND guest_freopen_host_log_tests keep-return-stdout)
+        add_test(NAME guest_freopen_host_log_keep_return_stderr COMMAND guest_freopen_host_log_tests keep-return-stderr)
+        set_tests_properties(guest_freopen_host_log_keep_return_stdout guest_freopen_host_log_keep_return_stderr
+            PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME guest_freopen_host_log_keep_failure COMMAND guest_freopen_host_log_tests keep-failure)
         set_tests_properties(guest_freopen_host_log_keep_failure PROPERTIES TIMEOUT 20)
+        add_test(NAME guest_freopen_host_log_native_closed_stdout COMMAND guest_freopen_host_log_tests native-closed-stdout
+            "${CMAKE_CURRENT_BINARY_DIR}/guest-freopen-native-closed-stdout.txt")
+        set_tests_properties(guest_freopen_host_log_native_closed_stdout PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE
+            FIXTURES_SETUP GuestFreopenNativeClosedStdout WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        add_test(NAME guest_freopen_host_log_keep_return_failure COMMAND guest_freopen_host_log_tests keep-return-failure
+            "${CMAKE_CURRENT_BINARY_DIR}/guest-freopen-native-closed-stdout.txt")
+        set_tests_properties(guest_freopen_host_log_keep_return_failure PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE
+            FIXTURES_REQUIRED GuestFreopenNativeClosedStdout WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
     endif()
     add_test_executable(guest_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestErrors.cpp)
     target_include_directories(guest_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
