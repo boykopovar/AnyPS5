@@ -3317,7 +3317,121 @@ bool readDirect(void*, std::uint64_t address, std::uint32_t* value) {
     return true;
 }
 
+void verifySrtOriginRoles() {
+    using namespace ShaderRecompiler;
+    enum class Mode { Direct, FlatForward, BitcastForward, CachedArithmetic, ErasedArithmetic, FirstLane };
+    for (const auto mode : {Mode::Direct, Mode::FlatForward, Mode::BitcastForward, Mode::CachedArithmetic, Mode::ErasedArithmetic, Mode::FirstLane}) {
+        IrResourcePlan plan;
+        plan.srtPlanComplete = true;
+        plan.userDataCount = 2u;
+        MemoryInfo memory;
+        memory.kind = ResourceKind::ScalarAddress;
+        plan.memoryInfo.push_back(memory);
+        std::vector<std::unique_ptr<IrValue>> values;
+        const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+            values.push_back(std::make_unique<IrValue>(opcode, type, static_cast<std::uint32_t>(values.size())));
+            for (auto* argument : arguments) values.back()->AddArgument(argument);
+            return *values.back();
+        };
+        const auto constant = [&](std::uint32_t word) -> IrValue& {
+            auto& value = make(IrOpcode::Void, IrType::U32);
+            value.SetImmediateU32(word);
+            return value;
+        };
+        const auto userWord = [&](std::uint32_t index) -> IrValue& {
+            auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+            reg.SetRegister({RegisterBank::Scalar, index});
+            return make(IrOpcode::GetUserData, IrType::U32, {&reg});
+        };
+        auto& address = make(IrOpcode::CompositeConstructU64, IrType::U64, {&userWord(0u), &userWord(1u)});
+        const auto read = [&](std::uint32_t offset) -> IrValue& {
+            auto& value = make(IrOpcode::LoadAddressU32, IrType::U32, {&address, &constant(offset)});
+            value.SetFlags(MemoryFlags{0, 0});
+            return value;
+        };
+        auto& first = read(0u);
+        auto& second = read(4u);
+        IrValue* lead = &first;
+        IrValue* other = &second;
+        if (mode == Mode::FlatForward) {
+            plan.srtReads.push_back({&first, 0u});
+            plan.cleanFlatSlots.push_back(0u);
+            plan.pureFlatSlots.push_back(0u);
+            auto& resource = make(IrOpcode::GetSrtResource, IrType::SrtResource);
+            lead = &make(IrOpcode::ReadConst, IrType::U32, {&resource, &constant(0u)});
+        } else if (mode == Mode::BitcastForward) {
+            auto& asFloat = make(IrOpcode::BitCastU32F32, IrType::F32, {&first});
+            lead = &make(IrOpcode::BitCastF32U32, IrType::U32, {&asFloat});
+        } else if (mode == Mode::CachedArithmetic) {
+            other = &make(IrOpcode::IAdd32, IrType::U32, {&first, &constant(1u)});
+        } else if (mode == Mode::ErasedArithmetic) {
+            lead = &make(IrOpcode::IAdd32, IrType::U32, {&first, &constant(0u)});
+        } else if (mode == Mode::FirstLane) {
+            auto& mask = make(IrOpcode::Void, IrType::Bool);
+            mask.SetImmediateBool(true);
+            lead = &make(IrOpcode::ReadFirstLane, IrType::U32, {&first, &mask});
+        }
+        DescriptorSource source;
+        source.dwordCount = 2u;
+        source.dwords[0] = lead;
+        source.dwords[1] = other;
+        plan.descriptorSources.push_back(source);
+        plan.materializationSources.push_back(0u);
+        struct Reading {
+            std::array<std::uint32_t, 4> words{0x12345000u, 0x00040001u, 16u, 0x31016facu};
+        } reading;
+        constexpr std::uint64_t guest = 0x100002000ull;
+        const std::array<std::uint32_t, 2> data{static_cast<std::uint32_t>(guest), static_cast<std::uint32_t>(guest >> 32u)};
+        struct Answer {
+            std::vector<DescriptorValue> descriptors;
+            std::vector<std::uint32_t> flat;
+            std::vector<std::uint8_t> active;
+            std::vector<std::pair<std::uint64_t, const void*>> reads;
+            std::vector<const void*> operands;
+            std::vector<std::pair<std::uint32_t, const void*>> leads;
+        };
+        const auto run = [&](bool tape) {
+            Answer result;
+            SrtRuntime runtime{data};
+            runtime.userContext = &reading;
+            runtime.readMemory = [](void* context, std::uint64_t at, std::uint32_t* word) {
+                const auto& source = *static_cast<Reading*>(context);
+                if (at < guest || at - guest > sizeof(source.words) - sizeof(*word)) return false;
+                std::memcpy(word, reinterpret_cast<const std::byte*>(source.words.data()) + (at - guest), sizeof(*word));
+                return true;
+            };
+            SrtUserDataUse use;
+            runtime.userDataUse = &use;
+            if (tape) {
+                const auto* compiled = Detail::SrtTape::For(plan);
+                require(compiled != nullptr && compiled->Run(plan, runtime, result.descriptors, result.flat, result.active), "SRT origin roles: tape refused a valid case");
+            } else {
+                const std::vector<std::uint32_t> sources(plan.materializationSources.begin(), plan.materializationSources.end());
+                const std::vector<std::uint8_t> clean(plan.cleanFlatSlots.begin(), plan.cleanFlatSlots.end());
+                require(Detail::EvaluateRuntimeSourcesImpl(plan, sources, runtime, result.descriptors, result.flat, true, clean, result.active), "SRT origin roles: interpreter refused a valid case");
+            }
+            require(use.reads.size() == use.readInstructions.size(), "SRT origin roles: memory reads lost their instruction");
+            for (std::size_t i = 0; i < use.reads.size(); ++i) result.reads.emplace_back(use.reads[i].first, use.readInstructions[i]);
+            result.operands = use.operandReads;
+            result.leads = use.sourceLeads;
+            return result;
+        };
+        const auto tape = run(true);
+        const auto interpreter = run(false);
+        require(tape.descriptors == interpreter.descriptors && tape.flat == interpreter.flat && tape.active == interpreter.active, "SRT origin roles: tape changed values or activity");
+        const auto readSeen = [&](const Answer& answer) { return std::find(answer.reads.begin(), answer.reads.end(), std::pair<std::uint64_t, const void*>{guest, &first}) != answer.reads.end(); };
+        require(readSeen(tape) && readSeen(interpreter), "SRT origin roles: source read did not preserve its identity");
+        const bool operand = mode == Mode::CachedArithmetic || mode == Mode::ErasedArithmetic || mode == Mode::FirstLane;
+        for (const auto* answer : {&tape, &interpreter}) {
+            require((std::find(answer->operands.begin(), answer->operands.end(), &first) != answer->operands.end()) == operand, "SRT origin roles: forwarding or operand classification differs");
+            const bool direct = mode == Mode::Direct || mode == Mode::FlatForward || mode == Mode::CachedArithmetic;
+            require((std::find(answer->leads.begin(), answer->leads.end(), std::pair<std::uint32_t, const void*>{0u, &first}) != answer->leads.end()) == direct, "SRT origin roles: descriptor source lead differs");
+        }
+    }
+}
+
 void verifySrtTape() {
+    verifySrtOriginRoles();
     using namespace ShaderRecompiler;
     struct Walk {
         bool ok = false;
@@ -3331,6 +3445,9 @@ void verifySrtTape() {
         std::uint64_t asBase = 0;
         std::uint64_t asValue = 0;
         std::vector<std::pair<std::uint64_t, std::int32_t>> userDataReads;
+        std::vector<std::pair<std::uint64_t, std::uintptr_t>> readOrigins;
+        std::vector<std::uintptr_t> operandReads;
+        std::vector<std::pair<std::uint32_t, std::uintptr_t>> sourceLeads;
         bool operator==(const Walk&) const = default;
     };
     const auto walk = [](const IrResourcePlan& plan, SrtRuntime runtime, bool tape) {
@@ -3354,6 +3471,17 @@ void verifySrtTape() {
         out.asBase = use.asBase;
         out.asValue = use.asValue;
         out.userDataReads = use.reads;
+        require(use.reads.size() == use.readInstructions.size(), "SRT tape origin metadata: recorded reads have no instruction origins");
+        for (std::size_t index = 0; index < use.reads.size(); ++index) out.readOrigins.emplace_back(use.reads[index].first, reinterpret_cast<std::uintptr_t>(use.readInstructions[index]));
+        for (const auto* read : use.operandReads) out.operandReads.push_back(reinterpret_cast<std::uintptr_t>(read));
+        for (const auto& [source, lead] : use.sourceLeads) out.sourceLeads.emplace_back(source, reinterpret_cast<std::uintptr_t>(lead));
+        const auto normalize = [](auto& entries) {
+            std::sort(entries.begin(), entries.end());
+            entries.erase(std::unique(entries.begin(), entries.end()), entries.end());
+        };
+        normalize(out.readOrigins);
+        normalize(out.operandReads);
+        normalize(out.sourceLeads);
         std::sort(out.userDataReads.begin(), out.userDataReads.end());
         out.userDataReads.erase(std::unique(out.userDataReads.begin(), out.userDataReads.end()), out.userDataReads.end());
         return out;
@@ -3421,6 +3549,34 @@ void verifySrtTape() {
         require(tape.ok && tape.active.size() == imageActivity + 1u && tape.active[imageActivity] == mode, "SRT tape: the image behind the branch has the wrong activity");
         require(tape.asBase != 0u && tape.asValue != 0u && !tape.userDataReads.empty(), "SRT tape: the guarded program's walk reported no user-data use");
     }
+
+
+    srt.fill(0u);
+    std::copy(valid.begin(), valid.end(), srt.begin());
+    std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+    srt[20] = 1u;
+    SrtUserDataUse preserved;
+    preserved.asBase = 0x40u;
+    preserved.asValue = 0x80u;
+    preserved.reads.emplace_back(srtAddress, -1);
+    const auto* seedInstruction = guardedPlan->descriptorSources.front().dwords[0];
+    preserved.readInstructions.push_back(seedInstruction);
+    preserved.operandReads.push_back(seedInstruction);
+    preserved.sourceLeads.emplace_back(99u, seedInstruction);
+    const auto expectedUse = preserved;
+    auto rejectedRuntime = runtimeFor(userData);
+    std::size_t readCalls = 0;
+    rejectedRuntime.userContext = &readCalls;
+    const auto rejectingRead = [](void* context, std::uint64_t address, std::uint32_t* word) {
+        if (++*static_cast<std::size_t*>(context) >= 2u) return false;
+        std::memcpy(word, reinterpret_cast<const void*>(address), sizeof(*word));
+        return true;
+    };
+    rejectedRuntime.readMemory = rejectingRead;
+    rejectedRuntime.readSpecializationMemory = rejectingRead;
+    rejectedRuntime.userDataUse = &preserved;
+    require(!answers(*guardedPlan, rejectedRuntime) && readCalls >= 2u, "SRT tape origin metadata: rejection did not follow a successful read");
+    require(preserved.asBase == expectedUse.asBase && preserved.asValue == expectedUse.asValue && preserved.reads == expectedUse.reads && preserved.readInstructions == expectedUse.readInstructions && preserved.operandReads == expectedUse.operandReads && preserved.sourceLeads == expectedUse.sourceLeads, "SRT tape origin metadata: refused walk changed its caller's annotations");
 
     const auto nullRuntime = runtimeFor(nullUserData);
     require(!answers(*guardedPlan, nullRuntime), "SRT tape: the tape answered a walk through a null user-data root");
@@ -12576,6 +12732,11 @@ int main(int argc, char** argv) {
             if (argc != 2 || std::string_view(argv[1]) != "--image-limits-" + std::string(part)) continue;
             verifyImageLimits(part);
             std::cout << "Image limits (" << part << ") passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--srt-buffer-origins") {
+            verifySrtTape();
+            std::cout << "SRT tape/interpreter read, operand and source origins agree\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {

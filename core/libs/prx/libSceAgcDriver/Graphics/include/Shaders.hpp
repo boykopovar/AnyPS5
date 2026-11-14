@@ -41,6 +41,7 @@ struct CompiledShader {
     const ShaderRecompiler::RecompileResult* program;
     std::uint32_t pushConstantOffset;
     const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews = nullptr;
+    std::span<const std::byte> pushConstants{};
 };
 
 inline std::uint32_t KeyedPushOffset(const CompiledShader& shader) {
@@ -92,8 +93,9 @@ inline std::array<std::byte, PipelinePushConstantBytes> AssemblePushConstants(st
     std::uint64_t occupied = 0;
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
-        const auto& bytes = shader.program->pushConstants;
+        const std::span<const std::byte> bytes = shader.pushConstants.empty() ? std::span<const std::byte>(shader.program->pushConstants) : shader.pushConstants;
         if (bytes.empty()) continue;
+        Require(bytes.size() == shader.program->pushConstants.size(), "replaced push constants change the shader push constant range");
         Require(bytes.size() % 4 == 0 && shader.pushConstantOffset % 4 == 0, "shader push constant range is not DWORD aligned");
         Require(shader.pushConstantOffset < PipelinePushConstantBytes && bytes.size() <= PipelinePushConstantBytes - shader.pushConstantOffset, "shader push constant range lies outside the pipeline push constant block");
         Require(bytes.size() <= PipelinePushSlotBytes - shader.pushConstantOffset % PipelinePushSlotBytes, "shader push constant range crosses a push constant slot");

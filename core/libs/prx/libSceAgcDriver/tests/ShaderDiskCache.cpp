@@ -33,6 +33,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -197,6 +198,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
     require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
+    require(left.bufferBaseSlots == right.bufferBaseSlots, prefix + "buffer base slots differ");
     require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
     require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
     require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
@@ -297,6 +299,7 @@ RecompileResult sampleResult() {
     result.stencilReferenceDword = 23u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
+    result.bufferBaseSlots = {{0u, 1u, 4u}, {3u, 0u, 0xffffffffu}};
     result.barycentricEmulation = {true, false, true};
     result.meshBarycentrics = MeshBarycentricLayout{{true, true, false}, {FragmentParameter{0, 2, false, true}, FragmentParameter{3, 3, false, false}}};
     result.variantId = 99;
@@ -1337,28 +1340,49 @@ struct ComputeRequest {
     }
 };
 
+struct BufferTableRequest : ComputeRequest {
+    std::array<std::uint32_t, 4> table{0x10000000u, 0u, 16u, 0x31016facu};
+    std::array<MemoryRegion, 1> memory;
+
+    explicit BufferTableRequest(bool useCache) : ComputeRequest(useCache), memory{{{0x50000u, std::as_bytes(std::span(table))}}} {
+        code = {0xf4080100u, 0xfa000000u, 0xf4200202u, 0xfa000000u, 0x7e000208u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
+        userData = {0x50000u, 0u, 0u, 0u};
+        request.shader = {ShaderStage::Fragment, 0x60000u, code, 0, {}};
+        request.context.compute.reset();
+        ShaderPixelStageInfo pixel{};
+        pixel.targetOutputMode[0] = 9u;
+        pixel.targetExportMapping.fill(0xe4u);
+        request.context.pixel = pixel;
+        request.context.memory = memory;
+    }
+};
+
+template<class Request>
 int runLoadingProcess() {
-    ComputeRequest cached(true);
+    Request cached(true);
     const auto loaded = Recompile(cached.request);
     const auto totals = ShaderDiskCache::Totals();
     require(totals.hits == 1 && totals.misses == 0 && totals.loadFailures == 0, "the second process did not load the stored variant (hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + ")");
-    ComputeRequest fresh(false);
+    Request fresh(false);
     const auto compiled = Recompile(fresh.request);
     requireSameResult(compiled, loaded, "loaded against compiled");
     require(!loaded.spirv.empty(), "the loaded SPIR-V is empty");
+    if constexpr (std::is_same_v<Request, BufferTableRequest>) require(!loaded.bufferBaseSlots.empty(), "the disk-loaded invocation lost its buffer-base patch slots");
     std::cout << "second process loaded " << loaded.spirv.size() << " SPIR-V words from the disk cache\n";
     return 0;
 }
 
-void verifyAcrossProcesses(const char* self) {
-    ComputeRequest request(true);
+template<class Request>
+void verifyAcrossProcesses(const char* self, const char* mode) {
+    Request request(true);
     const auto before = ShaderDiskCache::Totals();
     const auto compiled = Recompile(request.request);
     ShaderDiskCache::Flush();
     const auto after = ShaderDiskCache::Totals();
     require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
     require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
-    const std::string command = "\"" + std::string(self) + "\" --load";
+    if constexpr (std::is_same_v<Request, BufferTableRequest>) require(!compiled.bufferBaseSlots.empty(), "the cold invocation has no buffer-base patch slots");
+    const std::string command = "\"" + std::string(self) + "\" " + mode;
     require(std::system(command.c_str()) == 0, "the loading process failed");
 }
 
@@ -2822,7 +2846,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--large-file") return runLargeFileWrite();
-        if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
+        if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess<ComputeRequest>();
+        if (argc == 2 && std::string_view(argv[1]) == "--load-buffer-table") return runLoadingProcess<BufferTableRequest>();
         if (argc == 2 && std::string_view(argv[1]) == "--load-prebuilt") return runPrebuiltLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
@@ -2846,7 +2871,8 @@ int main(int argc, char** argv) {
         verifySharedPlans();
         verifyStore();
         verifyPersist();
-        verifyAcrossProcesses(argv[0]);
+        verifyAcrossProcesses<ComputeRequest>(argv[0], "--load");
+        verifyAcrossProcesses<BufferTableRequest>(argv[0], "--load-buffer-table");
         verifyPrebuiltAcrossProcesses(argv[0], directory);
         verifyPlanAcrossProcesses(argv[0]);
         verifyEmissionFailureMemo();

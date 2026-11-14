@@ -171,9 +171,15 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     bool seen = drawKeySightings->SeenBefore(key);
     const auto& pending = drawRelocationPending;
     if (pending.key == key && pending.identity != 0) {
-        if (pending.alias != 0) {
+        if (pending.aliases.structure != 0) {
             const auto trial = drawRelocationTrials.find(pending.identity);
-            if (drawKeySightings->SeenBefore(pending.alias ^ 0x9e3779b97f4a7c15ull) && trial != drawRelocationTrials.end()) {
+            bool aliasSeen = false;
+            for (std::size_t stage = 0; stage < pending.aliases.content.size(); ++stage) {
+                if (pending.aliases.content[stage] == 0) continue;
+                const auto stageKey = (pending.aliases.structure ^ (pending.aliases.content[stage] + 0x9e3779b97f4a7c15ull + stage)) * 0x100000001b3ull;
+                if (drawKeySightings->SeenBefore(stageKey)) aliasSeen = true;
+            }
+            if (aliasSeen && trial != drawRelocationTrials.end()) {
                 auto& state = trial->second;
                 if (state.productive || state.hits != 0 || state.admissions < DrawRelocationTrial::ProbationAdmissions) {
                     if (!state.productive && state.hits == 0) ++state.admissions;

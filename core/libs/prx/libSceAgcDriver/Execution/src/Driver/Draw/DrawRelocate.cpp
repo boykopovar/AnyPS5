@@ -55,7 +55,7 @@ std::uint64_t Driver::relocatedContentKey(const RelocatableUserWord& word, std::
                 readable = false;
                 return hash;
             }
-            for (std::size_t i = 0; i < count; ++i) mix(content[i]);
+            for (std::size_t i = 0; i < count; ++i) mix(std::find(word.dataOffsets.begin(), word.dataOffsets.end(), offset + static_cast<std::int64_t>(done + i) * 4) != word.dataOffsets.end() ? 0u : content[i]);
         }
     }
     return hash;
@@ -87,6 +87,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         return std::any_of(variant.runs.begin(), variant.runs.end(), [&](const auto& run) { return run.first < base + bytes && run.second > base; });
     };
     const auto taken = [&](std::uint32_t index) { return ((variant.relocatableWords | variant.valueWords | variant.calleeWords) >> index & 1u) != 0; };
+    const auto upperHalf = [&](std::uint32_t index) { return index != 0 && ((variant.relocatableWords | variant.calleeWords) >> (index - 1) & 1u) != 0; };
     if (ShaderRecompiler::GcnGuestShaders() && program.binary.stage == ShaderRecompiler::ShaderStage::Vertex) {
         for (const auto instruction : program.binary.code) {
             if ((instruction & 0xff80ff00u) != 0xbe802100u) continue;
@@ -112,7 +113,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
     }
     for (std::uint32_t index = program.hiddenUserWords; index + 2 < users; ++index) {
         const auto base = program.userData[index];
-        if (base == 0 || taken(index) || bound(base) != 1 || elsewhere(index, base)) continue;
+        if (base == 0 || taken(index) || upperHalf(index) || bound(base) != 1 || elsewhere(index, base)) continue;
         std::uint32_t binding = 0, word = 0;
         for (std::size_t b = 0; b < compiled.bindings.size(); ++b) {
             const auto& descriptor = compiled.bindings[b].guestDescriptor;
@@ -128,7 +129,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         variant.valueWords |= std::uint64_t {1} << index;
         variant.valueSlots.push_back({index, binding, word});
         const auto records = program.userData[index + 2];
-        if (records != 0 && !taken(index + 2) && bound(records) == 1 && !elsewhere(index + 2, records)) {
+        if (records != 0 && !taken(index + 2) && !upperHalf(index + 2) && bound(records) == 1 && !elsewhere(index + 2, records)) {
             variant.valueWords |= std::uint64_t {1} << (index + 2);
             variant.valueSlots.push_back({index + 2, binding, word + 2});
         }
@@ -246,9 +247,18 @@ void Driver::learnPendingRelocation() {
                 word.high = program.userData[index + 1];
             }
             const auto base = AlignedWord(program.userData[index]);
-            for (std::size_t run = 0; run < variant.runs.size() && run < variant.runBases.size(); ++run) {
-                if (variant.runBases[run] != static_cast<std::int8_t>(index)) continue;
-                word.reads.emplace_back(static_cast<std::int64_t>(variant.runs[run].first - base), static_cast<std::uint32_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t)));
+            std::uint32_t position = 0;
+            for (std::size_t run = 0; run < variant.runs.size(); ++run) {
+                const auto count = static_cast<std::uint32_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t));
+                if (run < variant.runBases.size() && variant.runBases[run] == static_cast<std::int8_t>(index)) {
+                    word.reads.emplace_back(static_cast<std::int64_t>(variant.runs[run].first - base), count);
+                    if (!variant.bufferWordBuffers.empty()) {
+                        for (const auto data : variant.dataPositions) {
+                            if (data >= position && data < position + count) word.dataOffsets.push_back(static_cast<std::int64_t>(variant.runs[run].first - base) + static_cast<std::int64_t>(data - position) * 4);
+                        }
+                    }
+                }
+                position += count;
             }
             shape->words.push_back(std::move(word));
             changed = true;
@@ -258,109 +268,266 @@ void Driver::learnPendingRelocation() {
         std::sort(shape->words.begin(), shape->words.end(), [](const RelocatableUserWord& a, const RelocatableUserWord& b) { return a.reg < b.reg; });
         drawRelocations[pending.identity] = std::move(shape);
     }
-    if (pending.alias == 0) return;
-    if (drawAliases.size() >= MaxAliases) drawRelocationCounters.evicted += dropEveryOther(drawAliases);
-    drawAliases[pending.alias] = pending.key;
+    if (pending.aliases.structure == 0) return;
+    if (drawStageDonors.size() >= MaxAliases) drawRelocationCounters.evicted += dropEveryOther(drawStageDonors);
+    if (drawDecodes.size() >= MaxAliases) drawRelocationCounters.evicted += dropEveryOther(drawDecodes);
+    DrawDecodeDonor donor{entry.decode, std::vector<std::uint64_t>(programs.size(), 0)};
+    for (std::size_t i = 0; i < programs.size(); ++i) {
+        if (entry.stages[i].empty() || entry.stages[i].front() == nullptr || entry.stages[i].front()->prepared == nullptr) continue;
+        const auto& variant = entry.stages[i].front();
+        const auto& program = programs[i];
+        std::uint64_t key = 0xcbf29ce484222325ull;
+        const auto mix = [&](std::uint64_t value) {
+            key ^= value;
+            key *= 0x100000001b3ull;
+        };
+        mix(reinterpret_cast<std::uintptr_t>(variant->prepared.get()));
+        mix(variant->pushOffset);
+        mix(program.userData.size());
+        for (std::uint32_t index = 0; index < program.userData.size(); ++index) {
+            const bool relocatable = pending.relocation != nullptr && index >= program.hiddenUserWords && std::any_of(pending.relocation->words.begin(), pending.relocation->words.end(), [&](const RelocatableUserWord& word) { return word.reg == program.userDataBase + index - program.hiddenUserWords; });
+            if (!relocatable && index >= program.hiddenUserWords) mix(program.userData[index]);
+        }
+        donor.stageKeys[i] = key == 0 ? 1 : key;
+        drawStageDonors[pending.aliases.Key(donor.stageKeys[i], program.userDataBase)] = {variant, program.userData, pending.key, inserted->second};
+    }
+    const auto held = drawDecodes.find(pending.aliases.structure);
+    if (held != drawDecodes.end() && held->second.stageKeys.size() == donor.stageKeys.size()) {
+        for (std::size_t i = 0; i < donor.stageKeys.size(); ++i) {
+            if (donor.stageKeys[i] == 0) donor.stageKeys[i] = held->second.stageKeys[i];
+        }
+    }
+    drawDecodes[pending.aliases.structure] = std::move(donor);
 }
 
-void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches) {
+void Driver::relocateDrawEntry(const QueueState& queue, const DrawAliasKeys& aliases, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches) {
     auto& counters = drawRelocationCounters;
     ++counters.lookups;
-    const auto found = drawAliases.find(alias);
-    if (found == drawAliases.end()) return;
-    const auto cached = drawCache.find(found->second);
-    if (cached == drawCache.end()) {
-        drawAliases.erase(found);
-        return;
-    }
-    if (cached->second->decode == nullptr) return;
-    const auto donor = cached->second;
-    const auto& programs = donor->decode->programs;
-    if (donor->stages.size() != programs.size()) return;
-    struct Move {
-        std::size_t program;
-        std::uint32_t index, from, to;
-    };
-    std::vector<Move> moves;
+    const auto known = drawDecodes.find(aliases.structure);
+    if (known == drawDecodes.end() || known->second.decode == nullptr) return;
+    const auto shared = known->second.decode;
+    const auto& stageKeys = known->second.stageKeys;
+    const auto& programs = shared->programs;
+    auto relocated = std::make_shared<DrawEntry>();
+    relocated->decode = shared;
+    relocated->stages.resize(programs.size());
+    std::vector<DrawUserPatch> current;
+    bool complete = true;
+    bool mixedOwners = false;
+    drawStageDonorKeys.assign(programs.size(), 0);
     for (std::size_t i = 0; i < programs.size(); ++i) {
         const auto& program = programs[i];
+        if (i < shared->roles.size() && shared->roles[i] == ShaderRecompiler::ProgramRole::GeometryBack) continue;
+        const auto found = i < stageKeys.size() && stageKeys[i] != 0 ? drawStageDonors.find(aliases.Key(stageKeys[i], program.userDataBase)) : drawStageDonors.end();
+        if (found != drawStageDonors.end()) drawStageDonorKeys[i] = found->first;
+        const auto owner = found != drawStageDonors.end() ? found->second.owner.lock() : nullptr;
+        const auto cachedOwner = found != drawStageDonors.end() ? drawCache.find(found->second.ownerKey) : drawCache.end();
+        const bool liveOwner = owner != nullptr && cachedOwner != drawCache.end() && cachedOwner->second.get() == owner.get();
+        const auto variant = liveOwner ? found->second.variant.lock() : nullptr;
+        const auto* donor = variant != nullptr && variant->compiled != nullptr && found->second.userData.size() == program.userData.size() && (variant->registeredViews == nullptr || CaptureRegisteredViewsCurrent(*variant->registeredViews)) ? &found->second : nullptr;
+        struct Move {
+            std::uint32_t index, from, to;
+        };
+        std::vector<Move> moves;
+        bool allowed = donor != nullptr;
         for (std::uint32_t index = program.hiddenUserWords; index < program.userData.size(); ++index) {
-            const auto current = readUserData(queue.shader, program.userDataBase + index - program.hiddenUserWords);
-            if (current != program.userData[index]) moves.push_back({i, index, program.userData[index], current});
+            const auto now = readUserData(queue.shader, program.userDataBase + index - program.hiddenUserWords);
+            if (now != program.userData[index]) current.push_back({i, index, now});
+            if (donor == nullptr || now == donor->userData[index]) continue;
+            const auto from = donor->userData[index];
+            if (index >= 64 || from == 0 || now == 0 || !(((((variant->relocatableWords | variant->calleeWords) >> index) & 1u) != 0 && ((from ^ now) & 3u) == 0) || ((variant->valueWords >> index) & 1u) != 0)) allowed = false;
+            moves.push_back({index, from, now});
         }
-    }
-    if (moves.empty()) return;
-    ++counters.donors;
-    auto relocated = std::make_shared<DrawEntry>();
-    relocated->decode = donor->decode;
-    relocated->donor = donor->donor != nullptr ? donor->donor : donor;
-    relocated->stages.resize(donor->stages.size());
-    for (std::size_t i = 0; i < donor->stages.size(); ++i) {
-        const bool moved = std::any_of(moves.begin(), moves.end(), [&](const Move& move) { return move.program == i; });
-        if (!moved) {
-            relocated->stages[i] = donor->stages[i];
+        if (!allowed) {
+            if (donor != nullptr) ++counters.refused;
+            complete = false;
             continue;
         }
-        for (const auto& variant : donor->stages[i]) {
-            if (variant == nullptr || variant->compiled == nullptr) continue;
-            const bool allowed = std::all_of(moves.begin(), moves.end(), [&](const Move& move) { return move.program != i || (move.index < 64 && move.from != 0 && move.to != 0 && ((((variant->relocatableWords | variant->calleeWords) >> move.index & 1u) != 0 && ((move.from ^ move.to) & 3u) == 0) || (variant->valueWords >> move.index & 1u) != 0)); });
-            if (!allowed) {
-                ++counters.refused;
-                continue;
+        const auto recipeOwner = owner->donor != nullptr ? owner->donor : owner;
+        if (!mixedOwners) {
+            if (relocated->donor == nullptr) relocated->donor = recipeOwner;
+            else if (relocated->donor != recipeOwner) {
+                relocated->donor = nullptr;
+                mixedOwners = true;
             }
-            auto copy = std::make_shared<DispatchVariant>();
-            copy->runs = variant->runs;
-            copy->runBases = variant->runBases;
-            copy->relocatableWords = variant->relocatableWords;
-            copy->userWordsWalked = variant->userWordsWalked;
-            copy->valueWords = variant->valueWords;
-            copy->valueSlots = variant->valueSlots;
-            copy->calleeWords = variant->calleeWords;
-            copy->calleeReads = variant->calleeReads;
-            copy->donor = variant->donor != nullptr ? variant->donor : variant;
-            copy->words = variant->words;
-            copy->forgetSerial = variant->forgetSerial;
-            copy->compiled = variant->compiled;
-            copy->meshIndexDescriptor = variant->meshIndexDescriptor;
-            copy->shader = variant->shader;
-            copy->dataPositions = variant->dataPositions;
-            copy->dataSlots = variant->dataSlots;
-            copy->flatBinding = variant->flatBinding;
-            copy->pushOffset = variant->pushOffset;
-            copy->vertexInfo = variant->vertexInfo;
-            for (const auto& move : moves) {
-                if (move.program != i) continue;
-                const auto delta = AlignedWord(move.to) - AlignedWord(move.from);
-                for (std::size_t run = 0; run < copy->runs.size() && run < copy->runBases.size(); ++run) {
-                    if (copy->runBases[run] != static_cast<std::int8_t>(move.index)) continue;
-                    copy->runs[run].first += delta;
-                    copy->runs[run].second += delta;
-                }
-                const auto& forwarded = variant->compiled->shaderDataUserWords;
-                for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
-                    if (forwarded[slot] == move.index) copy->shaderDataPatches.emplace_back(slot, move.to);
-                }
-                for (const auto& [index, binding, word] : variant->valueSlots) {
-                    if (index == move.index) copy->descriptorPatches.push_back({binding, word, move.to});
-                }
-            }
-            relocated->stages[i].push_back(std::move(copy));
         }
+        if (moves.empty()) {
+            relocated->stages[i].push_back(variant);
+            continue;
+        }
+        auto copy = cloneVariant(*variant);
+        copy->donor = variant->donor != nullptr ? variant->donor : variant;
+        for (const auto& move : moves) {
+            const auto delta = AlignedWord(move.to) - AlignedWord(move.from);
+            for (std::size_t run = 0; run < copy->runs.size() && run < copy->runBases.size(); ++run) {
+                if (copy->runBases[run] != static_cast<std::int8_t>(move.index)) continue;
+                copy->runs[run].first += delta;
+                copy->runs[run].second += delta;
+            }
+            for (const auto& [index, binding, word] : variant->valueSlots) {
+                if (index == move.index) copy->descriptorPatches.push_back({binding, word, move.to});
+            }
+            const auto& forwarded = variant->compiled->shaderDataUserWords;
+            for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
+                if (forwarded[slot] == move.index) copy->shaderDataPatches.emplace_back(slot, move.to);
+            }
+        }
+        relocated->stages[i].push_back(std::move(copy));
     }
-    patches.clear();
-    for (const auto& move : moves) patches.push_back({move.program, move.index, move.to});
+    if (complete) ++counters.donors;
+    patches = std::move(current);
     entry = std::move(relocated);
-    decode = donor->decode;
+    decode = shared;
+}
+
+std::shared_ptr<DispatchVariant> Driver::cloneVariant(const DispatchVariant& variant) {
+    auto copy = std::make_shared<DispatchVariant>();
+    copy->runs = variant.runs;
+    copy->registeredViews = variant.registeredViews;
+    copy->userDataMask = variant.userDataMask;
+    copy->userWordsWalked = variant.userWordsWalked;
+    copy->valueWords = variant.valueWords;
+    copy->valueSlots = variant.valueSlots;
+    copy->descriptorPatches = variant.descriptorPatches;
+    copy->calleeWords = variant.calleeWords;
+    copy->calleeReads = variant.calleeReads;
+    copy->meshIndexDescriptor = variant.meshIndexDescriptor;
+    copy->donor = variant.donor;
+
+    copy->runBases = variant.runBases;
+    copy->relocatableWords = variant.relocatableWords;
+    copy->words = variant.words;
+    copy->forgetSerial = variant.forgetSerial;
+    copy->compiled = variant.compiled;
+    copy->shader = variant.shader;
+    copy->dataPositions = variant.dataPositions;
+    copy->dataSlots = variant.dataSlots;
+    copy->flatBinding = variant.flatBinding;
+    copy->pushOffset = variant.pushOffset;
+    copy->prepared = variant.prepared;
+    copy->bufferWordBuffers = variant.bufferWordBuffers;
+    copy->patchedPushConstants = variant.patchedPushConstants;
+    copy->shaderDataPatches = variant.shaderDataPatches;
+    copy->vertexInfo = variant.vertexInfo;
+    return copy;
+}
+
+void Driver::tagBufferWords(DispatchVariant& variant, std::span<const ShaderRecompiler::BufferBaseWord> bufferBaseWords) {
+    TagDrawBufferBases_nid_no_patch(variant, bufferBaseWords, drawRelocationEnabled());
+}
+
+void TagDrawBufferBases_nid_no_patch(DispatchVariant& variant, std::span<const ShaderRecompiler::BufferBaseWord> bufferBaseWords, bool enabled) {
+    if (!enabled || bufferBaseWords.empty() || variant.compiled == nullptr || !variant.dataPositions.empty()) return;
+    const auto& compiled = *variant.compiled;
+    using Patches = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+    std::vector<std::pair<std::uint32_t, Patches>> tagged;
+    for (const auto& base : bufferBaseWords) {
+        if (!base.bufferRangeKnown) continue;
+        const bool capturedBuffer = base.bufferBytes != 0u && std::any_of(variant.runs.begin(), variant.runs.end(), [&](const auto& run) {
+            const auto [begin, end] = run;
+            return begin < end && (begin >= base.bufferAddress ? begin - base.bufferAddress < base.bufferBytes : base.bufferAddress < end);
+        });
+        if (capturedBuffer) continue;
+        std::uint32_t position = 0;
+        bool located = false;
+        for (const auto& [begin, end] : variant.runs) {
+            if (base.address >= begin && base.address < end && (base.address - begin) % sizeof(std::uint32_t) == 0) {
+                position += static_cast<std::uint32_t>((base.address - begin) / sizeof(std::uint32_t));
+                located = true;
+                break;
+            }
+            position += static_cast<std::uint32_t>((end - begin) / sizeof(std::uint32_t));
+        }
+        if (!located || position >= variant.words.size() || variant.words[position] == 0) continue;
+        const auto value = variant.words[position];
+        Patches patches;
+        std::size_t slots = 0, others = 0;
+        for (std::size_t binding = 0; binding < compiled.bindings.size(); ++binding) {
+            const auto& words = compiled.bindings[binding].guestDescriptor;
+            for (std::size_t word = 0; word < words.size(); ++word) {
+                if (words[word] != value) continue;
+                const bool slot = std::any_of(compiled.bufferBaseSlots.begin(), compiled.bufferBaseSlots.end(), [&](const std::array<std::uint32_t, 3>& entry) { return entry[0] == base.buffer && entry[1] == binding && entry[2] == word; });
+                const bool flat = compiled.bindings[binding].role == ShaderRecompiler::DescriptorRole::FlattenedSrt && base.flatOffset >= 0 && static_cast<std::int64_t>(word) == base.flatOffset;
+                if (slot) ++slots;
+                if (!slot && !flat) ++others;
+                if (slot || flat) patches.emplace_back(static_cast<std::uint32_t>(binding), static_cast<std::uint32_t>(word));
+            }
+        }
+        for (std::size_t at = 0; at + sizeof(std::uint32_t) <= compiled.pushConstants.size(); at += sizeof(std::uint32_t)) {
+            std::uint32_t word = 0;
+            std::memcpy(&word, compiled.pushConstants.data() + at, sizeof(word));
+            if (word == value) ++others;
+        }
+        for (const auto& constant : compiled.specialization) {
+            if (constant.value == value) ++others;
+        }
+        const auto expected = static_cast<std::size_t>(std::count_if(compiled.bufferBaseSlots.begin(), compiled.bufferBaseSlots.end(), [&](const std::array<std::uint32_t, 3>& entry) { return entry[0] == base.buffer; }));
+        if (slots == 0 || slots != expected || others != 0) continue;
+        if (std::any_of(tagged.begin(), tagged.end(), [&](const auto& entry) { return entry.first == position; })) continue;
+        tagged.emplace_back(position, std::move(patches));
+    }
+    std::sort(tagged.begin(), tagged.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (auto& [position, patches] : tagged) {
+        variant.dataPositions.push_back(position);
+        variant.bufferWordBuffers.push_back(std::move(patches));
+    }
+}
+
+std::shared_ptr<DispatchVariant> Driver::patchBufferWords(const DispatchVariant& variant, std::span<const std::pair<std::uint32_t, std::uint32_t>> live) {
+    if (live.empty() || variant.compiled == nullptr || variant.dataPositions.size() != variant.bufferWordBuffers.size()) return nullptr;
+    auto copy = cloneVariant(variant);
+    auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
+    for (const auto& [position, fresh] : live) {
+        const auto found = std::lower_bound(variant.dataPositions.begin(), variant.dataPositions.end(), position);
+        if (found == variant.dataPositions.end() || *found != position || position >= copy->words.size()) return nullptr;
+        const auto stored = copy->words[position];
+        if (stored == 0 || fresh == 0 || ((stored ^ fresh) & 3u) != 0) return nullptr;
+        for (const auto& [binding, word] : variant.bufferWordBuffers[static_cast<std::size_t>(found - variant.dataPositions.begin())]) {
+            if (binding >= rebased->bindings.size() || word >= rebased->bindings[binding].guestDescriptor.size() || rebased->bindings[binding].guestDescriptor[word] != stored) return nullptr;
+            rebased->bindings[binding].guestDescriptor[word] = fresh;
+        }
+        copy->words[position] = fresh;
+    }
+    copy->compiled = std::move(rebased);
+    copy->dataPatched = true;
+    return copy;
+}
+
+std::shared_ptr<DispatchVariant> Driver::patchStageDataWords(const DispatchVariant& variant, std::span<const std::pair<std::uint32_t, std::uint32_t>> live) {
+    if (live.empty() || variant.compiled == nullptr) return nullptr;
+    if (!variant.bufferWordBuffers.empty()) return patchBufferWords(variant, live);
+    if (variant.dataPositions.empty() || variant.flatBinding == DispatchVariant::NoFlatBinding || variant.flatBinding >= variant.compiled->bindings.size()) return nullptr;
+    auto copy = cloneVariant(variant);
+    auto words = copy->words;
+    for (const auto& [position, fresh] : live) {
+        if (position >= words.size()) return nullptr;
+        words[position] = fresh;
+    }
+    copy->compiled = patchDataWords(*copy, words);
+    copy->words = std::move(words);
+    copy->dataPatched = true;
+    return copy;
 }
 
 void Driver::applyShaderDataPatches(DispatchVariant& variant) {
     if (variant.shaderDataPatches.empty() && variant.descriptorPatches.empty()) return;
-    auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
-    for (const auto& [slot, value] : variant.shaderDataPatches) patchForwardedWord(*rebased, slot, value);
-    for (const auto& [binding, word, value] : variant.descriptorPatches) {
-        if (binding < rebased->bindings.size() && word < rebased->bindings[binding].guestDescriptor.size()) rebased->bindings[binding].guestDescriptor[word] = value;
+    const bool stored = std::any_of(variant.compiled->bindings.begin(), variant.compiled->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
+    if (!stored && variant.descriptorPatches.empty()) {
+        if (variant.patchedPushConstants.empty()) variant.patchedPushConstants = variant.compiled->pushConstants;
+        for (const auto& [slot, value] : variant.shaderDataPatches) {
+            const auto at = static_cast<std::size_t>(slot) * sizeof(std::uint32_t);
+            if (at + sizeof(std::uint32_t) <= variant.patchedPushConstants.size()) std::memcpy(variant.patchedPushConstants.data() + at, &value, sizeof(value));
+        }
+    } else {
+        auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
+        if (!variant.patchedPushConstants.empty()) rebased->pushConstants = variant.patchedPushConstants;
+        for (const auto& [slot, value] : variant.shaderDataPatches) patchForwardedWord(*rebased, slot, value);
+        for (const auto& [binding, word, value] : variant.descriptorPatches) {
+            if (binding < rebased->bindings.size() && word < rebased->bindings[binding].guestDescriptor.size()) rebased->bindings[binding].guestDescriptor[word] = value;
+        }
+        variant.compiled = std::move(rebased);
+        variant.patchedPushConstants.clear();
     }
-    variant.compiled = std::move(rebased);
     variant.shaderDataPatches.clear();
     variant.descriptorPatches.clear();
 }
@@ -375,7 +542,7 @@ void Driver::patchForwardedWord(ShaderRecompiler::RecompileResult& result, std::
 
 void Driver::reportDrawRelocation() {
     auto& counters = drawRelocationCounters;
-    AgcDriver::ProfilePrint_nid_no_patch("[draw-relocate] %llu alias lookups: %llu donors with moved user words, %llu refusals, %llu hits through a relocated entry; %zu shader sets learned, %zu aliases held (%llu dropped at the limit)\n", static_cast<unsigned long long>(counters.lookups), static_cast<unsigned long long>(counters.donors), static_cast<unsigned long long>(counters.refused), static_cast<unsigned long long>(counters.hits), drawRelocations.size(), drawAliases.size(), static_cast<unsigned long long>(counters.evicted));
+    AgcDriver::ProfilePrint_nid_no_patch("[draw-relocate] %llu alias lookups: %llu donors with moved user words, %llu refusals, %llu hits through a relocated entry; %zu shader sets learned, %zu stage donors held (%llu dropped at the limit)\n", static_cast<unsigned long long>(counters.lookups), static_cast<unsigned long long>(counters.donors), static_cast<unsigned long long>(counters.refused), static_cast<unsigned long long>(counters.hits), drawRelocations.size(), drawStageDonors.size(), static_cast<unsigned long long>(counters.evicted));
     counters = {};
 }
 
