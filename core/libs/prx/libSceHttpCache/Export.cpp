@@ -117,6 +117,7 @@ struct Entry {
     std::uint64_t lifetime = 0;
     Headers vary;
     std::string body;
+    std::string tag;
     bool isPublic = false;
     bool pending = false;
     std::size_t readOffset = 0;
@@ -138,6 +139,7 @@ struct ResponseData {
 struct Request {
     std::int32_t storeUser = -1;
     bool hasStore = false;
+    std::string tag;
     State state = State::Idle;
     int lastResult = ResultMiss;
     std::optional<RequestData> current;
@@ -573,6 +575,7 @@ void FillEntry(Request& request, Entry& entry, const ResponseData& response) {
     entry.headers = response.headers;
     entry.responseTime = response.time;
     entry.lifetime = Lifetime(response);
+    entry.tag = request.tag;
     entry.vary = SelectVary(request.current->headers, response.headers);
     ApplySharing(request, entry);
 }
@@ -743,7 +746,18 @@ int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl() {
 
 
 int APS5_VABI sceHttpCacheClear(std::int32_t cacheId, std::int32_t userId, const char* tag) {
-    NotImplemented_nid_no_patch(__func__);
+    if (tag == nullptr) return ErrorInvalidValue;
+    std::lock_guard lock(Mutex);
+    if (FindCache(cacheId) == nullptr) return ErrorNotFound;
+    if (SystemUser(userId) || !RegisteredUser(userId)) return 0;
+    const std::string_view filter(tag);
+    for (auto it = Store.begin(); it != Store.end();) {
+        if (std::get<0>(it->first) != userId || (!filter.empty() && it->second.tag != filter)) {
+            ++it;
+            continue;
+        }
+        it = Store.erase(it);
+    }
     return 0;
 }
 
@@ -792,8 +806,20 @@ int APS5_VABI sceHttpCacheCreateRequest(std::int32_t cacheId, std::int32_t userI
 }
 
 int APS5_VABI sceHttpCacheCreateRequestWithTag(std::int32_t cacheId, std::int32_t userId, const char* tag) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (tag == nullptr) return ErrorInvalidValue;
+    std::lock_guard lock(Mutex);
+    Cache* cache = FindCache(cacheId);
+    if (cache == nullptr) return ErrorNotFound;
+    if (!SystemUser(userId) && !RegisteredUser(userId)) return ErrorInvalidUser;
+    const std::uint32_t sequence = cache->nextRequest;
+    cache->nextRequest = sequence + 1 < RequestCounterLimit ? sequence + 1 : 1;
+    const auto requestId = static_cast<std::int32_t>(static_cast<std::uint32_t>(cacheId) << 24 | sequence);
+    Request request;
+    request.storeUser = userId;
+    request.hasStore = !SystemUser(userId);
+    request.tag = tag;
+    cache->requests[requestId] = std::move(request);
+    return requestId;
 }
 
 int APS5_VABI sceHttpCacheDeleteRequest(std::int32_t requestId) {
@@ -950,7 +976,9 @@ int APS5_VABI sceHttpCacheSetResponseHeader(std::int32_t requestId, const HttpCa
 int APS5_VABI sceHttpCacheSystemClearAll(const char* path) {
     std::string copiedPath;
     if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(Mutex);
+    Store.clear();
+    return 0;
 }
 
 int APS5_VABI sceHttpCacheSystemInit(const char* path) {
@@ -983,12 +1011,16 @@ int APS5_VABI sceHttpCacheTerm(std::int32_t cacheId) {
 
 
 int APS5_VABI sceHttpCacheClearAllUserTags(std::int32_t cacheId, const std::int32_t* userIds, std::size_t count) {
-    {
-        std::lock_guard lock(Mutex);
-        if (FindCache(cacheId) == nullptr) return ErrorNotFound;
-    }
+    std::lock_guard lock(Mutex);
+    if (FindCache(cacheId) == nullptr) return ErrorNotFound;
     if (count > 20 || (userIds == nullptr && count != 0)) return ErrorInvalidValue;
-    NotImplemented_nid_no_patch(__func__);
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::int32_t userId = userIds[i];
+        if (SystemUser(userId) || !RegisteredUser(userId)) continue;
+        for (auto it = Store.begin(); it != Store.end();) {
+            it = std::get<0>(it->first) == userId ? Store.erase(it) : std::next(it);
+        }
+    }
     return 0;
 }
 

@@ -141,6 +141,14 @@ void TestCacheArguments() {
     Require(sceHttpCacheClearAllUserTags(9, users, 1) == NotFound);
     Require(sceHttpCacheClearAllUserTags(cache, nullptr, 1) == InvalidValue);
     Require(sceHttpCacheClearAllUserTags(cache, users, 21) == InvalidValue);
+    const std::int32_t systemUsers[]{-1};
+    Require(sceHttpCacheClearAllUserTags(cache, systemUsers, 1) == 0);
+    Require(sceHttpCacheClear(cache, -1, nullptr) == InvalidValue);
+    Require(sceHttpCacheClear(9, -1, "tag") == NotFound);
+    Require(sceHttpCacheClear(cache, -1, "tag") == 0);
+    Require(sceHttpCacheCreateRequestWithTag(cache, -1, "tag") > 0);
+    Require(sceHttpCacheCreateRequestWithTag(cache, -1, nullptr) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll("/tmp") == 0);
     Require(sceHttpCacheTerm(cache) == 0);
 }
 
