@@ -107,3 +107,6 @@
 [submodule "3rdparty/cairo"]
 	path = 3rdparty/cairo
 	url = https://gitlab.freedesktop.org/cairo/cairo.git
+[submodule "3rdparty/libpng"]
+	path = 3rdparty/libpng
+	url = https://github.com/pnggroup/libpng.git
