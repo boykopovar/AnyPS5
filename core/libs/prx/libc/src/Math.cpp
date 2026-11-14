@@ -1403,9 +1403,51 @@ long double APS5_VABI acosl_nid_postfix(long double x) {
     const long double r = AsinNumerator(z) / AsinDenominator(z);
     return 2.0L * (high + (r * s + correction));
 }
-long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
-long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
-long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
+long double APS5_VABI acoshl_nid_postfix(long double x) {
+    constexpr long double Huge = 0x1p67L;
+    constexpr long double Ln2 = 0xb.17217f7d1cf79acp-4L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 2 || (kind == 1 && !std::signbit(x))) return x;
+    if (x < 1.0L) {
+        _Feraise_nid_postfix(0x01);
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    if (x == 1.0L) return 0.0L;
+    if (!(x < Huge)) return _LLog_nid_postfix(x, 0) + Ln2;
+    const long double t = -1.0L + x;
+    return log1pl_nid_postfix(sqrtl_nid_postfix(x * t + t) + t);
+}
+long double APS5_VABI asinhl_nid_postfix(long double x) {
+    constexpr long double Tiny = 0x1p-66L;
+    constexpr long double Huge = 0x1p67L;
+    constexpr long double Ln2 = 0xb.17217f7d1cf79acp-4L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 0 || kind == 1 || kind == 2) return x;
+    const long double a = x < 0.0L ? -x : x;
+    long double result;
+    if (a < Tiny) result = a;
+    else if (!(a < Huge)) result = _LLog_nid_postfix(a, 0) + Ln2;
+    else result = log1pl_nid_postfix(a / (sqrtl_nid_postfix(a * a + 1.0L) + 1.0L) * a + a);
+    return x < 0.0L ? -result : result;
+}
+long double APS5_VABI atanhl_nid_postfix(long double x) {
+    constexpr long double Tiny = 0x1p-33L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 0 || kind == 2) return x;
+    const long double a = x < 0.0L ? -x : x;
+    if (a > 1.0L) {
+        _Feraise_nid_postfix(0x01);
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    if (a == 1.0L) {
+        _Feraise_nid_postfix(0x04);
+        return x < 0.0L ? -std::numeric_limits<long double>::infinity() : std::numeric_limits<long double>::infinity();
+    }
+    if (-Tiny < a && a < Tiny) return x;
+    const long double q = a / (1.0L - a);
+    const long double result = log1pl_nid_postfix(q + q) * 0.5L;
+    return x < 0.0L ? -result : result;
+}
 long double APS5_VABI cbrtl_nid_postfix(long double x) {
     constexpr std::uint32_t B1 = 709958130;
     constexpr int Bias = 0x3fff;
@@ -1452,7 +1494,23 @@ long double APS5_VABI cbrtl_nid_postfix(long double x) {
 long double APS5_VABI erfl_nid_postfix(long double x) { return std::erf(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return std::erfc(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
-long double APS5_VABI log1pl_nid_postfix(long double x) { return std::log1p(x); }
+long double APS5_VABI log1pl_nid_postfix(long double x) {
+    constexpr long double Tiny = 0x1p-66L;
+    const short kind = _LDtest_nid_postfix(&x);
+    if (kind == 0 || kind == 2 || (kind == 1 && !std::signbit(x))) return x;
+    if (x < -1.0L) {
+        _Feraise_nid_postfix(0x01);
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    if (x == -1.0L) {
+        _Feraise_nid_postfix(0x04);
+        return -std::numeric_limits<long double>::infinity();
+    }
+    if (-Tiny <= x && x < Tiny) return x;
+    const long double u = 1.0L + x;
+    const long double correction = ((u + -1.0L) - x) * (-1.0L / u);
+    return _LLog_nid_postfix(u, 0) + correction;
+}
 long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
