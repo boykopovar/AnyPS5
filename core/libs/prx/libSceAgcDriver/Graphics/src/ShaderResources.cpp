@@ -271,6 +271,8 @@ void noteUncached(const std::shared_ptr<StorageTexture>& image) {
     uncached.any.store(true, std::memory_order_release);
 }
 
+std::atomic<std::uint64_t> textureReleases{0};
+
 std::atomic<bool>& TexturesReleased() {
     static std::atomic<bool> released{false};
     return released;
@@ -289,6 +291,7 @@ void countIndex(IndexCount which, std::uint64_t amount = 1) {
 
 void noteReleased(const std::shared_ptr<Texture>& texture, std::uint64_t address) {
     texture->MarkReleased();
+    textureReleases.fetch_add(1, std::memory_order_release);
     TexturesReleased().store(true, std::memory_order_release);
     GuestMemory::NoteTextureReleased(address);
 }
@@ -4457,7 +4460,8 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const auto epoch = GuestMemory::CollectEpoch();
         const auto proof = GuestMemory::ProofSerial();
         const auto pending = StorageTexture::PendingSerial();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending) {
+        const auto releases = textureReleases.load(std::memory_order_acquire);
+        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases) {
             static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
             thread_local std::uint64_t reuses = 0;
             if (verify && ++reuses % 64u == 0u) {
@@ -4475,6 +4479,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             provedEpoch = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); }) ? 0 : epoch;
             provedProof = proof;
             provedPending = pending;
+            provedReleases = releases;
         } else {
             provedEpoch = 0;
         }

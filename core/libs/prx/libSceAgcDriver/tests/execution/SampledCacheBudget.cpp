@@ -654,6 +654,32 @@ void replacedEntryTests(Context context) {
     std::puts("template over a replaced sampled cache entry passed");
 }
 
+void releasedEpochTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    WatchedSurface surface(context);
+    ClearCachedTextures(context.device);
+    Require(ShaderResources::EpochProofs(), "the released-texture fixture needs epoch proofs on");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto first = std::make_shared<ShaderResources>(context, shader);
+    Require(first->Reusable() && first->SampledTextures().size() == 1, "the released-texture template is not reusable");
+    const auto bound = first->SampledTextures().front();
+    ShaderResources::ProofReport report{};
+    Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the released-texture template did not prove current through the full proof");
+    Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full && report.failure == ShaderResources::ProofFailure::None, "an unchanged template in the same collect epoch did not take the epoch exit");
+    ClearCachedTextures(context.device);
+    Require(bound->Released(), "evicting the bound texture did not release it");
+    Require(!first->Revalidate(shader, &report), "a template binding a released texture proved current through the epoch exit");
+    Require(!first->Revalidate(shader, &report), "a template binding a released texture proved current on the next revalidation");
+    first.reset();
+    ClearCachedTextures(context.device);
+    std::puts("template over a released texture in the same collect epoch passed");
+}
+
 bool lookupChangedTests(Context context) {
     PlaceholderImages placeholders(context);
     context.placeholderImages = &placeholders;
@@ -1555,6 +1581,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             replacedEntryTests(context);
             std::puts("resource cache replaced entry tests passed");
+            return 0;
+        }
+        if (mode == "resource-released-epoch") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            releasedEpochTests(context);
+            std::puts("resource cache released epoch tests passed");
             return 0;
         }
         if (mode == "resource-lookup-changed") {
