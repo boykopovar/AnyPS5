@@ -34,6 +34,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     const auto* drawParameters = findFeatures<VkPhysicalDeviceShaderDrawParametersFeatures>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES);
     const auto* terminate = findFeatures<VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR);
     const auto* maintenance8 = findFeatures<VkPhysicalDeviceMaintenance8FeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR);
+    const auto* portability = findFeatures<VkPhysicalDevicePortabilitySubsetFeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR);
     Require(target.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version, "shader device profile has an incompatible BDA ABI");
     Require(bda != nullptr && bda->bufferDeviceAddress == VK_TRUE && core.shaderInt64 == VK_TRUE, "shader runtime requires enabled bufferDeviceAddress and shaderInt64");
     Require(bytes != nullptr && bytes->storageBuffer8BitAccess == VK_TRUE, "shader runtime requires enabled storageBuffer8BitAccess");
@@ -78,6 +79,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     Require(!target.nonConstantImageOffsets || (maintenance8 != nullptr && maintenance8->maintenance8 == VK_TRUE), "shader device profile exposes disabled maintenance8");
     Require(!target.tessellation || core.tessellationShader == VK_TRUE, "shader device profile exposes disabled tessellation");
     Require(!target.shaderImageMinLod || core.shaderResourceMinLod == VK_TRUE, "shader device profile exposes a disabled shaderResourceMinLod");
+    Require(!target.samplerLodBias || portability == nullptr || portability->samplerMipLodBias == VK_TRUE, "shader device profile applies a sampler LOD bias the portability subset disables");
     for (const auto extension : target.supportedExtensions) extensions.emplace_back(extension);
     std::ranges::sort(extensions);
     extensions.erase(std::unique(extensions.begin(), extensions.end()), extensions.end());
