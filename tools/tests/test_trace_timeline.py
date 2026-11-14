@@ -84,6 +84,41 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(missing.returncode, 2)
         self.assertIn("FAIL", missing.stderr)
 
+    def test_the_cli_accepts_only_finite_nonnegative_window_bounds(self):
+        path = Path(self.tmp.name) / "a.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        out = Path(self.tmp.name) / "a.html"
+        tool = Path(trace_timeline.__file__)
+        done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), "--from-ms=1", "--to-ms=6.5"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("window 1.000 to 6.500 ms", out.read_text(encoding="utf-8"))
+        for option in ("--from-ms", "--to-ms"):
+            for value in ("-1", "nan", "inf", "-inf", "1e308"):
+                with self.subTest(option=option, value=value):
+                    out.unlink(missing_ok=True)
+                    done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), option + "=" + value],
+                                          capture_output=True, text=True)
+                    self.assertEqual(done.returncode, 2, done.stderr)
+                    self.assertIn(option, done.stderr)
+                    self.assertFalse(out.exists())
+
+    def test_the_cli_rejects_sizes_that_are_not_positive(self):
+        path = Path(self.tmp.name) / "a.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        out = Path(self.tmp.name) / "a.html"
+        tool = Path(trace_timeline.__file__)
+        for option, value in (("--max-slices", "-1"), ("--max-slices", "0"), ("--width", "-500"), ("--width", "0"), ("--width", "x")):
+            with self.subTest(option=option, value=value):
+                out.unlink(missing_ok=True)
+                done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), option + "=" + value],
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertIn(option, done.stderr)
+                self.assertFalse(out.exists())
+
 
 def trace_timeline_slices(items):
     return trace_timeline.window_slices(trace_of(items), 0, 10**12)

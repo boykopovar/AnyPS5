@@ -1975,10 +1975,20 @@ int APS5_VABI sceSaveDataGetEventInfo() {
 }
 
 int APS5_VABI sceSaveDataGetMountedSaveDataCount(std::int32_t reserved, std::uint32_t* count) {
-    (void)reserved;
-    (void)count;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    if (count == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    if (reserved != 0) NotImplemented_nid_no_patch(__func__);
+    std::uint32_t mounted = 0;
+    {
+        std::lock_guard lock(g_slots_mutex);
+        for (const auto& slot : g_slots) {
+            if (slot.used) ++mounted;
+        }
+    }
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(count, &mounted, sizeof(mounted));
+    errno = savedErrno;
+    return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
 }
 
 static int getProgress(float* progress) {

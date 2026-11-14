@@ -177,6 +177,7 @@ struct PreparedShaders : PreparedShaderState {
         std::weak_ptr<VulkanDevice> device;
     };
     std::vector<DeferredAbi> deferredAbis;
+    std::size_t resolving = 0;
     bool deferredPreparing = false;
     std::mutex mutex;
     std::condition_variable settled;
@@ -324,6 +325,8 @@ std::uint64_t DepthCopyPixelProgramAddress(bool multisampled);
 std::uint32_t DepthCopyPixelUserWords(bool multisampled);
 ShaderSnapshot PrepareDepthCopyPixelProgram(bool multisampled);
 bool DriverOwnedProgram(std::uint64_t codeAddress);
+std::uint64_t StencilCopyPixelProgramAddress(bool multisampled);
+ShaderSnapshot PrepareStencilCopyPixelProgram(bool multisampled);
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot);
 std::optional<ShaderRecompiler::ShaderFloatMode> DispatchFloatMode(const ShaderSnapshot& snapshot, const Registers& live);
 std::shared_ptr<const ShaderSnapshot> RegisteredHeader(const ShaderRegistry& registry, const Shader* shader);
@@ -350,6 +353,7 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation);
+bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset);
 
 }
 
