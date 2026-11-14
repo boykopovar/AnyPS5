@@ -121,6 +121,31 @@ class PrepareWriteTests(ReleaseNotesCase):
         self.assertEqual(os.stat(self.full).st_mode & 0o777, 0o640)
 
 
+class PrepareCheckTests(ReleaseNotesCase):
+    def test_check_is_true_only_when_both_outputs_match_the_stripped_and_full_text(self):
+        notes = "## What's Changed\n* " + "x" * LIMIT + "\n## New Contributors\n* n\n"
+        stripped = "## New Contributors\n* n\n"
+        self.write_source(json.dumps({"body": notes}))
+        prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertTrue(prepare_release_notes.prepare_notes(self.source, self.body, self.full, check=True))
+        self.assertEqual(self.body.read_bytes(), stripped.encode("utf-8"))
+
+        self.body.write_bytes(notes.encode("utf-8"))
+        self.assertFalse(prepare_release_notes.prepare_notes(self.source, self.body, self.full, check=True))
+        self.body.write_bytes(stripped.encode("utf-8"))
+        self.full.write_bytes(stripped.encode("utf-8"))
+        self.assertFalse(prepare_release_notes.prepare_notes(self.source, self.body, self.full, check=True))
+
+    def test_check_reports_missing_outputs_without_creating_anything(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        body, full = self.root / "missing" / "body.md", self.root / "missing" / "full.md"
+        before = sorted(path.name for path in self.root.iterdir())
+        self.assertFalse(prepare_release_notes.prepare_notes(self.source, body, full, check=True))
+        self.assertFalse(prepare_release_notes.prepare_notes(self.source, self.body, self.full, check=True))
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), before)
+        self.assertFalse((self.root / "missing").exists())
+
+
 class ReleaseBodyTests(unittest.TestCase):
     def test_notes_at_or_below_limit_are_returned_unchanged(self):
         short = "## What's Changed\n- entry\n"
