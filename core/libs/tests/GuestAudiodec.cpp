@@ -11,6 +11,18 @@
 #include <stdexcept>
 #include <vector>
 
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(leak_sanitizer) || __has_feature(memory_sanitizer)
+#define AUDIODEC_SKIP_ADDRESS_LIMIT 1
+#endif
+#endif
+
 static void Require(bool value) { if (!value) std::abort(); }
 
 namespace {
@@ -493,9 +505,44 @@ void TestLargePcmCapacity() {
     Require(sceAudiodecDeleteDecoder(at9Handle) == 0);
 }
 
+#if defined(__linux__)
+int TestPcmCapacityAddressLimit() {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_LEAK__) || defined(AUDIODEC_SKIP_ADDRESS_LIMIT)
+    return 77;
+#else
+    const pid_t child = fork();
+    if (child < 0) return 1;
+    if (child == 0) {
+        constexpr rlim_t capacity = 256ull * 1024 * 1024;
+        const rlimit limit{capacity, capacity};
+        if (setrlimit(RLIMIT_AS, &limit) != 0) _exit(1);
+        if (sceAudiodecInitLibrary(2) != 0) _exit(2);
+        AudiodecParamMp3 param{sizeof(param), 1};
+        AudiodecMp3Info info{};
+        info.ui_size = sizeof(info);
+        AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+        const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
+        if (handle <= 0) _exit(3);
+        Streams streams;
+        errno = 71;
+        const std::size_t frameSize = 144 * 32000 / 48000 + (MP3_MONO[2] >> 1 & 1);
+        if (Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO), INT32_MAX - 1) != 0 ||
+            streams.au.ui_au_size != frameSize || streams.pcm.ui_pcm_size != 1152 * 2 || errno != 71) _exit(4);
+        if (sceAudiodecDeleteDecoder(handle) != 0 || sceAudiodecTermLibrary(2) != 0) _exit(5);
+        _exit(0);
+    }
+    int status = 0;
+    return waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 1;
+#endif
+}
+#endif
+
 }
 
-int main() {
+int main(int argc, char** argv) {
+#if defined(__linux__)
+    if (argc == 2 && std::strcmp(argv[1], "--pcm-capacity-rlimit") == 0) return TestPcmCapacityAddressLimit();
+#endif
     Require(sceAudiodecInitLibrary(0) == errorInvalidType);
     Require(sceAudiodecInitLibrary(4) == errorInvalidType);
     Require(sceAudiodecTermLibrary(0) == errorInvalidType);
