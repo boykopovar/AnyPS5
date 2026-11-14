@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,8 +17,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceGnmDriver/include/CommandStream.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
@@ -44,6 +47,7 @@ constexpr std::uint32_t CpDmaReadTagsBytes = 0xc08bu * 4;
 constexpr std::uint32_t OpEventWriteEop = 0x47;
 constexpr std::uint32_t OpEventWriteEos = 0x48;
 constexpr std::uint32_t OpReleaseMem = 0x49;
+constexpr std::uint32_t OpRewind = 0x59;
 constexpr std::uint32_t OpLoadConstRam = 0x80;
 constexpr std::uint32_t OpWriteConstRam = 0x81;
 constexpr std::uint32_t OpDumpConstRam = 0x83;
@@ -279,6 +283,32 @@ std::vector<std::uint32_t> MergeEngines(std::span<const std::uint32_t> dcb, std:
 
 namespace {
 
+constexpr std::uint32_t FirstComputeQueue = 0x20;
+constexpr std::uint32_t ComputePipes = 7;
+constexpr std::uint32_t QueuesPerPipe = 8;
+static_assert(ComputePipes * QueuesPerPipe <= AgcDriver::DriverDetail::SubmissionQueueEnd - FirstComputeQueue);
+
+struct ComputeRing {
+    const std::uint32_t* words = nullptr;
+    std::uint32_t size = 0;
+    volatile std::uint32_t* readOffset = nullptr;
+    std::uint32_t writeOffset = 0;
+    bool mapped = false;
+};
+
+std::mutex g_ringMutex;
+std::array<ComputeRing, ComputePipes * QueuesPerPipe> g_rings;
+
+void UseGcnShaders() {
+    static const bool gcn = (AgcDriverUseGcnShaders_nid_postfix(), true);
+    static_cast<void>(gcn);
+}
+
+ComputeRing& MappedRing(std::uint32_t id, const char* unmapped) {
+    if (id == 0 || id > g_rings.size() || !g_rings[id - 1].mapped) NotImplemented_nid_no_patch(unmapped);
+    return g_rings[id - 1];
+}
+
 void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     static FrameStart frameStart;
     static const bool waitIdle = std::getenv("APS5_GNM_SUBMIT_WAIT_IDLE") != nullptr;
@@ -289,8 +319,7 @@ void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::ui
         merged.push_back(GnmDriver::MergeEngines({dcbs[i], dcbBytes[i] / 4}, {constantWords != 0 ? ccbs[i] : nullptr, constantWords}));
     }
     if (!g_frameStarted) {
-        static const bool gcn = (AgcDriverUseGcnShaders_nid_postfix(), true);
-        static_cast<void>(gcn);
+        UseGcnShaders();
         AgcDriverSubmitGraphics_nid_postfix(frameStart.words, frameStart.size);
         g_frameStarted = true;
     }
@@ -592,8 +621,27 @@ int APS5_VABI sceGnmDebugHardwareStatus() {
     return 0;
 }
 
-int APS5_VABI sceGnmDingDong() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmDingDong(std::uint32_t id, std::uint32_t nextOffsetInDwords) {
+    std::lock_guard lock(g_ringMutex);
+    auto& ring = MappedRing(id, "sceGnmDingDong for a queue id that is not mapped");
+    if (nextOffsetInDwords >= ring.size) NotImplemented_nid_no_patch("sceGnmDingDong with an offset past the end of the ring");
+    std::vector<std::uint32_t> words;
+    for (auto at = ring.writeOffset; at != nextOffsetInDwords; at = (at + 1) & (ring.size - 1)) words.push_back(ring.words[at]);
+    std::vector<std::uint32_t> lowered;
+    for (std::size_t at = 0; at < words.size();) {
+        if (!IsFiller(words[at]) && (words[at] >> 30) == 3 && ((words[at] >> 16) & 0x3fffu) + 2 > words.size() - at)
+            NotImplemented_nid_no_patch("sceGnmDingDong with an offset inside a packet");
+        const auto packet = GnmDriver::PacketAt(words, at, "compute ring");
+        if (!IsFiller(packet[0]) && Opcode(packet[0]) == OpRewind) NotImplemented_nid_no_patch("sceGnmDingDong with a REWIND packet in the ring");
+        at += packet.size();
+        if (!IsFiller(packet[0])) Lower(lowered, packet);
+    }
+    if (!lowered.empty()) {
+        const Packet packet{lowered.data(), static_cast<std::uint32_t>(lowered.size()), 0, {}};
+        sceAgcDriverSubmitAcb(FirstComputeQueue + id - 1, &packet);
+    }
+    ring.writeOffset = nextOffsetInDwords;
+    *ring.readOffset = nextOffsetInDwords;
     return 0;
 }
 
@@ -620,9 +668,16 @@ std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::
     return mask;
 }
 
-int APS5_VABI sceGnmMapComputeQueue() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmMapComputeQueue(std::uint32_t pipe, std::uint32_t queue, void* ring, std::uint32_t ringSizeInDwords, void* readOffset) {
+    if (pipe >= ComputePipes || queue >= QueuesPerPipe || !ring || reinterpret_cast<std::uintptr_t>(ring) % 256 != 0 || !std::has_single_bit(ringSizeInDwords)
+        || !readOffset || reinterpret_cast<std::uintptr_t>(readOffset) % 4 != 0)
+        NotImplemented_nid_no_patch("sceGnmMapComputeQueue for a pipe above 6, a queue above 7, a ring that is missing, not 256-byte aligned or not a power of two in dwords, or a read offset that is missing or not 4-byte aligned");
+    std::lock_guard lock(g_ringMutex);
+    const auto slot = pipe * QueuesPerPipe + queue;
+    if (g_rings[slot].mapped) NotImplemented_nid_no_patch("sceGnmMapComputeQueue for a pipe and queue that are already mapped");
+    UseGcnShaders();
+    g_rings[slot] = {static_cast<const std::uint32_t*>(ring), ringSizeInDwords, static_cast<volatile std::uint32_t*>(readOffset), 0, true};
+    return static_cast<int>(slot) + 1;
 }
 
 int APS5_VABI sceGnmRequestFlipAndSubmitDone() {
@@ -645,8 +700,10 @@ int APS5_VABI sceGnmSetupMipStatsReport() {
     return 0;
 }
 
-int APS5_VABI sceGnmUnmapComputeQueue() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmUnmapComputeQueue(std::uint32_t id) {
+    std::lock_guard lock(g_ringMutex);
+    auto& ring = MappedRing(id, "sceGnmUnmapComputeQueue for a queue id that is not mapped");
+    ring = {};
     return 0;
 }
 

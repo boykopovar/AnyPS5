@@ -30,8 +30,22 @@ if(BUILD_TESTING)
     set_tests_properties(gnm_driver_packets PROPERTIES TIMEOUT 20)
     add_test(NAME gnm_driver_submit_wait COMMAND gnm_driver_submit_tests)
     set_tests_properties(gnm_driver_submit_wait PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+    add_test_executable(gnm_driver_compute_queue_tests tests/ComputeQueue.cpp)
+    target_include_directories(gnm_driver_compute_queue_tests PRIVATE
+            ${LIBS_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceAgcDriver/tests/execution
+            ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+            ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+            ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
+    )
+    target_link_libraries(gnm_driver_compute_queue_tests PRIVATE libSceGnmDriver libSceAgcDriver SDL2-static libc)
+    set_target_properties(gnm_driver_compute_queue_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(gnm_driver_compute_queue_tests)
+    add_test(NAME gnm_driver_compute_queue COMMAND gnm_driver_compute_queue_tests)
+    set_tests_properties(gnm_driver_compute_queue PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(gnm_driver_packets gnm_driver_submit_wait PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(gnm_driver_packets gnm_driver_submit_wait gnm_driver_compute_queue PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
