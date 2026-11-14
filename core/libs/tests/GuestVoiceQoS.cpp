@@ -190,10 +190,16 @@ int main(int argc, char** argv) {
     Require(sceVoiceDeletePort(titlePort) == 0);
     Require(sceVoiceQoSDeleteLocalEndpoint(local) == argumentInvalid);
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == 0);
+    errno = 71;
+    Require(sceVoiceQoSCreateRemoteEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
 
     const int endpointLimit = appType == 0x10000000 ? 15 : 7;
     for (int index = 0; index < endpointLimit; ++index) Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == index);
     Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == limitReached && remote == -1);
+    errno = 71;
+    Require(sceVoiceQoSCreateRemoteEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSDeleteRemoteEndpoint(2) == 0);
     Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == 2);
     Require(sceVoiceQoSEnd() == 0);

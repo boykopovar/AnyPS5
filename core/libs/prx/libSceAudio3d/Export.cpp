@@ -573,18 +573,27 @@ int APS5_VABI sceAudio3dObjectSetAttributes(uint32_t port_id, uint32_t object_id
         if (num_attributes == 0 || attribute_array == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
         std::lock_guard lock(g_mutex);
         if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
+        const auto address = reinterpret_cast<std::uintptr_t>(attribute_array);
+        if (num_attributes > (UINTPTR_MAX - address) / sizeof(Audio3dAttribute)) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        const auto copyIn = [](void* destination, const void* source, std::size_t size) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+            errno = savedErrno;
+            return copied;
+        };
+        bool missingValue = false;
         for (std::uint64_t i = 0; i < num_attributes; ++i) {
-            const Audio3dAttribute& attribute = attribute_array[i];
+            Audio3dAttribute attribute{};
+            const auto* source = reinterpret_cast<const void*>(address + i * sizeof(Audio3dAttribute));
+            if (!copyIn(&attribute, source, sizeof(attribute))) return AUDIO3D_ERROR_INVALID_PARAMETER;
             if (attribute.attribute_id < AUDIO3D_OBJECT_ATTRIBUTE_PCM || attribute.attribute_id > AUDIO3D_OBJECT_ATTRIBUTE_OUTPUT_ROUTE) return AUDIO3D_ERROR_INVALID_PARAMETER;
+            if (attribute.attribute_id != AUDIO3D_OBJECT_ATTRIBUTE_RESET_STATE && attribute.value == nullptr) missingValue = true;
             if (attribute.attribute_id != AUDIO3D_OBJECT_ATTRIBUTE_PCM) continue;
-            const auto* pcm = static_cast<const Audio3dPcm*>(attribute.value);
-            if (pcm == nullptr || pcm->num_samples == 0 || pcm->format > AUDIO3D_FORMAT_FLOAT) return AUDIO3D_ERROR_INVALID_PARAMETER;
+            Audio3dPcm pcm{};
+            if (attribute.value == nullptr || !copyIn(&pcm, attribute.value, sizeof(pcm)) || pcm.num_samples == 0 || pcm.format > AUDIO3D_FORMAT_FLOAT) return AUDIO3D_ERROR_INVALID_PARAMETER;
         }
         if (!g_port.objects.contains(object_id & AUDIO3D_OBJECT_ID_MASK)) return AUDIO3D_ERROR_INVALID_OBJECT;
-        for (std::uint64_t i = 0; i < num_attributes; ++i) {
-            if (attribute_array[i].attribute_id == AUDIO3D_OBJECT_ATTRIBUTE_RESET_STATE) continue;
-            if (attribute_array[i].value == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
-        }
+        if (missingValue) return AUDIO3D_ERROR_INVALID_PARAMETER;
         return 0;
     }();
     Report(port_id, object_id, result, __func__, "HOA", port_id, object_id, num_attributes, attribute_array);
@@ -705,8 +714,12 @@ int APS5_VABI sceAudio3dAudioOutOutput(std::int32_t handle, const void* ptr) {
         const auto port = g_port.audio_out_ports.find(handle);
         if (port == g_port.audio_out_ports.end()) return AUDIO3D_ERROR_INVALID_PORT;
         if (port->second.pending.size() >= g_port.queue_depth) return AUDIO3D_ERROR_NOT_READY;
-        const auto* first = static_cast<const std::uint8_t*>(ptr);
-        port->second.pending.emplace_back(first, first + port->second.buffer_bytes);
+        std::vector<std::uint8_t> block(port->second.buffer_bytes);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(block.data(), ptr, block.size());
+        errno = savedErrno;
+        if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        port->second.pending.push_back(std::move(block));
         return 0;
     }();
     Report(AUDIO3D_PORT_INVALID, AUDIO3D_OBJECT_INVALID, result, __func__, "IP", handle, ptr);
@@ -718,7 +731,12 @@ int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, uint32_t num
     const int result = [&] {
         if (param == nullptr || num == 0) return AUDIO3D_ERROR_INVALID_PARAMETER;
         for (; i < num; ++i) {
-            const int output = sceAudio3dAudioOutOutput(param[i].handle, param[i].ptr);
+            AudioOutOutputParam entry{};
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(&entry, param + i, sizeof(entry));
+            errno = savedErrno;
+            if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
+            const int output = sceAudio3dAudioOutOutput(entry.handle, entry.ptr);
             if (output < 0) return output;
         }
         return 0;
