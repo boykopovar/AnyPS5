@@ -357,6 +357,90 @@ def pe_imports(path, data):
     raise AuditError(f"{path}: PE import table is not NUL-terminated")
 
 
+MACHO_LOAD_DYLIB = (0xc, 0x20, 0x80000018, 0x8000001f, 0x80000023)
+
+
+def macho_commands(path, data):
+    magic, _, _, _, count, size, _, _ = unpack("<IiiIIIII", data, 0, path, "Mach-O header")
+    if magic != 0xfeedfacf:
+        raise AuditError(f"{path}: only little-endian 64-bit Mach-O is supported (magic 0x{magic:x})")
+    take(data, 32, size, path, "Mach-O load commands")
+    offset, end = 32, 32 + size
+    for index in range(count):
+        kind, length = unpack("<II", data, offset, path, f"Mach-O load command {index}")
+        if length < 8 or offset + length > end:
+            raise AuditError(f"{path}: Mach-O load command {index} of {length} bytes overruns the load commands")
+        yield kind, offset, length
+        offset += length
+
+
+def macho_uleb(data, offset, end, path):
+    value, shift = 0, 0
+    while True:
+        if offset >= end:
+            raise AuditError(f"{path}: truncated uleb128 in Mach-O export trie")
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7f) << shift
+        if not byte & 0x80:
+            return value, offset
+        shift += 7
+        if shift > 63:
+            raise AuditError(f"{path}: uleb128 overflow in Mach-O export trie")
+
+
+def macho_exports(path, data):
+    tries = []
+    for kind, offset, _ in macho_commands(path, data):
+        if kind == 0x80000022:
+            tries.append(unpack("<II", data, offset + 40, path, "Mach-O dyld info command"))
+        elif kind == 0x80000033:
+            tries.append(unpack("<II", data, offset + 8, path, "Mach-O exports trie command"))
+    tries = [trie for trie in tries if trie[1]]
+    if len(tries) > 1:
+        raise AuditError(f"{path}: Mach-O image has more than one export trie")
+    names = set()
+    if not tries:
+        return names
+    start, size = tries[0]
+    take(data, start, size, path, "Mach-O export trie")
+    end = start + size
+    stack, visited = [(0, b"")], set()
+    while stack:
+        node, prefix = stack.pop()
+        if node >= size or node in visited:
+            raise AuditError(f"{path}: Mach-O export trie node 0x{node:x} is out of bounds or revisited")
+        visited.add(node)
+        terminal, cursor = macho_uleb(data, start + node, end, path)
+        if terminal:
+            names.add(prefix.decode("utf-8", "surrogateescape").removeprefix("_").split(MODULE_SUFFIX, 1)[0])
+        cursor += terminal
+        if cursor >= end:
+            raise AuditError(f"{path}: Mach-O export trie node 0x{node:x} overruns the trie")
+        children = data[cursor]
+        cursor += 1
+        for _ in range(children):
+            label = data.find(b"\0", cursor, end)
+            if label < 0:
+                raise AuditError(f"{path}: unterminated label in Mach-O export trie")
+            child, next_cursor = macho_uleb(data, label + 1, end, path)
+            stack.append((child, prefix + data[cursor:label]))
+            cursor = next_cursor
+    return names
+
+
+def macho_imports(path, data):
+    needed = set()
+    for kind, offset, length in macho_commands(path, data):
+        if kind not in MACHO_LOAD_DYLIB:
+            continue
+        name = unpack("<I", data, offset + 8, path, "Mach-O dylib command")[0]
+        if name < 24 or name >= length:
+            raise AuditError(f"{path}: Mach-O dylib name offset {name} lies outside its {length}-byte command")
+        needed.add(cstring(data, offset + name, offset + length, path, "needed library name").rsplit("/", 1)[-1])
+    return needed
+
+
 def read_host_imports(path, data=None):
     if data is None:
         data = path.read_bytes()
@@ -364,7 +448,9 @@ def read_host_imports(path, data=None):
         return pe_imports(path, data)
     if data[:4] == b"\x7fELF":
         return elf_imports(path, data)[1]
-    raise AuditError(f"{path}: neither ELF nor PE (first bytes {data[:4]!r})")
+    if data[:4] == b"\xcf\xfa\xed\xfe":
+        return macho_imports(path, data)
+    raise AuditError(f"{path}: neither ELF, PE nor Mach-O (first bytes {data[:4]!r})")
 
 
 def read_exports(path, data=None):
@@ -374,7 +460,9 @@ def read_exports(path, data=None):
         return elf_exports(path, data)
     if data[:2] == b"MZ":
         return pe_exports(path, data)
-    raise AuditError(f"{path}: neither ELF nor PE (first bytes {data[:4]!r})")
+    if data[:4] == b"\xcf\xfa\xed\xfe":
+        return macho_exports(path, data)
+    raise AuditError(f"{path}: neither ELF, PE nor Mach-O (first bytes {data[:4]!r})")
 
 
 def directory_files(directory, pattern):
