@@ -11,8 +11,14 @@ if(BUILD_TESTING)
     add_test(NAME fiber_contextless COMMAND fiber_tests --contextless)
     add_asan_test_options(fiber detect_stack_use_after_return=0)
     add_asan_test_options(fiber_contextless detect_stack_use_after_return=0)
+
+    add_test_executable(guest_fiber_optparam_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestFiberOptParamSize.cpp)
+    target_include_directories(guest_fiber_optparam_size_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fiber_optparam_size_tests PRIVATE libSceFiber libc)
+    configure_windows_unwind(guest_fiber_optparam_size_tests)
+    add_test(NAME guest_fiber_optparam_size COMMAND guest_fiber_optparam_size_tests)
     if(WIN32)
-        set_tests_properties(fiber fiber_contextless PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(fiber fiber_contextless guest_fiber_optparam_size PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")
     endif()
 endif()
