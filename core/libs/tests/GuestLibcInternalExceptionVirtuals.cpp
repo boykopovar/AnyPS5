@@ -237,6 +237,31 @@ void CheckSystemErrorDoraise() {
     REQUIRE(rejected);
 }
 
+const LibcException::ExceptionObject* RaisedObject = nullptr;
+int RaiseCalls = 0;
+void APS5_VABI RecordRaise(const LibcException::ExceptionObject& object) {
+    RaisedObject = &object;
+    ++RaiseCalls;
+}
+void APS5_VABI OtherRaise(const LibcException::ExceptionObject&) {}
+
+void CheckSetRaiseHandler() {
+    if (_ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix(RecordRaise) != nullptr) std::abort();
+    LibcException::ExceptionObject object {};
+    _ZNSt9exceptionC1Ev_nid_postfix(&object);
+    bool caught = false;
+    try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); }
+    catch (const std::exception&) { caught = true; }
+    if (!caught || RaiseCalls != 1 || RaisedObject != &object) std::abort();
+    if (_ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix(OtherRaise) != RecordRaise) std::abort();
+    if (_ZNSt9exception18_Set_raise_handlerEPFvRKS_E_nid_postfix(nullptr) != OtherRaise) std::abort();
+    caught = false;
+    try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); }
+    catch (const std::exception&) { caught = true; }
+    if (!caught || RaiseCalls != 1) std::abort();
+    _ZNSt9exceptionD1Ev_nid_postfix(&object);
+}
+
 }
 
 int main() {
@@ -254,6 +279,7 @@ int main() {
     CheckFutureErrorDoraise();
     CheckFutureCategoryMessage();
     CheckSystemErrorDoraise();
+    CheckSetRaiseHandler();
 
     std::puts("libc internal exception virtual member checks passed");
     return 0;
