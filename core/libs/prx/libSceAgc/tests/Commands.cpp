@@ -1120,12 +1120,24 @@ void testDispatchPackets() {
     sceAgcCbDispatch(&direct.buffer, 7, 3, 1, 0x8000u);
     const std::array<std::uint32_t, 5> directExpected{0xc0031500u, 7, 3, 1, 0x8041u};
     check(std::equal(directExpected.begin(), directExpected.end(), direct.words.begin()), "DISPATCH_DIRECT packet mismatch");
+    const std::array<std::array<std::uint32_t, 2>, 10> modifiers{{
+        {4u, 0x41u}, {0x100u, 0x41u}, {0x44444444u, 0x41u},
+        {0xffffffffu, 0xa079u}, {8u, 0x49u}, {16u, 0x51u},
+        {32u, 0x61u}, {0x2000u, 0x2041u}, {0x8001u, 0x8041u},
+        {0x40u, 0x41u}
+    }};
+    for (const auto& item : modifiers) {
+        Storage masked;
+        masked.words.fill(0xdeadbeefu);
+        auto* packet = sceAgcCbDispatch(&masked.buffer, 1u, 2u, 3u, item[0]);
+        const std::array<std::uint32_t, 5> expected{0xc0031500u, 1u, 2u, 3u, item[1]};
+        check(packet == masked.words.data() && std::equal(expected.begin(), expected.end(), packet), "direct dispatch did not mask the modifier");
+        check(masked.buffer.cursor_up == packet + 5 && masked.words[5] == 0xdeadbeefu, "masked dispatch cursor or sentinel differs");
+    }
     Storage rejected;
     rejected.words.fill(0xa5a5a5a5u);
     const auto rejectedWords = rejected.words;
     const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcCbDispatch(&rejected.buffer, 1, 1, 1, 0x100u); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, reinterpret_cast<const volatile void*>(0x1002ull), 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, nullptr, 0); });
