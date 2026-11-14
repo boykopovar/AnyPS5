@@ -539,6 +539,9 @@ int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
  if (len == 0) return 0;
+ if (type == 10) return SCE_KERNEL_ERROR_EACCES;
+ if (type < 0 || type == 127) return SCE_KERNEL_ERROR_EINVAL;
+ if (UndefinedProtection(prot) && prot != std::numeric_limits<int>::min()) return SCE_KERNEL_ERROR_EINVAL;
  return DoMtypeprotect(addr, len, type, prot, false);
 }
 
