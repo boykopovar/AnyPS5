@@ -2016,7 +2016,11 @@ bool supportsNativeVop3Clamp(RdnaOpcode opcode) {
         isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode);
 }
 
-void checkNativeVop3Modifiers(RdnaOpcode opcode, bool permlane, bool carryInOut, bool scalarDst, std::uint32_t abs, std::uint32_t opSel, std::uint32_t clamp, std::uint32_t omod, std::uint32_t neg) {
+bool readsVop2Accumulator(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VMacF32 || opcode == RdnaOpcode::VMacLegacyF32;
+}
+
+void checkNativeVop3Modifiers(RdnaOpcode opcode, std::uint32_t encodedOpcode, bool permlane, bool carryInOut, bool scalarDst, std::uint32_t abs, std::uint32_t opSel, std::uint32_t clamp, std::uint32_t omod, std::uint32_t neg) {
     if (permlane) {
         if (abs != 0u || (opSel & ~0x3u) != 0u || clamp != 0u || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 perm-lane op_sel bits are not implemented");
@@ -2093,7 +2097,8 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, bool permlane, bool carryInOut,
     const bool clampModifier = supportsNativeVop3Clamp(opcode);
     const bool ignoresOutputModifiers = opcode == RdnaOpcode::VCvtI16F16;
     if (sourceModifiers) {
-        if (opSel != 0u || (omod != 0u && !resultModifiers && !ignoresOutputModifiers) || (clamp != 0u && !clampModifier && !ignoresOutputModifiers)) {
+        const bool unmeasuredAccumulatorModifiers = ((abs | neg) & 0x4u) != 0u && readsVop2Accumulator(opcode) && encodedOpcode != 0x12bu;
+        if (opSel != 0u || (omod != 0u && !resultModifiers && !ignoresOutputModifiers) || (clamp != 0u && !clampModifier && !ignoresOutputModifiers) || unmeasuredAccumulatorModifiers) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -2371,7 +2376,7 @@ RdnaInstruction DecodeRdnaVop3(std::uint32_t programCounter, std::span<const std
     const bool nativeSourceModifiers = supportsNativeVop3SourceModifiers(instruction.op);
     const bool nativeResultModifiers = supportsNativeVop3ResultModifiers(instruction.op);
 
-    checkNativeVop3Modifiers(instruction.op, permlane, vop3bUsesSdst, scalarDst, abs, opSel, clamp, omod, neg);
+    checkNativeVop3Modifiers(instruction.op, opcode, permlane, vop3bUsesSdst, scalarDst, abs, opSel, clamp, omod, neg);
 
     if (isVop1WithoutOperands(instruction.op)) {
         instruction.destination.kind = RdnaOperandKind::Null;
@@ -2445,6 +2450,10 @@ RdnaInstruction DecodeRdnaVop3(std::uint32_t programCounter, std::span<const std
         }
         if (nativeSourceModifiers) {
             applyNativeVop3SourceModifiers(instruction, abs, neg);
+        }
+        if (readsVop2Accumulator(instruction.op)) {
+            instruction.source2.absolute = (abs & 0x4u) != 0u;
+            instruction.source2.negate = (neg & 0x4u) != 0u;
         }
         ReadRdnaLiteralOperands(code, wordIndex, instruction);
         return instruction;
