@@ -366,6 +366,8 @@ public:
     // calls RecordCopyBacks (a dispatch or a recorded draw), since a staged region's results reach
     // guest memory by that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
+    void AllowCopyBackDeferral() { copyBackDeferral = true; }
+    std::uint64_t HandoverToken() const { return handoverToken; }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
     bool HoldsMirror(const std::shared_ptr<ImageMirror>& mirror) const;
@@ -592,10 +594,14 @@ private:
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
+    bool defersCopyBacks() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> writtenWithin(std::uint64_t begin, std::uint64_t end) const;
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
     Context context;
     bool stagingAllowed = false;
+    bool copyBackDeferral = false;
+    std::uint64_t handoverToken = 0;
     bool addressStaging = true;
     bool adjustedRegions = false;
     GuestAllocations::Lease lease;

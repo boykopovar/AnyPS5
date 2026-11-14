@@ -289,6 +289,7 @@ public:
     bool HasHostGpuCopies() const { return guestMemory.HasHostGpuCopies(); }
     bool HasStagedCopies() const { return guestMemory.HasStagedCopies(); }
     const void* MemoryOwner() const { return &guestMemory; }
+    std::uint64_t HandoverToken() const { return guestMemory.HandoverToken(); }
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }

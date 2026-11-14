@@ -1867,7 +1867,130 @@ struct DispatchOrder {
 
 thread_local DispatchOrder nextDispatchOrder;
 std::atomic<std::uint64_t> overlapDeferred{0}, overlapJoined{0}, overlapFlushed{0};
+std::atomic<std::uint64_t> handoversTaken{0}, handoverSkipped{0}, handoverRedirected{0}, handoverForwardedBytes{0}, handoverElided{0}, handoverElidedBytes{0}, handoverLanded{0}, handoverLandedBytes{0};
 
+using GuestRanges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+
+bool RangesCover(const GuestRanges& outer, const GuestRanges& inner) {
+    return std::all_of(inner.begin(), inner.end(), [&](const auto& range) { return std::any_of(outer.begin(), outer.end(), [&](const auto& cover) { return cover.first <= range.first && range.second <= cover.second; }); });
+}
+
+std::uint64_t RangeBytes(const GuestRanges& ranges) {
+    std::uint64_t bytes = 0;
+    for (const auto& [begin, end] : ranges) bytes += end - begin;
+    return bytes;
+}
+
+}
+
+bool Recorder::StagingHandoverEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_STAGING_HANDOVER") == nullptr;
+    return enabled;
+}
+
+Recorder::HandoverStatistics Recorder::HandoverCounts() {
+    return HandoverStatistics{handoversTaken.load(std::memory_order_relaxed), handoverSkipped.load(std::memory_order_relaxed), handoverRedirected.load(std::memory_order_relaxed), handoverForwardedBytes.load(std::memory_order_relaxed), handoverElided.load(std::memory_order_relaxed), handoverElidedBytes.load(std::memory_order_relaxed), handoverLanded.load(std::memory_order_relaxed), handoverLandedBytes.load(std::memory_order_relaxed)};
+}
+
+void Recorder::CountForwardedCopyIns(std::uint64_t skipped, std::uint64_t redirected, std::uint64_t bytes) {
+    handoverSkipped.fetch_add(skipped, std::memory_order_relaxed);
+    handoverRedirected.fetch_add(redirected, std::memory_order_relaxed);
+    handoverForwardedBytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+
+void Recorder::flushCopyBacks(std::uint64_t keptTaker) {
+    if (open == nullptr || open->copyBacks.empty()) return;
+    auto& pending = open->copyBacks;
+    std::vector<StagedCopyBack> landing;
+    if (keptTaker == 0) {
+        landing = std::move(pending);
+        pending.clear();
+    } else {
+        const auto kept = std::stable_partition(pending.begin(), pending.end(), [&](const StagedCopyBack& held) { return held.taker == keptTaker; });
+        landing.assign(std::make_move_iterator(kept), std::make_move_iterator(pending.end()));
+        pending.erase(kept, pending.end());
+    }
+    if (landing.empty()) return;
+    if (open->renderPass.open) endOpenRenderPass(PassBreak::Command);
+    const auto commands = open->commands;
+    const auto timing = BeginGpuTiming(CommandClass::StagingOut);
+    constexpr BarrierMask leading{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    if (!ElideCovered(CommandClass::StagingOut, leading, open->coveredAccess)) {
+        recordBarrier(commands, leading.srcStage, leading.dstStage, leading.srcAccess, leading.dstAccess);
+        CountBarriers(CommandClass::StagingOut);
+    }
+    const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
+    GuestRanges landed;
+    std::uint64_t bytes = 0;
+    for (const auto& entry : landing) {
+        std::vector<VkBufferCopy> regions;
+        regions.reserve(entry.written.size());
+        for (const auto& [begin, end] : entry.written) {
+            regions.push_back({begin - entry.begin, begin - entry.targetBase, end - begin});
+            landed.emplace_back(begin, end);
+            bytes += end - begin;
+        }
+        copy(commands, entry.shadow->Handle(), entry.target, static_cast<std::uint32_t>(regions.size()), regions.data());
+    }
+    if (BarrierValidate()) NoteAccess(CommandClass::StagingOut, Access{{}, landed, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
+    constexpr VkAccessFlags copiedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, copiedAccess);
+    CountBarriers(CommandClass::StagingOut);
+    open->coveredAccess = copiedAccess;
+    EndGpuTiming(timing, bytes);
+    handoverLanded.fetch_add(landing.size(), std::memory_order_relaxed);
+    handoverLandedBytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+
+bool Recorder::PendingCopyBackOverlaps(std::uint64_t address, std::size_t bytes) const {
+    if (open == nullptr || bytes == 0) return false;
+    const auto end = address + bytes;
+    return std::any_of(open->copyBacks.begin(), open->copyBacks.end(), [&](const StagedCopyBack& held) { return std::any_of(held.written.begin(), held.written.end(), [&](const auto& range) { return address < range.second && range.first < end; }); });
+}
+
+void Recorder::DeferCopyBack(StagedCopyBack entry) {
+    GuestMemory::AssertGpuLockHeld("Recorder::DeferCopyBack");
+    Require(entry.shadow != nullptr && !entry.written.empty(), "a deferred copy-back has no shadow or no written range");
+    ensureOpen();
+    Keep(entry.shadow);
+    entry.taker = 0;
+    auto& pending = open->copyBacks;
+    const auto same = std::find_if(pending.begin(), pending.end(), [&](const StagedCopyBack& held) { return held.begin == entry.begin && held.end == entry.end && held.target == entry.target && held.targetBase == entry.targetBase; });
+    if (same != pending.end() && RangesCover(entry.written, same->written)) {
+        handoverElided.fetch_add(1, std::memory_order_relaxed);
+        handoverElidedBytes.fetch_add(RangeBytes(same->written), std::memory_order_relaxed);
+        *same = std::move(entry);
+        return;
+    }
+    if (std::any_of(pending.begin(), pending.end(), [&](const StagedCopyBack& held) { return held.begin < entry.end && entry.begin < held.end; })) flushCopyBacks();
+    open->copyBacks.push_back(std::move(entry));
+}
+
+std::uint64_t Recorder::ClaimCopyBacks(std::span<StagedClaim> claims) {
+    GuestMemory::AssertGpuLockHeld("Recorder::ClaimCopyBacks");
+    if (open == nullptr || open->copyBacks.empty()) return 0;
+    auto& pending = open->copyBacks;
+    for (auto& held : pending) held.taker = 0;
+    std::uint64_t token = 0;
+    for (auto& claim : claims) {
+        const auto found = std::find_if(pending.begin(), pending.end(), [&](const StagedCopyBack& held) { return held.begin == claim.begin && held.end == claim.end && held.target == claim.target && held.targetBase == claim.targetBase; });
+        if (found == pending.end() || found->taker != 0 || !RangesCover(claim.written, found->written)) continue;
+        if (token == 0) token = ++copyBackClaims;
+        found->taker = token;
+        claim.shadow = found->shadow;
+        claim.forwarded = found->written;
+    }
+    if (token != 0) handoversTaken.fetch_add(1, std::memory_order_relaxed);
+    return token;
+}
+
+bool Recorder::JoinsRun(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses) const {
+    return joinsRun(queueKey, std::span(&owner, 1), accesses);
+}
+
+void Recorder::CloseRun() {
+    GuestMemory::AssertGpuLockHeld("Recorder::CloseRun");
+    flushDeferredDispatch();
 }
 
 bool Recorder::DispatchOverlapEnabled() {
@@ -1953,10 +2076,10 @@ bool Recorder::CloseRunOwing(const void* owner) {
     return true;
 }
 
-VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped) {
+VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, std::uint64_t keptTaker) {
     GuestMemory::AssertGpuLockHeld("Recorder::OverlapCommands");
     overlapped = joinsRun(queueKey, owners, accesses);
-    if (!overlapped) return Commands(coveredAccess);
+    if (!overlapped) return CommandsKeeping(keptTaker, coveredAccess);
     if (coveredAccess != nullptr) *coveredAccess = 0;
     return open->commands;
 }
@@ -2008,8 +2131,13 @@ std::uint64_t Recorder::ReapsWithWork() {
 }
 
 VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
+    return CommandsKeeping(0, coveredAccess);
+}
+
+VkCommandBuffer Recorder::CommandsKeeping(std::uint64_t keptTaker, VkAccessFlags* coveredAccess) {
     ensureOpen();
     flushDeferredDispatch();
+    flushCopyBacks(keptTaker);
     // Work recorded after a draw's render pass or an inline store run must see their writes: the
     // pass's end and the run's trailing barrier go in first (a per-batch run waits for Submit, or
     // for a caller whose ranges overlap a queued store: FlushStores).
@@ -2027,6 +2155,7 @@ void Recorder::MarkCovered(VkAccessFlags access) {
 Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access) {
     ensureOpen();
     flushDeferredDispatch();
+    flushCopyBacks();
     auto& pass = open->renderPass;
     if (!pass.open || forced || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
         const auto reason = !pass.open ? pass.closedBy : forced ? PassBreak::Forced : PassBreak::Segment;
@@ -2205,6 +2334,7 @@ void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const
     if (bytes.empty()) return;
     ensureOpen();
     flushDeferredDispatch();
+    flushCopyBacks();
     auto& run = open->run;
     const VkDeviceSize end = offset + bytes.size();
     storeCount.fetch_add(1, std::memory_order_relaxed);
@@ -2296,6 +2426,7 @@ void Recorder::flushPendingStore() {
 
 bool Recorder::closeStoreRun(bool atSubmit) {
     flushDeferredDispatch();
+    flushCopyBacks();
     auto& run = open->run;
     if (LabelRunsPerBatch()) {
         auto stores = std::move(run.queued);
@@ -2929,6 +3060,7 @@ void Recorder::PrepareSampleSlot() {
     if (!countingSamples || !segmentMode()) return;
     ensureOpen();
     flushDeferredDispatch();
+    flushCopyBacks();
     Require(!open->renderPass.open, "a sample slot is prepared inside a render pass");
     if (!segmentSlotReady(*open)) takeSegmentPool(*open);
 }
@@ -3134,6 +3266,7 @@ bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address) {
     if (target == 0 || !gpuSampleCounter()) return false;
     countingSamples = true;
     flushDeferredDispatch();
+    flushCopyBacks();
     if (segmentMode()) {
         ensureOpen();
         if (address != 0 && LabelRunsPerBatch() && pendingSamples.size() < SegmentFoldCapacity && open->queuedDumps < DumpFoldCapacity) {
@@ -4555,6 +4688,7 @@ void Recorder::Submit() {
     if (open == nullptr) return;
     GuestMemory::AssertGpuLockHeld("Recorder::Submit");
     flushDeferredDispatch();
+    flushCopyBacks();
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass(PassBreak::NewBatch);
     const bool segments = segmentMode();

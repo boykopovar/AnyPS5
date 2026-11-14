@@ -6312,8 +6312,10 @@ void reportStaging() {
     static std::uint64_t lastStaged = 0, lastIn = 0, lastOut = 0;
     const auto staged = stats.staged.load();
     const auto in = stats.stagedInBytes.load();
-    const auto out = stats.stagedOutBytes.load();
+    const auto handover = Recorder::HandoverCounts();
+    const auto out = stats.stagedOutBytes.load() + handover.landedBytes;
     AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging: %llu regions staged device-local (%llu with atomics, %llu of reused builds), %.0f KiB copied in, %.0f KiB copied back, %llu without copy-back, %llu shadows refused, %llu MiB in live shadows (limit %llu MiB); last 10 s: %llu regions, %.0f KiB in, %.0f KiB back\n", static_cast<unsigned long long>(staged), static_cast<unsigned long long>(stats.stagedAtomic.load()), static_cast<unsigned long long>(stats.stagedReused.load()), in / 1024.0, out / 1024.0, static_cast<unsigned long long>(stats.stagedLost.load()), static_cast<unsigned long long>(stats.stagingRefused.load()), static_cast<unsigned long long>(liveShadowBytes.load() >> 20u), static_cast<unsigned long long>(liveShadowLimit.load() >> 20u), static_cast<unsigned long long>(staged - lastStaged), (in - lastIn) / 1024.0, (out - lastOut) / 1024.0);
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging handover: %llu uses took pending copy-backs over, %llu copy-ins skipped and %llu redirected (%.0f KiB not read from imports), %llu copy-backs elided (%.0f KiB), %llu landed (%.0f KiB)\n", static_cast<unsigned long long>(handover.taken), static_cast<unsigned long long>(handover.skipped), static_cast<unsigned long long>(handover.redirected), handover.forwardedBytes / 1024.0, static_cast<unsigned long long>(handover.elided), handover.elidedBytes / 1024.0, static_cast<unsigned long long>(handover.landed), handover.landedBytes / 1024.0);
     lastStaged = staged;
     lastIn = in;
     lastOut = out;
@@ -6867,7 +6869,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     const auto uploads = uploadsProfiled.fetch_add(1, std::memory_order_relaxed) + 1;
     if (uploads % 2000 == 0) {
         const auto& copies = Copies();
-        AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu uploads: import lookup %.0f ms, buffer allocation %.0f ms, guest read %.0f ms; copies on the GPU: %llu regions (%.0f KiB) copied out of imports, %llu written sub-ranges (%.0f KiB) copied back, %llu staging stores by the CPU at write-back\n", static_cast<unsigned long long>(uploads), importUs.load(std::memory_order_relaxed) / 1000.0, allocateUs.load(std::memory_order_relaxed) / 1000.0, readUs.load(std::memory_order_relaxed) / 1000.0, static_cast<unsigned long long>(copies.gpuCopies.load(std::memory_order_relaxed)), copies.gpuCopyBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.gpuCopyBacks.load(std::memory_order_relaxed)), copies.gpuCopyBackBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.stagingStores.load(std::memory_order_relaxed)));
+        AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu uploads: import lookup %.0f ms, buffer allocation %.0f ms, guest read %.0f ms; copies on the GPU: %llu regions (%.0f KiB) copied out of imports, %llu written sub-ranges (%.0f KiB) copied back, %llu staging stores by the CPU at write-back\n", static_cast<unsigned long long>(uploads), importUs.load(std::memory_order_relaxed) / 1000.0, allocateUs.load(std::memory_order_relaxed) / 1000.0, readUs.load(std::memory_order_relaxed) / 1000.0, static_cast<unsigned long long>(copies.gpuCopies.load(std::memory_order_relaxed)), copies.gpuCopyBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.gpuCopyBacks.load(std::memory_order_relaxed) + Recorder::HandoverCounts().landed), (copies.gpuCopyBackBytes.load(std::memory_order_relaxed) + Recorder::HandoverCounts().landedBytes) / 1024.0, static_cast<unsigned long long>(copies.stagingStores.load(std::memory_order_relaxed)));
     }
     const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     if (ms > 50) {
@@ -7009,6 +7011,26 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     }
 }
 
+bool GuestBufferMemory::defersCopyBacks() const {
+    return copyBackDeferral && Recorder::StagingHandoverEnabled() && !changedCopyBacks(context) && !HoldsLease();
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::writtenWithin(std::uint64_t begin, std::uint64_t end) const {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> clipped;
+    for (const auto& [first, last] : writes) {
+        const auto from = std::max(first, begin);
+        const auto to = std::min(last, end);
+        if (from < to) clipped.emplace_back(from, to);
+    }
+    std::sort(clipped.begin(), clipped.end());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    for (const auto& range : clipped) {
+        if (!merged.empty() && range.first <= merged.back().second) merged.back().second = std::max(merged.back().second, range.second);
+        else merged.push_back(range);
+    }
+    return merged;
+}
+
 void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool addressable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static const bool capture = std::getenv("APS5_CAPTURE_GPU_COPIES") != nullptr;
@@ -7025,7 +7047,49 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     std::vector<Recorder::RunAccess> runAccesses;
     const auto runKey = Recorder::DispatchOverlapEnabled() && recorder->RunOpen() ? Recorder::PeekUnorderedDispatch() : 0u;
     if (runKey != 0) RunAccesses(runAccesses);
-    const auto commands = runKey != 0 ? recorder->RunCommands(runKey, this, runAccesses, inRun, &covered) : recorder->Commands(&covered);
+    const bool joinsRun = runKey != 0 && recorder->JoinsRun(runKey, this, runAccesses);
+    constexpr auto unclaimed = std::numeric_limits<std::size_t>::max();
+    std::vector<Recorder::StagedClaim> claims;
+    std::vector<std::size_t> claimOf(copies.size(), unclaimed);
+    handoverToken = 0;
+    if (!joinsRun && !capture && defersCopyBacks()) {
+        recorder->CloseRun();
+        if (recorder->HasPendingCopyBacks()) {
+            for (std::size_t index = 0; index < copies.size(); ++index) {
+                const auto* region = copies[index];
+                if (!region->deviceLocal || region->buffer == nullptr) continue;
+                claimOf[index] = claims.size();
+                claims.push_back({region->begin, region->end, region->copySource, region->copySourceBase, writtenWithin(region->begin, region->end), nullptr, {}});
+            }
+            handoverToken = recorder->ClaimCopyBacks(claims);
+            const auto claimed = [&](const Region& region) { return std::any_of(claims.begin(), claims.end(), [&](const Recorder::StagedClaim& claim) { return claim.shadow != nullptr && claim.begin == region.begin && claim.end == region.end; }); };
+            const auto reaches = [&](const Region& region) { return std::any_of(claims.begin(), claims.end(), [&](const Recorder::StagedClaim& claim) { return claim.shadow != nullptr && std::any_of(claim.forwarded.begin(), claim.forwarded.end(), [&](const auto& range) { return region.begin < range.second && range.first < region.end; }); }); };
+            if (handoverToken != 0 && std::any_of(regions.begin(), regions.end(), [&](const Region& region) { return !claimed(region) && reaches(region); })) handoverToken = 0;
+        }
+    }
+    const auto claimFor = [&](std::size_t index) -> const Recorder::StagedClaim* { return handoverToken != 0 && claimOf[index] != unclaimed && claims[claimOf[index]].shadow != nullptr ? &claims[claimOf[index]] : nullptr; };
+    const auto commands = joinsRun ? recorder->RunCommands(runKey, this, runAccesses, inRun, &covered) : recorder->CommandsKeeping(handoverToken, &covered);
+    const auto untouched = [&](std::size_t index) {
+        const auto* claim = claimFor(index);
+        return claim != nullptr && claim->shadow.get() == copies[index]->buffer.get() && claim->forwarded.size() == 1 && claim->forwarded.front().first == claim->begin && claim->forwarded.front().second == claim->end;
+    };
+    bool allUntouched = handoverToken != 0;
+    for (std::size_t index = 0; allUntouched && index < copies.size(); ++index) allUntouched = untouched(index);
+    if (allUntouched) {
+        for (auto* region : copies) {
+            region->snapshot.clear();
+            region->shadowCopy = nullptr;
+            traceStaged(region->begin, region->end, region->atomic);
+            Recorder::CountForwardedCopyIns(1, 0, region->end - region->begin);
+            if (profile) {
+                Copies().staged.fetch_add(1, std::memory_order_relaxed);
+                if (region->atomic) Copies().stagedAtomic.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (profile) reportStaging();
+        recorder->MarkCovered(covered);
+        return;
+    }
     const auto timing = recorder->BeginGpuTiming(StagingCopyInKey);
     if (Recorder::BarrierValidate()) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
@@ -7039,8 +7103,43 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     }
     bool stagedAny = false;
     std::uint64_t copiedBytes = 0;
-    for (auto* region : copies) {
+    for (std::size_t index = 0; index < copies.size(); ++index) {
+        auto* region = copies[index];
         const auto bytes = region->end - region->begin;
+        if (const auto* claim = claimFor(index); claim != nullptr) {
+            const bool same = claim->shadow.get() == region->buffer.get();
+            std::uint64_t imported = 0;
+            std::uint64_t forwarded = 0;
+            const auto fromImport = [&](std::uint64_t from, std::uint64_t to) {
+                if (from >= to) return;
+                CopyBuffer(context, commands, region->copySource, from - region->copySourceBase, region->buffer->Handle(), from - region->begin, to - from);
+                recorder->NotePendingRead(from, static_cast<std::size_t>(to - from), Recorder::ReadKind::GpuCopy);
+                imported += to - from;
+            };
+            recorder->Keep(region->buffer);
+            if (!same) recorder->Keep(claim->shadow);
+            auto at = region->begin;
+            for (const auto& [from, to] : claim->forwarded) {
+                fromImport(at, from);
+                if (!same) CopyBuffer(context, commands, claim->shadow->Handle(), from - region->begin, region->buffer->Handle(), from - region->begin, to - from);
+                forwarded += to - from;
+                at = to;
+            }
+            fromImport(at, region->end);
+            copiedBytes += imported + (same ? 0 : forwarded);
+            Recorder::CountForwardedCopyIns(same ? 1 : 0, same ? 0 : 1, forwarded);
+            region->snapshot.clear();
+            traceStaged(region->begin, region->end, region->atomic);
+            if (profile) {
+                stagedAny = true;
+                Copies().gpuCopies.fetch_add(1, std::memory_order_relaxed);
+                Copies().gpuCopyBytes.fetch_add(imported, std::memory_order_relaxed);
+                Copies().staged.fetch_add(1, std::memory_order_relaxed);
+                Copies().stagedInBytes.fetch_add(imported, std::memory_order_relaxed);
+                if (region->atomic) Copies().stagedAtomic.fetch_add(1, std::memory_order_relaxed);
+            }
+            continue;
+        }
         copiedBytes += bytes;
         if (region->buffer == nullptr) {
             // Not made by UploadPrepare (the registry was stale then): made here, under the lock.
@@ -7144,7 +7243,9 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
 }
 
 void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
+    handoverToken = 0;
     if (!uploaded || committed) return;
+    const bool defers = defersCopyBacks();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     // The written ranges, merged: a V# bound twice would otherwise copy the same bytes twice.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
@@ -7182,6 +7283,12 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     }
     for (auto& region : regions) {
         if (!region.gpuCopy || region.copiedBack) continue;
+        if (defers && region.deviceLocal && region.shadowCopy == nullptr && region.buffer != nullptr) {
+            auto written = writtenWithin(region.begin, region.end);
+            if (!written.empty()) recorder.DeferCopyBack({region.begin, region.end, region.copySource, region.copySourceBase, region.buffer, std::move(written), 0});
+            region.copiedBack = true;
+            continue;
+        }
         for (const auto& [begin, end] : merged) {
             const auto from = std::max(begin, region.begin);
             const auto to = std::min(end, region.end);
