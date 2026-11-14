@@ -6210,7 +6210,7 @@ std::atomic<std::uint64_t> liveShadowLimit{std::numeric_limits<std::uint64_t>::m
 std::uint64_t shadowBytesLimit(std::uint64_t heapBytes) {
     static const char* const setting = std::getenv("APS5_STAGING_SHADOW_MAX_MIB");
     if (setting != nullptr) return std::strtoull(setting, nullptr, 10) << 20u;
-    return std::max<std::uint64_t>(std::uint64_t{256} << 20u, heapBytes / 16u);
+    return std::max<std::uint64_t>(std::uint64_t{256} << 20u, heapBytes / 8u);
 }
 
 bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
@@ -6363,12 +6363,25 @@ bool GuestBufferMemory::adaptiveInPlace(const Region& region, bool use) const {
 }
 
 bool GuestBufferMemory::StagingDecisionsCurrent() const {
-    if (!AdaptiveStagingGate::Enabled()) return true;
+    const bool adaptive = AdaptiveStagingGate::Enabled();
     for (const auto& region : regions) {
-        if (!(region.gpuCopy && region.deviceLocal) && !region.adaptiveInPlace) continue;
+        if (region.unstaged && region.direct != nullptr) {
+            const auto bytes = static_cast<std::size_t>(region.end - region.begin);
+            if (deviceLocalHasRoom(context, bytes) && liveShadowBytes.load(std::memory_order_relaxed) + bytes <= liveShadowLimit.load(std::memory_order_relaxed) / 4u * 3u) return false;
+            continue;
+        }
+        if (!adaptive || (!(region.gpuCopy && region.deviceLocal) && !region.adaptiveInPlace)) continue;
         if (adaptiveInPlace(region, true) != region.adaptiveInPlace) return false;
     }
     return true;
+}
+
+std::uint64_t GuestBufferMemory::StagedBytes() const {
+    std::uint64_t bytes = 0;
+    for (const auto& region : regions) {
+        if (region.gpuCopy && region.deviceLocal) bytes += (region.end - region.begin) * (changedCopyBacks(context) ? 2u : 1u);
+    }
+    return bytes;
 }
 
 bool GuestBufferMemory::stagingWanted(const Region& region, bool addressable) const {
@@ -7902,6 +7915,10 @@ void SetDeviceLocalFullForTests(bool full) {
 
 std::uint64_t StagingShadowsRefused() {
     return Copies().stagingRefused.load(std::memory_order_relaxed);
+}
+
+std::uint64_t StagingShadowLimit() {
+    return liveShadowLimit.load(std::memory_order_relaxed);
 }
 
 HostImportsProof HostImportsIdentity(const Context& context) {

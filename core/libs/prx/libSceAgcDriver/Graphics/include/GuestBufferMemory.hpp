@@ -218,6 +218,7 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
 HostImportsProof HostImportsIdentity(const Context& context);
 void SetDeviceLocalFullForTests(bool full);
 std::uint64_t StagingShadowsRefused();
+std::uint64_t StagingShadowLimit();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -377,6 +378,7 @@ public:
     // RecordCopyBacks copies it back again. Nothing to do without staged regions.
     void RecordStagingCopies(Recorder& recorder);
     bool StagingDecisionsCurrent() const;
+    std::uint64_t StagedBytes() const;
     void AddSnapshot(const GuestMemorySnapshot& snapshot);
     // Upload is the two stages below back to back. UploadPrepare needs no device lock: it merges the
     // regions, binds the image mirrors and host imports that already serve them (an import pointer is

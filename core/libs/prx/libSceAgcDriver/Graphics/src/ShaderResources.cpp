@@ -3058,6 +3058,7 @@ bool LoopGuardEnabled() {
 void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
+    stagedBytes = guestMemory.StagedBytes();
     reusable = false;
     importsReconcilable = false;
     spaceReuse = false;
@@ -5102,6 +5103,21 @@ void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> reso
         index.erase(entries.back().first);
         entries.pop_back();
     }
+    if (entries.front().second->StagedBytes() != 0) {
+        std::uint64_t staged = 0;
+        for (const auto& entry : entries) staged += entry.second->StagedBytes();
+        for (auto it = std::prev(entries.end()); staged > StagedByteBudget() && it != entries.begin();) {
+            const auto bytes = it->second->StagedBytes();
+            if (bytes == 0) {
+                --it;
+                continue;
+            }
+            staged -= bytes;
+            if (evicted != nullptr) evicted->push_back(std::move(it->second));
+            index.erase(it->first);
+            it = std::prev(entries.erase(it));
+        }
+    }
     if (entries.front().second->TableElements() == 0) return;
     std::uint64_t tables = 0;
     for (const auto& entry : entries) tables += entry.second->TableElements();
@@ -5220,6 +5236,10 @@ std::uint64_t ResourceCache::TableElementBudget() {
         return static_cast<std::uint64_t>(parsed != 0 ? parsed : 65536ull);
     }();
     return elements;
+}
+
+std::uint64_t ResourceCache::StagedByteBudget() {
+    return StagingShadowLimit() / 2u;
 }
 
 std::uint64_t ResourceCache::TableElements() const {

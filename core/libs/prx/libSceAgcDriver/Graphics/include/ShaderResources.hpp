@@ -322,6 +322,7 @@ public:
     bool HasCachedStorageImages() const;
     bool HoldsReleasedTexture() const;
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }
+    std::uint64_t StagedBytes() const { return stagedBytes; }
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
@@ -516,6 +517,7 @@ private:
     std::vector<TableStage> tableStages;
     std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     std::array<std::uint32_t, 2> tableElements{};
+    std::uint64_t stagedBytes = 0;
     std::array<std::size_t, 2> storageTableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
@@ -877,6 +879,7 @@ public:
     void SetBase(std::size_t entries, std::size_t shrinkWindow);
     std::uint64_t TableElements() const;
     static std::uint64_t TableElementBudget();
+    static std::uint64_t StagedByteBudget();
     static constexpr std::size_t InitialEntries = 1024;
     static constexpr std::size_t MaximumEntries = 16384;
 
