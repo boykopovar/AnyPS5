@@ -257,10 +257,19 @@ int main() {
     constexpr int invalidArgument = static_cast<int>(0x80890001);
     constexpr int invalidHandle = static_cast<int>(0x80890006);
     Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureSetTouchAreaInformation(0, nullptr) == static_cast<int>(0x80890003));
     Require(sceSystemGestureGetTouchEventsCount(0, nullptr) == static_cast<int>(0x80890003));
     Require(sceSystemGestureInitializePrimitiveTouchRecognizer() == 0);
     Require(sceSystemGestureOpen(1, nullptr) == invalidArgument);
     const std::int32_t handle = sceSystemGestureOpen(0, nullptr);
+
+    std::array<unsigned char, 32> touchArea;
+    touchArea.fill(0x5a);
+    const auto originalTouchArea = touchArea;
+    Require(sceSystemGestureSetTouchAreaInformation(handle, touchArea.data()) == 0);
+    Require(touchArea == originalTouchArea);
+    Require(sceSystemGestureSetTouchAreaInformation(handle, nullptr) == invalidArgument);
+    Require(sceSystemGestureSetTouchAreaInformation(handle + 1, touchArea.data()) == invalidHandle);
 
     std::array<unsigned char, 64> buffer;
     buffer.fill(0x5a);
@@ -343,6 +352,7 @@ int main() {
     TestNotInitialized(handle);
     Require(sceSystemGestureClose(handle) == 0);
     Require(sceSystemGestureFinalizePrimitiveTouchRecognizer() == 0);
+    Require(sceSystemGestureSetTouchAreaInformation(handle, touchArea.data()) == static_cast<int>(0x80890003));
     Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x80890003));
     Require(sceSystemGestureClose(handle) == static_cast<int>(0x80890003));
     Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == static_cast<int>(0x80890003));
