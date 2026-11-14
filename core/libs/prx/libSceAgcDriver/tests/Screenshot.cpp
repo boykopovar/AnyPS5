@@ -16,6 +16,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace {
 
 void require(bool condition, const char* message) {
@@ -64,6 +68,22 @@ void triggerRequests(const std::filesystem::path& trigger) {
     require(rejected && std::filesystem::is_directory(trigger), "a directory trigger is rejected without removal");
     std::filesystem::remove(trigger);
     require(!AgcDriver::Screenshot::Take(), "removing an invalid trigger restores normal requests");
+#ifdef _WIN32
+    create();
+    const HANDLE held = ::CreateFileW(trigger.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    require(held != INVALID_HANDLE_VALUE, "hold the trigger open");
+    bool aborted = false;
+    bool taken = false;
+    try {
+        taken = AgcDriver::Screenshot::Take();
+    } catch (const std::runtime_error&) {
+        aborted = true;
+    }
+    require(::CloseHandle(held) != 0, "release the trigger");
+    require(!aborted, "a trigger held open by another process does not abort");
+    require(!taken && std::filesystem::exists(trigger), "a trigger that cannot be consumed requests nothing yet");
+    require(AgcDriver::Screenshot::Take() && !std::filesystem::exists(trigger), "a released trigger is consumed at the next frame");
+#endif
 }
 
 std::vector<std::uint8_t> readFile(const std::filesystem::path& path) {
