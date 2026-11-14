@@ -92,7 +92,7 @@ def main(argv=None):
         for name, output in found:
             reason = next((match.group(0) for line in output.splitlines()
                            if (match := re.search(r"skipped,.*", line, re.IGNORECASE))), "")
-            print(f"{name}: {reason}")
+            print(f"{name}: {reason or ' '.join(output.split())}")
         return 0
     if args.job == "windows":
         unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not symlink_privilege_limitation(name, output) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE, NO_RAW_SOCKET)) and not high_refresh_limitation(output)]

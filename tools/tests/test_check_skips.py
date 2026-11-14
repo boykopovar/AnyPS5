@@ -612,5 +612,20 @@ class NotRunTests(unittest.TestCase):
 
 
 
+class ListReasonRegressionTests(unittest.TestCase):
+    def test_list_keeps_unprefixed_reasons(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.xml"
+            for reason in ("SKIP: Windows symbolic-link privileges unavailable",
+                           "current display does not provide 120 Hz"):
+                with self.subTest(reason=reason):
+                    path.write_text('<testsuite><testcase name="example"><skipped message="SKIP_RETURN_CODE=77"/>'
+                                    '<system-out>' + reason + '</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, str(TOOL), str(path), "--list"],
+                                            capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("example: " + reason, result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
