@@ -483,6 +483,8 @@ enum class IrOpcode : std::uint16_t {
     ImageAtomicAnd64,
     ImageAtomicOr64,
     ImageAtomicXor64,
+    ImageAtomicInc64,
+    ImageAtomicDec64,
     ImageAtomicCmpSwap64,
     GetAttribute,
     GetInterpolationParameter,

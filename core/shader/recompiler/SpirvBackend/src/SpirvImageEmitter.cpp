@@ -1404,6 +1404,17 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpImageTexelPointer, TypePointer(state, spv::StorageClassImage, scalar), pointer, StorageImageDescriptorPointer(state, access.mem.resource), CoordU32(ctx, access), ConstantU32(state, 0));
             const auto value = Unary(state, spv::OpBitcast, scalar, ctx.Arg(access.inst, 2));
+            if (opcode == IrOpcode::ImageAtomicInc64 || opcode == IrOpcode::ImageAtomicDec64) {
+                const auto constant = [&](std::uint32_t low) { return state.module.Constant(spv::OpConstant, scalar, low, 0u); };
+                const auto updated = AtomicUpdateTyped(state, pointer, ResourceKind::Image, scalar, [&](std::uint32_t current) {
+                    if (opcode == IrOpcode::ImageAtomicInc64) {
+                        return Select(state, scalar, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), current, value), constant(0u), Binary(state, spv::OpIAdd, scalar, current, constant(1u)));
+                    }
+                    const auto wraps = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpIEqual, TypeBool(state), current, constant(0u)), Binary(state, spv::OpUGreaterThan, TypeBool(state), current, value));
+                    return Select(state, scalar, wraps, value, Binary(state, spv::OpISub, scalar, current, constant(1u)));
+                });
+                return Unary(state, spv::OpBitcast, TypeU64(state), updated);
+            }
             const auto old = state.module.AllocateId();
             if (opcode == IrOpcode::ImageAtomicCmpSwap64) {
                 const auto comparator = Unary(state, spv::OpBitcast, scalar, ctx.Arg(access.inst, 3));
@@ -2647,6 +2658,14 @@ void EmitImageAtomicOr64(SpirvValueEmitContext& ctx, const IrValue& inst) {
 }
 
 void EmitImageAtomicXor64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    EmitImage(ctx, inst);
+}
+
+void EmitImageAtomicInc64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    EmitImage(ctx, inst);
+}
+
+void EmitImageAtomicDec64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitImage(ctx, inst);
 }
 

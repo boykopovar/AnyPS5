@@ -524,6 +524,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("ImageAtomicAnd64", U64, ImageResource, ImageAddress, U64, U1),
     makeMeta("ImageAtomicOr64", U64, ImageResource, ImageAddress, U64, U1),
     makeMeta("ImageAtomicXor64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicInc64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicDec64", U64, ImageResource, ImageAddress, U64, U1),
     makeMeta("ImageAtomicCmpSwap64", U64, ImageResource, ImageAddress, U64, U64, U1),
     makeMeta("GetAttribute", U32, U32, U32),
     makeMeta("GetInterpolationParameter", U32, U32, U32, U32),
@@ -865,6 +867,8 @@ ImageOpcodeInfo ImageOpcodeInfoOf(IrOpcode opcode) {
         case IrOpcode::ImageAtomicAnd64:
         case IrOpcode::ImageAtomicOr64:
         case IrOpcode::ImageAtomicXor64:
+        case IrOpcode::ImageAtomicInc64:
+        case IrOpcode::ImageAtomicDec64:
         case IrOpcode::ImageAtomicCmpSwap64:
             return {ImageAccess::Atomic, ImageResourceClass::Storage, false};
         default:

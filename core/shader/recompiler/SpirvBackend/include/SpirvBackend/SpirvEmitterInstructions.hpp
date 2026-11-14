@@ -400,6 +400,8 @@ void EmitImageAtomicSMax64(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageAtomicAnd64(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageAtomicOr64(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageAtomicXor64(SpirvValueEmitContext& ctx, const IrValue& inst);
+void EmitImageAtomicInc64(SpirvValueEmitContext& ctx, const IrValue& inst);
+void EmitImageAtomicDec64(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageAtomicCmpSwap64(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitPhi(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitTessellationBase(SpirvValueEmitContext& ctx, const IrValue& inst);
