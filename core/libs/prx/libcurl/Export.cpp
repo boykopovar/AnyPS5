@@ -1341,9 +1341,12 @@ curl_mime* APS5_VABI curl_mime_init_nid_postfix(CURL* easy) {
 }
 
 const struct guest_curl_easyoption* APS5_VABI curl_easy_option_by_id_nid_postfix(std::int32_t guestId) {
-    const auto id = static_cast<CURLoption>(guestId);
-    const auto* opt = ::curl_easy_option_by_id(id);
-    return reinterpret_cast<const guest_curl_easyoption*>(opt);
+    for (const auto* opt = ::curl_easy_option_next(nullptr); opt != nullptr; opt = ::curl_easy_option_next(opt)) {
+        if (static_cast<std::int32_t>(opt->id) == guestId && (opt->flags & CURLOT_FLAG_ALIAS) == 0) {
+            return reinterpret_cast<const guest_curl_easyoption*>(opt);
+        }
+    }
+    return nullptr;
 }
 
 std::int32_t APS5_VABI curl_mime_subparts_nid_postfix(curl_mimepart* part, curl_mime* subparts) {
