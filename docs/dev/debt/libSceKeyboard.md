@@ -19,3 +19,7 @@
 - [sceKeyboardGetDeviceInfo and sceKeyboardSetProcessFocus](../../../core/libs/prx/libSceKeyboard/Export.cpp): pointer arguments are passed to device ioctls. Device-info storage is 168 bytes in the connection-query caller, but its fields and the process-focus layout remain unresolved.
 - [sceKeyboardConnectPort, sceKeyboardDisconnectPort and sceKeyboardDeviceOpen](../../../core/libs/prx/libSceKeyboard/Export.cpp): argument widths are confirmed. The meaning/order of the two 32-bit port arguments and the final 32-bit device-open argument still require the device-service backend.
 - [sceKeyboardPadEmulateClose and sceKeyboardPadEmulateOpen](../../../core/libs/prx/libSceKeyboard/PadEmulate.cpp): the supplied keyboard library has neither export; their signatures remain unresolved.
+
+### Silent stubs
+
+- [sceKeyboardSetProcessPrivilege](../../../core/libs/prx/libSceKeyboard/src/keyboard_impl.cpp) (libSceKeyboard) - stores the requested privilege value without restricting background input, matching scePadSetProcessPrivilege.

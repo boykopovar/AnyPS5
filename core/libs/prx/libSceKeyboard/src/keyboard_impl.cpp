@@ -21,6 +21,7 @@ std::uint32_t led = 0;
 std::uint32_t modifiers = 0;
 std::array<std::uint16_t, KEYBOARD_MAX_KEYCODES> keys{};
 int keyCount = 0;
+std::uint8_t processPrivilege = 0;
 
 constexpr char US_NORMAL[] = "1234567890\n\0\b\t -=[]\\\\;'`,./";
 constexpr char US_SHIFTED[] = "!@#$%^&*()\n\0\b\t _+{}||:\"~<>?";
@@ -140,6 +141,7 @@ int Open(int userId, std::int32_t type, std::int32_t index) {
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
     opened = true;
     openedUser = userId;
+    processPrivilege = 0;
     clearKeys();
     head = 0;
     count = 0;
@@ -157,6 +159,7 @@ int Close(std::int32_t handle) {
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     opened = false;
     openedUser = 0;
+    processPrivilege = 0;
     clearKeys();
     head = 0;
     count = 0;
@@ -240,6 +243,13 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
     charData->char_code = converted != 0 ? converted : keyCode;
     charData->processed = converted != 0;
     charData->length = charData->processed ? 1 : 0;
+    return KEYBOARD_OK;
+}
+
+int SetProcessPrivilege(std::uint8_t privilege) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    processPrivilege = privilege;
     return KEYBOARD_OK;
 }
 

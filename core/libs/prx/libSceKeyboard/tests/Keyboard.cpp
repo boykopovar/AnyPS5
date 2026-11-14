@@ -136,6 +136,9 @@ int main() {
     Require(sceKeyboardSetProcessPrivilege(0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardInit() == KEYBOARD_OK);
+    Require(sceKeyboardSetProcessPrivilege(0) == KEYBOARD_OK);
+    Require(sceKeyboardSetProcessPrivilege(1) == KEYBOARD_OK);
+    Require(sceKeyboardSetProcessPrivilege(255) == KEYBOARD_OK);
     CheckInvalidKeys(false);
     Require(sceKeyboardOpen(1, 0, 2, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardOpen(1, 0, -1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
