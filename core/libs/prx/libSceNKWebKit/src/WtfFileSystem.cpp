@@ -1,3 +1,6 @@
+// Derived from Source/WTF/wtf/playstation/FileSystemPlayStation.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WTF/wtf/posix/FileSystemPOSIX.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WTF/wtf/FileSystem.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2007-2017 Apple Inc. All rights reserved.
  * Copyright (C) 2021 Sony Interactive Entertainment Inc.
