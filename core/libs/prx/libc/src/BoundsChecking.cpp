@@ -12,7 +12,7 @@
 extern "C" {
 
 extern FileStream* __stderrp_nid_postfix;
-[[noreturn]] void abort_nid_postfix(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+[[noreturn]] void APS5_VABI abort_nid_postfix(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
 }
 
 namespace {

@@ -225,7 +225,7 @@ void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(status);
 }
 
-[[noreturn]] void abort_nid_postfix(
+[[noreturn]] void APS5_VABI abort_nid_postfix(
     uint64_t arg0, uint64_t arg1, uint64_t arg2,
     uint64_t arg3, uint64_t arg4, uint64_t arg5
 ) {
@@ -246,7 +246,7 @@ int* APS5_VABI __error_nid_postfix() {
     return &errno;
 }
 
-[[noreturn]] void __stack_chk_fail_nid_postfix() {
+[[noreturn]] void APS5_VABI __stack_chk_fail_nid_postfix() {
     std::abort();
 }
 
