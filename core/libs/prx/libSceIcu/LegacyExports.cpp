@@ -8939,10 +8939,6 @@ int APS5_VABI _ZN6icu_6810Normalizer17previousNormalizeEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_isASCIILetter_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6817StringTrieBuilderD0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
