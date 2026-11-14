@@ -17078,18 +17078,6 @@ int APS5_VABI _ZN7WebCore12GCController9singletonEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12GridPosition15setSpanPositionEiRKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12GridPosition19setExplicitPositionEiRKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore12GridPosition24setMaxPositionForTestingEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12HTMLDocument5widthEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -18399,10 +18387,6 @@ int APS5_VABI _ZN7WebCore14endOfParagraphERKNS_15VisiblePositionENS_27EditingBou
 }
 
 int APS5_VABI _ZN7WebCore14stopResolveDNSEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14valueForLengthERKNS_6LengthENS_10LayoutUnitE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -21337,10 +21321,6 @@ int APS5_VABI _ZN7WebCore19enclosingLayoutRectERKNS_9FloatRectE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore19floatValueForLengthERKNS_6LengthEf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore19makeMapBetweenRectsERKNS_9FloatRectES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -21350,10 +21330,6 @@ int APS5_VABI _ZN7WebCore19serializationForCSSERKNS_5ColorE() {
 }
 
 int APS5_VABI _ZN7WebCore19toAutofillFieldNameERKN3WTF10AtomStringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore19unitedBoundingBoxesERKN3WTF6VectorINS_9FloatQuadELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
