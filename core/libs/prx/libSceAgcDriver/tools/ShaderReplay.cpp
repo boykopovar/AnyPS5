@@ -15,6 +15,7 @@
 #include "spirv-tools/libspirv.hpp"
 #endif
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdint>
 #include <exception>
@@ -132,6 +133,21 @@ bool Replay(const char* path) {
             for (std::size_t index = 0; index < linked.size(); ++index) {
                 std::printf("  linked program %zu (stage %u, 0x%llx): user data base register %u, first user SGPR %u\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linked[index].userDataBaseRegister, linked[index].firstUserSgpr);
                 for (std::size_t i = 0; i < linked[index].userData.size(); ++i) std::printf("    user[%zu] = 0x%08x\n", i, linked[index].userData[i]);
+            }
+        }
+        if (context.pixel.has_value()) {
+            const auto& pixel = *context.pixel;
+            std::printf("  pixel: %u interpolators, SPI_PS_INPUT_ADDR 0x%08x, front face %s\n", pixel.interpolatorCount, pixel.inputAddr, !pixel.frontFace ? "unused" : pixel.frontFaceAllBits ? "all bits" : "float");
+            for (std::uint32_t i = 0; i < std::min<std::uint32_t>(pixel.interpolatorCount, static_cast<std::uint32_t>(pixel.interpolatorSettings.size())); ++i) std::printf("    SPI_PS_INPUT_CNTL_%u = 0x%08x\n", i, pixel.interpolatorSettings[i]);
+        }
+        if (context.vertex.has_value()) {
+            const auto& vertex = *context.vertex;
+            const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderRecompiler::ShaderVertexStageInfo::MaxResources);
+            std::printf("  vertex: %u fetched resources, fetch embedded %s\n", vertex.resourcesNum, vertex.fetchEmbedded ? "yes" : "no");
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const auto& words = vertex.resources[i].fields;
+                const auto& destination = vertex.resourcesDst[i];
+                std::printf("    resource %u: V# %08x %08x %08x %08x, attribute %d, VGPR %d count %d, fetch index %u\n", i, words[0], words[1], words[2], words[3], destination.attrId, destination.registerStart, destination.registersNum, destination.fetchIndex);
             }
         }
         for (const auto& region : context.memory) {
