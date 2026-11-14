@@ -94,6 +94,9 @@ void VerifyLoggedInUser(int userId) {
     UserServiceGamePresets presets{};
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetGamePresets(userId, reinterpret_cast<UserServiceGamePresets*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetGamePresets(userId, &presets) == USER_SERVICE_OK);
     Require(presets.difficulty == 0);
 

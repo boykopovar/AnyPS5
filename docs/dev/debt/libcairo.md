@@ -10,6 +10,8 @@
 
 - [Png.cpp](../../../core/libs/prx/libcairo/Png.cpp) - console malformed-PNG status is unmeasured. Cairo 1.18.0 maps `CAIRO_STATUS_PNG_ERROR` to a no-memory error surface, so an invalid PNG CRC reports `CAIRO_STATUS_NO_MEMORY`. Later Cairo versions provide a distinct PNG-error surface; that change is not backported.
 
+- [SurfacePattern.cpp](../../../core/libs/prx/libcairo/SurfacePattern.cpp) - console behaviour of `cairo_pattern_create_for_surface`, `cairo_set_source` and `cairo_mask` is unmeasured. They forward to the bundled Cairo 1.18.0: a null or failed surface gives a pattern in that error, and a null or failed pattern puts the context in that error and draws nothing; a null context reaches Cairo unchanged. Sony's `CAIRO_STATUS_NULL_SURFACE_IMAGE` patch changes only the span renderer for a solid mask. `cairo_mask` never composites through it here: the mesh and surface patterns these exports create are not solid, and a surface pattern keeps `CAIRO_EXTEND_NONE` while `cairo_pattern_set_extend` is a stub, so Cairo does not turn the mask into a paint.
+
 - [Mesh.cpp](../../../core/libs/prx/libcairo/Mesh.cpp) - console equivalence of mesh construction, automatic patch completion, error states and rasterization is unmeasured. The seven exports use the bundled Cairo 1.18.0 pattern objects and mesh implementation. Null or foreign pattern pointers reach Cairo unchanged.
 
 ### Functional font options
@@ -44,7 +46,6 @@
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
-| `cairo_mask` | `D1KYCZ80Sac` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_show_glyphs` | `FnhwGKKZOjU` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
@@ -56,14 +57,12 @@
 | `cairo_fill` | `Ndvm8s28Gyc` |
 | `cairo_pop_group_to_source` | `Oyzf6kDk6Ns` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
-| `cairo_pattern_create_for_surface` | `Q6xyruheFCE` |
 | `cairo_arc` | `R0TePTSHd2k` |
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
-| `cairo_set_source` | `bU0QXekwNes` |
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
 | `cairo_fill_preserve` | `dewyjTlk+u8` |
