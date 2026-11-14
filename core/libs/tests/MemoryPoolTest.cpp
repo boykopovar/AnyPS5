@@ -5,10 +5,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <new>
 #include <stdexcept>
 
 bool DirectMemoryCheckedFree(int64_t start, size_t len);
+bool DirectMemoryClaimRelease(int64_t start, size_t len, bool requireAllocated);
+void DirectMemoryAbandonRelease(int64_t start, size_t len) noexcept;
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType);
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit);
 
@@ -20,6 +23,7 @@ constexpr uint64_t kPool = static_cast<uint64_t>(DIRECT_MEMORY_SIZE);
 enum class Fault { None, BackingBadAlloc, BackingRuntimeError, ForgetRuntimeError };
 Fault g_fault = Fault::None;
 long g_newBudget = -1;
+std::map<uint64_t, uint64_t> g_releaseClaims;
 
 int g_failures = 0;
 
@@ -145,6 +149,18 @@ void free_partial_and_spanning() {
     CHECK(DirectMemoryFreeRun(2 * kPage, kPool) == 4 * kPage);
     CHECK(!DirectMemoryCheckedFree(0, 4 * kPage));
     CHECK(DirectMemoryCheckedFree(0, 2 * kPage));
+    DirectMemoryFree(0, kPool);
+    CHECK(PoolEmpty());
+}
+
+void alloc_skips_a_claimed_release() {
+    int64_t a = -1, b = -1;
+    CHECK(DirectMemoryAlloc(0, kPool, kPage, 0, 1, &a) == 0 && a == 0);
+    CHECK(DirectMemoryClaimRelease(0, 4 * kPage, false));
+    CHECK(DirectMemoryAlloc(0, 4 * kPage, kPage, 0, 1, &b) == SCE_KERNEL_ERROR_EAGAIN);
+    CHECK(DirectMemoryAlloc(0, 5 * kPage, kPage, 0, 1, &b) == 0 && b == static_cast<int64_t>(4 * kPage));
+    DirectMemoryAbandonRelease(0, 4 * kPage);
+    CHECK(DirectMemoryAlloc(0, 4 * kPage, kPage, 0, 1, &b) == 0 && b == static_cast<int64_t>(kPage));
     DirectMemoryFree(0, kPool);
     CHECK(PoolEmpty());
 }
@@ -284,6 +300,7 @@ const Case kCases[] = {
     {"free_out_of_range_is_ignored", free_out_of_range_is_ignored},
     {"retype_out_of_range_is_ignored", retype_out_of_range_is_ignored},
     {"free_partial_and_spanning", free_partial_and_spanning},
+    {"alloc_skips_a_claimed_release", alloc_skips_a_claimed_release},
     {"retype_splits_and_skips_gaps", retype_splits_and_skips_gaps},
     {"alloc_backing_bad_alloc_rolls_back", alloc_backing_bad_alloc_rolls_back},
     {"alloc_node_bad_alloc_rolls_back", alloc_node_bad_alloc_rolls_back},
@@ -295,10 +312,23 @@ const Case kCases[] = {
 
 }
 
-void CreateDirectMemoryBacking(int64_t, size_t, int) {
+void CreateDirectMemoryBacking(int64_t, size_t) {
     if (g_fault == Fault::BackingBadAlloc) throw std::bad_alloc();
     if (g_fault == Fault::BackingRuntimeError) throw std::runtime_error("backing");
 }
+
+bool DirectMemoryReleaseClaimed(std::uint64_t first, std::uint64_t last, std::uint64_t* claimEnd) {
+    auto claim = g_releaseClaims.lower_bound(last);
+    if (claim == g_releaseClaims.begin()) return false;
+    --claim;
+    if (claim->second <= first) return false;
+    if (claimEnd) *claimEnd = claim->second;
+    return true;
+}
+
+void DirectMemoryAddReleaseClaim(std::uint64_t first, std::uint64_t last) { g_releaseClaims.emplace(first, last); }
+
+void DirectMemoryRemoveReleaseClaim(std::uint64_t first) { g_releaseClaims.erase(first); }
 
 void ForgetDirectMemory(int64_t, size_t) {
     if (g_fault == Fault::ForgetRuntimeError) throw std::runtime_error("forget");

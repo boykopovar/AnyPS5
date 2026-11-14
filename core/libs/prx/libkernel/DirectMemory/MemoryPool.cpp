@@ -73,6 +73,11 @@ struct PhysicalMemoryPool {
         const size_t pageCount = static_cast<size_t>(alignedLen / kPage);
 
         while (cur <= end && alignedLen <= end - cur) {
+            uint64_t claimEnd;
+            if (DirectMemoryReleaseClaimed(cur, cur + alignedLen, &claimEnd)) {
+                if (!RoundUp(claimEnd, align, cur)) break;
+                continue;
+            }
             size_t lastUsed;
             if (!_lastUsedPage(static_cast<size_t>(cur / kPage), pageCount, lastUsed)) {
                 _commit(cur, alignedLen, memoryType);
@@ -97,7 +102,7 @@ struct PhysicalMemoryPool {
         } else {
             _claimFinished.wait(lock, [&] { return !_claimed(lo, hi); });
         }
-        _claims.emplace(lo, hi);
+        DirectMemoryAddReleaseClaim(lo, hi);
         return true;
     }
 
@@ -106,8 +111,14 @@ struct PhysicalMemoryPool {
         if (!PageSpan(start, len, lo, hi)) return;
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            _claims.erase(lo);
-            (void)_releaseLocked(lo, hi, false);
+            try {
+                (void)_releaseLocked(lo, hi, false);
+            } catch (...) {
+                DirectMemoryRemoveReleaseClaim(lo);
+                _claimFinished.notify_all();
+                throw;
+            }
+            DirectMemoryRemoveReleaseClaim(lo);
         }
         _claimFinished.notify_all();
     }
@@ -117,7 +128,7 @@ struct PhysicalMemoryPool {
         if (!PageSpan(start, len, lo, hi)) return;
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            _claims.erase(lo);
+            DirectMemoryRemoveReleaseClaim(lo);
         }
         _claimFinished.notify_all();
     }
@@ -235,7 +246,7 @@ private:
         if (!ins.second) throw std::logic_error("DirectMemory pool: block map and page flags disagree");
 
         try {
-            CreateDirectMemoryBacking(static_cast<int64_t>(start), static_cast<size_t>(len), type);
+            CreateDirectMemoryBacking(static_cast<int64_t>(start), static_cast<size_t>(len));
         } catch (...) {
             _blocks.erase(ins.first);
             throw;
@@ -244,10 +255,7 @@ private:
         _mark(static_cast<size_t>(start / kPage), static_cast<size_t>(len / kPage), true);
     }
 
-    bool _claimed(uint64_t lo, uint64_t hi) const {
-        std::map<uint64_t, uint64_t>::const_iterator it = _claims.lower_bound(hi);
-        return it != _claims.begin() && std::prev(it)->second > lo;
-    }
+    static bool _claimed(uint64_t lo, uint64_t hi) { return DirectMemoryReleaseClaimed(lo, hi, nullptr); }
 
     bool _release(uint64_t start, size_t len, bool requireAllocated) {
         uint64_t lo, hi;
@@ -308,7 +316,6 @@ private:
     std::condition_variable _claimFinished;
     bool _used[kNumPages] = {};
     BlockMap _blocks;
-    std::map<uint64_t, uint64_t> _claims;
 };
 
 }

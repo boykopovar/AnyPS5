@@ -1218,6 +1218,19 @@ static void CheckMtypeprotect() {
     std::int64_t start = -1;
     std::int64_t end = -1;
     Require(sceKernelGetDirectMemoryType(phys + static_cast<std::int64_t>(page * 2), &type, &start, &end) == 0 && type == 2);
+    void* alias = nullptr;
+    Require(sceKernelMapDirectMemory(&alias, page * 3, 3, 0, phys, 0) == 0);
+    Require(sceKernelMtypeprotect(bytes + page, page, 5, 3) == 0);
+    const auto typeAt = [&](void* base, std::size_t index) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(static_cast<unsigned char*>(base) + page * index, 0, &info, sizeof(info)) == 0 && info.is_direct);
+        return info.memory_type;
+    };
+    Require(typeAt(alias, 0) == 2 && typeAt(alias, 1) == 5 && typeAt(alias, 2) == 2);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page * 3) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 3) == 0);
+    Require(sceKernelMapDirectMemory(&mapped, page * 3, 3, 0, phys, 0) == 0);
+    Require(typeAt(mapped, 0) == 2 && typeAt(mapped, 1) == 5 && typeAt(mapped, 2) == 2);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }
@@ -2560,6 +2573,46 @@ static void CheckConcurrentCheckedReleasesUnmapViewsOnce() {
     Require(sceKernelReleaseDirectMemory(again, page * 4) == 0);
 }
 
+static void CheckReleaseExcludesMappingsAndAllocations() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t first = 0;
+    std::int64_t third = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 4, 0, 0, &first) == 0);
+    Require(sceKernelAllocateDirectMemory(first + static_cast<std::int64_t>(page * 8), 0x7fffffffffll, page, 0, 0, &third) == 0 && third == first + static_cast<std::int64_t>(page * 8));
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 4, 3, 0, first, 0) == 0);
+    auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    int result = -1;
+    std::thread releaser([&] { result = sceKernelReleaseDirectMemory(first, page * 9); });
+    const auto begin = static_cast<std::uint64_t>(first);
+    std::uint64_t claimEnd = 0;
+    while (!DirectMemoryReleaseClaimed(begin, begin + page, &claimEnd)) std::this_thread::yield();
+    Require(claimEnd == begin + page * 9);
+    int aliasResult = -1;
+    int fixedResult = -1;
+    int holeResult = -1;
+    std::atomic<bool> attempted{false};
+    std::thread attempts([&] {
+        void* alias = nullptr;
+        aliasResult = sceKernelMapDirectMemory(&alias, page, 3, 0, first + static_cast<std::int64_t>(page), 0);
+        void* fixed = static_cast<unsigned char*>(mapped) + page;
+        fixedResult = sceKernelMapDirectMemory(&fixed, page, 3, 0x10, first + static_cast<std::int64_t>(page), 0);
+        std::int64_t hole = -1;
+        holeResult = sceKernelAllocateDirectMemory(first + static_cast<std::int64_t>(page * 4), first + static_cast<std::int64_t>(page * 8), page, 0, 0, &hole);
+        attempted = true;
+    });
+    for (int waited = 0; waited < 200 && !attempted; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const bool finished = attempted;
+    lease.clear();
+    attempts.join();
+    releaser.join();
+    Require(finished && aliasResult == SCE_KERNEL_ERROR_ENOMEM && fixedResult == SCE_KERNEL_ERROR_ENOMEM && holeResult == SCE_KERNEL_ERROR_EAGAIN);
+    Require(result == 0);
+    std::int64_t hole = -1;
+    Require(sceKernelAllocateDirectMemory(first, first + static_cast<std::int64_t>(page * 9), page * 9, 0, 0, &hole) == 0 && hole == first);
+    Require(sceKernelReleaseDirectMemory(hole, page * 9) == 0);
+}
+
 static void CheckSecondDirectMappingWaitsForLeases() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -3459,6 +3512,12 @@ static void CheckDirectMemoryWriteWatch() {
     Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page * 3));
     Require(CollectPages(first, 0, page * 3) == Joined(PagesOfRange(alias, 0, page), PagesOfRange(first, page, page)));
     Require(CollectPages(first, 0, page * 3).empty());
+    void* same = static_cast<unsigned char*>(first) + page;
+    Require(sceKernelMapDirectMemory(&same, page, 3, 0x10, phys + page, 0) == 0 && same == static_cast<unsigned char*>(first) + page);
+    Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(aliasAddress, page) && GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page * 3));
+    static_cast<void>(CollectPages(first, 0, page * 3));
+    static_cast<volatile unsigned char*>(alias)[small] = 6;
+    Require(CollectPages(first, 0, page * 3) == PagesOf({{alias, small}, {first, page + small}}));
     bytes[0] = 2;
     static_cast<volatile unsigned char*>(alias)[7] = 3;
     Require(bytes[page + 7] == 3);
@@ -4517,6 +4576,7 @@ int main(int argc, char** argv) {
     CheckReleaseKeepsPhysicalUntilViewsUnmapped(sceKernelReleaseDirectMemory);
     CheckReleaseKeepsPhysicalUntilViewsUnmapped(sceKernelCheckedReleaseDirectMemory);
     CheckConcurrentCheckedReleasesUnmapViewsOnce();
+    CheckReleaseExcludesMappingsAndAllocations();
     CheckPinnedRangeIsLeftOutOfNewLeases();
     CheckBreakingAResidentRunKeepsConcurrentAccesses();
     CheckRemappedDirectMemoryIsChargedOnce();
