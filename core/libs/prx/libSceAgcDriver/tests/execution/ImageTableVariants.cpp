@@ -57,6 +57,7 @@ constexpr std::uint32_t Depth = 62;
 constexpr std::uint32_t Sized = 59;
 constexpr std::uint32_t Tied = 58;
 constexpr std::uint32_t Proved = 56;
+constexpr std::size_t ArgumentsWord = 4096;
 
 alignas(256) std::array<std::uint32_t, Records> Keys{};
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
@@ -186,7 +187,7 @@ void FillTable(const GuestBlock& block) {
     }
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& table, std::span<const std::uint32_t> code = TableCode) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& table, std::span<const std::uint32_t> code = TableCode, std::array<std::uint32_t, 3> partialThreads = {}, std::uint32_t pushBytes = 128) {
     const auto srtAddress = AddressOf(Srt.data());
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     const std::span<const std::uint32_t> words(table.Table(), Records * Stride / 4u);
@@ -196,12 +197,12 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
         {AddressOf(words.data()), std::as_bytes(words)},
         {AddressOf(Keys.data()), std::as_bytes(std::span(Keys))},
     }};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1, partialThreads};
     const ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, AddressOf(code.data()), code, 0, {}},
         {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
+        {0, 0, 0, pushBytes}
     };
     auto result = ShaderRecompiler::Recompile(request);
     const auto binding = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& candidate) { return candidate.role == ShaderRecompiler::DescriptorRole::ImageTable; });
@@ -444,6 +445,31 @@ void RunProof(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     AgcDriver::Graphics::ClearDepthSurfaces(device.Device());
 }
 
+void RunThreadDimensions(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Prepare(block);
+    const auto result = Compile(device, block, TableCode, {~0u, ~0u, ~0u}, 0u);
+    const auto table = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTable; });
+    const auto data = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; });
+    Require(data != result.bindings.end() && table < data, "image table variants: the thread-dimension shader does not bind its ShaderData after its image table");
+    auto* arguments = block.Table() + ArgumentsWord;
+    std::fill(arguments, arguments + 4, 0u);
+    for (const std::uint32_t threads : {Lanes, Lanes / 2u + 3u}) {
+        arguments[0] = threads;
+        arguments[1] = 1u;
+        arguments[2] = 1u;
+        Keys[0] = 5u;
+        std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
+        device.DispatchIndirect(result, AddressOf(arguments), {}, AddressOf(TableCode.data()), nullptr, nullptr, {Lanes, 1u, 1u});
+        device.WaitIdle();
+        const auto expected = Row(block.Texels(5), Wide);
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            const auto red = Output[lane * 4u];
+            if (lane < threads) Require(red == expected[lane], "image table variants: a thread-dimension dispatch of " + std::to_string(threads) + " threads sampled the wrong texel in lane " + std::to_string(lane));
+            else Require(red == 0xdeadbeefu, "image table variants: a thread-dimension dispatch of " + std::to_string(threads) + " threads ran lane " + std::to_string(lane));
+        }
+    }
+}
+
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     RunTied(device, block);
     RunProof(device, block);
@@ -453,6 +479,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     RunSize(device, block);
     RunDepth(device, block);
     RunRejected(device, block);
+    RunThreadDimensions(device, block);
 }
 
 }

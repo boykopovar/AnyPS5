@@ -5644,9 +5644,11 @@ std::optional<std::size_t> ShaderResources::shaderDataAllocation(const CompiledS
     Require(shader.program != nullptr, "missing compiled shader");
     const auto& program = *shader.program;
     if (program.bindings.size() != bindings.size()) return std::nullopt;
-    for (std::size_t index = 0; index < program.bindings.size(); ++index) {
-        if (program.bindings[index].role != ShaderRecompiler::DescriptorRole::ShaderData || bindings[index].allocations.size() != 1) continue;
-        const auto allocation = bindings[index].allocations.front();
+    for (const auto& programBinding : program.bindings) {
+        if (programBinding.role != ShaderRecompiler::DescriptorRole::ShaderData) continue;
+        const auto resource = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& binding) { return binding.layout.binding == programBinding.binding && binding.set < 0; });
+        if (resource == bindings.end() || resource->allocations.size() != 1) return std::nullopt;
+        const auto allocation = resource->allocations.front();
         if (allocations[allocation].guest || allocations[allocation].buffer == nullptr) return std::nullopt;
         return allocation;
     }
