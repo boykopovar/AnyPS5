@@ -26,6 +26,8 @@
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <netinet/tcp_fsm.h>
+#include <cstddef>
 #endif
 #endif
 #include "SceTypes.hpp"
@@ -430,6 +432,19 @@ int Disconnect(Socket& socket) {
     socket.localAddressCleared = true;
     return 0;
 }
+#ifdef __APPLE__
+bool DroppedTcpConnection(const Socket& socket) {
+    if (socket.type != 1 || (socket.family != 2 && socket.family != 28)) return false;
+    const int saved = errno;
+    tcp_connection_info info{};
+    socklen_t size = sizeof(info);
+    const bool dropped = ::getsockopt(socket.value, IPPROTO_TCP, TCP_CONNECTION_INFO, &info, &size) == 0
+        && size >= offsetof(tcp_connection_info, tcpi_state) + sizeof(info.tcpi_state)
+        && info.tcpi_state == TCPS_CLOSED;
+    errno = saved;
+    return dropped;
+}
+#endif
 #ifdef _WIN32
 void LoopbackForUnspecifiedInet(sockaddr_storage& native) {
     if (native.ss_family == AF_INET) {
@@ -1727,6 +1742,8 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) {
 #ifdef _WIN32
         if (socket->type == 1) return Fail(NoteConnectError(*socket));
+#elif defined(__APPLE__)
+        if (errno == EISCONN && DroppedTcpConnection(*socket)) return Fail(61);
 #endif
         return Fail(ConnectError());
     }
