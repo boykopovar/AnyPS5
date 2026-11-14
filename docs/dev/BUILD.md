@@ -399,6 +399,10 @@ Set `APS5_THREAD_PRIORITY=high` to raise the AGC driver's queue workers and the 
 
 The shader recompilation logic in [core/shader/recompiler](../../core/shader/recompiler) is isolated from the rest of the project and is a pure function of its input data, designed for integration into any other project. The current CMake target also includes cache support and links a supplied runtime target, glslang, and optionally SPIRV-Tools.
 
+## Hardened runtime probe
+
+`tools/macos_hardened_probe.cpp` prints the result of `mmap` with read, write, and execute, `mprotect` to read and execute, and the `mach_vm_remap` plus `mach_vm_protect` sequence used by call-trace thunks. It also prints `DYLD_INSERT_LIBRARIES`. `tools/macos_sign_guest.sh` ad-hoc signs one executable with `--options runtime` and `tools/macos_hardened_runtime.entitlements`. Those entitlements are `allow-unsigned-executable-memory`, `allow-dyld-environment-variables`, and `disable-library-validation`. This tree does not change the allocators and does not claim that Rosetta accepts any of those calls. Read the probe output on a Mac.
+
 ## Register context tests
 
 The x86-64 register capture and restore tests can be built separately on Linux and macOS, without submodules or the prx libraries. On macOS:
