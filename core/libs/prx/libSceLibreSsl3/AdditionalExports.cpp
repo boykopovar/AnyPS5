@@ -4,10 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PEM_read_bio_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -157,14 +153,6 @@ int APS5_VABI X509_new_nid_postfix() {
 }
 
 int APS5_VABI SSL_get0_verified_chain_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_PKEY_derive_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_PKEY_derive_init_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

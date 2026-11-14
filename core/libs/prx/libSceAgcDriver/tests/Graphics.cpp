@@ -890,12 +890,11 @@ void msaaEnableClearOneSampleTargetTests() {
     queue = drawC();
     queue.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     requireOneSample(queue, "draw C with an enabled but unaddressed ANCILLARY input");
-    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export";
-    for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
-        queue = drawC();
-        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
-        expectFailure([&] { DecodeState(queue); }, refused);
-    }
+    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index input under PS_ITER_SAMPLE, a coverage input, or a sample-mask export";
+    queue = drawC();
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
+    requireOneSample(queue, "draw C whose pixel program reads ANCILLARY without PS_ITER_SAMPLE");
+    Require(!DecodeState(queue).perSampleShading, "ANCILLARY into a one-sample color target without MSAA_ENABLE asked for sample shading");
     queue = drawC();
     queue.context[0x293] = 0x10000u;
     queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample);
@@ -6536,6 +6535,7 @@ void addressSpaceTeardownTests() {
         Require(!memory.HoldsLease(), "completed address-based build kept its own lease");
     }
     AgcDriver::Graphics::ClearImageMirrors(context.device);
+    AgcDriver::Graphics::ClearUploadCopies(context.device);
     GuestHeap::GuestHeapFree_nid_postfix(block);
     Require(AgcDriver::Graphics::LeaseCounters().cacheDrops == before, "device teardown left the cached address space pinning guest allocations");
     Require(mock.live == 0, "address-space teardown test leaked Vulkan objects");
@@ -7084,6 +7084,96 @@ void descriptorPoolResetFailureTest() {
 
 }
 
+std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> bytewisePushConstants(std::span<const AgcDriver::Graphics::CompiledShader> shaders) {
+    using AgcDriver::Graphics::PipelinePushConstantBytes;
+    using AgcDriver::Graphics::PipelinePushSlotBytes;
+    std::array<std::byte, PipelinePushConstantBytes> result{};
+    std::array<bool, PipelinePushConstantBytes> occupied{};
+    for (const auto& shader : shaders) {
+        Require(shader.program != nullptr, "missing compiled shader");
+        const auto& bytes = shader.program->pushConstants;
+        if (bytes.empty()) continue;
+        Require(bytes.size() % 4 == 0 && shader.pushConstantOffset % 4 == 0, "shader push constant range is not DWORD aligned");
+        Require(shader.pushConstantOffset < PipelinePushConstantBytes && bytes.size() <= PipelinePushConstantBytes - shader.pushConstantOffset, "shader push constant range lies outside the pipeline push constant block");
+        Require(bytes.size() <= PipelinePushSlotBytes - shader.pushConstantOffset % PipelinePushSlotBytes, "shader push constant range crosses a push constant slot");
+        for (std::size_t i = 0; i < bytes.size(); ++i) {
+            const auto position = shader.pushConstantOffset + i;
+            Require(!occupied[position], "shader push constant ranges of different stages overlap");
+            occupied[position] = true;
+            result[position] = bytes[i];
+        }
+    }
+    return result;
+}
+
+void pushConstantAssemblyTests() {
+    using AgcDriver::Graphics::CompiledShader;
+    using AgcDriver::Graphics::PipelinePushConstantBytes;
+    using AgcDriver::Graphics::PipelinePushSlotBytes;
+    std::mt19937_64 random(0x5ca1ab1e);
+    const auto below = [&](std::uint64_t bound) { return static_cast<std::uint32_t>(random() % bound); };
+    std::array<ShaderRecompiler::RecompileResult, 4> programs;
+    std::map<std::string, std::uint32_t> outcomes;
+    const auto compare = [&](std::span<const CompiledShader> shaders, const std::string& what) {
+        std::string expectedError;
+        std::array<std::byte, PipelinePushConstantBytes> expected{};
+        try {
+            expected = bytewisePushConstants(shaders);
+        } catch (const std::runtime_error& error) {
+            expectedError = error.what();
+        }
+        std::string actualError;
+        std::array<std::byte, PipelinePushConstantBytes> actual{};
+        try {
+            actual = AgcDriver::Graphics::AssemblePushConstants(shaders);
+        } catch (const std::runtime_error& error) {
+            actualError = error.what();
+        }
+        Require(actualError == expectedError, what + ": the push constant assembly failed differently from the byte loop (\"" + actualError + "\" against \"" + expectedError + "\")");
+        Require(!expectedError.empty() || actual == expected, what + ": the push constant assembly placed bytes differently from the byte loop");
+        ++outcomes[expectedError.empty() ? std::string("assembled") : expectedError];
+    };
+    const auto fill = [&](ShaderRecompiler::RecompileResult& program, std::uint32_t size) {
+        program.pushConstants.resize(size);
+        for (auto& byte : program.pushConstants) byte = static_cast<std::byte>(below(256));
+    };
+    for (std::uint32_t vertexBytes = 0; vertexBytes <= PipelinePushSlotBytes; vertexBytes += 4) {
+        for (std::uint32_t pixelOffset = 0; pixelOffset < PipelinePushConstantBytes; pixelOffset += 4) {
+            fill(programs[0], vertexBytes);
+            fill(programs[1], 4 + below(32) * 4);
+            const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &programs[0], 0}, {ShaderRecompiler::ShaderStage::Fragment, &programs[1], pixelOffset}}};
+            compare(shaders, "vertex " + std::to_string(vertexBytes) + " bytes, pixel at " + std::to_string(pixelOffset));
+        }
+    }
+    for (std::uint32_t round = 0; round < 40000; ++round) {
+        const auto count = below(5);
+        std::array<CompiledShader, 4> shaders{};
+        for (std::uint32_t index = 0; index < count; ++index) {
+            const auto shape = below(8);
+            std::uint32_t size = 0;
+            std::uint32_t offset = 0;
+            if (shape == 0) {
+                size = below(PipelinePushSlotBytes + 16);
+                offset = below(PipelinePushConstantBytes + 16);
+            } else if (shape == 1) {
+                offset = below(1000);
+            } else {
+                size = 4 * (1 + below(PipelinePushSlotBytes / 4));
+                offset = shape == 2 ? 4 * below(PipelinePushConstantBytes / 4 + 2) : (index % 2) * PipelinePushSlotBytes + 4 * below(PipelinePushSlotBytes / 4 - size / 4 + 1);
+            }
+            fill(programs[index], size);
+            const bool missing = below(64) == 0;
+            shaders[index] = {index + 1 == count ? ShaderRecompiler::ShaderStage::Fragment : ShaderRecompiler::ShaderStage::Vertex, missing ? nullptr : &programs[index], offset};
+        }
+        compare(std::span<const CompiledShader>(shaders.data(), count), "random layout " + std::to_string(round));
+    }
+    for (const auto& [outcome, seen] : outcomes) std::printf("push constant assembly: %u x %s\n", seen, outcome.c_str());
+    for (const auto* expected : {"assembled", "not DWORD aligned", "outside the pipeline push constant block", "crosses a push constant slot", "ranges of different stages overlap", "missing compiled shader"}) {
+        const auto found = std::find_if(outcomes.begin(), outcomes.end(), [&](const auto& entry) { return entry.first.find(expected) != std::string::npos && entry.second >= 50; });
+        Require(found != outcomes.end(), std::string("the push constant assembly comparison rarely reached: ") + expected);
+    }
+}
+
 void pushConstantTests() {
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::RecompileResult fragment;
@@ -7123,6 +7213,7 @@ void pushConstantTests() {
     Require(AgcDriver::Graphics::AssemblePushConstants(shaders)[8] == std::byte{0}, "empty push constants were copied");
     shaders[1].program = nullptr;
     expectFailure([&] { AgcDriver::Graphics::AssemblePushConstants(shaders); }, "missing compiled shader");
+    pushConstantAssemblyTests();
 }
 
 void descriptorSnapshotTests() {
@@ -12618,6 +12709,7 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "oob_select 1 past the records still spans its fetch");
         attribute.resource.fields[3] = 0x2004dfacu;
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
+        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 2, stride 32, NUM_RECORDS 3, vertex index 3");
         attribute.resource.fields[3] = 0x3004dfacu;
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
         attribute.resource.fields[3] = 77u << 12u;
@@ -12646,6 +12738,7 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 7) == 16, "OOB_SELECT 1 must read the whole element for the last index below NUM_RECORDS");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 9); }, "record count");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 8); }, "record count");
+        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 8); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 1, stride 0, NUM_RECORDS 8, instance index 8");
         zeroStride(1, 1);
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "OOB_SELECT 1 with one record must read the element at index 0");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 2); }, "record count");
@@ -12769,6 +12862,22 @@ void validationTests() {
         const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "VK_EXT_shader_viewport_index_layer");
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, true);
+    }
+    {
+        ShaderRecompiler::RecompileResult tessVertex, tessControl, tessEvaluation;
+        tessVertex.spirv = makeModule({});
+        tessControl.spirv = makeModule({.push = true, .tessellationModel = spv::ExecutionModelTessellationControl});
+        tessEvaluation.spirv = makeModule({.tessellationModel = spv::ExecutionModelTessellationEvaluation, .layerOutput = true});
+        const std::array<AgcDriver::Graphics::CompiledShader, 4> tessShaders{{{ShaderRecompiler::ShaderStage::Local, &tessVertex, 0}, {ShaderRecompiler::ShaderStage::TessellationControl, &tessControl, 0}, {ShaderRecompiler::ShaderStage::TessellationEvaluation, &tessEvaluation, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        auto tessState = state;
+        tessState.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
+        tessState.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 3, 2, 1, 4, 128, 16, false};
+        const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false); }, "VK_EXT_shader_viewport_index_layer");
+        AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false, false, false, false, false, false, false, false, true);
+        tessEvaluation.spirv = makeModule({.tessellationModel = spv::ExecutionModelTessellationEvaluation});
+        tessControl.spirv = makeModule({.push = true, .tessellationModel = spv::ExecutionModelTessellationControl, .layerOutput = true});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false, false, false, false, false, false, false, false, true); }, "unsupported tessellation built-in");
     }
     for (const auto capability : {spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle}) {
         ShaderRecompiler::RecompileResult vertex;
@@ -14060,6 +14169,17 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         BuildPipelineStoreKey(legacyKey, context, legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(legacyReplayed, context, legacyDecoded.state, legacyDecoded.vertexInput, layouts.View(), legacyShaders, legacyDecoded.attachmentLayout);
         Require(legacyFlag == original && legacyKey != original && legacyKey == legacyReplayed, "the legacy vertex selection keyed a pipeline by the state flag instead of by its vertex module");
+        {
+            auto shortState = state;
+            shortState.depth.reset();
+            shortState.colors.resize(1);
+            shortState.blends.resize(1);
+            std::vector<std::byte> shortKey, shortAgain, longAgain;
+            BuildPipelineStoreKey(shortKey, context, shortState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            BuildPipelineStoreKey(longAgain, context, state, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            BuildPipelineStoreKey(shortAgain, context, shortState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            Require(!shortKey.empty() && shortKey.size() < original.size() && shortAgain == shortKey && longAgain == original, "a key built after a longer one kept bytes of it");
+        }
         std::vector<std::byte> unclamped, clamped, biased;
         auto clampedState = state;
         clampedState.depthBiasClamp = 1.0f;
@@ -14662,6 +14782,10 @@ int main(int argc, char** argv) {
     setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--push-constant-assembly") {
+            pushConstantTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--linear-volume-nonresident") {
             LinearVolumeNonResidentTests();
             return 0;

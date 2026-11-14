@@ -1829,6 +1829,7 @@ ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, s
     if (run.ranges.empty()) return run;
     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
     if (begin == run.base) return run;
+    if (run.ranges.front()->bytes > window && run.bytes - run.ranges.front()->bytes <= window) return run;
     return {};
 }
 
@@ -2989,6 +2990,123 @@ std::shared_ptr<Buffer> snapshotCopy(const Context& context, std::uint64_t addre
     }
     copies.Insert(key, buffer, bytes);
     return buffer;
+}
+
+struct UploadCopies {
+    using Key = std::tuple<std::uint64_t, std::size_t, VkBufferUsageFlags>;
+    using Pieces = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+    AgcDriver::Mutex mutex;
+    VkDevice device = VK_NULL_HANDLE;
+    struct Entry {
+        std::shared_ptr<Buffer> buffer;
+        std::uint64_t generation = 0;
+        Pieces pieces;
+        std::list<Key>::iterator recent;
+    };
+    std::map<Key, Entry> entries;
+    std::list<Key> recency;
+    std::size_t bytes = 0;
+};
+
+std::size_t uploadCacheBudget() {
+    static const std::size_t bytes = [] {
+        const char* value = std::getenv("APS5_UPLOAD_CACHE_MIB");
+        return static_cast<std::size_t>(value != nullptr ? std::strtoull(value, nullptr, 10) : 512ull) << 20u;
+    }();
+    return bytes;
+}
+
+constexpr std::size_t uploadCacheEntries = 256;
+
+UploadCopies& UploadCopyCache() {
+    static UploadCopies copies;
+    return copies;
+}
+
+void resetUploadCache(UploadCopies& copies, VkDevice device) {
+    copies.entries.clear();
+    copies.recency.clear();
+    copies.bytes = 0;
+    copies.device = device;
+}
+
+std::uint64_t collectUploadWrites(std::uint64_t begin, bool sparse, const UploadCopies::Pieces& backed, std::size_t bytes) {
+    if (!GuestMemory::WriteWatched()) return 0;
+    if (!sparse) return GuestMemory::CollectWrites(begin, bytes);
+    std::uint64_t generation = 0;
+    for (const auto& [first, last] : backed) {
+        generation = GuestMemory::CollectWrites(first, static_cast<std::size_t>(last - first));
+        if (generation == 0) return 0;
+    }
+    return generation;
+}
+
+bool uploadUnchanged(std::uint64_t begin, bool sparse, const UploadCopies::Pieces& backed, std::size_t bytes, std::uint64_t generation) {
+    if (generation == 0) return false;
+    if (!sparse) return GuestMemory::CollectWritesUncached(begin, bytes) != 0 && GuestMemory::UnchangedSince(begin, bytes, generation);
+    for (const auto& [first, last] : backed) {
+        const auto size = static_cast<std::size_t>(last - first);
+        if (GuestMemory::CollectWritesUncached(first, size) == 0 || !GuestMemory::UnchangedSince(first, size, generation)) return false;
+    }
+    return true;
+}
+
+std::shared_ptr<Buffer> findUploaded(const Context& context, std::uint64_t begin, bool sparse, const UploadCopies::Pieces& backed, std::size_t bytes, VkBufferUsageFlags usage, std::uint64_t& generation) {
+    generation = 0;
+    if (uploadCacheBudget() == 0) return nullptr;
+    auto& copies = UploadCopyCache();
+    const UploadCopies::Key key{begin, bytes, usage};
+    {
+        std::lock_guard lock(copies.mutex);
+        if (copies.device != context.device) {
+            resetUploadCache(copies, context.device);
+            return nullptr;
+        }
+        const auto found = copies.entries.find(key);
+        if (found == copies.entries.end() || found->second.pieces != backed) return nullptr;
+        generation = found->second.generation;
+    }
+    if (!uploadUnchanged(begin, sparse, backed, bytes, generation)) return nullptr;
+    std::lock_guard lock(copies.mutex);
+    const auto found = copies.entries.find(key);
+    if (found == copies.entries.end() || found->second.generation != generation) return nullptr;
+    copies.recency.splice(copies.recency.end(), copies.recency, found->second.recent);
+    return found->second.buffer;
+}
+
+void insertUploaded(const Context& context, std::uint64_t begin, const UploadCopies::Pieces& backed, std::size_t bytes, VkBufferUsageFlags usage, const std::shared_ptr<Buffer>& buffer, std::uint64_t generation) {
+    const auto budget = uploadCacheBudget();
+    if (budget == 0 || generation == 0 || bytes > budget) return;
+    auto& copies = UploadCopyCache();
+    const UploadCopies::Key key{begin, bytes, usage};
+    std::lock_guard lock(copies.mutex);
+    if (copies.device != context.device) resetUploadCache(copies, context.device);
+    if (const auto found = copies.entries.find(key); found != copies.entries.end()) {
+        copies.recency.erase(found->second.recent);
+        copies.bytes -= std::get<1>(found->first);
+        copies.entries.erase(found);
+    }
+    while (!copies.recency.empty() && (copies.bytes + bytes > budget || copies.entries.size() >= uploadCacheEntries)) {
+        const auto oldest = copies.entries.find(copies.recency.front());
+        copies.bytes -= std::get<1>(oldest->first);
+        copies.entries.erase(oldest);
+        copies.recency.pop_front();
+    }
+    copies.recency.push_back(key);
+    copies.entries.emplace(key, UploadCopies::Entry{buffer, generation, backed, std::prev(copies.recency.end())});
+    copies.bytes += bytes;
+}
+
+void forgetUploaded(const Context& context, std::uint64_t begin, std::size_t bytes, VkBufferUsageFlags usage) {
+    auto& copies = UploadCopyCache();
+    std::lock_guard lock(copies.mutex);
+    if (copies.device != context.device) return;
+    const UploadCopies::Key key{begin, bytes, usage};
+    if (const auto found = copies.entries.find(key); found != copies.entries.end()) {
+        copies.recency.erase(found->second.recent);
+        copies.bytes -= std::get<1>(found->first);
+        copies.entries.erase(found);
+    }
 }
 
 bool mirrorsEnabled() {
@@ -5737,6 +5855,12 @@ void ClearRetainedSpaces(VkDevice device) {
     pruneRetained([device](const RetainedAddressSpace& node) { return node.device == device; });
 }
 
+void ClearUploadCopies(VkDevice device) {
+    auto& copies = UploadCopyCache();
+    std::lock_guard lock(copies.mutex);
+    if (copies.device == device) resetUploadCache(copies, VK_NULL_HANDLE);
+}
+
 std::size_t RetainedSpaceCount() {
     std::size_t count = 0;
     pruneRetained([&count](const RetainedAddressSpace&) {
@@ -6076,6 +6200,15 @@ CopyStats& Copies() {
 // region takes the path it would take without staging (Region::unstaged).
 std::atomic<bool> deviceLocalFullForTests{false};
 
+std::atomic<std::uint64_t> liveShadowBytes{0};
+std::atomic<std::uint64_t> liveShadowLimit{std::numeric_limits<std::uint64_t>::max()};
+
+std::uint64_t shadowBytesLimit(std::uint64_t heapBytes) {
+    static const char* const setting = std::getenv("APS5_STAGING_SHADOW_MAX_MIB");
+    if (setting != nullptr) return std::strtoull(setting, nullptr, 10) << 20u;
+    return std::max<std::uint64_t>(std::uint64_t{256} << 20u, heapBytes / 16u);
+}
+
 bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
     if (deviceLocalFullForTests.load(std::memory_order_relaxed)) return false;
     static std::atomic<std::int64_t> checkedMs{std::numeric_limits<std::int64_t>::min()};
@@ -6091,18 +6224,26 @@ bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
         const auto budget = reported.heapBudget[heap];
         const auto usage = reported.heapUsage[heap];
         room.store(budget == 0 ? std::numeric_limits<std::uint64_t>::max() : usage + budget / 8u < budget ? budget - budget / 8u - usage : 0u, std::memory_order_relaxed);
+        liveShadowLimit.store(shadowBytesLimit(budget != 0 ? budget : context.memory.memoryHeaps[heap].size), std::memory_order_relaxed);
         checkedMs.store(nowMs, std::memory_order_relaxed);
     }
     return bytes <= room.load(std::memory_order_relaxed);
 }
 
 std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes, VkBufferUsageFlags usage) {
-    if (!deviceLocalHasRoom(context, bytes)) {
+    if (!deviceLocalHasRoom(context, bytes) || liveShadowBytes.load(std::memory_order_relaxed) + bytes > liveShadowLimit.load(std::memory_order_relaxed)) {
         Copies().stagingRefused.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
     try {
-        if (auto buffer = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage)) return buffer;
+        if (auto buffer = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage)) {
+            liveShadowBytes.fetch_add(bytes, std::memory_order_relaxed);
+            auto* shadow = buffer.get();
+            return std::shared_ptr<Buffer>(shadow, [owner = std::move(buffer), bytes](Buffer*) mutable {
+                owner.reset();
+                liveShadowBytes.fetch_sub(bytes, std::memory_order_relaxed);
+            });
+        }
         static std::atomic<int> reported{0};
         if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[buffers] staging shadow of %zu bytes refused: its device-local heap is within an eighth of its budget\n", bytes);
         Copies().stagingRefused.fetch_add(1, std::memory_order_relaxed);
@@ -6168,7 +6309,7 @@ void reportStaging() {
     const auto staged = stats.staged.load();
     const auto in = stats.stagedInBytes.load();
     const auto out = stats.stagedOutBytes.load();
-    AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging: %llu regions staged device-local (%llu with atomics, %llu of reused builds), %.0f KiB copied in, %.0f KiB copied back, %llu without copy-back, %llu shadows refused; last 10 s: %llu regions, %.0f KiB in, %.0f KiB back\n", static_cast<unsigned long long>(staged), static_cast<unsigned long long>(stats.stagedAtomic.load()), static_cast<unsigned long long>(stats.stagedReused.load()), in / 1024.0, out / 1024.0, static_cast<unsigned long long>(stats.stagedLost.load()), static_cast<unsigned long long>(stats.stagingRefused.load()), static_cast<unsigned long long>(staged - lastStaged), (in - lastIn) / 1024.0, (out - lastOut) / 1024.0);
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging: %llu regions staged device-local (%llu with atomics, %llu of reused builds), %.0f KiB copied in, %.0f KiB copied back, %llu without copy-back, %llu shadows refused, %llu MiB in live shadows (limit %llu MiB); last 10 s: %llu regions, %.0f KiB in, %.0f KiB back\n", static_cast<unsigned long long>(staged), static_cast<unsigned long long>(stats.stagedAtomic.load()), static_cast<unsigned long long>(stats.stagedReused.load()), in / 1024.0, out / 1024.0, static_cast<unsigned long long>(stats.stagedLost.load()), static_cast<unsigned long long>(stats.stagingRefused.load()), static_cast<unsigned long long>(liveShadowBytes.load() >> 20u), static_cast<unsigned long long>(liveShadowLimit.load() >> 20u), static_cast<unsigned long long>(staged - lastStaged), (in - lastIn) / 1024.0, (out - lastOut) / 1024.0);
     lastStaged = staged;
     lastIn = in;
     lastOut = out;
@@ -6753,6 +6894,40 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         region.bufferEnd = end < region.end ? end : 0;
     }
     const auto allocated = region.bufferEnd != 0 ? region.bufferEnd - region.begin : bytes;
+    const bool written = region.writable && WritesOverlap(region.begin, static_cast<std::size_t>(bytes));
+    const bool cacheable = region.buffer == nullptr && (region.hostBacked || region.writable) && !written;
+    std::uint64_t uploadGeneration = 0;
+    if (cacheable) {
+        if (auto cached = findUploaded(context, region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated), usage, uploadGeneration)) {
+            bool unchanged = true;
+            {
+                const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::BufferUpload);
+                if (const auto hook = GuestMemory::CurrentFlushHook()) {
+                    if (!region.sparse) {
+                        hook(region.begin, static_cast<std::size_t>(allocated));
+                    } else {
+                        for (const auto& [first, last] : region.backed) hook(first, static_cast<std::size_t>(last - first));
+                    }
+                    unchanged = uploadUnchanged(region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated), uploadGeneration);
+                }
+            }
+            if (unchanged) {
+                region.buffer = std::move(cached);
+                region.snapshot.clear();
+                static std::atomic<std::uint64_t> hits{0}, hitBytes{0};
+                const auto hit = hits.fetch_add(1, std::memory_order_relaxed) + 1;
+                hitBytes.fetch_add(allocated, std::memory_order_relaxed);
+                if (profile && hit % 1000 == 0) {
+                    AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu upload cache hits, %.0f MiB served\n", static_cast<unsigned long long>(hit), static_cast<double>(hitBytes.load(std::memory_order_relaxed)) / 1048576.0);
+                }
+                return;
+            }
+            forgetUploaded(context, region.begin, static_cast<std::size_t>(allocated), usage);
+        }
+        uploadGeneration = collectUploadWrites(region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated));
+    } else if (written) {
+        forgetUploaded(context, region.begin, static_cast<std::size_t>(allocated), usage);
+    }
     // A buffer made by UploadPrepare for a GPU copy that fell back here (its import went) is kept.
     const bool shared = region.buffer == nullptr && !region.hostBacked && !region.writable && !region.sparse && region.bufferEnd == 0 && region.snapshot.size() == bytes;
     if (shared) region.buffer = snapshotCopy(context, region.begin, region.snapshot, usage);
@@ -6764,7 +6939,6 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     if (region.hostBacked || region.writable) {
         // Only ranges a descriptor may write need the copy the write-back diffs against; the
         // registered ranges of an address-based shader are read-only to it (AddressRanges).
-        const bool written = region.writable && WritesOverlap(region.begin, static_cast<std::size_t>(bytes));
         if (!region.sparse) {
             GuestMemory::Read(region.begin, region.buffer->Bytes());
             readBytes += region.buffer->Bytes().size();
@@ -6790,6 +6964,7 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         readBytes += region.snapshot.size();
     }
     region.snapshot.clear();
+    if (uploadGeneration != 0 && uploadUnchanged(region.begin, region.sparse, region.backed, static_cast<std::size_t>(allocated), uploadGeneration)) insertUploaded(context, region.begin, region.backed, static_cast<std::size_t>(allocated), usage, region.buffer, uploadGeneration);
     if (profile) readUs.fetch_add(microsecondsSince(readStart), std::memory_order_relaxed);
     if (profile) {
         static AgcDriver::Mutex reasonsMutex;

@@ -500,11 +500,6 @@ int APS5_VABI _ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_Ge
     return 0;
 }
 
-int APS5_VABI _ZSt22_Get_future_error_whati_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalMemoryMutexEnable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;

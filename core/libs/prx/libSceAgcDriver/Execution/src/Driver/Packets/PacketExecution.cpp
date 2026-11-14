@@ -167,6 +167,7 @@ void Driver::execute(Submission& submission) {
         std::uint32_t queue;
         bool held;
         bool working;
+        std::shared_ptr<FlipWork> work;
         void Release() {
             if (!held) return;
             held = false;
@@ -176,13 +177,13 @@ void Driver::execute(Submission& submission) {
             if (!working) return;
             const auto workSerial = driver.submitFlipWork(queue);
             working = false;
-            driver.finishFlipWork(workSerial);
+            driver.finishFlipWork(work, workSerial);
         }
         ~FlipHold() {
             Release();
-            if (working) driver.finishFlipWork(0);
+            if (working) driver.finishFlipWork(work, 0);
         }
-    } flipHold{*this, submission.queue, submission.holdsFlip, submission.holdsFlip};
+    } flipHold{*this, submission.queue, submission.holdsFlip, submission.holdsFlip, submission.flipWork};
     const bool pipelined = submission.queue == 0 && DrawPipeline::Depth() != 0;
     static const bool orderedWaits = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
     DrawPipeline::Active() = pipelined;
@@ -631,8 +632,8 @@ void Driver::execute(Submission& submission) {
         }
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(submission.rewindTail - 1)).load(std::memory_order_acquire) & 0x80000000u) != 0) {
             const bool holdsFlip = std::exchange(flipHold.working, false);
-            DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SubmitEnd, [this, holdsFlip, progress = submission.progress] {
-                if (holdsFlip) finishFlipWork(submitFlipWork(0));
+            DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SubmitEnd, [this, holdsFlip, flipWork = submission.flipWork, progress = submission.progress] {
+                if (holdsFlip) finishFlipWork(flipWork, submitFlipWork(0));
                 else submitOpenWork(progress);
                 wakeQueueZeroForCompletions();
             }, {});
