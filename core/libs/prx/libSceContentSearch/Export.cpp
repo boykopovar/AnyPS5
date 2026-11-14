@@ -73,18 +73,22 @@ void ValidateOrderBy(const char* funcName, const ContentSearchContentOrderByCond
 extern "C" {
 
 int APS5_VABI sceContentSearchAddAvContentCreatedEventCondition() {
+    if (!g_initialized.load()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceContentSearchDisableAvContentCreatedEvent() {
+    if (!g_initialized.load()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceContentSearchEnableAvContentCreatedEvent() {
+    if (!g_initialized.load()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceContentSearchGetContentIdByAvContentCreatedEvent() {
+    if (!g_initialized.load()) return ErrorNotInitialized;
     NotImplemented_nid_no_patch(__func__);
 }
 
