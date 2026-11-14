@@ -59,6 +59,8 @@ struct WebRtcAudioEncodedInfoLeaf {
     bool sendEvenIfEmpty;
     bool speech;
     int encoderType;
+    std::uint8_t unknownAt18[0x4c];
+    bool unknownAt64;
 };
 
 struct WebRtcAudioEncodedInfo {
@@ -68,11 +70,13 @@ struct WebRtcAudioEncodedInfo {
     WebRtcAudioEncodedInfoLeaf* redundantCapacity;
 };
 
-static_assert(sizeof(WebRtcAudioEncodedInfoLeaf) == 24);
+static_assert(sizeof(WebRtcAudioEncodedInfoLeaf) == 0x68);
 static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, encodedTimestamp) == 8);
 static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, payloadType) == 12);
 static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, sendEvenIfEmpty) == 16);
 static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, speech) == 17);
 static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, encoderType) == 20);
-static_assert(sizeof(WebRtcAudioEncodedInfo) == 48);
-static_assert(offsetof(WebRtcAudioEncodedInfo, redundantBegin) == 24);
+static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, unknownAt18) == 0x18);
+static_assert(offsetof(WebRtcAudioEncodedInfoLeaf, unknownAt64) == 0x64);
+static_assert(sizeof(WebRtcAudioEncodedInfo) == 0x80);
+static_assert(offsetof(WebRtcAudioEncodedInfo, redundantBegin) == 0x68);
