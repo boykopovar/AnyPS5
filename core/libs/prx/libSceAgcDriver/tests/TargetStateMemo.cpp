@@ -182,9 +182,13 @@ void draw(AgcDriver::VulkanDevice& device, const ColorTarget& color, const DrawO
     device.Draw(state, {0, 3, 0, 1, 0, false}, shaders);
 }
 
+bool memoSwitchedOff() {
+    return RuntimeSwitches::Set(RuntimeSwitch::NoTargetMemo);
+}
+
 bool memoResolves() {
-    static const bool resolves = std::getenv("APS5_NO_TARGET_MEMO") != nullptr || std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr || std::getenv("APS5_DRAW_PIPELINE") == nullptr;
-    return resolves;
+    static const bool resolves = std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr || std::getenv("APS5_DRAW_PIPELINE") == nullptr;
+    return resolves || memoSwitchedOff();
 }
 
 std::uint64_t lookups() {
@@ -193,8 +197,8 @@ std::uint64_t lookups() {
 }
 
 bool memoServes() {
-    static const bool serves = std::getenv("APS5_NO_TARGET_MEMO") == nullptr && std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr && std::getenv("APS5_DRAW_PIPELINE") != nullptr;
-    return serves;
+    static const bool serves = std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr && std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    return serves && !memoSwitchedOff();
 }
 
 bool memoCounted() {
@@ -729,7 +733,7 @@ void memoHitPath(AgcDriver::VulkanDevice& device) {
     const bool bench = benchRepeats != nullptr && benchRepeats[0] != '\0';
     const std::size_t repeats = bench ? std::strtoull(benchRepeats, nullptr, 10) : 1000u;
     const std::size_t samples = bench ? 8u : 2u;
-    const bool disabled = !DrawPipelineEnabled() || std::getenv("APS5_NO_TARGET_MEMO") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    const bool disabled = !DrawPipelineEnabled() || memoSwitchedOff() || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     for (const HitCase hitCase : {HitCase{"color", false, false}, HitCase{"color+depth", false, true}, HitCase{"dcc+depth", true, true}}) {
         auto color = colorTarget(hitCase.metadata);
@@ -1029,7 +1033,7 @@ void colorMemoProofBreak(AgcDriver::VulkanDevice& device) {
 }
 
 void cachedDepthOverlap(AgcDriver::VulkanDevice& device) {
-    const bool disabled = !DrawPipelineEnabled() || std::getenv("APS5_NO_TARGET_MEMO") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    const bool disabled = !DrawPipelineEnabled() || memoSwitchedOff() || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     const auto color = colorTarget();
     const auto disjoint = depthTarget(true);
     auto onSurface = disjoint;
@@ -1265,6 +1269,24 @@ void heldBaselineUnits(AgcDriver::VulkanDevice& device) {
     *byteOf(1) = held;
 }
 
+void switchFlip(AgcDriver::VulkanDevice& device) {
+    const bool initial = memoSwitchedOff();
+    auto color = colorTarget(false);
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTargetMemo, false);
+    reset(device, color);
+    arm(device, color);
+    const auto builds = TargetMemoBuildsForTest();
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTargetMemo, true);
+    for (int repeat = 0; repeat < 3; ++repeat) mustLookUp(device, color, {}, "a draw with APS5_NO_TARGET_MEMO switched on repeated its targets");
+    Require(TargetMemoBuildsForTest() == builds, "a draw with APS5_NO_TARGET_MEMO switched on built a memo");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTargetMemo, false);
+    mustLookUp(device, color, {}, "the first draw after APS5_NO_TARGET_MEMO switched off repeated a memo built before it was switched on");
+    mustRepeat(device, color, "a draw after the memo was rebuilt did not repeat its targets");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTargetMemo, true);
+    mustLookUp(device, color, {}, "a draw after APS5_NO_TARGET_MEMO switched on again repeated its targets");
+    RuntimeSwitches::Assign(RuntimeSwitch::NoTargetMemo, initial);
+}
+
 void depthProofAfterMetadataWrite(AgcDriver::VulkanDevice& device) {
     const auto color = colorTarget();
     reset(device, color);
@@ -1384,7 +1406,7 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
         const ProofFields proof;
         for (int repeat = 0; repeat < 4; ++repeat) draw(device, color, options);
         requireMoved(proof, "", "unchanged repeat");
-        const bool enabled = std::getenv("APS5_NO_TARGET_MEMO") == nullptr;
+        const bool enabled = !memoSwitchedOff();
         Require(!enabled || TargetMemoBuildsForTest() == builds, "an unchanged successful repeat rebuilt the memo");
         AgcDriver::GuestMemory::BreakProofs();
         draw(device, color, options);
@@ -1392,7 +1414,7 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     }
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 14> R3Scenarios{{
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 15> R3Scenarios{{
     {"untracked-dcc", untrackedDccClear},
     {"untracked-cmask", untrackedCmaskClear},
     {"resident-dcc", residentDccClear},
@@ -1400,6 +1422,7 @@ const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 14>
     {"depth-proof", depthProofAfterMetadataWrite},
     {"baseline", validRefreshBaselines},
     {"held-baseline", heldBaselineUnits},
+    {"switch-flip", switchFlip},
     {"unchanged", unchangedMemo},
     {"fallback", depthFallbackInvalidatesColor},
     {"descriptor", colorMemoDepthDescriptorChange},

@@ -3327,8 +3327,8 @@ bool VerifyTargetMemo() {
 }
 
 bool TargetMemoEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_TARGET_MEMO") == nullptr && std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr;
-    return enabled && ShaderResources::EpochProofs();
+    static const bool cached = std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr;
+    return cached && !RuntimeSwitches::Set(RuntimeSwitch::NoTargetMemo) && ShaderResources::EpochProofs();
 }
 
 struct TargetProof {
@@ -3472,6 +3472,12 @@ bool ownsTargetMemo(TargetMemo& memo) {
     if (memo.colors.valid || memo.depth.valid) noteTargetMemo(TargetMemoEvent::ThreadChanged);
     memo.Invalidate();
     return false;
+}
+
+void dropTargetMemo() {
+    if (targetMemoOwner.load(std::memory_order_relaxed) == nullptr) return;
+    ThreadTargetMemo().Invalidate();
+    targetMemoOwner.store(nullptr, std::memory_order_relaxed);
 }
 
 bool colorOverlapsDepth(const State& state, const TargetBinding& binding) {
@@ -3638,6 +3644,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     targets.resize(state.colors.size());
     auto& targetViews = prepared.targetViews;
     const bool memoActive = TargetMemoEnabled();
+    if (!memoActive) dropTargetMemo();
     bool targetsUsed = false;
     TargetProof targetProof;
     TargetProof admissionProof;
