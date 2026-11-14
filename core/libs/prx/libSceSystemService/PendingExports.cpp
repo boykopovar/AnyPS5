@@ -837,8 +837,22 @@ std::uint64_t APS5_VABI sceShellCoreUtilGetFreeSizeOfAvContentsTmp() {
 
 int APS5_VABI sceShellCoreUtilGetFreeSizeOfUserPartition(std::uint64_t* freeSize, std::uint64_t* totalSize) {
     const std::filesystem::space_info space = HostSpace();
-    if (freeSize != nullptr) *freeSize = space.available;
-    if (totalSize != nullptr) *totalSize = space.capacity;
+    const int savedErrno = errno;
+    if (freeSize != nullptr) {
+        const std::uint64_t localFree = space.available;
+        if (!GuestCopyOut_nid_no_patch(freeSize, &localFree, sizeof(localFree))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    if (totalSize != nullptr) {
+        const std::uint64_t localTotal = space.capacity;
+        if (!GuestCopyOut_nid_no_patch(totalSize, &localTotal, sizeof(localTotal))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    errno = savedErrno;
     return 0;
 }
 
