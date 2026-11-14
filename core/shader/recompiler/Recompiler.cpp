@@ -67,6 +67,16 @@
 
 namespace ShaderRecompiler {
 
+static std::shared_ptr<const RecompileResult> Sealed(std::shared_ptr<const RecompileResult> result) {
+    if (result != nullptr) result->SealIdentity();
+    return result;
+}
+
+bool VerifyIdentityMemo() {
+    static const bool verify = std::getenv("APS5_VERIFY_IDENTITY") != nullptr;
+    return verify;
+}
+
 namespace {
 
 ShaderStageKind toShaderStageKind(ShaderStage stage) {
@@ -2297,10 +2307,10 @@ std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& req
     if (!request.useCache || capture.source == nullptr) {
         auto program = PrepareResourceProgram(request);
         const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });
-        return std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot));
+        return Sealed(std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot)));
     }
-    if (!ResultMemo()) return std::make_shared<const RecompileResult>(materializeVariant(*capture.source, request, capture.snapshot));
-    return materializeMemoized(*capture.source, request, capture.snapshot, memoHit);
+    if (!ResultMemo()) return Sealed(std::make_shared<const RecompileResult>(materializeVariant(*capture.source, request, capture.snapshot)));
+    return Sealed(materializeMemoized(*capture.source, request, capture.snapshot, memoHit));
 }
 
 template <typename Impl>
@@ -2595,7 +2605,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
             entry.touched = front.lookups;
             TouchHeapTemplate({source.id, key, hit->result->heapTemplateId});
         }
-        return hit->result;
+        return Sealed(hit->result);
     }
     UsedBindingPlan usedPlan;
     auto built = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, &usedPlan, nullptr, &substitutes));
@@ -2607,7 +2617,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     std::shared_ptr<const HeapTemplate> shared = std::move(created);
     if (!templates) {
         complete(shared);
-        return shared->result;
+        return Sealed(shared->result);
     }
     bool inserted = false;
     {
@@ -2620,15 +2630,15 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     else TouchHeapTemplate(HeapTemplateName(source, key, *shared));
     entry = {source.id, key, front.lookups, shared};
     complete(shared);
-    return shared->result;
+    return Sealed(shared->result);
 }
 
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(const ResourceCapture& capture) const {
     if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
-    if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr);
+    if (request.useCache && ResultMemo()) return Sealed(materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr));
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot));
     result->cacheHit = true;
-    return result;
+    return Sealed(std::move(result));
 }
 
 const std::shared_ptr<const IrResourcePlan>& PreparedShaderInvocation::Plan() const {
@@ -2683,16 +2693,16 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
     snapshot.samplers.assign(info.samplers.size(), {{}, 4u});
     snapshot.userData.assign(RuntimeAbi::UserDataCapacity, 0u);
     snapshot.flattenedSrt.assign(1u, 0u);
-    return std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, snapshot, true));
+    return Sealed(std::make_shared<const RecompileResult>(materializeResult(*handle.artifact, request, snapshot, true)));
 }
 
 std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest& request, const ResourceCapture& capture, const SourceHandle& handle) {
     if (!MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
     if (capture.source != handle.source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
-    if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle.source, handle.artifact, request, capture.snapshot, true, nullptr);
+    if (request.useCache && ResultMemo()) return Sealed(materializePreparedMemoized(*handle.source, handle.artifact, request, capture.snapshot, true, nullptr));
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, capture.snapshot));
     result->cacheHit = true;
-    return result;
+    return Sealed(std::move(result));
 }
 
 std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime, const SourceHandle& handle) {

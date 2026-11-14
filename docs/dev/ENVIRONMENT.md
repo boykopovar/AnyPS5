@@ -73,6 +73,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_BDA` | presence | `core/shader/recompiler/Optimization/src/ResourceTracker.cpp` |  | prints the first few accesses that make a program take the address-based path |
 | `APS5_TRACE_BUFFER_WRITTEN` | presence | `core/shader/recompiler/Optimization/src/DescriptorBindingBuilder.cpp` |  | prints how many guest buffer elements a program may store to and how many it only loads |
 | `APS5_TRACE_IMAGE_TABLE` | presence | `core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp` |  | traces image-table resolution |
+| `APS5_VERIFY_IDENTITY` | presence | `core/shader/recompiler/Recompiler.cpp` |  | recomputes a shader result's pipeline identity on every lookup of its kept identity and fails if they differ |
 | `APS5_VERIFY_MASKED_RESULT_MEMO` | presence | `core/shader/recompiler/Recompiler.cpp` |  | also materializes every patched result memo hit, prints the first twenty whose patched result differs and counts them in the result memo report of `APS5_PROFILE_DRAW` |
 | `APS5_VERIFY_SRT_COMPACT` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtDescriptorEvaluation.cpp` |  | walks every SRT descriptor a second time through the IR evaluator and throws when the two walks differ |
 | `APS5_VERIFY_SRT_TAPE` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtTape.cpp` |  | walks a plan's runtime sources a second time through the evaluator, adopts its answers where the two differ and prints the first twenty differences |

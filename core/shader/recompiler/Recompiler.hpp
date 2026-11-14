@@ -526,6 +526,27 @@ struct ResultKeyMemo {
     }
 };
 
+struct IdentityMemo {
+    mutable std::atomic<bool> taken{false};
+    mutable std::atomic<bool> sealed{false};
+    mutable std::atomic<std::uint64_t> low{0};
+    mutable std::atomic<std::uint64_t> high{0};
+    mutable std::atomic<std::uint64_t> moduleLow{0};
+    mutable std::atomic<std::uint64_t> moduleHigh{0};
+    IdentityMemo() = default;
+    IdentityMemo(const IdentityMemo&) {}
+    IdentityMemo& operator=(const IdentityMemo&) {
+        Reset();
+        return *this;
+    }
+    void Reset() const {
+        taken.store(false, std::memory_order_relaxed);
+        sealed.store(false, std::memory_order_relaxed);
+    }
+};
+
+[[nodiscard]] bool VerifyIdentityMemo();
+
 struct HeapStageWords {
     std::vector<std::uint32_t> userData;
     std::vector<std::uint32_t> flattenedSrt;
@@ -1020,7 +1041,30 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;
     [[nodiscard]] std::uint64_t PipelineVariantId() const { return specializationId != 0 ? specializationId : variantId; }
+    IdentityMemo identityMemo;
     [[nodiscard]] PipelineIdentity Identity() const {
+        if (!identityMemo.sealed.load(std::memory_order_acquire)) return ComputeIdentity();
+        const auto module = spirv.ContentHash();
+        if (identityMemo.taken.load(std::memory_order_acquire) && identityMemo.moduleLow.load(std::memory_order_relaxed) == module.low &&
+            identityMemo.moduleHigh.load(std::memory_order_relaxed) == module.high) {
+            const PipelineIdentity kept{identityMemo.low.load(std::memory_order_relaxed), identityMemo.high.load(std::memory_order_relaxed)};
+            if (VerifyIdentityMemo() && !(kept == ComputeIdentity())) throw std::runtime_error("a shader's kept pipeline identity differs from its hash: a hashed field changed after the identity was taken");
+            return kept;
+        }
+        const auto identity = ComputeIdentity();
+        if (identity.Empty()) return identity;
+        identityMemo.taken.store(false, std::memory_order_relaxed);
+        identityMemo.low.store(identity.low, std::memory_order_relaxed);
+        identityMemo.high.store(identity.high, std::memory_order_relaxed);
+        identityMemo.moduleLow.store(module.low, std::memory_order_relaxed);
+        identityMemo.moduleHigh.store(module.high, std::memory_order_relaxed);
+        identityMemo.taken.store(true, std::memory_order_release);
+        return identity;
+    }
+    void SealIdentity() const {
+        if (!identityMemo.sealed.load(std::memory_order_relaxed)) identityMemo.sealed.store(true, std::memory_order_release);
+    }
+    [[nodiscard]] PipelineIdentity ComputeIdentity() const {
         const auto hash = spirv.ContentHash();
         if (hash == SpirvContentHash{}) return {};
         PipelineIdentity identity{hash.low, hash.high};
