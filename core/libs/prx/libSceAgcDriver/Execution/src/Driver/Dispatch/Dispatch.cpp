@@ -14,6 +14,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <atomic>
@@ -26,6 +27,10 @@
 namespace AgcDriver::DriverDetail {
 
 namespace {
+
+constexpr std::uint32_t computeStartX = 0x204;
+constexpr std::uint32_t computeStartY = 0x205;
+constexpr std::uint32_t computeStartZ = 0x206;
 
 bool DispatchItemsEnabled() {
     static const bool enabled = [] {
@@ -503,6 +508,15 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
+    std::optional<ShaderRecompiler::ImageOverwriteDispatch> overwriteDispatch;
+    if (indirectArguments == 0 && readUserData(queue.shader, computeStartX) == 0 && readUserData(queue.shader, computeStartY) == 0 && readUserData(queue.shader, computeStartZ) == 0) {
+        overwriteDispatch.emplace();
+        overwriteDispatch->groups = groups;
+        overwriteDispatch->partialThreads = compute.partialThreads;
+        for (std::size_t index = 0; index < userData.size() && index < overwriteDispatch->userData.size(); ++index) overwriteDispatch->userData[index] = userData[index];
+        overwriteDispatch->userCount = static_cast<std::uint32_t>(std::min<std::size_t>(userData.size(), overwriteDispatch->userData.size()));
+    }
+    const Graphics::OverwriteDispatchScope overwriteScope(overwriteDispatch ? &*overwriteDispatch : nullptr);
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     if (traceIo) {
 

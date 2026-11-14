@@ -258,6 +258,24 @@ if(BUILD_TESTING)
         core/shader/recompiler/ControlFlow/include)
     add_test(NAME shader_ssa_pass_reads COMMAND shader_ssa_pass_reads_tests)
     set_tests_properties(shader_ssa_pass_reads PROPERTIES TIMEOUT 20)
+    add_test_executable(shader_image_overwrite_proof_tests
+        core/shader/recompiler/tests/ImageOverwriteProof.cpp
+        core/shader/recompiler/Optimization/src/ImageOverwriteProof.cpp
+        core/shader/recompiler/RdnaDecoder/src/RdnaImageOpDecoder.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrProgram.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrBlock.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrOpcode.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrType.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/GuestRegister.cpp)
+    target_include_directories(shader_image_overwrite_proof_tests PRIVATE
+        core/shader/recompiler
+        core/shader/recompiler/IntermediateRepresentation/include
+        core/shader/recompiler/Optimization/include
+        core/shader/recompiler/RdnaDecoder/include
+        core/shader/recompiler/ControlFlow/include)
+    add_test(NAME shader_image_overwrite_proof COMMAND shader_image_overwrite_proof_tests)
+    set_tests_properties(shader_image_overwrite_proof PROPERTIES TIMEOUT 20)
     add_test_executable(pad_command_file_tests core/libs/prx/libScePad/tests/InputCommandFile.cpp)
     target_include_directories(pad_command_file_tests PRIVATE core/libs)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)

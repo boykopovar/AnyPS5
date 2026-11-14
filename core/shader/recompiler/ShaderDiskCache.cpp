@@ -92,14 +92,14 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 864, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 888, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
 static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
-static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
+static_assert(sizeof(ImageResource) == 244, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
@@ -145,7 +145,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 50, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 51, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -457,6 +457,46 @@ private:
     bool ok = true;
 };
 
+void encodeOverwrite(Writer& out, const ImageOverwrite& proof) {
+    out.Value(proof.proved);
+    out.Value(proof.fullGroups);
+    for (const auto& axis : proof.axes) {
+        out.Value(axis.groupAxis);
+        out.Value(axis.tile);
+        out.Value(axis.offsetRegister);
+        out.Value(axis.boundRegister);
+        out.Value(axis.boundImmediate);
+        out.Value(axis.maxLane);
+    }
+    for (const auto& range : proof.ranges) {
+        out.Value(range.groupAxis);
+        out.Value(range.scale);
+        out.Value(range.minLane);
+        out.Value(range.maxLane);
+        out.Value(range.bits);
+    }
+}
+
+void decodeOverwrite(Reader& in, ImageOverwrite& proof) {
+    in.Value(proof.proved);
+    in.Value(proof.fullGroups);
+    for (auto& axis : proof.axes) {
+        in.Value(axis.groupAxis);
+        in.Value(axis.tile);
+        in.Value(axis.offsetRegister);
+        in.Value(axis.boundRegister);
+        in.Value(axis.boundImmediate);
+        in.Value(axis.maxLane);
+    }
+    for (auto& range : proof.ranges) {
+        in.Value(range.groupAxis);
+        in.Value(range.scale);
+        in.Value(range.minLane);
+        in.Value(range.maxLane);
+        in.Value(range.bits);
+    }
+}
+
 void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Value(binding.kind);
     writer.Value(binding.role);
@@ -483,6 +523,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
     writer.Values(std::span<const std::uint32_t>(binding.bufferExtent));
+    writer.List(binding.imageOverwrites, [](Writer& out, const ImageOverwrite& proof) { encodeOverwrite(out, proof); });
 }
 
 void decodeBinding(Reader& reader, DescriptorBinding& binding) {
@@ -512,6 +553,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
     reader.Values(binding.bufferExtent);
+    reader.List(binding.imageOverwrites, 133, [](Reader& in, ImageOverwrite& proof) { decodeOverwrite(in, proof); });
 }
 
 void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
@@ -830,6 +872,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.table);
         out.Value(image.tableOperation);
         out.Value(image.targetMerge);
+        encodeOverwrite(out, image.overwrite);
     });
     writer.Value(!info.runtimeImageModes.empty());
     writer.List(info.samplers, [](Writer& out, const SamplerResource& sampler) {
@@ -895,7 +938,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
     });
-    reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
+    reader.List(info.images, 210, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
         in.Value(image.firstUsePc);
         in.Value(image.resourceClass);
@@ -946,6 +989,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.table);
         in.Value(image.tableOperation);
         in.Value(image.targetMerge);
+        decodeOverwrite(in, image.overwrite);
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);

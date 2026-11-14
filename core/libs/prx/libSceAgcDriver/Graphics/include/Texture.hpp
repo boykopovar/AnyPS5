@@ -336,6 +336,7 @@ public:
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
+    static void SetFlushingHookForTest(void (*hook)());
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
     static constexpr std::uint64_t OccasionalWriteFlips = 8;
@@ -465,6 +466,24 @@ public:
     // Results pending in images lying wholly inside the range are dead (a fill overwrites every
     // byte of them): they are dropped instead of stored. Returns how many images were.
     static std::size_t DiscardPendingInside(std::uint64_t address, std::size_t bytes);
+    struct OverwriteClaim {
+        std::uint64_t baseAddress = 0;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> bytes;
+    };
+    static const OverwriteClaim*& ClaimedOverwrite();
+    class OverwriteScope {
+    public:
+        explicit OverwriteScope(const OverwriteClaim* claim) : previous(ClaimedOverwrite()) { ClaimedOverwrite() = claim; }
+        ~OverwriteScope() { ClaimedOverwrite() = previous; }
+        OverwriteScope(const OverwriteScope&) = delete;
+        OverwriteScope& operator=(const OverwriteScope&) = delete;
+
+    private:
+        const OverwriteClaim* previous;
+    };
+    static std::size_t DiscardPendingCovered(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const StorageTexture* self);
     // A fill of the whole surface (`layer` WholeImage) or of one array layer with the 16-byte
     // `pattern`, done as a GPU clear of the image instead of a store into guest memory: the
     // pattern must be one texel of the storage format repeated, exactly representable as a clear
@@ -750,6 +769,7 @@ private:
     void forgetBorrowed(std::uint32_t first, std::uint32_t count);
     bool clearByKeysFill(DccKeys keys, std::uint8_t key);
     bool overlaps(std::uint64_t address, std::size_t bytes) const;
+    bool pendingUnitsOverlap(std::uint64_t address, std::size_t bytes) const;
     // Whether the image is live (not released) and overlaps the fill: the test that gives ClassifyFill
     // its overlapping images, and that NoteKeysFill and ClearByKeysFill use to bound the key match.
     bool overlapsLive(std::uint64_t address, std::size_t bytes) const;

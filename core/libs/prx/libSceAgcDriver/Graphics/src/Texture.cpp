@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
@@ -263,6 +264,7 @@ struct LiveImages {
 };
 
 std::atomic<void (*)()> publishHookForTest{nullptr};
+std::atomic<void (*)()> flushingHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -2535,6 +2537,9 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
+    if (const auto* claim = ClaimedOverwrite(); claim != nullptr && !handOverKeys.has_value() && claim->baseAddress == descriptor.baseAddress && claim->width == descriptor.width && claim->height == descriptor.height && !DepthSurfaceOverlaps(context.device, scopeBegin, scopeBytes)) {
+        static_cast<void>(DiscardPendingCovered(claim->bytes, this));
+    }
     static const bool refreshOrdered = std::getenv("APS5_NO_REFRESH_GPU_ORDERED") == nullptr;
     const bool orderedEligible = refreshOrdered && !scoped && alias == nullptr && !handOverKeys.has_value() && descriptor.dccAddress == 0 && !layerPending.Any() && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
     bool orderedSkipped = false;
@@ -4376,6 +4381,16 @@ bool StorageTexture::overlaps(std::uint64_t address, std::size_t bytes) const {
     return address < descriptor.baseAddress + guestBytes && descriptor.baseAddress < address + bytes;
 }
 
+bool StorageTexture::pendingUnitsOverlap(std::uint64_t address, std::size_t bytes) const {
+    if (!overlaps(address, bytes)) return false;
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        if (!layerPending[unit]) continue;
+        const auto unitBegin = layerBegin(unit);
+        if (unitBegin < address + bytes && address < unitBegin + layerBytes(unit)) return true;
+    }
+    return false;
+}
+
 bool StorageTexture::overlapsLive(std::uint64_t address, std::size_t bytes) const {
     return !released && guestBytes != 0 && overlaps(address, bytes);
 }
@@ -5160,6 +5175,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             throw;
         }
     }
+    if (const auto hook = flushingHookForTest.load(std::memory_order_acquire)) hook();
     std::exception_ptr failure;
     const auto previousReason = std::exchange(flushReason, reason);
     for (const auto& texture : flush) {
@@ -5203,6 +5219,10 @@ bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) c
 
 void StorageTexture::SetPublishHookForTest(void (*hook)()) {
     publishHookForTest.store(hook, std::memory_order_release);
+}
+
+void StorageTexture::SetFlushingHookForTest(void (*hook)()) {
+    flushingHookForTest.store(hook, std::memory_order_release);
 }
 
 bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
@@ -5662,8 +5682,10 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     StorageTexture* containing = nullptr;
+    const bool units = RuntimeSwitches::Set(RuntimeSwitch::ProvenOverwrite);
     for (auto* texture : pending.textures) {
         if (texture->descriptor.baseAddress != address || texture->guestBytes < bytes) continue;
+        if (units && !texture->pendingUnitsOverlap(address, static_cast<std::size_t>(bytes))) continue;
         if (texture->guestBytes == bytes) return texture->weak_from_this().lock();
         // Containment, not equality: a descriptor of a chain's first mips (its own guestBytes are
         // shorter) is served by the chain's image; CanCopyFrom then checks the geometry.
@@ -6055,9 +6077,11 @@ bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
         if (query.end <= query.begin) continue;
         const auto bytes = static_cast<std::size_t>(query.end - query.begin);
         if (pending.textures.MayOverlap(query.begin, bytes)) {
+            const bool units = RuntimeSwitches::Set(RuntimeSwitch::ProvenOverwrite);
             for (const auto* texture : pending.textures) {
-                if (query.found == nullptr && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes) query.found = texture;
-                if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;
+                const bool holds = !units || texture->pendingUnitsOverlap(query.begin, bytes);
+                if (query.found == nullptr && holds && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes) query.found = texture;
+                if (texture != query.except && holds && texture->overlaps(query.begin, bytes)) query.overlaps = true;
             }
         }
         for (const auto* texture : pending.flushing) {
@@ -6066,6 +6090,72 @@ bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
         if (query.pending != nullptr && query.found != query.pending) identities = false;
     }
     return identities;
+}
+
+const StorageTexture::OverwriteClaim*& StorageTexture::ClaimedOverwrite() {
+    thread_local const OverwriteClaim* claim = nullptr;
+    return claim;
+}
+
+std::size_t StorageTexture::DiscardPendingCovered(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const StorageTexture* self) {
+    const auto inside = [&](std::uint64_t begin, std::uint64_t end) {
+        return std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.first <= begin && end <= range.second; });
+    };
+    const auto touches = [&](const StorageTexture& texture) {
+        return std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return texture.overlaps(range.first, static_cast<std::size_t>(range.second - range.first)); });
+    };
+    std::vector<std::shared_ptr<StorageTexture>> unitStored;
+    for (const auto& range : ranges) {
+        for (auto& other : overlappingPending(range.first, static_cast<std::size_t>(range.second - range.first))) {
+            if (other.get() != self && other->descriptor.dccAddress != 0 && !other->storesWhole()) unitStored.push_back(std::move(other));
+        }
+    }
+    const auto storedByUnits = [&](const StorageTexture* texture) {
+        return texture->descriptor.dccAddress == 0 || std::any_of(unitStored.begin(), unitStored.end(), [&](const auto& other) { return other.get() == texture; });
+    };
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    if (std::any_of(pending.flushing.begin(), pending.flushing.end(), [&](const StorageTexture* texture) { return texture != self && touches(*texture); })) return 0;
+    std::size_t discarded = 0;
+    const auto* exempt = Refreshing::Get();
+    for (auto it = pending.textures.begin(); it != pending.textures.end();) {
+        auto* texture = *it;
+        if (texture == self || texture == exempt || !touches(*texture) || !storedByUnits(texture)) {
+            ++it;
+            continue;
+        }
+        if (inside(texture->descriptor.baseAddress, texture->descriptor.baseAddress + texture->guestBytes)) {
+            texture->dirty = false;
+            texture->layerPending.assign(texture->trackedLayers, false);
+            texture->layerOriginal.assign(texture->trackedLayers, false);
+            texture->cancelStoredSaves();
+            texture->forgetDrawn();
+            it = pending.textures.erase(it);
+            ++discarded;
+            continue;
+        }
+        bool dropped = false;
+        if (texture->blockUnits) {
+            for (std::uint32_t unit = 0; unit < texture->trackedLayers; ++unit) {
+                const auto unitBegin = texture->layerBegin(unit);
+                if (!texture->layerPending[unit] || !inside(unitBegin, unitBegin + texture->layerBytes(unit))) continue;
+                texture->layerPending[unit] = false;
+                texture->layerOriginal[unit] = false;
+                texture->cancelStoredSave(unit);
+                unitsDropped.fetch_add(1, std::memory_order_relaxed);
+                dropped = true;
+            }
+        }
+        if (dropped) ++discarded;
+        if (dropped && !texture->anyLayerPending()) {
+            texture->dirty = false;
+            it = pending.textures.erase(it);
+            continue;
+        }
+        ++it;
+    }
+    if (discarded != 0) BumpPendingSerial();
+    return discarded;
 }
 
 std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::size_t bytes) {
@@ -6842,6 +6932,9 @@ StorageTexture::CreationHandOver StorageTexture::PrepareCreation(const Context& 
         flushed = FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "storage image creation", PublishScope::None) || dirty;
         return CreationHandOver();
     };
+    if (const auto* claim = ClaimedOverwrite(); claim != nullptr && claim->baseAddress == descriptor.baseAddress && claim->width == descriptor.width && claim->height == descriptor.height && !DepthSurfaceOverlaps(context.device, descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
+        static_cast<void>(DiscardPendingCovered(claim->bytes, nullptr));
+    }
     flushed = false;
     if (!ClearHandOverOn().load(std::memory_order_relaxed) || descriptor.dccAddress == 0 || IsBlockCompressed(descriptor.format)) return storeFirst();
     const auto geometry = DescribeSurface(descriptor);

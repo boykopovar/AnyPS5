@@ -15110,6 +15110,148 @@ void integerClearTests(const Device& device) {
     std::cout << "integer storage clears: " << tested << " formats ok\n";
 }
 
+std::array<std::pair<std::uint64_t, std::uint64_t>, 1> discardWhileFlushingRange{};
+std::size_t discardWhileFlushingCount = 0;
+bool discardWhileFlushingRan = false;
+
+void discardWhileFlushing() {
+    discardWhileFlushingRan = true;
+    discardWhileFlushingCount = StorageTexture::DiscardPendingCovered(discardWhileFlushingRange, nullptr);
+}
+
+bool discardPendingCoveredTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    const std::string what = "proven-overwrite discard";
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: " << what << " not tested\n";
+        return false;
+    }
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t surfaceBytes = 4 * unit;
+    constexpr std::size_t bytes = 2 * surfaceBytes;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(unit, bytes);
+#endif
+    Require(block != nullptr && reinterpret_cast<std::uint64_t>(block) % unit == 0, "cannot allocate the proven-overwrite discard block");
+    auto* memory = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Restore {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        bool previous;
+        ~Restore() {
+            StorageTexture::SetFlushingHookForTest(nullptr);
+            RuntimeSwitches::Assign(RuntimeSwitch::ProvenOverwrite, previous);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } restore{base, block, address, RuntimeSwitches::Set(RuntimeSwitch::ProvenOverwrite)};
+    if (HostImportFor(base, address, bytes) == nullptr) {
+        std::cout << "host import of the proven-overwrite discard block refused: " << what << " not tested\n";
+        return false;
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::ProvenOverwrite, true);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    const auto surface = [&](std::uint64_t at) {
+        GuestTextureResource resource{};
+        resource.baseAddress = at;
+        resource.width = 256;
+        resource.height = 256;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        return resource;
+    };
+    const auto resourceA = surface(address);
+    const auto resourceB = surface(address + surfaceBytes);
+    Require(DescribeSurface(resourceA).guestBytes == surfaceBytes, "the proven-overwrite discard surfaces have an unexpected size");
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const auto draw = [&](const std::shared_ptr<StorageTexture>& image, VkClearColorValue value) {
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkDirty();
+    };
+    const auto storeAll = [&] {
+        Require(StorageTexture::FlushPending(address, bytes, nullptr, "proven-overwrite discard test", PublishScope::Whole), what + ": nothing was pending at the end");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        std::vector<std::byte> read(bytes);
+        AgcDriver::GuestMemory::Read(address, read);
+        recorder.Sync();
+        std::memcpy(read.data(), memory, bytes);
+        return read;
+    };
+    const auto pendingOver = [](std::uint64_t begin, std::uint64_t end) {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> ranges{{{begin, end}}};
+        return StorageTexture::AnyPendingUnitsOverlap(ranges);
+    };
+    const auto unitHolds = [](std::span<const std::byte> read, std::size_t index, std::uint8_t value) {
+        return std::all_of(read.begin() + static_cast<std::ptrdiff_t>(index * unit), read.begin() + static_cast<std::ptrdiff_t>((index + 1) * unit), [value](std::byte byte) { return std::to_integer<std::uint8_t>(byte) == value; });
+    };
+    {
+        const std::string where = what + ", a range ending inside a unit";
+        recorder.Sync();
+        std::memset(memory, 0x55, bytes);
+        auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+        draw(imageB, {{1.0f, 1.0f, 1.0f, 1.0f}});
+        Require(pendingOver(address + surfaceBytes, address + bytes), where + ": B's results are not pending");
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> covered{{{address + surfaceBytes, address + surfaceBytes + unit + unit / 2}}};
+        Require(StorageTexture::DiscardPendingCovered(covered, nullptr) == 1, where + ": B's unit inside the range was not dropped");
+        Require(!pendingOver(address + surfaceBytes, address + surfaceBytes + unit), where + ": the unit wholly inside the range is still pending");
+        Require(pendingOver(address + surfaceBytes + unit, address + surfaceBytes + 2 * unit), where + ": the unit the range ends inside was dropped");
+        Require(pendingOver(address + surfaceBytes + 2 * unit, address + surfaceBytes + 3 * unit) && pendingOver(address + surfaceBytes + 3 * unit, address + bytes), where + ": the units past the range were dropped");
+        const auto read = storeAll();
+        Require(unitHolds(read, 4, 0x55), where + ": the dropped unit was written back");
+        Require(unitHolds(read, 5, 0xff) && unitHolds(read, 6, 0xff) && unitHolds(read, 7, 0xff), where + ": B's kept units were not written back");
+    }
+    {
+        const std::string where = what + ", while another image over the range is flushing";
+        recorder.Sync();
+        std::memset(memory, 0x55, bytes);
+        auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
+        auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+        draw(imageA, {{1.0f, 1.0f, 1.0f, 1.0f}});
+        draw(imageB, {{1.0f, 1.0f, 1.0f, 1.0f}});
+        discardWhileFlushingRange = {{{address, address + bytes}}};
+        discardWhileFlushingRan = false;
+        discardWhileFlushingCount = 0;
+        StorageTexture::SetFlushingHookForTest(&discardWhileFlushing);
+        Require(StorageTexture::FlushPending(address, surfaceBytes, nullptr, "proven-overwrite discard test", PublishScope::None), where + ": A was not pending");
+        StorageTexture::SetFlushingHookForTest(nullptr);
+        Require(discardWhileFlushingRan, where + ": the flush never reached its write-back");
+        Require(discardWhileFlushingCount == 0, where + ": units were dropped while A was being stored");
+        Require(pendingOver(address + surfaceBytes, address + bytes), where + ": B's results were dropped while A was being stored");
+        Require(StorageTexture::DiscardPendingCovered(discardWhileFlushingRange, nullptr) == 1, where + ": B was not dropped once A was stored");
+        Require(!pendingOver(address + surfaceBytes, address + bytes), where + ": B is still pending after the drop");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    std::cout << "proven-overwrite discard: ok\n";
+    return true;
+}
+
 bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     const std::string what = watched ? "clear-key hand-over (watched)" : "clear-key hand-over";
@@ -16478,6 +16620,13 @@ int main(int argc, char** argv) {
                 return 77;
             }
             std::cout << "Refreshes over a pending DCC key store passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--discard-covered-only") {
+            if (!discardPendingCoveredTests(device, recorder)) {
+                std::cout << "skipped, the device imports no host memory for the proven-overwrite discard\n";
+                return 77;
+            }
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--clear-hand-over-only") {
