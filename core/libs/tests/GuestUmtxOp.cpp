@@ -170,15 +170,15 @@ static void RejectsAnInvalidTimeout() {
         Require(FailsWith(Umtx(&word, operation, 1, SizeOf(sizeof(negative)), &negative), GUEST_EINVAL));
         Require(FailsWith(Umtx(&word, operation, 1, SizeOf(sizeof(tooManyNanos)), &tooManyNanos), GUEST_EINVAL));
     }
-    struct {
-        std::uint32_t usecs = 20000;
-        std::uint32_t zero32 = 0;
-        std::int64_t zero64 = 0;
-    } zeroNeighbours;
+    KernelTimespec subSecond{0, 20000000};
     auto start = std::chrono::steady_clock::now();
-    Require(FailsWith(Umtx(&word, UMTX_OP_WAIT_UINT, 1, nullptr, &zeroNeighbours), GUEST_ETIMEDOUT));
+    Require(FailsWith(Umtx(&word, UMTX_OP_WAIT_UINT, 1, nullptr, &subSecond), GUEST_ETIMEDOUT));
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
     Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
+    for (const int operation : {UMTX_OP_WAIT, UMTX_OP_WAIT_UINT}) {
+        Require(FailsWith(Umtx(&word, operation, 1, nullptr, &negative), GUEST_EINVAL));
+        Require(FailsWith(Umtx(&word, operation, 1, nullptr, &tooManyNanos), GUEST_EINVAL));
+    }
     UmtxTime negativeNanos{{0, -1}, 0, CLOCK_MONOTONIC_ID};
     Require(FailsWith(Umtx(&word, UMTX_OP_WAIT_UINT, 1, SizeOf(sizeof(negativeNanos)), &negativeNanos), GUEST_EINVAL));
 }
