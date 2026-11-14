@@ -114,13 +114,14 @@ public:
     Reservation(const Reservation&) = delete;
     Reservation& operator=(const Reservation&) = delete;
 
-    void Publish(std::int32_t* output) {
-        std::lock_guard lock(g_mutex);
-        for (std::int32_t index = 0; index < count; ++index) {
-            output[index] = ids[index];
-            FindLocked(ids[index])->state = AioCompleted;
+    bool Publish(std::int32_t* output) {
+        {
+            std::lock_guard lock(g_mutex);
+            for (std::int32_t index = 0; index < count; ++index) FindLocked(ids[index])->state = AioCompleted;
         }
+        if (!GuestCopyOut_nid_no_patch(output, ids.data(), static_cast<std::size_t>(count) * sizeof(ids[0]))) return false;
         published = true;
+        return true;
     }
 
 private:
@@ -227,10 +228,18 @@ int SubmitCommands(const KernelAioRwRequest* req, std::int32_t size, std::int32_
     for (std::int32_t i = 0; i < size; ++i) {
         if (requests[i].result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     }
-    Reservation reservation(multiple ? size : 1);
+    const std::int32_t count = multiple ? size : 1;
+    const std::size_t idBytes = static_cast<std::size_t>(count) * sizeof(*id);
+    {
+        const int savedErrno = errno;
+        const GuestArena::HostWrite guard(id, idBytes);
+        const bool writable = guard.Open() && GuestWritable_nid_no_patch(id, idBytes);
+        errno = savedErrno;
+        if (!writable) return SCE_KERNEL_ERROR_EFAULT;
+    }
+    Reservation reservation(count);
     for (std::int32_t i = 0; i < size; ++i) RunRequest(requests[i], write);
-    reservation.Publish(id);
-    return 0;
+    return reservation.Publish(id) ? 0 : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out) {
@@ -338,11 +347,11 @@ int APS5_VABI sceKernelAioInitializeImpl(void* param, int32_t size) {
 
 void APS5_VABI sceKernelAioInitializeParam(void* param) {
     if (param == nullptr) throw std::invalid_argument("sceKernelAioInitializeParam: param is null");
-    auto* scheduling = static_cast<KernelAioSchedulingParam*>(param);
-    for (int index = 0; index < 3; ++index) {
-        const bool split = index < 2;
-        scheduling[index] = {AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, split ? 1u : 0u, split ? AioDefaultSplitSize : 0u, split ? AioDefaultSplitSize : 0u};
-    }
+    constexpr KernelAioSchedulingParam split{AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, 1u, AioDefaultSplitSize, AioDefaultSplitSize};
+    constexpr KernelAioSchedulingParam unsplit{AioDefaultSchedulingWindow, AioDefaultDelayedCountLimit, 0u, 0u, 0u};
+    constexpr KernelAioSchedulingParam scheduling[]{split, split, unsplit};
+    if (!GuestCopyOut_nid_no_patch(param, scheduling, sizeof(scheduling)))
+        throw std::invalid_argument("sceKernelAioInitializeParam: param is not writable");
 }
 
 int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t schedulingWindowSize, int32_t delayedCountLimit, uint32_t enableSplit, uint32_t splitSize, uint32_t splitChunkSize) {
@@ -350,12 +359,8 @@ int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t sche
     if (schedulingWindowSize < 0 || schedulingWindowSize > AioSchedulingWindowMax || delayedCountLimit < 0 || delayedCountLimit > AioDelayedCountMax || enableSplit > 1)
         return SCE_KERNEL_ERROR_EINVAL;
     if (enableSplit == 1 && (splitSize == 0 || splitSize > AioSplitSizeMax || splitChunkSize == 0 || splitChunkSize > AioSplitChunkSizeMax)) return SCE_KERNEL_ERROR_EINVAL;
-    param->schedulingWindowSize = schedulingWindowSize;
-    param->delayedCountLimit = delayedCountLimit;
-    param->enableSplit = enableSplit;
-    param->splitSize = splitSize;
-    param->splitChunkSize = splitChunkSize;
-    return 0;
+    const KernelAioSchedulingParam value{schedulingWindowSize, delayedCountLimit, enableSplit, splitSize, splitChunkSize};
+    return GuestCopyOut_nid_no_patch(param, &value, sizeof(value)) ? 0 : SCE_KERNEL_ERROR_EFAULT;
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
@@ -248,7 +249,7 @@ Driver::Driver() {
         }
         std::thread host;
         try {
-            host = std::thread(import);
+            host = Libc::StartHostThread(import);
         } catch (const std::system_error& error) {
             std::fprintf(stderr, "[gpu] import of GPU memory at its mapping failed: no host thread to run it on: %s\n", error.what());
             return;
@@ -325,6 +326,11 @@ bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
     rethrowFailure();
     checkStopping();
     return done;
+}
+
+bool Driver::SettledHeld() {
+    std::lock_guard lock(mutex);
+    return captureHold.load(std::memory_order_relaxed);
 }
 
 bool Driver::Settled() {

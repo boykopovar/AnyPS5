@@ -74,6 +74,14 @@ static void CheckDatagram(bool net) {
     size = 123;
     Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, &size) == sizeof(payload));
     Require(size == 123 && std::strcmp(received, payload) == 0);
+    Require(Failed(connect_nid_postfix(sender, nullptr, receiverAddress.size()), 14));
+    Require(connect_nid_postfix(sender, receiverAddress.data(), receiverAddress.size()) == 0);
+    const auto sent = net ? sceNetSend(sender, payload, sizeof(payload), 0)
+                          : sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0);
+    Require(sent == sizeof(payload));
+    std::memset(received, 0, sizeof(received));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == sizeof(payload));
+    Require(std::strcmp(received, payload) == 0);
     Require(Close(net, receiver) == 0 && Close(net, sender) == 0);
 }
 

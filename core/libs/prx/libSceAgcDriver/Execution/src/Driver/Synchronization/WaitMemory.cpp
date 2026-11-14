@@ -113,6 +113,7 @@ void Driver::landPendingWaits(std::uint32_t queue) {
 }
 
 void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory) {
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
 
     auto start = std::chrono::steady_clock::now();
     auto lastDone = packetsDone.load();
@@ -135,11 +136,13 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     bool warned = false;
 
     struct EpochPoint {
+        std::uint64_t address;
+        std::size_t bytes;
         bool bump = true;
         ~EpochPoint() {
-            if (bump) bumpEpoch(&EpochBumps::waits);
+            if (bump) bumpWaitEpoch(address, bytes);
         }
-    } epochPoint;
+    } epochPoint{awaited, awaitedBytes};
     bool ownStoreUnlanded = false;
     const auto memorySatisfied = [&] {
         ownStoreUnlanded = false;

@@ -2,8 +2,8 @@
 
 ### Silent stubs
 
-- [sceVrTracker2QueryMemory](../../../core/libs/prx/libSceVrTracker2/Export.cpp) - returning `0x8A740006` for an unwritable requirement pointer is a host-safety fallback with console behavior unmeasured.
-- [VrTracker2ClearWideResult and sceVrTracker2GetRelocalizerResult](../../../core/libs/prx/libSceVrTracker2/Export.cpp) - returning `0x8A740006` for an unwritable output pointer is a host-safety fallback; console behavior for this pointer is unmeasured.
+- [sceVrTracker2QueryMemory and sceVrTracker2Initialize](../../../core/libs/prx/libSceVrTracker2/Export.cpp) - returning `0x8A740006` for an unreadable parameter or unwritable requirement pointer is a host-safety fallback with console behavior unmeasured.
+- [VrTracker2ClearWideResult, sceVrTracker2GetRelocalizerResult and VrTracker2ClearWord](../../../core/libs/prx/libSceVrTracker2/Export.cpp) - returning `0x8A740006` (or throwing on ClearWord) for an unwritable output pointer via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior for these pointers is unmeasured.
 - [libSceVrTracker2](../../../core/libs/prx/libSceVrTracker2/Export.cpp) never initializes; initialized tracking behavior is absent. Its uninitialized responses were measured without a headset: most exports return 0x8A740001 without writes, while specific output/reset helpers clear buffers or write defaults. These helpers still lack complete signatures. Named export signatures and play-area output layouts are recovered; initialization option semantics and result fields need reconstruction. The exports the NID database resolves now carry their export names; the rest remain grouped by their observed response rather than their individual contracts.
 
 ### Unknown function info
