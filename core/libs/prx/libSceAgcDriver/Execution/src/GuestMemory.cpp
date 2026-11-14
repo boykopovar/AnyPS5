@@ -9,6 +9,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
@@ -2010,6 +2011,9 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
     ++tracker.generation;
     StampRuns runs{tracker, kind, 0, window, {}};
 #ifdef _WIN32
+    static std::atomic<int> armResident{-1};
+    const int armWanted = Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::ArmResident) ? 1 : 0;
+    if (armResident.load(std::memory_order_relaxed) != armWanted && armResident.exchange(armWanted, std::memory_order_relaxed) != armWanted) GuestArena::GuestArenaSetArmResident_nid_no_patch(armWanted != 0);
     const bool complete = collectWindowsWrites(runs, first, stop, armedOnly);
 #else
     const auto dirtyRuns = collectDirtyRuns.load(std::memory_order_relaxed);

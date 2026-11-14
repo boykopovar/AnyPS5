@@ -1,4 +1,5 @@
 #include <codegen/x86/RedZoneFramer.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -356,6 +357,148 @@ void skipsFragmentsThatPopWithoutPushing() {
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
     require(sites.empty() && displacements.empty() && report.Skipped.at("push or pop in a leaf without pushes") == 1, "a fragment without pushes that pops a register its caller pushed was framed");
+    Codegen::RedZoneFrameReport relocated;
+    std::vector<Codegen::RedZoneDisplacement> relocatedDisplacements;
+    const auto relocatedSites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, relocated, relocatedDisplacements, true);
+    require(relocatedSites.empty() && relocated.Relocated == 0 && relocated.NotRelocated.at("pops a value its caller pushed") == 1, "a fragment that pops a register its caller pushed was relocated");
+}
+
+void refusesRelocatingSegmentOperands() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    append(body, {0x53, 0x5b});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, Ret)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.empty() && report.Relocated == 0 && report.NotRelocated.at("segment-prefixed operand, which a later pass rewrites in the original code") == 1, "a leaf reading fs:0, which the TLS pass rewrites in place, was relocated");
+}
+
+void relocatesLeavesEndingInTheSdkAssertTrap() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x5b});
+    append(body, LoadBelowRsp);
+    append(body, {0x48, 0x85, 0xc0, 0x74, 0x01, 0xc3});
+    const auto input = image({framelessLeaf({}, body, {0xcd, 0x41, 0x0f, 0x0b})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf whose failure path ends in int 0x41 and ud2 was not relocated");
+}
+
+void relocatesLeavesTailJumpingThroughARegister() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x5b});
+    append(body, LoadBelowRsp);
+    const std::vector<std::uint8_t> jumpThroughRdi{0xff, 0xe7};
+    const auto input = image({framelessLeaf({}, body, jumpThroughRdi)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf tail-jumping through rdi at depth 0 was not relocated");
+    const auto& stub = sites[0].Body;
+    const std::vector<std::uint8_t> raiseThenJump{0x48, 0x8d, 0xa4, 0x24, 0x90, 0x00, 0x00, 0x00, 0xff, 0xe7};
+    require(std::search(stub.begin(), stub.end(), raiseThenJump.begin(), raiseThenJump.end()) != stub.end(), "the relocated leaf does not raise rsp back before its indirect jump");
+}
+
+void relocatesIndirectJumpsWithPushedRegisters() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, {0xff, 0xe7})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf jumping through rdi with rbx pushed was not relocated");
+    const auto& stub = sites[0].Body;
+    const std::vector<std::uint8_t> pushThenStore{0x53, 0xff, 0x34, 0x24, 0x8f, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00};
+    require(std::search(stub.begin(), stub.end(), pushThenStore.begin(), pushThenStore.end()) != stub.end(), "the relocated leaf does not store its pushed rbx at the slot the original code expects");
+    const std::vector<std::uint8_t> loadThenRaiseJump{0x48, 0x8b, 0x84, 0x24, 0x80, 0x00, 0x00, 0x00, 0x48, 0x8d, 0xa4, 0x24, 0x90, 0x00, 0x00, 0x00, 0xff, 0xe7};
+    require(std::search(stub.begin(), stub.end(), loadThenRaiseJump.begin(), loadThenRaiseJump.end()) != stub.end(), "the relocated leaf does not raise rsp right before its indirect jump");
+}
+
+void storesPushedRegistersWhereExplicitOperandsReadThem() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x83, 0xc4, 0x08});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, {0xc3})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf reading its pushed rbx through [rsp] and freeing it with add was not relocated");
+    const auto& stub = sites[0].Body;
+    const std::vector<std::uint8_t> pushThenStore{0x53, 0xff, 0x34, 0x24, 0x8f, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00};
+    require(std::search(stub.begin(), stub.end(), pushThenStore.begin(), pushThenStore.end()) != stub.end(), "the relocated leaf reads [rsp] one shift above its push without storing the pushed rbx there");
+}
+
+void refusesRelocatingIndirectJumpsAfterPushesAndAllocations() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x48, 0x83, 0xec, 0x10});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, {0xff, 0xe7})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.empty() && report.Relocated == 0, "a leaf jumping through rdi after a push and a sub was relocated");
+}
+
+void readsAhAsAByteRegisterNotRsp() {
+    for (const bool spl : {false, true}) {
+        std::vector<std::uint8_t> body = StoreBelowRsp;
+        if (spl) append(body, {0x40});
+        append(body, {0x0f, 0xb6, 0xf4});
+        append(body, {0x88, 0x64, 0x24, 0x08});
+        append(body, LoadBelowRsp);
+        const auto input = image({framelessLeaf({}, body, Ret)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+        const auto handled = report.Framed + report.Relocated;
+        if (spl) require(handled == 0, "a leaf reading spl through movzbl with a REX prefix was framed, although it uses rsp as a register");
+        else require(handled == 1, "a leaf reading ah through movzbl and storing ah to the stack was refused as a register use of rsp");
+    }
+}
+
+void refusesRelocatingRipRelativeBranches() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, LoadBelowRsp);
+    const std::vector<std::uint8_t> jumpThroughMemory{0xff, 0x25, 0x00, 0x00, 0x00, 0x00};
+    const auto input = image({framelessLeaf({}, body, jumpThroughMemory)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.empty() && report.Relocated == 0 && report.NotRelocated.at("rip-relative indirect branch") == 1, "a leaf tail-jumping through a rip-relative pointer was relocated as a direct jump to the pointer");
+}
+
+void relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift() {
+    const std::vector<std::uint8_t> framePrologue{0x55, 0x48, 0x89, 0xe5};
+    const std::vector<std::uint8_t> leaveRet{0xc9, 0xc3};
+    const std::vector<std::uint8_t> storeAtRbpMinus80{0x48, 0x89, 0x7d, 0x80};
+    const std::vector<std::uint8_t> loadAtRbpMinus80{0x48, 0x8b, 0x45, 0x80};
+    std::vector<std::uint8_t> body = storeAtRbpMinus80;
+    append(body, loadAtRbpMinus80);
+    const auto input = image({framelessLeaf(framePrologue, body, leaveRet)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a frame-pointer leaf touching [rbp-0x80] was not relocated");
+    const std::vector<std::uint8_t> lowerBy0x90{0x48, 0x8d, 0xa4, 0x24, 0x70, 0xff, 0xff, 0xff};
+    require(sites[0].Body.size() >= lowerBy0x90.size() && std::equal(lowerBy0x90.begin(), lowerBy0x90.end(), sites[0].Body.begin()), "the relocated frame leaf does not lower rsp by 0x90, below its saved rbp and the red zone under it");
+}
+
+void refusesRelocatingStackReadsOfAPushedRegister() {
+    const std::vector<std::uint8_t> framePrologue{0x55, 0x48, 0x89, 0xe5};
+    const std::vector<std::uint8_t> leaveRet{0xc9, 0xc3};
+    const std::vector<std::uint8_t> spillBelowRbp{0x48, 0x89, 0x7d, 0xf0};
+    const std::vector<std::uint8_t> loadSavedRbp{0x48, 0x8b, 0x45, 0x00};
+    std::vector<std::uint8_t> body = spillBelowRbp;
+    append(body, loadSavedRbp);
+    const auto input = image({framelessLeaf(framePrologue, body, leaveRet)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(report.Relocated == 0 && report.NotRelocated.contains("stack operand reaching a pushed register"), "a frame-pointer leaf reading its saved rbp through [rbp] was relocated, where the copy keeps that register one shift lower");
 }
 
 void skipsWideningOverBranchTargets() {
@@ -990,6 +1133,16 @@ int main() {
         widensAShortFramePointerPrologue();
         framesLeavesWithoutPushes();
         skipsFragmentsThatPopWithoutPushing();
+        refusesRelocatingSegmentOperands();
+        refusesRelocatingRipRelativeBranches();
+        relocatesLeavesEndingInTheSdkAssertTrap();
+        relocatesLeavesTailJumpingThroughARegister();
+        relocatesIndirectJumpsWithPushedRegisters();
+        storesPushedRegistersWhereExplicitOperandsReadThem();
+        readsAhAsAByteRegisterNotRsp();
+        refusesRelocatingIndirectJumpsAfterPushesAndAllocations();
+        relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift();
+        refusesRelocatingStackReadsOfAPushedRegister();
         skipsWideningOverBranchTargets();
         skipsBranchesIntoTheInstructionsAfterAShortPrologue();
         widensAShortPrologueThatAllocates();

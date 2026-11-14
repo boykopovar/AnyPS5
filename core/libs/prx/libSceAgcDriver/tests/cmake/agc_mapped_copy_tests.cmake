@@ -2,6 +2,7 @@ if(BUILD_TESTING)
     add_test_executable(agc_mapped_copy_tests
             tests/MappedCopy.cpp
             Execution/src/GuestMemory.cpp
+            Graphics/src/RuntimeSwitches.cpp
             Execution/src/PerformanceTraceThread.cpp
     )
     target_include_directories(agc_mapped_copy_tests PRIVATE ${LIBS_INCLUDE_DIR})

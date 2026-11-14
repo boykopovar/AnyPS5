@@ -2265,8 +2265,10 @@ static void CheckLargeResidentWritesDoNotFault() {
     };
     Require(collect() == bytes / 4096);
     Require(collect() == 0 && collect() == 0);
+    const bool armed = std::getenv("APS5_ARM_RESIDENT") != nullptr;
+    const DWORD settled = armed ? PAGE_READONLY : PAGE_READWRITE;
     MEMORY_BASIC_INFORMATION memory{};
-    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
+    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == settled);
     auto* data = static_cast<unsigned char*>(mapped);
     const auto path = std::filesystem::path("anyps5-resident-read-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
@@ -2294,7 +2296,7 @@ static void CheckLargeResidentWritesDoNotFault() {
         Require(collect() == 1 && collect() == 0);
     }
     for (unsigned int round = 0; round < 16; ++round) Require(collect() == 0);
-    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
+    Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == settled);
     const auto before = g_accessViolations;
     const auto handler = AddVectoredExceptionHandler(1, CountAccessViolations);
     Require(handler != nullptr);
@@ -2303,7 +2305,7 @@ static void CheckLargeResidentWritesDoNotFault() {
         Require(collect() == bytes / 4096 && collect() == 0);
     }
     Require(RemoveVectoredExceptionHandler(handler));
-    Require(g_accessViolations == before);
+    Require(g_accessViolations == before + (armed ? 1u : 0u));
     Require(VirtualQuery(mapped, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == PAGE_READWRITE);
     Require(mprotect_nid_postfix(mapped, bytes, 1) == 0);
     Require(collect() == 0 && collect() == 0);

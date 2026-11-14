@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "ShaderDiskCache.hpp"
@@ -159,6 +160,7 @@ Driver& Driver::Get() {
 
 Driver::~Driver() {
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetArmGate_nid_no_patch(nullptr);
     GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix(nullptr);
     stop();
 }
@@ -174,6 +176,7 @@ void Driver::stop() {
     std::lock_guard shutdownLock(shutdownMutex);
     if (stopped) return;
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetArmGate_nid_no_patch(nullptr);
     if (!GuestMemory::StopHostWrites(1000)) std::fprintf(stderr, "[driver] a host write was still inside the driver's hook 1 s into the shutdown; stopping without waiting for it\n");
     LibcRequestShutdown_nid_postfix();
     {
@@ -232,6 +235,7 @@ Driver::Driver() {
         throw;
     }
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(&GuestMemory::PrepareHostWrite);
+    GuestArena::GuestArenaSetArmGate_nid_no_patch([] { return Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::ArmBlocks); });
     GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix([](const GuestAllocations::Mapped& ranges, std::uint64_t generation) {
         const auto import = [&] {
             try {

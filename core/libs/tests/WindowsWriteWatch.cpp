@@ -1034,6 +1034,114 @@ void CheckKnownZeroShared() {
     Require(KnownZeroPages(region.first, Bytes).empty(), "shared memory is known zero");
 }
 
+void CheckArmedPrivateBlocks() {
+    Mappings::SetArmGate([] { return true; });
+    struct Gate {
+        ~Gate() { Mappings::SetArmGate(nullptr); }
+    } gate;
+    constexpr std::size_t Block = 0x10000;
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, 2 * Block));
+    Require(memory != nullptr, "armed private reservation failed");
+    mappings.Commit(memory, 2 * Block, PAGE_READWRITE, Block, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    const auto collect = [&] {
+        std::set<std::size_t> result;
+        std::array<void*, 64> pages{};
+        std::size_t count = pages.size();
+        Require(mappings.Collect(address, 2 * Block, pages.data(), &count, true), "armed private collection failed");
+        for (std::size_t i = 0; i < count; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+        return result;
+    };
+    const auto arm = [&] {
+        for (int walk = 0; walk < 4; ++walk) Require(collect().empty(), "a clean private block reported writes");
+    };
+    arm();
+    Require(RegionAt(memory).Protect == PAGE_READONLY && RegionAt(memory + Block).Protect == PAGE_READONLY, "clean private blocks were not armed");
+    std::uint64_t callsBefore = 0;
+    std::uint64_t callsAfter = 0;
+    std::uint64_t pieces = 0;
+    mappings.CollectWork(&callsBefore, &pieces);
+    Require(collect().empty(), "armed private blocks reported writes");
+    mappings.CollectWork(&callsAfter, &pieces);
+    Require(callsAfter == callsBefore, "a collect over armed private blocks made a system call");
+    const auto faultsBefore = faults.load();
+    static_cast<volatile unsigned char*>(memory)[Small] = 1;
+    Require(faults.load() == faultsBefore + 1, "a write to an armed private block did not fault once");
+    Require(RegionAt(memory).Protect == PAGE_READWRITE && RegionAt(memory + Block).Protect == PAGE_READONLY, "a write reopened the wrong private block");
+    static_cast<volatile unsigned char*>(memory)[3 * Small] = 1;
+    Require(collect() == std::set<std::size_t>{1, 3}, "writes to a reopened private block were not reported");
+    Require(collect().empty(), "writes to a reopened private block were reported twice");
+    Require(mappings.BeginHostWrite(address + Block, Small), "a host write over an armed private block was refused");
+    Require(RegionAt(memory + Block).Protect == PAGE_READWRITE, "a host write did not reopen an armed private block");
+    memory[Block] = 2;
+    mappings.EndHostWrite(address + Block, Small);
+    Require(collect().contains(Block / Small), "a host write into an armed private block was not reported");
+    for (int fault = 0; fault < 4; ++fault) {
+        arm();
+        static_cast<volatile unsigned char*>(memory)[0] = static_cast<unsigned char>(fault);
+        Require(collect().contains(0), "a write to a rearmed private block was not reported");
+    }
+    arm();
+    Require(RegionAt(memory).Protect == PAGE_READWRITE, "a private block that keeps faulting was armed again");
+    arm();
+    Require(RegionAt(memory + Block).Protect == PAGE_READONLY, "a clean private block was not armed again");
+    mappings.SetProtection(address + Block + 4 * Small, 4 * Small, PAGE_READWRITE);
+    Require(RegionAt(memory + Block).Protect == PAGE_READWRITE && RegionAt(memory + Block + 12 * Small).Protect == PAGE_READWRITE, "a protection change inside an armed private block left the rest of it read-only");
+    DWORD previous = 0;
+    Require(VirtualProtect(memory + Block + 4 * Small, 4 * Small, PAGE_READWRITE, &previous) != 0, "cannot change the protection inside an armed private block");
+    memory[Block + 12 * Small] = 4;
+    Require(collect().contains(Block / Small + 12), "a write beside a protection change inside an armed private block was not reported");
+    arm();
+    Require(RegionAt(memory + Block).Protect == PAGE_READONLY, "a private block was not armed again after a partial protection change");
+    mappings.SetProtection(address + Block, Block, PAGE_READWRITE);
+    Require(VirtualProtect(memory + Block, Block, PAGE_READWRITE, &previous) != 0, "cannot change the protection of an armed private block");
+    memory[Block + Small] = 3;
+    Require(collect().contains(Block / Small + 1), "a write after a protection change was not reported");
+    mappings.Reset(memory, 2 * Block);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+void CheckArmedResidentRun() {
+    Mappings::SetArmGate([] { return true; });
+    struct Gate {
+        ~Gate() { Mappings::SetArmGate(nullptr); }
+    } gate;
+    constexpr std::size_t Large = 0x40000;
+    auto& mappings = Mappings::Get();
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Large, nullptr);
+    auto* first = static_cast<unsigned char*>(mappings.Reserve(nullptr, Large));
+    Require(section && first, "cannot allocate armed resident run test memory");
+    mappings.ForgetSection(section);
+    mappings.Map(first, Large, section, 0, PAGE_READWRITE, true, true);
+    Require(RegionAt(first).Type == MEM_PRIVATE, "the armed resident run test memory is not resident");
+    const auto address = reinterpret_cast<std::uintptr_t>(first);
+    const auto collect = [&] {
+        std::set<std::size_t> result;
+        auto cursor = address;
+        while (cursor < address + Large) {
+            std::array<void*, 32> pages{};
+            std::size_t available = pages.size();
+            Require(mappings.Collect(cursor, address + Large - cursor, pages.data(), &available, true), "armed resident run collection failed");
+            for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+            if (available < pages.size()) break;
+            cursor = reinterpret_cast<std::uintptr_t>(pages[available - 1]) + Small;
+        }
+        return result;
+    };
+    for (int walk = 0; walk < 5; ++walk) collect();
+    Require(RegionAt(first + Large - Small).Protect == PAGE_READONLY, "a clean resident run was not armed");
+    const auto faultsBefore = faults.load();
+    static_cast<volatile unsigned char*>(first)[Large - Small] = 1;
+    Require(faults.load() == faultsBefore + 1, "a write to an armed resident run did not fault once");
+    Require(collect() == std::set<std::size_t>{Large / Small - 1}, "a write to an armed resident run was not reported");
+    Require(collect().empty(), "a write to an armed resident run was reported twice");
+    mappings.Reset(first, Large);
+    mappings.ForgetSection(section);
+    VirtualFree(first, 0, MEM_RELEASE);
+    CloseHandle(section);
+}
+
 int main(int argc, char** argv) {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
@@ -1073,6 +1181,8 @@ int main(int argc, char** argv) {
         CheckKnownZeroResident();
         CheckKnownZeroShared();
         CheckKnownZeroFirstReads();
+        CheckArmedPrivateBlocks();
+        CheckArmedResidentRun();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

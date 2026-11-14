@@ -783,11 +783,22 @@ bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t byte
     return WindowsMappings::Get().ResidentSpan(address, bytes, start, end);
 }
 
+void GuestArenaSetArmResident_nid_no_patch(bool on) {
+    WindowsMappings::Get().SetArmResident(on);
+}
+
+bool armCompared() {
+    static const bool arm = std::getenv("APS5_ARM_COMPARED") != nullptr;
+    return arm;
+}
+
 void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    if (armCompared()) return;
     WindowsMappings::Get().CompareWhenShared(address, bytes);
 }
 
 void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    if (armCompared()) return;
     WindowsMappings::Get().CompareWhenShared(address, bytes, true);
 }
 
@@ -922,6 +933,14 @@ bool GuestArenaWriteWatched_nid_postfix() {
 
 void GuestArenaSetHostWriteHook_nid_no_patch(void (*hook)(std::uintptr_t, std::size_t)) {
     hostWriteHook.store(hook, std::memory_order_release);
+}
+
+void GuestArenaSetArmGate_nid_no_patch(bool (*gate)()) {
+#ifdef _WIN32
+    WindowsMappings::SetArmGate(gate);
+#else
+    static_cast<void>(gate);
+#endif
 }
 
 void GuestArenaSetAccessObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes)) {

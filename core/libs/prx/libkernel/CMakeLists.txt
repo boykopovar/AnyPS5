@@ -2441,7 +2441,9 @@ if(BUILD_TESTING)
         set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
     endif()
     if(WIN32)
-        set_tests_properties(guest_memory guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
+        add_test(NAME guest_memory_armed COMMAND guest_memory_tests)
+        set_tests_properties(guest_memory_armed PROPERTIES ENVIRONMENT "APS5_ARM_RESIDENT=1;APS5_ARM_COMPARED=1")
+        set_tests_properties(guest_memory guest_memory_armed guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(NOT ANYPS5_ENABLE_ASAN AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
