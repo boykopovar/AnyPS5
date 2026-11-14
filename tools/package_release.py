@@ -109,6 +109,11 @@ def package(platform, build, output, version):
     if "libharfbuzz.prx" in expected:
         licenses.append((ROOT / "3rdparty/harfbuzz/COPYING", "libs/licenses/harfbuzz.txt"))
         licenses.append((ROOT / "3rdparty/harfbuzz/src/ms-use/COPYING", "libs/licenses/harfbuzz-ms-use.txt"))
+    if "libcairo.prx" in expected:
+        licenses.append((ROOT / "3rdparty/cairo/COPYING", "libs/licenses/cairo.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-LGPL-2.1", "libs/licenses/cairo-lgpl-2.1.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-MPL-1.1", "libs/licenses/cairo-mpl-1.1.txt"))
+        licenses.append((ROOT / "3rdparty/pixman/COPYING", "libs/licenses/pixman.txt"))
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))

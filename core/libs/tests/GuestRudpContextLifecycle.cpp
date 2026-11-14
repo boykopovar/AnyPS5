@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -181,6 +182,9 @@ int main() {
         std::memset(status, 0x5a, sizeof(status));
         Require(sceRudpGetContextStatus(ctx, status, 6) == 0);
         for (std::size_t i = 0; i < sizeof(status); ++i) Require(status[i] == (i >= 6 ? 0x5a : i >= 4 ? 0xFF : 0));
+        errno = 71;
+        Require(sceRudpGetContextStatus(ctx, reinterpret_cast<void*>(0x10), 0x30) == invalidArgument);
+        Require(errno == 71);
     }
     Require(sceRudpGetContextStatus(ctx, nullptr, 0x30) == invalidArgument);
 

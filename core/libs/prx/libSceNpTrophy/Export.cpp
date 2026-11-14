@@ -226,9 +226,10 @@ int APS5_VABI sceNpTrophyDestroyContext(int context) {
 int APS5_VABI sceNpTrophyCreateHandle(int* handle) {
     if (!handle) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
-    const int id = g_nextHandle++;
+    const int id = g_nextHandle;
+    if (!GuestCopyOut_nid_no_patch(handle, &id, sizeof(id))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    ++g_nextHandle;
     g_handles.insert(id);
-    *handle = id;
     return 0;
 }
 
@@ -298,11 +299,12 @@ int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, i
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
+    const int platinum = NP_TROPHY_INVALID_ID;
+    if (!GuestCopyOut_nid_no_patch(platinumId, &platinum, sizeof(platinum))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     auto updated = context->unlocked;
     updated.insert(trophyId);
     SaveState(*context, updated);
     context->unlocked = std::move(updated);
-    *platinumId = NP_TROPHY_INVALID_ID;
     return 0;
 }
 
@@ -523,8 +525,9 @@ int APS5_VABI sceNpTrophyConfigGetTrophyTitleDetails(void) {
 }
 
 int APS5_VABI sceNpTrophyConfigHasGroupFeature(const std::uint8_t* config) {
-    if (!config) return 0;
-    return config[0x90] & 1;
+    std::uint8_t features = 0;
+    if (!config || !GuestCopyIn_nid_no_patch(&features, config + 0x90, sizeof(features))) return 0;
+    return features & 1;
 }
 
 int APS5_VABI sceNpTrophyGroupArrayGetNum(const std::uint32_t* groupArray) {

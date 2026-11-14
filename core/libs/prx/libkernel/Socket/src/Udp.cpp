@@ -530,6 +530,13 @@ bool SourceFaults(const void* pointer, std::uint64_t length) {
     return !GuestReadable(pointer, length);
 }
 #endif
+#ifdef __APPLE__
+void DropFaultedDatagram(const Socket& socket, int flags) {
+    if (socket.type != 2 || (flags & GuestPeek) != 0) return;
+    char probe[1];
+    ::recv(socket.value, probe, sizeof(probe), MSG_DONTWAIT);
+}
+#endif
 bool ReportAddress(void* address, std::uint32_t* addressLength, const void* name, std::uint32_t size) {
     return (address == nullptr || GuestCopyOut_nid_no_patch(address, name, size)) && GuestCopyOut_nid_no_patch(addressLength, &size, sizeof(size));
 }
@@ -2128,7 +2135,13 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
 #ifdef _WIN32
     if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(limit);
 #endif
-    if (result < 0) return Fail(NativeError());
+    if (result < 0) {
+        const int error = NativeError();
+#ifdef __APPLE__
+        if (error == 14) DropFaultedDatagram(*socket, flags);
+#endif
+        return Fail(error);
+    }
     if (!addressLength) return result;
     unsigned char name[28]{};
     std::uint32_t reported = address ? 0 : capacity;

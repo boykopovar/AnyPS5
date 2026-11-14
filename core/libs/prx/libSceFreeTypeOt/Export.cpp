@@ -193,8 +193,9 @@ int APS5_VABI sceFreeTypeOtOutlineEmboldenXY_nid_no_patch() {
 }
 APS5_EXPORT("BgUMBGvhATU", sceFreeTypeOtOutlineEmboldenXY_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline,
+                                                       const FreeType::GuestBitmap* bitmap) {
+    return FT_Outline_Get_Bitmap_nid_postfix(library, outline, bitmap);
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
 

@@ -494,6 +494,28 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
             self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
 
+    def test_cairo_and_pixman_licenses_in_archives(self):
+        (self.source / "core/libs/prx/libcairo").mkdir()
+        (self.unpatched.parent / "libcairo.prx").write_bytes(b"unpatched library")
+        (self.build / "core/libs/libs/libcairo.prx").write_bytes(b"cairo")
+        notices = {
+            "cairo/COPYING": ("cairo.txt", b"cairo notice"),
+            "cairo/COPYING-LGPL-2.1": ("cairo-lgpl-2.1.txt", b"cairo LGPL"),
+            "cairo/COPYING-MPL-1.1": ("cairo-mpl-1.1.txt", b"cairo MPL"),
+            "pixman/COPYING": ("pixman.txt", b"pixman notice"),
+        }
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.read("libs/licenses/" + name), content)
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
     def fontconfig_notices(self):
         (self.source / "core/libs/prx/libfontconfig").mkdir()
         (self.unpatched.parent / "libfontconfig.prx").write_bytes(b"unpatched Fontconfig library")

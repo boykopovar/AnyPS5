@@ -84,6 +84,10 @@ void TestClosedPortHandleBounds() {
     const int handle = sceAudioOutOpen(user, portTypeMain, 0, standardLen, standardFreq, 1);
     Require(handle >= 1 && handle <= 32);
 
+    errno = 71;
+    Require(sceAudioOutGetPortState(handle, reinterpret_cast<AudioOutPortState*>(0x10)) == invalidPointer);
+    Require(errno == 71);
+
     Require(sceAudioOutClose(handle) == 0);
     Require(sceAudioOutClose(handle) == AUDIO_OUT_ERROR_INVALID_PORT);
 

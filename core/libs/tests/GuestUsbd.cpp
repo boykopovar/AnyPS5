@@ -583,7 +583,16 @@ int main(int argc, char** argv) {
     Require(setupBuffer[4] == 0x09 && setupBuffer[5] == 0x04, "index not filled little-endian");
     Require(setupBuffer[6] == 18 && setupBuffer[7] == 0, "length not filled little-endian");
     if (argc == 2 && std::strcmp(argv[1], "device") == 0) Device();
+    errno = 71;
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument, "unwritable device list accepted");
+    Require(sceUsbdHandleEventsTimeout(reinterpret_cast<const UsbdTimeval*>(0x10)) == invalidArgument, "unreadable timeout accepted");
+    Require(sceUsbdHandleEventsLocked(reinterpret_cast<UsbdTimeval*>(0x10)) == invalidArgument, "unreadable locked timeout accepted");
+    Require(sceUsbdWaitForEvent(reinterpret_cast<UsbdTimeval*>(0x10)) == invalidArgument, "unreadable wait timeout accepted");
+    Require(sceUsbdBulkTransfer(&foreign, 0x81, buffer, 8, reinterpret_cast<std::int32_t*>(0x10), 100) == invalidArgument, "unwritable bulk transferred accepted");
+    Require(sceUsbdInterruptTransfer(&foreign, 0x81, buffer, 8, reinterpret_cast<std::int32_t*>(0x10), 100) == invalidArgument, "unwritable interrupt transferred accepted");
+    Require(errno == 71, "guest-copy failure modified errno");
     sceUsbdExit();
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument && errno == 71, "unwritable empty device list accepted");
     Require(sceUsbdOpenDeviceWithVidPid(0, 0) == nullptr, "a device was opened after the library exited");
 
     std::puts("USBD tests passed");

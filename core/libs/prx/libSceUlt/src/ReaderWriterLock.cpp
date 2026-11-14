@@ -93,14 +93,12 @@ int APS5_VABI sceUltReaderWriterLockCreate(void* rwlock, const char* name, void*
     }
     auto state = std::make_shared<UltReaderWriterLockState>();
     state->_waitingPool = waitingQueueResourcePool;
-    if (name != nullptr) {
-        std::strncpy(state->_name, name, sizeof(state->_name) - 1);
-    }
+    if (!CopyUltName(state->_name, name)) return ULT_ERROR_NULL;
     std::lock_guard<std::mutex> lock(gLocksMutex);
     if (gLocks.contains(rwlock)) {
         return ULT_ERROR_STATE;
     }
-    std::memset(rwlock, 0, 256);
+    if (!ClearUltObject(rwlock, 256)) return ULT_ERROR_NULL;
     gLocks[rwlock] = std::move(state);
     return ULT_OK;
 }

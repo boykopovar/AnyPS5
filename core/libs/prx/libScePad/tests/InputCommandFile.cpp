@@ -110,6 +110,26 @@ int main() {
         Check(sticks.Poll(1900000) == Pad::InputCommandFile::Input{8, true, {0, 255, 128, 64}});
         write("APS5_PAD_TIMELINE 1 17 1\n0 100 8388608\n");
         Check(sticks.Poll(1500000) == Pad::InputCommandFile::Input{});
+        std::string terminators(1, '\0');
+#ifdef _WIN32
+        terminators.push_back('\x1a');
+#endif
+        for (const auto& pulse : {std::string("2000 16384 300"),
+                                  std::string("2000 0 300 0 255 128 128"),
+                                  std::string("2000 0 300 touch(100,200,3,1)")}) {
+            for (const char terminator : terminators) {
+                write(pulse + terminator + "-ignored\n");
+                Pad::InputCommandFile terminated(path);
+                write("1000 64 300\n");
+                Check(terminated.Buttons(0) == 0);
+                write("2001 64 300\n");
+                Check(terminated.Buttons(100000) == 64);
+            }
+        }
+        write(std::string("2000 16384 300") + '\0' + std::string(114, ' ') + '\n');
+        Pad::InputCommandFile overlong(path);
+        write("1 64 300\n");
+        Check(overlong.Buttons(0) == 64);
         std::filesystem::remove(path);
         std::cout << "Controller timeline runtime cases passed\n";
         return 0;

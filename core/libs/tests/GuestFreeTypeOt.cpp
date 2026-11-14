@@ -36,6 +36,7 @@ struct Exports {
     decltype(&FT_Outline_Get_Orientation_nid_postfix) orientation;
     decltype(&FT_Outline_Copy_nid_postfix) copy;
     decltype(&FT_Outline_Decompose_nid_postfix) decompose;
+    decltype(&FT_Outline_Get_Bitmap_nid_postfix) outlineBitmap;
 };
 
 struct StrokerExports {
@@ -185,6 +186,12 @@ void Libraries() {
         Require(forwarded.render(library, &shape, &params) == FT_Outline_Render(native, &nativeShape, &nativeParams), "render result");
         Require(std::any_of(pixels.begin(), pixels.end(), [](unsigned char pixel) { return pixel != 0; }) && pixels == nativePixels, "rendered pixels");
         Require(params.source == &shape, "render source");
+        std::fill(pixels.begin(), pixels.end(), 0);
+        std::fill(nativePixels.begin(), nativePixels.end(), 0);
+        Require(ot.outlineBitmap(library, &shape, &bitmap) == FT_Outline_Get_Bitmap(native, &nativeShape, &nativeBitmap),
+                "outline bitmap result");
+        Require(std::any_of(pixels.begin(), pixels.end(), [](unsigned char pixel) { return pixel != 0; }) &&
+                pixels == nativePixels, "outline bitmap pixels");
     }
     Require(forwarded.render(nullptr, &shape, nullptr) == FT_Outline_Render(nullptr, &nativeShape, nullptr), "render without library");
     Require(forwarded.render(library, nullptr, nullptr) == FT_Outline_Render(native, nullptr, nullptr), "render without outline");
@@ -439,6 +446,9 @@ int main(int argc, char** argv) {
     if (!library) std::fprintf(stderr, "%s\n", dlerror());
 #endif
     Require(library != nullptr, "load requested library");
+    Resolve(ot.outlineBitmap, library, patched, "4RRjK-Wd1lU", "sceFreeTypeOtOutlineGetBitmap_nid_no_patch");
+    Require(ot.outlineBitmap(nullptr, nullptr, nullptr) == FT_Outline_Get_Bitmap(nullptr, nullptr, nullptr),
+            "outline bitmap without library");
 #ifdef _WIN32
     const bool forwards = patched;
     void* dependency = GetModuleHandleA("libSceFreeType.prx");

@@ -29,7 +29,6 @@ int APS5_VABI _Gentime_nid_postfix();
 int APS5_VABI _Getcloc_nid_postfix();
 int APS5_VABI _Getctyptab_nid_postfix();
 int APS5_VABI _Getdst_nid_postfix();
-int APS5_VABI _Geterrno_nid_postfix();
 int APS5_VABI _Getfld_nid_postfix();
 int APS5_VABI _Getfloat_nid_postfix();
 int APS5_VABI _Getgloballocale_nid_postfix();

@@ -101,3 +101,9 @@
 	path = 3rdparty/icu
 	url = https://github.com/unicode-org/icu.git
 	shallow = true
+[submodule "3rdparty/pixman"]
+	path = 3rdparty/pixman
+	url = https://gitlab.freedesktop.org/pixman/pixman.git
+[submodule "3rdparty/cairo"]
+	path = 3rdparty/cairo
+	url = https://gitlab.freedesktop.org/cairo/cairo.git

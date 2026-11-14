@@ -22,6 +22,7 @@
 #include "prx/libSceNKWebKit/include/ColorSpaceExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
+#include "prx/libSceNKWebKit/include/VPCodecExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"

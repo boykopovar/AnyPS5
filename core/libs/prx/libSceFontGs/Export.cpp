@@ -806,7 +806,11 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTexturePattern(FontGraphicsFrame* grap
                                                        std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1,
                                                        std::uint32_t option2, std::uint32_t dimension2, void** output) {
     if (output == nullptr) return FontGsInvalidParameter;
-    *output = nullptr;
+    void* zero = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return FontGsInvalidParameter;
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
     if (gnm == nullptr) return FontGsInvalidParameter;

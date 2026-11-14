@@ -2,9 +2,8 @@
 
 ### Unknown function info
 
-- [sceNpMatching2CreateContextInternal, sceNpMatching2CreateJoinRoomA, sceNpMatching2GetLobbyInfoList, sceNpMatching2GetLobbyMemberDataInternal, sceNpMatching2GetLobbyMemberDataInternalList, sceNpMatching2GetMemoryInfo, sceNpMatching2GetRoomMemberDataExternalList, sceNpMatching2GetRoomMemberIdListLocal, sceNpMatching2GetRoomPasswordLocal, sceNpMatching2GetSignalingOptParamLocal](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpMatching2.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
-- [sceNpMatching2GetSslMemoryInfo, sceNpMatching2GetUserInfoListA, sceNpMatching2GrantRoomOwner, sceNpMatching2JoinLobby, sceNpMatching2JoinRoomA, sceNpMatching2LeaveLobby, sceNpMatching2RegisterManualUdpSignalingCallback, sceNpMatching2SendLobbyChatMessage, sceNpMatching2SetExtraInitParam, sceNpMatching2SetLobbyMemberDataInternal, sceNpMatching2SetRoomDataInternalExt](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpMatching2.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
-- [sceNpMatching2SetSignalingOptParam, sceNpMatching2SignalingAbortConnection, sceNpMatching2SignalingCancelPeerNetInfo, sceNpMatching2SignalingEnableManualUdpMode, sceNpMatching2SignalingEstablishConnection, sceNpMatching2SignalingGetPeerNetInfo, sceNpMatching2SignalingGetPeerNetInfoResult](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpMatching2.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceNpMatching2SetExtraInitParam](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpMatching2.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceNpMatching2SignalingAbortConnection, sceNpMatching2SignalingCancelPeerNetInfo, sceNpMatching2SignalingEnableManualUdpMode, sceNpMatching2SignalingEstablishConnection, sceNpMatching2SignalingGetPeerNetInfo, sceNpMatching2SignalingGetPeerNetInfoResult](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpMatching2.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
 
 ### Functional
 
@@ -24,3 +23,37 @@
 - [sceNpMatching2GetUserInfoList](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - a request that passes the checks throws: firmware 13.42 [run natively](https://github.com/boykopovar/AnyPS5/pull/12623#issuecomment-6501291543) checked a null parameter, then the context (`CONTEXT_NOT_FOUND`, and 0x80550C3B for an A context), then the leading server id (`INVALID_SERVER_ID`), but did not show how an accepted request completes offline. The initialization check first and the null request id check follow the other requests and [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_matching2/np_matching2.cpp#L907-L933). Not measured on a console
 - [sceNpMatching2GetServerId, sceNpMatching2GetRoomJoinedSlotMaskLocal, sceNpMatching2GetWorldIdArrayForAllServers](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - no context starts offline, so a known context gets what firmware 13.42 [returned](https://github.com/boykopovar/AnyPS5/pull/12623#issuecomment-6501291543) for a created, never-started one, writing nothing: `CONTEXT_NOT_STARTED`, `CONTEXT_NOT_STARTED` and `SERVER_NOT_AVAILABLE` (0x80550C28). An unknown context gives `CONTEXT_NOT_FOUND`. The first two refuse a null output before the context; room 0 gives 0x80550C0C on a known context ([measured](https://github.com/boykopovar/AnyPS5/pull/12623#issuecomment-6501700641)). The third checks the context first, then its pointers. Assumed: that initialization is checked first, as in the request calls, the widths of the third call's arguments and which of its pointers it checks
 - [sceNpMatching2SignalingGetConnectionInfo, sceNpMatching2SignalingGetConnectionInfoA, sceNpMatching2SignalingGetPort, sceNpMatching2SignalingSetPort](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - as firmware 13.42 [did](https://github.com/boykopovar/AnyPS5/pull/12623#issuecomment-6501291543) with no context started: the connection info calls refuse a null `info` with 0x80550E15, then answer 0x80550E19 (no peer) for a known context and 0x80550E05 for an unknown one; the null check of the non-A form and the answer before initialization are not measured. The signaling port starts at 0 and `SetPort` stores what `GetPort` reports. Neither checks initialization here, and `GetPort` writes through its pointer with no null check, as the module does per its disassembly
+
+- [29 request and query calls before initialization](../../../core/libs/prx/libSceNpMatching2/Export.cpp) (libSceNpMatching2) - return 0x80550C03 (`SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED`) while the library is not initialized and throw once it is: what they do then is unknown. Firmware 13.42's `libSceNpMatching2.sprx` (read from disassembly and run under a CPU emulator on x86-64, not on a console) tests its initialized byte at 0x9049c before anything else in each of them; only `sceNpMatching2Initialize` sets it and `sceNpMatching2Terminate` clears it, which `main` models as `matching2Initialized`. The calls:
+
+| Export |
+| --- |
+| `sceNpMatching2CreateJoinRoom` |
+| `sceNpMatching2GetRoomDataExternalList` |
+| `sceNpMatching2GetRoomMemberDataInternal` |
+| `sceNpMatching2JoinRoom` |
+| `sceNpMatching2KickoutRoomMember` |
+| `sceNpMatching2SearchRoom` |
+| `sceNpMatching2SendRoomChatMessage` |
+| `sceNpMatching2SetRoomMemberDataInternal` |
+| `sceNpMatching2CreateContextInternal` |
+| `sceNpMatching2CreateJoinRoomA` |
+| `sceNpMatching2GetLobbyInfoList` |
+| `sceNpMatching2GetLobbyMemberDataInternal` |
+| `sceNpMatching2GetLobbyMemberDataInternalList` |
+| `sceNpMatching2GetMemoryInfo` |
+| `sceNpMatching2GetRoomMemberDataExternalList` |
+| `sceNpMatching2GetRoomMemberIdListLocal` |
+| `sceNpMatching2GetRoomPasswordLocal` |
+| `sceNpMatching2GetSignalingOptParamLocal` |
+| `sceNpMatching2GetSslMemoryInfo` |
+| `sceNpMatching2GetUserInfoListA` |
+| `sceNpMatching2GrantRoomOwner` |
+| `sceNpMatching2JoinLobby` |
+| `sceNpMatching2JoinRoomA` |
+| `sceNpMatching2LeaveLobby` |
+| `sceNpMatching2RegisterManualUdpSignalingCallback` |
+| `sceNpMatching2SendLobbyChatMessage` |
+| `sceNpMatching2SetLobbyMemberDataInternal` |
+| `sceNpMatching2SetRoomDataInternalExt` |
+| `sceNpMatching2SetSignalingOptParam` |
