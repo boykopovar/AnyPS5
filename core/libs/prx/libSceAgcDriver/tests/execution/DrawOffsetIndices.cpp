@@ -673,6 +673,40 @@ std::string Run(Fixture& fixture) {
         failures += fixture.Check(what + ", on the CPU path", bufferIndices, arguments.vertexOffset, arguments.firstInstance, true);
     }
     {
+        const std::string what = "indexed indirect record whose program reads no offset register";
+        auto noReads = fixture.Vertex(VertexCode, staleUserData);
+        noReads.vertexOffsetSgpr = -1;
+        noReads.instanceOffsetSgpr = -1;
+        noReads.vertexOffsetShared = false;
+        noReads.instanceOffsetShared = false;
+        noReads.vertexOffsetConflict = false;
+        noReads.instanceOffsetConflict = false;
+        noReads.userDataRegisterReads &= ~((std::uint64_t{1} << (BaseVertexSgpr - 8u)) | (std::uint64_t{1} << (StartInstanceSgpr - 8u)));
+        AgcDriver::Pm4::DrawParameters packet{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
+        packet.indirect = indexedIndirect;
+        failures += Classified(fixture, what, noReads, staleUserData, packet, std::nullopt, Rule::Constant);
+        char line[256];
+        std::snprintf(line, sizeof(line), "%s: constants vertex %u instance %u\n", what.c_str(), packet.indirect->vertexConstant, packet.indirect->instanceConstant);
+        std::cout << line;
+        if (packet.indirect->vertexConstant != 0 || packet.indirect->instanceConstant != 0) failures += line;
+    }
+    if (fixture.device->DrawIndirectSupport().multi) {
+        const std::string what = "indexed indirect list of 300 records whose program reads no offset register";
+        auto noReads = fixture.Vertex(VertexCode, staleUserData);
+        noReads.vertexOffsetSgpr = -1;
+        noReads.instanceOffsetSgpr = -1;
+        noReads.vertexOffsetShared = false;
+        noReads.instanceOffsetShared = false;
+        noReads.vertexOffsetConflict = false;
+        noReads.instanceOffsetConflict = false;
+        noReads.userDataRegisterReads &= ~((std::uint64_t{1} << (BaseVertexSgpr - 8u)) | (std::uint64_t{1} << (StartInstanceSgpr - 8u)));
+        auto longIndirect = indexedIndirect;
+        longIndirect.count = 300;
+        AgcDriver::Pm4::DrawParameters packet{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
+        packet.indirect = longIndirect;
+        failures += Classified(fixture, what, noReads, staleUserData, packet, std::nullopt, Rule::Constant);
+    }
+    {
         const std::string what = "auto indirect record whose program copies v5/v8 before its fetch adds, start vertex 300, start instance 7";
         const std::array<std::uint32_t, 4> record{Vertices, Instances, 300, 7};
         std::copy(record.begin(), record.end(), fixture.Records() + 16);
