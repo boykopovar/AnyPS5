@@ -828,4 +828,62 @@ int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char*
     return 0;
 }
 
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(const char* text, std::size_t size) {
+    const char* const end = text + size;
+    for (const char* p = text; p < end;) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead >= 0x80) {
+            length = Utf8SequenceLength(lead);
+            if (length == 0 || p + length > end) return false;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (!IsContinuation(p[i])) return false;
+            }
+        }
+        p += length;
+    }
+    return true;
+}
+
+bool APS5_VABI _sceNpMsgPackStrUtilIsValidUtf8String(const char* text) {
+    return _sceNpMsgPackStrUtilIsValidUtf8StringWithSize(text, std::strlen(text));
+}
+
+int APS5_VABI sceNpUtilNumChars(const char* text) {
+    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::size_t count = 0;
+    for (const char* p = text; *p != '\0';) {
+        const auto lead = static_cast<unsigned char>(*p);
+        std::size_t length = 1;
+        if (lead < 0x80) {
+            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        } else {
+            length = Utf8SequenceLength(lead);
+            if (length == 0) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            for (std::size_t i = 1; i < length; ++i) {
+                if (p[i] == '\0' || !IsContinuation(p[i])) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            }
+        }
+        p += length;
+        ++count;
+    }
+    return static_cast<int>(count);
+}
+
+int APS5_VABI sceNpJwsHs256GetEncodeSize(std::uint32_t payloadSize, std::uint32_t* encodeSize) {
+    if (encodeSize == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    *encodeSize = ((payloadSize + 2) / 3) * 4 + 0x5E;
+    return 0;
+}
+
+int APS5_VABI sceNpXmlParseInit(void* context, void* arg2, void* arg3, void* arg4) {
+    if (context == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    auto* parser = static_cast<char*>(context);
+    std::memset(parser + 8, 0, 0x248);
+    *reinterpret_cast<void**>(parser) = arg2;
+    *reinterpret_cast<void**>(parser + 0x250) = arg3;
+    *reinterpret_cast<void**>(parser + 0x258) = arg4;
+    return 0;
+}
+
 }
