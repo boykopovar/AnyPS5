@@ -123,10 +123,6 @@ int APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI RSAPublicKey_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_print_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
