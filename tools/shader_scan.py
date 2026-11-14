@@ -23,6 +23,13 @@ def skip_literal(source, start):
     return j
 
 
+def digit_separator(source, i):
+    j = i
+    while j and (source[j - 1].isalnum() or source[j - 1] in "_.'"):
+        j -= 1
+    return source[i] == "'" and source[j].isdigit()
+
+
 def strip_comments(source):
     out, i, n = [], 0, len(source)
     while i < n:
@@ -37,7 +44,7 @@ def strip_comments(source):
             stop = n if end < 0 else end + 2
             out.append(re.sub(r"[^\n]", " ", source[i:stop]))
             i = stop
-        elif c in "\"'":
+        elif c in "\"'" and not digit_separator(source, i):
             j = skip_literal(source, i)
             out.append(source[i:j + 1])
             i = j + 1
@@ -57,7 +64,7 @@ def body_after(source, header):
     depth, i = 0, opening
     while i < len(source):
         c = source[i]
-        if c in "\"'":
+        if c in "\"'" and not digit_separator(source, i):
             i = skip_literal(source, i)
         elif c == "{":
             depth += 1
@@ -282,7 +289,7 @@ def measure_forms(files, isa, decoder=None, translated=None):
 
 UNSUPPORTED = re.compile(r"unsupported|not (?:yet )?(?:implemented|supported)|unimplemented", re.I)
 UNSUPPORTED_TYPES = re.compile(r"^throw\s+(?:\w+::)*(?:UnsupportedInstructionError|\w*Unsupported\w*)\b")
-THROW = re.compile(r"""\bthrow\b(?:[^;"']|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')*;""")
+THROW = re.compile(r"""\bthrow\b(?:[^;"']|"(?:\\.|[^"\\\n])*"|(?<=[0-9A-Fa-f])'(?=[0-9A-Fa-f])(?!.')|'(?:\\.|[^'\\\n])*')*;""")
 
 
 def unsupported_throws(files):

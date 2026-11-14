@@ -275,6 +275,26 @@ class ScanTests(unittest.TestCase):
         self.assertEqual([(s["file"], s["line"]) for s in sites], [("Ir/Lower.cpp", 1), ("Ir/Lower.cpp", 6), ("Ir/Lower.cpp", 7), ("Top.cpp", 1)])
         self.assertEqual(sites[0]["message"], "Unsupported image type")
 
+    def test_digit_separators_do_not_change_bodies_or_unsupported_throws(self):
+        results = []
+        for number in ("1000", "1'000"):
+            with tempfile.TemporaryDirectory() as directory:
+                write_tree(directory)
+                translate = Path(directory) / "core/shader/recompiler/Translation/Translate.cpp"
+                header = "TranslationContext::emitScalar(const Instruction& i)\n{\n"
+                text = translate.read_text(encoding="utf-8")
+                self.assertIn(header, text)
+                translate.write_text(text.replace(header, header + f"    if (budget > {number}) {{\n        return;\n    }}\n"), encoding="utf-8")
+                lower = Path(directory) / "core/shader/recompiler/Ir/Lower.cpp"
+                lower.write_text(lower.read_text(encoding="utf-8") + f'void g() {{ throw UnsupportedInstructionError("unsupported", {number}); }}\n'
+                                 f'void h() {{ throw UnsupportedInstructionError("unsupported", u8\'a\', {number}, \';\'); }}\n', encoding="utf-8")
+                sites = shader_scan.unsupported_throws(shader_scan.read_tree(directory))
+                results.append((shader_scan.measure(directory, ISA), [s["line"] for s in sites if s["file"] == "Ir/Lower.cpp"]))
+        self.assertEqual(results[0][0]["instructions"], {"total": 14, "decoded": 10, "translated": 5})
+        self.assertEqual(results[0][1], [1, 6, 7, 8, 9])
+        self.assertEqual(results[1][0]["instructions"], results[0][0]["instructions"])
+        self.assertEqual(results[1], results[0])
+
     def test_a_missing_opcode_table_stops_the_scan_naming_it(self):
         with tempfile.TemporaryDirectory() as directory:
             write_tree(directory, tables=[e for e in shader_scan.REQUIRED_TABLES if e != "SOP1"])
