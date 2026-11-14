@@ -38,6 +38,27 @@
 
 namespace {
 
+constexpr auto DefaultControllerButtons = [] {
+    using Pad::PadButton;
+    std::array<PadButton, SDL_CONTROLLER_BUTTON_MAX> buttons{};
+    buttons[SDL_CONTROLLER_BUTTON_A] = PadButton::Cross;
+    buttons[SDL_CONTROLLER_BUTTON_B] = PadButton::Circle;
+    buttons[SDL_CONTROLLER_BUTTON_X] = PadButton::Square;
+    buttons[SDL_CONTROLLER_BUTTON_Y] = PadButton::Triangle;
+    buttons[SDL_CONTROLLER_BUTTON_BACK] = PadButton::TouchPad;
+    buttons[SDL_CONTROLLER_BUTTON_START] = PadButton::Options;
+    buttons[SDL_CONTROLLER_BUTTON_LEFTSTICK] = PadButton::L3;
+    buttons[SDL_CONTROLLER_BUTTON_RIGHTSTICK] = PadButton::R3;
+    buttons[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] = PadButton::L1;
+    buttons[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] = PadButton::R1;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_UP] = PadButton::Up;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_RIGHT] = PadButton::Right;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_DOWN] = PadButton::Down;
+    buttons[SDL_CONTROLLER_BUTTON_DPAD_LEFT] = PadButton::Left;
+    buttons[SDL_CONTROLLER_BUTTON_TOUCHPAD] = PadButton::TouchPad;
+    return buttons;
+}();
+
 void stopRumble(SDL_GameController* controller) {
     SDL_GameControllerRumble(controller, 0, 0, 0);
     if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) SDL_GameControllerRumbleTriggers(controller, 0, 0, 0);
@@ -369,6 +390,10 @@ void PadInput::applyMappingSnapshot() {
     if (snapshot == appliedMapping) return;
     appliedMapping = snapshot;
     keyboardMouse.Replace(*snapshot);
+    for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
+        if (slots[slot].controller != nullptr) slots[slot].state = sampleController(slot);
+    }
+    static_cast<void>(keyboardMouse.PadChordRequests(slots[0].state.buttons));
 }
 
 void PadInput::reloadInputMapping() {
@@ -395,36 +420,27 @@ PadInputState PadInput::sampleController(int slot) const {
     if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return result;
     SDL_GameController* controller = slots[slot].controller;
     if (controller == nullptr) return result;
-    const auto readButton = [controller](SDL_GameControllerButton button) {
-        return SDL_GameControllerGetButton(controller, button) != 0;
-    };
-    const auto addButton = [&result, &readButton](SDL_GameControllerButton source, Pad::PadButton button) {
-        if (readButton(source)) result.buttons |= static_cast<std::uint32_t>(button);
-    };
-    addButton(SDL_CONTROLLER_BUTTON_A, Pad::PadButton::Cross);
-    addButton(SDL_CONTROLLER_BUTTON_B, Pad::PadButton::Circle);
-    addButton(SDL_CONTROLLER_BUTTON_X, Pad::PadButton::Square);
-    addButton(SDL_CONTROLLER_BUTTON_Y, Pad::PadButton::Triangle);
-    addButton(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, Pad::PadButton::L1);
-    addButton(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, Pad::PadButton::R1);
     const auto type = SDL_GameControllerGetType(controller);
-    const bool viewPressed = type != SDL_CONTROLLER_TYPE_PS4 && type != SDL_CONTROLLER_TYPE_PS5 && readButton(SDL_CONTROLLER_BUTTON_BACK);
-    if (viewPressed) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
-    addButton(SDL_CONTROLLER_BUTTON_START, Pad::PadButton::Options);
-    addButton(SDL_CONTROLLER_BUTTON_LEFTSTICK, Pad::PadButton::L3);
-    addButton(SDL_CONTROLLER_BUTTON_RIGHTSTICK, Pad::PadButton::R3);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_UP, Pad::PadButton::Up);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, Pad::PadButton::Right);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_DOWN, Pad::PadButton::Down);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_LEFT, Pad::PadButton::Left);
-    addButton(SDL_CONTROLLER_BUTTON_TOUCHPAD, Pad::PadButton::TouchPad);
+    const bool hasPlayStationLayout = type == SDL_CONTROLLER_TYPE_PS4 || type == SDL_CONTROLLER_TYPE_PS5;
+    bool touchpadButtonPressed = false;
+    for (std::size_t index = 0; index < DefaultControllerButtons.size(); ++index) {
+        const auto source = static_cast<SDL_GameControllerButton>(index);
+        const auto defaultButton = source == SDL_CONTROLLER_BUTTON_BACK && hasPlayStationLayout
+            ? Pad::PadButton::None : DefaultControllerButtons[index];
+        const auto button = appliedMapping->controllerButtons[index].value_or(defaultButton);
+        if (button == Pad::PadButton::None || SDL_GameControllerGetButton(controller, source) == 0) continue;
+        result.buttons |= static_cast<std::uint32_t>(button);
+        touchpadButtonPressed |= button == Pad::PadButton::TouchPad && source != SDL_CONTROLLER_BUTTON_TOUCHPAD;
+    }
 
     const auto triggerValue = [controller](SDL_GameControllerAxis axis) {
         const auto value = std::clamp<int>(SDL_GameControllerGetAxis(controller, axis), 0, 32767);
         return static_cast<std::uint8_t>((value * 255 + 16383) / 32767);
     };
-    result.analogButtonsL2 = triggerValue(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-    result.analogButtonsR2 = triggerValue(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+    result.analogButtonsL2 = (result.buttons & static_cast<std::uint32_t>(Pad::PadButton::L2)) != 0
+        ? 255 : triggerValue(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+    result.analogButtonsR2 = (result.buttons & static_cast<std::uint32_t>(Pad::PadButton::R2)) != 0
+        ? 255 : triggerValue(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
     if (result.analogButtonsL2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::L2);
     if (result.analogButtonsR2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::R2);
 
@@ -434,7 +450,7 @@ PadInputState PadInput::sampleController(int slot) const {
     const auto left = stick(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY, keyboardMouse.Configuration().settings.leftStickDeadzonePercent);
     const auto right = stick(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY, keyboardMouse.Configuration().settings.rightStickDeadzonePercent);
     result.sticks = {left[0], left[1], right[0], right[1]};
-    switch (SDL_GameControllerGetType(controller)) {
+    switch (type) {
         case SDL_CONTROLLER_TYPE_PS5: result.deviceKind = 1; break;
         case SDL_CONTROLLER_TYPE_PS4: result.deviceKind = 2; break;
         default: result.deviceKind = 3; break;
@@ -459,7 +475,7 @@ PadInputState PadInput::sampleController(int slot) const {
             result.touch[finger].y = static_cast<std::uint16_t>(std::clamp(y, 0.0f, 1.0f) * (kTouchPadHeight - 1));
         }
     }
-    if (viewPressed && !result.touch[0].active && !result.touch[1].active) {
+    if (touchpadButtonPressed && !result.touch[0].active && !result.touch[1].active) {
         result.touch[0] = {true, kTouchPadWidth / 2, kTouchPadHeight / 2, 0};
     }
     return result;
