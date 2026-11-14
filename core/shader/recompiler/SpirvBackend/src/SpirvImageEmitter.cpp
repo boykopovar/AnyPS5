@@ -2198,6 +2198,10 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     const auto offset = ctx.Def(handle->Argument(0));
     const auto header = ImageTableAbi::TableHeader(table);
     const auto& parent = sources.at(column.heapSource).tableColumn;
+    if (!parent.has_value() && column.pointerKeyed) {
+        if (!column.indirect || handle->ArgumentCount() < 3u) ctx.Fail(inst, "has a pointer-keyed image table without its pointer");
+        return LookupTablePointer(state, ctx.Def(handle->Argument(1)), ctx.Def(handle->Argument(2)), header);
+    }
     if (!parent.has_value()) return LookupTableWord(state, column, offset, header);
     if (!parent->buffer || !parent->indirect || handle->ArgumentCount() < 3u) ctx.Fail(inst, "has a nested image table without its buffer pointer");
     const auto root = LookupTablePointer(state, ctx.Def(handle->Argument(1)), ctx.Def(handle->Argument(2)), header);
