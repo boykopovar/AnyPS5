@@ -448,7 +448,7 @@ void APS5_VABI ASN1_OCTET_STRING_free_nid_postfix(Asn1String* string);
 int APS5_VABI tls_config_parse_protocols_nid_postfix(std::uint32_t* protocols, const char* text);
 void APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix(void* ctx, int value);
 int APS5_VABI ASN1_TIME_diff_nid_postfix(int* days, int* seconds, const Asn1String* from, const Asn1String* to);
-int APS5_VABI OBJ_obj2txt_nid_postfix();
+int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength, const Asn1Object_nid_no_patch* object, int noName);
 int APS5_VABI SSL_set_quic_transport_params_nid_postfix();
 int APS5_VABI SSL_is_quic_nid_postfix();
 LibreSsl3X509Pubkey* APS5_VABI X509_get_X509_PUBKEY_nid_postfix(const LibreSsl3Certificate* certificate);
