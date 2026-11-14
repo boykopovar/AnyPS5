@@ -611,8 +611,8 @@ std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
     return 0xff0000000ull;
 }
 
-int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex(std::uint32_t engine, std::uint32_t cuIndex) {
+    if (engine <= 1 && cuIndex < 9) return -1;
     return 0;
 }
 

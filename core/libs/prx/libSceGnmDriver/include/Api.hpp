@@ -46,7 +46,7 @@ int APS5_VABI sceGnmDingDong();
 int APS5_VABI sceGnmDisableMipStatsReport();
 int APS5_VABI sceGnmGetEqTimeStamp();
 std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress();
-int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex();
+int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex(std::uint32_t engine, std::uint32_t cuIndex);
 std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::uint32_t mask);
 int APS5_VABI sceGnmMapComputeQueue();
 int APS5_VABI sceGnmRequestFlipAndSubmitDone();
