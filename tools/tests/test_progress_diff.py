@@ -29,6 +29,14 @@ class PresenceTests(unittest.TestCase):
         rows = progress_diff.compare(base, head)["libraries"]["groups"]
         self.assertEqual([row["name"] for row in rows], ["a", "b", "c"])
 
+    def test_sections_are_compared_separately(self):
+        base = snapshot(libraries=[{"name": "same"}], shaders=[])
+        head = snapshot(libraries=[{"name": "same"}], shaders=[{"name": "same"}])
+        result = progress_diff.compare(base, head)
+        self.assertEqual(set(result), {"libraries", "shaders"})
+        self.assertEqual(result["libraries"]["groups"][0]["presence"], "both")
+        self.assertEqual([(row["name"], row["presence"]) for row in result["shaders"]["groups"]], [("same", "added")])
+
 
 if __name__ == "__main__":
     unittest.main()
