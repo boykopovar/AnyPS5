@@ -301,6 +301,9 @@ void GnmDrawupPattern() {
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
         Require(errno == 71);
         f.surface.initialized = 1;
+        errno = 71;
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
+        Require(errno == 71);
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == 0);
         Require(out != nullptr);
         const auto* record = static_cast<const TestDrawupRecord*>(out);
