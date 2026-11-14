@@ -557,11 +557,16 @@ public:
         if (end <= begin || _resolver.load(std::memory_order_acquire) == nullptr) return false;
         const auto first = pageStart(begin);
         const auto last = pageEnd(end);
+        const auto held = [&] { return std::any_of(_traps.begin(), _traps.end(), [&](const Trap& trap) { return trap.owner == 0 && trap.begin == begin && trap.end == end; }); };
+        {
+            const std::lock_guard lock(_lock);
+            if (held()) return true;
+        }
         if (!Watch::Get().Covers(first, last)) return false;
         learn(first, last);
         Trap trap{begin, end, first, last, 0, 0, std::vector<std::uint8_t>((last - first) / PageBytes, 0)};
         const std::lock_guard lock(_lock);
-        if (std::any_of(_traps.begin(), _traps.end(), [&](const Trap& held) { return held.owner == 0 && held.begin == begin && held.end == end; })) return true;
+        if (held()) return true;
         for (const auto& [hostBegin, hostEnd] : _hostWrites)
             if (hostBegin < last && first < hostEnd) return false;
         if (!protectionIs(first, last, PROT_READ | PROT_WRITE)) return false;
