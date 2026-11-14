@@ -92,6 +92,12 @@ std::size_t RecordedCount() {
 
 std::atomic<int> g_selfRemovalCalls{0};
 std::atomic<std::int32_t> g_selfRemovalResult{-1};
+std::atomic<int> g_reentrantResult{-1};
+char g_reentrantMount[UsbStorage::MountPointSize]{};
+
+void APS5_VABI RemapInside(const UsbStorageEvent*, void*) {
+    g_reentrantResult = sceUsbStorageRequestMap(0, "Movies", 0, 0, g_reentrantMount, nullptr);
+}
 
 void APS5_VABI RemoveSelf(const UsbStorageEvent*, void*) {
     ++g_selfRemovalCalls;
@@ -504,6 +510,28 @@ void TestMapAvailability(const FakeHost& host) {
     Require(Events().events.size() == seen + 2, "the map callbacks raised no other event");
 }
 
+void TestMapCallbackIdentity(const FakeHost& host) {
+    Inject(host, true, false);
+    std::filesystem::create_directories(host.firstMount / "Movies");
+    Require(sceUsbStorageInit(nullptr) == 0, "initialize for the map callback identity");
+    const auto seen = RecordedCount();
+    Require(sceUsbStorageRegisterCallbackForMapAvailable(0, "Music", &Record, &g_mountTag) == 0, "register a relative map callback");
+    Require(sceUsbStorageRegisterCallbackForMapAvailable(0, "/mnt/usb0/Music", &Record, &g_unmountTag) == 0, "register a mount point map callback");
+    char mountPoint[UsbStorage::MountPointSize];
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, nullptr) == 0, "map the shared directory");
+    const auto first = NextEvent(seen);
+    const auto second = NextEvent(seen + 1);
+    Require(first.userData == &g_mountTag && second.userData == &g_unmountTag, "each map callback received its own argument");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "Music", &Record) == 0, "unregister the relative map callback");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "/mnt/usb0/Music", &Record) == 0, "unregister the mount point map callback");
+    Require(sceUsbStorageRegisterCallbackForMapAvailable(0, "Music", &RemapInside, nullptr) == 0, "register a map callback that maps again");
+    Require(sceUsbStorageRequestUnmap(0, mountPoint) == 0, "unmap the shared directory before mapping it again");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, nullptr) == 0, "map the shared directory again");
+    Require(g_reentrantResult == 0, "a map callback could request a map");
+    Require(sceUsbStorageUnregisterCallbackForMapAvailable(0, "Music", &RemapInside) == 0, "unregister the nested map callback");
+    Require(sceUsbStorageTerm() == 0, "terminate after the map callback identity");
+}
+
 void TestDeviceGetdents() {
     std::int32_t fd = -1;
     std::uint64_t bufferSize = 0;
@@ -781,6 +809,7 @@ int main() {
     TestRootChange(host);
     TestUnregisterDuringDispatch(host);
     TestMapAvailability(host);
+    TestMapCallbackIdentity(host);
     if (CreateSysfs(host)) {
         TestSysfsScan(host);
     } else {

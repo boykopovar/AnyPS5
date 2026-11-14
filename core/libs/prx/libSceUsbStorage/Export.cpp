@@ -92,7 +92,7 @@ struct DirectoryScan {
 
 struct Service {
     std::mutex mutex;
-    std::mutex dispatch;
+    std::recursive_mutex dispatch;
     std::condition_variable wake;
     bool initialized = false;
     bool stopping = false;
@@ -185,14 +185,13 @@ void Dispatch(Service& service, const std::vector<UsbStorageEvent>& events) {
 
 void DispatchMap(Service& service, std::vector<MapRegistration>& registrations, std::uint32_t device, const std::string& directory,
                  const std::string& path, const UsbStorageEvent& event) {
-    const auto matches = [&](const MapRegistration& registration) {
-        return registration.device == device && (registration.directory == directory || "/" + registration.directory == path);
-    };
     std::vector<MapRegistration> selected;
     {
         std::lock_guard lock(service.mutex);
         for (const auto& registration : registrations) {
-            if (matches(registration)) selected.push_back(registration);
+            if (registration.device == device && (registration.directory == directory || "/" + registration.directory == path)) {
+                selected.push_back(registration);
+            }
         }
     }
     for (const auto& registration : selected) {
@@ -201,7 +200,8 @@ void DispatchMap(Service& service, std::vector<MapRegistration>& registrations, 
         {
             std::lock_guard lock(service.mutex);
             const auto current = std::find_if(registrations.begin(), registrations.end(), [&](const auto& entry) {
-                return matches(entry) && entry.callback == registration.callback;
+                return entry.device == registration.device && entry.directory == registration.directory &&
+                       entry.callback == registration.callback;
             });
             if (current == registrations.end()) continue;
             arg = current->arg;
