@@ -60,56 +60,6 @@ std::int32_t IntegerSqrt(std::uint64_t value) {
 extern "C" {
 
 
-int APS5_VABI sceFreeTypeOtUnknown_UD7IFu7ML2U_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("UD7IFu7ML2U", sceFreeTypeOtUnknown_UD7IFu7ML2U_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_2T7lbS_CSzA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("2T7lbS+CSzA", sceFreeTypeOtUnknown_2T7lbS_CSzA_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_MGEIQsujKaY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("MGEIQsujKaY", sceFreeTypeOtUnknown_MGEIQsujKaY_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_mkmgcRnAJog_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("mkmgcRnAJog", sceFreeTypeOtUnknown_mkmgcRnAJog_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_m18bTUNF_0g_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("m18bTUNF-0g", sceFreeTypeOtUnknown_m18bTUNF_0g_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_vTZ34rw1sfg_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("vTZ34rw1sfg", sceFreeTypeOtUnknown_vTZ34rw1sfg_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_PvCNusrp9xQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("PvCNusrp9xQ", sceFreeTypeOtUnknown_PvCNusrp9xQ_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_dlM4ASZdcjk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("dlM4ASZdcjk", sceFreeTypeOtUnknown_dlM4ASZdcjk_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_Ev3BqJ_U1Fg_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Ev3BqJ-U1Fg", sceFreeTypeOtUnknown_Ev3BqJ_U1Fg_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("ZhtAXOoLNyo", sceFreeTypeOtUnknown_ZhtAXOoLNyo_nid_no_patch);
-
 int APS5_VABI sceFreeTypeOtGlyphSlotEmbolden_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
