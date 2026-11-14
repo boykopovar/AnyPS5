@@ -1,11 +1,11 @@
-// Adapted from uprv_stableBinarySearch in ICU 68.2 common/uarrsort.cpp:
+// Derived from icu4c/source/common/uarrsort.cpp@84e1f26ea77152936e70d53178a816dbfbf69989 (ICU 68.2):
 // https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uarrsort.cpp
 //
-// ICU's notice, kept as the upstream file has it:
+// The upstream file's notice, verbatim:
+//   © 2016 and later: Unicode, Inc. and others.
+//   License & terms of use: http://www.unicode.org/copyright.html
 //   Copyright (C) 2003-2013, International Business Machines
 //   Corporation and others.  All Rights Reserved.
-// ICU and its data are distributed under the Unicode licence:
-//   https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/LICENSE
 //
 // The guest comparator is called directly, as libc's qsort calls its comparator.
 
