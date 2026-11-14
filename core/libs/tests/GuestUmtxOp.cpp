@@ -32,6 +32,7 @@ static constexpr int UMTX_OP_SEM_WAIT = 19;
 static constexpr int UMTX_OP_SEM_WAKE = 20;
 static constexpr int UMTX_OP_NWAKE_PRIVATE = 21;
 static constexpr int UMTX_OP_SEM2_WAIT = 23;
+static constexpr int UMTX_OP_MEASURED_NOOP = 27;
 static constexpr int UMTX_OP_MAX = 27;
 static constexpr std::uint32_t UMTX_ABSTIME = 1;
 static constexpr int CLOCK_MONOTONIC_ID = 4;
@@ -375,7 +376,8 @@ static void RejectsBadObjectsAndOperations() {
 
     std::uint64_t value = 0;
     Require(FailsWith(Umtx(&value, 0, 0), GUEST_EOPNOTSUPP));
-    Require(FailsWith(Umtx(&value, UMTX_OP_MAX, 0), GUEST_EINVAL));
+    Require(Umtx(&value, UMTX_OP_MEASURED_NOOP, 0) == 0);
+    Require(FailsWith(Umtx(&value, UMTX_OP_MEASURED_NOOP + 1, 0), GUEST_EINVAL));
     Require(FailsWith(Umtx(&value, -1, 0), GUEST_EINVAL));
 
     for (const std::uint64_t owner : {std::uint64_t{0}, std::uint64_t{123456}, (std::uint64_t{1} << 63) | 123456}) {
