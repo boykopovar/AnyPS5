@@ -1300,6 +1300,291 @@ static void TestCustomMastering() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+#ifndef APS5_NGS2_PS4_LIBRARY
+struct MasteringModule {
+    std::uint32_t id;
+    std::uint32_t offset;
+    std::uint32_t size;
+};
+
+static Ngs2CustomMasteringRackOption ModulesRackOption(std::uint32_t channels, std::uint32_t state, const std::vector<MasteringModule>& modules) {
+    auto option = MasteringRackOption(channels, 1);
+    option.custom_rack_option.state_size = state;
+    option.custom_rack_option.num_modules = static_cast<std::uint32_t>(modules.size());
+    for (std::size_t m = 0; m < modules.size(); m++) {
+        auto& info = option.custom_rack_option.module[m];
+        info.module_id = modules[m].id;
+        info.state_offset = modules[m].offset;
+        info.state_size = modules[m].size;
+    }
+    return option;
+}
+
+static Ngs2CustomMasteringRackOption TitleRackOption(std::uint32_t channels) {
+    return ModulesRackOption(channels, 172, {{SCE_NGS2_CUSTOM_MODULE_ID_MIX_MATRIX, 0, 0}, {SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER, 16, 156}});
+}
+
+static Ngs2CustomMasteringRackOption OutputRackOption(std::uint32_t channels) {
+    return ModulesRackOption(channels, 172, {{SCE_NGS2_CUSTOM_MODULE_ID_MIX_MATRIX, 0, 0}, {SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER, 16, 156}, {SCE_NGS2_CUSTOM_MODULE_ID_OUTPUT, 0, 0}});
+}
+
+static int MasteringQuery(const Ngs2CustomMasteringRackOption& option) {
+    Ngs2ContextBufferInfo query{};
+    return sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &option.custom_rack_option.rack_option, &query);
+}
+
+static bool MasteringQueryThrows(const Ngs2CustomMasteringRackOption& option) {
+    try {
+        MasteringQuery(option);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+static uintptr_t MasteringModulesRack(uintptr_t system, const Ngs2CustomMasteringRackOption& option) {
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &option.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &option.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
+    return rack;
+}
+
+static int MasteringCreate(uintptr_t system, const Ngs2CustomMasteringRackOption& option) {
+    const auto good = TitleRackOption(2);
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &good.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    return sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &option.custom_rack_option.rack_option, &info, &rack);
+}
+
+template <typename TParam>
+static int MasteringControl(uintptr_t voice, std::uint32_t id, TParam param) {
+    param.header = {static_cast<std::uint16_t>(sizeof(TParam)), 0, id};
+    return sceNgs2VoiceControl(voice, &param.header);
+}
+
+static uintptr_t ChannelSampler(uintptr_t system, std::uint32_t channels, const std::vector<std::int16_t>& pcm) {
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, 48000, 0, 0, 0}});
+    const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size() / channels), 0, 0};
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+    return voice;
+}
+
+static std::vector<float> RenderChannels(uintptr_t system, std::uint32_t channels) {
+    std::vector<float> out(Grain * channels, -1.0f);
+    const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    return out;
+}
+
+struct MasteringFixture {
+    uintptr_t system;
+    uintptr_t rack;
+    uintptr_t voice;
+    std::vector<std::int16_t> pcm;
+
+    MasteringFixture(const Ngs2CustomMasteringRackOption& option, std::uint32_t channels, std::uint32_t impulse)
+        : system(CreateSystem()), pcm(static_cast<std::size_t>(Grain) * channels * 8, 0) {
+        rack = MasteringModulesRack(system, option);
+        voice = Voice(rack);
+        Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, channels, 0});
+        Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+        for (std::size_t frame = 0; frame < pcm.size() / channels; frame++) pcm[frame * channels + impulse] = 16384;
+        const auto sampler = ChannelSampler(system, channels, pcm);
+        Patch(sampler, voice);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    }
+
+    void Destroy() const {
+        Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+};
+
+static void TestCustomMasteringCreation() {
+    const auto system = CreateSystem();
+    const auto title = [](std::uint32_t state) { return ModulesRackOption(2, state, {{0x17, 0, 0}, {0x18, 16, 156}}); };
+    for (const std::uint32_t state : {172u, 176u, 1024u}) Require(MasteringQuery(title(state)) == SCE_NGS2_OK);
+    Require(MasteringQuery(title(0)) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+    Require(MasteringQuery(title(16)) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
+    Require(MasteringQuery(title(171)) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 16, 156}, {0x17, 0, 0}})) == SCE_NGS2_OK);
+    Require(MasteringQuery(OutputRackOption(2)) == SCE_NGS2_OK);
+    Require(MasteringQuery(ModulesRackOption(2, 16, {{0x17, 0, 0}})) == SCE_NGS2_OK);
+    Require(MasteringQuery(ModulesRackOption(2, 0, {{0x17, 0, 0}})) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+    Require(MasteringQuery(ModulesRackOption(2, 32, {{0x17, 16, 16}})) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+    Require(MasteringQuery(ModulesRackOption(2, 32, {{0x17, 16, 4}})) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 16, 156}})) == SCE_NGS2_OK);
+    Require(MasteringQuery(ModulesRackOption(2, 16, {{0x18, 0, 0}})) == SCE_NGS2_OK);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 16, 152}})) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 16, 160}})) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+    Require(MasteringQuery(ModulesRackOption(2, 156, {{0x18, 0, 156}})) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
+    Require(MasteringQuery(ModulesRackOption(2, 16, {{0x1a, 0, 0}})) == SCE_NGS2_OK);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 0xfffffff0u, 156}})) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 17, 156}})) == SCE_NGS2_ERROR_INVALID_STATE_OFFSET);
+    Require(MasteringQuery(ModulesRackOption(2, 172, {{0x18, 16, 156}})) == SCE_NGS2_OK);
+
+    auto withOption = TitleRackOption(2);
+    for (const std::uint32_t size : {4u, 8u, 16u, 20u}) {
+        const Ngs2CustomModuleOption option{size};
+        withOption.custom_rack_option.module[0].option = &option;
+        Require(MasteringQuery(withOption) == SCE_NGS2_OK);
+    }
+    const Ngs2CustomModuleOption meterOption{4};
+    withOption.custom_rack_option.module[0].option = nullptr;
+    withOption.custom_rack_option.module[1].option = &meterOption;
+    Require(MasteringQuery(withOption) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
+
+    Require(MasteringQueryThrows(ModulesRackOption(2, 16, {{0x16, 0, 0}})));
+    Require(MasteringQueryThrows(ModulesRackOption(2, 16, {{SCE_NGS2_CUSTOM_MODULE_ID_GAIN, 0, 0}})));
+    Require(MasteringQueryThrows(ModulesRackOption(2, 16, {{0x17, 0, 0}, {0x17, 0, 0}})));
+
+    auto noGrain = TitleRackOption(2);
+    noGrain.custom_rack_option.rack_option.max_grain_samples = 0;
+    Require(MasteringCreate(system, noGrain) == SCE_NGS2_ERROR_INVALID_MAX_GRAIN_SAMPLES);
+    auto noChannels = TitleRackOption(2);
+    noChannels.max_channels = 0;
+    Require(MasteringCreate(system, noChannels) == SCE_NGS2_ERROR_INVALID_NUM_CHANNELS);
+    auto noVoices = TitleRackOption(2);
+    noVoices.custom_rack_option.rack_option.max_voices = 0;
+    Require(MasteringCreate(system, noVoices) == SCE_NGS2_ERROR_INVALID_MAX_VOICES);
+    auto shortOption = TitleRackOption(2);
+    shortOption.custom_rack_option.rack_option.size = sizeof(Ngs2CustomRackOption);
+    Require(MasteringCreate(system, shortOption) == SCE_NGS2_ERROR_INVALID_OPTION_SIZE);
+    auto bareOption = MasteringRackOption(2, 1);
+    bareOption.custom_rack_option.rack_option.size = sizeof(Ngs2CustomRackOption);
+    bool bareInvalid = false;
+    try {
+        MasteringCreate(system, bareOption);
+    } catch (const std::invalid_argument&) {
+        bareInvalid = true;
+    }
+    Require(bareInvalid);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static Ngs2CustomVoiceMixMatrixParam SixBySixMatrix() {
+    Ngs2CustomVoiceMixMatrixParam matrix{};
+    for (std::uint32_t o = 0; o < 6; o++) {
+        for (std::uint32_t i = 0; i < 6; i++) matrix.levels[o][i] = 0.1f * static_cast<float>(o + 1) + 0.01f * static_cast<float>(i + 1);
+    }
+    return matrix;
+}
+
+static void TestMixMatrixModule() {
+    for (std::uint32_t impulse = 0; impulse < 6; impulse++) {
+        const MasteringFixture fixture(TitleRackOption(6), 6, impulse);
+        auto out = RenderChannels(fixture.system, 6);
+        for (std::uint32_t i = 0; i < Grain; i++) {
+            for (std::uint32_t o = 0; o < 6; o++) Require(out[i * 6 + o] == (i >= 3 && o == impulse ? 0.5f : 0.0f));
+        }
+        const auto matrix = SixBySixMatrix();
+        Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, matrix) == SCE_NGS2_OK);
+        out = RenderChannels(fixture.system, 6);
+        for (std::uint32_t i = 0; i < Grain; i++) {
+            for (std::uint32_t o = 0; o < 6; o++) Require(out[i * 6 + o] == matrix.levels[o][impulse] * 0.5f);
+        }
+        fixture.Destroy();
+    }
+
+    const MasteringFixture fixture(TitleRackOption(2), 2, 0);
+    Ngs2CustomVoiceMixMatrixParam extremes{};
+    extremes.levels[0][1] = std::numeric_limits<float>::quiet_NaN();
+    extremes.levels[1][0] = -100.0f;
+    Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, extremes) == SCE_NGS2_OK);
+    auto out = RenderChannels(fixture.system, 2);
+    Require(std::isnan(out[(Grain - 1) * 2]) && out[(Grain - 1) * 2 + 1] == -16.0f);
+    for (const auto [level, expected] : {std::pair{100.0f, 16.0f}, std::pair{32.0f, 16.0f}, std::pair{-32.5f, -16.0f}}) {
+        Ngs2CustomVoiceMixMatrixParam matrix{};
+        matrix.levels[0][0] = level;
+        Require(MasteringControl(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, matrix) == SCE_NGS2_OK);
+        out = RenderChannels(fixture.system, 2);
+        Require(out[(Grain - 1) * 2] == expected);
+    }
+
+    struct ShortMatrixParam {
+        Ngs2VoiceParamHeader header;
+        float levels[2];
+    };
+    Require(ControlThrows<std::runtime_error>(fixture.voice, SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX | 0, ShortMatrixParam{}));
+    fixture.Destroy();
+}
+
+static void TestMasteringModuleParams() {
+    const MasteringFixture fixture(OutputRackOption(2), 2, 0);
+    const auto voice = fixture.voice;
+    Require(MasteringControl(voice, 0x40001700, Ngs2CustomVoiceMixMatrixParam{}) == SCE_NGS2_OK);
+    for (const std::uint32_t id : {0x40001801u, 0x40001a02u}) Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_OK);
+    for (const std::uint32_t id : {0x40001701u, 0x40001800u, 0x40001802u, 0x40001a00u, 0x40001a01u, 0x40001a03u, 0x40001600u, 0x40001500u}) {
+        Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+    }
+    Require(ControlThrows<std::runtime_error>(voice, 0x40030001, AnyModuleParam{}));
+    for (std::uint32_t id = 0x40030002; id <= 0x40030006; id++) Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_ID);
+    for (const std::uint32_t id : {0x30000002u, 0x30000003u, 0x30000004u, 0x30000006u}) Require(MasteringControl(voice, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+    Require(ControlThrows<std::runtime_error>(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 2, 0}));
+
+    for (const std::uint32_t mode : {0u, 1u, 2u}) Require(MasteringControl(voice, 0x40001801, Ngs2VoicePeakMeterParam{{}, mode, 0}) == SCE_NGS2_OK);
+    for (const std::uint32_t mode : {3u, 0xffffffffu}) {
+        Require(MasteringControl(voice, 0x40001801, Ngs2VoicePeakMeterParam{{}, mode, 0}) == SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE);
+    }
+    fixture.Destroy();
+}
+
+static void TestMasteringPeakMeterState() {
+    const MasteringFixture fixture(TitleRackOption(2), 2, 0);
+    const auto voice = fixture.voice;
+    std::vector<std::uint8_t> state(1024);
+    auto* header = reinterpret_cast<Ngs2VoiceState*>(state.data());
+    for (const std::size_t size : {16u, 171u}) Require(sceNgs2VoiceGetState(voice, header, size) == SCE_NGS2_ERROR_INVALID_OUT_SIZE);
+    for (const std::size_t size : {8u, 172u, 1024u}) {
+        std::fill(state.begin(), state.end(), std::uint8_t{0xaa});
+        Require(sceNgs2VoiceGetState(voice, header, size) == SCE_NGS2_OK);
+        Require((header->state_flags & SCE_NGS2_VOICE_STATE_FLAG_INUSE) != 0 && header->error_code == 0);
+        for (std::size_t i = 8; i < size; i++) Require(state[i] == 0);
+        for (std::size_t i = size; i < state.size(); i++) Require(state[i] == 0xaa);
+    }
+    Require(MasteringControl(voice, 0x40001801, Ngs2VoicePeakMeterParam{{}, 1, 0}) == SCE_NGS2_OK);
+    Require(sceNgs2VoiceGetState(voice, header, 8) == SCE_NGS2_OK);
+    bool threw = false;
+    try {
+        sceNgs2VoiceGetState(voice, header, 172);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    fixture.Destroy();
+
+    const MasteringFixture plain(ModulesRackOption(2, 16, {{0x17, 0, 0}}), 2, 0);
+    Require(sceNgs2VoiceGetState(plain.voice, header, 172) == SCE_NGS2_ERROR_INVALID_OUT_SIZE);
+    plain.Destroy();
+}
+
+static void TestMasteringOutputModule() {
+    const MasteringFixture fixture(OutputRackOption(2), 2, 0);
+    auto out = RenderChannels(fixture.system, 2);
+    Require(out[(Grain - 1) * 2] == 0.5f);
+    Require(MasteringControl(fixture.voice, 0x40001a02, Ngs2MasteringVoiceOutputParam{{}, 1, 0}) == SCE_NGS2_OK);
+    out = RenderChannels(fixture.system, 2);
+    for (const float sample : out) Require(sample == 0.0f);
+    Require(MasteringControl(fixture.voice, 0x40001a02, Ngs2MasteringVoiceOutputParam{{}, 0, 0}) == SCE_NGS2_OK);
+    out = RenderChannels(fixture.system, 2);
+    Require(out[(Grain - 1) * 2] == 0.5f);
+    fixture.Destroy();
+}
+
+static void TestCustomMasteringModules() {
+    TestCustomMasteringCreation();
+    TestMixMatrixModule();
+    TestMasteringModuleParams();
+    TestMasteringPeakMeterState();
+    TestMasteringOutputModule();
+}
+#endif
+
 int main() {
     for (const auto count : {1u, 2u, 24u}) {
         TestCustomDelayOptionErrors(count);
@@ -1328,5 +1613,8 @@ int main() {
     TestCustomFilterCodes();
 #endif
     TestCustomMastering();
+#ifndef APS5_NGS2_PS4_LIBRARY
+    TestCustomMasteringModules();
+#endif
     return 0;
 }

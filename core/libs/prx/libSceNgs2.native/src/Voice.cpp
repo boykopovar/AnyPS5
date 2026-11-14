@@ -754,6 +754,10 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         voice.userFx[index].configured = true;
         return result;
     }
+    if (Ngs2IsMasteringModuleParam(voice, param.id)) {
+        Ngs2CheckMasteringModuleParam(param);
+        return CopyParam(param);
+    }
     throw std::runtime_error("NGS2: this buffered voice parameter is not implemented");
 }
 
@@ -1166,6 +1170,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP) {
                 RejectPs4Channels(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
+                if (!voice.mixMatrix.empty()) throw std::runtime_error("NGS2: a mastering setup after a mixing matrix is not implemented");
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 return;
             }
@@ -1207,6 +1212,10 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
                 const auto& modules = voice.rack->customModuleIds;
                 const auto index = param->id & 0x1fu;
                 if (index >= modules.size() || modules[index] != ((param->id >> 8) & 0xffu)) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
+            }
+            if (!PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
+                const int result = Ngs2CheckMasteringParamId(*voice.rack, param->id);
+                if (result != SCE_NGS2_OK) return result;
             }
             if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
                 const auto index = param->id & 0x1fu;
@@ -1350,8 +1359,10 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING: {
-            if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            *state = {};
+            const bool meter = Ngs2HasCustomModule(*voice.rack, SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER);
+            if (state_size != sizeof(Ngs2VoiceState) && !(meter && state_size >= SCE_NGS2_CUSTOM_PEAK_METER_VOICE_STATE_SIZE)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            if (state_size > sizeof(Ngs2VoiceState) && voice.peakMeterMode != 0) throw std::runtime_error("NGS2: the peak meter module state of mode " + std::to_string(voice.peakMeterMode) + " is not implemented");
+            std::memset(state, 0, state_size);
             state->state_flags = voice.stateFlags;
             return SCE_NGS2_OK;
         }

@@ -45,6 +45,7 @@ static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX = static_cast<int
 static constexpr int SCE_NGS2_ERROR_NULL_PARAM_LIST = static_cast<int>(0x804A8360);
 static constexpr int SCE_NGS2_ERROR_INVALID_PARAM_ID = static_cast<int>(0x804A835A);
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE = static_cast<int>(0x804A8361);
+static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_ID = static_cast<int>(0x804A8362);
 static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS = static_cast<int>(0x804A8461);
 static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_FLAG = static_cast<int>(0x804A8463);
 static constexpr int SCE_NGS2_ERROR_INVALID_OPTION_SIZE = static_cast<int>(0x804A8013);
@@ -56,7 +57,9 @@ static constexpr int SCE_NGS2_ERROR_INVALID_FILTER_TYPE = static_cast<int>(0x804
 static constexpr int SCE_NGS2_ERROR_INVALID_PITCH_SHIFT_OPTION = static_cast<int>(0x804A8098);
 static constexpr int SCE_NGS2_ERROR_INVALID_REVERB_OPTION = static_cast<int>(0x804A8099);
 static constexpr int SCE_NGS2_ERROR_INVALID_NUM_WAVEFORM_BLOCKS = static_cast<int>(0x804A8053);
+static constexpr int SCE_NGS2_ERROR_INVALID_STATE_OFFSET = static_cast<int>(0x804A8301);
 static constexpr int SCE_NGS2_ERROR_INVALID_STATE_SIZE = static_cast<int>(0x804A8302);
+static constexpr int SCE_NGS2_ERROR_INVALID_MAX_VOICES = static_cast<int>(0x804A8309);
 static constexpr int SCE_NGS2_ERROR_INVALID_BUFFER_INDEX = static_cast<int>(0x804A8306);
 static constexpr int SCE_NGS2_ERROR_INVALID_MODULE_LOCATION = static_cast<int>(0x804A8308);
 static constexpr int SCE_NGS2_ERROR_INVALID_NUM_BUFFERS = static_cast<int>(0x804A830B);
@@ -130,7 +133,10 @@ static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT = 0x
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER = 0x40001300;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_REVERB = 0x40001b00;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN = 0x40001500;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_MIX_MATRIX = 0x40001700;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_PEAK_METER = 0x40001800;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX = 0x40001900;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_OUTPUT = 0x40001a00;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_DELAY = 0x40001d00;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 = 0x40001f00;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT = 0x40002000;
@@ -143,10 +149,16 @@ static constexpr std::uint32_t SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS = 2;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE = 12;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_PITCH_SHIFT_OPTION_SIZE = 8;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_PITCH_SHIFT_STATE_SIZE = 8;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_MIN_STATE_SIZE = 16;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_PEAK_METER_STATE_SIZE = 156;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_PEAK_METER_VOICE_STATE_SIZE = 172;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_FILTER = 0x13;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_GAIN = 0x15;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_REVERB = 0x1b;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_MIX_MATRIX = 0x17;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER = 0x18;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_USER_FX = 0x19;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_OUTPUT = 0x1a;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_DELAY = 0x1d;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_USER_FX2 = 0x1f;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT = 0x20;
@@ -696,6 +708,12 @@ struct Ngs2CustomVoiceGainParam {
     float gain[SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS];
 };
 static_assert(sizeof(Ngs2CustomVoiceGainParam) == 156);
+
+struct Ngs2CustomVoiceMixMatrixParam {
+    Ngs2VoiceParamHeader header;
+    float levels[SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS][SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS];
+};
+static_assert(sizeof(Ngs2CustomVoiceMixMatrixParam) == 5484);
 
 struct Ngs2CustomVoicePitchShiftParam {
     Ngs2VoiceParamHeader header;
