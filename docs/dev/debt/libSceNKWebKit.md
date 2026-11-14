@@ -62,6 +62,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WebCore::Process identifier](../../../core/libs/prx/libSceNKWebKit/src/WebCoreProcess.cpp) (libSceNKWebKit) - the generation-protection check is not modelled: in firmware 13.42 `identifier()` (`0x207100`) crashes before generating when the byte at `0x3369ef8` is 1, and no store to that byte by address was found in the module's code, so what sets it is unknown. The object-identifier counter it draws from is shared in the module with the `HistoryItem` constructors, seven other exports and internal code, none of which is implemented, so identifiers are unique only among implemented callers. The rest follows `system_ex/common_ex/lib/libSceNKWebKit.sprx` 13.42 (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`; `setIdentifier` at `0x2e3bb0`), read from disassembly, not run. Closes when: measured on a console.
 
+- [WTF ICU string transforms](../../../core/libs/prx/libSceNKWebKit/src/WtfStringIcu.cpp) (libSceNKWebKit) - locale case mapping, `String::foldCase` and `normalizedNFC` are not compared with a console module; non-ASCII text goes through `libSceIcu`, whose Unicode data may differ from the console's. `const AtomString&` is read as a pointer to an 8-byte `String` and `StringViewWithUnderlyingString` as a 24-byte `StringView` and `String` pair, per the pinned headers; console layouts are unverified. Behaviour follows [StringImpl.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.cpp#L351-L689) and [StringView.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringView.cpp#L277-L312). Null references, null characters with a nonzero length, a failing index past the end or on a 16-bit string, and ICU normalizer errors throw where the source asserts.
 - [PAL::fileSizeDescription](../../../core/libs/prx/libSceNKWebKit/src/PalFileSizeFormatter.cpp) (libSceNKWebKit) - not compared with a console module: the device's WebKit revision is unverified. It follows the non-Cocoa branch of pinned WebKit [FileSizeFormatter.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/PAL/pal/FileSizeFormatter.cpp#L35-L46): below 1000 the decimal size and ` bytes`, otherwise `size / 1000.`, `size / 1000000.` or `size / 1000000000.` to one decimal place with ` KB`, ` MB` or ` GB`, formatted by the existing `NumberToFixedWidthString`. The [PS5 11.x source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/PAL/pal/FileSizeFormatter.cpp#L35-L46) returns an `AtomString` from `makeAtomString`; this returns a plain 8-bit `String` that is not in the atom table. Closes when: compared with a console module.
 
 - [WebCore content-type validation](../../../core/libs/prx/libSceNKWebKit/src/ContentTypeValidation.cpp) - console ABI and execution remain unverified. The one-pointer String, 32-bit Mode (Rfc2045 = 0, MimeSniff = 1) and boolean result follow the pinned [ParsedContentType.cpp and paired header](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ParsedContentType.cpp). Validation preserves the source parser's token, whitespace and quoted-string cursor rules, including RFC acceptance of trailing subtype text and its extra advance after a closing quote. Null String is invalid; null accessed character storage throws. Parameter storage is omitted because it does not affect create success. Closes when: compared with a console module.
@@ -174,6 +175,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5952 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - the inventory declarations listed below throw through NotImplemented_nid_no_patch, and a pull request that implements one removes its row; signatures and behavior are unverified. The [generated progress report](https://boykopovar.github.io/AnyPS5/progress.html) counts the throwing exports. The later 13.60-labelled image contains all 8703 inventory declarations; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
@@ -1336,11 +1338,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF10ParkingLot9unparkOneEPKv` | `56Wsrmx3txk` |
 | `_ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE` | `NvD7vqlu22E` |
 | `_ZN3WTF10StringImpl17utf8ForCharactersEPKhj` | `o5VwYgTgLtU` |
-| `_ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE` | `5SrekqH5TJQ` |
-| `_ZN3WTF10StringImpl28convertToUppercaseWithLocaleERKNS_10AtomStringE` | `LO6XXCwAPyU` |
-| `_ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv` | `ANdfelUexnk` |
-| `_ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv` | `cN2zfHMPS5A` |
-| `_ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj` | `mlL4YzHlNa4` |
 | `_ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE` | `jnH78zLM6qY` |
 | `_ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE` | `E0H-Rg9JQxQ` |
 | `_ZN3WTF10StringImpl7destroyEPS0_` | `yxwlKktzy6Y` |
@@ -1389,8 +1386,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF13ReadWriteLock8readLockEv` | `tbhRqP+K-1c` |
 | `_ZN3WTF13ReadWriteLock9writeLockEv` | `cKaXv3V+n+k` |
 | `_ZN3WTF13dumpCharacterERNS_11PrintStreamEc` | `rpsD9ynfjc0` |
-| `_ZN3WTF13normalizedNFCENS_10StringViewE` | `bgrxJM-HmMM` |
-| `_ZN3WTF13normalizedNFCERKNS_6StringE` | `2LUk8Ch0mJY` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE` | `DwwpqTcKG0Q` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE` | `bwThPa6WtDc` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE` | `6cO1aKnHM64` |
@@ -4854,12 +4849,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE` | `Ea+86Wd8S-g` |
 | `_ZNK3WTF3URL21truncatedForUseAsBaseEv` | `uekVJTVqBGc` |
 | `_ZNK3WTF3URL4dumpERNS_11PrintStreamE` | `ITwB6pPwmRc` |
-| `_ZNK3WTF6String28convertToLowercaseWithLocaleERKNS_10AtomStringE` | `oxQpdsUY-cg` |
-| `_ZNK3WTF6String28convertToUppercaseWithLocaleERKNS_10AtomStringE` | `7IN+T9v1oAg` |
-| `_ZNK3WTF6String31convertToLowercaseWithoutLocaleEv` | `vQwAX-xV-Dg` |
-| `_ZNK3WTF6String31convertToUppercaseWithoutLocaleEv` | `xZYXhT-qMno` |
-| `_ZNK3WTF6String57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj` | `XStmVdN3R7Y` |
-| `_ZNK3WTF6String8foldCaseEv` | `dXm2FJEv86k` |
 | `_ZNK3WTF6Thread4dumpERNS_11PrintStreamE` | `IEIydcJjkbo` |
 | `_ZNK3WTF7RunLoop9TimerBase16secondsUntilFireEv` | `9ym46rnYKZA` |
 | `_ZNK3WTF7RunLoop9TimerBase8isActiveEv` | `uh7RQK-+n20` |
