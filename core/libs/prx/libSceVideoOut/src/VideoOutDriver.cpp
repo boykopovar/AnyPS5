@@ -532,9 +532,15 @@ int VideoOutDriver::GetBusType(int handle) {
 
 int VideoOutDriver::SubmitFlip(int handle, int index, int flipMode, int64_t flipArg) {
     if (LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
-    // A title that does not pace on flipPendingNum can run ahead of the presenter now that the queue
-    // worker no longer waits per flip; a full queue is the documented error, not a failure.
-    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) {
+        std::unique_lock lock(flipQueue->mutex);
+        const bool room = flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(FLIP_ROOM_WAIT_MICROS), [&] {
+            return flipQueue->failure || flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested() || flipQueue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
+        });
+        if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+        if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
+        if (!room) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    }
     AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{static_cast<std::uint32_t>(handle), index, static_cast<std::uint32_t>(flipMode), flipArg});
     return 0;
 }
