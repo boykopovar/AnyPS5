@@ -910,7 +910,13 @@ std::string ErrorCodeMessage(const ErrorCode& code) {
     const auto message = reinterpret_cast<Message>(const_cast<void*>(static_cast<const void* const*>(code.category->vtable)[3]));
     GuestLocale::String text {};
     message(&text, code.category, code.value);
-    std::string result(text.capacity > 15 ? text.pointer : text.buffer, text.size);
+    std::string result;
+    try {
+        result.assign(text.capacity > 15 ? text.pointer : text.buffer, text.size);
+    } catch (...) {
+        try { GuestLocale::ReleaseStringStorage(text); } catch (...) {}
+        throw;
+    }
     GuestLocale::ReleaseStringStorage(text);
     return result;
 }

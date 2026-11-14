@@ -385,7 +385,15 @@ std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::Str
     GuestLocale::String value{};
     method(&value, AsNumpunct(facet));
     const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
-    std::string text(onHeap ? value.pointer : value.buffer, value.size);
+    std::string text;
+    try {
+        text.assign(onHeap ? value.pointer : value.buffer, value.size);
+    } catch (...) {
+        if (onHeap) {
+            try { GuestStringStorage::Deallocate(value.pointer, value.capacity + 1); } catch (...) {}
+        }
+        throw;
+    }
     if (onHeap) GuestStringStorage::Deallocate(value.pointer, value.capacity + 1);
     return text;
 }
