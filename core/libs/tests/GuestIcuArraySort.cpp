@@ -62,10 +62,25 @@ void TestStableInsertionKeepsEqualItemsInOrder() {
         Require(items[index].tag == expectedTags[index], "sortArray stable: equal keys keep their input order");
 }
 
+void TestStableSortOfNineOrMoreItems() {
+    std::vector<Item> items;
+    for (std::int32_t index = 0; index < 12; ++index)
+        items.push_back(Item{index % 3, index});
+    std::int32_t status = 0;
+    uprv_sortArray_nid_postfix(items.data(), static_cast<std::int32_t>(items.size()), sizeof(Item), CompareKeys, nullptr, 1, &status);
+    Require(status == 0, "sortArray stable large: a valid call succeeds");
+    for (std::size_t index = 1; index < items.size(); ++index) {
+        Require(items[index - 1].key <= items[index].key, "sortArray stable large: keys are ordered");
+        if (items[index - 1].key == items[index].key)
+            Require(items[index - 1].tag < items[index].tag, "sortArray stable large: equal keys keep their input order");
+    }
+}
+
 }
 
 int main() {
     TestArgumentChecks();
     TestStableInsertionKeepsEqualItemsInOrder();
+    TestStableSortOfNineOrMoreItems();
     return 0;
 }
