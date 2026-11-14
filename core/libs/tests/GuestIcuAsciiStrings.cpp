@@ -31,10 +31,20 @@ void TestToUpper() {
         Require(uprv_toupper_nid_postfix(static_cast<char>(value)) == static_cast<char>(std::toupper(value)), "toupper agrees with the C locale");
 }
 
+void TestAsciiToLower() {
+    for (int value = 0; value < 256; ++value) {
+        const bool upper = value >= 'A' && value <= 'Z';
+        Require(uprv_asciitolower_nid_postfix(static_cast<char>(value)) == (upper ? static_cast<char>(value + 32) : static_cast<char>(value)), "asciitolower maps A-Z only");
+    }
+    for (int value = 0; value < 128; ++value)
+        Require(uprv_asciitolower_nid_postfix(static_cast<char>(value)) == static_cast<char>(std::tolower(value)), "asciitolower agrees with the C locale");
+}
+
 }
 
 int main() {
     TestIsASCIILetter();
     TestToUpper();
+    TestAsciiToLower();
     return 0;
 }
