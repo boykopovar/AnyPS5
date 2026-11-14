@@ -845,12 +845,33 @@ static void restoreSave(const std::string& dirName) {
     RemoveTree(stagedEntry, ignored);
 }
 
-static int deleteSave(const SaveDataDelete* del) {
-    if (del == nullptr || del->dir_name == nullptr) {
+static int deleteSave(const SaveDataDelete* del, SceSaveDataDirName* traceDirName, bool* hasTraceDirName) {
+    if (hasTraceDirName != nullptr) *hasTraceDirName = false;
+    if (del == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    const int savedErrno = errno;
+    SaveDataDelete localDel{};
+    if (!GuestCopyIn_nid_no_patch(&localDel, del, sizeof(localDel))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (localDel.dir_name == nullptr) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SceSaveDataDirName localDirName{};
+    if (!GuestCopyIn_nid_no_patch(&localDirName, localDel.dir_name, sizeof(localDirName))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    errno = savedErrno;
+    if (traceDirName != nullptr && hasTraceDirName != nullptr) {
+        *traceDirName = localDirName;
+        *hasTraceDirName = true;
+    }
     std::string dirName;
-    if (!parse_dir_name(del->dir_name, &dirName)) {
+    if (!parse_dir_name(&localDirName, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const std::string path = save_root() + "/" + dirName;
@@ -878,8 +899,10 @@ static int deleteSave(const SaveDataDelete* del) {
 }
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
-    const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    SceSaveDataDirName traceDirName{};
+    bool hasTraceDirName = false;
+    const int rc = deleteSave(del, &traceDirName, &hasTraceDirName);
+    SAVEDATA_TRACE("delete dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), hasTraceDirName ? traceDirName.data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 

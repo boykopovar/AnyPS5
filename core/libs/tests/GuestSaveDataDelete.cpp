@@ -5,6 +5,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -129,6 +130,14 @@ int main() {
     Check(sceSaveDataDelete(nullptr) == SaveDataErrorParameter, "null del returns PARAMETER");
     SaveDataDelete nullDirDel{};
     Check(sceSaveDataDelete(&nullDirDel) == SaveDataErrorParameter, "null dir_name returns PARAMETER");
+    errno = 71;
+    Check(sceSaveDataDelete(reinterpret_cast<const SaveDataDelete*>(0x10)) == SaveDataErrorParameter, "invalid del returns PARAMETER");
+    Check(errno == 71, "errno is preserved on invalid del pointer");
+    SaveDataDelete invalidDirDel{};
+    invalidDirDel.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    errno = 71;
+    Check(sceSaveDataDelete(&invalidDirDel) == SaveDataErrorParameter, "invalid dir_name returns PARAMETER");
+    Check(errno == 71, "errno is preserved on invalid dir_name pointer");
     Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails before initialization");
     Check(sceSaveDataDeleteTransactionResource(1) == SaveDataErrorNotInitialized, "delete transaction resource 1 fails before initialization");
 
