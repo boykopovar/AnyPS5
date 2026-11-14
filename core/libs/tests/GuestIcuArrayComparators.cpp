@@ -16,6 +16,18 @@ std::int32_t CompareInt32(std::int32_t left, std::int32_t right) {
     return uprv_int32Comparator_nid_postfix(nullptr, &left, &right);
 }
 
+std::int32_t CompareUint32(std::uint32_t left, std::uint32_t right) {
+    return uprv_uint32Comparator_nid_postfix(nullptr, &left, &right);
+}
+
+void TestUint32() {
+    Require(CompareUint32(1, 2) == -1, "uint32: smaller value sorts first");
+    Require(CompareUint32(2, 1) == 1, "uint32: larger value sorts last");
+    Require(CompareUint32(7, 7) == 0, "uint32: equal values compare equal");
+    Require(CompareUint32(0xFFFFFFFFu, 0) == 1, "uint32: the largest value is above zero without wrapping");
+    Require(CompareUint32(0, 0xFFFFFFFFu) == -1, "uint32: zero is below the largest value without wrapping");
+}
+
 void TestInt32() {
     Require(CompareInt32(1, 2) == -1, "int32: smaller value sorts first");
     Require(CompareInt32(2, 1) == 1, "int32: larger value sorts last");
@@ -29,5 +41,6 @@ void TestInt32() {
 
 int main() {
     TestInt32();
+    TestUint32();
     return 0;
 }
