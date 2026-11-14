@@ -226,6 +226,7 @@ struct Context {
     bool depthClamp = false;
     // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;
+    mutable std::vector<std::pair<std::pair<VkFormat, std::uint32_t>, bool>> stencilShadowCopyProbes;
     bool drawInputsInPlace = true;
     bool discreteGpu = false;
     bool integratedGpu = false;
