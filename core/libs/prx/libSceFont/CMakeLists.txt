@@ -88,8 +88,7 @@ if(BUILD_TESTING)
         guest_font_factory_unwind_renderer_callback_error
         guest_font_factory_unwind_renderer_callback_throw
         guest_font_factory_unwind_renderer_callback_cleanup_throw PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>"
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
     endif()
 
     add_test_executable(guest_font_renderer_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontRendererLifecycle.cpp)
