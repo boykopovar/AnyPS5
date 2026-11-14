@@ -1663,10 +1663,6 @@ int APS5_VABI _ZNK6icu_6813UnicodeString11moveIndex32Eii_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_stableBinarySearch_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6810UnicodeSet13createFromAllERKNS_13UnicodeStringE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
