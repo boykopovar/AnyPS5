@@ -14478,6 +14478,14 @@ void commandStateTests() {
         tracker.SetViewport(context, negative);
         tracker.SetViewport(context, positive);
         expectStateLog({stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f), stateLine("viewport", -0.0f, 0.0f, 640.0f, 480.0f, -0.0f, 1.0f), stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f)}, "viewports that differ in the sign of zero");
+        const VkViewport first{0.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f};
+        const std::array<VkViewport, 2> pair{first, VkViewport{320.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f}};
+        const std::array<VkRect2D, 2> pairScissors{VkRect2D{{0, 0}, {320, 240}}, VkRect2D{{320, 0}, {320, 240}}};
+        tracker.SetViewports(context, pair, pairScissors);
+        tracker.SetViewport(context, first);
+        tracker.SetScissor(context, pairScissors[0]);
+        tracker.SetViewport(context, positive);
+        expectStateLog({stateLine("viewport", 0.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f), stateLine("scissor", 0, 0, 320u, 240u), stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f)}, "a single viewport after a viewport array that set the same viewport 0");
         tracker.SetDepthBias(context, 0.0f, 0.0f, 0.0f);
         tracker.SetDepthBias(context, -0.0f, 0.0f, 0.0f);
         tracker.SetDepthBias(context, -0.0f, 0.0f, 0.0f);
