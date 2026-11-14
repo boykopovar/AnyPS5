@@ -448,7 +448,11 @@ static void CheckBlocks(const Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWav
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
         const bool compressedStream = atrac9 && accepts && block.num_repeats == 0;
-        if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream)) {
+        const bool loopsPastData = bytes > block.data_size && !compressed && block.num_repeats == UINT32_MAX && block.num_skip_samples == 0 &&
+                                   block.data_size >= frameBytes && block.data_size % frameBytes == 0 &&
+                                   (std::any_of(param.blocks + i + 1, param.blocks + param.num_blocks, [](const Ngs2WaveformBlock& next) { return next.num_samples != 0 || next.data_size != 0; }) ||
+                                    std::any_of(param.blocks, param.blocks + i, [](const Ngs2WaveformBlock& previous) { return previous.num_repeats == UINT32_MAX && (previous.num_samples != 0 || previous.data_size != 0); }));
+        if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream && !loopsPastData)) {
             throw std::invalid_argument("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
         }
         if (vag) Ngs2CheckVag(shape.channels, static_cast<const std::uint8_t*>(param.data) + block.data_offset, block);

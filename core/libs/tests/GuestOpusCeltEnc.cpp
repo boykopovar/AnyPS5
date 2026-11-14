@@ -181,7 +181,18 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltEncGetAjmContext(nullptr, nullptr) == EncoderError(0x01));
     Require(sceOpusCeltEncGetAjmContext(ToState(blank), nullptr) == 0);
     Require(sceOpusCeltEncGetAjmContext(ToState(marked), nullptr) == 0);
+    Require(sceOpusCeltEncGetAjmContext(reinterpret_cast<const OpusCeltEncoder*>(0x10), nullptr) == 0);
     Require(ajmContext == 0x12345678u);
+    Require(sceOpusCeltEncGetAjmContext(ToState(blank), &ajmContext) == 0);
+    Require(ajmContext == 0);
+    SetWord(marked.data(), 0xD4, 0x0A1B2C3Du);
+    std::array<std::uint32_t, 3> contextWords{0xBAD0C0DEu, 0u, 0xBAD0C0DEu};
+    Require(sceOpusCeltEncGetAjmContext(ToState(marked), &contextWords[1]) == 0);
+    Require(contextWords == std::array<std::uint32_t, 3>{0xBAD0C0DEu, 0x0A1B2C3Du, 0xBAD0C0DEu});
+    errno = 71;
+    RequireThrows([&] { sceOpusCeltEncGetAjmContext(reinterpret_cast<const OpusCeltEncoder*>(0x10), &ajmContext); });
+    RequireThrows([&] { sceOpusCeltEncGetAjmContext(ToState(marked), reinterpret_cast<std::uint32_t*>(0x10)); });
+    Require(errno == 71);
 
     std::array<std::uint8_t, 1024> multistream{};
     SetWord(multistream.data(), 0x98, 0x17B2u);

@@ -71,6 +71,9 @@ int main() {
     DestroyWhileWaiting();
     PthreadBarrierattrPrivate* missing = nullptr;
     int pshared = -1;
+    PthreadBarrierPrivate* nullBarrier = nullptr;
+    Require(pthread_barrier_wait_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_barrier_wait_nid_postfix(&nullBarrier) == GUEST_EINVAL);
     Require(pthread_barrierattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(pthread_barrierattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(pthread_barrierattr_destroy_nid_postfix(&missing) == GUEST_EINVAL);
