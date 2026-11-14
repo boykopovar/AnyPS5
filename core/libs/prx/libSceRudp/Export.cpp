@@ -1,5 +1,6 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
@@ -71,6 +72,9 @@ enum RudpOption {
     RUDP_OPTION_CONNECTION_TIMEOUT = 9,
     RUDP_OPTION_CLOSE_WAIT_TIMEOUT = 10,
     RUDP_OPTION_AGGREGATION_TIMEOUT = 11,
+    RUDP_OPTION_12 = 12,
+    RUDP_OPTION_13 = 13,
+    RUDP_OPTION_LAST_ERROR = 14,
     RUDP_OPTION_READ_TIMEOUT = 15,
     RUDP_OPTION_WRITE_TIMEOUT = 16,
     RUDP_OPTION_FLUSH_TIMEOUT = 17,
@@ -101,11 +105,13 @@ struct RudpContext {
         {RUDP_OPTION_CONNECTION_TIMEOUT, 60000},
         {RUDP_OPTION_CLOSE_WAIT_TIMEOUT, 0},
         {RUDP_OPTION_AGGREGATION_TIMEOUT, 30},
+        {RUDP_OPTION_12, 1},
+        {RUDP_OPTION_13, 10},
         {RUDP_OPTION_READ_TIMEOUT, 0},
         {RUDP_OPTION_WRITE_TIMEOUT, 0},
         {RUDP_OPTION_FLUSH_TIMEOUT, 0},
         {RUDP_OPTION_KEEP_ALIVE_INTERVAL, 0},
-        {RUDP_OPTION_KEEP_ALIVE_TIMEOUT, 0},
+        {RUDP_OPTION_KEEP_ALIVE_TIMEOUT, 20000},
     };
 };
 std::map<int, RudpContext> g_ctx;
@@ -220,7 +226,10 @@ int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
     unsigned char report[RUDP_STATUS_SIZE] = {};
     const auto contexts = static_cast<uint32_t>(g_ctx.size());
     std::memcpy(report + RUDP_STATUS_CURRENT_CONTEXTS, &contexts, sizeof(contexts));
-    if (!GuestCopyOut_nid_no_patch(status, report, size)) return RUDP_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
+    errno = savedErrno;
+    if (!copied) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -374,9 +383,11 @@ int APS5_VABI sceRudpSetOption(int ctxId, int option, const void* value, uint32_
     const auto context = g_ctx.find(ctxId);
     if (context == g_ctx.end()) return RUDP_ERROR_INVALID_CONTEXT_ID;
     if (option < RUDP_OPTION_MAX_PAYLOAD || option > RUDP_OPTION_KEEP_ALIVE_TIMEOUT) return RUDP_ERROR_INVALID_OPTION;
+    if (option == RUDP_OPTION_LAST_ERROR) return value == nullptr ? RUDP_ERROR_INVALID_ARGUMENT : RUDP_ERROR_INVALID_OPTION;
     uint32_t optionValue;
     if (value == nullptr || len != sizeof(optionValue)) return RUDP_ERROR_INVALID_ARGUMENT;
-    std::memcpy(&optionValue, value, sizeof(optionValue));
+    if (!GuestCopyIn_nid_no_patch(&optionValue, value, sizeof(optionValue))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (option == RUDP_OPTION_12) optionValue = optionValue != 0 ? 1 : 0;
     context->second.options.insert_or_assign(option, optionValue);
     return 0;
 }
@@ -390,8 +401,7 @@ int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, uint32_t len)
     if (context == g_ctx.end()) return RUDP_ERROR_INVALID_CONTEXT_ID;
     if (option < RUDP_OPTION_MAX_PAYLOAD || option > RUDP_OPTION_KEEP_ALIVE_TIMEOUT) return RUDP_ERROR_INVALID_OPTION;
     const auto entry = context->second.options.find(option);
-    if (entry == context->second.options.end() ||
-        (option > RUDP_OPTION_AGGREGATION_TIMEOUT && option < RUDP_OPTION_READ_TIMEOUT)) {
+    if (entry == context->second.options.end()) {
         NotImplemented_nid_no_patch(__func__);
     }
     if (value == nullptr || len != sizeof(entry->second)) return RUDP_ERROR_INVALID_ARGUMENT;
@@ -426,7 +436,10 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, std::size_t size
     }
     unsigned char report[RUDP_CONTEXT_STATUS_SIZE] = {};
     std::memset(report + RUDP_CONTEXT_STATUS_PARENT, 0xFF, sizeof(std::int32_t));
-    std::memcpy(status, report, size);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
+    errno = savedErrno;
+    if (!copied) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -716,19 +729,21 @@ int APS5_VABI sceRudpGetLocalInfo(int ctxId, int* socketId, void* addr, std::uin
     if (!context.bound) {
         return RUDP_ERROR_NOT_BOUND;
     }
-    if (socketId) *socketId = context.socketId;
-    if (vport) *vport = context.vport;
-    if (muxMode) *muxMode = context.muxMode;
-    if (addr && addrLen && *addrLen > 0) {
-        std::uint8_t socketAddress[0x1c]{};
-        std::uint32_t socketAddressSize = sizeof(socketAddress);
-        if (sceNetGetsockname(context.socketId, socketAddress, &socketAddressSize) != 0) {
-            throw std::runtime_error("sceRudpGetLocalInfo: the answer for a socket sceNetGetsockname rejects was not measured");
-        }
-        const std::uint32_t copied = *addrLen > sizeof(socketAddress) ? static_cast<std::uint32_t>(sizeof(socketAddress)) : *addrLen;
-        std::memcpy(addr, socketAddress, copied);
-        *addrLen = copied;
+    if (socketId && !GuestCopyOut_nid_no_patch(socketId, &context.socketId, sizeof(context.socketId))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (vport && !GuestCopyOut_nid_no_patch(vport, &context.vport, sizeof(context.vport))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (muxMode && !GuestCopyOut_nid_no_patch(muxMode, &context.muxMode, sizeof(context.muxMode))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (!addr || !addrLen) return 0;
+    std::uint32_t requested = 0;
+    if (!GuestCopyIn_nid_no_patch(&requested, addrLen, sizeof(requested))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (requested == 0) return 0;
+    std::uint8_t socketAddress[0x1c]{};
+    std::uint32_t socketAddressSize = sizeof(socketAddress);
+    if (sceNetGetsockname(context.socketId, socketAddress, &socketAddressSize) != 0) {
+        throw std::runtime_error("sceRudpGetLocalInfo: the answer for a socket sceNetGetsockname rejects was not measured");
     }
+    const std::uint32_t copied = requested > sizeof(socketAddress) ? static_cast<std::uint32_t>(sizeof(socketAddress)) : requested;
+    if (!GuestCopyOut_nid_no_patch(addr, socketAddress, copied)) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyOut_nid_no_patch(addrLen, &copied, sizeof(copied))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

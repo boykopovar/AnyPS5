@@ -888,7 +888,7 @@ private:
             if (compared(index)) {
                 requireDccRange(copyCurrent(range, dccCopies[index]), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             } else {
-                GuestMemory::CollectWrites(range.address, range.bytes);
+                GuestMemory::CollectWritesUncached(range.address, range.bytes);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident multisampled DCC target or its metadata are not implemented");
@@ -900,7 +900,7 @@ private:
             if (fmaskCopy.compared) {
                 requireDccRange(copyCurrent(range, fmaskCopy), range, "writes to a resident native FMASK are not implemented");
             } else {
-                GuestMemory::CollectWrites(range.address, range.bytes);
+                GuestMemory::CollectWritesUncached(range.address, range.bytes);
                 requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident native FMASK are not implemented");
@@ -1935,6 +1935,28 @@ void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& acti
     std::unique_lock lock(guardedMutex());
     active->store(false, std::memory_order_release);
     if (std::erase_if(guarded(), [&](const auto& range) { return range.active == active; }) != 0u) guardedGeneration().fetch_add(1, std::memory_order_release);
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
+}
+
+void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::unique_lock lock(guardedMutex());
+    bool changed = false;
+    std::vector<std::shared_ptr<std::atomic<bool>>> retired;
+    for (const auto& range : guarded()) {
+        if (!range.fmask && range.plane != fmaskPlane) continue;
+        if (!range.use->hostOnly.load(std::memory_order_acquire) || range.use->claimed.load(std::memory_order_acquire)) continue;
+        if (address > range.address || range.address + range.bytes > address + bytes) continue;
+        if (std::find(retired.begin(), retired.end(), range.active) == retired.end()) retired.push_back(range.active);
+    }
+    if (retired.empty()) return;
+    for (const auto& active : retired) active->store(false, std::memory_order_release);
+    std::erase_if(guarded(), [&](const auto& range) {
+        if (std::find(retired.begin(), retired.end(), range.active) == retired.end()) return false;
+        if (range.metadataValid) range.metadataValid->store(false, std::memory_order_release);
+        return true;
+    });
+    guardedGeneration().fetch_add(1, std::memory_order_release);
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
