@@ -190,6 +190,15 @@ int main() {
     Require(setCursor(handle + 1, 0) == InvalidHandle, "ExtensionSetCursor took an unopened handle");
     Require(getCursor(handle, nullptr) == InvalidArg && getCursor(handle + 1, nullptr) == InvalidArg, "ExtensionGetCursor didn't check its output before the handle");
     Require(getCursor(handle + 1, buffer.data()) == InvalidHandle, "ExtensionGetCursor took an unopened handle");
+    std::int32_t cursor = 0x5a5a5a5a;
+    Require(setCursor(handle, 7) == Ok, "ExtensionSetCursor refused a valid cursor");
+    Require(getCursor(handle, &cursor) == Ok && cursor == 7, "ExtensionGetCursor didn't return the stored cursor");
+    Require(setCursor(handle, -3) == Ok, "ExtensionSetCursor refused a negative cursor");
+    Require(getCursor(handle, &cursor) == Ok && cursor == -3, "ExtensionGetCursor didn't replace the stored cursor");
+    errno = 71;
+    Require(getCursor(handle, reinterpret_cast<void*>(0x10)) == InvalidArg, "ExtensionGetCursor wrote to an unmapped guest cursor");
+    Require(errno == 71, "ExtensionGetCursor changed errno for an unmapped guest cursor");
+    Require(getCursor(handle, &cursor) == Ok && cursor == -3, "ExtensionGetCursor changed the cursor after a rejected write");
 
     Require(sceMouseClose(handle) == Ok, "sceMouseClose failed");
     Require(getHandle(1, 0, 0) == NoHandle, "GetHandle returned a closed handle");
