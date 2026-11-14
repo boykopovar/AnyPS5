@@ -4,9 +4,7 @@
 #include <cstdint>
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstring>
-#include <cerrno>
 #include <stdexcept>
 #include <chrono>
 #include <thread>
@@ -201,18 +199,28 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  if (info == nullptr) {
   return PAD_ERROR_INVALID_ARG;
  }
- std::memset(info, 0, sizeof(*info));
- if (SpecialHandle(handle)) return PAD_OK;
- info->touchPadInfo.pixelDensity = 44.86f;
- info->touchPadInfo.resolution.x = kTouchPadWidth;
- info->touchPadInfo.resolution.y = kTouchPadHeight;
- info->stickInfo.deadZoneLeft = 13;
- info->stickInfo.deadZoneRight = 13;
- info->connectionType = PAD_CONNECTION_TYPE_LOCAL;
+ PadControllerInformation localInfo{};
+ if (SpecialHandle(handle)) {
+  const int savedErrno = errno;
+  const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+  errno = savedErrno;
+  if (!copied) return PAD_ERROR_INVALID_ARG;
+  return PAD_OK;
+ }
+ localInfo.touchPadInfo.pixelDensity = 44.86f;
+ localInfo.touchPadInfo.resolution.x = kTouchPadWidth;
+ localInfo.touchPadInfo.resolution.y = kTouchPadHeight;
+ localInfo.stickInfo.deadZoneLeft = 13;
+ localInfo.stickInfo.deadZoneRight = 13;
+ localInfo.connectionType = PAD_CONNECTION_TYPE_LOCAL;
  const bool connected = Pad::IsConnected(PortOf(handle));
- info->connectedCount = connected ? 1 : 0;
- info->connected = connected;
- info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
+ localInfo.connectedCount = connected ? 1 : 0;
+ localInfo.connected = connected;
+ localInfo.deviceClass = PAD_DEVICE_CLASS_STANDARD;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 

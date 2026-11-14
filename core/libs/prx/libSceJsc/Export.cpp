@@ -1693,10 +1693,6 @@ int APS5_VABI _ZN3WTF6StringC2EPKh() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF7CPUTime3getEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF7RunLoop6isMainEv() {
     NotImplemented_nid_no_patch(__func__);
 }
