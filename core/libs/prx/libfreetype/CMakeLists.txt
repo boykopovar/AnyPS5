@@ -1,4 +1,4 @@
-add_library(libfreetype SHARED EXCLUDE_FROM_ALL Export.cpp src/Gzip.cpp src/CompressedStreams.cpp src/MultipleMasters.cpp src/FaceSettings.cpp src/Color.cpp src/FontMetadata.cpp src/LibraryHelpers.cpp)
+add_library(libfreetype SHARED EXCLUDE_FROM_ALL Export.cpp src/Gzip.cpp src/CompressedStreams.cpp src/MultipleMasters.cpp src/FaceSettings.cpp src/Color.cpp src/FontMetadata.cpp src/LibraryHelpers.cpp src/BitmapBlend.cpp)
 target_include_directories(libfreetype PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libfreetype PRIVATE freetype libSceFreeType)
 if(NOT ANYPS5_USE_SYSTEM_DEPS)
@@ -158,5 +158,55 @@ if(BUILD_TESTING AND NOT ANYPS5_USE_SYSTEM_DEPS)
         set_tests_properties(guest_legacy_freetype_library_nid PROPERTIES ENVIRONMENT_MODIFICATION "DYLD_LIBRARY_PATH=path_list_prepend:${legacyFreeTypeLibraryPatchedDir}")
     else()
         set_tests_properties(guest_legacy_freetype_library_nid PROPERTIES ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${legacyFreeTypeLibraryPatchedDir}")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_legacy_freetype_bitmap_blend_tests ${LIBS_INCLUDE_DIR}/tests/GuestLegacyFreeTypeBitmapBlend.cpp)
+    target_include_directories(guest_legacy_freetype_bitmap_blend_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_legacy_freetype_bitmap_blend_tests PRIVATE freetype ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_legacy_freetype_bitmap_blend_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_legacy_freetype_bitmap_blend_tests)
+    set(legacyFreeTypeBlendPatchedDir ${CMAKE_CURRENT_BINARY_DIR}/guest_legacy_freetype_bitmap_blend_modules/$<CONFIG>)
+    set(legacyFreeTypeBlendPatchedModule ${legacyFreeTypeBlendPatchedDir}/libfreetype.prx)
+    set(legacyFreeTypeBlendPatchedLibraries)
+    foreach(legacyFreeTypeBlendLibrary IN ITEMS libfreetype libSceFreeType libkernel libc)
+        set(legacyFreeTypeBlendLibraryOutput ${legacyFreeTypeBlendPatchedDir}/${legacyFreeTypeBlendLibrary}.prx)
+        if(legacyFreeTypeBlendLibrary STREQUAL "libc")
+            set(legacyFreeTypeBlendPatchArguments libc)
+        else()
+            set(legacyFreeTypeBlendPatchArguments ${legacyFreeTypeBlendLibrary} --preserve-export-list ${LIBC_EXPORT_LIST})
+        endif()
+        add_custom_command(OUTPUT ${legacyFreeTypeBlendLibraryOutput}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${legacyFreeTypeBlendPatchedDir}
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${legacyFreeTypeBlendLibrary}> ${legacyFreeTypeBlendLibraryOutput}.tmp
+            COMMAND $<TARGET_FILE:nid_patcher> ${legacyFreeTypeBlendPatchArguments} ${legacyFreeTypeBlendLibraryOutput}.tmp
+            COMMAND ${CMAKE_COMMAND} -E rename ${legacyFreeTypeBlendLibraryOutput}.tmp ${legacyFreeTypeBlendLibraryOutput}
+            DEPENDS nid_patcher ${legacyFreeTypeBlendLibrary} ${LIBC_EXPORT_LIST}
+            VERBATIM)
+        list(APPEND legacyFreeTypeBlendPatchedLibraries ${legacyFreeTypeBlendLibraryOutput})
+    endforeach()
+    add_custom_target(guest_legacy_freetype_bitmap_blend_libraries DEPENDS ${legacyFreeTypeBlendPatchedLibraries})
+    add_dependencies(guest_legacy_freetype_bitmap_blend_tests guest_legacy_freetype_bitmap_blend_libraries)
+    set(legacyFreeTypeBlendPatchedExecutable ${legacyFreeTypeBlendPatchedDir}/guest_legacy_freetype_bitmap_blend_tests${CMAKE_EXECUTABLE_SUFFIX})
+    add_custom_command(OUTPUT ${legacyFreeTypeBlendPatchedExecutable}
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:guest_legacy_freetype_bitmap_blend_tests> ${legacyFreeTypeBlendPatchedExecutable}.tmp
+        COMMAND $<TARGET_FILE:nid_patcher> --exec --only-sce ${legacyFreeTypeBlendPatchedExecutable}.tmp
+        COMMAND ${CMAKE_COMMAND} -E rename ${legacyFreeTypeBlendPatchedExecutable}.tmp ${legacyFreeTypeBlendPatchedExecutable}
+        DEPENDS guest_legacy_freetype_bitmap_blend_tests nid_patcher
+        VERBATIM)
+    add_custom_target(guest_legacy_freetype_bitmap_blend_fixture ALL DEPENDS ${legacyFreeTypeBlendPatchedExecutable})
+    add_test(NAME guest_legacy_freetype_bitmap_blend COMMAND guest_legacy_freetype_bitmap_blend_tests $<TARGET_FILE:libfreetype> $<TARGET_FILE:libSceFreeType> unpatched)
+    add_test(NAME guest_legacy_freetype_bitmap_blend_nid COMMAND ${legacyFreeTypeBlendPatchedExecutable} ${legacyFreeTypeBlendPatchedDir}/libfreetype.prx ${legacyFreeTypeBlendPatchedDir}/libSceFreeType.prx patched)
+    set_tests_properties(guest_legacy_freetype_bitmap_blend guest_legacy_freetype_bitmap_blend_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_legacy_freetype_bitmap_blend PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libfreetype>")
+        set_tests_properties(guest_legacy_freetype_bitmap_blend_nid PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_legacy_freetype_bitmap_blend_tests>;PATH=path_list_prepend:${legacyFreeTypeBlendPatchedDir}")
+    elseif(APPLE)
+        set_tests_properties(guest_legacy_freetype_bitmap_blend_nid PROPERTIES ENVIRONMENT_MODIFICATION "DYLD_LIBRARY_PATH=path_list_prepend:${legacyFreeTypeBlendPatchedDir}")
+    else()
+        set_tests_properties(guest_legacy_freetype_bitmap_blend_nid PROPERTIES ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${legacyFreeTypeBlendPatchedDir}")
     endif()
 endif()
