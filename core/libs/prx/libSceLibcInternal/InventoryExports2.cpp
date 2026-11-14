@@ -177,36 +177,6 @@ int APS5_VABI sceLibcInternalUnknown_yc_vi84_2aE_nid_no_patch() {
 }
 APS5_EXPORT("yc-vi84-2aE", sceLibcInternalUnknown_yc_vi84_2aE_nid_no_patch);
 
-int APS5_VABI _ZN6Dinkum7threads10lock_errorD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads10lock_errorD1Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads17_Throw_lock_errorEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads21_Throw_resource_errorEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads21thread_resource_errorD0Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6Dinkum7threads21thread_resource_errorD1Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNKSbIwSt11char_traitsIwESaIwEE5_XlenEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
