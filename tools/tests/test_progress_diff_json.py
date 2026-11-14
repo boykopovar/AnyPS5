@@ -37,6 +37,16 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(groups[2]["presence"], "added")
         self.assertEqual(original, [p.read_bytes() for p in paths])
 
+    def test_percentage_point_change_is_rounded_like_the_snapshot_percentages(self):
+        base, head = self.root / "base.json", self.root / "head.json"
+        for old, new, change in ((40.03, 40.09, 0.06), (40.09, 40.03, -0.06)):
+            with self.subTest(old=old, new=new):
+                base.write_text(json.dumps({"libraries": {"percent": old, "groups": []}, "shaders": {"percent": 100.0, "groups": []}}))
+                head.write_text(json.dumps({"libraries": {"percent": new, "groups": []}, "shaders": {"percent": 100.0, "groups": []}}))
+                result = self.cli("progress_diff.py", base, head)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["libraries"]["change_percentage_points"], change)
+
     def test_malformed_or_duplicate_groups_are_rejected_without_partial_json(self):
         good = {"libraries": {"percent": 0, "groups": []}, "shaders": {"percent": 0, "groups": []}}
         base, head = self.root / "base.json", self.root / "head.json"

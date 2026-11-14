@@ -13,6 +13,8 @@ void ReserveCommitterCore();
 
 void ReserveFinisherCore();
 
+void NameDriverThread(const char* name);
+
 }
 
 #endif

@@ -4,6 +4,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -148,6 +149,22 @@ std::atomic<bool> g_initialized{false};
 
 bool Initialized() {
     return g_initialized.load(std::memory_order_acquire);
+}
+
+template <typename T>
+bool StoreGuest(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool LoadGuest(T& value, const T* source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    return copied;
 }
 
 template <std::uint32_t TCommand, typename TRequest>
@@ -605,20 +622,21 @@ int APS5_VABI sceHidControlPswUpdateIsUpdateNeededForMultiDevice(std::uint32_t d
                                                                  std::uint16_t* first, std::uint16_t* second) {
     if (!Initialized()) return ErrorNotInitialized;
     if (first == nullptr) return ErrorInvalidArgument;
-    *first = 0;
+    if (!StoreGuest(first, std::uint16_t{0})) return ErrorInvalidArgument;
     if (version == nullptr) return ErrorInvalidArgument;
-    if (second != nullptr) *second = 0;
+    if (second != nullptr && !StoreGuest(second, std::uint16_t{0})) return ErrorInvalidArgument;
     constexpr std::size_t versionOffset = 0xa;
     std::array<std::uint8_t, UpdateImageSize> image{};
-    const std::uint16_t requested = *version;
+    std::uint16_t requested = 0;
+    if (!LoadGuest(requested, version)) return ErrorInvalidArgument;
     std::memcpy(image.data() + versionOffset, &requested, sizeof(requested));
     std::uint16_t firstReply = 0;
     std::uint16_t secondReply = 0;
     UpdateCheck request{device, 0, image.data(), UpdateImageSize, &firstReply, &secondReply};
     const int status = Control<UpdateCheckCommand>(request);
     if (status != 0) return status;
-    *first = firstReply;
-    if (second != nullptr) *second = secondReply;
+    if (!StoreGuest(first, firstReply)) return ErrorInvalidArgument;
+    if (second != nullptr && !StoreGuest(second, secondReply)) return ErrorInvalidArgument;
     return status;
 }
 
@@ -648,7 +666,8 @@ int APS5_VABI sceHidControlPswUpdateIsReady(std::uint32_t device, std::uint32_t*
     std::uint32_t reply = 0;
     Transfer request{device, 0, &reply};
     const int result = Control<0x80104865>(request);
-    *state = reply < UpdateReadiness.size() ? UpdateReadiness[reply] : UnknownUpdateReadiness;
+    const std::uint32_t value = reply < UpdateReadiness.size() ? UpdateReadiness[reply] : UnknownUpdateReadiness;
+    if (!StoreGuest(state, value)) return ErrorInvalidArgument;
     return result;
 }
 
@@ -665,7 +684,7 @@ int APS5_VABI sceHidControlPswUpdateGetStatus(std::uint32_t device, std::uint32_
     std::uint32_t reply = 0;
     Transfer request{device, 0, &reply};
     const int result = Control<0x80104867>(request);
-    *status = reply;
+    if (!StoreGuest(status, reply)) return ErrorInvalidArgument;
     return result;
 }
 
@@ -691,7 +710,8 @@ int APS5_VABI sceHidControlPswUpdateGetReconnectStatus(std::uint32_t* status) {
     request.reply = &reply;
     request.mode = 1;
     const int result = Control<0x80184869>(request);
-    *status = reply == 0 ? 0 : reply == 1 ? 1 : 2;
+    const std::uint32_t value = reply == 0 ? 0 : reply == 1 ? 1 : 2;
+    if (!StoreGuest(status, value)) return ErrorInvalidArgument;
     return result;
 }
 

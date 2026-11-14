@@ -3,6 +3,7 @@
 #include "NpUniversalDataSystem.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -219,10 +220,18 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordDataEstimateSize(const void* reco
     if (!g_initialized.load()) return kNotInitialized;
     if (record == nullptr) return kNullRecord;
     if (size == nullptr) return kInvalidArgument;
-    if (FindObject(const_cast<void*>(record)) == nullptr && FindArray(const_cast<void*>(record)) == nullptr) {
+    std::size_t estimated = 0;
+    if (const auto* object = FindObject(const_cast<void*>(record))) {
+        estimated = Uds::MessagePackSize(*object);
+    } else if (const auto* array = FindArray(const_cast<void*>(record))) {
+        estimated = Uds::MessagePackSize(*array);
+    } else {
         return kNullRecord;
     }
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(size, &estimated, sizeof(estimated));
+    errno = savedErrno;
+    return written ? 0 : kInvalidArgument;
 }
 
 int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBool(void* record, bool value) {
