@@ -1,5 +1,6 @@
 import argparse
 import html
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -68,9 +69,9 @@ def nonnegative_number(value):
     try:
         number = float(value)
     except ValueError:
-        raise argparse.ArgumentTypeError("must be a number")
-    if number < 0:
-        raise argparse.ArgumentTypeError("must be a number")
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
+    if not math.isfinite(number) or not 0 <= number < 1e300:
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
     return number
 
 
