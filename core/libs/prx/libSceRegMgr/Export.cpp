@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -118,14 +119,18 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
-        const auto* bytes = static_cast<const std::uint8_t*>(value);
+        std::vector<std::uint8_t> bytes(size);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), value, size);
+        errno = savedErrno;
+        if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         const bool changed = it == entries_.end() || it->second.binVal.size() != size ||
-                             std::memcmp(it->second.binVal.data(), bytes, size) != 0;
+                             (size != 0 && std::memcmp(it->second.binVal.data(), bytes.data(), size) != 0);
         RegEntry& entry = entries_[key];
         entry.type = TypeBin;
         entry.intVal = 0;
         entry.strVal.clear();
-        entry.binVal.assign(bytes, bytes + size);
+        entry.binVal = std::move(bytes);
         if (changed) changed_[key] = 0xff;
         return 0;
     }

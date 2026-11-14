@@ -87,6 +87,9 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImage(image.c_str(), -1, 0) == ErrorArgument, "negative x");
     Require(sceScreenShotSetOverlayImage(image.c_str(), 0, -1) == ErrorArgument, "negative y");
     Require(sceScreenShotSetOverlayImage(nullptr, 0, 0) == ErrorArgument, "null path");
+    errno = 71;
+    Require(sceScreenShotSetOverlayImage(reinterpret_cast<const char*>(0x10), 0, 0) == ErrorArgument, "unmapped path");
+    Require(errno == 71, "preserve errno on unmapped path");
     const std::string longPath(1024, 'a');
     Require(sceScreenShotSetOverlayImage(longPath.c_str(), 0, 0) == ErrorArgument, "path of 1024 characters");
     const std::string nearLimit(1023, 'a');
@@ -109,6 +112,9 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, 0, 10) == ErrorArgument, "origin 10");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 0) == ErrorArgument, "origin checked first");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 1) == ErrorArgument, "null path with valid origin");
+    errno = 71;
+    Require(sceScreenShotSetOverlayImageWithOrigin(reinterpret_cast<const char*>(0x10), 0, 0, 1) == ErrorArgument, "unmapped path with valid origin");
+    Require(errno == 71, "preserve errno on unmapped path with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), -1, 0, 1) == ErrorArgument, "negative x with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, -1, 1) == ErrorArgument, "negative y with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), maxX + 1, 0, 1) == ErrorArgument, "x past screen with valid origin");
