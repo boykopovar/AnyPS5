@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cmath>
 #include <cstdint>
+#include <cerrno>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +20,15 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #ifdef __GLIBC__
 #include <malloc.h>
 #endif
@@ -29,6 +40,65 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+static void CheckAttributeGuestMemory(FontHandle font) {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    const auto page = static_cast<std::size_t>(pageSize);
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+    Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    int original = 0;
+    Require(sceFontGetAttribute(font, 0, &original) == SCE_FONT_OK);
+    for (const auto offset : {page, page - sizeof(int) / 2}) {
+        auto* output = reinterpret_cast<int*>(memory + offset);
+        Require(sceFontDefineAttribute(nullptr, 123, output) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+        errno = EDOM;
+        Require(sceFontDefineAttribute(font, 123, output) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EDOM);
+        int current = 0;
+        Require(sceFontGetAttribute(font, 0, &current) == SCE_FONT_OK && current == original);
+    }
+    std::memset(memory, 0xa5, page);
+    auto* exact = reinterpret_cast<int*>(memory + page - sizeof(int));
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+    errno = EDOM;
+    Require(sceFontDefineAttribute(font, 123, exact) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EDOM);
+    for (std::size_t i = 0; i < page; ++i) Require(memory[i] == 0xa5);
+    int current = 0;
+    Require(sceFontGetAttribute(font, 0, &current) == SCE_FONT_OK && current == original);
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0);
+#endif
+    for (const int value : {std::numeric_limits<int>::min(), -1, 0, std::numeric_limits<int>::max()}) {
+        errno = EDOM;
+        Require(sceFontDefineAttribute(font, value, exact) == SCE_FONT_OK && errno == EDOM);
+        Require(*exact == current);
+        Require(sceFontGetAttribute(font, 0, &current) == SCE_FONT_OK && current == value);
+        for (std::size_t i = 0; i < page - sizeof(int); ++i) Require(memory[i] == 0xa5);
+    }
+    Require(sceFontDefineAttribute(font, original, nullptr) == SCE_FONT_OK);
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(memory, page * 2) == 0);
+#endif
+}
 
 static void SetFontDirectory(const std::filesystem::path& directory) {
 #ifdef _WIN32
@@ -842,6 +912,7 @@ int main() {
     Require(sceFontGetAttribute(font, 0x99, &attribute) == SCE_FONT_OK && attribute == 0x11);
     Require(sceFontDefineAttribute(font, 0, &attribute) == SCE_FONT_OK && attribute == 0x11);
     Require(sceFontDefineAttribute(font, 5, nullptr) == SCE_FONT_OK);
+    CheckAttributeGuestMemory(font);
     attribute = -1;
     Require(sceFontGetAttribute(font, 0, &attribute) == SCE_FONT_OK && attribute == 5);
     Require(sceFontGetAttribute(font, 0x11, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);

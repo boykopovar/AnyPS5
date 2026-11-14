@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
 
@@ -146,7 +147,13 @@ extern "C" {
 
 int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* oldAttribute) {
     return AccessFontSettings(fontHandle, [&](FontState& state) {
-        if (oldAttribute) *oldAttribute = state.attribute;
+        if (oldAttribute) {
+            const int previous = state.attribute;
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(oldAttribute, &previous, sizeof(previous));
+            errno = savedErrno;
+            if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        }
         state.attribute = attribute;
         return SCE_FONT_OK;
     });
