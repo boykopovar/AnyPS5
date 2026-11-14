@@ -1985,7 +1985,6 @@ int APS5_VABI sceIcuLegacyUnknown_qisHypG_plus_THA_nid_no_patch();
 int APS5_VABI ures_initStackObject_nid_postfix();
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix();
 int APS5_VABI udata_getInfo_nid_postfix();
-int APS5_VABI uloc_getLocaleForLCID_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_qsrqpMOCXYE_nid_no_patch();
 int APS5_VABI uloc_getVariant_nid_postfix();
 int APS5_VABI uhash_iremovei_nid_postfix();
@@ -2042,7 +2041,6 @@ int APS5_VABI _ZN6icu_686Locale15setKeywordValueEPKcS2_R10UErrorCode_nid_postfix
 int APS5_VABI sceIcuLegacyUnknown_sh4tekSCfDg_nid_no_patch();
 int APS5_VABI _ZNK6icu_6817UCharsTrieBuilder23matchNodesCanHaveValuesEv_nid_postfix();
 int APS5_VABI _ZN6icu_687UVector4sortEPFa8UElementS1_ER10UErrorCode_nid_postfix();
-int APS5_VABI uloc_getLCID_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_sj9YiLphihc_nid_no_patch();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EE8copyFromERKS1_R10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIteratorC2ERKNS_13UnicodeStringER11UParseErrorR10UErrorCode_nid_postfix();

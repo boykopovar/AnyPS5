@@ -205,8 +205,23 @@ def collect_docs(source, output):
         staging = Path(temporary)
         for document in documents:
             shutil.copy2(document, staging / document.name)
-        for document in documents:
-            (staging / document.name).replace(output / document.name)
+        try:
+            for document in documents:
+                (staging / document.name).replace(output / document.name)
+        except BaseException as error:
+            failures = []
+            for document in reversed(documents):
+                staged = staging / document.name
+                if staged.exists():
+                    continue
+                published = output / document.name
+                try:
+                    published.replace(staged)
+                except OSError as recovery_error:
+                    failures.append(f"{published}: {recovery_error}")
+            if failures:
+                raise RuntimeError(f"Documentation promotion failed: {error}; rollback failed: {'; '.join(failures)}; remaining published documents require recovery") from error
+            raise
 
 
 def package_web(build, output, version, revision):

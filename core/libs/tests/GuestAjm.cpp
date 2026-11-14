@@ -1023,6 +1023,9 @@ void TestInstanceContextOwnership(std::uint32_t context) {
     Require(untouched == 0xfeedu);
     Require(sceAjmInstanceCreate(0, 24, 0, nullptr) == invalidContext);
     Require(sceAjmInstanceCreate(context, 24, 0, nullptr) == invalidParameter);
+    errno = 71;
+    Require(sceAjmInstanceCreate(context, 24, 0, reinterpret_cast<uint32_t*>(0x10)) == invalidParameter);
+    Require(errno == 71);
     std::uint32_t other = 0;
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
     std::uint32_t first = 0;

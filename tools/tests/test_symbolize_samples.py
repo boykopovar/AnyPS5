@@ -1206,6 +1206,25 @@ class ThreadFilterInputTests(unittest.TestCase):
                         for path, content in original.items():
                             self.assertEqual(path.read_bytes(), content)
 
+    def test_thread_filter_rejects_a_thread_the_capture_does_not_have(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = root / "threads.txt"
+            capture.write_text("thread 12 samples 4\n  example.prx 0x1010 4 4\nthread 7 samples 10\n  example.prx 0x1010 10 10\n", encoding="utf-8")
+            for thread, extra in (("8", []), ("07", []), ("abc", ["--json"])):
+                with self.subTest(thread=thread):
+                    result = subprocess.run([sys.executable, symbolize_samples.__file__, str(capture),
+                                             "--libs", str(root), "--thread", thread, *extra],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"{capture}: thread {thread} is not in the capture (threads: 7, 12)", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+            result = subprocess.run([sys.executable, symbolize_samples.__file__, str(capture), "--libs", str(root), "--thread", "7"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("10 samples", result.stdout)
+
     def test_collapsed_stacks_reject_thread_filter_without_writing_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
