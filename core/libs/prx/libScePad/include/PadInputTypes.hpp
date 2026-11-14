@@ -61,6 +61,11 @@ enum class MouseButton : std::uint8_t {
     X2 = SDL_BUTTON_X2
 };
 
+enum class InputMode : std::uint8_t {
+    Hold,
+    Toggle
+};
+
 struct InputBinding {
     SDL_Scancode key;
     MouseButton mouseButton;
@@ -69,6 +74,7 @@ struct InputBinding {
     int wheelDirection = 0;
     int wheelTilt = 0;
     std::uint32_t padButtons = 0;
+    InputMode mode = InputMode::Hold;
 };
 
 }

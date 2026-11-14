@@ -154,7 +154,7 @@ std::uint32_t parsePadChord(std::string_view value) {
     return mask;
 }
 
-Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
+Pad::InputBinding parseSource(const InputAction& action, std::string_view source) {
     const auto separator = source.find(':');
     if (separator == std::string_view::npos) throw std::runtime_error("source must use TYPE:VALUE format");
     const auto type = upper(trim(source.substr(0, separator)));
@@ -208,6 +208,22 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         throw std::runtime_error("mouse wheel direction must be UP, DOWN, LEFT or RIGHT");
     }
     throw std::runtime_error("source type must be KEY, MOUSE, WHEEL or PAD");
+}
+
+Pad::InputBinding parseBinding(const InputAction& action, std::string_view source) {
+    auto mode = Pad::InputMode::Hold;
+    auto rest = trim(source);
+    const auto space = rest.find_first_of(" \t");
+    if (space != std::string_view::npos && upper(rest.substr(0, space)) == "TOGGLE") {
+        mode = Pad::InputMode::Toggle;
+        rest = trim(rest.substr(space + 1));
+    }
+    auto binding = parseSource(action, rest);
+    if (mode == Pad::InputMode::Hold) return binding;
+    if (action.control != Pad::InputControl::Button) throw std::runtime_error("Toggle can only be used on a pad button");
+    if (binding.wheelDirection != 0 || binding.wheelTilt != 0) throw std::runtime_error("Toggle cannot use the mouse wheel");
+    binding.mode = mode;
+    return binding;
 }
 
 enum class InputSetting {
