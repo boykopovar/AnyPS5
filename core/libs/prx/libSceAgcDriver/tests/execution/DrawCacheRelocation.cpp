@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "Optimization/SrtWalker.hpp"
@@ -17,6 +18,7 @@
 #include <sys/mman.h>
 #endif
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -53,6 +55,7 @@ alignas(16) std::array<float, 4> Other{0.5f, 0.0f, 0.0f, 0.0f};
 alignas(16) std::array<float, 4> ForwardedData{};
 alignas(32) std::array<std::array<std::uint64_t, 4>, 6> AlignedTables{};
 alignas(32) std::array<std::uint64_t, 4> OffsetTable{};
+alignas(32) std::array<std::uint64_t, 4> SecondOffsetTable{};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 constexpr std::uint32_t LinearAttrib3 = 0x9000000u;
 constexpr std::uint32_t RenderTargetAttrib3 = LinearAttrib3 | (0x1bu << 14u);
@@ -321,6 +324,15 @@ void UnrelocatedAliasesStayOut(bool libraries) {
     Require(counters.hits - start.hits == twice.size(), mode + ": the exact key of a repeated draw lost its hits next to draws whose alias never relocates (" + std::to_string(counters.hits - start.hits) + " hits in " + std::to_string(twice.size()) + " draws)");
 }
 
+std::atomic<bool> RestartArmed{false};
+std::atomic<bool> RestartChecked{false};
+
+void ChangeForwardedDataBeforeCheck() {
+    if (!RestartArmed.exchange(false)) return;
+    RestartChecked.store(AgcDriver::DriverDetail::DrawFinisher::OnFinisherThread());
+    ForwardedData[0] = 0.25f;
+}
+
 void MovedForwardedWordReachesStageDataHit(bool libraries) {
     Registered(TriangleVertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
     Registered(ForwardedPixelHeader, ForwardedPixelCode.data(), sizeof(ForwardedPixelCode), 1);
@@ -361,6 +373,34 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     Require(counters.lookups == before.lookups + 1 && counters.hits == before.hits + 1 && counters.stageDataHits == before.stageDataHits + 1, mode + ": a draw whose pointer table moved and whose data changed in place was not a relocated stage data hit (" + std::to_string(counters.hits - before.hits) + " hits, " + std::to_string(counters.stageDataHits - before.stageDataHits) + " stage data hits)");
     const auto moved = pixels({64, 255, 255, 64});
     Require(moved.empty(), mode + ": a relocated stage data hit did not draw with the moved user word: " + moved);
+
+    ForwardedData[0] = 1.0f;
+    RestartChecked.store(false);
+    RestartArmed.store(true);
+    AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeForwardedDataBeforeCheck);
+    const auto restartedCounters = draw(&OffsetTable[2]);
+    AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
+    Require(!RestartArmed.load(), mode + ": the capture check did not run for the relocated draw");
+    if (RestartChecked.load()) {
+        const auto skipped = restartedCounters.restartPatchSkipped - counters.restartPatchSkipped;
+        const auto expected = std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr ? 1u : 0u;
+        Require(skipped == expected, mode + ": the finisher restart re-patched a decode that the recipe verification had already replaced, or skipped a patch it needed (" + std::to_string(skipped) + " skips, expected " + std::to_string(expected) + ")");
+    }
+    std::printf("%s: relocated hit whose data changed before its capture check (checked on the %s): %llu hits, %llu inserts\n", mode.c_str(), RestartChecked.load() ? "draw finisher" : "queue worker", static_cast<unsigned long long>(restartedCounters.hits - counters.hits), static_cast<unsigned long long>(restartedCounters.inserts - counters.inserts));
+    const auto restarted = pixels({64, 255, 255, 64});
+    Require(restarted.empty(), mode + ": a relocated hit recaptured after its data changed did not draw with its own user word: " + restarted);
+    const auto other = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Other.data()));
+    for (auto& table : AlignedTables) table[0] = other;
+    const auto again = draw(&OffsetTable[2]);
+    std::printf("%s: the same draw again after the donor tables moved to other data: %llu hits, %llu inserts\n", mode.c_str(), static_cast<unsigned long long>(again.hits - restartedCounters.hits), static_cast<unsigned long long>(again.inserts - restartedCounters.inserts));
+    const auto repeated = pixels({64, 255, 255, 64});
+    Require(repeated.empty(), mode + ": a draw cached after its relocated hit was recaptured drew through the donor's user word: " + repeated);
+    SecondOffsetTable[2] = data;
+    const auto moved2 = draw(&SecondOffsetTable[2]);
+    std::printf("%s: a draw through a second moved table at the same alignment: %llu lookups, %llu hits, %llu stage data hits, %llu inserts\n", mode.c_str(), static_cast<unsigned long long>(moved2.lookups - again.lookups), static_cast<unsigned long long>(moved2.hits - again.hits), static_cast<unsigned long long>(moved2.stageDataHits - again.stageDataHits), static_cast<unsigned long long>(moved2.inserts - again.inserts));
+    Require(moved2.hits == again.hits + 1 && moved2.inserts == again.inserts, mode + ": a draw through a second moved table was not a relocated hit after its alias's entry was recaptured (" + std::to_string(moved2.hits - again.hits) + " hits, " + std::to_string(moved2.inserts - again.inserts) + " inserts)");
+    const auto second = pixels({64, 255, 255, 64});
+    Require(second.empty(), mode + ": a draw through a second moved table drew wrong pixels: " + second);
 }
 
 }

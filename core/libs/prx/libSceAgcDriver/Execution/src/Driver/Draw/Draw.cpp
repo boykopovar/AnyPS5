@@ -131,6 +131,7 @@ struct DrawTail {
     DrawPhaseTiming phaseTiming{false, phaseMs, phaseLap};
     Pm4::DrawParameters drawParameters{};
     Pm4::DrawParameters resolvedParameters{};
+    std::vector<DrawUserPatch> userPatches;
     bool pipelined = false;
     bool traceIndirect = false;
     std::uint64_t dumpTarget = 0;
@@ -400,7 +401,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     auto& dataEntry = tail.dataEntry;
     auto& shapeKey = tail.shapeKey;
     std::uint64_t drawIdentity = 0, drawAlias = 0;
-    std::vector<DrawUserPatch> userPatches;
+    auto& userPatches = tail.userPatches;
     if (registerKey) {
         const auto keyStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         std::shared_ptr<const DrawRelocation> relocation;
@@ -1433,6 +1434,16 @@ void Driver::restartFinishedDraw(DrawTail& tail) {
             program.memory = {{{fresh.codeAddress, std::as_bytes(std::span(fresh.code))}, {fresh.headerAddress, fresh.header}}};
             if (fresh.header.empty()) NoteRawGraphicsDraw(fresh);
             program.snapshot = std::move(snapshot);
+        }
+    }
+    if (tail.drawHit && !tail.userPatches.empty()) {
+        if (verifyDrawRecipe()) {
+            std::lock_guard cacheLock(drawCacheMutex);
+            ++drawEntryCounters.restartPatchSkipped;
+        } else {
+            auto patched = std::make_shared<DrawDecode>(*tail.decode);
+            for (const auto& patch : tail.userPatches) patched->programs[patch.program].userData[patch.index] = patch.value;
+            tail.decode = std::move(patched);
         }
     }
     const auto& programs = *tail.programs;
