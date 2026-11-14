@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
+#include "Optimization/ResourceTracker.hpp"
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
@@ -12779,6 +12780,163 @@ void verifyRuntimeImageSwitchDeduplication() {
     require(mipTargets.at(0u) != mipTargets.at(1u), "runtime image switch deduplication: storage image modes with different mip modes shared an OpSwitch target");
 }
 
+void verifyBaseFormattedReadExtent() {
+    using namespace ShaderRecompiler;
+    const auto track = [](MemoryInfo memory, IrOpcode opcode = IrOpcode::LoadBufferU32x3, bool unknownOffset = false, bool mixed = false, std::uint32_t offsetShape = 0u) {
+        IrProgram program;
+        program.Resources().stage = IrShaderStage::Compute;
+        program.Resources().srtPlanComplete = true;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        IrBuilder builder(program);
+        builder.SetInsertionPoint(block);
+        auto& zero = builder.Constant(0u);
+        auto& descriptor = builder.Emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&builder.Constant(0x1000u), &zero, &builder.Constant(1u), &builder.Constant(0x2004a3acu)});
+        auto& active = program.CreateValue(IrOpcode::Void, IrType::U1);
+        active.SetImmediateBool(true);
+        auto& unknown = program.CreateValue(IrOpcode::Void, IrType::U32);
+        IrValue* soffset = &zero;
+        if (offsetShape != 0u) {
+            program.Resources().srtReads.push_back({&zero, 0u});
+            auto& srt = builder.Emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
+            auto& flat = builder.Emit(IrOpcode::ReadConst, IrType::U32, {&srt, &builder.Constant(offsetShape == 4u ? 1u : 0u)});
+            auto& shifted = builder.Emit(IrOpcode::ShiftRightLogical32, IrType::U32, {&flat, &builder.Constant(offsetShape == 3u ? 32u : 5u)});
+            soffset = &builder.Emit(IrOpcode::BitwiseAnd32, IrType::U32, {&shifted, &builder.Constant(0x7fu)});
+            if (offsetShape == 2u) soffset = &builder.Emit(IrOpcode::IAdd32, IrType::U32, {soffset, &builder.Constant(1u)});
+        }
+        const auto emit = [&](MemoryInfo info, IrOpcode op) {
+            const auto index = static_cast<std::uint32_t>(program.Resources().memoryInfo.size());
+            program.Resources().memoryInfo.push_back(info);
+            if (op == IrOpcode::ReadConstBuffer) (void)builder.Emit(op, IrOpcodeType(op), {&descriptor, &zero}, MemoryFlags{index, 0u});
+            else if (BufferAccessOf(op) == BufferAccess::Write || BufferAccessOf(op) == BufferAccess::Atomic) (void)builder.Emit(op, IrOpcodeType(op), {&descriptor, &zero, &zero, &zero, &zero, &active}, MemoryFlags{index, 0u});
+            else (void)builder.Emit(op, IrOpcodeType(op), {&descriptor, &zero, unknownOffset ? &unknown : &zero, soffset, &active}, MemoryFlags{index, 0u});
+        };
+        emit(memory, opcode);
+        if (mixed) {
+            memory.formatted = false;
+            emit(memory, IrOpcode::LoadBufferU32x3);
+        }
+        ResourceTracker{}.Track(program);
+        require(program.Info().buffers.size() == 1u, "formatted read extent: tracker did not merge one V#");
+        return program.Info();
+    };
+    MemoryInfo memory;
+    memory.kind = ResourceKind::Buffer;
+    memory.formatted = true;
+    memory.dataDwords = 3u;
+    const auto positive = track(memory);
+    require(positive.buffers[0].baseFormattedReads, "formatted read extent: base formatted load was not proved");
+    require(!BufferResource{}.baseFormattedReads, "formatted read extent: missing proof did not fail closed");
+    const auto candidate = [](const ShaderInfo& info, std::uint32_t format, std::uint32_t selectors, std::span<const std::uint32_t> flat = {}, std::span<const SrtReadPoison> poison = {}, std::uint32_t nullRoots = 0u) {
+        BindingAllocationResult allocation;
+        allocation.layout.descriptors.push_back({DescriptorBindingKind::Buffers, {0u}});
+        ResourceSnapshot snapshot;
+        snapshot.buffers.push_back({{0x1000u, 0u, 1u, 0x20000000u | format << 12u | selectors}, 4u});
+        snapshot.flattenedSrt.assign(flat.begin(), flat.end());
+        snapshot.srtPoison.assign(poison.begin(), poison.end());
+        snapshot.nullRootReads = nullRoots;
+        DescriptorBindingBuilder{}.Populate(allocation, info, IrShaderStage::Compute, 0u, snapshot, {});
+        require(allocation.bindings.size() == 1u && allocation.bindings[0].bufferReadExtent.size() == 1u, "formatted read extent: candidate metadata missing");
+        return allocation.bindings[0].bufferReadExtent[0];
+    };
+    for (const auto& [format, components] : std::array<std::pair<std::uint32_t, std::uint32_t>, 4>{{{22u, 1u}, {62u, 2u}, {73u, 3u}, {77u, 4u}}}) {
+        auto info = positive;
+        info.buffers[0].formattedReadMask = (1u << components) - 1u;
+        require(candidate(info, format, DstSel(4u, 5u, 6u, 7u)) == components * 4u, "formatted read extent: complete 32-bit element was not covered");
+    }
+    require(candidate(positive, 30u, DstSel(4u, 5u, 6u)) == 0u, "formatted read extent: packed format gained a DWORD-count footprint");
+    require(candidate(positive, 74u, DstSel(4u, 4u, 6u)) == 0u, "formatted read extent: incomplete source coverage was accepted");
+    require(candidate(positive, 74u, DstSel(4u, 5u, 7u)) == 0u, "formatted read extent: missing source component used modulo inference");
+    require(candidate(positive, 74u, DstSel(6u, 4u, 5u)) == 12u, "formatted read extent: complete component permutation was rejected");
+    auto altered = memory;
+    altered.formatted = false;
+    require(!track(altered).buffers[0].baseFormattedReads, "formatted read extent: raw load gained proof");
+    require(!track(memory, IrOpcode::LoadBufferU32x3, false, true).buffers[0].baseFormattedReads, "formatted read extent: mixed raw reads retained proof");
+    altered = memory;
+    altered.kind = ResourceKind::ScalarBuffer;
+    altered.dataDwords = 1u;
+    require(!track(altered, IrOpcode::ReadConstBuffer).buffers[0].baseFormattedReads, "formatted read extent: scalar load gained proof");
+    altered = memory;
+    altered.typed = true;
+    altered.dataFormat = 6u;
+    altered.numberFormat = 1u;
+    require(!track(altered).buffers[0].baseFormattedReads, "formatted read extent: typed load gained proof");
+    altered = memory;
+    altered.offset = 4u;
+    require(!track(altered).buffers[0].baseFormattedReads, "formatted read extent: instruction offset gained proof");
+    require(!track(memory, IrOpcode::LoadBufferU32x3, true).buffers[0].baseFormattedReads, "formatted read extent: unknown offset gained proof");
+    require(!track(memory, IrOpcode::StoreBufferU32).buffers[0].baseFormattedReads, "formatted read extent: store gained proof");
+    require(!track(memory, IrOpcode::BufferAtomicIAdd32).buffers[0].baseFormattedReads, "formatted read extent: atomic gained proof");
+    const auto runtimeOffset = track(memory, IrOpcode::LoadBufferU32x3, false, false, 1u);
+    require(runtimeOffset.buffers[0].baseFormattedReads, "formatted read extent: SRT bitfield zero condition was not retained");
+    for (const auto& [word, extent] : std::array<std::pair<std::uint32_t, std::uint32_t>, 4>{{{0x15u, 12u}, {0x35u, 0u}, {0xfffff015u, 12u}, {0x15u, 12u}}}) {
+        require(candidate(runtimeOffset, 74u, DstSel(4u, 5u, 6u), std::span(&word, 1u)) == extent, "formatted read extent: runtime bitfield zero condition used the wrong captured value");
+    }
+    const std::array<std::uint32_t, 1> zeroField{0x15u};
+    const std::array<SrtReadPoison, 1> poison{{{0u, 0x20u, 0x3000u}}};
+    require(candidate(runtimeOffset, 74u, DstSel(4u, 5u, 6u)) == 0u, "formatted read extent: absent SRT slot gained proof");
+    require(candidate(runtimeOffset, 74u, DstSel(4u, 5u, 6u), zeroField, poison) == 0u, "formatted read extent: poisoned SRT slot gained proof");
+    require(candidate(runtimeOffset, 74u, DstSel(4u, 5u, 6u), zeroField, {}, 1u) == 0u, "formatted read extent: null-root SRT capture gained proof");
+    for (const auto shape : {2u, 3u, 4u}) require(!track(memory, IrOpcode::LoadBufferU32x3, false, false, shape).buffers[0].baseFormattedReads, "formatted read extent: unsupported or invalid SRT expression gained proof");
+
+    const std::array<std::uint32_t, 10> code{0xe0082000u, 0x80000200u, 0xbf8c3f70u, 0xe0701000u, 0x80010200u, 0xe0701004u, 0x80010300u, 0xe0701008u, 0x80010400u, 0xbf810000u};
+    std::array<std::uint32_t, 8> userData{0x1000u, 0u, 0u, 0x2004a3acu, 0x2000u, 0u, 12u, 0x31016facu};
+    auto request = FrontendRequest(code, userData);
+    const auto prepared = PrepareShader(request);
+    SrtRuntime runtime{};
+    runtime.userData = userData;
+    runtime.shaderBase = request.shader.codeAddress;
+    for (const auto& [base, records] : std::array<std::pair<std::uint32_t, std::uint32_t>, 5>{{{0x1000u, 0u}, {0x1000u, 1u}, {0x3000u, 1u}, {0u, 0u}, {0x1000u, 1u}}}) {
+        userData[0] = base;
+        userData[2] = records;
+        const auto capture = CaptureResources(request, runtime, *prepared);
+        const auto result = MaterializeShader(request, *capture, *prepared);
+        bool found = false;
+        for (const auto& binding : result->bindings) {
+            if (binding.role != DescriptorRole::GuestBuffers) continue;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                const auto* words = binding.guestDescriptor.data() + element * 4u;
+                if (words[3] != 0x2004a3acu) continue;
+                const auto extent = binding.bufferReadExtent.at(element);
+                require(words[0] == base && words[2] == records && (records == 0u ? extent == 0u || extent == 12u : extent == 12u), "formatted read extent: presence changes froze candidate extent or descriptor words");
+                found = true;
+            }
+        }
+        require(found, "formatted read extent: materialized input descriptor was absent");
+    }
+    const std::array<std::uint32_t, 16> runtimeCode{
+        0xf4000284u, 0xfa000000u, 0xbf8cc07fu, 0x900a850au, 0x870aff0au, 0x7fu,
+        0xe0082000u, 0x0a000200u, 0xbf8c3f70u,
+        0xe0701000u, 0x80010200u, 0xe0701004u, 0x80010300u, 0xe0701008u, 0x80010400u, 0xbf810000u,
+    };
+    std::uint32_t attribute = 0x15u;
+    const auto attributeAddress = reinterpret_cast<std::uintptr_t>(&attribute);
+    std::array<std::uint32_t, 10> runtimeUser{0x1000u, 0u, 1u, 0x2004a3acu, 0x2000u, 0u, 12u, 0x31016facu, static_cast<std::uint32_t>(attributeAddress), static_cast<std::uint32_t>(attributeAddress >> 32u)};
+    const std::array<MemoryRegion, 1> regions{{{attributeAddress, std::as_bytes(std::span(&attribute, 1u))}}};
+    auto runtimeRequest = FrontendRequest(runtimeCode, runtimeUser);
+    runtimeRequest.context.memory = regions;
+    runtimeRequest.useCache = true;
+    const auto runtimePrepared = PrepareShader(runtimeRequest);
+    RequestMemoryView view(regions);
+    const auto capturedRuntime = view.MakeRuntime(runtimeUser, runtimeRequest.shader.codeAddress);
+    for (const auto& [word, extent] : std::array<std::pair<std::uint32_t, std::uint32_t>, 4>{{{0x15u, 12u}, {0x35u, 0u}, {0xfffff015u, 12u}, {0x15u, 12u}}}) {
+        attribute = word;
+        const auto capture = CaptureResources(runtimeRequest, capturedRuntime, *runtimePrepared);
+        const auto result = MaterializeShader(runtimeRequest, *capture, *runtimePrepared);
+        bool found = false;
+        for (const auto& binding : result->bindings) {
+            if (binding.role != DescriptorRole::GuestBuffers) continue;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                if (binding.guestDescriptor[element * 4u + 3u] != 0x2004a3acu) continue;
+                require(binding.bufferReadExtent.at(element) == extent, "formatted read extent: prepared or masked memo froze an SRT-dependent extent");
+                found = true;
+            }
+        }
+        require(found, "formatted read extent: runtime-offset input descriptor was absent");
+    }
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -12790,6 +12948,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--layer-specialization-release") {
             verifyLayerSpecializationRelease();
             std::cout << "Layer specialization metadata survives SPIR-V release and rebuild\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--base-formatted-read-extent") {
+            verifyBaseFormattedReadExtent();
+            std::cout << "Base formatted read extents preserve static and runtime SRT proofs across cached materialization\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {

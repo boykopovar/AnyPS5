@@ -38,6 +38,7 @@ struct BufferSubstitute {
 };
 
 bool BufferDescriptorPresent(const DescriptorValue& descriptor);
+std::uint32_t BaseFormattedReadExtent(const BufferResource& buffer, std::uint32_t word3, const ResourceSnapshot& snapshot);
 BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index);
 
 struct DescriptorBindingPlan {

@@ -38,6 +38,31 @@ namespace {
     throw std::runtime_error(message);
 }
 
+std::uint32_t bufferReadExtent(const BufferResource& buffer, std::uint32_t word3, const ResourceSnapshot& snapshot) {
+    if (!buffer.baseFormattedReads || !buffer.read || buffer.written || buffer.atomic || buffer.scalar || buffer.formattedReadMask == 0u) return 0u;
+    if (!buffer.baseReadZeroMasks.empty() && snapshot.nullRootReads != 0u) return 0u;
+    for (const auto& proof : buffer.baseReadZeroMasks) {
+        if (proof.slot >= snapshot.flattenedSrt.size() || (snapshot.flattenedSrt[proof.slot] & proof.mask) != 0u) return 0u;
+        if (std::ranges::any_of(snapshot.srtPoison, [&](const auto& poison) { return poison.slot == proof.slot; })) return 0u;
+    }
+    const auto format = (word3 >> 12u) & 0x7fu;
+    if (format == 0u || format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float)) return 0u;
+    const auto info = GetFormatInfo(static_cast<IrBufferFormat>(format));
+    if (info.packedBitfield || info.componentCount == 0u || info.componentCount > 4u) return 0u;
+    for (std::uint32_t component = 0; component < info.componentCount; ++component) {
+        if (info.componentBits[component] != 32u) return 0u;
+    }
+    std::uint32_t sources = 0u;
+    for (std::uint32_t output = 0; output < 4u; ++output) {
+        if ((buffer.formattedReadMask & (1u << output)) == 0u) continue;
+        const auto selector = (word3 >> (output * 3u)) & 7u;
+        if (selector <= 1u) continue;
+        if (selector < 4u || selector - 4u >= info.componentCount) return 0u;
+        sources |= 1u << (selector - 4u);
+    }
+    return sources == (1u << info.componentCount) - 1u ? info.byteSize : 0u;
+}
+
 // Debug aid: APS5_TRACE_BUFFER_WRITTEN=1 prints, after every Populate, how many guest buffer
 // elements the program may store to and how many it only loads (this call and cumulative), so the
 // replay tool shows what a driver gains from DescriptorBinding::bufferWritten.
@@ -429,6 +454,10 @@ bool BufferDescriptorPresent(const DescriptorValue& descriptor) {
     return descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
 }
 
+std::uint32_t BaseFormattedReadExtent(const BufferResource& buffer, std::uint32_t word3, const ResourceSnapshot& snapshot) {
+    return bufferReadExtent(buffer, word3, snapshot);
+}
+
 BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index) {
     const bool present = BufferDescriptorPresent(descriptor);
     if (!present && !substitutes.empty()) return index < substitutes.size() && substitutes[index].known ? substitutes[index] : BufferSubstitute{};
@@ -621,6 +650,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.bufferWritten.push_back(buffer.written || buffer.atomic);
                 physical.bufferRead.push_back(buffer.read);
                 physical.bufferExtent.push_back(buffer.maxByteExtent);
+                physical.bufferReadExtent.push_back(BaseFormattedReadExtent(buffer, BufferSpecializationFields(snapshot.buffers.at(resource), substitutes, resource).word3, snapshot));
                 if (buffer.written || buffer.atomic) ++entry.writtenBuffers;
                 else ++entry.readOnlyBuffers;
             }
