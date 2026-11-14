@@ -94,6 +94,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WKOpenPanelParametersCopyAllowedMIMETypes](../../../core/libs/prx/libSceNKWebKit/src/OpenPanelParameters.cpp) (libSceNKWebKit) - derives allowed MIME types from `acceptMIMETypes` and `acceptFileExtensions` via `WebCore::MIMETypeRegistry::allowedMIMETypes` in [Mime.cpp](../../../core/libs/prx/libSceNKWebKit/src/Mime.cpp) following `API::OpenPanelParameters::allowedMIMETypes` (`Source/WebKit/UIProcess/API/APIOpenPanelParameters.cpp`) and `MIMETypeRegistry::allowedMIMETypes` (`Source/WebCore/platform/MIMETypeRegistry.cpp`), ASCII-lowercasing accept MIME types, mapping known extensions (leading dot trimmed) through `Mime.cpp`'s extension table, deduplicating in order, and skipping unknown extensions; extension coverage is bounded by that table, no export creates an open panel instance in host execution yet, and console ABI and behavior are unverified.
 - [WKOpenPanelParametersCopyAllowedMIMETypes](../../../core/libs/prx/libSceNKWebKit/src/OpenPanelParameters.cpp) (libSceNKWebKit) - nothing outside tests creates an `OpenPanelParameters` (`WKPageSetPageUIClient`, `WKViewCreate`, and `WebPageProxy::runOpenPanel` open-panel delivery from WebProcess `<input type="file">` are unimplemented, so titles never receive an instance yet); extension mapping is bounded by [Mime.cpp](../../../core/libs/prx/libSceNKWebKit/src/Mime.cpp)'s table, and console ABI and behavior are unverified. Otherwise derives allowed MIME types via `WebCore::MIMETypeRegistry::allowedMIMETypes` following `APIOpenPanelParameters.cpp` and `MIMETypeRegistry.cpp`, lowercasing ASCII MIME types, mapping known extensions (leading dot trimmed), deduplicating in order, and skipping unknown extensions.
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
+- [WTF callOnMainThread and callOnMainRunLoop](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - console execution is unverified. The 8-byte `Function` and `[D1, D0, call]` vtable follow the pinned [Function.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Function.h#L37-L121). A null or empty `Function` throws. A cross-thread `AndWait` rethrows the callable's exception after destroying it. An `AndWait` blocks forever if the WKRunLoop stops or is reinitialised first, or if called from the `WKRunLoopInitializeMain` thread when `initializeMainThread` ran on another thread or never ran, which upstream's single main thread rules out. Otherwise follows [MainThread.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/MainThread.cpp#L66-L145) without `USE(WEB_THREAD)`. Closes when: compared with a console module.
 - [WKApplicationCacheManager](../../../core/libs/prx/libSceNKWebKit/src/ApplicationCacheManager.cpp) (libSceNKWebKit) - `WKApplicationCacheManagerDeleteAllEntries`, `WKApplicationCacheManagerDeleteEntriesForOrigin` and `WKApplicationCacheManagerGetApplicationCacheOrigins` are empty no-ops following [WKApplicationCacheManager.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKApplicationCacheManager.cpp) at revision `80f77e94c6`; console runtime binaries have not been measured. Closes when: compared with a console module.
 - [WebCore::registerMemoryReleaseNotifyCallbacks](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - empty no-op whose console body was not checked. It follows the non-Cocoa definition `void registerMemoryReleaseNotifyCallbacks() { }` in [MemoryRelease.cpp L239-L244](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/MemoryRelease.cpp#L239-L244), declared `void` in [MemoryRelease.h L46](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/MemoryRelease.h#L46); [WebKit e12a212a531a](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WebCore/page/MemoryRelease.cpp#L226-L231) has the same body. Closes when: compared with a console module.
 
@@ -1467,7 +1468,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF15isWordTextBreakEP14UBreakIterator` | `Jb1OVO08cOE` |
 | `_ZN3WTF15memoryFootprintEv` | `DLog94EYwFI` |
 | `_ZN3WTF16addSignalHandlerENS_6SignalEONS_8FunctionIFNS_12SignalActionES0_RNS_7SigInfoERNS_17PlatformRegistersEEEE` | `l0Z0NQiqr3M` |
-| `_ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE` | `DDIR4QpfiIg` |
 | `_ZN3WTF16codePointCompareENS_10StringViewES0_` | `PAp-xS1m7bI` |
 | `_ZN3WTF16codePointCompareERKNS_6StringES2_` | `qpi9pgZKF5g` |
 | `_ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE` | `9NbKoZNi0Jo` |
@@ -1484,7 +1484,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF17StringPrintStreamD0Ev` | `eSdAHApUsso` |
 | `_ZN3WTF17StringPrintStreamD1Ev` | `EOmLhk6TiW4` |
 | `_ZN3WTF17StringPrintStreamD2Ev` | `DyzD9dy1J9M` |
-| `_ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE` | `9v4s2WAlWKI` |
 | `_ZN3WTF17wordBreakIteratorENS_10StringViewE` | `fmD6lvba-e0` |
 | `_ZN3WTF18ExternalStringImpl6createEPKDsjONS_8FunctionIFvPS0_PvjEEE` | `8Elqwzjf6KQ` |
 | `_ZN3WTF18ExternalStringImpl6createEPKhjONS_8FunctionIFvPS0_PvjEEE` | `g6gKfjgJEGU` |
@@ -1534,7 +1533,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF22CrossThreadTaskHandlerD1Ev` | `RQGUZHWVCLY` |
 | `_ZN3WTF22CrossThreadTaskHandlerD2Ev` | `F9bDxOEGeA8` |
 | `_ZN3WTF22TextBreakIteratorCache9singletonEv` | `m9nEKMAp80k` |
-| `_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE` | `95FhkfvoGQM` |
 | `_ZN3WTF24AutomaticThreadCondition4waitERNS_4LockE` | `4Xe0NrWsndM` |
 | `_ZN3WTF24AutomaticThreadCondition7waitForERNS_4LockENS_7SecondsE` | `6VIC0pMsv30` |
 | `_ZN3WTF24AutomaticThreadCondition9notifyAllERKNS_14AbstractLockerE` | `Ei7Gxq2j6e8` |
@@ -1543,7 +1541,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF24AutomaticThreadConditionC2Ev` | `AiOIdr8qlv8` |
 | `_ZN3WTF24AutomaticThreadConditionD1Ev` | `eW8DnRSDucM` |
 | `_ZN3WTF24AutomaticThreadConditionD2Ev` | `qjebiZKT83w` |
-| `_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE` | `uTDkdY+Gquc` |
 | `_ZN3WTF25activateSignalHandlersForENS_6SignalE` | `Pyu7Zyt6XUE` |
 | `_ZN3WTF26getAndResetAccumulatedLogsEv` | `bD3nxh6Om44` |
 | `_ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj` | `3PZOiy2oZ9w` |
