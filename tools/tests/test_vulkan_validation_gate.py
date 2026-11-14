@@ -77,6 +77,33 @@ class ReportTests(unittest.TestCase):
             "probe": ["UNASSIGNED-Device address out of bounds", "UNASSIGNED-Threading-Info"]})
         self.assertEqual(report["exit_code"], 1)
 
+    def test_validation_messages_with_any_id_are_compared(self):
+        inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
+        text = ('<testsuite><testcase name="probe"><system-err>' + inserted + '\n'
+                'Validation Error: [ Undefined-Value-ShaderFragmentOutputMismatch ] pStages[1] writes to location 2\n'
+                'Validation Warning: [ WARNING-Shader-OutputNotConsumed ] vertex output [ 3 ] is not consumed\n'
+                'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
+                'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
+                'Validation Error: [ VUID-Real-1 ] pAttachments[0] is invalid\n'
+                'environment: Validation-Fake-Configuration [ Fake-Id ]'
+                '</system-err></testcase></testsuite>')
+        tests, problems = self.report(text)
+        self.assertEqual(tests["probe"]["diagnostics"], {
+            "Undefined-Value-ShaderFragmentOutputMismatch": 1,
+            "WARNING-Shader-OutputNotConsumed": 1,
+            "SubmitValidation-WaitEvents-WrongQueue": 2,
+            "VUID-Real-1": 1,
+        })
+        self.assertEqual(problems, [])
+        report = gate.compare([
+            {"side": "baseline", "iteration": 1, "returncode": 0, "problems": [],
+             "tests": {"probe": {"diagnostics": {"VUID-Real-1": 1}}}},
+            {"side": "candidate", "iteration": 1, "returncode": 0, "problems": [], "tests": tests},
+        ])
+        self.assertEqual(report["new_diagnostics"], {
+            "probe": ["SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
+        self.assertEqual(report["exit_code"], 1)
+
     def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
         inserted = '[Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (layer.json)'
         for line, problems in ((inserted, []), ('Insert instance layer "VK_LAYER_OTHER" (layer.json)', ["probe"]), ("", ["probe"])):
