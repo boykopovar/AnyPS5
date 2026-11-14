@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Resource/include/Lifecycle.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
