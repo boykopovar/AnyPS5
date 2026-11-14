@@ -194,5 +194,37 @@ class GenerateGfx1013FormsTests(unittest.TestCase):
             isa_profiles.generate_gfx1013_forms(RDNA1, RDNA1)
 
 
+class LlvmSupplementalFormsTests(unittest.TestCase):
+    def test_table_has_distinct_rows_that_pass_validation(self):
+        rows = isa_profiles.llvm_gfx1013_additional_forms()
+        self.assertEqual(len(rows), 96)
+        self.assertEqual(len(set(rows)), len(rows))
+        self.assertEqual(isa_profiles.validate_forms(list(rows)), list(rows))
+
+    def test_scalar_store_atomic_and_cache_opcodes(self):
+        rows = set(isa_profiles.llvm_gfx1013_additional_forms())
+        self.assertIn(("S_STORE_DWORD", "SMEM", "base", 0x10), rows)
+        self.assertIn(("S_STORE_DWORDX4", "SMEM", "base", 0x12), rows)
+        self.assertIn(("S_SCRATCH_STORE_DWORDX2", "SMEM", "base", 0x16), rows)
+        self.assertIn(("S_BUFFER_STORE_DWORDX4", "SMEM", "base", 0x1a), rows)
+        self.assertIn(("S_BUFFER_ATOMIC_CMPSWAP", "SMEM", "base", 0x41), rows)
+        self.assertIn(("S_BUFFER_ATOMIC_CMPSWAP_X2", "SMEM", "base", 0x61), rows)
+        self.assertIn(("S_ATOMIC_ADD", "SMEM", "base", 0x82), rows)
+        self.assertIn(("S_ATOMIC_ADD_X2", "SMEM", "base", 0xa2), rows)
+        self.assertIn(("S_DCACHE_WB", "SMEM", "base", 0x21), rows)
+        self.assertIn(("S_DCACHE_DISCARD_X2", "SMEM", "base", 0x29), rows)
+
+    def test_ds_source2_opcodes_cover_both_widths(self):
+        rows = set(isa_profiles.llvm_gfx1013_additional_forms())
+        self.assertIn(("DS_ADD_SRC2_U32", "DS", "base", 0x80), rows)
+        self.assertIn(("DS_RSUB_SRC2_U32", "DS", "base", 0x82), rows)
+        self.assertIn(("DS_WRITE_SRC2_B32", "DS", "base", 0x8d), rows)
+        self.assertIn(("DS_MIN_SRC2_F32", "DS", "base", 0x92), rows)
+        self.assertIn(("DS_ADD_SRC2_F32", "DS", "base", 0x95), rows)
+        self.assertIn(("DS_ADD_SRC2_U64", "DS", "base", 0xc0), rows)
+        self.assertIn(("DS_MAX_SRC2_F64", "DS", "base", 0xd3), rows)
+        self.assertIn(("V_MUL_LO_I32", "VOP3", "base", 0x16b), rows)
+
+
 if __name__ == "__main__":
     unittest.main()
