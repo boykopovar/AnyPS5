@@ -30,6 +30,7 @@ struct GainGraph {
         custom.rack_option.max_matrices = 1;
         custom.rack_option.max_ports = 1;
         custom.num_buffers = 1;
+        custom.state_size = 16;
         custom.num_modules = 1;
         custom.module[0].module_id = SCE_NGS2_CUSTOM_MODULE_ID_GAIN;
         mixerOption.max_channels = channels;

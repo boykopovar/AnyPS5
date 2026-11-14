@@ -80,6 +80,15 @@ int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option
     if (option.num_buffers == 0 || option.num_buffers > SCE_NGS2_CUSTOM_MAX_BUFFERS || option.num_buffers < maxInputs) {
         return SCE_NGS2_ERROR_INVALID_NUM_BUFFERS;
     }
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+        const auto& common = option.rack_option;
+        if (common.max_ports == 0) return SCE_NGS2_ERROR_INVALID_MAX_PORTS;
+        if (common.max_matrices == 0) return SCE_NGS2_ERROR_INVALID_MAX_MATRICES;
+        if (common.max_matrices != 1 && option.state_size < SCE_NGS2_CUSTOM_SUBMIXER_MIN_STATE_SIZE) {
+            throw std::runtime_error("NGS2: the custom submixer state size minimum with " + std::to_string(common.max_matrices) + " matrices is not implemented");
+        }
+        if (option.state_size < SCE_NGS2_CUSTOM_SUBMIXER_MIN_STATE_SIZE) return SCE_NGS2_ERROR_INVALID_STATE_SIZE;
+    }
     if (option.num_modules > SCE_NGS2_CUSTOM_MAX_MODULES || option.rack_option.max_ports > SCE_NGS2_CUSTOM_MAX_PORTS) APS5_INVALID_ARG_EX;
     for (std::uint32_t m = 0; m < option.num_modules; m++) {
         const auto& info = option.module[m];

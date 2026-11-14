@@ -2809,6 +2809,7 @@ static uintptr_t CustomSubmixerVoice(uintptr_t system) {
     custom.rack_option.max_matrices = 1;
     custom.rack_option.max_ports = 1;
     custom.num_buffers = 1;
+    custom.state_size = 16;
     custom.port[0].source_buffer_id = 0;
     option.max_channels = 8;
     option.max_inputs = 1;
@@ -2863,6 +2864,7 @@ static void TestOddChannelCountsLikePs4() {
         Ngs2CustomSubmixerRackOption customOption{};
         customOption.custom_rack_option.rack_option = {sizeof(customOption), {}, 0, 512, 1, 0, 1, 1};
         customOption.custom_rack_option.num_buffers = 1;
+        customOption.custom_rack_option.state_size = 16;
         customOption.max_channels = maxChannels;
         customOption.max_inputs = 1;
         auto customBuffer = query(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, customOption.custom_rack_option.rack_option);
@@ -3578,6 +3580,7 @@ static void TestPs4FilterParams() {
         custom.rack_option.max_matrices = 1;
         custom.rack_option.max_ports = 1;
         custom.num_buffers = 1;
+        custom.state_size = 16;
         custom.num_modules = 1;
         custom.module[0].module_id = SCE_NGS2_CUSTOM_MODULE_ID_FILTER;
         custom.port[0].source_buffer_id = 0;

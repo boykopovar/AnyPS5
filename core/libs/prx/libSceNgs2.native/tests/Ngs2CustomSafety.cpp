@@ -21,6 +21,8 @@ static uintptr_t Custom(uintptr_t system, std::uint32_t count, bool chain, std::
     custom.rack_option.max_voices = 1;
     custom.rack_option.max_ports = 1;
     custom.num_buffers = count;
+    custom.state_size = 16;
+    custom.rack_option.max_matrices = 1;
     custom.port[0].source_buffer_id = outputBuffer;
     custom.num_modules = chain ? 2 : 0;
     custom.module[0].module_id = SCE_NGS2_CUSTOM_MODULE_ID_USER_FX;
