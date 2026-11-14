@@ -2,6 +2,7 @@
 #include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -86,6 +87,9 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImage(image.c_str(), -1, 0) == ErrorArgument, "negative x");
     Require(sceScreenShotSetOverlayImage(image.c_str(), 0, -1) == ErrorArgument, "negative y");
     Require(sceScreenShotSetOverlayImage(nullptr, 0, 0) == ErrorArgument, "null path");
+    errno = 71;
+    Require(sceScreenShotSetOverlayImage(reinterpret_cast<const char*>(0x10), 0, 0) == ErrorArgument, "unmapped path");
+    Require(errno == 71, "preserve errno on unmapped path");
     const std::string longPath(1024, 'a');
     Require(sceScreenShotSetOverlayImage(longPath.c_str(), 0, 0) == ErrorArgument, "path of 1024 characters");
     const std::string nearLimit(1023, 'a');
@@ -108,10 +112,26 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, 0, 10) == ErrorArgument, "origin 10");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 0) == ErrorArgument, "origin checked first");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 1) == ErrorArgument, "null path with valid origin");
+    errno = 71;
+    Require(sceScreenShotSetOverlayImageWithOrigin(reinterpret_cast<const char*>(0x10), 0, 0, 1) == ErrorArgument, "unmapped path with valid origin");
+    Require(errno == 71, "preserve errno on unmapped path with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), -1, 0, 1) == ErrorArgument, "negative x with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, -1, 1) == ErrorArgument, "negative y with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), maxX + 1, 0, 1) == ErrorArgument, "x past screen with valid origin");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, maxY + 1, 1) == ErrorArgument, "y past screen with valid origin");
+}
+
+void TestSetParamUnmapped() {
+    alignas(8) std::array<std::byte, 0x28> param{};
+    const std::uint32_t size = 0x28;
+    std::memcpy(param.data(), &size, sizeof(size));
+    const auto unmapped = reinterpret_cast<const char*>(0x10);
+    for (const std::size_t offset : {0x08u, 0x10u, 0x18u}) {
+        alignas(8) std::array<std::byte, 0x28> block = param;
+        std::memcpy(block.data() + offset, &unmapped, sizeof(unmapped));
+        errno = 71;
+        Require(sceScreenShotSetParam(block.data()) == ErrorArgument && errno == 71, "SetParam took an unmapped string pointer");
+    }
 }
 
 }
@@ -122,5 +142,6 @@ int main(int argc, char** argv) {
     InstallProcessParameters(large ? 0x3500000u : 0x34fffffu);
     TestDisableState();
     TestOverlay(large);
+    TestSetParamUnmapped();
     return 0;
 }

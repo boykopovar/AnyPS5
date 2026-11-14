@@ -80,6 +80,20 @@ int main() {
     Require(sceContentSearchInit(nullptr) == ErrorAlreadyInitialized);
     Require(sceContentSearchInit(&param) == ErrorAlreadyInitialized);
 
+    const auto* invalidSets = reinterpret_cast<const ContentSearchContentColumnSet*>(0x10);
+    const auto* invalidOrders = reinterpret_cast<const ContentSearchContentOrderByCondition*>(0x10);
+    ContentSearchContentColumnSet invalidNestedSet{reinterpret_cast<const ContentSearchContentColumn*>(0x10), 1, 2};
+    ContentSearchContentColumnSet setsWithInvalidSecond[] = {columnSet, invalidNestedSet};
+    count = -1;
+    updateId = -1;
+    errno = 71;
+    Require(sceContentSearchGetNumOfContent(invalidSets, 1, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetTotalContentSize(&invalidNestedSet, 1, &size, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, invalidOrders, 1, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchContent(setsWithInvalidSecond, 2, &orderBy, 1, 0, 1, &count, infos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchContent(&columnSet, 1, invalidOrders, 1, 0, 1, &count, infos, &updateId) == ErrorInvalidArgument);
+    Require(count == -1 && updateId == -1 && size == -1 && errno == 71);
+
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == 0);
     Require(updateId == 0);
     updateId = -1;
@@ -138,6 +152,9 @@ int main() {
     Require(sceContentSearchGetContentLastUpdateId(reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
     Require(sceContentSearchGetApplicationLastUpdateId(nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetMyApplicationIndex(nullptr) == ErrorInvalidArgument);
+    errno = 71;
+    Require(sceContentSearchGetMyApplicationIndex(reinterpret_cast<std::int32_t*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, nullptr, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 0, &count, &updateId) == ErrorInvalidArgument);

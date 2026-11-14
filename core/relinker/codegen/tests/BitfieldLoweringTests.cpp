@@ -189,6 +189,30 @@ void execution() {
                     }
                 }
             }
+            for (const std::uint8_t dst : std::array<std::uint8_t, 2>{0, 4}) {
+                for (const std::int32_t displacement : {-176, -168, -167, -160, -152, -151, -144, -136}) {
+                    Bytes tail{static_cast<std::uint8_t>(0x84 | (dst << 3)), 0x24};
+                    for (unsigned s = 0; s < 32; s += 8)
+                        tail.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> s));
+                    constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+                    const auto site = memorySite(operation, wide, tail);
+                    const auto operands = *Codegen::DecodeBitfield(site.data(), site.size());
+                    const Execution execution(site, value, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                        for (int part = 0; part < 2; ++part) {
+                            Bytes store{0xC7, 0x84, 0x24};
+                            const auto slot = static_cast<std::uint32_t>(displacement + part * 4);
+                            const auto word = static_cast<std::uint32_t>(value >> (part * 32));
+                            for (unsigned s = 0; s < 32; s += 8) store.push_back(static_cast<std::uint8_t>(slot >> s));
+                            for (unsigned s = 0; s < 32; s += 8) store.push_back(static_cast<std::uint8_t>(word >> s));
+                            body.Raw(store);
+                        }
+                        Codegen::EmitBitfield(body, operands);
+                    });
+                    auto state = LoweringExecution::InitialState();
+                    state.Input[7] = 0x0C04;
+                    run(execution, operands, state, value);
+                }
+            }
         }
     }
 }

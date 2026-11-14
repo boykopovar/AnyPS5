@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
 
 namespace {
 
@@ -41,4 +42,16 @@ int main() {
     const unsigned char withNul[] = {0x00, 0x05};
     const unsigned char withNulLow[] = {0x00, 0x02};
     Require(memcmp_nid_postfix(withNul, withNulLow, 2) == 3);
+
+    Require(strcmp_nid_postfix("\x80\xff", "\x80\xff") == 0);
+    Require(strcmp_nid_postfix("a\0b", "a\0c") == 0);
+    Require(strncmp_nid_postfix("abc", "abd", std::numeric_limits<std::size_t>::max()) == -1);
+    Require(strncmp_nid_postfix("\xff", "\x01", 1) == 254);
+    Require(strncmp_nid_postfix("\x01", "\xff", 1) == -254);
+    Require(memcmp_nid_postfix("aaa", "zzz", 0) == 0);
+    Require(memcmp_nid_postfix("a\0b", "a\0c", 3) == -1);
+    const unsigned char maxByte[] = {0xff};
+    const unsigned char zeroByte[] = {0x00};
+    Require(memcmp_nid_postfix(maxByte, zeroByte, 1) == 255);
+    Require(memcmp_nid_postfix(zeroByte, maxByte, 1) == -255);
 }

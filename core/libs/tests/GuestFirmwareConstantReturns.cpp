@@ -11,6 +11,7 @@
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
 #include "prx/libmdbg_syscore/libmdbg_syscore.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -197,6 +198,15 @@ void CheckVisionManager() {
         Require(sceVisionManagerGetWorkingMemorySize(&sizes[0], &sizes[1], &sizes[2]) == 0);
         Require(sizes[0] == 0 && sizes[1] == 0x1600000 && sizes[2] == 0x4200000);
     }
+    std::uint32_t mem1 = 0, mem2 = 0, mem3 = 0;
+    Require(sceVisionManagerGetWorkingMemorySize(nullptr, &mem2, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, nullptr, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, &mem2, nullptr) == VisionInvalid);
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(reinterpret_cast<std::uint32_t*>(0x10), &mem2, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, reinterpret_cast<std::uint32_t*>(0x10), &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, &mem2, reinterpret_cast<std::uint32_t*>(0x10)) == VisionInvalid);
+    Require(errno == 71);
 
     int context = 0;
     const std::int32_t parameters[] = {0, 1, 3, 4, 5, 6, -1, 0x7fffffff, static_cast<std::int32_t>(0x80000000)};

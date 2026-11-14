@@ -161,6 +161,11 @@ int main(int argc, char** argv) {
     std::vector<std::uint8_t> packet(1024, 0);
     std::uint32_t packetSize = static_cast<std::uint32_t>(packet.size());
     Require(sceVoiceQoSReadPacket(connection, packet.data(), &packetSize) == 0 && packetSize == 0);
+    errno = 71;
+    Require(sceVoiceQoSReadPacket(connection, packet.data(), reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
+    Require(sceVoiceQoSConnect(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), local, remote) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSReadPacket(connection, nullptr, &packetSize) == argumentInvalid);
     Require(sceVoiceQoSReadPacket(connection, packet.data(), nullptr) == argumentInvalid);
     Require(sceVoiceQoSReadPacket(connection + 100, packet.data(), &packetSize) == argumentInvalid);
@@ -185,10 +190,16 @@ int main(int argc, char** argv) {
     Require(sceVoiceDeletePort(titlePort) == 0);
     Require(sceVoiceQoSDeleteLocalEndpoint(local) == argumentInvalid);
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == 0);
+    errno = 71;
+    Require(sceVoiceQoSCreateRemoteEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
 
     const int endpointLimit = appType == 0x10000000 ? 15 : 7;
     for (int index = 0; index < endpointLimit; ++index) Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == index);
     Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == limitReached && remote == -1);
+    errno = 71;
+    Require(sceVoiceQoSCreateRemoteEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSDeleteRemoteEndpoint(2) == 0);
     Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == 2);
     Require(sceVoiceQoSEnd() == 0);
@@ -201,6 +212,9 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSReadPacket(connection, packet.data(), &packetSize) == notInitialized);
     Require(sceVoiceQoSWritePacket(connection, packet.data(), &packetSize) == notInitialized);
     Require(sceVoiceQoSInit(memory.data(), 0x40000, appType) == 0);
+    errno = 71;
+    Require(sceVoiceQoSCreateLocalEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), 1, 0, 0) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == argumentInvalid);
     Require(sceVoiceQoSEnd() == 0);
     Require(sceVoiceQoSEnd() == notInitialized);

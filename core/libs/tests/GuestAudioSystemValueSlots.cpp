@@ -64,6 +64,13 @@ int main() {
     Require(Taken(out) == 11, "a zero value blocked the next one");
     Require(Stored(out) == static_cast<std::int32_t>(0x80000000), "the pending value changed the stored one");
 
+    Store(100);
+    Require(Stored(out) == 100, "second stored value was not returned");
+    Give(200);
+    Require(Taken(out) == 200, "second pending value was not taken");
+    Require(Taken(out) == 0, "second take did not clear pending value");
+    Require(Stored(out) == 100, "second take altered stored value");
+
     std::puts("AudioSystem value slot tests passed");
     return 0;
 }

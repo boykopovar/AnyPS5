@@ -1,4 +1,6 @@
 #include "prx/libSceFaceTracker/include/Api.hpp"
+#include "prx/libSceFace/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -260,7 +262,16 @@ int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *feat
     if (ctxByte(context, kInitFlag)[0] == 0) {
         return kErrNotInitialized;
     }
-    if (userId <= 0) {
+    if (userId <= 0 || !feature || !featureSize) {
+        return kErrInvalid;
+    }
+    const int savedErrno = errno;
+    void *probeFeature = nullptr;
+    int probeSize = 0;
+    const bool probedFeature = GuestCopyIn_nid_no_patch(&probeFeature, feature, sizeof(probeFeature));
+    const bool probedSize = GuestCopyIn_nid_no_patch(&probeSize, featureSize, sizeof(probeSize));
+    errno = savedErrno;
+    if (!probedFeature || !probedSize) {
         return kErrInvalid;
     }
     const int32_t count = userDbCount(context);
@@ -274,9 +285,14 @@ int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *feat
             continue;
         }
         uint8_t *block = userDbFeatures(context) + static_cast<std::size_t>(i) * kFeatureStride;
-        std::memcpy(feature, &block, sizeof(block));
         const int32_t size = kMaxFeatureSize;
-        std::memcpy(featureSize, &size, sizeof(size));
+        const int savedErrno = errno;
+        const bool copiedFeature = GuestCopyOut_nid_no_patch(feature, &block, sizeof(block));
+        const bool copiedSize = GuestCopyOut_nid_no_patch(featureSize, &size, sizeof(size));
+        errno = savedErrno;
+        if (!copiedFeature || !copiedSize) {
+            return kErrInvalid;
+        }
         return 0;
     }
     return kErrNotFound;
@@ -328,8 +344,46 @@ int APS5_VABI sceFaceTrackerGetTrackIdByUserId(int userId, void *context) {
     return kErrNotFound;
 }
 
-int APS5_VABI sceFaceTrackerGetDefaultConfig() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFaceTrackerGetDefaultConfig(void *config) {
+    if (config == nullptr) {
+        return kErrInvalid;
+    }
+    std::uint32_t param[0x38 / 4] = {};
+    auto *out = static_cast<std::uint32_t *>(config);
+    if (sceFaceDetectionGetDefaultParam(param) == 0) {
+        out[0x00 / 4] = param[0x08 / 4];
+        out[0x04 / 4] = param[0x10 / 4];
+        out[0x08 / 4] = param[0x0c / 4];
+        out[0x0c / 4] = 0;
+        out[0x10 / 4] = 0;
+        out[0x14 / 4] = param[0x1c / 4];
+        out[0x18 / 4] = param[0x20 / 4];
+        out[0x1c / 4] = 0;
+        out[0x20 / 4] = 0;
+        out[0x24 / 4] = param[0x2c / 4];
+        out[0x28 / 4] = param[0x30 / 4];
+        out[0x2c / 4] = 0;
+        out[0x30 / 4] = 0x20;
+        out[0x34 / 4] = 4;
+    }
+    out[0x38 / 4] = 0x3f574bc7;
+    out[0x3c / 4] = 0x40000000;
+    out[0x40 / 4] = 0x40000000;
+    out[0x44 / 4] = 2;
+    out[0x48 / 4] = 2;
+    out[0x4c / 4] = 0x3e99999a;
+    out[0x50 / 4] = 4;
+    out[0x54 / 4] = 0x42b40000;
+    out[0x58 / 4] = 5;
+    out[0x5c / 4] = 0x42480000;
+    out[0x60 / 4] = 0xa;
+    static_cast<std::uint8_t *>(config)[0x64] = 1;
+    out[0x68 / 4] = 0xf;
+    out[0x6c / 4] = 0x42500000;
+    out[0x70 / 4] = 0x1e;
+    out[0x74 / 4] = 0xf;
+    out[0x78 / 4] = 5;
+    static_cast<std::uint16_t *>(config)[0x7c / 2] = 0x101;
     return 0;
 }
 
