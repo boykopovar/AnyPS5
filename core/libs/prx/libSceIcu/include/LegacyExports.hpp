@@ -429,7 +429,7 @@ int APS5_VABI uhash_hashLong_nid_postfix();
 int APS5_VABI _ZN6icu_6817CanonicalIterator15getEquivalents2EPNS_9HashtableEPKDsiR10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_9YMKGv_minus_fNys_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_9Z_plus_29sFbhtM_nid_no_patch();
-int APS5_VABI uprv_isInvariantUString_nid_postfix();
+std::int8_t APS5_VABI uprv_isInvariantUString_nid_postfix(const char16_t* s, std::int32_t length);
 int APS5_VABI _ZN6icu_6813ICUServiceKeyD1Ev_nid_postfix();
 int APS5_VABI _ZNK6icu_6813ICUServiceKey9currentIDERNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI ucnv_safeClone_nid_postfix();
