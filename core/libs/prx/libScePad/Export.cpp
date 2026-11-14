@@ -264,11 +264,14 @@ int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInfor
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
- if (SpecialHandle(handle)) {
-  std::memset(info, 0, sizeof(*info));
-  return PAD_OK;
+ PadTriggerEffectStateInformation localInfo{};
+ if (!SpecialHandle(handle)) {
+  PadGetTriggerEffectState_nid_postfix(PortOf(handle), localInfo.state);
  }
- PadGetTriggerEffectState_nid_postfix(PortOf(handle), info->state);
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
