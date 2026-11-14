@@ -888,3 +888,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
 endif()
+
+
+target_sources(libSceLibcInternal PRIVATE Filebuf.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_internal_filebuf_unlock_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalFilebufUnlock.cpp)
+    target_include_directories(guest_libc_internal_filebuf_unlock_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_internal_filebuf_unlock_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_libc_internal_filebuf_unlock_tests)
+    add_test(NAME guest_libc_internal_filebuf_unlock COMMAND guest_libc_internal_filebuf_unlock_tests)
+    set_tests_properties(guest_libc_internal_filebuf_unlock PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_internal_filebuf_unlock PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
