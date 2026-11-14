@@ -3,6 +3,7 @@
 #include "RuntimeAbi.hpp"
 #include "SpirvBackend/SpirvClipDistances.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
+#include "SpirvBackend/SpirvVertexLayer.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
@@ -10,6 +11,7 @@
 #include <array>
 #include <bit>
 #include <limits>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -36,13 +38,18 @@ struct Emulation {
     std::vector<PerVertexSource> perVertex;
 };
 
+struct LayerLocations {
+    std::uint32_t vertex;
+    std::uint32_t control;
+};
+
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(std::string("Rect-list SPIR-V: ") + message);
 }
 
 class RectListEmitter {
 public:
-    RectListEmitter(const std::vector<Parameter>& parameters, const Emulation& emulation, spv::ExecutionModel model, std::uint32_t version, std::uint32_t faultBinding, std::uint32_t clipDistances) : builder(version), faultBinding(faultBinding), version(version), clipDistances(clipDistances), parameters(parameters), emulation(emulation) {
+    RectListEmitter(const std::vector<Parameter>& parameters, const Emulation& emulation, spv::ExecutionModel model, std::uint32_t version, std::uint32_t faultBinding, std::uint32_t clipDistances, std::optional<LayerLocations> layer) : builder(version), faultBinding(faultBinding), version(version), clipDistances(clipDistances), layer(layer), parameters(parameters), emulation(emulation) {
         builder.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
 
         voidType = type(spv::OpTypeVoid);
@@ -59,6 +66,10 @@ public:
             clipArrayType = array(floatType, clipDistances);
             ptrInputClip = pointer(spv::StorageClassInput, clipArrayType);
             ptrOutputClip = pointer(spv::StorageClassOutput, clipArrayType);
+        }
+        if (layer) {
+            ptrInputUint = pointer(spv::StorageClassInput, uintType);
+            ptrOutputUint = pointer(spv::StorageClassOutput, uintType);
         }
 
         ptrInputVec4Float = pointer(spv::StorageClassInput, vec4FloatType);
@@ -149,6 +160,7 @@ public:
             builder.AddFunction(spv::OpCompositeConstruct, clipArrayType, clip, std::span<const std::uint32_t>(values));
             store(access(ptrOutputClip, clipOut, invocation), clip);
         }
+        if (layer) store(access(ptrOutputUint, layerOut, invocation), load(uintType, access(ptrInputUint, layerIn, intConstant(flatVertex))));
 
         for (std::uint32_t i = 0; i < parameters.size(); i++) {
             if (parameters[i].missing) {
@@ -204,6 +216,7 @@ public:
         const auto position = load(vec4FloatType, access(ptrInputVec4Float, glIn, index, intConstant(0)));
         store(access(ptrOutputVec4Float, glOut, intConstant(0)), position);
         if (clipDistances != 0u) store(clipOut, load(clipArrayType, access(ptrInputClip, clipIn, index)));
+        if (layer) store(layerOut, load(uintType, access(ptrInputUint, layerIn, index)));
         for (std::uint32_t i = 0; i < parameters.size(); i++) {
             store(outputs[i], load(vec4FloatType, access(ptrInputVec4Float, inputs[i], index)));
         }
@@ -335,6 +348,10 @@ private:
         builder.EmitCapability(spv::CapabilityShader);
         builder.EmitCapability(spv::CapabilityTessellation);
         if (clipDistances != 0u) builder.EmitCapability(spv::CapabilityClipDistance);
+        if (layer && model == spv::ExecutionModelTessellationEvaluation) {
+            builder.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
+            builder.EmitExtension("SPV_EXT_shader_viewport_index_layer");
+        }
         main = result(spv::OpFunction, voidType, spv::FunctionControlMaskNone, functionType);
         if (model == spv::ExecutionModelTessellationControl) {
             builder.AddExecutionMode(main, spv::ExecutionModeOutputVertices, 4u);
@@ -361,6 +378,10 @@ private:
         }
         glIn = addInterface(spv::StorageClassInput, array(perVertexType, tessControl ? 3u : 4u));
         if (clipDistances != 0u) clipIn = clipVariable(spv::StorageClassInput, array(clipArrayType, tessControl ? 3u : 4u));
+        if (layer) {
+            layerIn = addInterface(spv::StorageClassInput, array(uintType, tessControl ? 3u : 4u));
+            decorate(layerIn, spv::DecorationLocation, tessControl ? layer->vertex : layer->control);
+        }
 
         inputs.resize(parameters.size());
         std::array<std::uint32_t, 32> locations {};
@@ -405,9 +426,17 @@ private:
             tessOuter = addInterface(spv::StorageClassOutput, array(floatType, 4u));
             decorate(tessOuter, spv::DecorationBuiltIn, spv::BuiltInTessLevelOuter);
             builder.AddAnnotation(spv::OpDecorate, tessOuter, spv::DecorationPatch);
+            if (layer) {
+                layerOut = addInterface(spv::StorageClassOutput, array(uintType, 4u));
+                decorate(layerOut, spv::DecorationLocation, layer->control);
+            }
         } else {
             glOut = addInterface(spv::StorageClassOutput, perVertexType);
             if (clipDistances != 0u) clipOut = clipVariable(spv::StorageClassOutput, clipArrayType);
+            if (layer) {
+                layerOut = addInterface(spv::StorageClassOutput, uintType);
+                decorate(layerOut, spv::DecorationBuiltIn, spv::BuiltInLayer);
+            }
         }
 
         outputs.resize(parameters.size());
@@ -436,6 +465,7 @@ private:
     std::uint32_t faultBinding;
     std::uint32_t version;
     std::uint32_t clipDistances;
+    std::optional<LayerLocations> layer;
     std::uint32_t fault = 0;
     const std::vector<Parameter>& parameters;
     const Emulation& emulation;
@@ -462,6 +492,10 @@ private:
     std::uint32_t clipArrayType = 0;
     std::uint32_t ptrInputClip = 0;
     std::uint32_t ptrOutputClip = 0;
+    std::uint32_t ptrInputUint = 0;
+    std::uint32_t ptrOutputUint = 0;
+    std::uint32_t layerIn = 0;
+    std::uint32_t layerOut = 0;
     std::uint32_t ptrInputFloat = 0;
     std::uint32_t ptrInputVec4Float = 0;
     std::uint32_t ptrOutputFloat = 0;
@@ -510,19 +544,38 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     }
     const auto emulatedSlots = static_cast<std::uint32_t>(emulation.barycentrics.size() + emulation.perVertex.size() * 3u);
     const auto clipDistances = VertexClipDistanceCount(vertex.spirv.Words());
+    const auto vertexLayer = FindVertexLayerOutput(vertex.spirv.Words());
+    const auto reservedSlots = emulatedSlots + (vertexLayer ? 1u : 0u);
     const auto& limits = *target.tessellation;
     const std::uint32_t perVertexComponents = std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents, limits.maxEvaluationOutputComponents});
     const std::uint32_t parameterSlots = perVertexComponents > clipDistances ? (perVertexComponents - clipDistances) / 4u : 0u;
-    require(emulatedSlots == 0u || parameterSlots > emulatedSlots, "emulated barycentrics exceed the tessellation interface limits");
-    if (const std::size_t capacity = parameterSlots > emulatedSlots ? parameterSlots - 1u - emulatedSlots : 0u; parameters.size() > capacity) {
+    require(reservedSlots == 0u || parameterSlots > reservedSlots, "emulated barycentrics and the vertex layer exceed the tessellation interface limits");
+    if (const std::size_t capacity = parameterSlots > reservedSlots ? parameterSlots - 1u - reservedSlots : 0u; parameters.size() > capacity) {
         parameters.resize(capacity);
     }
-    const auto components = static_cast<std::uint32_t>((parameters.size() + emulatedSlots + 1) * 4 + clipDistances);
+    const auto components = static_cast<std::uint32_t>((parameters.size() + reservedSlots + 1) * 4 + clipDistances);
     require(limits.maxPatchSize >= 4 && components <= limits.maxControlPerVertexInputComponents && components <= limits.maxControlPerVertexOutputComponents && components <= limits.maxEvaluationInputComponents && components <= limits.maxEvaluationOutputComponents && limits.maxControlPerPatchOutputComponents >= 6 && components * 4 + 6 <= limits.maxControlTotalOutputComponents, "tessellation interface exceeds device limits");
     require(clipDistances == 0u || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityClipDistance) != target.supportedCapabilities.end(), "the vertex clip distances need shaderClipDistance");
+    require(!vertexLayer || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityShaderViewportIndexLayerEXT) != target.supportedCapabilities.end(), "forwarding the vertex gl_Layer needs VK_EXT_shader_viewport_index_layer");
+    std::optional<LayerLocations> layer;
+    if (vertexLayer) {
+        std::array<bool, 32> used{};
+        for (const auto& parameter : parameters) used[parameter.outputLocation] = true;
+        for (const auto location : emulation.barycentrics) {
+            require(location < used.size(), "an emulated barycentric location is out of range");
+            used[location] = true;
+        }
+        for (const auto& source : emulation.perVertex) {
+            require(source.outputLocation + 2u < used.size(), "an emulated per-vertex location is out of range");
+            for (std::uint32_t corner = 0; corner < 3u; ++corner) used[source.outputLocation + corner] = true;
+        }
+        const auto free = std::find(used.begin(), used.end(), false);
+        require(free != used.end(), "no free location carries the vertex gl_Layer to the evaluation stage");
+        layer = LayerLocations{vertexLayer->location, static_cast<std::uint32_t>(free - used.begin())};
+    }
     const auto faultBinding = RuntimeAbi::BindingNumber(RuntimeAbi::Stage::TessellationControl, RuntimeAbi::Binding::FaultBuffer);
-    RectListEmitter control(parameters, emulation, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding, clipDistances);
-    RectListEmitter evaluation(parameters, emulation, spv::ExecutionModelTessellationEvaluation, target.spirvVersion, faultBinding, clipDistances);
+    RectListEmitter control(parameters, emulation, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding, clipDistances, layer);
+    RectListEmitter evaluation(parameters, emulation, spv::ExecutionModelTessellationEvaluation, target.spirvVersion, faultBinding, clipDistances, layer);
     RectListShaders shaders;
     shaders.control.spirv = control.EmitControl(0u);
     shaders.control.bindings.push_back({DescriptorKind::StorageBuffer, DescriptorRole::FaultBuffer, 0, faultBinding, 1, {}});
@@ -533,8 +586,8 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     shaders.evaluation.spirv = ValidateAndOptimizeSpirv(shaders.evaluation.spirv, target.vulkanVersion, target.spirvVersion);
 #endif
     shaders.lastVertexControl = shaders.control;
-    if (std::any_of(parameters.begin(), parameters.end(), [](const Parameter& parameter) { return parameter.flat && !parameter.missing; })) {
-        RectListEmitter lastVertexControl(parameters, emulation, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding, clipDistances);
+    if (layer || std::any_of(parameters.begin(), parameters.end(), [](const Parameter& parameter) { return parameter.flat && !parameter.missing; })) {
+        RectListEmitter lastVertexControl(parameters, emulation, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding, clipDistances, layer);
         shaders.lastVertexControl.spirv = lastVertexControl.EmitControl(2u);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         shaders.lastVertexControl.spirv = ValidateAndOptimizeSpirv(shaders.lastVertexControl.spirv, target.vulkanVersion, target.spirvVersion);

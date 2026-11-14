@@ -1,5 +1,6 @@
 #include "BdaAbi.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "SpirvBackend/SpirvVertexLayer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -52,6 +53,8 @@ struct Module {
     std::uint32_t primitiveIndices = 0;
     bool fragmentBarycentric = false;
     bool layerOutput = false;
+    bool generatedLayerStage = false;
+    bool layer = false;
     bool meshCapability = false;
     std::uint32_t primitiveInputs = 0;
     bool pointSizeOutput = false;
@@ -116,6 +119,10 @@ struct Module {
             return;
         }
         if (stage == Stage::Geometry) {
+            if (!input && value == spv::BuiltInLayer && generatedLayerStage && Signature(type) == "u32" && !layer) {
+                layer = true;
+                return;
+            }
             Require(value == spv::BuiltInPosition && Signature(type) == "f32x4" && (input || !position), "unsupported geometry built-in");
             if (!input) position = true;
             return;
@@ -134,6 +141,10 @@ struct Module {
             if (!input && value == spv::BuiltInPosition) {
                 Require(signature == "f32x4" && !position, "invalid or duplicate position output");
                 position = true;
+                return;
+            }
+            if (stage == Stage::TessellationEvaluation && !input && value == spv::BuiltInLayer && generatedLayerStage && layerOutput && signature == "u32" && !layer) {
+                layer = true;
                 return;
             }
             if (stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation) {
@@ -169,7 +180,7 @@ struct Module {
     }
 };
 
-Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool shaderResourceMinLod, bool fmaFloat16, std::span<const std::uint32_t> primitiveLocations = {}) {
+Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool shaderResourceMinLod, bool fmaFloat16, std::span<const std::uint32_t> primitiveLocations = {}, std::span<const std::uint32_t> overrideWords = {}) {
     using Stage = ShaderRecompiler::ShaderStage;
     Require(compiled.program != nullptr, "missing compiled shader");
     const auto& shader = *compiled.program;
@@ -189,7 +200,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         Require(binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer && binding.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && binding.descriptorSet == 0 && binding.count == 1 && binding.guestDescriptor.empty() && !binding.readOnly, "invalid rect-list fault buffer contract");
     }
     const auto model = mesh ? spv::ExecutionModelMeshEXT : control ? spv::ExecutionModelTessellationControl : evaluation ? spv::ExecutionModelTessellationEvaluation : geometry ? spv::ExecutionModelGeometry : vertex ? spv::ExecutionModelVertex : spv::ExecutionModelFragment;
-    const auto& words = shader.spirv;
+    const std::span<const std::uint32_t> words = overrideWords.empty() ? shader.spirv.Words() : overrideWords;
 
     Require(words.size() >= 5, "SPIR-V header is truncated: " + std::to_string(words.size()) + " words");
     Require(words[0] == spv::MagicNumber, "invalid SPIR-V magic number: " + std::to_string(words[0]));
@@ -198,6 +209,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     Require(words[4] == 0, "unsupported SPIR-V schema: " + std::to_string(words[4]));
 
     Module module;
+    module.generatedLayerStage = (evaluation && state.stages.path == ShaderPath::Vertex && !state.stages.tessellation) || (geometry && state.stages.path == ShaderPath::Vertex);
     module.pointSizeOutput = (state.vertexPoints && stage == Stage::Vertex) || (mesh && state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u);
     std::uint32_t entries = 0;
     std::uint32_t memoryModels = 0;
@@ -710,7 +722,8 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         Require(shaders[i].program != nullptr, "missing compiled shader");
         Require(shaders[i].stage == expected, "graphics stage order disagrees");
         for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "graphics resource uses a descriptor set other than its stage's");
-        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation, shaderResourceMinLod, fmaFloat16, primitiveLocations);
+        const auto relocated = i == 0 && ForwardsVertexLayer(state, shaders) ? ShaderRecompiler::RelocateVertexLayerOutput(shaders[0].program->spirv.Words()) : std::vector<std::uint32_t>{};
+        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation, shaderResourceMinLod, fmaFloat16, primitiveLocations, relocated);
         if (i != 0) {
             for (const auto& [location, signature] : current.inputs) {
                 const auto output = previous.outputs.find(location);

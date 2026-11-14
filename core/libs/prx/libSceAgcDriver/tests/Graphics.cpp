@@ -37,6 +37,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include "SpirvBackend/SpirvVertexLayer.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <limits>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
@@ -9772,6 +9773,11 @@ void framebufferOwnerTests() {
     Require(mock.live == 0, "framebuffer owner tests leaked Vulkan objects");
 }
 
+std::size_t VariableBuiltIns(const ShaderRecompiler::RecompileResult& result, spv::BuiltIn builtin);
+bool DeclaresCapability(const ShaderRecompiler::RecompileResult& result, std::uint32_t capability);
+bool DeclaresExtension(const ShaderRecompiler::RecompileResult& result, std::string_view name);
+std::optional<std::uint32_t> UintArrayAt(const ShaderRecompiler::RecompileResult& result, spv::StorageClass storage, std::uint32_t location);
+
 void barycentricEmulationTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -9871,7 +9877,7 @@ void barycentricEmulationTests() {
     target.spirvVersion = 0x00010300u;
     target.supportedCapabilities = capabilities;
     const GeometryStageLimits limits{64u, 128u, 256u, 1024u, 128u};
-    auto geometry = BuildBarycentricGeometryShader(vertex, fragment, target, limits);
+    auto geometry = BuildBarycentricGeometryShader(vertex, fragment, target, limits, 0u);
     const std::array<CompiledShader, 3> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Geometry, &geometry, 0}, {ShaderStage::Fragment, &fragment, 0}}};
     const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     auto state = DecodeState(makeState());
@@ -9893,9 +9899,25 @@ void barycentricEmulationTests() {
     const auto plain = compile(interpolates, false);
     const std::array<CompiledShader, 3> plainShaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Geometry, &geometry, 0}, {ShaderStage::Fragment, &plain, 0}}};
     expectFailure([&] { ValidateShaders(plainShaders, state, subgroup, false, false, false, true); }, "only for emulated barycentrics");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, plain, target, limits)); }, "does not emulate barycentrics");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, std::nullopt)); }, "geometry shaders are unavailable");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, GeometryStageLimits{64u, 12u, 256u, 1024u, 128u})); }, "exceeds device limits");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, plain, target, limits, 0u)); }, "does not emulate barycentrics");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, std::nullopt, 0u)); }, "geometry shaders are unavailable");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, GeometryStageLimits{64u, 12u, 256u, 1024u, 128u}, 0u)); }, "exceeds device limits");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits, 1u)); }, "first or the last");
+    Require(VariableBuiltIns(geometry, spv::BuiltInLayer) == 0u, "the generated geometry stage writes a layer the vertex shader does not");
+    {
+        RecompileResult layered;
+        layered.spirv = makeModule({.parameterOutput = true, .layerOutput = true});
+        layered.parameterExports = {0u};
+        const auto first = BuildBarycentricGeometryShader(layered, fragment, target, limits, 0u);
+        const auto last = BuildBarycentricGeometryShader(layered, fragment, target, limits, 2u);
+        Require(first.Identity() != last.Identity(), "the generated geometry stage does not take the layer from the provoking vertex it was built for");
+        for (const auto* built : {&first, &last}) {
+            Require(VariableBuiltIns(*built, spv::BuiltInLayer) == 1u && UintArrayAt(*built, spv::StorageClassInput, 1u) == 3u && !DeclaresCapability(*built, spv::CapabilityShaderViewportIndexLayerEXT), "the generated geometry stage does not read the vertex layer at its location and write it to Layer");
+            const std::array<CompiledShader, 3> layeredShaders{{{ShaderStage::Vertex, &layered, 0}, {ShaderStage::Geometry, built, 0}, {ShaderStage::Fragment, &fragment, 0}}};
+            ValidateShaders(layeredShaders, state, subgroup, false, false, false, true, false, false, false, false, true);
+            expectFailure([&] { ValidateShaders(layeredShaders, state, subgroup, false, false, false, true, false, false, false, false, false); }, "VK_EXT_shader_viewport_index_layer");
+        }
+    }
 
     const std::array<std::uint32_t, 2> tessellationCapabilities{spv::CapabilityShader, spv::CapabilityTessellation};
     SpirvTarget tessellationTarget = target;
@@ -10000,9 +10022,34 @@ void barycentricEmulationTests() {
     Require(memberBuiltIn(clippedPatches.evaluation, spv::BuiltInClipDistance) && !variableBuiltIn(clippedPatches.evaluation, spv::BuiltInClipDistance), "the generated evaluation stage does not keep the clip distances in its per-vertex blocks");
     const std::array<CompiledShader, 4> clippedShaders{{{ShaderStage::Vertex, &clipped, 0}, {ShaderStage::TessellationControl, &clippedPatches.control, 0}, {ShaderStage::TessellationEvaluation, &clippedPatches.evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};
     ValidateShaders(clippedShaders, state, subgroup, false, false, false, false, false, false, true);
+    Require(VariableBuiltIns(patches.control, spv::BuiltInLayer) == 0u && VariableBuiltIns(patches.evaluation, spv::BuiltInLayer) == 0u && !DeclaresCapability(patches.evaluation, spv::CapabilityShaderViewportIndexLayerEXT), "a generated tessellation stage writes a layer the vertex shader does not");
+    {
+        const std::array<std::uint32_t, 3> layerCapabilities{spv::CapabilityShader, spv::CapabilityTessellation, spv::CapabilityShaderViewportIndexLayerEXT};
+        auto layerTarget = tessellationTarget;
+        layerTarget.supportedCapabilities = layerCapabilities;
+        RecompileResult layered;
+        layered.spirv = makeModule({.parameterOutput = true, .layerOutput = true});
+        layered.parameterExports = {0u};
+        expectFailure([&] { static_cast<void>(BuildBarycentricTessellationShaders(layered, fragment, tessellationTarget, 128u, 0u)); }, "VK_EXT_shader_viewport_index_layer");
+        const auto first = BuildBarycentricTessellationShaders(layered, fragment, layerTarget, 128u, 0u);
+        const auto last = BuildBarycentricTessellationShaders(layered, fragment, layerTarget, 128u, 2u);
+        Require(first.control.Identity() == last.control.Identity() && first.evaluation.Identity() != last.evaluation.Identity(), "only the evaluation stage should depend on the provoking vertex that selects the layer");
+        auto context = mockContext();
+        context.provokingVertexLast = false;
+        auto lastState = state;
+        lastState.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+        for (const auto* built : {&first, &last}) {
+            Require(VariableBuiltIns(built->control, spv::BuiltInLayer) == 0u && UintArrayAt(built->control, spv::StorageClassInput, 1u) == 3u && UintArrayAt(built->control, spv::StorageClassOutput, 1u) == 3u, "the generated control stage does not pass the vertex layer on at its location");
+            Require(VariableBuiltIns(built->evaluation, spv::BuiltInLayer) == 1u && UintArrayAt(built->evaluation, spv::StorageClassInput, 1u) == 3u && DeclaresCapability(built->evaluation, spv::CapabilityShaderViewportIndexLayerEXT) && DeclaresExtension(built->evaluation, "SPV_EXT_shader_viewport_index_layer"), "the generated evaluation stage does not write the vertex layer");
+            const std::array<CompiledShader, 4> layeredShaders{{{ShaderStage::Vertex, &layered, 0}, {ShaderStage::TessellationControl, &built->control, 0}, {ShaderStage::TessellationEvaluation, &built->evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};
+            ValidateShaders(layeredShaders, state, subgroup, false, false, false, false, false, false, false, false, true);
+            expectFailure([&] { ValidateShaders(layeredShaders, state, subgroup, false, false, false, false, false, false, false, false, false); }, "VK_EXT_shader_viewport_index_layer");
+            ValidateProvokingVertex(context, lastState, layeredShaders);
+        }
+    }
     vertex.parameterExports.clear();
     expectFailure([&] { static_cast<void>(BuildBarycentricTessellationShaders(vertex, fragment, tessellationTarget, 128u, 0u)); }, "not exported by the vertex shader");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits)); }, "not exported by the vertex shader");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits, 0u)); }, "not exported by the vertex shader");
 }
 
 void copiedWriterIndirectOverlapTests() {
@@ -10213,6 +10260,94 @@ bool MemberBuiltIn(const ShaderRecompiler::RecompileResult& result, spv::BuiltIn
     return false;
 }
 
+std::optional<std::uint32_t> DecoratedLocation(std::span<const std::uint32_t> words, std::uint32_t target) {
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpDecorate && (words[at] >> 16u) == 4u && words[at + 1] == target && words[at + 2] == spv::DecorationLocation) return words[at + 3];
+    }
+    return std::nullopt;
+}
+
+bool DeclaresCapability(const ShaderRecompiler::RecompileResult& result, std::uint32_t capability) {
+    const auto& words = result.spirv.Words();
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpCapability && words[at + 1] == capability) return true;
+    }
+    return false;
+}
+
+bool DeclaresExtension(const ShaderRecompiler::RecompileResult& result, std::string_view name) {
+    const auto& words = result.spirv.Words();
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) != spv::OpExtension) continue;
+        const auto* text = reinterpret_cast<const char*>(words.data() + at + 1);
+        if (std::string_view(text) == name) return true;
+    }
+    return false;
+}
+
+std::optional<std::uint32_t> UintArrayAt(const ShaderRecompiler::RecompileResult& result, spv::StorageClass storage, std::uint32_t location) {
+    const auto& words = result.spirv.Words();
+    std::map<std::uint32_t, std::uint32_t> pointees;
+    std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> arrays;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::set<std::uint32_t> uints;
+    std::map<std::uint32_t, std::uint32_t> variables;
+    std::set<std::uint32_t> located;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        const auto count = words[at] >> 16u;
+        if (op == spv::OpTypePointer && count == 4u) pointees[words[at + 1]] = words[at + 3];
+        if (op == spv::OpTypeArray && count == 4u) arrays[words[at + 1]] = {words[at + 2], words[at + 3]};
+        if (op == spv::OpConstant && count == 4u) constants[words[at + 2]] = words[at + 3];
+        if (op == spv::OpTypeInt && count == 4u && words[at + 2] == 32u && words[at + 3] == 0u) uints.insert(words[at + 1]);
+        if (op == spv::OpVariable && count >= 4u && words[at + 3] == storage) variables[words[at + 2]] = words[at + 1];
+        if (op == spv::OpDecorate && count == 4u && words[at + 2] == spv::DecorationLocation && words[at + 3] == location) located.insert(words[at + 1]);
+    }
+    for (const auto variable : located) {
+        const auto pointer = variables.find(variable);
+        if (pointer == variables.end()) continue;
+        const auto array = arrays.find(pointees.at(pointer->second));
+        if (array == arrays.end() || !uints.contains(array->second.first)) return std::nullopt;
+        return constants.at(array->second.second);
+    }
+    return std::nullopt;
+}
+
+void vertexLayerRelocationTests() {
+    using namespace ShaderRecompiler;
+    Require(!FindVertexLayerOutput({}) && RelocateVertexLayerOutput({}).empty(), "an empty vertex module was given a layer output");
+    const auto plain = makeModule({.parameterOutput = true});
+    Require(!FindVertexLayerOutput(plain) && RelocateVertexLayerOutput(plain).empty(), "a vertex module without gl_Layer was given a layer output");
+    for (const auto [parameterOutput, parameterLocation, expected] : {std::tuple{false, 0u, 0u}, std::tuple{true, 0u, 1u}, std::tuple{true, 2u, 0u}}) {
+        const auto words = makeModule({.parameterOutput = parameterOutput, .parameterLocation = parameterLocation, .layerOutput = true});
+        const auto layer = FindVertexLayerOutput(words);
+        Require(layer && layer->location == expected, "the vertex gl_Layer was not given the first location no vertex output covers");
+        const auto relocated = RelocateVertexLayerOutput(words);
+        RecompileResult result;
+        result.spirv = relocated;
+        Require(relocated.size() == words.size() && VariableBuiltIns(result, spv::BuiltInLayer) == 0u && DecoratedLocation(relocated, layer->variable) == expected, "the relocated vertex gl_Layer is not a plain output at its location");
+        Require(!FindVertexLayerOutput(relocated), "a relocated vertex module still has a layer output");
+    }
+    const auto words = makeModule({.parameterOutput = true, .layerOutput = true});
+    const auto layer = FindVertexLayerOutput(words);
+    Require(layer.has_value(), "the vertex gl_Layer was not found");
+    auto twice = words;
+    twice.insert(twice.end(), {(4u << 16u) | spv::OpDecorate, layer->variable, spv::DecorationBuiltIn, spv::BuiltInLayer});
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(twice)); }, "more than one gl_Layer");
+    auto member = words;
+    member.insert(member.end(), {(5u << 16u) | spv::OpMemberDecorate, layer->variable, 0u, spv::DecorationBuiltIn, spv::BuiltInLayer});
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(member)); }, "block member");
+    auto viewport = words;
+    viewport[layer->decoration + 3] = spv::BuiltInViewportIndex;
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(viewport)); }, "gl_ViewportIndex");
+    auto located = words;
+    located.insert(located.end(), {(4u << 16u) | spv::OpDecorate, layer->variable, spv::DecorationLocation, 5u});
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(located)); }, "location or component");
+    auto truncated = words;
+    truncated.push_back((9u << 16u) | spv::OpNop);
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(truncated)); }, "malformed");
+}
+
 void rectListTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -10260,6 +10395,44 @@ void rectListTests() {
         auto queue = makeState();
         queue.userConfig[0x242] = 17;
         ValidateShaders(clippedShaders, DecodeState(queue), VkPhysicalDeviceSubgroupProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES}, false, false, false, false, false, false, true);
+    }
+    Require(VariableBuiltIns(faultAuxiliary.evaluation, spv::BuiltInLayer) == 0u && !DeclaresCapability(faultAuxiliary.evaluation, spv::CapabilityShaderViewportIndexLayerEXT), "a rect-list evaluation stage writes a layer the vertex shader does not");
+    {
+        const std::array<std::uint32_t, 4> layerCapabilities{spv::CapabilityShader, spv::CapabilityTessellation, spv::CapabilityClipDistance, spv::CapabilityShaderViewportIndexLayerEXT};
+        auto layerTarget = target;
+        layerTarget.supportedCapabilities = layerCapabilities;
+        const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        auto queue = makeState();
+        queue.userConfig[0x242] = 17;
+        const auto state = DecodeState(queue);
+        RecompileResult layered;
+        layered.spirv = makeModule({.parameterOutput = true, .layerOutput = true});
+        layered.parameterExports = {0};
+        expectFailure([&] { static_cast<void>(BuildRectListShaders(layered, fragment, target)); }, "VK_EXT_shader_viewport_index_layer");
+        RecompileResult parameterFragment;
+        parameterFragment.spirv = makeModule({.fragment = true, .rectParameters = true});
+        parameterFragment.fragmentParameters = {{0, 0, false, false}, {1, 0, false, false}};
+        for (const auto* pixel : {&fragment, &parameterFragment}) {
+            const auto rect = BuildRectListShaders(layered, *pixel, layerTarget);
+            const auto forward = pixel == &fragment ? 0u : 2u;
+            Require(VariableBuiltIns(rect.evaluation, spv::BuiltInLayer) == 1u && DeclaresCapability(rect.evaluation, spv::CapabilityShaderViewportIndexLayerEXT) && DeclaresExtension(rect.evaluation, "SPV_EXT_shader_viewport_index_layer"), "the rect-list evaluation stage does not write the vertex layer");
+            for (const auto* control : {&rect.control, &rect.lastVertexControl}) {
+                Require(VariableBuiltIns(*control, spv::BuiltInLayer) == 0u && UintArrayAt(*control, spv::StorageClassInput, 1u) == 3u && UintArrayAt(*control, spv::StorageClassOutput, forward) == 4u, "the rect-list control stage does not read the vertex layer at its location and pass it on at the first location no parameter takes");
+            }
+            Require(UintArrayAt(rect.evaluation, spv::StorageClassInput, forward) == 4u, "the rect-list evaluation stage does not read the layer its control stage passes on");
+            Require(rect.lastVertexControl.Identity() != rect.control.Identity(), "the rect-list control stages do not take the layer from different provoking vertices");
+            for (const auto* control : {&rect.control, &rect.lastVertexControl}) {
+                const std::array<CompiledShader, 4> shaders{{{ShaderStage::Vertex, &layered, 0}, {ShaderStage::TessellationControl, control, 0}, {ShaderStage::TessellationEvaluation, &rect.evaluation, 0}, {ShaderStage::Fragment, pixel, 0}}};
+                ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, true);
+                expectFailure([&] { ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, false); }, "VK_EXT_shader_viewport_index_layer");
+            }
+        }
+        RecompileResult clippedLayer;
+        clippedLayer.spirv = makeModule({.clipDistanceLength = 2, .layerOutput = true});
+        const auto clippedRect = BuildRectListShaders(clippedLayer, fragment, layerTarget);
+        Require(VariableBuiltIns(clippedRect.evaluation, spv::BuiltInLayer) == 1u && VariableBuiltIns(clippedRect.evaluation, spv::BuiltInClipDistance) == 2u && UintArrayAt(clippedRect.control, spv::StorageClassInput, 0u) == 3u, "the rect-list stages do not forward both the clip distances and the layer");
+        const std::array<CompiledShader, 4> clippedShaders{{{ShaderStage::Vertex, &clippedLayer, 0}, {ShaderStage::TessellationControl, &clippedRect.control, 0}, {ShaderStage::TessellationEvaluation, &clippedRect.evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};
+        ValidateShaders(clippedShaders, state, subgroup, false, false, false, false, false, false, true, false, true);
     }
     vertex.spirv = makeModule({.parameterOutput = true});
     fragment.spirv = makeModule({.fragment = true, .rectParameters = true});
@@ -15295,6 +15468,7 @@ int main(int argc, char** argv) {
         vertexZeroFillMergeTests();
         parallelCompareTests();
         pixelParameterSlotTests();
+        vertexLayerRelocationTests();
         rectListTests();
         quadListTests();
         floatControlsModeTests();
