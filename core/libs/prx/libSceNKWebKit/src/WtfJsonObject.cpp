@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/JSONValues.cpp
+// Derived from Source/WTF/wtf/JSONValues.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2010 Google Inc. All rights reserved.
  * Copyright (C) 2014 University of Washington. All rights reserved.
@@ -31,7 +31,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/HashTable.h
+// Derived from Source/WTF/wtf/HashTable.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2008 David Levin <levin@chromium.org>
