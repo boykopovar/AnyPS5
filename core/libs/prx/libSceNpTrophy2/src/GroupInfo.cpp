@@ -134,14 +134,8 @@ int APS5_VABI sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t of
 }
 
 int APS5_VABI sceNpTrophy2GetGroupIcon(int context, int handle, int group_id, void* buffer, size_t* size) {
-    (void)context;
     (void)handle;
-    (void)group_id;
-    (void)buffer;
-    if (size != nullptr) {
-        *size = NP_TROPHY2_ICON_SIZE_NONE;
-    }
-    throw std::runtime_error(std::string(__func__) + ": icon file not found");
+    return NpTrophy2::CopyIcon(context, NpTrophy2::IconKind::Group, group_id, buffer, size, __func__);
 }
 
 }

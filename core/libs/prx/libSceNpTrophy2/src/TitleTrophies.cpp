@@ -1,6 +1,8 @@
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
+#include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -130,6 +132,45 @@ void CopyText(char* destination, std::size_t size, std::string_view text) {
     while (length > 0 && length < text.size() && (static_cast<unsigned char>(text[length]) & 0xC0u) == 0x80u) --length;
     std::memcpy(destination, text.data(), length);
     destination[length] = '\0';
+}
+
+int CopyIcon(int context, IconKind kind, std::int32_t id, void* buffer, std::size_t* size, const char* caller) {
+    const auto owner = FindContext(context);
+    const auto* package = owner ? Package(owner->serviceLabel) : nullptr;
+    const std::string* icon = nullptr;
+    if (package != nullptr) {
+        const std::map<std::int32_t, std::string>* icons = nullptr;
+        if (kind == IconKind::Game && package->gameIcon) icon = &*package->gameIcon;
+        if (kind == IconKind::Group) icons = &package->groupIcons;
+        if (kind == IconKind::Trophy) icons = &package->trophyIcons;
+        if (kind == IconKind::Reward) icons = &package->rewardIcons;
+        if (icons != nullptr) {
+            if (const auto found = icons->find(id); found != icons->end()) icon = &found->second;
+        }
+    }
+    if (icon == nullptr) {
+        if (size != nullptr) *size = NP_TROPHY2_ICON_SIZE_NONE;
+        return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
+    }
+    if (size == nullptr) throw std::invalid_argument(std::string(caller) + ": invalid argument");
+    if (kind == IconKind::Trophy || kind == IconKind::Reward) {
+        const auto trophy = package->trophies.find(id);
+        if (trophy != package->trophies.end() && trophy->second.hidden && !UnlockedBy(owner->userId, owner->serviceLabel)(id)) {
+            throw std::runtime_error(std::string(caller) + ": trophy " + std::to_string(id) + " is hidden and locked, and whether the console gives out its icon is not known");
+        }
+    }
+    if (buffer == nullptr) {
+        *size = icon->size();
+        return SCE_NP_TROPHY2_OK;
+    }
+    if (*size < icon->size()) {
+        throw std::runtime_error(std::string(caller) + ": the buffer holds " + std::to_string(*size) + " bytes and the icon " + std::to_string(icon->size()) + ", and the console's answer to that is not known");
+    }
+    const GuestArena::HostWrite destination(buffer, icon->size());
+    if (!destination.Open()) throw std::runtime_error(std::string(caller) + ": the icon buffer is not writable");
+    std::memcpy(buffer, icon->data(), icon->size());
+    *size = icon->size();
+    return SCE_NP_TROPHY2_OK;
 }
 
 UnlockedQuery UnlockedBy(std::int32_t userId, std::uint32_t serviceLabel) {

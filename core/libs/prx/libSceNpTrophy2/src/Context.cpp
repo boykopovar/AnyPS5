@@ -7,6 +7,7 @@
 #include <string>
 
 #include "prx/libSceNpTrophy2/include/NpTrophy2.hpp"
+#include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -83,14 +84,8 @@ int APS5_VABI sceNpTrophy2UnregisterUnlockCallback() {
 }
 
 int APS5_VABI sceNpTrophy2GetRewardIcon(int context, int handle, int reward_id, void* buffer, size_t* size) {
-    (void)context;
     (void)handle;
-    (void)reward_id;
-    (void)buffer;
-    if (size != nullptr) {
-        *size = NP_TROPHY2_ICON_SIZE_NONE;
-    }
-    return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
+    return NpTrophy2::CopyIcon(context, NpTrophy2::IconKind::Reward, reward_id, buffer, size, __func__);
 }
 
 int APS5_VABI sceNpTrophy2ShowTrophyList(int context) {
