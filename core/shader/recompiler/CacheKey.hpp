@@ -383,6 +383,7 @@ private:
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
         append(key, value.ldsLockFences);
+        append(key, value.deviceAtomicWorkgroupMemoryBarriers);
         append(key, value.meshWindowBuffer);
         append(key, value.hostInterpolationFirst);
         append(key, value.shaderImageMinLod);

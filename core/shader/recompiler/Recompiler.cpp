@@ -708,6 +708,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.waveLdsMemoryBarriers = request.target.waveLdsMemoryBarriers;
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
     targetOptions.ldsLockFences = request.target.ldsLockFences;
+    targetOptions.deviceAtomicWorkgroupMemoryBarriers = request.target.deviceAtomicWorkgroupMemoryBarriers;
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
     targetOptions.float16WidenNans = request.target.float16WidenNans;
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;

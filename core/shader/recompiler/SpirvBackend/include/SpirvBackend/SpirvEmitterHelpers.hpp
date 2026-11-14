@@ -144,6 +144,7 @@ std::uint32_t EmitD16FormatComponent(SpirvEmitterState& state, const SpirvBuffer
 std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t data);
 std::uint32_t EmitD16StoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t half);
 void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state);
+void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state, std::uint32_t memorySemantics);
 std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t subid, std::uint32_t control);
 std::uint32_t EmitAndConstant(SpirvEmitterState& state, std::uint32_t value, std::uint32_t mask);
 std::uint32_t EmitShiftRightConstant(SpirvEmitterState& state, std::uint32_t value, std::uint32_t shift);
@@ -295,8 +296,11 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
     EmitLabel(state, cont);
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, merge);
-    const auto fenceScope = kind == ResourceKind::Lds ? LdsMemoryBarrierScope(state) : scope;
-    if (kind != ResourceKind::Lds || !state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, fenceScope), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory));
+    if (kind == ResourceKind::Lds) {
+        if (!state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, LdsMemoryBarrierScope(state)), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory));
+    } else {
+        EmitDeviceAtomicMemoryBarrier(state, memory);
+    }
     return observed;
 }
 

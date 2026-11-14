@@ -334,14 +334,19 @@ std::uint32_t EmitD16StoreComponent(SpirvEmitterState& state, const SpirvBufferF
     return EmitFormatStoreComponent(state, info, component, EmitOrU32(state, sign, magnitude));
 }
 
-void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
+void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state, std::uint32_t memorySemantics) {
     // GCN atomics imply no fence; this device-scope barrier is the acquire side of lock/publish
     // patterns (atomic, then loads of data other waves wrote). It also makes every non-returning
     // atomic wait for its completion. Experiment switch: APS5_NO_ATOMIC_BARRIER=1 drops it.
     static const bool disabled = std::getenv("APS5_NO_ATOMIC_BARRIER") != nullptr;
     if (disabled) return;
-    const auto semantics = spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask;
+    const auto effectiveMemory = state.deviceAtomicWorkgroupMemoryBarriers ? static_cast<std::uint32_t>(spv::MemorySemanticsWorkgroupMemoryMask) : memorySemantics;
+    const auto semantics = spv::MemorySemanticsAcquireReleaseMask | effectiveMemory;
     state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, semantics));
+}
+
+void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
+    EmitDeviceAtomicMemoryBarrier(state, spv::MemorySemanticsUniformMemoryMask);
 }
 
 std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t subid, std::uint32_t control) {
