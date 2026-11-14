@@ -2698,7 +2698,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (!GuestMemory::GpuMutex().HeldByThisThread()) gpuLock.lock();
         state->placeholderImages = std::make_unique<Graphics::PlaceholderImages>(graphicsContext());
     }
-    state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores);
+    state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores, state->functionsReady ? &state->deviceFunctions : nullptr, family);
     state->recorder->Activate();
     state->context = buildContext();
     state->contextReady = true;

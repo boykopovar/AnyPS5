@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -135,6 +136,7 @@ public:
 
 private:
     friend struct Context;
+    friend class CommandEncoder;
     TFunction function = nullptr;
 };
 
@@ -180,6 +182,8 @@ struct DeviceFunctions {
     PFN_vkCmdCopyBufferToImage cmdCopyBufferToImage = nullptr;
     PFN_vkCmdCopyImageToBuffer cmdCopyImageToBuffer = nullptr;
     PFN_vkCmdClearColorImage cmdClearColorImage = nullptr;
+    PFN_vkCmdBeginQuery cmdBeginQuery = nullptr;
+    PFN_vkCmdEndQuery cmdEndQuery = nullptr;
     PFN_vkUpdateDescriptorSets updateDescriptorSets = nullptr;
     PFN_vkAllocateDescriptorSets allocateDescriptorSets = nullptr;
     PFN_vkGetFenceStatus getFenceStatus = nullptr;
@@ -195,6 +199,7 @@ struct DeviceFunctions {
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
 std::uint64_t& DeviceProcLookups();
+void BeforeCommandLookup(VkDevice device, std::source_location where = std::source_location::current());
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -343,8 +348,8 @@ struct Context {
     VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
-    TFunction Function(FunctionName name) const {
-        return lookup<TFunction>(name.Value());
+    TFunction Function(FunctionName name, std::source_location where = std::source_location::current()) const {
+        return lookup<TFunction>(name.Value(), where);
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.
@@ -481,9 +486,10 @@ private:
     friend void FillDeviceFunctions(const Context& context, DeviceFunctions& functions);
 
     template<typename TFunction>
-    TFunction lookup(const char* name) const {
+    TFunction lookup(const char* name, std::source_location where = std::source_location::current()) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
+        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device, where);
         const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
         return function;
