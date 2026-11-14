@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdlib>
+#include <exception>
 #include <initializer_list>
 
 static void APS5_VABI Handler(int, void*) {}
@@ -24,4 +25,20 @@ int main() {
         Require(sceKernelRemoveExceptionHandler(signum) == 0);
     }
     Require(sceKernelRemoveExceptionHandler(30) == 0);
+    Require(sceKernelDebugRaiseException(0xa0020001, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDebugRaiseExceptionOnReleaseMode(0xa0020001, 1) == SCE_KERNEL_ERROR_EINVAL);
+    bool threw = false;
+    try {
+        sceKernelDebugRaiseException(0xa0020001, 0);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        sceKernelDebugRaiseExceptionOnReleaseMode(0xa0020001, 0);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw);
 }

@@ -1476,12 +1476,16 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
 #endif
 }
 
-void APS5_VABI sceKernelDebugRaiseException(int c1, int c2) {
+int APS5_VABI sceKernelDebugRaiseException(int c1, int c2) {
     APS5_LOG_OUT("sceKernelDebugRaiseException c1=0x%08x c2=0x%08x caller=%p", static_cast<unsigned>(c1), static_cast<unsigned>(c2), __builtin_return_address(0));
+    if (c2 != 0) return SCE_KERNEL_ERROR_EINVAL;
+    throw std::runtime_error("sceKernelDebugRaiseException: an unconsumed debug exception terminates the process");
 }
 
-void APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2) {
+int APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2) {
     APS5_LOG_OUT("sceKernelDebugRaiseExceptionOnReleaseMode c1=0x%08x c2=0x%08x caller=%p", static_cast<unsigned>(c1), static_cast<unsigned>(c2), __builtin_return_address(0));
+    if (c2 != 0) return SCE_KERNEL_ERROR_EINVAL;
+    throw std::runtime_error("sceKernelDebugRaiseExceptionOnReleaseMode: an unconsumed debug exception terminates the process");
 }
 
 }
