@@ -1,0 +1,15 @@
+add_library(libScePrecompiledShaders SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePrecompiledShaders PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePrecompiledShaders)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_precompiled_shaders_tests ${LIBS_INCLUDE_DIR}/tests/GuestPrecompiledShaders.cpp)
+    target_include_directories(guest_precompiled_shaders_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_precompiled_shaders_tests PRIVATE libScePrecompiledShaders glslang SPIRV glslang-default-resource-limits libc)
+    configure_windows_unwind(guest_precompiled_shaders_tests)
+    add_test(NAME guest_precompiled_shaders COMMAND guest_precompiled_shaders_tests)
+    if(WIN32)
+        set_tests_properties(guest_precompiled_shaders PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePrecompiledShaders>")
+    endif()
+endif()
