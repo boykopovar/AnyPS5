@@ -1,5 +1,6 @@
 #include "strcodec.h"
 #include "JXRGlue.h"
+#include "ConverterCallbacks.h"
 #include "TranscodeBridge.h"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "GuestHeap.h"
@@ -247,6 +248,67 @@ int64_t JxrDecodeSelectFrame_nid_no_patch(void* decoder, uint32_t frame) {
 int32_t JxrIdpEmpty_nid_no_patch(void* codec) {
     return IDPEmpty((CWMImageStrCodec*)codec);
 }
+
+#define JXR_DECLARE_CONVERTER(name) extern ERR name(PKFormatConverter*, const PKRect*, U8*, U32);
+JXR_CONVERTER_CALLBACKS(JXR_DECLARE_CONVERTER)
+#undef JXR_DECLARE_CONVERTER
+
+int64_t JxrInitializeConvertNative_nid_no_patch(void* converter, const void* sourceFormat, const char* extension,
+                                                const void* targetFormat, int32_t* callbackId) {
+    PKFormatConverter* pFC = (PKFormatConverter*)converter;
+    PKPixelFormatGUID enPFFrom;
+    PKPixelFormatGUID enPFTo;
+    unsigned char previous[sizeof(pFC->Convert)];
+    memcpy(previous, &pFC->Convert, sizeof(previous));
+    memcpy(&enPFFrom, sourceFormat, sizeof(enPFFrom));
+    memcpy(&enPFTo, targetFormat, sizeof(enPFTo));
+    const ERR result = PKFormatConverter_InitializeConvert(pFC, enPFFrom, (char*)extension, enPFTo);
+    *callbackId = -1;
+    if (memcmp(&pFC->Convert, previous, sizeof(previous)) != 0) {
+        *callbackId = -2;
+#define JXR_MATCH_CONVERTER(name) if (pFC->Convert == name) *callbackId = JXR_CONVERT_##name;
+        JXR_CONVERTER_CALLBACKS(JXR_MATCH_CONVERTER)
+#undef JXR_MATCH_CONVERTER
+        memcpy(&pFC->Convert, previous, sizeof(previous));
+    }
+    return result;
+}
+
+int64_t JxrConvertNative_nid_no_patch(void* converter, const void* rectangle, uint8_t* pixels, uint32_t stride,
+                                      int32_t callbackId) {
+    switch (callbackId) {
+#define JXR_CALL_CONVERTER(name) case JXR_CONVERT_##name: return name((PKFormatConverter*)converter, (const PKRect*)rectangle, pixels, stride);
+        JXR_CONVERTER_CALLBACKS(JXR_CALL_CONVERTER)
+#undef JXR_CALL_CONVERTER
+    default:
+        return WMP_errUnsupportedFormat;
+    }
+}
+
+
+int64_t JxrFormatConverterInitialize_nid_no_patch(void* converter, void* decoder, const void* sourceFormat,
+                                                   const char* extension, const void* targetFormat,
+                                                   int32_t* callbackId) {
+    PKFormatConverter* pFC = (PKFormatConverter*)converter;
+    PKPixelFormatGUID enPFFrom;
+    PKPixelFormatGUID enPFTo;
+    unsigned char previous[sizeof(pFC->Convert)];
+    memcpy(previous, &pFC->Convert, sizeof(previous));
+    memcpy(&enPFFrom, sourceFormat, sizeof(enPFFrom));
+    memcpy(&enPFTo, targetFormat, sizeof(enPFTo));
+    const ERR result = PKFormatConverter_InitializeConvert(pFC, enPFFrom, (char*)extension, enPFTo);
+    *callbackId = -1;
+    if (memcmp(&pFC->Convert, previous, sizeof(previous)) != 0) {
+        *callbackId = -2;
+#define JXR_MATCH_CONVERTER(name) if (pFC->Convert == name) *callbackId = JXR_CONVERT_##name;
+        JXR_CONVERTER_CALLBACKS(JXR_MATCH_CONVERTER)
+#undef JXR_MATCH_CONVERTER
+        memcpy(&pFC->Convert, previous, sizeof(previous));
+    }
+    if (result >= 0) pFC->pDecoder = (PKImageDecode*)decoder;
+    return result;
+}
+
 
 typedef int64_t (APS5_VABI *JxrGuestGetPos)(struct WMPStream*, size_t*);
 typedef int64_t (APS5_VABI *JxrGuestClose)(struct WMPStream**);

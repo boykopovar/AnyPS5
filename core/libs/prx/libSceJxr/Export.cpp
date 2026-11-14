@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include "Stream.hpp"
 #include "Factory.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
@@ -51,6 +52,20 @@ constexpr std::int64_t WmpErrBufferOverflow = -103;
 constexpr std::size_t MemoryBuffer = 0;
 constexpr std::size_t MemorySize = 1;
 constexpr std::size_t MemoryPosition = 2;
+using DecoderGetResolution = std::int64_t (APS5_VABI*)(void*, float*, float*);
+static_assert(sizeof(DecoderGetResolution) == 8);
+
+std::uintptr_t GuestFieldAddress(const void* base, std::uintptr_t offset, std::size_t size) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) {
+        throw std::invalid_argument("invalid JXR guest field address");
+    }
+    const auto field = address + offset;
+    if (size > std::numeric_limits<std::uintptr_t>::max() - field) {
+        throw std::invalid_argument("invalid JXR guest field range");
+    }
+    return field;
+}
 
 template<typename TSlot, typename TFunction>
 TSlot Slot(TFunction* function) {
@@ -224,40 +239,113 @@ std::int64_t APS5_VABI PKFormatConverter_Convert_nid_postfix(void* converter, co
     return WmpErrSuccess;
 }
 
-int APS5_VABI PKFormatConverter_Copy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Copy_nid_postfix(JxrGuestFormatConverter* converter, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t decoderCopyOffset = 7 * sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - decoderCopyOffset) APS5_INVALID_ARG_EX;
+    using DecoderCopy = std::int64_t (APS5_VABI*)(void*, const void*, std::uint8_t*, std::uint32_t);
+    static_assert(sizeof(DecoderCopy) == sizeof(void*));
+    DecoderCopy decoderCopy = nullptr;
+    const auto* decoderCopyField = reinterpret_cast<const void*>(decoderAddress + decoderCopyOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoderCopy, decoderCopyField, sizeof(decoderCopy)) || !decoderCopy) APS5_INVALID_ARG_EX;
+
+    auto result = decoderCopy(decoder, rectangle, buffer, stride);
+    if (result < 0) return result;
+
+    constexpr std::size_t converterConvertOffset = 7 * sizeof(void*);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - converterConvertOffset) APS5_INVALID_ARG_EX;
+    using ConverterConvert = std::int64_t (APS5_VABI*)(void*, const void*, std::uint8_t*, std::uint32_t);
+    static_assert(sizeof(ConverterConvert) == sizeof(void*));
+    ConverterConvert converterConvert = nullptr;
+    const auto* converterConvertField = reinterpret_cast<const void*>(converterAddress + converterConvertOffset);
+    if (!GuestCopyIn_nid_no_patch(&converterConvert, converterConvertField, sizeof(converterConvert)) || !converterConvert) APS5_INVALID_ARG_EX;
+
+    result = converterConvert(converter, rectangle, buffer, stride);
+    return result;
 }
 
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat) {
+    if (!converter || !pixelFormat) APS5_INVALID_ARG_EX;
+    constexpr auto pixelFormatOffset = offsetof(JxrGuestFormatConverter, pixelFormat);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - pixelFormatOffset) APS5_INVALID_ARG_EX;
+    const auto* sourcePixelFormat = reinterpret_cast<const JxrGuestGuid*>(converterAddress + pixelFormatOffset);
+    JxrGuestGuid copy{};
+    if (!GuestCopyIn_nid_no_patch(&copy, sourcePixelFormat, sizeof(copy))) APS5_INVALID_ARG_EX;
+    if (!GuestCopyOut_nid_no_patch(pixelFormat, &copy, sizeof(copy))) APS5_INVALID_ARG_EX;
+    return WmpErrSuccess;
 }
 
-int APS5_VABI PKFormatConverter_GetResolution_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetResolution_nid_postfix(JxrGuestFormatConverter* converter, float* x, float* y) {
+    if (!converter) throw std::invalid_argument("null JXR format converter");
+    void* decoder = nullptr;
+    const auto decoderAddress = GuestFieldAddress(converter, offsetof(JxrGuestFormatConverter, decoder), sizeof(decoder));
+    if (!GuestCopyIn_nid_no_patch(&decoder, reinterpret_cast<const void*>(decoderAddress), sizeof(decoder)) || !decoder) {
+        throw std::invalid_argument("invalid JXR decoder field");
+    }
+    DecoderGetResolution getResolution = nullptr;
+    const auto callbackAddress = GuestFieldAddress(decoder, 24, sizeof(getResolution));
+    if (!GuestCopyIn_nid_no_patch(&getResolution, reinterpret_cast<const void*>(callbackAddress), sizeof(getResolution)) || !getResolution) {
+        throw std::invalid_argument("invalid JXR resolution callback field");
+    }
+    return getResolution(decoder, x, y);
 }
 
-int APS5_VABI PKFormatConverter_GetSize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetSize_nid_postfix(JxrGuestFormatConverter* converter, std::int32_t* width, std::int32_t* height) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t getSizeOffset = 2 * sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - getSizeOffset) APS5_INVALID_ARG_EX;
+    using DecoderGetSize = std::int64_t (APS5_VABI*)(void*, std::int32_t*, std::int32_t*);
+    static_assert(sizeof(DecoderGetSize) == 8);
+    DecoderGetSize getSize = nullptr;
+    const auto* callbackField = reinterpret_cast<const void*>(decoderAddress + getSizeOffset);
+    if (!GuestCopyIn_nid_no_patch(&getSize, callbackField, sizeof(getSize)) || !getSize) APS5_INVALID_ARG_EX;
+    return getSize(decoder, width, height);
 }
 
-int APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t getPixelFormatOffset = sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - getPixelFormatOffset) APS5_INVALID_ARG_EX;
+    using DecoderGetPixelFormat = std::int64_t (APS5_VABI*)(void*, JxrGuestGuid*);
+    static_assert(sizeof(DecoderGetPixelFormat) == sizeof(void*));
+    DecoderGetPixelFormat getPixelFormat = nullptr;
+    const auto* callbackField = reinterpret_cast<const void*>(decoderAddress + getPixelFormatOffset);
+    if (!GuestCopyIn_nid_no_patch(&getPixelFormat, callbackField, sizeof(getPixelFormat)) || !getPixelFormat) APS5_INVALID_ARG_EX;
+
+    return getPixelFormat(decoder, pixelFormat);
 }
 
-int APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKFormatConverter_Initialize_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKFormatConverter_Release_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Release_nid_postfix(void** converter) {
+    return PKFree_nid_postfix(converter);
 }
 
 std::int64_t APS5_VABI PKImageDecode_Copy_nid_postfix(void*, const void*, std::uint8_t*, std::uint32_t) {
