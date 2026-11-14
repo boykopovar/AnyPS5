@@ -242,6 +242,23 @@ static std::size_t GuestMainStackBytes() {
     return (bytes + PS5_PAGE_SIZE - 1) / PS5_PAGE_SIZE * PS5_PAGE_SIZE;
 }
 
+extern "C" [[noreturn]] void APS5_VABI Aps5CallOnGuestMainStack_nid_no_patch(std::uintptr_t top, void* arguments, void (APS5_VABI* entry)(void*));
+
+asm(".text\n"
+    APS5_ASM_FUNCTION("Aps5CallOnGuestMainStack_nid_no_patch") R"(
+    .cfi_startproc
+    .cfi_undefined %rip
+    mov %rdi, %rsp
+    push $0
+    push $0
+    mov %rsp, %rbp
+    mov %rsi, %rdi
+    xor %esi, %esi
+    call *%rdx
+    ud2
+    .cfi_endproc
+)" APS5_ASM_FUNCTION_END("Aps5CallOnGuestMainStack_nid_no_patch"));
+
 extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*)) {
     if (entry == nullptr) throw std::invalid_argument("EnterGuestMainStack: null entry point");
     if (guestMainStackLow.load(std::memory_order_acquire) != 0) throw std::runtime_error("EnterGuestMainStack: the guest main stack was already entered");
@@ -270,18 +287,7 @@ extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* ar
         self->stackAddress = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(mapping) + GUEST_STACK_GUARD);
         self->stackSize = bytes - GUEST_STACK_GUARD;
     }
-    __asm__ volatile(
-        "mov %0, %%rsp\n\t"
-        "pushq $0\n\t"
-        "pushq $0\n\t"
-        "mov %%rsp, %%rbp\n\t"
-        "xor %%esi, %%esi\n\t"
-        "call *%2\n\t"
-        "ud2"
-        :
-        : "r"(top), "D"(arguments), "a"(entry)
-        : "memory");
-    __builtin_unreachable();
+    Aps5CallOnGuestMainStack_nid_no_patch(top, arguments, entry);
 }
 
 static void AllocateGuestStack(PthreadPrivate* thread, std::size_t usableBytes) {
