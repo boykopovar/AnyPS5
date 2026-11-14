@@ -258,6 +258,12 @@ void StoreDefaultNaN(void* target, std::size_t bytes) {
     }
 }
 
+std::string ScanLength(const std::string& length, char conversion) {
+    if (length == "L" && std::strchr("diouxXn", conversion) != nullptr) return {};
+    if (std::strchr("aAeEfFgG", conversion) != nullptr && length != "l" && length != "L") return {};
+    return length;
+}
+
 class StringSource {
     const char* const start;
     const char* position;
@@ -344,9 +350,9 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             const char first = *cursor++;
             if ((first == 'h' || first == 'l') && *cursor == first) ++cursor;
         }
-        const std::string length(lengthStart, cursor);
         const char conversion = *cursor;
         if (conversion == '\0') return finish(assigned);
+        const std::string length = ScanLength(std::string(lengthStart, cursor), conversion);
         if (!secure && std::strchr("diouxXaAeEfFgGcspn[SC", conversion) == nullptr) return finish(assigned);
         std::string specifier(1, conversion);
         if (conversion == '[') {

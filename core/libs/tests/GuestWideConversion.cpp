@@ -1,3 +1,4 @@
+#include <array>
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
@@ -201,6 +202,13 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"2.25", u"%Lf", &extended) == 1 && extended == 2.25L, "%Lf");
     float single = 0;
     Require(swscanf_s_nid_postfix(u"-inf", u"%f", &single) == 1 && single == -std::numeric_limits<float>::infinity(), "%f infinity");
+    for (const char16_t* format : {u"%llf", u"%jf", u"%zf", u"%tf", u"%lla", u"%hf"}) {
+        std::array<unsigned char, 16> stored;
+        stored.fill(0x55);
+        Require(swscanf_s_nid_postfix(u"1.5", format, stored.data()) == 1 && stored[4] == 0x55, "a floating length other than l or L stores a float");
+        std::memcpy(&single, stored.data(), sizeof(single));
+        Require(single == 1.5f, "a floating length other than l or L stores the value");
+    }
 
     Require(swscanf_s_nid_postfix(u"a", u"b%d", &first) == 0, "literal mismatch is a matching failure");
     Require(swscanf_s_nid_postfix(u"", u"x") == 0, "literal at end of input returns zero");

@@ -365,8 +365,6 @@ private:
     }
 
     Outcome Float(const Directive& directive) {
-        if (!directive.length.empty() && directive.length != "l" && directive.length != "L")
-            Fail("invalid floating length modifier " + directive.length);
         void* target = nullptr;
         if (!directive.suppress && (target = args.Next<void*>()) == nullptr) return Outcome::Violation;
         SkipSpace();
