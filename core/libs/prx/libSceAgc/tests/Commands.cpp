@@ -25,6 +25,7 @@
 #include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
 #include "prx/libSceAgc/DcbDraw/include/DrawIndexed.hpp"
 #include "prx/libSceAgc/DcbDraw/include/DrawNonIndexed.hpp"
+#include "prx/libSceAgc/DcbDraw/include/Stats.hpp"
 #include "prx/libSceAgc/Cb/include/Registers.hpp"
 #include "prx/libSceAgc/Acb/include/Control.hpp"
 #include "prx/libSceAgc/Acb/include/Sync.hpp"
@@ -1224,6 +1225,29 @@ void testAcquireMem() {
     check(sceAgcDcbAcquireMemGetSize() == 32 && sceAgcAcbAcquireMemGetSize() == 32, "acquire packet size");
 }
 
+template <typename TWrite>
+std::size_t writtenBytes(TWrite write) {
+    Storage storage;
+    const auto* start = storage.buffer.cursor_up;
+    write(storage.buffer);
+    return static_cast<std::size_t>(storage.buffer.cursor_up - start) * sizeof(std::uint32_t);
+}
+
+void testPacketSizes() {
+    alignas(64) std::uint32_t memory[16]{};
+    const std::array<std::uint32_t, 3> values{1, 2, 3};
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcDcbDrawIndexAuto(&buffer, 17, 0); }) == sceAgcDcbDrawIndexAutoGetSize(), "auto index draw size differs from its packet");
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcDcbDrawIndexIndirect(&buffer, 0x40, 0); }) == sceAgcDcbDrawIndexIndirectGetSize(), "indexed indirect draw size differs from its packet");
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcDcbDrawIndirectMulti(&buffer, 0x40, 0, 5, nullptr, 16, 0); }) == sceAgcDcbDrawIndirectMultiGetSize(), "indirect multi draw size differs from its packets");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcDcbSetIndexBuffer(&buffer, reinterpret_cast<std::uintptr_t>(memory)); }) == sceAgcDcbSetIndexBufferGetSize(), "index buffer size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcDcbGetLodStats(&buffer, 0, memory, sizeof(memory), 0, 0, 0, 0); }) == sceAgcDcbGetLodStatsGetSize(), "LOD statistics size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcDcbCondExec(&buffer, memory, 4); }) == sceAgcDcbCondExecGetSize(), "graphics conditional execution size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcAcbCondExec(&buffer, memory, 4); }) == sceAgcAcbCondExecGetSize(), "compute conditional execution size differs from its packet");
+    check(writtenBytes([](CommandBuffer& buffer) { sceAgcAcbRewind(&buffer, 0); }) == sceAgcAcbRewindGetSize(), "compute rewind size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcCbSetShRegisterRangeDirect(&buffer, 0x90, values.data(), values.size()); }) == sceAgcCbSetShRegisterRangeDirectGetSize(values.size()), "shader register range size differs from its packet");
+    check(writtenBytes([&](CommandBuffer& buffer) { sceAgcCbSetUcRegisterRangeDirect(&buffer, 0x90, values.data(), values.size()); }) == sceAgcCbSetUcRegisterRangeDirectGetSize(values.size()), "user config register range size differs from its packet");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1265,6 +1289,7 @@ int main(int argc, char** argv) {
         testAtomicGds();
         testDebugRaiseException();
         testCopyDataAndComputeEvents();
+        testPacketSizes();
         testDefaults();
         testDefaultsTypes();
         LibcRunShutdown_nid_postfix();

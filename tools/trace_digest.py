@@ -6,9 +6,12 @@ import html
 import json
 import math
 import os
+import re
 import sys
 import zlib
 from pathlib import Path
+
+from performance_compare import unique_json_object
 
 DESCRIPTION = """Digest of an APS5_TRACE_FRAMES / APS5_TRACE_SECONDS capture (aps5-trace-*.json.gz) for an issue or a
 pull request: the summary line, the slowest frames with their largest slices, the busy and wait time of each
@@ -183,11 +186,13 @@ def load_summary_lines(path, numbered=False, label=None):
         if not line.strip():
             continue
         try:
-            record = json.loads(line)
+            record = json.loads(line, object_pairs_hook=unique_json_object)
         except json.JSONDecodeError as error:
             raise ValueError(f"{display}:{number}: invalid JSON: {error.msg}") from error
         except RecursionError as error:
             raise ValueError(f"{display}:{number}: JSON nesting is too deep") from error
+        except ValueError as error:
+            raise ValueError(f"{display}:{number}: {error}") from error
         if not isinstance(record, dict):
             raise ValueError(f"{display}:{number}: summary record must be an object")
         records.append((number, record) if numbered else record)
@@ -371,8 +376,21 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
     return result
 
 
+def markdown_text(value):
+    escaped = html.escape(str(value))
+    marker = re.match(r"^([ ]{0,3})(#{1,6}|[-+*]|[0-9]{1,9}[.)])(?=[ \t])", escaped)
+    if marker:
+        index = len(marker.group(1))
+        escaped = escaped[:index] + f"&#{ord(escaped[index])};" + escaped[index + 1:]
+    escaped = "".join("&#95;" if char == "_" and (index == 0 or index == len(escaped) - 1 or
+                      not escaped[index - 1].isalnum() or not escaped[index + 1].isalnum()) else char
+                      for index, char in enumerate(escaped))
+    escaped = escaped.translate({ord(char): f"&#{ord(char)};" for char in "\\`*[]~@|"})
+    return escaped.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+
+
 def table_cell(value):
-    return html.escape(str(value)).replace("|", "&#124;").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+    return markdown_text(value)
 
 
 def markdown(result):
@@ -383,10 +401,10 @@ def markdown(result):
     summary = result["summary"]
     if summary:
         frame = summary["frame_ms"]
-        lines.append(f"**{summary['window']['spec']}** from present {summary['window']['first_present']}: {summary['presents']} presents, "
+        lines.append(f"**{markdown_text(summary['window']['spec'])}** from present {summary['window']['first_present']}: {summary['presents']} presents, "
                      f"frame p50 {frame['p50']:.1f} / p90 {frame['p90']:.1f} / p99 {frame['p99']:.1f} / max {frame['max']:.1f} ms, "
                      f"GPU busy {summary['gpu_busy_ms_per_present']:.1f} ms per present")
-        lines.append(f"{summary['gpu']}, {summary['driver']}, {summary['os']}, {summary['resolution']}, commit {summary['commit']}"
+        lines.append(f"{markdown_text(summary['gpu'])}, {markdown_text(summary['driver'])}, {markdown_text(summary['os'])}, {markdown_text(summary['resolution'])}, commit {markdown_text(summary['commit'])}"
                      f"{' (dirty)' if summary.get('dirty') else ''}, dropped: {'yes' if summary['trace_dropped'] else 'no'}")
         lines.append("")
         lines.append("```json")
@@ -402,7 +420,7 @@ def markdown(result):
     lines.append("**Slowest frames** (largest slices inside each, inclusive)")
     lines.append("")
     for frame in result["slowest_frames"]:
-        parts = ", ".join(f"{entry['name']} ({entry['thread']}) {entry['ms']:.1f}" for entry in frame["slices"])
+        parts = ", ".join(f"{markdown_text(entry['name'])} ({markdown_text(entry['thread'])}) {entry['ms']:.1f}" for entry in frame["slices"])
         lines.append(f"- present {frame['present']}: {frame['ms']:.1f} ms at {frame['at_ms']:.0f} ms: {parts}")
     lines.append("")
     lines.append("**Persistent spikes** (frame time above the fastest frame that separates it from a longer frame; one entry per stall, not per frame)")
@@ -419,33 +437,35 @@ def markdown(result):
         lines.append(f"| {table_cell(thread['thread'])} | {thread['busy_ms_per_frame']:.1f} ({thread['busy_pct']:.0f} %) | {thread['wait_ms_per_frame']:.1f} ({thread['wait_pct']:.0f} %) "
                      f"| {thread['untraced_ms_per_frame']:.1f} | {thread['folded_ms_per_frame']:.1f} | {table_cell(largest)} |")
     lines.append("")
-    lines.append("**Largest slices** (ms per frame, inclusive, all threads): " + ", ".join(f"{entry['name']} {entry['ms']:.1f}" for entry in result["top_slices_ms_per_frame"]))
+    lines.append("**Largest slices** (ms per frame, inclusive, all threads): " + ", ".join(f"{markdown_text(entry['name'])} {entry['ms']:.1f}" for entry in result["top_slices_ms_per_frame"]))
     lines.append("")
     lines.append("**Longest waits**")
     lines.append("")
     for wait in result["longest_waits"]:
-        lines.append(f"- {wait['name']} ({wait['thread']}) {wait['ms']:.1f} ms at {wait['at_ms']:.0f} ms, present {wait['present']}")
+        lines.append(f"- {markdown_text(wait['name'])} ({markdown_text(wait['thread'])}) {wait['ms']:.1f} ms at {wait['at_ms']:.0f} ms, present {wait['present']}")
     if "largest_gpu_batches" in result:
         lines.append("")
         lines.append("**Largest GPU batches** (GPU ranges inside, and the CPU slices that recorded each, inclusive)")
         lines.append("")
         for batch in result["largest_gpu_batches"]:
-            ranges = ", ".join(f"{entry['name']} {entry['ms']:.1f}" for entry in batch["gpu_ranges"]) or "no ranges"
-            recorded = ", ".join(f"{entry['name']} ({entry['thread']}) {entry['ms']:.1f}" for entry in batch["recorded_by"]) or "no CPU slices"
+            ranges = ", ".join(f"{markdown_text(entry['name'])} {entry['ms']:.1f}" for entry in batch["gpu_ranges"]) or "no ranges"
+            recorded = ", ".join(f"{markdown_text(entry['name'])} ({markdown_text(entry['thread'])}) {entry['ms']:.1f}" for entry in batch["recorded_by"]) or "no CPU slices"
             lines.append(f"- batch {batch['batch']}: {batch['ms']:.1f} ms at {batch['at_ms']:.0f} ms, present {batch['present']}: GPU {ranges}; recorded by {recorded}")
     if "stacks" in result:
         stacks = result["stacks"]
         lines.append("")
         lines.append(f"**Worker stacks** ({stacks['samples']} samples, {stacks['truncated_pct']:.1f} % truncated; total leaves out the {stacks['common_frames']} frames every complete stack shares)")
         lines.append("")
-        lines.append("- self: " + ", ".join(f"{entry['frame']} {entry['pct']:.1f} %" for entry in stacks["self"]))
-        lines.append("- total: " + ", ".join(f"{entry['frame']} {entry['pct']:.1f} %" for entry in stacks["total"]))
+        lines.append("- self: " + ", ".join(f"{markdown_text(entry['frame'])} {entry['pct']:.1f} %" for entry in stacks["self"]))
+        lines.append("- total: " + ", ".join(f"{markdown_text(entry['frame'])} {entry['pct']:.1f} %" for entry in stacks["total"]))
     return "\n".join(lines) + "\n"
 
 
 def load_intervals(path):
+    path = Path(path)
+    candidate = resolve_summary_path(path)
     lines = []
-    for number, record in load_summary_lines(path, numbered=True):
+    for number, record in load_summary_lines(candidate, numbered=True, label=path):
         if "interval_start_s" not in record:
             continue
         try:
@@ -525,7 +545,7 @@ def markdown_intervals(result):
     if not rows:
         return "no interval lines (interval_start_s) found\n"
     lines = [f"**{len(rows)} intervals**, {rows[0]['start_s']:.1f} to {rows[-1]['end_s']:.1f} s, {sum(row['presents'] for row in rows)} presents",
-             f"{identity['gpu']}, {identity['driver']}, {identity['os']}, {identity['resolution']}, commit {identity['commit']}"
+             f"{markdown_text(identity['gpu'])}, {markdown_text(identity['driver'])}, {markdown_text(identity['os'])}, {markdown_text(identity['resolution'])}, commit {markdown_text(identity['commit'])}"
              f"{' (dirty)' if identity.get('dirty') else ''}"]
     if result["identity_changed_at"]:
         lines.append("build, environment, host, resolution or title metadata changed at interval " + ", ".join(str(index + 1) for index in result["identity_changed_at"]))
@@ -580,6 +600,12 @@ def main(arguments=None):
     if options.stacks and options.trace.endswith(".jsonl"):
         parser.error("--stacks requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
+        try:
+            intervals_path = resolve_summary_path(options.trace)
+        except ValueError as error:
+            parser.error(str(error))
+        if not intervals_path.is_file():
+            parser.error(f"summary file not found: {options.trace}")
         result = digest_intervals(load_intervals(options.trace))
         if options.summary:
             parser.error("--summary requires an event trace, not interval summaries")

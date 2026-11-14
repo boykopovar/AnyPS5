@@ -48,6 +48,19 @@ int main() {
         nullNameThrew = true;
     }
     Require(nullNameThrew);
+    setprogname_nid_postfix("/");
+    Require(std::strcmp(getprogname_nid_postfix(), "") == 0);
+    Require(std::strcmp(_getprogname_nid_postfix(), "") == 0);
+    setprogname_nid_postfix("/app0/bin/");
+    Require(std::strcmp(getprogname_nid_postfix(), "") == 0);
+    Require(std::strcmp(_getprogname_nid_postfix(), "") == 0);
+    setprogname_nid_postfix("/app0/sub/dir/game.self");
+    Require(std::strcmp(getprogname_nid_postfix(), "game.self") == 0);
+    Require(std::strcmp(_getprogname_nid_postfix(), "game.self") == 0);
+    Require(std::strcmp(__progname_nid_postfix, "game.self") == 0);
+    setprogname_nid_postfix("dir\\game.self");
+    Require(std::strcmp(getprogname_nid_postfix(), "dir\\game.self") == 0);
+    Require(std::strcmp(_getprogname_nid_postfix(), "dir\\game.self") == 0);
     setprogname_nid_postfix(original);
     Require(getprogname_nid_postfix() == original);
     Require(*__error_nid_postfix() == 45);
