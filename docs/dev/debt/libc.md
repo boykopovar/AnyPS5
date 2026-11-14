@@ -158,6 +158,9 @@
 
 ### Functional
 
+- [asctime guest memory](../../../core/libs/prx/libc/src/Time.cpp): `asctime_r` and its `asctime` caller return null with `EFAULT` when a nonnull calendar input or output cannot be copied through the guest-memory helpers. This host-safety fallback has not been measured on a console. Only the seven calendar fields the formatter uses are read, and output is staged before copying; a failed output copy may have written a prefix on some hosts. Existing null-argument and formatting behavior stays as described below. Console bad-memory behavior and concurrent mapping changes remain unverified.
+
+
 - [_ZNSt12system_errorC2ESt10error_codePKc](../../../core/libs/prx/libc/src/exception/StandardExceptions.cpp) (libc) - the console module's body is unverified. The constructor fills the 32-byte guest object as Dinkumware `_Makestr` does: the `runtime_error` base takes the message, appends `": "` only when the message is non-empty, then appends `error_code.message()` through the category's guest vtable; the 16-byte `error_code` is stored at offset 16. A null message becomes an empty message here, where Dinkumware dereferences it; a null category throws `std::invalid_argument`, where Dinkumware dereferences it. It is exported from libc so the weak libstdc++ copy in libSceLibcInternal is preserved by the NID patcher; libSceLibcInternal's `oly3wSwEJ2A` export forwards to it.
 - [insque and remque](../../../core/libs/prx/libc/src/Queue.cpp) (libc) have not been verified on a console. A null element throws; behavior with corrupted links is unverified. Otherwise, the queue operations follow FreeBSD 11.4 [insque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/insque.c) and [remque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/remque.c).
 

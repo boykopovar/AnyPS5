@@ -801,14 +801,24 @@ size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* 
 
 char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer) {
     if (buffer == nullptr) throw std::invalid_argument("asctime_r: null buffer");
+    std::array<char, 26> output{};
     if (timeptr == nullptr) {
         errno = EINVAL;
-        std::memcpy(buffer, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
-        return buffer;
+        std::memcpy(output.data(), "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
+    } else {
+        GuestTm time{};
+        if (!GuestCopyIn_nid_no_patch(&time, timeptr, offsetof(GuestTm, tm_yday))) {
+            errno = EFAULT;
+            return nullptr;
+        }
+        const std::int64_t year = static_cast<std::int64_t>(time.tm_year) + YEAR_BASE;
+        std::snprintf(output.data(), output.size(), "%s %s%3d %02d:%02d:%02d %04d\n", tableName(time.tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(time.tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
+            clampedField(time.tm_mday, 100), clampedField(time.tm_hour, 100), clampedField(time.tm_min, 100), clampedField(time.tm_sec, 100), clampedField(year, 10000));
     }
-    const std::int64_t year = static_cast<std::int64_t>(timeptr->tm_year) + YEAR_BASE;
-    std::snprintf(buffer, 26, "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
-        clampedField(timeptr->tm_mday, 100), clampedField(timeptr->tm_hour, 100), clampedField(timeptr->tm_min, 100), clampedField(timeptr->tm_sec, 100), clampedField(year, 10000));
+    if (!GuestCopyOut_nid_no_patch(buffer, output.data(), std::strlen(output.data()) + 1)) {
+        errno = EFAULT;
+        return nullptr;
+    }
     return buffer;
 }
 
