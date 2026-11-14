@@ -31,7 +31,7 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
     }
     IrValue& inst = *value;
     if (!requireUniform && _validatedDependencies.contains(&inst)) return true;
-    if (!_visiting.insert(&inst).second) {
+    if (!_visiting.insert(&inst)) {
         return !requireUniform;
     }
     const auto finish = [&](bool valid) {

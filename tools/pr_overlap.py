@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
@@ -77,11 +78,18 @@ def own(prs, sha):
     return {n: pr for n, pr in prs.items() if pr["sha"] not in ancestors}
 
 
-def gh(*args):
-    try:
-        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
-    except FileNotFoundError as error:
-        raise ValueError("GitHub CLI 'gh' is required on PATH") from error
+def gh(*args, attempts=3, delay=0.5):
+    for attempt in range(attempts):
+        try:
+            result = subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8")
+        except FileNotFoundError as error:
+            raise ValueError("GitHub CLI 'gh' is required on PATH") from error
+        if result.returncode == 0:
+            return result.stdout
+        transient = any(code in result.stderr for code in ("500", "502", "503", "504", "server error", "connection reset", "Connection reset", "timed out", "TLS handshake"))
+        if attempt + 1 == attempts or not transient:
+            raise subprocess.CalledProcessError(result.returncode, ["gh", *args], output=result.stdout, stderr=result.stderr)
+        time.sleep(delay * (2 ** attempt))
 
 
 def upstream():
