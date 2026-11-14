@@ -387,7 +387,22 @@ void TranslationContext::writeRounding(const RdnaInstruction& inst) {
 }
 
 void TranslationContext::checkRoundingUse(const RdnaInstruction& inst) const {
-    const RoundingUse use = RoundingUseOf(inst.op);
+    RoundingUse use = RoundingUseOf(inst.op);
+    switch (inst.op) {
+    case RdnaOpcode::VMinF16:
+    case RdnaOpcode::VMaxF16:
+    case RdnaOpcode::VMin3F16:
+    case RdnaOpcode::VMax3F16:
+    case RdnaOpcode::VMed3F16:
+    case RdnaOpcode::VFloorF16:
+    case RdnaOpcode::VCeilF16:
+    case RdnaOpcode::VTruncF16:
+    case RdnaOpcode::VRndneF16:
+        if (inst.destination.omod != 0u && outputModifierApplies(6u)) use.fields |= ModeRound1664Bits;
+        break;
+    default:
+        break;
+    }
     if (use.fields == 0u) return;
     const std::string where = "instruction (opcode " + std::to_string(inst.opcodeId) + ") at pc " + std::to_string(inst.programCounter);
     if ((rounding.unknown & use.fields) != 0u) {

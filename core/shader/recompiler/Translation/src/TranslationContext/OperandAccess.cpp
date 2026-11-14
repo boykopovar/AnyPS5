@@ -450,23 +450,7 @@ IrF32 TranslationContext::applyF32ResultModifiers(const RdnaOperand& operand, Ir
     return value;
 }
 
-IrF32 TranslationContext::scaleF16Result(std::uint32_t omod, IrF32 value) {
-    IrValue& bits = ir.BitCastU32(value.Value());
-    IrValue& magnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
-    IrValue& sign = ir.BitwiseAnd(bits, ir.Constant(0x80000000u));
-    IrValue* result = nullptr;
-    if (omod == 3u) {
-        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x39000000u)), sign, ir.ISub(bits, ir.Constant(0x00800000u)));
-    } else {
-        const std::uint32_t exponentStep = omod == 1u ? 0x00800000u : 0x01000000u;
-        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x47800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x47800000u)));
-    }
-    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x38800000u)), sign, *result);
-    result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
-    return IrF32(ir.BitCastF32(*result));
-}
-
-IrU32 TranslationContext::scaleF16Bits(std::uint32_t omod, IrU32 bits) {
+IrU32 TranslationContext::scaleF16Bits(std::uint32_t omod, IrU32 bits, bool followsRoundMode) {
     IrValue& raw = bits.Value();
     IrValue& magnitude = ir.BitwiseAnd(raw, ir.Constant(0x7fffu));
     IrValue& sign = ir.BitwiseAnd(raw, ir.Constant(0x8000u));
@@ -475,36 +459,14 @@ IrU32 TranslationContext::scaleF16Bits(std::uint32_t omod, IrU32 bits) {
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0800u)), sign, ir.ISub(raw, ir.Constant(0x0400u)));
     } else {
         const std::uint32_t exponentStep = omod == 1u ? 0x0400u : 0x0800u;
-        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7c00u - exponentStep)), ir.IAdd(raw, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7c00u)));
+        const std::uint32_t rounding = followsRoundMode && floatMode.has_value() ? (floatMode->floatMode >> 2u) & 3u : 0u;
+        IrValue* overflow = &ir.Constant(fp16Overflow() || rounding == 3u ? 0x7bffu : 0x7c00u);
+        if (!fp16Overflow() && (rounding == 1u || rounding == 2u)) overflow = &ir.Select(ir.IEqual(sign, ir.Constant(rounding == 1u ? 0u : 0x8000u)), ir.Constant(0x7c00u), ir.Constant(0x7bffu));
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7c00u - exponentStep)), ir.IAdd(raw, ir.Constant(exponentStep)), ir.BitwiseOr(sign, *overflow));
     }
-    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0400u)), sign, *result);
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0400u)), ir.Constant(0u), *result);
     result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7bffu)), raw, *result);
     return IrU32(*result);
-}
-
-IrF32 TranslationContext::applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value) {
-    if (operand.omod != 0u && outputModifierApplies(6u)) {
-        value = scaleF16Result(operand.omod, value);
-    }
-    return clampF16Result(operand, value);
-}
-
-IrF32 TranslationContext::applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> overflowSources) {
-    if (operand.omod != 0u && outputModifierApplies(6u)) {
-        value = scaleF16Result(operand.omod, value);
-    }
-    return clampF16Result(operand, clampF16Overflow(value, overflowSources));
-}
-
-IrF32 TranslationContext::clampF16Result(const RdnaOperand& operand, IrF32 value) {
-    if (!operand.clamp) {
-        return value;
-    }
-    const IrF32 zero(ir.ConstantF32(0.0f));
-    const IrU1 positive(ir.Emit(IrOpcode::FPOrdGreaterThan32, IrType::U1, {&value.Value(), &zero.Value()}));
-    const IrF32 limited(ir.Emit(IrOpcode::FPMin32, IrType::F32, {&value.Value(), &ir.ConstantF32(1.0f)}));
-    const IrF32 clamped = selectF32(positive, limited, zero);
-    return dx10Clamp() ? clamped : selectF32(IrU1(ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {&value.Value()})), value, clamped);
 }
 
 IrF32 TranslationContext::clampF16Overflow(IrF32 value, std::initializer_list<IrValue*> sources) {
@@ -522,9 +484,9 @@ IrF32 TranslationContext::clampF16Overflow(IrF32 value, std::initializer_list<Ir
     return IrF32(ir.BitCastF32(ir.Select(overflow.Value(), largest.Value(), bits.Value())));
 }
 
-IrU32 TranslationContext::clampF16Bits(const RdnaOperand& operand, IrU32 bits) {
+IrU32 TranslationContext::clampF16Bits(const RdnaOperand& operand, IrU32 bits, bool followsRoundMode) {
     if (operand.omod != 0u && outputModifierApplies(6u)) {
-        bits = scaleF16Bits(operand.omod, bits);
+        bits = scaleF16Bits(operand.omod, bits, followsRoundMode);
     }
     if (!operand.clamp) {
         return bits;
