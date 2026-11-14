@@ -25,7 +25,8 @@ export function settingValue(setting, value) {
         if (!/^-?\d+$/u.test(text) || Number(text) < 0 || Number(text) > 90) return `${setting.name} must be a whole percentage from 0 to 90.`;
         return '';
     }
-    const parsed = numberPattern.test(text) ? Number(text) : undefined;
+    const underflows = Number(text) === 0 && /[1-9]/u.test(text.replace(/[eE].*$/u, ''));
+    const parsed = numberPattern.test(text) && !underflows ? Number(text) : undefined;
     if (setting.kind === 'sensitivity') {
         if (parsed === undefined || !Number.isFinite(parsed) || !(parsed > 0) || parsed > 10) return `${setting.name} must be a number greater than 0 and at most 10.`;
         return '';

@@ -331,3 +331,13 @@ test('extended keypad editing and memory keys capture and round trip', () => {
     assert.deepEqual(captureKey({code: 'Backspace'}), {value: 'Backspace'});
     assert.deepEqual(captureKey({code: 'NumLock'}), {value: 'Numlock'});
 });
+
+test('setting numbers that underflow to zero are refused like std::from_chars refuses them', () => {
+    for (const value of ['1e-400', '-1e-400', '2e-324', '0.1e-323']) {
+        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`).errors.map(error => error.line), [1], value);
+    }
+    for (const value of ['0', '-0', '0.000', '0e-400', '3e-324']) {
+        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`).errors, [], value);
+    }
+    assert.deepEqual(parseIni('MouseSensitivity = 1e-310').errors, []);
+});
