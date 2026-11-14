@@ -1725,10 +1725,6 @@ int APS5_VABI _ZN3WTF8JSONImpl5Value12escapeStringERNS_13StringBuilderENS_10Stri
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF8pageMaskEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void APS5_VABI _ZN7bmalloc11AllIsoHeapsC1ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
     std::memset(self, 0, 8);
 }
