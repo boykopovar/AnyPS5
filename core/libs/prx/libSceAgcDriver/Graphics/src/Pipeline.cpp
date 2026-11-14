@@ -615,7 +615,6 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             references.at(state.colors[index].exportIndex) = {static_cast<std::uint32_t>(colors.size()), attachmentLayout};
             colors.push_back(color);
         }
-        boundColorAttachments = static_cast<std::uint32_t>(colors.size());
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = static_cast<std::uint32_t>(references.size());
@@ -978,17 +977,6 @@ void Pipeline::Begin(CommandState& recording, const Framebuffer& framebuffer, Vk
     begin.renderPass = renderPass;
     begin.framebuffer = framebuffer.Handle();
     begin.renderArea = {{0, 0}, extent};
-    const auto locations = SampleLocations(state);
-    const auto grid = sampleLocationGrid;
-    const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(state.samples), grid, state.samples * grid.width * grid.height, locations.data()};
-    const VkAttachmentSampleLocationsEXT initial{boundColorAttachments, info};
-    const VkSubpassSampleLocationsEXT post{0, info};
-    VkRenderPassSampleLocationsBeginInfoEXT sampleLocations{VK_STRUCTURE_TYPE_RENDER_PASS_SAMPLE_LOCATIONS_BEGIN_INFO_EXT};
-    sampleLocations.attachmentInitialSampleLocationsCount = state.depth ? 1 : 0;
-    sampleLocations.pAttachmentInitialSampleLocations = state.depth ? &initial : nullptr;
-    sampleLocations.postSubpassSampleLocationsCount = 1;
-    sampleLocations.pPostSubpassSampleLocations = &post;
-    if (sampleLocationsEnabled) begin.pNext = &sampleLocations;
     context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
     Continue(recording, state, masked);
 }
