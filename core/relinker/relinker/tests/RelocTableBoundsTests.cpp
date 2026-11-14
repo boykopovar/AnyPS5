@@ -50,6 +50,7 @@ void WriteTag(Bytes& image, const std::size_t index, const std::int64_t tag, con
 }
 
 void WriteRelativeEntry(Bytes& image) {
+    Write<std::uint32_t>(image, 64 + 4, 7);
     Write<std::uint64_t>(image, kRelaEntry, 0x300);
     Write<std::uint64_t>(image, kRelaEntry + 8, kRelativeEntryInfo);
     Write<std::int64_t>(image, kRelaEntry + 16, 0);

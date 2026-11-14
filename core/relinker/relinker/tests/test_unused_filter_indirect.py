@@ -12,7 +12,7 @@ TABLE = 0x820
 FUNCTION = CODE + 0x40
 SECOND_FUNCTION = CODE + 0x60
 REJECTED = {"got-slot-address-size-underflow":
-            "RELA r_offset 0xfffff008 (8 bytes) does not fit inside a PT_LOAD segment"}
+            "RELA r_offset 0xfffff008 (8 bytes) does not fit inside a writable PT_LOAD segment"}
 
 
 def rel(next_address, target):
