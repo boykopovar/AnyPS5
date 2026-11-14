@@ -9,6 +9,7 @@
 #include <thread>
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -181,6 +182,20 @@ static void CheckStreamWaitAll(bool net) {
     Require(Close(net, stream.accepted) == 0 && Close(net, stream.client) == 0 && Close(net, stream.listener) == 0);
 }
 
+static void CheckFailedShutdown() {
+    const int socket = Open(true, 1);
+    Require(socket >= 0);
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    Require(KernelFindSocketNative_nid_no_patch(socket, &owner, &native));
+    const auto state = std::static_pointer_cast<KernelSocketPoll::NativeOwner>(owner);
+    for (const int how : {0, 1, 2}) {
+        Require(Failed(shutdown_nid_postfix(socket, how), 57));
+        Require(state->shutdownFlags.load() == 0);
+    }
+    Require(Close(true, socket) == 0);
+}
+
 static void CheckShutdownPoll(bool net, int how) {
     using namespace std::chrono_literals;
     const auto stream = OpenStream(net);
@@ -257,6 +272,7 @@ int main() {
         CheckConnectedDatagramTransfer(net);
         CheckStreamTransfer(net);
     }
+    CheckFailedShutdown();
     CheckUnknownDescriptor();
     return 0;
 }
