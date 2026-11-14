@@ -150,6 +150,7 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
     rack->rackId = rackId;
     rack->maxChannels = RackMaxChannels(rackId, options);
     rack->maxFilters = rackId == SCE_NGS2_RACK_ID_SAMPLER ? options.sampler.max_filters
+                      : rackId == SCE_NGS2_RACK_ID_SUBMIXER ? options.submixer.max_filters
                       : rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER ? options.customSampler.custom_rack_option.num_modules
                       : (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) ? options.customSubmixer.custom_rack_option.num_modules : 0;
     std::memcpy(rack->name, options.common.name, sizeof(rack->name));

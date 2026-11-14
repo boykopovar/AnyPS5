@@ -1,12 +1,13 @@
 #include "Translation/InstructionTranslator.hpp"
 #include "Recompiler.hpp"
-#include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace ShaderRecompiler {
@@ -163,9 +164,47 @@ void includeInstructionVectorRegisters(const RdnaInstruction& instruction, std::
     }
 }
 
-void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateOptions& options) {
+using BlockPredecessors = std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>;
+
+BlockPredecessors blockPredecessors(const ControlFlowGraph& cfg) {
+    BlockPredecessors predecessors;
+    for (const auto& block : cfg.blocks) {
+        for (const auto successor : block.successors) predecessors[successor].push_back(block.id);
+    }
+    return predecessors;
+}
+
+std::unordered_set<std::uint32_t> vectorWindowRegion(const ControlFlowGraph& cfg, const BlockPredecessors& predecessors, const std::unordered_set<std::uint32_t>& relative) {
+    std::unordered_map<std::uint32_t, const BasicBlock*> byId;
+    for (const auto& block : cfg.blocks) byId.emplace(block.id, &block);
+    const auto closure = [&](bool forward) {
+        std::unordered_set<std::uint32_t> seen(relative.begin(), relative.end());
+        std::vector<std::uint32_t> pending(relative.begin(), relative.end());
+        while (!pending.empty()) {
+            const auto id = pending.back();
+            pending.pop_back();
+            const auto found = predecessors.find(id);
+            const auto* next = forward ? &byId.at(id)->successors : found != predecessors.end() ? &found->second : nullptr;
+            if (next == nullptr) continue;
+            for (const auto other : *next) {
+                if (seen.insert(other).second) pending.push_back(other);
+            }
+        }
+        return seen;
+    };
+    const auto reached = closure(true);
+    const auto reaching = closure(false);
+    std::unordered_set<std::uint32_t> region;
+    for (const auto id : reached) {
+        if (reaching.contains(id)) region.insert(id);
+    }
+    return region;
+}
+
+void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateOptions& options, bool vectorWindowActive) {
     IrBuilder entryIr(program);
     entryIr.SetInsertionPoint(entryBlock);
+    entryIr.SetVectorWindowActive(vectorWindowActive);
 
     const auto setVector = [&entryIr, &program](VectorReg reg, IrValue& value) {
         auto& metadata = program.Metadata();
@@ -529,6 +568,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     program.SetWaveSize(options.waveSize);
     std::uint32_t windowBase = NumVectorRegs;
     bool indexedWrites = false;
+    std::unordered_set<std::uint32_t> relativeBlocks;
     for (const auto& cfgBlock : cfg.blocks) {
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
@@ -536,16 +576,19 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
             switch (instruction.op) {
                 case RdnaOpcode::VMovrelsB32:
                     windowBase = std::min(windowBase, instruction.source0.reg);
+                    relativeBlocks.insert(cfgBlock.id);
                     break;
                 case RdnaOpcode::VMovreldB32:
                     windowBase = std::min(windowBase, instruction.destination.reg);
                     indexedWrites = true;
+                    relativeBlocks.insert(cfgBlock.id);
                     break;
                 case RdnaOpcode::VMovrelsdB32:
                 case RdnaOpcode::VMovrelsd2B32:
                 case RdnaOpcode::VSwaprelB32:
                     windowBase = std::min({windowBase, instruction.source0.reg, instruction.destination.reg});
                     indexedWrites = true;
+                    relativeBlocks.insert(cfgBlock.id);
                     break;
                 default:
                     break;
@@ -558,6 +601,15 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         program.Metadata().vectorWindowSize = vectorLimit - windowBase;
         program.Metadata().vectorWindowIndexedWrites = indexedWrites;
     }
+    static const bool unscopedWindow = std::getenv("APS5_NO_SCOPED_VECTOR_WINDOW") != nullptr;
+    const auto predecessors = blockPredecessors(cfg);
+    const auto windowRegion = program.Metadata().vectorWindowSize != 0u && !unscopedWindow ? vectorWindowRegion(cfg, predecessors, relativeBlocks) : std::unordered_set<std::uint32_t>{};
+    const bool scopedWindow = !windowRegion.empty() && windowRegion.size() < cfg.blocks.size();
+    const auto syncsWindow = [&](bool toWindow) { return scopedWindow && (toWindow || program.Metadata().vectorWindowIndexedWrites); };
+    const auto syncedOnEntry = [&](std::uint32_t id) {
+        const auto found = predecessors.find(id);
+        return found != predecessors.end() && std::ranges::none_of(found->second, [&](std::uint32_t predecessor) { return windowRegion.contains(predecessor) == windowRegion.contains(id); });
+    };
     program.Resources().stage = toIrShaderStage(options.stage);
     program.Resources().shaderHash = options.shaderHash;
     program.Resources().userDataBase = options.userDataBaseRegister;
@@ -616,9 +668,14 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     }
     blocks.front()->AddBranch(blocks[blockIndices.at(cfg.blocks.front().id)]);
 
-    emitEntryPrologue(program, *blocks.front(), options);
+    emitEntryPrologue(program, *blocks.front(), options, !scopedWindow);
     if (program.Metadata().vectorWindowSize != 0u) {
         vectorLimit = program.Metadata().vectorWindowBase + program.Metadata().vectorWindowSize;
+    }
+    if (scopedWindow && windowRegion.contains(cfg.blocks.front().id)) {
+        IrBuilder entryIr(program);
+        entryIr.SetInsertionPoint(*blocks.front());
+        entryIr.SyncVectorWindow(true);
     }
     if (ancillaryWindow) {
         for (const IrValue* instruction : blocks.front()->Instructions()) {
@@ -628,18 +685,23 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         }
     }
 
-    const auto entryRounding = ComputeEntryRounding(cfg, decoded, options.floatMode.has_value() ? options.floatMode->floatMode : 0u);
+    const auto entryRounding = ComputeEntryRounding(cfg, decoded, options.floatMode.has_value() ? options.floatMode->floatMode : ModeUndeclaredSeed);
     for (const auto& cfgBlock : cfg.blocks) {
         const auto typedIndex = blockIndices.at(cfgBlock.id);
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
         context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma);
+        context.SetNativeInteger16(options.nativeInteger16);
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetFloat32FlushDeclared(options.float32FlushDeclared);
         context.SetFloat64(options.float64);
+        context.SetSharedVectorRegisters(options.sharedVectorBase, options.sharedVectorCount);
         context.SetEntryRounding(entryRounding.at(cfgBlock.id));
+        const bool insideWindow = !scopedWindow || windowRegion.contains(cfgBlock.id);
+        context.SetVectorWindowActive(insideWindow);
+        if (syncsWindow(insideWindow) && syncedOnEntry(cfgBlock.id)) context.SyncVectorWindow(insideWindow);
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
             if (isCodeTableLoad(cfg, instruction.programCounter)) {
@@ -671,6 +733,9 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 });
             }
         }
+        if (syncsWindow(!insideWindow) && std::ranges::any_of(cfgBlock.successors, [&](std::uint32_t successor) { return windowRegion.contains(successor) != insideWindow && !syncedOnEntry(successor); })) {
+            context.SyncVectorWindow(!insideWindow);
+        }
         context.AddBranchCondition(cfgBlock, blockInfos[typedIndex]);
     }
 
@@ -679,10 +744,6 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
 
     ValidateProgram(program, false);
     return program;
-}
-
-void InstructionTranslator::translateInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) const {
-    DispatchInstruction(builder, instruction, cfg, options);
 }
 
 TranslationContext::TranslationContext(IrProgram& program, IrBlock& block, std::uint32_t vectorLimit) : program(program), ir(program), block(block), instructionBranchCondition(IrU1(program.CreateValue(IrOpcode::Void, IrType::Bool))), currentVectorLimit(vectorLimit) {

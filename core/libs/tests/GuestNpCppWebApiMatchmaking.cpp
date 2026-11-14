@@ -88,7 +88,78 @@ const TextFn kSetView = _ZN3sce2Np9CppWebApi11Matchmaking2V13Api20ParameterToGet
 
 }
 
+
+constexpr int kTransactionNotStarted = static_cast<int>(0x80553508);
+
+void TestBookkeeping() {
+    alignas(8) unsigned char object[8]{};
+    IntrusivePtr handle{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEEC1Ev(&handle);
+    Require(!_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEEcvbEv(&handle));
+    handle.object = object;
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEEcvbEv(&handle));
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEEptEv(&handle) == object);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEdeEv(&handle) == object);
+    handle.object = nullptr;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V18LocationEED1Ev(&handle);
+
+    IntrusivePtr vectorHandle{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V113PlayerForReadEEEEEED1Ev(&vectorHandle);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11Matchmaking2V19AttributeEEEEEED1Ev(&vectorHandle);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V19SubmitterEED1Ev(&vectorHandle);
+
+    alignas(8) unsigned char transaction[0x10];
+    std::memset(transaction, kFill, sizeof(transaction));
+    _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(transaction);
+    _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(nullptr) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(nullptr, nullptr) == kNotSignedIn);
+
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V120GetOfferResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V121GetTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE() == kNotSignedIn);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11Matchmaking2V124SubmitTicketResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() == kTransactionNotStarted);
+
+    CommonIterator first{}, last{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEE5beginEv(&first, &vectorHandle);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEE3endEv(&last, &vectorHandle);
+    Require(first.element == nullptr && last.element == nullptr);
+    Require(!_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEneERKS9_(&first, &last));
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEdeEv(&first) == nullptr);
+
+    alignas(8) unsigned char elements[0x30]{};
+    CommonIterator cursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEEppEv(&cursor) == &cursor);
+    Require(cursor.element == elements + sizeof(IntrusivePtr));
+
+    CommonConstIterator constFirst = _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE5beginEv(&vectorHandle);
+    CommonConstIterator constLast = _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEE3endEv(&vectorHandle);
+    Require(constFirst.element == nullptr && constLast.element == nullptr);
+    Require(!_ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEEneERKS9_(&constFirst, &constLast));
+    Require(_ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEEdeEv(&constFirst) == nullptr);
+
+    CommonConstIterator constCursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEEppEv(&constCursor) == &constCursor);
+    Require(constCursor.element == elements + sizeof(IntrusivePtr));
+    _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V19AttributeEEEED1Ev(&constCursor);
+    CommonConstIterator zeroIterator{};
+    _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEEED2Ev(&zeroIterator);
+    _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEEED2Ev(&zeroIterator);
+}
+
 int main() {
+    {
+        alignas(8) unsigned char model[0x30];
+        constexpr std::uint64_t values[]{0, 1, 0xffffffffULL, 0x100000000ULL, 0x8000000000000000ULL, 0x0123456789abcdefULL, 0xffffffffffffffffULL};
+        for (const auto value : values) {
+            std::memset(model, 0xa5, sizeof(model));
+            std::memcpy(model + 0x10, &value, sizeof(value));
+            unsigned char before[sizeof(model)];
+            std::memcpy(before, model, sizeof(model));
+            Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv(model) == value);
+            Require(std::memcmp(model, before, sizeof(model)) == 0);
+        }
+    }
+    TestBookkeeping();
     for (const auto fn : kSignedOut) Require(fn(nullptr) == kNotSignedIn);
     for (const auto fn : kSetters) Require(fn(nullptr) == 0);
 

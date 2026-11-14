@@ -30,31 +30,19 @@ RemoteplayState g_state = RemoteplayState::None;
 extern "C" {
 
 int APS5_VABI sceRemoteplayIsRemoteViewering() {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceRemoteplayNotifyCanWakeup() {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceRemoteplayRegistCallback() {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceRemoteplayUnregistCallback() {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 
@@ -87,8 +75,6 @@ int APS5_VABI sceRemoteplayTerminate(void) {
 }
 
 int APS5_VABI sceRemoteplayApprove(void) {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -109,8 +95,6 @@ int APS5_VABI sceRemoteplayConfirmDeviceRegist(void) {
 }
 
 int APS5_VABI sceRemoteplayDisconnect(void) {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -141,8 +125,6 @@ int APS5_VABI sceRemoteplayGetMbusDeviceInfo(void) {
 }
 
 int APS5_VABI sceRemoteplayGetOperationStatus(void) {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -153,8 +135,6 @@ int APS5_VABI sceRemoteplayGetPrimaryUserId(void) {
 }
 
 int APS5_VABI sceRemoteplayGetRemoteplayStatus(void) {
-    std::lock_guard lock(g_stateMutex);
-    if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -272,6 +272,7 @@ static void Signals() {
     received = 0;
     Require(raise_nid_postfix(30) == 0 && received == 0);
     Require(Fails(_sigsuspend_nid_postfix(&empty), Interrupted) && received == 30);
+    Require(Fails(_sigsuspend_nid_postfix(nullptr), BadAddress));
     GuestSignalSet restored{};
     Require(sigprocmask_nid_postfix(1, nullptr, &restored) == 0 && std::memcmp(&restored, &blocked, sizeof(restored)) == 0);
     Require(sigprocmask_nid_postfix(3, &saved, nullptr) == 0);

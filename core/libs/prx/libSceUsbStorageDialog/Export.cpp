@@ -12,17 +12,7 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000Au);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
 constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 std::uint32_t g_sdkVersion = 0;
@@ -46,13 +36,20 @@ int APS5_VABI sceUsbStorageDialogInitialize(void) {
 
 int APS5_VABI sceUsbStorageDialogOpen(const UsbStorageDialogParam* param) {
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (!ValidateCommonDialogBaseParam(param->base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    UsbStorageDialogParam local{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
+    if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param))) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     UserServiceLoginUserIdList users{};
-    if (param->userId == -1 || sceUserServiceGetLoginUserIdList(&users) != 0 || std::find(std::begin(users.user_id), std::end(users.user_id), param->userId) == std::end(users.user_id)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
-    if (param->path[1023] != 0 || param->path[0] == 0) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
-    if (g_sdkVersion >= 0x04500000 && (std::strpbrk(param->path, ",*?\"<>|") != nullptr || std::strstr(param->path, "..") != nullptr)) return static_cast<int>(0x812D0003u);
+    if (local.userId == -1 || sceUserServiceGetLoginUserIdList(&users) != 0 || std::find(std::begin(users.user_id), std::end(users.user_id), local.userId) == std::end(users.user_id)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    if (local.path[1023] != 0 || local.path[0] == 0) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    if (g_sdkVersion >= 0x04500000 && (std::strpbrk(local.path, ",*?\"<>|") != nullptr || std::strstr(local.path, "..") != nullptr)) return static_cast<int>(0x812D0003u);
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
     g_closed = false;
     g_status = COMMON_DIALOG_STATUS_RUNNING;

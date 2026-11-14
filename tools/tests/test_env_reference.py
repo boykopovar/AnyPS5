@@ -93,6 +93,21 @@ class EnvReferenceTests(unittest.TestCase):
         found = env_reference.reads([root / "core"])
         self.assertIn("APS5_MULTILINE", found)
 
+    def test_mebibyte_reads_are_integers_with_their_default(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('static const std::uint64_t a = MebibytesFromEnvironment("APS5_POOL_MIB", 64);\n'
+                          'static const std::uint64_t b = MebibytesFromEnvironment \t( "APS5_POOL_TOTAL_MIB" , 256);\n'
+                          'static constexpr const char* POOL_ENV = "APS5_POOL_CONSTANT_MIB";\n'
+                          'static const std::uint64_t c = MebibytesFromEnvironment(POOL_ENV, 8);\n'
+                          'static const std::uint64_t d = MyMebibytesFromEnvironment("APS5_NOT_A_MEBIBYTE_READ", 1);\n',
+                          encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_POOL_MIB"], [(source.as_posix(), 1, "integer", "64")])
+        self.assertEqual(found["APS5_POOL_TOTAL_MIB"], [(source.as_posix(), 2, "integer", "256")])
+        self.assertEqual(found["APS5_POOL_CONSTANT_MIB"], [(source.as_posix(), 4, "integer", "")])
+        self.assertNotIn("APS5_NOT_A_MEBIBYTE_READ", found)
+
     def test_long_multiline_reads_are_checked_and_keep_their_locations(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"
