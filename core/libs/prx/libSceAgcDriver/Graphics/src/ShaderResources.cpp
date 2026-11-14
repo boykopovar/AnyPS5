@@ -1718,6 +1718,10 @@ WriteIndexOutcomes WriteIndexOutcomesCounted() {
     return {at(IndexAccepted), at(IndexPartial), at(IndexFallback), at(IndexBumped), at(IndexLookedUp), at(IndexRebound), at(IndexCompared), at(IndexBuilds)};
 }
 
+void ReleaseSampledTexture(const std::shared_ptr<Texture>& texture, std::uint64_t address) {
+    noteReleased(texture, address);
+}
+
 void ClearCachedTextures(VkDevice device) {
     Require(device != VK_NULL_HANDLE, "cannot clear textures without a Vulkan device");
     auto& sampled = Textures();

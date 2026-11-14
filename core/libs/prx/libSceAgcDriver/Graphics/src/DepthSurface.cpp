@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -1055,6 +1056,15 @@ public:
     bool Holds(const Texture* texture) const {
         const auto held = [&](const auto& entry) { return entry.second.get() == texture; };
         return std::any_of(textures.begin(), textures.end(), held) || std::any_of(stencilCopy.textures.begin(), stencilCopy.textures.end(), held);
+    }
+
+    void ReleaseSampledViews() {
+        for (const auto& [key, texture] : textures) ReleaseSampledTexture(texture, target.address);
+        if (target.stencilAddress != 0) GuestMemory::NoteTextureReleased(target.stencilAddress);
+    }
+
+    void DropReleasedViews() {
+        std::erase_if(textures, [](const auto& entry) { return entry.second->Released(); });
     }
 
     bool SampledElsewhere() const {
@@ -3198,6 +3208,7 @@ void storeStaleStencil(DepthSurface& surface) {
 
 void retire(DepthSurface& surface) {
     surface.retired = true;
+    if (surface.target.samples == 1u) surface.ReleaseSampledViews();
     for (auto* owners : {&depthOwners(), &stencilOwners()}) {
         std::erase_if(*owners, [&](const auto& entry) { return entry.second.surface == &surface; });
     }
@@ -3495,6 +3506,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         }
         surface = surfaces().back().get();
     }
+    surface->DropReleasedViews();
     surface->retired = false;
     const auto owner = depthOwners().find({context.device, target.address});
     const bool inherits = owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && !owner->second.surface->retired;

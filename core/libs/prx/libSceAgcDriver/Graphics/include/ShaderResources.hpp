@@ -33,6 +33,7 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+void ReleaseSampledTexture(const std::shared_ptr<Texture>& texture, std::uint64_t address);
 struct WriteIndexOutcomes {
     std::uint64_t accepted = 0;
     std::uint64_t partial = 0;

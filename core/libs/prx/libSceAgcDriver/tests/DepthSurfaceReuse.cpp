@@ -489,9 +489,21 @@ void TestRetiredSurfaceRelease(const Context& context) {
     RetireDepthSurfaces(context.device, sampled, bytes);
     DepthSurfaceView(context, {sampled + 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
     Require(!destroyed(sampledImage), "a retired depth surface must keep its image while its sampled view is held");
+    Require(view->Released(), "retiring a depth surface must mark its held sampled view released, so cached shader resources holding it are dropped");
     view.reset();
     DepthSurfaceView(context, {sampled + 0x200000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
     Require(destroyed(sampledImage), "a retired depth surface must free its image once its sampled view is released");
+
+    constexpr std::uint64_t retaken = 0x9a000000;
+    DepthSurfaceView(context, {retaken, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    auto before = lookup(context, {retaken, FormatR32Float, 256, 256});
+    Require(before != nullptr, "an R32F view of a D32 surface's own extent must sample its depth plane");
+    RetireDepthSurfaces(context.device, retaken, bytes);
+    Require(before->Released(), "retiring a depth surface must mark its sampled view released");
+    DepthSurfaceView(context, {retaken, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    const auto after = lookup(context, {retaken, FormatR32Float, 256, 256});
+    Require(after != nullptr && after != before && !after->Released(), "a retired depth surface taken again must sample through a new view, not its released one");
+    before.reset();
 
     constexpr std::uint64_t kept = 0x9c000000;
     DepthSurfaceView(context, {kept, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
