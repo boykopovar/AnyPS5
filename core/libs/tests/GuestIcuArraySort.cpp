@@ -52,9 +52,20 @@ void TestArgumentChecks() {
     Require(true, "sortArray: a null status pointer returns without touching the array");
 }
 
+void TestStableInsertionKeepsEqualItemsInOrder() {
+    Item items[] = {{2, 0}, {1, 1}, {2, 2}, {1, 3}, {2, 4}};
+    std::int32_t status = 0;
+    uprv_sortArray_nid_postfix(items, 5, sizeof(Item), CompareKeys, nullptr, 1, &status);
+    Require(status == 0, "sortArray stable: a valid call succeeds");
+    const std::int32_t expectedTags[] = {1, 3, 0, 2, 4};
+    for (int index = 0; index < 5; ++index)
+        Require(items[index].tag == expectedTags[index], "sortArray stable: equal keys keep their input order");
+}
+
 }
 
 int main() {
     TestArgumentChecks();
+    TestStableInsertionKeepsEqualItemsInOrder();
     return 0;
 }
