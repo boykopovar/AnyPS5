@@ -28,6 +28,12 @@
 
 namespace AgcDriver::DriverDetail {
 
+const ShaderRecompiler::SrtUserDataUse& StageCapture::UserDataUse() const {
+    static const ShaderRecompiler::SrtUserDataUse none;
+    return userDataOwner != nullptr ? userDataOwner->userDataUse : none;
+}
+
+
 namespace {
 
 void TraceMaterializationFailure(std::uint64_t token, const Submission& submission, std::size_t packetOffset, std::size_t stage, const char* phase, const std::exception_ptr& failure) {
@@ -124,8 +130,9 @@ bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t 
             cursor += count;
         }
         stageCapture.heapReadWords = std::move(owned);
-        stageCapture.userDataMask = UserDataMask(program, context.vertexInfos[i], reads.userDataUse.asValue | reads.userDataUse.asBase, *stageCapture.compiled);
-        stageCapture.userDataUse = std::move(reads.userDataUse);
+        const auto& use = reads.capture->userDataUse;
+        stageCapture.userDataMask = UserDataMask(program, context.vertexInfos[i], use.asValue | use.asBase, *stageCapture.compiled);
+        stageCapture.userDataOwner = reads.capture;
         stageCapture.capture = std::move(reads.capture);
         stageCapture.ring = true;
         context.memory.insert(context.memory.end(), stageCapture.regions.begin(), stageCapture.regions.end());
@@ -232,7 +239,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
 
     stageCapture.regions = context.shaderMemory.TakeRecentRegions();
     stageCapture.supplied = context.shaderMemory.SuppliedBlocks();
-    stageCapture.userDataUse = capture->userDataUse;
+    stageCapture.userDataOwner = capture;
     stageCapture.registeredViews = std::make_shared<const std::vector<ShaderRecompiler::RegisteredImageView>>(capture->snapshot.registeredImages);
     context.recompiled[i] = true;
     context.memory = context.shaderMemory.Regions();
@@ -385,7 +392,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             for (const auto& read : decodeReads[i]) regions.push_back({read.address, read.Bytes()});
             std::stable_sort(regions.begin(), regions.end(), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress < b.guestAddress; });
             const bool relocatable = decodeReads[i].empty() && (!vertexInfos[i] || vertexInfos[i]->resourcesNum == 0);
-            tagVariantRuns(*variant, regions, stageCapture.userDataUse, relocatable, programs[i].hiddenUserWords, stageCapture.supplied);
+            tagVariantRuns(*variant, regions, stageCapture.UserDataUse(), relocatable, programs[i].hiddenUserWords, stageCapture.supplied);
             if (relocatable && (stageCapture.heapWords == nullptr || variant->ringTemplate != nullptr)) tagUserValueWords(*variant, programs[i], stageCapture.heapWords.get());
             if (drawStageDataHits() && stageCapture.capture != nullptr && !stageCapture.capture->readTrace.leaves.empty()) recordStageDataPositions(*variant, *stageCapture.capture, decodeReads[i]);
             if (traceDrawCache() && entry != nullptr && matched[i] == nullptr && i < entry->stages.size()) {

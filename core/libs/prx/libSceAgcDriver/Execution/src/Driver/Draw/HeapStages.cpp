@@ -489,7 +489,7 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     materializeCost.Stop();
     const bool complete = !reads.failed && result != nullptr;
     HeapStageMaterialized materialized;
-    if (complete) materialized.reads = {std::move(sharedRanges), std::move(sharedValues), capture->userDataUse, capture, true};
+    if (complete) materialized.reads = {std::move(sharedRanges), std::move(sharedValues), capture, true};
     materialized.result = std::move(result);
     materialized.words = std::move(words);
     return materialized;

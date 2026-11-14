@@ -1370,7 +1370,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto sameInfo = [&](const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& a, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& b) { return a.has_value() == b.has_value() && (!a || sameVertexInfo(*a, *b)); };
         const auto forwardRecordWords = [&](std::size_t programIndex, ShaderRecompiler::RecompileResult& result, const std::optional<ShaderRecompiler::ShaderVertexStageInfo>& previousInfo) {
             std::uint64_t walked = 0;
-            if (stageCaptures[programIndex].capture != nullptr) walked = stageCaptures[programIndex].userDataUse.asBase | stageCaptures[programIndex].userDataUse.asValue;
+            if (stageCaptures[programIndex].capture != nullptr) walked = stageCaptures[programIndex].UserDataUse().asBase | stageCaptures[programIndex].UserDataUse().asValue;
             else if (matched[programIndex] != nullptr) walked = matched[programIndex]->userWordsWalked;
             else return false;
             if ((graphics.stages.mesh && programIndex == 0) || !sameInfo(previousInfo, vertexInfos[programIndex])) return false;
@@ -1392,7 +1392,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             const bool sameBindings = forwarded.bindings.size() == fresh.bindings.size() && std::equal(forwarded.bindings.begin(), forwarded.bindings.end(), fresh.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
             std::uint64_t walked = 0;
             for (const auto& word : recordWords) {
-                if (word.program == programIndex && word.index < ShaderRecompiler::SrtUserDataUse::TrackedWords) walked |= (stageCaptures[programIndex].userDataUse.asBase | stageCaptures[programIndex].userDataUse.asValue) >> word.index & 1u;
+                if (word.program == programIndex && word.index < ShaderRecompiler::SrtUserDataUse::TrackedWords) walked |= (stageCaptures[programIndex].UserDataUse().asBase | stageCaptures[programIndex].UserDataUse().asValue) >> word.index & 1u;
             }
             const char* what = forwarded.variantId != fresh.variantId ? "variant" : forwarded.pushConstants != fresh.pushConstants ? "push constants" : !sameBindings ? "bindings" : forwarded.shaderDataUserWords != fresh.shaderDataUserWords ? "forwarded words" : walked != 0 ? "walked user word" : nullptr;
             ++wordsVerified;

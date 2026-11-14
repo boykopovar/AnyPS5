@@ -132,12 +132,14 @@ struct StageCapture {
     std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied;
     std::uint64_t forgetSerial = 0;
     std::uint32_t pushOffset = 0;
-    ShaderRecompiler::SrtUserDataUse userDataUse;
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> userDataOwner;
     std::uint64_t userDataMask = ~std::uint64_t{0};
     bool direct = false;
     bool ring = false;
     std::shared_ptr<ShaderRecompiler::HeapStageWords> heapWords;
     std::shared_ptr<const std::vector<std::uint32_t>> heapReadWords;
+
+    const ShaderRecompiler::SrtUserDataUse& UserDataUse() const;
 
     bool Cacheable() const { return !direct || ring; }
 };
