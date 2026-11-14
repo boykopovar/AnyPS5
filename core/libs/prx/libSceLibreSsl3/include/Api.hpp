@@ -190,7 +190,7 @@ int APS5_VABI RSA_bits_nid_postfix(const LibreSsl3Rsa* rsa);
 int APS5_VABI BN_is_negative_nid_postfix(const Bignum* value);
 int APS5_VABI EVP_CIPHER_nid_nid_postfix(const LibreSsl3EvpCipher* cipher);
 void APS5_VABI ERR_load_ERR_strings_nid_postfix();
-int APS5_VABI BIO_vfree_nid_postfix(void);
+void APS5_VABI BIO_vfree_nid_postfix(LibreSsl::Bio* bio);
 int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, std::size_t length);
 void APS5_VABI DH_get0_key_nid_postfix(const LibreSsl3Dh* dh, const void** pubKey, const void** privKey);
 void APS5_VABI DH_get0_pqg_nid_postfix(const LibreSsl3Dh* dh, const void** p, const void** q, const void** g);
