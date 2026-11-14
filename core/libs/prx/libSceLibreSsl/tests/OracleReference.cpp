@@ -90,6 +90,8 @@ void AddAllAlgorithms() { OPENSSL_add_all_algorithms_noconf(); }
 void LoadBuiltinModules() { OPENSSL_load_builtin_modules(); }
 void ConfModulesFree() { CONF_modules_free(); }
 int I2tAsn1Object(char* buffer, int length, const void* object) { return i2t_ASN1_OBJECT(buffer, length, const_cast<ASN1_OBJECT*>(static_cast<const ASN1_OBJECT*>(object))); }
+void* D2iX509(void** certificate, const unsigned char** in, long length) { return d2i_X509(reinterpret_cast<X509**>(certificate), in, length); }
+void X509Free(void* certificate) { X509_free(static_cast<X509*>(certificate)); }
 unsigned long ErrGetError() { return ERR_get_error(); }
 void ErrClearError() { ERR_clear_error(); }
 
