@@ -1545,7 +1545,13 @@ void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCop
 
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite) {
     auto* recorder = context.recorder;
-    if (recorder == nullptr || bytes == 0 || !context.drawInputsInPlace) return nullptr;
+    if (recorder == nullptr || bytes == 0) return nullptr;
+    static const std::size_t largeInput = [] {
+        const char* value = std::getenv("APS5_LARGE_INPUT_IN_PLACE_MIB");
+        return static_cast<std::size_t>(value != nullptr ? std::strtoull(value, nullptr, 10) : 8u) << 20u;
+    }();
+    const bool large = behindGpuWrite != nullptr && largeInput != 0 && bytes >= largeInput;
+    if (!context.drawInputsInPlace && !large) return nullptr;
     bool behind = false;
     if (behindGpuWrite == nullptr) {
         GuestMemory::FlushGpuWrites(address, bytes);
