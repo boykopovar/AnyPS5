@@ -735,7 +735,8 @@ int APS5_VABI sceNpManagerIntGetIssuerId(void) {
 }
 int APS5_VABI sceNpManagerIntGetNpEnv(void* npEnv) {
     if (!npEnv) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    std::memset(npEnv, 0, 0x18);
+    constexpr std::array<std::uint8_t, 0x18> cleared{};
+    if (!CopyGuestOut(npEnv, cleared.data(), cleared.size())) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetNpId(int userId, NpId* npId) {
@@ -1255,10 +1256,10 @@ int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {
     if (!sandbox_info) return SCE_NP_ERROR_INVALID_ARGUMENT;
     static constexpr char Platform[] = "RETAIL";
     static constexpr char Environment[] = "LIVE";
-    auto* info = static_cast<char*>(sandbox_info);
-    std::memset(info, 0, 0x50);
-    std::memcpy(info, Platform, sizeof(Platform));
-    std::memcpy(info + 0x28, Environment, sizeof(Environment));
+    std::array<char, 0x50> info{};
+    std::memcpy(info.data(), Platform, sizeof(Platform));
+    std::memcpy(info.data() + 0x28, Environment, sizeof(Environment));
+    if (!CopyGuestOut(sandbox_info, info.data(), info.size())) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

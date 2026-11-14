@@ -578,6 +578,8 @@ void CheckManagerIntProfileGetters() {
     Require(sceNpManagerIntGetNpEnv(npEnv.bytes) == SignedOut, "sceNpManagerIntGetNpEnv must report NP as signed out");
     for (std::size_t i = 0; i < 0x18; ++i) Require(npEnv.bytes[i] == 0, "sceNpManagerIntGetNpEnv must zero the environment block");
     for (std::size_t i = 0x18; i < sizeof(npEnv.bytes); ++i) Require(npEnv.bytes[i] == 0x5a, "sceNpManagerIntGetNpEnv must leave the tail untouched");
+    errno = 71;
+    Require(sceNpManagerIntGetNpEnv(reinterpret_cast<void*>(0x10)) == InvalidArgument && errno == 71, "sceNpManagerIntGetNpEnv unwritable output");
     Require(sceNpManagerIntGetVshClientId(nullptr) == InvalidArgument, "sceNpManagerIntGetVshClientId must refuse a null output");
     Require(sceNpManagerIntGetVshClientId(out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetVshClientId must report NP as signed out and write nothing");
     std::uint64_t offlineAccountId = 0x5a5a5a5a5a5a5a5a;
@@ -886,6 +888,8 @@ static void CheckSandboxInfo() {
     for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
     for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+    errno = 71;
+    Require(sceNpGetSandboxInfo(reinterpret_cast<void*>(0x10)) == InvalidArgument && errno == 71, "sceNpGetSandboxInfo unwritable buffer");
 }
 
 void CheckValueClasses() {
