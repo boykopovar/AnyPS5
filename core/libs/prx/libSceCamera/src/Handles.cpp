@@ -1,8 +1,10 @@
+#include <cerrno>
 #include <limits>
 #include <mutex>
 #include <unordered_set>
 #include <stdexcept>
 #include <cstdint>
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceCamera/libSceCamera.hpp"
 #include "prx/libSceCamera/include/Camera.hpp"
 
@@ -15,9 +17,15 @@ std::mutex handlesMutex;
 std::unordered_set<std::int32_t> openHandles;
 std::int64_t nextHandle = 1;
 
-int CheckStart(std::int32_t handle, const CameraStartParameter* param) {
-    if (handle < 1 || !param || param->sizeThis != sizeof(CameraStartParameter)) return SCE_CAMERA_ERROR_PARAM;
+int CheckStart(std::int32_t handle, const CameraStartParameter* param, CameraStartParameter* outParam = nullptr) {
+    if (handle < 1 || !param) return SCE_CAMERA_ERROR_PARAM;
+    CameraStartParameter localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied || localParam.sizeThis != sizeof(CameraStartParameter)) return SCE_CAMERA_ERROR_PARAM;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
+    if (outParam) *outParam = localParam;
     return 0;
 }
 
@@ -57,8 +65,9 @@ int APS5_VABI sceCameraCloseByHandle(std::int32_t handle) {
 }
 
 int APS5_VABI sceCameraStart(std::int32_t handle, const CameraStartParameter* param) {
-    if (const int error = CheckStart(handle, param)) return error;
-    if (param->formatLevel[0] > 0xF || param->formatLevel[1] > 0xF || (param->formatLevel[0] | param->formatLevel[1]) == 0)
+    CameraStartParameter localParam{};
+    if (const int error = CheckStart(handle, param, &localParam)) return error;
+    if (localParam.formatLevel[0] > 0xF || localParam.formatLevel[1] > 0xF || (localParam.formatLevel[0] | localParam.formatLevel[1]) == 0)
         return SCE_CAMERA_ERROR_FORMAT_UNKNOWN;
     return SCE_CAMERA_ERROR_NOT_CONNECTED;
 }

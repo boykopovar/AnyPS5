@@ -103,6 +103,12 @@ void CheckStart() {
     CameraStartParameter start = Start(1, 1);
     Require(sceCameraStart(0, &start) == ErrorParam, "handle 0 must be rejected");
     Require(sceCameraStart(1, nullptr) == ErrorParam, "a null start parameter must be rejected");
+    errno = 71;
+    Require(sceCameraStart(1, reinterpret_cast<const CameraStartParameter*>(0x10)) == ErrorParam, "an unmapped start parameter must report PARAM");
+    Require(errno == 71, "errno must be preserved on unmapped start parameter");
+    errno = 71;
+    Require(sceCameraStartByHandle(1, reinterpret_cast<const CameraStartParameter*>(0x10)) == ErrorParam, "an unmapped start parameter must report PARAM");
+    Require(errno == 71, "errno must be preserved on unmapped start parameter");
     start.sizeThis = 16;
     Require(sceCameraStart(1, &start) == ErrorParam, "a start parameter of the wrong size must be rejected");
     start = Start(0, 0);
