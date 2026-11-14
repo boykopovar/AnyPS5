@@ -782,7 +782,9 @@ void Driver::TrackRewindTails() {
 void Driver::noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next) {
     if (!tracksTails.load(std::memory_order_relaxed)) return;
     std::lock_guard lock(tailsMutex);
-    if (read != nullptr) std::erase_if(unreadTails, [&](const auto& tail) { return tail.second == read; });
+    if (read != nullptr) {
+        if (const auto copied = std::ranges::find(unreadTails, std::pair{queue, read}); copied != unreadTails.end()) unreadTails.erase(copied);
+    }
     if (next != nullptr) unreadTails.emplace_back(queue, next);
 }
 

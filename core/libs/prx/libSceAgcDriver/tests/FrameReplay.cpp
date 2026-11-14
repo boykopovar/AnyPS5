@@ -22,6 +22,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -95,6 +97,38 @@ public:
         if (!error) std::terminate();
     }
     std::atomic<int> ready = 0;
+};
+
+class HeldOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return std::make_shared<Request>(ready); }
+    void WaitForFlipRoom() override {
+        std::unique_lock lock(mutex);
+        ++waiting;
+        changed.notify_all();
+        changed.wait(lock, [&] { return room; });
+    }
+    void Fail(std::exception_ptr error) noexcept override {
+        if (!error) std::terminate();
+    }
+    bool WaitUntilHeld() {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(10), [&] { return waiting != 0; });
+    }
+    void Open() {
+        {
+            std::lock_guard lock(mutex);
+            room = true;
+        }
+        changed.notify_all();
+    }
+    std::atomic<int> ready = 0;
+
+private:
+    std::mutex mutex;
+    std::condition_variable changed;
+    int waiting = 0;
+    bool room = false;
 };
 
 struct Layout {
@@ -883,14 +917,41 @@ void testRewindPageRestored(const std::filesystem::path& tool) {
     check(replayed(tool, checkCapture(1), layout.label, 4) == std::vector<std::byte>{std::byte{Done}, std::byte{0}, std::byte{0}, std::byte{0}}, "the replay did not run the REWIND tail after the deltas that restored the page of its control");
 }
 
+void testSharedRewindTail() {
+    const auto layout = allocate();
+    auto output = std::make_shared<HeldOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    AgcDriverTrackRewindTails_nid_postfix();
+    auto* const words = layout.firstCommands;
+    auto buffer = commands(words);
+    auto* const control = sceAgcDcbRewind(&buffer, 0) + 1;
+    const std::array<std::uint32_t, 6> flip{AgcDriver::FlipPacketHeader, Handle, 0, 1, 0, 0};
+    std::memcpy(buffer.cursor_up, flip.data(), sizeof(flip));
+    buffer.cursor_up += flip.size();
+    Packet packet{words, static_cast<std::uint32_t>(buffer.cursor_up - words), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the first submission of the REWIND buffer failed");
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the second submission of the REWIND buffer failed");
+    waitUntil([&] { return parkedOn(control); }, "the queue did not park at the unreleased REWIND");
+    check(!AgcDriverRewindTailsUnread_nid_postfix(), "a tail behind an unreleased REWIND counts as unread");
+    release(control);
+    const bool held = output->WaitUntilHeld();
+    const bool secondUnread = AgcDriverRewindTailsUnread_nid_postfix();
+    output->Open();
+    AgcDriverWaitIdle_nid_postfix();
+    check(held, "the first submission's tail did not wait for flip room");
+    check(secondUnread, "after the first of two submissions sharing a REWIND buffer copied its tail, the second submission's unread copy of the same tail was forgotten");
+    check(!AgcDriverRewindTailsUnread_nid_postfix(), "a tail counts as unread after both submissions copied it");
+    check(output->ready.load() == 2, "the flips in both copies of the tail did not run");
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
         {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}};
-    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_page|allocation_ranges]\n");
+    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || rewound.contains(mode)))) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_page|allocation_ranges]\n");
         return 2;
     }
     int status = 0;
@@ -908,6 +969,7 @@ int main(int argc, char** argv) {
         else if (mode == "reservation_error") testReservationError(argv[1]);
         else if (mode == "rewind") testParkedRewindReplays(argv[1]);
         else if (mode == "rewind_reuse") testRewindTargetReuse(argv[1]);
+        else if (mode == "rewind_shared_tail") testSharedRewindTail();
         else testCaptureAndReplay(argv[1], mode == "pipelines");
     } catch (const Inconclusive& error) {
         std::printf("skipped, %s\n", error.what());
