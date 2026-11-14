@@ -353,11 +353,21 @@ int main() {
         Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
         Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
         Require(registered.user_id[i] == userId);
+        Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, &homeCount) == USER_SERVICE_OK);
+        for (int k = 0; k < 16; ++k) {
+            Require(homeIds[k] == registered.user_id[k]);
+        }
+        Require(homeCount == 2);
         VerifyLoggedInUser(userId);
 
         UserServiceSetUserConnected_nid_postfix(i, false);
         Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
+        Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, &homeCount) == USER_SERVICE_OK);
+        for (int k = 0; k < 16; ++k) {
+            Require(homeIds[k] == registered.user_id[k]);
+        }
+        Require(homeCount == 1);
         VerifyLoggedOutUser(userId);
     }
 
