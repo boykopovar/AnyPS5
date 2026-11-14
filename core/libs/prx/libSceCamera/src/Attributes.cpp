@@ -49,7 +49,10 @@ bool ValidTarget(const CameraAutoExposureGainTarget* option) {
 template <typename TValue>
 int Report(std::int32_t handle, std::uint32_t channel, TValue* out, const void* option, TValue value) {
     if (const int error = CheckGet(handle, channel, out, option)) return error;
-    *out = value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 
@@ -58,20 +61,28 @@ int Report(std::int32_t handle, std::uint32_t channel, TValue* out, const void* 
 extern "C" {
 
 int APS5_VABI sceCameraGetAttribute(std::int32_t handle, CameraAttribute* attribute) {
-    if (handle < 1 || !attribute || attribute->sizeThis != sizeof(CameraAttribute) || !Readable(attribute->channel)) return SCE_CAMERA_ERROR_PARAM;
+    if (handle < 1 || !attribute) return SCE_CAMERA_ERROR_PARAM;
+    CameraAttribute localAttr{};
+    const int savedErrno = errno;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(&localAttr, attribute, sizeof(localAttr));
+    errno = savedErrno;
+    if (!copiedIn || localAttr.sizeThis != sizeof(CameraAttribute) || !Readable(localAttr.channel)) return SCE_CAMERA_ERROR_PARAM;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
-    const std::uint32_t channel = attribute->channel;
-    *attribute = {};
-    attribute->sizeThis = sizeof(CameraAttribute);
-    attribute->channel = channel;
-    attribute->exposureGain.exposure = 83;
-    attribute->exposureGain.gain = 100;
-    attribute->whiteBalance = DEFAULT_WHITE_BALANCE;
-    attribute->gamma.value = DEFAULT_GAMMA;
-    attribute->saturation = DEFAULT_SATURATION;
-    attribute->contrast = DEFAULT_CONTRAST;
-    attribute->sharpness = DEFAULT_SHARPNESS;
-    attribute->hue = DEFAULT_HUE;
+    const std::uint32_t channel = localAttr.channel;
+    localAttr = {};
+    localAttr.sizeThis = sizeof(CameraAttribute);
+    localAttr.channel = channel;
+    localAttr.exposureGain.exposure = 83;
+    localAttr.exposureGain.gain = 100;
+    localAttr.whiteBalance = DEFAULT_WHITE_BALANCE;
+    localAttr.gamma.value = DEFAULT_GAMMA;
+    localAttr.saturation = DEFAULT_SATURATION;
+    localAttr.contrast = DEFAULT_CONTRAST;
+    localAttr.sharpness = DEFAULT_SHARPNESS;
+    localAttr.hue = DEFAULT_HUE;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(attribute, &localAttr, sizeof(localAttr));
+    errno = savedErrno;
+    if (!copiedOut) return SCE_CAMERA_ERROR_PARAM;
     return 0;
 }
 

@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -72,7 +73,14 @@ extern "C" {
 
 int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2) {
     if (!onlineId1 || !onlineId2) return NP_ERROR_INVALID_ARGUMENT;
-    if (std::strncmp(onlineId1->data, onlineId2->data, ONLINE_ID_MAX_LENGTH) != 0) return NP_UTIL_ERROR_NOT_MATCH;
+    NpOnlineId localId1{};
+    NpOnlineId localId2{};
+    const int savedErrno = errno;
+    const bool copied1 = GuestCopyIn_nid_no_patch(&localId1, onlineId1, sizeof(localId1));
+    const bool copied2 = GuestCopyIn_nid_no_patch(&localId2, onlineId2, sizeof(localId2));
+    errno = savedErrno;
+    if (!copied1 || !copied2) return NP_ERROR_INVALID_ARGUMENT;
+    if (std::strncmp(localId1.data, localId2.data, ONLINE_ID_MAX_LENGTH) != 0) return NP_UTIL_ERROR_NOT_MATCH;
     return 0;
 }
 
@@ -92,8 +100,13 @@ int APS5_VABI sceNpGetPlatformType(const NpIdFull* npId) {
 
 int APS5_VABI sceNpIntGetPlatformType(const NpIdFull* npId) {
     if (!npId) return NP_ERROR_INVALID_ARGUMENT;
-    if (platformTag(*npId) == PLATFORM_TAG_COMPANION) return static_cast<int>(PLATFORM_TYPE_COMPANION);
-    return platformTypeOf(*npId);
+    NpIdFull localId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localId, npId, sizeof(localId));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    if (platformTag(localId) == PLATFORM_TAG_COMPANION) return static_cast<int>(PLATFORM_TYPE_COMPANION);
+    return platformTypeOf(localId);
 }
 
 int APS5_VABI sceNpSetPlatformType(NpIdFull* npId, std::uint32_t platformType) {
@@ -121,12 +134,17 @@ int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(NpIdFull* npId, std::int32_t repl
 }
 
 int APS5_VABI sceNpIntIsValidOnlineId(const NpOnlineId* onlineId) {
-    if (!onlineId || onlineId->data[ONLINE_ID_MAX_LENGTH] != 0) return 0;
-    const std::size_t length = strnlen(onlineId->data, ONLINE_ID_MAX_LENGTH + 1);
+    if (!onlineId) return 0;
+    NpOnlineId localId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localId, onlineId, sizeof(localId));
+    errno = savedErrno;
+    if (!copied || localId.data[ONLINE_ID_MAX_LENGTH] != 0) return 0;
+    const std::size_t length = strnlen(localId.data, ONLINE_ID_MAX_LENGTH + 1);
     if (length < 3 || length > ONLINE_ID_MAX_LENGTH) return 0;
-    if (!std::isalnum(static_cast<unsigned char>(onlineId->data[0]))) return 0;
+    if (!std::isalnum(static_cast<unsigned char>(localId.data[0]))) return 0;
     for (std::size_t i = 1; i < length; ++i) {
-        const unsigned char character = static_cast<unsigned char>(onlineId->data[i]);
+        const unsigned char character = static_cast<unsigned char>(localId.data[i]);
         if (!std::isalnum(character) && character != '_' && character != '-') return 0;
     }
     return 1;

@@ -413,6 +413,45 @@ void Pad::ApplyInputMapping(InputConfiguration& configuration, std::istream& inp
     applyInputStream(configuration, input, source);
 }
 
+namespace {
+
+Pad::InputFileStamp fileStamp(const std::filesystem::path& path) {
+    Pad::InputFileStamp stamp;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) return stamp;
+    stamp.present = true;
+    stamp.modified = std::filesystem::last_write_time(path, error);
+    stamp.size = std::filesystem::file_size(path, error);
+    return stamp;
+}
+
+}
+
+Pad::InputMappingStamp Pad::InputMappingFileStamp(std::string_view titleId) {
+    const auto configured = configuredPath();
+    const std::filesystem::path path = !configured.empty() ? configured : defaultConfigPath();
+    InputMappingStamp stamp;
+    stamp.shared = fileStamp(path);
+    const auto profile = InputProfileName(titleId);
+    if (!profile.empty()) stamp.profile = fileStamp(path.parent_path() / profile);
+    return stamp;
+}
+
+Pad::InputMappingWatch::InputMappingWatch(InputMappingStamp applied) : applied(applied), candidate(applied) {}
+
+bool Pad::InputMappingWatch::Poll(const InputMappingStamp& current) {
+    if (current == applied) {
+        candidate = current;
+        return false;
+    }
+    if (current != candidate) {
+        candidate = current;
+        return false;
+    }
+    applied = current;
+    return true;
+}
+
 Pad::InputMappingStore::InputMappingStore(InputConfiguration initial) : current(std::make_shared<const InputConfiguration>(std::move(initial))) {}
 
 std::shared_ptr<const Pad::InputConfiguration> Pad::InputMappingStore::Snapshot() const {
