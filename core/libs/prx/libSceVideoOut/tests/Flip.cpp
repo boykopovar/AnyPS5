@@ -1522,6 +1522,16 @@ void testOutputResolutionOverride() {
     SDL_DisplayMode mode{};
     check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
     const std::uint32_t following = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    std::array<std::byte, 80> fresh{};
+    check(sceVideoOutGetOutputStatusWithVrr(handle, fresh.data()) == static_cast<int>(0x8029001Cu), "the VRR status of a handle without buffers was not refused");
+    std::vector<std::byte> allocation(65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffers{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = 64;
+    attribute.height = 64;
+    attribute.pixel_format = 0x8000000000000000ull;
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffers, 1, &attribute, 0, nullptr) == 0, "the buffer registration failed");
     const auto reported = [&] {
         VideoOutOutputStatus status{};
         check(sceVideoOutGetOutputStatus(handle, &status) == 0, "the output status was not returned");
