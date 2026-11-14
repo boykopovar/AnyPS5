@@ -97,13 +97,16 @@ struct PhysicalMemoryPool {
         uint64_t lo, hi;
         if (!PageSpan(start, len, lo, hi)) return false;
         std::unique_lock<std::mutex> lock(_mutex);
-        if (requireAllocated) {
-            if (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi)) return false;
-        } else {
-            _claimFinished.wait(lock, [&] { return !_claimed(lo, hi); });
+        for (;;) {
+            if (requireAllocated && (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi))) return false;
+            if (!_claimed(lo, hi) && DirectMemoryTryAddReleaseClaim(lo, hi)) return true;
+            _claimFinished.wait(lock);
         }
-        DirectMemoryAddReleaseClaim(lo, hi);
-        return true;
+    }
+
+    void WakeReleaseClaims() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _claimFinished.notify_all();
     }
 
     void FinishRelease(uint64_t start, size_t len) {
@@ -346,6 +349,10 @@ void DirectMemoryFinishRelease(int64_t start, size_t len) {
 
 void DirectMemoryAbandonRelease(int64_t start, size_t len) noexcept {
     PhysicalMemoryPool::Instance().AbandonRelease(static_cast<uint64_t>(start), len);
+}
+
+void DirectMemoryWakeReleaseClaims() {
+    PhysicalMemoryPool::Instance().WakeReleaseClaims();
 }
 
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType) {

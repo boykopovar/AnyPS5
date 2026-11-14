@@ -543,6 +543,7 @@ struct DirectMemoryState {
     std::map<std::uint64_t, PhysicalPage> physPages;
     std::map<std::uintptr_t, DirectMapping> directMappings;
     std::map<std::uint64_t, std::uint64_t> releaseClaims;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> mapHolds;
     std::mutex protectionLock;
     std::map<std::uintptr_t, ProtectedRange> protections;
     std::mutex reservationLock;
@@ -563,6 +564,7 @@ auto& g_physBlocks = MemoryState().physBlocks;
 auto& g_physPages = MemoryState().physPages;
 auto& g_directMappings = MemoryState().directMappings;
 auto& g_releaseClaims = MemoryState().releaseClaims;
+auto& g_mapHolds = MemoryState().mapHolds;
 auto& g_physicalSpans = MemoryState().physicalSpans;
 auto& g_protectionLock = MemoryState().protectionLock;
 auto& g_protections = MemoryState().protections;
@@ -695,6 +697,39 @@ bool ReleasingLocked(std::uint64_t first, std::uint64_t last, std::uint64_t* cla
     if (claimEnd) *claimEnd = claim->second;
     return true;
 }
+
+bool MapHeldLocked(std::uint64_t first, std::uint64_t last) {
+    return std::any_of(g_mapHolds.begin(), g_mapHolds.end(), [&](const auto& hold) { return hold.first < last && first < hold.second; });
+}
+
+class DirectMapHold {
+public:
+    DirectMapHold(std::uint64_t first, std::uint64_t last) : first(first), last(last) {
+        std::lock_guard lock(g_directLock);
+        if (FirstUnallocatedPage(first, last - first) || ReleasingLocked(first, last)) return;
+        g_mapHolds.emplace_back(first, last);
+        held = true;
+    }
+
+    ~DirectMapHold() {
+        if (!held) return;
+        {
+            std::lock_guard lock(g_directLock);
+            g_mapHolds.erase(std::find(g_mapHolds.begin(), g_mapHolds.end(), std::pair{first, last}));
+        }
+        DirectMemoryWakeReleaseClaims();
+    }
+
+    DirectMapHold(const DirectMapHold&) = delete;
+    DirectMapHold& operator=(const DirectMapHold&) = delete;
+
+    explicit operator bool() const { return held; }
+
+private:
+    std::uint64_t first;
+    std::uint64_t last;
+    bool held = false;
+};
 
 void RequireNotReleasing(std::uint64_t phys, std::size_t len) {
     if (!ReleasingLocked(phys, phys + len)) return;
@@ -1189,10 +1224,8 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
         return SCE_KERNEL_ERROR_EINVAL;
     }
     if ((prot & ~0x3F7) == 0 && (prot & GuestProtCpuExecute) != 0) return SCE_KERNEL_ERROR_EINVAL;
-    {
-        std::lock_guard lock(g_directLock);
-        if (FirstUnallocatedPage(static_cast<std::uint64_t>(physStart), len) || ReleasingLocked(static_cast<std::uint64_t>(physStart), static_cast<std::uint64_t>(physStart) + len)) return SCE_KERNEL_ERROR_ENOMEM;
-    }
+    const DirectMapHold hold(static_cast<std::uint64_t>(physStart), static_cast<std::uint64_t>(physStart) + len);
+    if (!hold) return SCE_KERNEL_ERROR_ENOMEM;
     GuestAllocations::Mutation mutation;
     flags = PlaceHintInReservation(*addr, len, flags);
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
@@ -1204,8 +1237,6 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     ReplaceFixedOverlap(mutation, *addr, len, flags);
     RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
     std::lock_guard lock(g_directLock);
-    ValidatePhysicalRange(static_cast<std::uint64_t>(physStart), len);
-    RequireNotReleasing(static_cast<std::uint64_t>(physStart), len);
     void* mapped = MapAligned(*addr, len, PROT_NONE, flags, alignment);
     try {
         AddMapping(reinterpret_cast<std::uintptr_t>(mapped), len, static_cast<std::uint64_t>(physStart), LinuxProtFromSce(prot));
@@ -1842,9 +1873,11 @@ bool DirectMemoryReleaseClaimed(std::uint64_t first, std::uint64_t last, std::ui
     return ReleasingLocked(first, last, claimEnd);
 }
 
-void DirectMemoryAddReleaseClaim(std::uint64_t first, std::uint64_t last) {
+bool DirectMemoryTryAddReleaseClaim(std::uint64_t first, std::uint64_t last) {
     std::lock_guard lock(g_directLock);
+    if (MapHeldLocked(first, last)) return false;
     g_releaseClaims.emplace(first, last);
+    return true;
 }
 
 void DirectMemoryRemoveReleaseClaim(std::uint64_t first) {

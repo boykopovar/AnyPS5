@@ -2540,6 +2540,71 @@ static void CheckReleaseExcludesMappingsAndAllocations() {
     Require(sceKernelReleaseDirectMemory(hole, page * 9) == 0);
 }
 
+struct ReleaseDuringMap {
+    std::int64_t phys = 0;
+    std::size_t bytes = 0;
+    GuestAllocations::Lease lease;
+    std::thread releaser;
+    std::atomic<int> result{-1};
+    bool claimedDuringMap = false;
+};
+
+static ReleaseDuringMap* releaseDuringMap = nullptr;
+
+static bool ReleaseWhileTheMapWaits(std::uintptr_t, std::size_t) {
+    auto& state = *releaseDuringMap;
+    if (!state.releaser.joinable()) {
+        state.releaser = std::thread([&state] { state.result = sceKernelReleaseDirectMemory(state.phys, state.bytes); });
+        const auto first = static_cast<std::uint64_t>(state.phys);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+        while (!(state.claimedDuringMap = DirectMemoryReleaseClaimed(first, first + state.bytes, nullptr)) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    }
+    state.lease.clear();
+    return true;
+}
+
+static void CheckFixedMapRacingAReleaseKeepsItsDestination() {
+    constexpr std::size_t page = 0x4000;
+    for (const bool partial : {true, false}) {
+        std::int64_t kept = 0;
+        std::int64_t released = 0;
+        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &kept) == 0);
+        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &released) == 0);
+        void* destination = nullptr;
+        Require(sceKernelMapDirectMemory(&destination, page * 2, 3, 0, kept, 0) == 0);
+        if (partial) Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(destination) + page, page) == 0);
+        static_cast<volatile unsigned char*>(destination)[5] = 0x5a;
+        ReleaseDuringMap state;
+        state.phys = released;
+        state.bytes = page * 2;
+        state.lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        releaseDuringMap = &state;
+        GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&ReleaseWhileTheMapWaits);
+        int mapResult = -1;
+        bool threw = false;
+        void* fixed = destination;
+        try {
+            mapResult = sceKernelMapDirectMemory(&fixed, page * 2, 3, 0x10, released, 0);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(nullptr);
+        state.lease.clear();
+        Require(state.releaser.joinable());
+        state.releaser.join();
+        releaseDuringMap = nullptr;
+        Require(!threw && !state.claimedDuringMap);
+        Require(mapResult == 0 && fixed == destination && state.result == 0);
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(destination, 0, &info, sizeof(info)) != 0 || !info.is_direct);
+        void* again = nullptr;
+        Require(sceKernelMapDirectMemory(&again, page * 2, 3, 0, kept, 0) == 0);
+        Require(static_cast<volatile unsigned char*>(again)[5] == 0x5a);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), page * 2) == 0);
+        Require(sceKernelReleaseDirectMemory(kept, page * 2) == 0);
+    }
+}
+
 static void CheckSecondDirectMappingWaitsForLeases() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -4501,6 +4566,7 @@ int main(int argc, char** argv) {
     CheckReleaseKeepsPhysicalUntilViewsUnmapped(sceKernelCheckedReleaseDirectMemory);
     CheckConcurrentCheckedReleasesUnmapViewsOnce();
     CheckReleaseExcludesMappingsAndAllocations();
+    CheckFixedMapRacingAReleaseKeepsItsDestination();
     CheckPinnedRangeIsLeftOutOfNewLeases();
     CheckBreakingAResidentRunKeepsConcurrentAccesses();
     CheckRemappedDirectMemoryIsChargedOnce();

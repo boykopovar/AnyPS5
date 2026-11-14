@@ -24,6 +24,7 @@ bool DirectMemoryCheckedFree(int64_t start, size_t len);
 bool DirectMemoryClaimRelease(int64_t start, size_t len, bool requireAllocated);
 void DirectMemoryFinishRelease(int64_t start, size_t len);
 void DirectMemoryAbandonRelease(int64_t start, size_t len) noexcept;
+void DirectMemoryWakeReleaseClaims();
 void CreateDirectMemoryBacking(int64_t start, size_t len);
 bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end, std::uint64_t* offset, int* memoryType);
 bool DirectMemoryAliased(std::uintptr_t address, std::size_t bytes);
@@ -36,7 +37,7 @@ struct DirectMemoryView {
 
 void UnmapDirectMemoryRange(int64_t start, size_t len);
 bool DirectMemoryReleaseClaimed(std::uint64_t first, std::uint64_t last, std::uint64_t* claimEnd);
-void DirectMemoryAddReleaseClaim(std::uint64_t first, std::uint64_t last);
+bool DirectMemoryTryAddReleaseClaim(std::uint64_t first, std::uint64_t last);
 void DirectMemoryRemoveReleaseClaim(std::uint64_t first);
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType);
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType);
