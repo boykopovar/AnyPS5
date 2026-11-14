@@ -5,6 +5,7 @@ add_test_executable(agc_shader_memory_tests EXCLUDE_FROM_ALL
         Execution/src/PerformanceTraceThread.cpp
         Graphics/src/GuestTextureResource.cpp
         Graphics/src/TextureTiling.cpp
+        Graphics/src/RuntimeSwitches.cpp
         Graphics/src/TextureFormat.cpp
 )
 target_include_directories(agc_shader_memory_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
@@ -16,6 +17,10 @@ target_include_directories(agc_driver_image_table_cache_bounds_tests PRIVATE $<T
 
 if(BUILD_TESTING)
     add_test(NAME agc_shader_bindless COMMAND agc_shader_memory_tests --bindless)
+    add_test(NAME agc_shader_table_binding_growth COMMAND agc_shader_memory_tests --table-binding-growth)
+    add_test(NAME agc_shader_table_resolution_growth COMMAND agc_shader_memory_tests --table-resolution-growth)
+    add_test(NAME agc_shader_empty_table_resolution COMMAND agc_shader_memory_tests --empty-table-resolution)
+    add_test(NAME agc_shader_shared_table_resolution COMMAND agc_shader_memory_tests --shared-table-resolution)
     set_tests_properties(agc_shader_bindless PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_shader_selected_records_image_limit COMMAND agc_shader_memory_tests --selected-records-image-limit)
     add_test(NAME agc_shader_selected_records_pair_limit COMMAND agc_shader_memory_tests --selected-records-pair-limit)

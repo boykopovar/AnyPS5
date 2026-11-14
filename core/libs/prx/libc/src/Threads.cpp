@@ -277,8 +277,10 @@ int APS5_VABI _Mtx_timedlock_nid_postfix(void** handle, const Xtime* target) {
     auto* mutex = ResolveMutex(handle, "_Mtx_timedlock");
     const auto self = std::this_thread::get_id();
     if (mutex->owner.load(std::memory_order_acquire) == self) {
-        if ((mutex->type & mutexRecursive) == 0)
-            return threadBusy;
+        if ((mutex->type & mutexRecursive) == 0) {
+            std::this_thread::sleep_until(deadline);
+            return threadTimedout;
+        }
         if (mutex->count == std::numeric_limits<int>::max())
             throw std::overflow_error("_Mtx_timedlock: recursive lock count overflow");
         ++mutex->count;
