@@ -79,8 +79,6 @@ int ValidateVideoOutOutputMode_nid_no_patch(uint64_t mode, const VideoOutOutputO
         break;
     case 0x4: case 0x7: case 0x8: case 0xC: case 0xD: case 0xE: case 0x10: case 0x11: case 0x13:
         return VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE;
-    case 0x12:
-        throw std::runtime_error(std::string(__func__) + ": output mode 0x12 answers differently on two consoles");
     default:
         return VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE;
     }
