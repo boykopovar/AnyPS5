@@ -40,6 +40,18 @@ int main() {
     Require(ERR_get_error_nid_postfix() == 0, "drained queue get");
     Require(ERR_peek_error_nid_postfix() == 0, "drained queue peek");
 
+    void* key = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
+    void* certificate = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2345));
+    void* authorities = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3456));
+    LibreSslPutError_nid_no_patch(3, 1, 2);
+    Require(PKCS12_parse_nid_postfix(nullptr, reinterpret_cast<const char*>(static_cast<std::uintptr_t>(1)), &key, &certificate, &authorities) == 0, "null PKCS12 returns failure");
+    Require(key == reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234)), "null PKCS12 leaves key output unchanged");
+    Require(certificate == reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2345)), "null PKCS12 leaves certificate output unchanged");
+    Require(authorities == reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3456)), "null PKCS12 leaves authorities output unchanged");
+    Require(ERR_get_error_nid_postfix() == Pack(3, 1, 2), "null PKCS12 preserves earlier error ordering");
+    Require(ERR_get_error_nid_postfix() == Pack(35, 0xfff, 105), "null PKCS12 publishes LibreSSL invalid pointer error");
+    Require(ERR_get_error_nid_postfix() == 0, "null PKCS12 error queue drained");
+
     for (int i = 1; i <= 16; ++i) LibreSslPutError_nid_no_patch(i, 0, i);
     for (int i = 2; i <= 16; ++i) Require(ERR_get_error_nid_postfix() == Pack(i, 0, i), "full queue drops the oldest error");
     Require(ERR_get_error_nid_postfix() == 0, "full queue holds 15 errors");

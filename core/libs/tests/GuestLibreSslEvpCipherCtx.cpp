@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <source_location>
 #include <stdexcept>
 #include <vector>
@@ -100,8 +101,20 @@ static void SetFlags(unsigned char* context, std::uint64_t flags) {
     std::memcpy(context + FlagsOffset, &flags, sizeof(flags));
 }
 
+static bool failCalloc = false;
+
+static void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size); }
+static void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
+static void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return failCalloc ? nullptr : std::calloc(count, size); }
+static void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+static void* APS5_VABI HeapAlign(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+static void* APS5_VABI HeapRealign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
+static int APS5_VABI HeapPosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+
 static void InitializeHeap() {
-    void* const api[10] {};
+    void* const api[10] {reinterpret_cast<void*>(HeapAllocate), reinterpret_cast<void*>(HeapFree), reinterpret_cast<void*>(HeapCalloc),
+        reinterpret_cast<void*>(HeapReallocate), reinterpret_cast<void*>(HeapAlign), reinterpret_cast<void*>(HeapRealign),
+        reinterpret_cast<void*>(HeapPosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api);
 }
 
@@ -415,6 +428,155 @@ static void TestHeldBlock() {
     Require(EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written) == 1);
     Require(written == 4 && std::memcmp(out, plain.data() + 16, 4) == 0);
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
+static void TestDecryptFinalErrors() {
+    auto cipher = XorBlockCipher();
+    for (const auto final : {EVP_DecryptFinal_ex_nid_postfix, EVP_CipherFinal_ex_nid_postfix}) {
+        for (int scenario = 0; scenario < 9; ++scenario) {
+            cipher.blockSize = 16;
+            ResetCalls();
+            ERR_clear_error_nid_postfix();
+            unsigned char context[ContextBytes] {};
+            unsigned char out[32];
+            std::memset(out, 0xEE, sizeof(out));
+            Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+            Bytes block(16, 16);
+            if (scenario == 0) block[15] = 0;
+            if (scenario == 1) block[15] = 17;
+            if (scenario == 2) { block[14] = 3; block[15] = 2; }
+            if (scenario == 3 || scenario == 7) Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+            int written = -1;
+            const int length = scenario == 3 || scenario == 5 ? 15 : scenario == 4 ? 0 : 16;
+            const auto encrypted = Xor(block);
+            Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, encrypted.data(), length) == 1);
+            std::memset(out, 0xEE, sizeof(out));
+            if (scenario == 8) cipher.blockSize = 64;
+            written = 123;
+            const int result = final(Context(context), out, &written);
+            const auto error = ERR_get_error_nid_postfix();
+            const int reason = scenario < 3 ? 100 : scenario == 3 ? 138 : scenario < 6 ? 109 : scenario == 8 ? 136 : 0;
+            Require(result == (reason == 0 ? 1 : 0));
+            Require(written == 0);
+            for (const auto byte : out) Require(byte == 0xEE);
+            if (error != (reason ? (UINT64_C(6) << 24 | UINT64_C(0xfff) << 12 | reason) : 0))
+                std::fprintf(stderr, "decrypt final scenario %d: ret=%d length=%d error=0x%llx expected EVP/fff/%d\n", scenario, result, written, static_cast<unsigned long long>(error), reason);
+            Require((error >> 24 & 0xff) == (reason ? 6 : 0));
+            Require((error >> 12 & 0xfff) == (reason ? 0xfff : 0));
+            Require((error & 0xfff) == static_cast<unsigned>(reason));
+            Require(ERR_get_error_nid_postfix() == 0);
+            Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        }
+    }
+}
+
+static void RequireErrors(std::initializer_list<int> reasons, std::source_location location = std::source_location::current()) {
+    for (const int reason : reasons) Require(ERR_get_error_nid_postfix() == (UINT64_C(0x06fff000) | static_cast<unsigned>(reason)), location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+static void TestCipherErrors() {
+    int value = 0;
+    {
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == 0);
+        RequireErrors({131});
+        Cipher cipher {};
+        Store(context, CipherOffset, &cipher);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == 0);
+        RequireErrors({132});
+        cipher.control = RecordControl;
+        for (int result : {-1, 0, -2, 1}) {
+            ResetCalls();
+            calls.controlResult = result;
+            Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == (result == -1 ? 0 : result));
+            if (result == -1) RequireErrors({133});
+            else RequireErrors({});
+        }
+    }
+    for (int result : {2, -1, 0}) {
+        auto cipher = XorBlockCipher();
+        cipher.flags = FlagCtrlInit;
+        cipher.control = result == 2 ? nullptr : RecordControl;
+        ResetCalls();
+        calls.controlResult = result;
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+        if (result == 2) RequireErrors({132, 134});
+        else if (result == -1) RequireErrors({133, 134});
+        else RequireErrors({134});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    for (int encrypt : {1, 0}) {
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_CipherInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr, encrypt) == 0);
+        RequireErrors({131});
+        Require((encrypt ? EVP_EncryptInit_ex_nid_postfix : EVP_DecryptInit_ex_nid_postfix)(Context(context), nullptr, nullptr, XorKey, nullptr) == 0);
+        RequireErrors({131});
+    }
+    {
+        auto cipher = XorBlockCipher();
+        ResetCalls();
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        failCalloc = true;
+        const int result = EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr);
+        failCalloc = false;
+        Require(result == 0 && calls.inits == 0);
+        RequireErrors({65});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        cipher.blockSize = 4;
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+        RequireErrors({136});
+        cipher.blockSize = 16;
+        cipher.ivLength = 17;
+        for (std::uint64_t mode : {ModeCbc, ModeCfb, ModeOfb}) {
+            cipher.flags = mode;
+            Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+            RequireErrors({102});
+        }
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    const auto input = Pattern(32, 7);
+    for (const auto final : {EVP_EncryptFinal_ex_nid_postfix, EVP_CipherFinal_ex_nid_postfix}) {
+        auto cipher = XorBlockCipher();
+        ResetCalls();
+        unsigned char context[ContextBytes] {};
+        unsigned char out[64] {};
+        int written = 123;
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+        ERR_clear_error_nid_postfix();
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, input.data(), 5) == 1 && written == 0);
+        written = 123;
+        Require(final(Context(context), out, &written) == 0 && written == 123);
+        RequireErrors({138});
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr) == 1);
+        cipher.blockSize = 64;
+        Require(final(Context(context), out, &written) == 0 && written == 123);
+        RequireErrors({136});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    for (const auto update : {EVP_EncryptUpdate_nid_postfix, EVP_DecryptUpdate_nid_postfix, EVP_CipherUpdate_nid_postfix}) {
+        for (int encrypt : {1, 0}) {
+            if (update != EVP_CipherUpdate_nid_postfix && encrypt != (update == EVP_EncryptUpdate_nid_postfix)) continue;
+            auto cipher = XorBlockCipher();
+            ResetCalls();
+            unsigned char context[ContextBytes] {};
+            unsigned char out[64] {};
+            Require(EVP_CipherInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr, encrypt) == 1);
+            cipher.blockSize = 64;
+            ERR_clear_error_nid_postfix();
+            int written = 123;
+            Require(update(Context(context), out, &written, input.data(), 5) == 0);
+            Require(written == (encrypt ? 0 : 123) && calls.ciphers == 0);
+            RequireErrors({136});
+            Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        }
+    }
 }
 
 static void TestBadPadding() {
@@ -1198,6 +1360,8 @@ int main() {
     TestCtrl();
     TestPadding();
     TestHeldBlock();
+    TestDecryptFinalErrors();
+    TestCipherErrors();
     TestBadPadding();
     TestNoPadding();
     TestInitFields();
