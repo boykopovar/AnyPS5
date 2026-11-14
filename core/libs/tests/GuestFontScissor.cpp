@@ -135,12 +135,13 @@ struct RenderedGlyph {
     FontRenderOutput output{};
 };
 
-static RenderedGlyph RenderGlyph(FontHandle font, int x, int y, bool scissor, int x0 = 0, int y0 = 0, int w = 0, int h = 0) {
+static RenderedGlyph RenderGlyph(FontHandle font, float x, float y, bool scissor, int x0 = 0, int y0 = 0, int w = 0, int h = 0, FontStyleFrame* frame = nullptr) {
     RenderedGlyph rendered;
     FontRenderSurface surface{};
     sceFontRenderSurfaceInit(&surface, rendered.pixels.data(), 128, 1, 128, 128);
     if (scissor) sceFontRenderSurfaceSetScissor(&surface, x0, y0, w, h);
-    Require(sceFontRenderCharGlyphImageHorizontal(font, 'A', &surface, static_cast<float>(x), static_cast<float>(y), &rendered.metrics, &rendered.output) == SCE_FONT_OK);
+    if (frame) Require(sceFontRenderSurfaceSetStyleFrame(&surface, frame) == SCE_FONT_OK);
+    Require(sceFontRenderCharGlyphImageHorizontal(font, 'A', &surface, x, y, &rendered.metrics, &rendered.output) == SCE_FONT_OK);
     return rendered;
 }
 
@@ -198,6 +199,31 @@ static void CheckRenderedClipping(FontHandle font) {
     Require(outside.metrics.width > 0.0f && outside.metrics.Horizontal.advance > 0.0f);
 }
 
+static void CheckRenderedSlant(FontHandle font) {
+    Require(sceFontSetupRenderScalePixel(font, 40.0f, 40.0f) == SCE_FONT_OK);
+    Require(sceFontSetupRenderEffectSlant(font, 0.0f) == SCE_FONT_OK);
+    const auto plain = RenderGlyph(font, 40.25f, 80.5f, false);
+    Require(sceFontSetupRenderEffectSlant(font, 0.5f) == SCE_FONT_OK);
+    const auto positive = RenderGlyph(font, 40.25f, 80.5f, false);
+    Require(positive.pixels != plain.pixels);
+    Require(positive.metrics.width == 42.0f && positive.metrics.Horizontal.bearingX == 4.0f);
+    Require(positive.metrics.height == plain.metrics.height && positive.metrics.Horizontal.advance == plain.metrics.Horizontal.advance);
+    FontGlyphMetrics measured{};
+    Require(sceFontGetRenderCharGlyphMetrics(font, 'A', &measured) == SCE_FONT_OK);
+    Require(measured.width == positive.metrics.width && measured.Horizontal.bearingX == positive.metrics.Horizontal.bearingX);
+    Require(sceFontSetupRenderEffectSlant(font, -0.5f) == SCE_FONT_OK);
+    const auto negative = RenderGlyph(font, 40.25f, 80.5f, false);
+    Require(negative.pixels != plain.pixels && negative.pixels != positive.pixels);
+    Require(negative.metrics.width == 42.0f && negative.metrics.Horizontal.bearingX == -10.0f);
+    FontStyleFrame frame{};
+    Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameSetEffectSlant(&frame, 0.5f) == SCE_FONT_OK);
+    const auto framed = RenderGlyph(font, 40.25f, 80.5f, false, 0, 0, 0, 0, &frame);
+    Require(framed.pixels == positive.pixels && framed.metrics.width == positive.metrics.width);
+    Require(sceFontSetupRenderEffectSlant(font, 0.0f) == SCE_FONT_OK);
+    Require(RenderGlyph(font, 40.25f, 80.5f, false).pixels == plain.pixels);
+}
+
 int main() {
     CheckScissorArithmetic();
 
@@ -216,6 +242,7 @@ int main() {
     Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
     Require(sceFontSetupRenderScalePixel(font, 100.0f, 100.0f) == SCE_FONT_OK);
     CheckRenderedClipping(font);
+    CheckRenderedSlant(font);
     Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);
