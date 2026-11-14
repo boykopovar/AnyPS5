@@ -115,6 +115,15 @@ void MultisampledTargetsDecode() {
     Check(Failure([] { Decode(4u, 4u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a 4x GCN fast clear without a CMASK address was accepted");
 }
 
+void SingleSampleFastClearDecode() {
+    const auto cleared = Decode(1u, 1u, FastClear);
+    Check(cleared.samples == 1u && cleared.cmaskFastClear, "a single-sample GCN color target with FAST_CLEAR is not a CMASK fast clear");
+    Check(cleared.cmaskAddress == AddressOf(cmaskMemory) && cleared.cmaskBytes == CmaskBytes, "a single-sample GCN fast clear lost its CMASK address or size");
+    const auto compressed = Decode(1u, 1u, Compression);
+    Check(compressed.cmaskAddress == 0u && !compressed.cmaskFastClear, "a single-sample GCN color target with only COMPRESSION took a CMASK");
+    Check(Failure([] { Decode(1u, 1u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a single-sample GCN fast clear without a CMASK address was accepted");
+}
+
 void FewerFragmentsDecode() {
     const auto fmask = AddressOf(fmaskMemory);
     const auto eqaa = Decode(4u, 2u, Compression, true, fmask);
@@ -133,7 +142,9 @@ void FewerFragmentsDecode() {
     Check(Failure([] { Decode(4u, 2u, 0u, true, AddressOf(fmaskMemory)); }).find("supported only with FMASK") != std::string::npos, "a 4-sample 2-fragment GCN color target without COMPRESSION was accepted");
     Check(Failure([] { Decode(4u, 2u, Compression, true, 0u); }).find("has no FMASK address") != std::string::npos, "a compressed 4-sample 2-fragment GCN color target without an FMASK base was accepted");
     Check(Failure([] { Decode(2u, 4u, 0u); }).find("more fragments than samples") != std::string::npos, "a 2-sample 4-fragment GCN color target was accepted");
-    Check(Failure([] { Decode(4u, 1u, FastClear, true, AddressOf(fmaskMemory)); }).find("fast clear (CMASK) is not implemented") != std::string::npos, "a fast-cleared 4-sample 1-fragment GCN color target was accepted");
+    const auto fastClearedOne = Decode(4u, 1u, FastClear | Compression, true, fmask);
+    Check(fastClearedOne.samples == 1u && fastClearedOne.coverageSamples == 4u && fastClearedOne.cmaskFastClear && fastClearedOne.cmaskAddress == AddressOf(cmaskMemory) && fastClearedOne.cmaskBytes == CmaskBytes, "a fast-cleared 4-sample 1-fragment GCN color target lost its CMASK fast clear");
+    Check(fastClearedOne.fmaskAddress == fmask && fastClearedOne.gcnFmaskBytes == Width * Height, "a fast-cleared compressed 4-sample 1-fragment GCN color target lost its FMASK");
 }
 
 AgcDriver::Graphics::ColorTarget DecodeMultisampledSlice(std::uint64_t base, std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags, std::uint32_t slice) {
@@ -165,6 +176,21 @@ void MultisampledSlicesDecode() {
     Check(oneFragment.gcnFmaskBytes == Width * Height && oneFragment.fmaskAddress == fmask + 3u * oneFragment.gcnFmaskBytes, "the FMASK of slice 3 of a compressed 4-sample 1-fragment GCN array does not start three FMASK slices past the FMASK base");
     const auto first = DecodeMultisampledSlice(base, 4u, 2u, Compression, 0u);
     Check(first.address == base && first.fmaskAddress == fmask && first.cmaskAddress == cmask, "slice 0 of a 4-sample 2-fragment GCN array does not start at the array, FMASK and CMASK bases");
+}
+
+void FastClearedSlicesDecode() {
+    static std::byte* const memory = LowMemory(MultisampledSliceMemoryBytes);
+    const auto base = AddressOf(memory);
+    if (memory == nullptr || base + MultisampledSliceMemoryBytes > (std::uint64_t{1} << 40u)) {
+        Check(false, "cannot allocate fast-cleared array slice test memory below 1 TiB");
+        return;
+    }
+    const auto cmask = AddressOf(cmaskMemory);
+    const auto single = DecodeMultisampledSlice(base, 1u, 1u, FastClear, 2u);
+    Check(single.address == base + 2u * ColorBytes && single.cmaskFastClear && single.cmaskBytes == CmaskBytes && single.cmaskAddress == cmask + 2u * CmaskBytes, "the CMASK of slice 2 of a fast-cleared single-sample GCN array does not start two CMASK slices past the CMASK base");
+    const auto oneFragment = DecodeMultisampledSlice(base, 4u, 1u, FastClear | Compression, 1u);
+    Check(oneFragment.address == base + ColorBytes && oneFragment.cmaskFastClear && oneFragment.cmaskAddress == cmask + CmaskBytes, "the CMASK of slice 1 of a fast-cleared 4-sample 1-fragment GCN array does not start one CMASK slice past the CMASK base");
+    Check(oneFragment.fmaskAddress == AddressOf(fmaskMemory) + oneFragment.gcnFmaskBytes, "the FMASK of slice 1 of a fast-cleared 4-sample 1-fragment GCN array does not start one FMASK slice past the FMASK base");
 }
 
 std::string FmaskDecompress(std::uint32_t visibleHeight) {
@@ -208,14 +234,16 @@ int main() {
         cmaskMemory = colorMemory + ColorBytes;
         fmaskMemory = colorMemory + FmaskOffset;
         MultisampledTargetsDecode();
+        SingleSampleFastClearDecode();
         FewerFragmentsDecode();
         MultisampledSlicesDecode();
+        FastClearedSlicesDecode();
         PaddedTargetsAreCovered();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
     if (failures != 0) return 1;
-    std::puts("GCN multisampled color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, and a metadata pass over the visible rows of a padded target is covered");
+    std::puts("GCN multisampled and fast-cleared single-sample color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, and a metadata pass over the visible rows of a padded target is covered");
     return 0;
 }

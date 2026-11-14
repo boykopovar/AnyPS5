@@ -2339,10 +2339,9 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         const auto clear = find(cx, 0x323 + word + stride);
         color.clearWords[word] = clear == cx.end() ? 0u : clear->second;
     }
-    Require(color.samples > 1u || ((info >> 13u) & 1u) == 0, "PS4 color target fast clear (CMASK) is not implemented");
-    if (color.samples > 1u && (info & 0x6000u) != 0) {
+    if ((info & 0x2000u) != 0 || (color.samples > 1u && (info & 0x4000u) != 0)) {
         color.cmaskAddress = static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u;
-        Require(color.cmaskAddress != 0, "a multisampled GCN color target with fast clear or FMASK compression has no CMASK address");
+        Require(color.cmaskAddress != 0, "a GCN color target with fast clear or FMASK compression has no CMASK address");
         color.cmaskBytes = (static_cast<std::size_t>(read(cx, 0x320 + stride) & 0x3fffu) + 1u) * 128u;
         color.cmaskAddress += static_cast<std::uint64_t>(slice) * color.cmaskBytes;
         color.cmaskFastClear = (info & 0x2000u) != 0;

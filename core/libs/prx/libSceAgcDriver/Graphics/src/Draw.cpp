@@ -576,9 +576,7 @@ void requireCmaskCodes(std::uint32_t codes) {
     Require((codes & 1u) == 0, "a CMASK fast clear of a DCC color target, whose clear belongs in its DCC keys, was recorded");
 }
 
-CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::vector<std::uint32_t>& cleared) {
-    const auto address = color.cmaskAddress;
-    const auto bytes = layout.Bytes();
+std::vector<std::byte> readCmaskBytes(std::uint64_t address, std::size_t bytes, std::size_t alignment) {
     const bool locked = GuestMemory::GpuMutex().HeldByThisThread();
     auto* recorder = Recorder::Active();
     if (locked && recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {
@@ -594,7 +592,12 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
         }
     }
     std::vector<std::byte> mask(bytes);
-    GuestMemory::Read(address, mask, CmaskLayout::Alignment);
+    GuestMemory::Read(address, mask, alignment);
+    return mask;
+}
+
+CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::vector<std::uint32_t>& cleared) {
+    const auto mask = readCmaskBytes(color.cmaskAddress, layout.Bytes(), CmaskLayout::Alignment);
     const auto uniform = [&](std::byte value) { return std::all_of(mask.begin(), mask.end(), [&](std::byte entry) { return entry == value; }); };
     if (color.coverageSamples > color.samples) {
         for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
@@ -658,8 +661,52 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
 }
 
+bool materializeGcnCmaskClear(const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
+    constexpr std::size_t cmaskAlignment = 128;
+    const auto bytes = color.cmaskBytes;
+    if (cmaskProved(color.cmaskAddress, bytes)) return false;
+    const auto collected = GuestMemory::CollectWrites(color.cmaskAddress, bytes);
+    const auto mask = readCmaskBytes(color.cmaskAddress, bytes, cmaskAlignment);
+    const bool oneFragment = color.coverageSamples > color.samples;
+    std::size_t clearedTiles = 0;
+    for (const auto entry : mask) {
+        for (const auto shift : {0u, 4u}) {
+            const auto code = (std::to_integer<std::uint32_t>(entry) >> shift) & 0xfu;
+            if (code == 0u) {
+                ++clearedTiles;
+            } else if (oneFragment && (code >> 2u) != 3u) {
+                char text[128];
+                std::snprintf(text, sizeof(text), "AGC graphics: CMASK code 0x%x of a one-fragment GCN color target is not implemented", code);
+                throw std::runtime_error(text);
+            }
+        }
+    }
+    if (clearedTiles == 0) {
+        proveCmask(color.cmaskAddress, bytes, collected);
+        return false;
+    }
+    Require(clearedTiles == mask.size() * 2u, "a GCN CMASK that fast clears only some tiles of its color target is not implemented (the GCN CMASK tile order is not modeled)");
+    const auto texel = clearTexel(color, DccKeys::ClearRegister);
+    const char* refusal = nullptr;
+    const bool filled = color.mipCount == 1 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
+    if (!filled) {
+        StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
+        const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+        Require(surface.Bytes() == color.bytes && color.bytes % color.elementBytes == 0, "CMASK fast clear over a color target whose layout differs from its surface");
+        std::vector<std::byte> texels(color.bytes);
+        for (std::size_t offset = 0; offset < texels.size(); offset += color.elementBytes) std::memcpy(texels.data() + offset, texel.data(), color.elementBytes);
+        GuestMemory::Write(color.address, texels, surface.Alignment());
+        if (resident != nullptr) resident->Refresh();
+    }
+    const std::vector<std::byte> expanded(bytes, std::byte{0xff});
+    GuestMemory::Write(color.cmaskAddress, expanded, cmaskAlignment);
+    proveCmask(color.cmaskAddress, bytes, GuestMemory::CollectWrites(color.cmaskAddress, bytes));
+    return filled;
+}
+
 bool materializeCmaskClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
     if (color.cmaskAddress == 0) return false;
+    if (ColorTileModeIsGcn(color.tileMode)) return materializeGcnCmaskClear(color, resident);
     if (context.detiler != nullptr) requireCmaskCodes(context.detiler->CmaskErrors());
     const CmaskLayout layout(color.extent.width, color.extent.height);
     const auto bytes = layout.Bytes();
