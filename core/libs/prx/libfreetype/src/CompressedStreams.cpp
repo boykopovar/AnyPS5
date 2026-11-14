@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <ft2build.h>
+#include FT_BZIP2_H
 #include FT_GZIP_H
 #include FT_LZW_H
 #include FT_SYSTEM_H
@@ -140,6 +141,10 @@ int APS5_VABI FT_Stream_OpenGzip_nid_postfix(GuestStreamRec* stream, GuestStream
 
 int APS5_VABI FT_Stream_OpenLZW_nid_postfix(GuestStreamRec* stream, GuestStreamRec* source) {
     return Open(stream, source, FT_Stream_OpenLZW);
+}
+
+int APS5_VABI FT_Stream_OpenBzip2_nid_postfix(GuestStreamRec* stream, GuestStreamRec* source) {
+    return Open(stream, source, FT_Stream_OpenBzip2);
 }
 
 }

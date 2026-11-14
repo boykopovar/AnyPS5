@@ -13,8 +13,17 @@ import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import vulkan_validation_gate as gate
+from test_check_compile import spawnable_python
 
-PYTHON = Path(sys.executable).as_posix()
+
+def probe_command():
+    interpreter = spawnable_python()
+    if interpreter is None:
+        return None
+    return " ".join(f'"{part}"' for part in (Path(interpreter[0]).as_posix(), *interpreter[1:]))
+
+
+PYTHON = probe_command()
 
 
 class ReportTests(unittest.TestCase):
@@ -45,6 +54,28 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(tests["probe"]["diagnostics"], {"VUID-Real-1": 1, "SYNC-HAZARD-WRITE_AFTER_WRITE": 1, "VUID-Old-2": 1})
         self.assertEqual(len(tests["probe"]["missing_layers"]), 1)
         self.assertEqual(problems, ["probe"])
+
+    def test_unassigned_validation_errors_are_compared(self):
+        inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
+        text = ('<testsuite><testcase name="probe"><system-err>' + inserted + '\n'
+                'Validation Error: [ UNASSIGNED-Threading-Info ] invalid image handle\n'
+                'Validation Error: [ UNASSIGNED-Device address out of bounds ] invalid address\n'
+                'environment: UNASSIGNED-Fake-Configuration'
+                '</system-err></testcase></testsuite>')
+        tests, problems = self.report(text)
+        self.assertEqual(tests["probe"]["diagnostics"], {
+            "UNASSIGNED-Threading-Info": 1,
+            "UNASSIGNED-Device address out of bounds": 1,
+        })
+        self.assertEqual(problems, [])
+        report = gate.compare([
+            {"side": "baseline", "iteration": 1, "returncode": 0, "problems": [],
+             "tests": {"probe": {"diagnostics": {}}}},
+            {"side": "candidate", "iteration": 1, "returncode": 0, "problems": [], "tests": tests},
+        ])
+        self.assertEqual(report["new_diagnostics"], {
+            "probe": ["UNASSIGNED-Device address out of bounds", "UNASSIGNED-Threading-Info"]})
+        self.assertEqual(report["exit_code"], 1)
 
     def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
         inserted = '[Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (layer.json)'
@@ -133,6 +164,27 @@ class ReportTests(unittest.TestCase):
                     self.assertFalse(output.exists())
 
 
+@unittest.skipUnless(shutil.which("git"), "requires Git")
+class EncodingTests(unittest.TestCase):
+    def test_a_non_ascii_source_path_error_reports_as_utf8(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary).resolve() / "界"
+            source = repository / "sub"
+            source.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            output = Path(temporary) / "evidence"
+            arguments = ["--baseline", str(source), "0" * 40, "--candidate", str(source), "0" * 40,
+                         "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+            stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with contextlib.redirect_stderr(stderr):
+                code = gate.main(arguments)
+                stderr.flush()
+            self.assertEqual(code, 2)
+            self.assertIn(f"validation gate: {source}: must be a source worktree root",
+                          stderr.buffer.getvalue().decode("utf-8"))
+            self.assertFalse(output.exists())
+
+
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
 class FixtureTests(unittest.TestCase):
     def setUp(self):
@@ -141,6 +193,8 @@ class FixtureTests(unittest.TestCase):
         self.root = Path(self.directory.name).resolve()
 
     def source(self, name, message="pass", test="probe", property_text="", layer=True):
+        if PYTHON is None:
+            self.skipTest("needs a Python interpreter that is not an App Execution Alias")
         source = self.root / name
         source.mkdir()
         program = 'import os, sys\nfrom pathlib import Path\n'
@@ -168,7 +222,7 @@ class FixtureTests(unittest.TestCase):
             'cmake_minimum_required(VERSION 3.20)\nproject(gate_fixture NONE)\nenable_testing()\n'
             'add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/probe.py" COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/probe.py" "${CMAKE_BINARY_DIR}/probe.py" DEPENDS "${CMAKE_SOURCE_DIR}/probe.py")\n'
             'add_custom_target(fixture DEPENDS "${CMAKE_BINARY_DIR}/probe.py")\n'
-            'add_test(NAME ' + test + ' COMMAND "' + PYTHON + '" "${CMAKE_BINARY_DIR}/probe.py")\n'
+            'add_test(NAME ' + test + ' COMMAND ' + PYTHON + ' "${CMAKE_BINARY_DIR}/probe.py")\n'
             'set_tests_properties(' + test + ' PROPERTIES SKIP_RETURN_CODE 77 ' + property_text + ')\n', encoding="utf-8")
         subprocess.run(["git", "init", "-q", str(source)], check=True)
         subprocess.run(["git", "-C", str(source), "add", "."], check=True)
@@ -301,15 +355,15 @@ class AttributionTests(FixtureTests):
         baseline, candidate = self.source("base"), self.source("head", "mutate")
         cmake = candidate[0] / "CMakeLists.txt"
         text = cmake.read_text(encoding="utf-8")
-        absolute = 'add_test(NAME probe COMMAND "' + PYTHON + '" "${CMAKE_BINARY_DIR}/probe.py")'
+        absolute = 'add_test(NAME probe COMMAND ' + PYTHON + ' "${CMAKE_BINARY_DIR}/probe.py")'
         self.assertIn(absolute, text)
-        cmake.write_text(text.replace(absolute, 'add_test(NAME probe COMMAND "' + PYTHON + '" probe.py)'), encoding="utf-8")
+        cmake.write_text(text.replace(absolute, 'add_test(NAME probe COMMAND ' + PYTHON + ' probe.py)'), encoding="utf-8")
         subprocess.run(["git", "-C", str(candidate[0]), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                         "-c", "commit.gpgSign=false", "commit", "-qam", "relative fixture"], check=True)
         candidate = candidate[0], gate.git(candidate[0], "rev-parse", "HEAD")
         code, report = self.execute(baseline, candidate, "--repeat", "1")
         self.assertTrue(all(iteration["returncode"] == 0 for iteration in report["iterations"]), report)
-        self.assertEqual(report["builds"]["candidate"]["tests"][0]["command"][1], "probe.py")
+        self.assertEqual(report["builds"]["candidate"]["tests"][0]["command"][-1], "probe.py")
         self.assertNotEqual((self.root / "evidence/candidate/build/probe.py").read_bytes(), (candidate[0] / "probe.py").read_bytes())
         self.assertEqual(code, 2, report)
         self.assertIn("artifacts changed", report["error"])

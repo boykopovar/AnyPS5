@@ -42,6 +42,13 @@ static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80552B02);
 static constexpr int SCE_NP_ASM_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055A201);
 static constexpr int SCE_NP_ASM_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055A202);
@@ -128,9 +135,16 @@ struct StateCallback {
     bool pending = false;
 };
 
+struct ToolkitStateCallback {
+    NpStateCallbackForToolkit callback = nullptr;
+    void* userdata = nullptr;
+    bool pending = false;
+};
+
 std::mutex stateMutex;
 std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> stateCallbacksA;
 StateCallback stateCallback;
+ToolkitStateCallback toolkitStateCallback;
 
 constexpr int NP_GAME_PRESENCE_CALLBACK_MAX = 8;
 
@@ -519,7 +533,8 @@ int APS5_VABI sceNpIntRegisterGamePresenceCallback(void) {
 }
 int APS5_VABI sceNpIsPlusMember(int, bool* isMember) {
     if (!isMember) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *isMember = false;
+    constexpr bool val = false;
+    if (!CopyGuestOut(isMember, &val, sizeof(val))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpManagerIntAbortRequest(int reqId) {
@@ -667,7 +682,8 @@ int APS5_VABI sceNpManagerIntGetAccountNpEnv(int userId, void* npEnv) {
 }
 int APS5_VABI sceNpManagerIntGetAccountType(int userId, std::int32_t* accountType) {
     if (userId == USER_SERVICE_USER_ID_INVALID || !accountType) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *accountType = 0;
+    constexpr std::int32_t val = 0;
+    if (!CopyGuestOut(accountType, &val, sizeof(val))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetActiveSigninState(int userId, void* state) {
@@ -873,17 +889,21 @@ int APS5_VABI sceNpAbortRequest(int req_id) {
 int APS5_VABI sceNpCheckCallback(void) {
     std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> callbacksA;
     StateCallback legacy;
+    ToolkitStateCallback toolkit;
     {
         std::lock_guard lock(stateMutex);
         callbacksA = stateCallbacksA;
         legacy = stateCallback;
+        toolkit = toolkitStateCallback;
         for (auto& entry : stateCallbacksA) entry.pending = false;
         stateCallback.pending = false;
+        toolkitStateCallback.pending = false;
     }
     if (legacy.pending) legacy.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, nullptr, legacy.userdata);
     for (const auto& entry : callbacksA) {
         if (entry.pending) entry.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, entry.userdata);
     }
+    if (toolkit.pending && toolkit.callback) toolkit.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, toolkit.userdata);
     return 0;
 }
 
@@ -1012,7 +1032,8 @@ int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
 int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
     (void)user_id;
     if (!state) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    *state = NP_REACHABILITY_STATE_UNAVAILABLE;
+    constexpr uint32_t val = NP_REACHABILITY_STATE_UNAVAILABLE;
+    if (!CopyGuestOut(state, &val, sizeof(val))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1025,22 +1046,16 @@ int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
 int APS5_VABI sceNpGetState(int user_id, uint32_t* state) {
     (void)user_id;
     if (!state) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    const uint32_t localState = NP_STATE_SIGNED_OUT;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(state, &localState, sizeof(localState));
-    errno = savedErrno;
-    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    constexpr uint32_t localState = NP_STATE_SIGNED_OUT;
+    if (!CopyGuestOut(state, &localState, sizeof(localState))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
     (void)user_id;
     if (!has_signed_up) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    const bool localSignedUp = false;
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(has_signed_up, &localSignedUp, sizeof(localSignedUp));
-    errno = savedErrno;
-    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    constexpr bool localSignedUp = false;
+    if (!CopyGuestOut(has_signed_up, &localSignedUp, sizeof(localSignedUp))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1048,7 +1063,8 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
     if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
-    *result = SCE_NP_ERROR_SIGNED_OUT;
+    constexpr int val = SCE_NP_ERROR_SIGNED_OUT;
+    if (!CopyGuestOut(result, &val, sizeof(val))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return NP_POLL_ASYNC_FINISHED;
 }
 
@@ -1056,7 +1072,8 @@ int APS5_VABI sceNpWaitAsync(int req_id, int* result) {
     if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(requestMutex);
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
-    *result = SCE_NP_ERROR_SIGNED_OUT;
+    constexpr int val = SCE_NP_ERROR_SIGNED_OUT;
+    if (!CopyGuestOut(result, &val, sizeof(val))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1170,6 +1187,19 @@ int APS5_VABI sceNpUnregisterStateCallback(void) {
     std::lock_guard lock(stateMutex);
     if (!stateCallback.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
     stateCallback = {};
+    return 0;
+}
+
+int APS5_VABI sceNpRegisterStateCallbackForToolkit(NpStateCallbackForToolkit callback, void* userdata) {
+    std::lock_guard lock(stateMutex);
+    toolkitStateCallback = {callback, userdata, true};
+    return 0;
+}
+
+int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void) {
+    std::lock_guard lock(stateMutex);
+    if (!toolkitStateCallback.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
+    toolkitStateCallback = {};
     return 0;
 }
 

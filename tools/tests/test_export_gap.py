@@ -87,6 +87,41 @@ def provides(name, nid):
 
 
 class ExportGapTests(unittest.TestCase):
+    def test_export_table_ignores_comments_strings_and_macro_definitions(self):
+        active = nid_of("sceExampleActive")
+        commented = nid_of("sceExampleCommented")
+        blocked = nid_of("sceExampleBlocked")
+        continued = nid_of("sceExampleContinuedComment")
+        quoted = nid_of("sceExampleQuoted")
+        raw = nid_of("sceExampleRaw")
+        macro = nid_of("sceExampleMacro")
+        splice = "\\" + "\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            table = tables / (MODULE + ".c")
+            table.write_text(
+                f'#define UNUSED_LOOKUP {splice}sprx_dlsym(__handle, "{macro}", &slot)\n'
+                f'const char *quoted = "sprx_dlsym(__handle, \\"{quoted}\\", &slot)";\n'
+                f'const char *raw = R"(sprx_dlsym(__handle, "{raw}", &slot))";\n'
+                f'const char *multiline_raw = R"(sprx_dlsym(__handle, "{raw}", &slot)\n'
+                '#define NOT_A_DIRECTIVE )";\n'
+                f'// sprx_dlsym(__handle, "{commented}", &slot);\n'
+                f'/* sprx_dlsym(__handle, "{blocked}", &slot); */\n'
+                f'// a continued comment {splice}sprx_dlsym(__handle, "{continued}", &slot);\n'
+                f'sprx_dlsym(__handle, /* keep */ {splice}"{active}", &slot);\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(export_gap.parse_export_table(table), [active])
+            db = write_db(directory, [(nid, "sceExample" + str(index)) for index, nid in
+                                      enumerate((active, commented, blocked, continued, quoted, raw, macro))])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables),
+                                                "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8"), active + "\n")
+            self.assertIn(f"{MODULE}: 1 missing", report)
+
     def test_all_missing_are_reported(self):
         first = nid_names.compute_nid("sceExampleAlpha")
         second = nid_names.compute_nid("sceExampleBeta")
@@ -321,6 +356,26 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("APS5_EXPORT", report)
             self.assertIn("libSceAmpr", report)
             self.assertIn("Caller.cpp:2", report)
+
+    def test_self_call_line_counts_spliced_lines(self):
+        nid = nid_names.compute_nid("sceExampleSelfCall")
+        sources = {
+            "#define TWICE(x) \\\n    ((x) + \\\n     (x))\nint useIt(void) {\n    return sceExampleSelfCall(1);\n}\n": "Caller.cpp:5 ",
+            "int useIt(void) {\n    int x = \\\n        sceExampleSelfCall(1);\n    return x;\n}\n": "Caller.cpp:3 ",
+            "int useIt(void) {\n    return sceExampleSelfCall(1, \\\n        2);\n}\n": "Caller.cpp:2 ",
+        }
+        for source, expected in sources.items():
+            for newline in ("\n", "\r\n"):
+                with self.subTest(expected=expected, newline=repr(newline)), tempfile.TemporaryDirectory() as directory:
+                    root, prx, tables = tree(directory)
+                    library = write_module(prx, MODULE, {"Export.cpp": "int APS5_VABI sceExampleOther(void) { return 0; }\n"})
+                    (library / "Caller.cpp").write_bytes(source.replace("\n", newline).encode("utf-8"))
+                    write_table(tables, MODULE, [nid])
+                    db = write_db(directory, [(nid, "sceExampleSelfCall")])
+                    out = Path(directory) / "out.txt"
+                    code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+                    self.assertEqual(code, 0)
+                    self.assertIn(expected, report)
 
     def test_self_call_with_qualifier_needs_renamed_helper(self):
         first = nid_names.compute_nid("sceExampleGlobalCall")
