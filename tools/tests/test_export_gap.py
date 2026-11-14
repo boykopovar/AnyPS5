@@ -87,6 +87,41 @@ def provides(name, nid):
 
 
 class ExportGapTests(unittest.TestCase):
+    def test_export_table_ignores_comments_strings_and_macro_definitions(self):
+        active = nid_of("sceExampleActive")
+        commented = nid_of("sceExampleCommented")
+        blocked = nid_of("sceExampleBlocked")
+        continued = nid_of("sceExampleContinuedComment")
+        quoted = nid_of("sceExampleQuoted")
+        raw = nid_of("sceExampleRaw")
+        macro = nid_of("sceExampleMacro")
+        splice = "\\" + "\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            table = tables / (MODULE + ".c")
+            table.write_text(
+                f'#define UNUSED_LOOKUP {splice}sprx_dlsym(__handle, "{macro}", &slot)\n'
+                f'const char *quoted = "sprx_dlsym(__handle, \\"{quoted}\\", &slot)";\n'
+                f'const char *raw = R"(sprx_dlsym(__handle, "{raw}", &slot))";\n'
+                f'const char *multiline_raw = R"(sprx_dlsym(__handle, "{raw}", &slot)\n'
+                '#define NOT_A_DIRECTIVE )";\n'
+                f'// sprx_dlsym(__handle, "{commented}", &slot);\n'
+                f'/* sprx_dlsym(__handle, "{blocked}", &slot); */\n'
+                f'// a continued comment {splice}sprx_dlsym(__handle, "{continued}", &slot);\n'
+                f'sprx_dlsym(__handle, /* keep */ {splice}"{active}", &slot);\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(export_gap.parse_export_table(table), [active])
+            db = write_db(directory, [(nid, "sceExample" + str(index)) for index, nid in
+                                      enumerate((active, commented, blocked, continued, quoted, raw, macro))])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables),
+                                                "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8"), active + "\n")
+            self.assertIn(f"{MODULE}: 1 missing", report)
+
     def test_all_missing_are_reported(self):
         first = nid_names.compute_nid("sceExampleAlpha")
         second = nid_names.compute_nid("sceExampleBeta")
@@ -267,6 +302,16 @@ class ExportGapTests(unittest.TestCase):
                   "#define UNUSED_WRAPPER(NAME) \\\n"
                   "    EXAMPLE_MACRO(sceExampleOnlyInDefinition)\n")
         self.assertFalse(provides_with(source, nid))
+
+    def test_apostrophe_in_directive_does_not_hide_later_definitions(self):
+        source = ("#if !defined(__x86_64__)\n"
+                  "#error this library doesn't build for the host\n"
+                  "#endif\n"
+                  "int APS5_VABI sceProbeInit(void) { return 0; }\n"
+                  "int APS5_VABI sceProbeRead(int handle) { return handle == '0'; }\n")
+        for name in ("sceProbeInit", "sceProbeRead"):
+            with self.subTest(name=name):
+                self.assertTrue(provides_with(source, nid_of(name)))
 
     def test_explicit_export_binding_counts_as_provided(self):
         nid = nid_names.compute_nid("sceExampleExplicit")

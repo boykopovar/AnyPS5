@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -53,6 +54,12 @@ static int testIds() {
     bool ok = expect(sceNpCmpOnlineId(nullptr, &kestrel) == INVALID_ARGUMENT, "a null online ID was compared");
     ok &= expect(sceNpCmpOnlineId(&kestrel, nullptr) == INVALID_ARGUMENT, "a null second online ID was compared");
     ok &= expect(sceNpCmpOnlineId(nullptr, nullptr) == INVALID_ARGUMENT, "null online IDs were compared");
+    errno = 71;
+    ok &= expect(sceNpCmpOnlineId(reinterpret_cast<const NpOnlineId*>(0x10), &kestrel) == INVALID_ARGUMENT, "unmapped first online ID was accepted");
+    ok &= expect(errno == 71, "errno was not preserved for unmapped first online ID");
+    errno = 71;
+    ok &= expect(sceNpCmpOnlineId(&kestrel, reinterpret_cast<const NpOnlineId*>(0x10)) == INVALID_ARGUMENT, "unmapped second online ID was accepted");
+    ok &= expect(errno == 71, "errno was not preserved for unmapped second online ID");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &kestrelCopy) == 0, "equal online IDs did not match");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &heron) == NOT_MATCH, "different online IDs matched");
 
@@ -123,6 +130,9 @@ static int testIds() {
     ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(nullptr, 0) == UTIL_INVALID_ARGUMENT && sceNpUtilCanonicalizeNpIdForPsp2(nullptr, 1) == UTIL_INVALID_ARGUMENT,
         "canonicalizing a null NpId succeeded");
     NpIdFull loose = npIdWithTag("heron-4", 0x34737000);
+    errno = 71;
+    ok &= expect(sceNpIntGetPlatformType(reinterpret_cast<const NpIdFull*>(0x10)) == INVALID_ARGUMENT, "an unmapped NpId in sceNpIntGetPlatformType");
+    ok &= expect(errno == 71, "errno altered on unmapped NpId in sceNpIntGetPlatformType");
     ok &= expect(sceNpGetPlatformType(&loose) == 0 && sceNpIntGetPlatformType(&loose) == 0, "a tag with opt[4] zero is not platform 0");
     const NpIdFull nearCompanion = npIdWithTag("heron-4", 0x716D6F63);
     ok &= expect(sceNpIntGetPlatformType(&nearCompanion) == INVALID_PLATFORM_TYPE, "comq was taken for comp");
@@ -184,6 +194,9 @@ static int testIds() {
     NpOnlineId unterminated = onlineId("abcdefghijklmnop");
     unterminated.data[16] = 'q';
     ok &= expect(sceNpIntIsValidOnlineId(nullptr) == 0, "a null online ID is valid");
+    errno = 71;
+    ok &= expect(sceNpIntIsValidOnlineId(reinterpret_cast<const NpOnlineId*>(0x10)) == 0, "an unmapped online ID is valid");
+    ok &= expect(errno == 71, "errno was not preserved for unmapped online ID");
     ok &= expect(sceNpIntIsValidOnlineId(&kestrel) == 1, "kestrel_77 is not valid");
     ok &= expect(sceNpIntIsValidOnlineId(&heron) == 1, "heron-4 is not valid");
     const NpOnlineId sixteen = onlineId("abcdefghijklmnop");
