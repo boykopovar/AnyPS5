@@ -52,6 +52,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -85,6 +86,8 @@ constexpr int errnoBadFile = 9;
 constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
+std::mutex processPropertiesMutex;
+std::map<std::array<char, 32>, std::array<std::int64_t, 4>> processProperties;
 constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
 constexpr std::size_t ExecArgumentBytesLimit = 262144;
 constexpr std::string_view ExecDefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
@@ -959,6 +962,16 @@ int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
 
 void* APS5_VABI sceKernelGetProcParam(void) {
     return const_cast<void*>(ApplicationProcessParameters_nid_no_patch());
+}
+
+int KernelSetProcessProperty_nid_no_patch(const void* name, std::int64_t value1, std::int64_t value2, std::int64_t value3, std::int64_t value4) {
+    if (name == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    std::array<char, 32> key;
+    if (!GuestCopyIn_nid_no_patch(key.data(), name, key.size())) return SCE_KERNEL_ERROR_EFAULT;
+    const std::array<std::int64_t, 4> values{value1, value2, value3, value4};
+    std::lock_guard guard(processPropertiesMutex);
+    processProperties[key] = values;
+    return 0;
 }
 
 int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
