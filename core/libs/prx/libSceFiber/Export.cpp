@@ -16,6 +16,10 @@
 #include <string>
 #include <xmmintrin.h>
 
+#if defined(__SANITIZE_ADDRESS__) || defined(ANYPS5_ENABLE_ASAN)
+#include <sanitizer/asan_interface.h>
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include "prx/libc/include/GuestArena.hpp"
@@ -107,12 +111,26 @@ static bool TraceFibers() {
     return enabled;
 }
 
+static void ReleaseAbandonedFrames(const void* low, const void* high) {
+#if defined(__SANITIZE_ADDRESS__) || defined(ANYPS5_ENABLE_ASAN)
+    if (low && high && low < high) {
+        __asan_unpoison_memory_region(const_cast<void*>(low), static_cast<std::size_t>(static_cast<const std::uint8_t*>(high) - static_cast<const std::uint8_t*>(low)));
+    }
+#else
+    (void)low;
+    (void)high;
+#endif
+}
+
 static void CompletePendingSuspend() {
     auto& thread = ThreadState();
     if (thread.pendingSuspend) {
         auto* fiber = thread.pendingSuspend;
         const auto state = fiber->context ? FiberState::Suspended : FiberState::Idle;
-        if (!fiber->context) fiber->savedStack = nullptr;
+        if (!fiber->context) {
+            ReleaseAbandonedFrames(fiber->savedStack, thread.threadStack);
+            fiber->savedStack = nullptr;
+        }
         fiber->state.store(state, std::memory_order_release);
         thread.pendingSuspend = nullptr;
     }
