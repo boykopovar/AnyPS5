@@ -64,6 +64,13 @@ def listed(connection):
     return connection["nodes"]
 
 
+def objects(connection):
+    nodes = listed(connection)
+    if not all(isinstance(item, dict) for item in nodes):
+        raise ValueError("expected nodes that are objects")
+    return nodes
+
+
 def check_of(node):
     if not isinstance(node, dict):
         raise ValueError("check is not an object")
@@ -82,13 +89,16 @@ def pull(node):
         raise ValueError("pull request needs a number")
     if not isinstance(node.get("isDraft"), bool):
         raise ValueError(f"#{node['number']}: draft flag must be a boolean")
-    commits = listed(node.get("commits"))
-    rollup = commits[0]["commit"].get("statusCheckRollup") if commits else None
+    commits = objects(node.get("commits"))
+    commit = commits[0].get("commit") if commits else {}
+    if not isinstance(commit, dict):
+        raise ValueError(f"#{node['number']}: commit is not an object")
+    rollup = commit.get("statusCheckRollup")
     contexts = (rollup or {}).get("contexts") or {}
     author = (node.get("author") or {}).get("login") or "ghost"
-    reviews = [(item.get("author") or {}).get("login") or "ghost" for item in listed(node.get("latestOpinionatedReviews"))
+    reviews = [(item.get("author") or {}).get("login") or "ghost" for item in objects(node.get("latestOpinionatedReviews"))
                if item.get("state") == "CHANGES_REQUESTED"]
-    requested = {(item.get("requestedReviewer") or {}).get("login") for item in listed(node.get("reviewRequests"))}
+    requested = {(item.get("requestedReviewer") or {}).get("login") for item in objects(node.get("reviewRequests"))}
     return {
         "number": node["number"],
         "title": node.get("title") or "",

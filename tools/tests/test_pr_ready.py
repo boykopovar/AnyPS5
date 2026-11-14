@@ -272,6 +272,19 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot read pull requests", err)
 
+    def test_a_null_node_is_an_error(self):
+        review, request, commit = node(number=7, changes=["bob"]), node(number=7, requested=["bob"]), node(number=7)
+        review["latestOpinionatedReviews"]["nodes"][0] = None
+        request["reviewRequests"]["nodes"][0] = None
+        commit["commits"]["nodes"][0]["commit"] = None
+        for name, data in (("review", review), ("review request", request), ("commit", commit)):
+            with self.subTest(name):
+                calls = []
+                code, _, err = self.run_main([], [data], calls)
+                self.assertEqual(code, 2)
+                self.assertIn("cannot read pull requests", err)
+                self.assertEqual(calls, [])
+
     def test_graphql_errors_are_reported(self):
         out, err = io.StringIO(), io.StringIO()
         with patch("pr_ready.pr_labels.gh", return_value=json.dumps({"errors": [{"message": "boom"}]})), \
