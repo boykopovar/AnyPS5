@@ -91,6 +91,7 @@ void RunUnregistered(AgcDriver::VulkanDevice& device, ShaderRecompiler::Recompil
         const auto handle = snapshot.prepared->entries.front().handle;
         const auto& artifact = ShaderRecompiler::GetPreparedArtifact(*handle);
         const std::uint32_t* module = artifact.gpuResolvedImages ? nullptr : artifact.spirv.data();
+        std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> keptResults;
         for (const bool useCache : {false, true}) {
             request.useCache = useCache;
             Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == handle, "unregistered compute source was prepared again");
@@ -100,6 +101,7 @@ void RunUnregistered(AgcDriver::VulkanDevice& device, ShaderRecompiler::Recompil
             const auto capture = repeated.Capture(runtime);
             const auto result = repeated.Materialize(*capture);
             if (module == nullptr) module = result->spirv.data();
+            keptResults.push_back(result);
             Require(snapshot.prepared->entries.size() == 1 && result->variantId == artifact.variantId && result->spirv.data() == module, "unregistered compute invocation replaced its cached artifact");
             device.Dispatch(*result, 1, 1, 1);
         }
@@ -144,6 +146,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 1, request)); }, "outside the snapshot");
     const auto& artifact = ShaderRecompiler::GetPreparedArtifact(*handle);
     const std::uint32_t* module = artifact.gpuResolvedImages ? nullptr : artifact.spirv.data();
+    std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> keptResults;
     for (std::uint32_t value = 0; value < 8; ++value) {
         users.fill(value);
         request.useCache = value % 2 == 0;
@@ -153,6 +156,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         const auto capture = ShaderRecompiler::CaptureResources(request, runtime, *ready);
         const auto result = ShaderRecompiler::MaterializeShader(request, *capture, *ready);
         if (module == nullptr) module = result->spirv.data();
+        keptResults.push_back(result);
         Require(result->variantId == artifact.variantId && result->spirv.data() == module, "invocation replaced the prepared artifact");
         device.Dispatch(*result, 1, 1, 1);
     }
