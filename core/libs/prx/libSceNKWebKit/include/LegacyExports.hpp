@@ -2271,7 +2271,6 @@ int APS5_VABI _ZN7WebCore15JSSVGSVGElementC1EPN3JSC9StructureERNS_17JSDOMGlobalO
 int APS5_VABI _ZN7WebCore10ISOFullBoxD0Ev();
 int APS5_VABI _ZN7WebCore17LibWebRTCProvider24registerWebKitVP9DecoderEv();
 int APS5_VABI _ZN7WebCore15AsyncFileStream4readEPci();
-int APS5_VABI _ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_();
 int APS5_VABI _ZN7WebCore9FrameView29layoutOrVisualViewportChangedEv();
 int APS5_VABI _ZN7WebCore11DisplayList7ClipOutD0Ev();
 int APS5_VABI _ZN7WebCore16JSXMLHttpRequest6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_14XMLHttpRequestENS6_13DumbPtrTraitsIS8_EEEE();
