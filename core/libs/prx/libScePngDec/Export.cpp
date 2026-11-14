@@ -395,7 +395,8 @@ bool pull(InputStream& stream, std::size_t size) {
             stream.chunk = static_cast<const std::uint8_t*>(chunk.data);
             stream.chunkSize = chunk.size;
         }
-        const std::size_t count = std::min(size, static_cast<std::size_t>(stream.chunkSize));
+        constexpr std::size_t MaxCopyStep = 64 * 1024;
+        const std::size_t count = std::min({size, static_cast<std::size_t>(stream.chunkSize), MaxCopyStep});
         const std::size_t old = stream.data.size();
         stream.data.resize(old + count);
         if (!GuestCopyIn_nid_no_patch(stream.data.data() + old, stream.chunk, count)) {
