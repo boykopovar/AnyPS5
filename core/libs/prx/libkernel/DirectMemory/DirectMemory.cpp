@@ -941,7 +941,7 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
         throw std::invalid_argument(message);
     }
     if ((flags & GuestMapFixed) != 0) {
-        ValidateRange(addr, len, alignment);
+        ValidateRange(addr, len, PS5_PAGE_SIZE);
 #ifdef _WIN32
         if ((flags & GuestMapNoOverwrite) != 0) {
             const auto start = reinterpret_cast<std::uintptr_t>(addr);
