@@ -353,6 +353,17 @@ void CheckLibcTimePut() {
     auto shortStream = MakeStream(3);
     out = Export<TimePutPatternExport>("j9LU8GsuEGw")(facet, GuestLocale::OutputIterator{false, &shortStream.buffer}, &ios, ' ', &time, pattern.data(), pattern.data() + 8);
     Require(out.failed && shortStream.accepted == "202" && shortStream.offered == 10, "a failed write marks the iterator and later characters are still offered");
+    const auto doPut = Export<TimePutExport>("+i81FtUCarA");
+    GuestLocale::Facet recording{&g_recordingTimePut.facet, 1, 0};
+    auto doPutStream = MakeStream(64);
+    g_timeCalls = 0;
+    out = doPut(&recording, GuestLocale::OutputIterator{false, &doPutStream.buffer}, &ios, ' ', &time, 'Y', '\0');
+    out = doPut(&recording, out, &ios, ' ', &time, 'y', 'E');
+    out = doPut(&recording, out, &ios, ' ', &time, 'c', '\0');
+    Require(!out.failed && doPutStream.accepted == "202626Fri Oct  2 13:05:09 2026" && g_timeCalls == 0, "do_put formats the conversion itself, the modifier first, without calling through the facet's vtable");
+    auto doPutShort = MakeStream(3);
+    out = doPut(&recording, GuestLocale::OutputIterator{false, &doPutShort.buffer}, &ios, ' ', &time, 'Y', '\0');
+    Require(out.failed && doPutShort.accepted == "202" && doPutShort.offered == 4, "a failed do_put write marks the iterator and later characters are still offered");
     facet->vtable->deleteObject(facet);
 }
 

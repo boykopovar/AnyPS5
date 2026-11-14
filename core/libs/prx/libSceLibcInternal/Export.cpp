@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -207,11 +208,10 @@ int APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_Ge
     return 0;
 }
 
-int APS5_VABI sceLibcInternalPending4_070_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+GuestLocale::OutputIterator APS5_VABI sceLibcInternalTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
+    return LibcTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);
 }
-APS5_EXPORT("+i81FtUCarA", sceLibcInternalPending4_070_nid_no_patch);
+APS5_EXPORT("+i81FtUCarA", sceLibcInternalTimePutDoPut_nid_no_patch);
 
 int APS5_VABI sceLibcInternalPending4_071_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
