@@ -6115,7 +6115,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
         });
         // Listed after the registration: a throw there leaves nothing that would pin the CPU path forever.
-        if (resources.HasCopiedWrites()) writers->push_back(kept);
+        if (resources.HasCopiedWrites()) {
+            writers->push_back(kept);
+            GuestMemory::BreakProofs();
+        }
     }
     recordStep(PhaseRecordCompletion);
 }

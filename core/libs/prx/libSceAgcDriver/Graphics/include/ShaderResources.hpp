@@ -98,6 +98,37 @@ std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, con
 // a storage image other than `except` has results pending in [address, address + bytes).
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except);
 
+struct DrawProofStamp {
+    std::uint64_t epoch = 0;
+    std::uint64_t proof = 0;
+    std::uint64_t pending = 0;
+    std::uint64_t depthSurfaces = 0;
+    std::uint64_t unwatch = 0;
+    static DrawProofStamp Now();
+    bool operator==(const DrawProofStamp&) const = default;
+};
+enum class DrawProofKind : std::size_t { Resources, Targets, Count };
+enum class DrawProofMiss : std::size_t { None, Epoch, Serial, Registry, DepthSurfaces, Unwatch, Images, DepthPlanes, Imports, Staging, Target, Evicted, Count };
+struct DrawProofKindCounts {
+    std::uint64_t reused = 0;
+    std::uint64_t proved = 0;
+    std::uint64_t verified = 0;
+    std::uint64_t differing = 0;
+    std::uint64_t stored = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(DrawProofMiss::Count)> missed{};
+};
+using DrawProofCounts = std::array<DrawProofKindCounts, static_cast<std::size_t>(DrawProofKind::Count)>;
+bool DrawProofsEnabled();
+bool DrawProofVerifyDue();
+DrawProofMiss DrawProofStampMiss(const DrawProofStamp& proved, const DrawProofStamp& now);
+const char* DrawProofMissName(DrawProofMiss miss);
+void NoteDrawProofReused(DrawProofKind kind);
+void NoteDrawProofProved(DrawProofKind kind);
+void NoteDrawProofMissed(DrawProofKind kind, DrawProofMiss miss);
+void NoteDrawProofVerified(DrawProofKind kind, bool differing, bool stored, const char* what);
+DrawProofCounts DrawProofCounted();
+std::string DrawProofText(const DrawProofCounts& now, const DrawProofCounts& seen);
+
 struct PipelineSetLayouts {
     VkDescriptorSetLayout main = VK_NULL_HANDLE;
     VkDescriptorSetLayout fragment = VK_NULL_HANDLE;
@@ -801,9 +832,13 @@ private:
     // no image other than the object's own sources has results pending over its surfaces and
     // regions, so those checks are skipped (see fastRevalidate).
     std::uint64_t pendingSerialSeen = 0;
-    std::uint64_t provedEpoch = 0;
-    std::uint64_t provedProof = 0;
-    std::uint64_t provedPending = 0;
+    DrawProofStamp provedStamp;
+    bool proofHeld = false;
+    std::vector<std::pair<const StorageTexture*, std::uint64_t>> provedImages;
+    bool proofEligible() const;
+    DrawProofMiss proofMiss(const DrawProofStamp& now) const;
+    void takeProof(const DrawProofStamp& stamp);
+    bool verifyProof(std::span<const CompiledShader> shaders, ProofReport* report);
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
