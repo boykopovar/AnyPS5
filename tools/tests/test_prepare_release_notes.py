@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -89,6 +90,35 @@ class PrepareBodyLimitTests(ReleaseNotesCase):
         self.write_source(json.dumps({"body": over}))
         with self.assertRaisesRegex(ValueError, "exceeds 125000 characters"):
             prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+
+
+class PrepareWriteTests(ReleaseNotesCase):
+    def test_write_mode_creates_parents_and_writes_stripped_body_and_full_notes(self):
+        notes = "Intro é\n## What's Changed\n* " + "x" * LIMIT + "\n## New Contributors\n* newcomer\n"
+        body = self.root / "out" / "body" / "body.md"
+        full = self.root / "out" / "full" / "full.md"
+        self.write_source(json.dumps({"body": notes}))
+        self.assertIsNone(prepare_release_notes.prepare_notes(self.source, body, full))
+        self.assertEqual(body.read_bytes(), "Intro é\n## New Contributors\n* newcomer\n".encode("utf-8"))
+        self.assertEqual(full.read_bytes(), notes.encode("utf-8"))
+
+    def test_successful_write_leaves_no_temporary_files(self):
+        out = self.root / "out"
+        out.mkdir()
+        body, full = out / "body.md", out / "full.md"
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        prepare_release_notes.prepare_notes(self.source, body, full)
+        self.assertEqual(sorted(path.name for path in out.iterdir()), ["body.md", "full.md"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_replacing_an_existing_output_keeps_its_permission_bits(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        self.body.write_bytes(b"previous body")
+        self.full.write_bytes(b"previous full")
+        os.chmod(self.full, 0o640)
+        prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertEqual(self.full.read_bytes(), b"## New Contributors\n* a\n")
+        self.assertEqual(os.stat(self.full).st_mode & 0o777, 0o640)
 
 
 class ReleaseBodyTests(unittest.TestCase):
