@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import sys
@@ -290,6 +292,62 @@ class ReleaseBodyTests(unittest.TestCase):
         self.assertEqual(prepare_release_notes.release_body(prefix + "## What's Changed\n* a\n# Top\nkeep"),
                          prefix + "# Top\nkeep")
         self.assertEqual(prepare_release_notes.release_body(prefix + "## What's Changed\n* a\n"), prefix)
+
+
+class MainTests(ReleaseNotesCase):
+    def run_main(self, argv):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                code = prepare_release_notes.main(argv)
+            except SystemExit as error:
+                code = error.code
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def arguments(self, *extra):
+        return ["--input", str(self.source), "--body", str(self.body), "--full", str(self.full), *extra]
+
+    def test_write_mode_returns_zero_and_writes_outputs_quietly(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        code, stdout, stderr = self.run_main(self.arguments())
+        self.assertEqual((code, stdout, stderr), (0, "", ""))
+        self.assertEqual(self.body.read_bytes(), b"## New Contributors\n* a\n")
+        self.assertEqual(self.full.read_bytes(), b"## New Contributors\n* a\n")
+
+    def test_check_mode_reports_stale_outputs_with_status_one_and_no_writes(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        self.body.write_bytes(b"stale body")
+        code, stdout, stderr = self.run_main(self.arguments("--check"))
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("Release note outputs are missing or stale", stderr)
+        self.assertEqual(self.body.read_bytes(), b"stale body")
+        self.assertFalse(self.full.exists())
+
+    def test_check_mode_returns_zero_for_matching_outputs(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        self.assertEqual(self.run_main(self.arguments())[0], 0)
+        self.assertEqual(self.run_main(self.arguments("--check")), (0, "", ""))
+
+    def test_input_and_output_errors_exit_two_with_a_message_and_no_traceback(self):
+        self.write_source("{")
+        code, stdout, stderr = self.run_main(self.arguments("--check"))
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("Expecting", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+        self.write_source(json.dumps({"body": "notes"}))
+        code, stdout, stderr = self.run_main(["--input", str(self.source), "--body", str(self.body),
+                                              "--full", str(self.body)])
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("distinct files", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertFalse(self.body.exists())
+
+    def test_missing_required_option_is_a_usage_error(self):
+        code, _, stderr = self.run_main(["--input", str(self.source)])
+        self.assertEqual(code, 2)
+        self.assertIn("--body", stderr)
 
 
 if __name__ == "__main__":
