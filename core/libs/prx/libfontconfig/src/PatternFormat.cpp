@@ -1,3 +1,4 @@
+// Derived from src/fcformat.c (Fontconfig 72b9a48f57de6204d99ce1c217b5609ee92ece9b)
 /*
  * Copyright © 2008,2009 Red Hat, Inc.
  *
