@@ -3414,18 +3414,21 @@ const char* APS5_VABI sceNetGetIfName(std::uint32_t index) {
 int APS5_VABI sceNetGetIfnameNumList(std::uint32_t* interfaceIds, std::int32_t capacity, std::uint32_t flags) {
     if (!g_net_inited) return fail(NET_ENOTINIT);
     if (interfaceIds == nullptr || capacity <= 0 || flags > 1) return fail(NET_EINVAL);
-    const std::uint32_t first = (flags & 1) != 0 ? 0 : 1;
-    const std::uint32_t last = (flags & 1) != 0 ? 9 : 8;
+    const bool withLoopback = (flags & 1) != 0;
+    const std::uint32_t last = withLoopback ? 9 : 8;
     std::int32_t count = 0;
-    for (std::uint32_t interfaceId = first; interfaceId <= last && count < capacity; ++interfaceId) {
-        if (!HostInterfaceIndex(interfaceId)) continue;
-        interfaceIds[count++] = interfaceId;
+    const auto add = [&](std::uint32_t interfaceId) {
+        if (count < capacity && HostInterfaceIndex(interfaceId)) interfaceIds[count++] = interfaceId;
+    };
+    if (withLoopback) {
+        add(1);
+        add(0);
     }
+    for (std::uint32_t interfaceId = withLoopback ? 2 : 1; interfaceId <= last; ++interfaceId) add(interfaceId);
     return count;
 }
 
 int APS5_VABI sceNetGetNameToIndex(std::uint32_t interfaceId) {
-    if (!g_net_inited) return fail(NET_ENOTINIT);
     if (interfaceId == 0xffffffffu) return fail(NET_EINVAL);
     const auto index = HostInterfaceIndex(interfaceId);
     if (!index) return fail(NET_ENODATA);
