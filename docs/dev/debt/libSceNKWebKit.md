@@ -129,6 +129,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [LibWebRTCProvider allocation operators](../../../core/libs/prx/libSceNKWebKit/src/WtfMemory.cpp) (libSceNKWebKit) follow the pinned WebKit 11.x [`WTF_MAKE_FAST_ALLOCATED` contract](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastMalloc.h#L287-L309) for `fastMalloc`/`fastFree`; placement overloads return the supplied storage. Console ABI remains unverified.
 - [GLContext allocation operators](../../../core/libs/prx/libSceNKWebKit/src/WtfMemory.cpp) follow the pinned WebKit 11.x [`WTF_MAKE_FAST_ALLOCATED` contract](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastMalloc.h#L287-L309) for `fastMalloc`/`fastFree`; placement overloads return the supplied storage. Console ABI remains unverified.
 - [WTF::BitVector](../../../core/libs/prx/libSceNKWebKit/src/WtfBitVector.cpp) (libSceNKWebKit) - `mergeSlow` ORs only the words both out-of-line vectors hold, where [BitVector.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/BitVector.cpp#L126-L142) reads past the other vector's words when this one is longer. `isEmptySlow`, `bitCountSlow` and `hashSlowCase` on an inline, empty or deleted vector, and a null vector anywhere, throw where WebKit reads through an invalid pointer; `equalsSlowCase` on two inline vectors compares their words. `dump` still throws, as `WTF::PrintStream` is not implemented. The one-word layout follows [BitVector.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/BitVector.h#L455-L509) for 64-bit pointers and is not measured on a console.
+- [WTF::printInternal](../../../core/libs/prx/libSceNKWebKit/src/WtfPrintStream.cpp) (libSceNKWebKit) - `PrintStream::printf`, the `const char*`, `CString`, `bool`, `int`, `unsigned`, `long`, `unsigned long`, `double` and `RawPointer` overloads and `dumpCharacter` follow the pinned [PrintStream.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/PrintStream.cpp#L38-L216) and only pass their format and value to the guest stream's `vprintf` with a SysV `va_list`; formatting is the stream's job. The vtable slots (destructor pair, `vprintf` 2, `flush` 3, `begin` 4, `end` 5) come from the declaration order in [PrintStream.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/PrintStream.h#L53-L101) and are not measured on a console. `long` and `unsigned long` are 64-bit as on the console, also on Windows hosts.
 - [Constant-return exports from 13.42](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 13 `WKBundleFrame`, `WKBundleNavigationAction`, `WKBundlePage`, `WKFrame`, `WKPage` and `WKProtectionSpace` exports return 0 as read from the disassembly of the PS5 13.42 `libSceNKWebKit.sprx` (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`), not measured on a console: their export addresses all point to one shared body at `0x5b90`, `xor eax,eax; ret`. As in the Constant-return exports entry, the declared prototypes stay the no-parameter `int` placeholders, so only the 32-bit return is claimed. 11.00 was not checked for these 13.
 - [WebCore::ResourceResponseBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) - guest layout and header ordinals are unverified on console. [Historical WebKit](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WebCore/platform/network/ResourceResponseBase.h) and the [PlayStation source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceResponseBase.h) agree through the 32-byte header map at offset 80. These exports assume curl's no-op lazy initialization. Cache and date getters parse live headers without writing fields beyond the known prefix. Status, flags, AtomString creation, certificate data and the complete layout remain unresolved.
 - [Resource response time and filename getters](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) - the six legacy time returns are unverified on console. [Historical WTF::Optional](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WTF/wtf/Optional.h) returns indirectly with engagement at byte 0 and seconds at byte 8. [PlayStation's filename parser](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPParsers.cpp) matches filename keys case-sensitively, splits at semicolons inside quotes and returns an empty string for an empty parameter.
@@ -1367,7 +1368,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF11OSAllocator8decommitEPvm` | `CFjj7pKSrS4` |
 | `_ZN3WTF11PrintStream20printfVariableFormatEPKcz` | `wdbdMn2JHZc` |
 | `_ZN3WTF11PrintStream3endEv` | `FyOMUdXa5Tc` |
-| `_ZN3WTF11PrintStream6printfEPKcz` | `Idp+8dpnrr8` |
 | `_ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv` | `ycxHHEa11OI` |
 | `_ZN3WTF11ThreadGroup3addERKNS_14AbstractLockerERNS_6ThreadE` | `wxOWH7WVHa0` |
 | `_ZN3WTF11ThreadGroup3addERNS_6ThreadE` | `yI8ZKsn2NmU` |
@@ -1391,26 +1391,16 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF13ReadWriteLock11writeUnlockEv` | `trYWw7dUt9Y` |
 | `_ZN3WTF13ReadWriteLock8readLockEv` | `tbhRqP+K-1c` |
 | `_ZN3WTF13ReadWriteLock9writeLockEv` | `cKaXv3V+n+k` |
-| `_ZN3WTF13dumpCharacterERNS_11PrintStreamEc` | `rpsD9ynfjc0` |
 | `_ZN3WTF13normalizedNFCENS_10StringViewE` | `bgrxJM-HmMM` |
 | `_ZN3WTF13normalizedNFCERKNS_6StringE` | `2LUk8Ch0mJY` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE` | `DwwpqTcKG0Q` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE` | `bwThPa6WtDc` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE` | `6cO1aKnHM64` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE` | `iZmKEESJ3mw` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEPKc` | `P-HGfOZxkgU` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEPN3JSC9CodeBlockE` | `RFKbaZAsHKs` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE` | `KDRPZeaauUQ` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE` | `dY5HI1HhX8Q` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEa` | `ejLjAkmwuMc` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEb` | `laF+cd2rvw8` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEd` | `yHE4d2C-Ius` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEf` | `Nvu+-KKztN4` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEh` | `j4qPZlQyJUc` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEi` | `YzM19lL-JGU` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEj` | `BEzuHMRRYIs` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEl` | `OwyHvMkCWP8` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEm` | `d4mB8nRN2tU` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEs` | `TGBn8YLhSro` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEt` | `7WVXLziXGtM` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEx` | `tTW6TdBv6wo` |

@@ -262,6 +262,10 @@ void Release(CStringBuffer* buffer) {
     if (buffer && !--buffer->refCount) Deallocate(buffer);
 }
 
+const char* CStringBytes(const CString& value) {
+    return value.buffer ? reinterpret_cast<const char*>(value.buffer + 1) : nullptr;
+}
+
 }  // namespace NKWebKit::WtfAbi
 
 namespace {
@@ -427,10 +431,6 @@ CString NewCString(std::size_t length, char*& data) {
     data = reinterpret_cast<char*>(buffer + 1);
     data[length] = 0;
     return CString(buffer);
-}
-
-const char* Bytes(const CString& value) {
-    return value.buffer ? reinterpret_cast<const char*>(value.buffer + 1) : nullptr;
 }
 
 CString CopyCString(const char* data, std::size_t length) {
@@ -758,7 +758,7 @@ String APS5_VABI _ZN3WTF6String8fromUTF8EPKh(const unsigned char* data) {
 }
 
 String APS5_VABI _ZN3WTF6String8fromUTF8ERKNS_7CStringE(const CString& value) {
-    const char* data = Bytes(value);
+    const char* data = CStringBytes(value);
     return FromUTF8(reinterpret_cast<const unsigned char*>(data), data ? std::strlen(data) : 0);
 }
 
@@ -996,11 +996,11 @@ char* APS5_VABI _ZN3WTF7CString11mutableDataEv(CString* self) {
     auto& value = Checked(self);
     if (!value.buffer) return nullptr;
     if (value.buffer->refCount != 1) {
-        auto copy = CopyCString(Bytes(value), value.buffer->length);
+        auto copy = CopyCString(CStringBytes(value), value.buffer->length);
         NKWebKit::WtfAbi::Release(value.buffer);
         value.buffer = std::exchange(copy.buffer, nullptr);
     }
-    return const_cast<char*>(Bytes(value));
+    return const_cast<char*>(CStringBytes(value));
 }
 
 void APS5_VABI _ZN3WTF7CString4growEm(CString* self, std::size_t length) {
@@ -1008,13 +1008,13 @@ void APS5_VABI _ZN3WTF7CString4growEm(CString* self, std::size_t length) {
     if (!value.buffer || length <= value.buffer->length) throw std::invalid_argument("WTF CString must grow");
     char* output;
     auto copy = NewCString(length, output);
-    std::memcpy(output, Bytes(value), value.buffer->length + 1);
+    std::memcpy(output, CStringBytes(value), value.buffer->length + 1);
     NKWebKit::WtfAbi::Release(value.buffer);
     value.buffer = std::exchange(copy.buffer, nullptr);
 }
 
 unsigned APS5_VABI _ZNK3WTF7CString4hashEv(const CString* self) {
-    const char* data = Bytes(Checked(self));
+    const char* data = CStringBytes(Checked(self));
     if (!data) return 0;
     StringHasher hasher;
     while (*data) hasher.addCharacter(static_cast<char16_t>(*data++));
@@ -1023,17 +1023,17 @@ unsigned APS5_VABI _ZNK3WTF7CString4hashEv(const CString* self) {
 
 bool APS5_VABI _ZN3WTFeqERKNS_7CStringES2_(const CString& a, const CString& b) {
     if (!a.buffer || !b.buffer) return !a.buffer && !b.buffer;
-    return a.buffer->length == b.buffer->length && !std::memcmp(Bytes(a), Bytes(b), a.buffer->length);
+    return a.buffer->length == b.buffer->length && !std::memcmp(CStringBytes(a), CStringBytes(b), a.buffer->length);
 }
 
 bool APS5_VABI _ZN3WTFeqERKNS_7CStringEPKc(const CString& a, const char* b) {
     if (!a.buffer || !b) return !a.buffer && !b;
-    return !std::strcmp(Bytes(a), b);
+    return !std::strcmp(CStringBytes(a), b);
 }
 
 bool APS5_VABI _ZN3WTFltERKNS_7CStringES2_(const CString& a, const CString& b) {
     if (!a.buffer) return !!b.buffer;
-    return b.buffer && std::strcmp(Bytes(a), Bytes(b)) < 0;
+    return b.buffer && std::strcmp(CStringBytes(a), CStringBytes(b)) < 0;
 }
 
 bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const CString& a, const CString& b) {
@@ -1041,7 +1041,7 @@ bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const CString& a, co
     if (a.buffer == deleted) return b.buffer == deleted;
     if (b.buffer == deleted) return false;
     if (!a.buffer || !b.buffer) return !a.buffer && !b.buffer;
-    return a.buffer->length == b.buffer->length && !std::memcmp(Bytes(a), Bytes(b), a.buffer->length);
+    return a.buffer->length == b.buffer->length && !std::memcmp(CStringBytes(a), CStringBytes(b), a.buffer->length);
 }
 
 String APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE(const String* string) {
