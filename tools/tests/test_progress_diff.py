@@ -63,6 +63,10 @@ class SymbolSetTests(unittest.TestCase):
         self.assertEqual(row["done_names"], {"added": [], "removed": ["a"]})
         self.assertEqual(row["todo_names"], {"added": ["a"], "removed": []})
 
+    def test_symbol_lists_are_sorted(self):
+        row = self.row({"name": "G", "todo_names": ["q", "b"]}, {"name": "G", "todo_names": ["m", "a"]})
+        self.assertEqual(row["todo_names"], {"added": ["a", "m"], "removed": ["b", "q"]})
+
 
 if __name__ == "__main__":
     unittest.main()
