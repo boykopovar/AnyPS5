@@ -655,6 +655,27 @@ class ImportAuditTests(unittest.TestCase):
                 with self.assertRaisesRegex(import_audit.AuditError, "invalid import symbol"):
                     import_audit.read_registry(registry)
 
+    def test_lone_surrogate_registry_import_is_invalid(self):
+        registry = self.work.root / "homebrew.registry.json"
+        registry.write_text('[{"nid": "bad\\ud800name", "library": ""}]\n', encoding="utf-8")
+        with self.assertRaisesRegex(import_audit.AuditError, "invalid import symbol"):
+            import_audit.read_registry(registry)
+
+    def test_module_import_name_that_is_not_utf8_is_absent(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        image = build_elf([("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("bad_name", 0, GLOBAL_FUNCTION)], ["libSceA.prx"])
+        (work.modules / "main.prx").write_bytes(image.replace(b"bad_name", b"bad\xffname"))
+        registry = work.root / "game.json"
+        write_registry(registry, [])
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["unique_by_class"], {"implemented": 1, "partial": 0, "stub": 0, "absent": 1, "module": 0})
+        record = next(record for record in data["imports"] if record["class"] == "absent")
+        self.assertEqual((record["nid"], record["providers"], record["symbol_mismatch"]), ("bad\udcffname", [], False))
+
     def test_failed_json_write_preserves_existing_report_and_leaves_no_partial_report(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
