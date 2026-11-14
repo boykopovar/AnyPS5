@@ -133,6 +133,14 @@ void TestPushSincResamplerRejectsBadSizes() {
         WebRtcPushSincResampler push;
         _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 480, 0);
     });
+    RequireInvalidArgument([] {
+        WebRtcPushSincResampler push;
+        _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 3841, 160);
+    });
+    RequireInvalidArgument([] {
+        WebRtcPushSincResampler push;
+        _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 480, 3841);
+    });
     WebRtcPushSincResampler smallest;
     _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&smallest, 49, 10);
     std::vector<float> few(49, 1.f), out(10);
@@ -186,6 +194,39 @@ void TestPushResamplerStereo() {
     });
     _ZN6webrtc13PushResamplerIsED1Ev_nid_postfix(&resampler);
     Require(resampler.source == nullptr && resampler.resamplersBegin == nullptr);
+}
+
+void TestPushResamplerRejectsBadShapesAndKeepsItsState() {
+    RequireInvalidArgument([] {
+        WebRtcPushResampler16 resampler;
+        _ZN6webrtc13PushResamplerIsEC1Emmm_nid_postfix(&resampler, 480, 160, 9);
+    });
+    RequireInvalidArgument([] {
+        WebRtcPushResampler16 resampler;
+        _ZN6webrtc13PushResamplerIsEC1Emmm_nid_postfix(&resampler, 3841, 160, 1);
+    });
+    WebRtcPushResampler16 resampler;
+    _ZN6webrtc13PushResamplerIsEC1Emmm_nid_postfix(&resampler, 480, 160, 2);
+    const std::int16_t* source = resampler.source;
+    const std::vector<std::int16_t> input = InterleavedTones(480, 2, 0, 48000);
+    std::vector<std::int16_t> output(320);
+    std::vector<std::int16_t> large(9 * 3841);
+    RequireInvalidArgument([&] {
+        _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
+            &resampler, WebRtcInterleavedView {9, 3841, large.data(), large.size()}, WebRtcMutableInterleavedView16 {9, 160, large.data(), 9 * 160});
+    });
+    RequireInvalidArgument([&] {
+        _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
+            &resampler, WebRtcInterleavedView {2, 480, input.data(), input.size() - 1}, WebRtcMutableInterleavedView16 {2, 160, output.data(), output.size()});
+    });
+    RequireInvalidArgument([&] {
+        _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
+            &resampler, WebRtcInterleavedView {2, 480, input.data(), input.size()}, WebRtcMutableInterleavedView16 {2, 160, output.data(), output.size() + 2});
+    });
+    Require(resampler.source == source && resampler.sourceView.numChannels == 2 && resampler.sourceView.samplesPerChannel == 480);
+    Require(_ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
+                &resampler, WebRtcInterleavedView {2, 480, input.data(), input.size()}, WebRtcMutableInterleavedView16 {2, 160, output.data(), output.size()}) == 320);
+    _ZN6webrtc13PushResamplerIsED1Ev_nid_postfix(&resampler);
 }
 
 void TestPushResamplerSameRateCopies() {
@@ -303,6 +344,13 @@ void TestRemixQuadToStereoAndUpmix() {
     WebRtcAudioFrame* target = NewFrame(160, 2, 16000);
     std::vector<std::int16_t> three(480);
     RequireInvalidArgument([&] { Remix(three, 3, 160, resampler, target); });
+    const std::vector<std::int16_t> tooShort(100);
+    RequireInvalidArgument([&] {
+        _ZN6webrtc3voe16RemixAndResampleENS_15InterleavedViewIKsEEiPNS_13PushResamplerIsEEPNS_10AudioFrameE_nid_postfix(
+            WebRtcInterleavedView {1, 160, tooShort.data(), tooShort.size()}, 16000, &resampler, target);
+    });
+    std::vector<std::int16_t> nine(9 * 160);
+    RequireInvalidArgument([&] { Remix(nine, 9, 160, resampler, target); });
     delete frame;
     delete stereo;
     delete target;
@@ -324,6 +372,7 @@ int main() {
     TestPushSincResamplerRejectsBadSizes();
     TestPushSincResamplerDeletingDestructor();
     TestPushResamplerStereo();
+    TestPushResamplerRejectsBadShapesAndKeepsItsState();
     TestPushResamplerSameRateCopies();
     TestPushResamplerMonoMatchesTheFloatPath();
     TestRemixDownmixesThenResamples();

@@ -1,3 +1,7 @@
+/* Derived from common_audio/resampler/sinc_resampler.cc@8d78f5de6c27b2c793039989ea381f1428fb0100 */
+/* Derived from common_audio/resampler/push_sinc_resampler.cc@8d78f5de6c27b2c793039989ea381f1428fb0100 */
+/* Derived from common_audio/resampler/push_resampler.cc@8d78f5de6c27b2c793039989ea381f1428fb0100 */
+/* Derived from audio/remix_resample.cc@8d78f5de6c27b2c793039989ea381f1428fb0100 */
 /*
  *  Copyright (c) 2013 The WebRTC project authors. All Rights Reserved.
  *
@@ -49,11 +53,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <numbers>
 #include <stdexcept>
 #include <vector>
 
 namespace {
+
+constexpr std::size_t MaxChannels = 8;
+constexpr std::size_t MaxSamplesPerChannel = 3840;
 
 void RunCallback(WebRtcPushSincResampler* push, std::size_t frames, float* destination);
 
@@ -242,6 +250,19 @@ void ReleaseResamplers(WebRtcPushResampler16* resampler) {
     resampler->resamplersCapacity = nullptr;
 }
 
+struct PushSincResamplerDeleter {
+    void operator()(WebRtcPushSincResampler* push) const {
+        _ZN6webrtc17PushSincResamplerD1Ev_nid_postfix(push);
+        delete push;
+    }
+};
+
+void CheckShape(std::size_t sourceSamplesPerChannel, std::size_t destinationSamplesPerChannel, std::size_t channels) {
+    if (channels == 0 || channels > MaxChannels || sourceSamplesPerChannel == 0 || sourceSamplesPerChannel > MaxSamplesPerChannel ||
+        destinationSamplesPerChannel == 0 || destinationSamplesPerChannel > MaxSamplesPerChannel)
+        throw std::invalid_argument("PushResampler needs 1 to 8 channels and 1 to 3840 samples per channel");
+}
+
 void Clear(WebRtcPushResampler16* resampler) {
     resampler->source = nullptr;
     resampler->destination = nullptr;
@@ -253,34 +274,42 @@ void Clear(WebRtcPushResampler16* resampler) {
 }
 
 void EnsureInitialized(WebRtcPushResampler16* resampler, std::size_t sourceSamplesPerChannel, std::size_t destinationSamplesPerChannel, std::size_t channels) {
-    if (sourceSamplesPerChannel == 0 || destinationSamplesPerChannel == 0 || channels == 0)
-        throw std::invalid_argument("PushResampler needs non-zero sample counts and channels");
+    CheckShape(sourceSamplesPerChannel, destinationSamplesPerChannel, channels);
     if (sourceSamplesPerChannel == resampler->sourceView.samplesPerChannel && destinationSamplesPerChannel == resampler->destinationView.samplesPerChannel &&
         channels == resampler->sourceView.numChannels)
         return;
+    std::unique_ptr<std::int16_t[]> source(new std::int16_t[sourceSamplesPerChannel * channels]);
+    std::unique_ptr<std::int16_t[]> destination(new std::int16_t[destinationSamplesPerChannel * channels]);
+    std::vector<std::unique_ptr<WebRtcPushSincResampler, PushSincResamplerDeleter>> pushes;
+    pushes.reserve(channels);
+    for (std::size_t i = 0; i < channels; ++i) {
+        auto push = std::make_unique<WebRtcPushSincResampler>();
+        _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(push.get(), sourceSamplesPerChannel, destinationSamplesPerChannel);
+        pushes.emplace_back(push.release());
+    }
+    std::unique_ptr<WebRtcPushSincResampler*[]> table(new WebRtcPushSincResampler*[channels]);
     ReleaseResamplers(resampler);
     delete[] resampler->source;
     delete[] resampler->destination;
-    resampler->source = nullptr;
-    resampler->destination = nullptr;
-    resampler->source = new std::int16_t[sourceSamplesPerChannel * channels];
-    resampler->destination = new std::int16_t[destinationSamplesPerChannel * channels];
+    for (std::size_t i = 0; i < channels; ++i)
+        table[i] = pushes[i].release();
+    resampler->source = source.release();
+    resampler->destination = destination.release();
     resampler->sourceView = {channels, sourceSamplesPerChannel, resampler->source, sourceSamplesPerChannel * channels};
     resampler->destinationView = {channels, destinationSamplesPerChannel, resampler->destination, destinationSamplesPerChannel * channels};
-    resampler->resamplersBegin = new WebRtcPushSincResampler*[channels]();
-    resampler->resamplersEnd = resampler->resamplersBegin;
-    resampler->resamplersCapacity = resampler->resamplersBegin + channels;
-    for (std::size_t i = 0; i < channels; ++i) {
-        auto* push = new WebRtcPushSincResampler;
-        _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(push, sourceSamplesPerChannel, destinationSamplesPerChannel);
-        *resampler->resamplersEnd++ = push;
-    }
+    resampler->resamplersBegin = table.release();
+    resampler->resamplersEnd = resampler->resamplersBegin + channels;
+    resampler->resamplersCapacity = resampler->resamplersEnd;
 }
 
 int ResampleInterleaved(WebRtcPushResampler16* resampler, const WebRtcInterleavedView& source, const WebRtcMutableInterleavedView16& destination) {
-    EnsureInitialized(resampler, source.samplesPerChannel, destination.samplesPerChannel, source.numChannels);
     if (destination.numChannels != source.numChannels)
         throw std::invalid_argument("PushResampler::Resample needs the same channel count on both sides");
+    CheckShape(source.samplesPerChannel, destination.samplesPerChannel, source.numChannels);
+    if (source.size != source.samplesPerChannel * source.numChannels || destination.size != destination.samplesPerChannel * destination.numChannels ||
+        !source.data || !destination.data)
+        throw std::invalid_argument("PushResampler::Resample views must hold samples per channel times channels samples");
+    EnsureInitialized(resampler, source.samplesPerChannel, destination.samplesPerChannel, source.numChannels);
     if (source.samplesPerChannel == destination.samplesPerChannel) {
         if (source.size != 0)
             std::memcpy(destination.data, source.data, source.size * sizeof(std::int16_t));
@@ -338,8 +367,9 @@ extern "C" {
 void APS5_VABI _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(WebRtcPushSincResampler* push, std::size_t sourceFrames, std::size_t destinationFrames) {
     if (!push)
         throw std::invalid_argument("PushSincResampler constructor requires an object");
-    if (sourceFrames <= SincResampler::KernelSize + SincResampler::KernelSize / 2 || destinationFrames == 0)
-        throw std::invalid_argument("PushSincResampler needs more than 48 source frames and a destination frame");
+    if (sourceFrames <= SincResampler::KernelSize + SincResampler::KernelSize / 2 || sourceFrames > MaxSamplesPerChannel || destinationFrames == 0 ||
+        destinationFrames > MaxSamplesPerChannel)
+        throw std::invalid_argument("PushSincResampler needs 49 to 3840 source frames and 1 to 3840 destination frames");
     push->vtable = PushSincResamplerVtable + 2;
     push->resampler = nullptr;
     push->floatBuffer = nullptr;
@@ -425,6 +455,9 @@ int APS5_VABI _ZN6webrtc13PushResamplerIsE8ResampleEN3rtc9ArrayViewIKsLln4711EEE
 void APS5_VABI _ZN6webrtc3voe16RemixAndResampleENS_15InterleavedViewIKsEEiPNS_13PushResamplerIsEEPNS_10AudioFrameE_nid_postfix(WebRtcInterleavedView source, int, WebRtcPushResampler16* resampler, WebRtcAudioFrame* frame) {
     if (!resampler || !frame)
         throw std::invalid_argument("voe::RemixAndResample requires a resampler and a frame");
+    if (source.numChannels == 0 || source.numChannels > MaxChannels || source.samplesPerChannel > MaxSamplesPerChannel ||
+        source.size != source.samplesPerChannel * source.numChannels || (source.size != 0 && !source.data))
+        throw std::invalid_argument("voe::RemixAndResample needs 1 to 8 channels, at most 3840 samples per channel and a matching view");
     std::array<std::int16_t, WebRtcAudioFrameMaxDataSizeSamples> downmixed;
     if (source.numChannels > frame->numChannels) {
         const std::size_t frames = source.samplesPerChannel;
