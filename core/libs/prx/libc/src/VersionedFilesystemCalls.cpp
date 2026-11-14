@@ -73,6 +73,24 @@ int StatusType(const char* function, const char* path, int* perms, int* error) {
     return type;
 }
 
+class CopyDescriptor {
+    const FilesystemForwards_nid_no_patch& kernel;
+    int descriptor;
+public:
+    CopyDescriptor(const FilesystemForwards_nid_no_patch& calls, int value) : kernel(calls), descriptor(value) {}
+    ~CopyDescriptor() {
+        if (descriptor < 0) return;
+        try { Close(); } catch (...) {}
+    }
+    CopyDescriptor(const CopyDescriptor&) = delete;
+    CopyDescriptor& operator=(const CopyDescriptor&) = delete;
+    void Close() {
+        const int value = descriptor;
+        descriptor = -1;
+        kernel.close(value);
+    }
+};
+
 int CopyContents(const FilesystemForwards_nid_no_patch& kernel, int source, int target, std::byte* buffer) {
     for (;;) {
         const auto count = kernel.read(source, buffer, CopyBlock);
@@ -186,15 +204,17 @@ int APS5_VABI _ZNSt8__sce_v210filesystem10_Copy_fileEPKcS2__nid_postfix(const ch
     const auto& kernel = Kernel(__func__);
     const int source = kernel.open(from, 0, 0);
     if (source < 0) return ErrorOf(source);
+    CopyDescriptor sourceOwner(kernel, source);
     const int target = kernel.open(to, CopyTargetFlags, CopyTargetMode);
     if (target < 0) {
-        kernel.close(source);
+        sourceOwner.Close();
         return ErrorOf(target);
     }
+    CopyDescriptor targetOwner(kernel, target);
     const std::unique_ptr<std::byte[]> buffer(new (std::nothrow) std::byte[CopyBlock]);
     const int result = buffer ? CopyContents(kernel, source, target, buffer.get()) : OutOfMemory;
-    kernel.close(target);
-    kernel.close(source);
+    targetOwner.Close();
+    sourceOwner.Close();
     return result;
 }
 
