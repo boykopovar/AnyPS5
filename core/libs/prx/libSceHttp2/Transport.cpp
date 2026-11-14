@@ -49,6 +49,9 @@ constexpr int ConnectTimedOut = static_cast<int>(0x817b1221);
 constexpr int ReceiveTimedOut = static_cast<int>(0x817b1222);
 constexpr int SendTimedOut = static_cast<int>(0x817b1223);
 constexpr int ConnectionReset = static_cast<int>(0x80410136);
+constexpr int GoawayReceived = static_cast<int>(0x817b120a);
+constexpr int StreamReset = static_cast<int>(0x817b122a);
+constexpr std::uint32_t MeasuredStreamErrors = 13;
 constexpr std::array<int, 7> HandshakeFailures{
     static_cast<int>(0x8095f00b), static_cast<int>(0x8095f00c), static_cast<int>(0x8095f00d), static_cast<int>(0x8095f010),
     static_cast<int>(0x8095170d), static_cast<int>(0x80951d78), static_cast<int>(0x80410136)};
@@ -353,6 +356,8 @@ struct Request::State {
     std::mutex mutex;
     std::atomic<bool> cancelled{false};
     std::atomic<bool> stopped{false};
+    std::atomic<bool> deleted{false};
+    int streamFailure = 0;
     bool started = false;
     bool callbackActive = false;
     std::unique_lock<std::mutex>* callbackLock = nullptr;
@@ -428,8 +433,6 @@ struct Request::State {
 
     Limit Total() const { return {totalDeadline, TimedOut}; }
 
-    int SendTimeoutCode() const { return url.secure ? 0 : SendTimedOut; }
-
     [[noreturn]] void Raise(int code, const char* message) const {
         Require(code != 0, message);
         throw RequestFailure{code};
@@ -443,6 +446,7 @@ struct Request::State {
             const int result = callback();
             lock.lock();
             callbackActive = false;
+            Require(!deleted.load(), "sceHttp2: request deleted from its own callback; console error mapping is unknown");
             Check(Total());
             return result;
         } catch (...) {
@@ -462,7 +466,7 @@ struct Request::State {
     }
 
     void Check(Limit deadline) const {
-        Require(!stopped.load(), "sceHttp2: request deleted during an operation; console error mapping is unknown");
+        Require(!stopped.load(), "sceHttp2: context terminated during an operation; console error mapping is unknown");
         if (cancelled.load()) Raise(Aborted, "sceHttp2: request cancelled; console error mapping is unknown");
         if (Clock::now() >= deadline.at) Raise(deadline.code, "sceHttp2: request timed out; console error mapping is unknown");
     }
@@ -618,7 +622,7 @@ struct Request::State {
             "sceHttp2: SSL verification options rejected");
         Require(sceSslSetAlpn(ssl, version == 3 ? "h2" : "http/1.1") == 0, "sceHttp2: ALPN setup failed");
         if (settings.sslCallback) Require(sceSslSetVerifyCallback(ssl, Verify_nid_no_patch, this) == 0, "sceHttp2: SSL callback setup failed");
-        const Limit handshakeDeadline{connectDeadline.at, connectDeadline.code == TimedOut ? TimedOut : 0};
+        const auto handshakeDeadline = Deadline(settings.recvTimeout, ReceiveTimedOut);
         for (;;) {
             Check(handshakeDeadline);
             result = sceSslConnect(ssl);
@@ -637,7 +641,7 @@ struct Request::State {
     int TryRead(void* data, std::size_t size) {
         const auto count = url.secure ? SslRead_nid_no_patch(ssl, data, size, 0) : sceNetRecv(socket, data, size, 0);
         if (!url.secure && count < 0 && *sceNetErrnoLoc() == 35) return WantRead;
-        if (!url.secure && count == ConnectionReset) Raise(ConnectionReset, "sceHttp2: read failed; console error mapping is unknown");
+        if (count == ConnectionReset) Raise(!url.secure ? ConnectionReset : ready ? 0 : ConnectionEnded, "sceHttp2: TLS reset after the response headers; console error mapping is unknown");
         Require((count >= 0 && count <= std::numeric_limits<int>::max()) || count == WantRead || count == WantWrite,
             "sceHttp2: read failed; console error mapping is unknown");
         return static_cast<int>(count);
@@ -810,7 +814,7 @@ struct Request::State {
         }
         const std::array<std::pair<const void*, std::size_t>, 4> blocks{{
             {header.data(), header.size()}, {prefix.data(), prefix.size()}, {data, size}, {"\r\n0\r\n\r\n", chunkUpload ? 7u : 0u}}};
-        const auto deadline = Deadline(settings.sendTimeout, SendTimeoutCode());
+        const auto deadline = Deadline(settings.sendTimeout, SendTimedOut);
         std::size_t block = 0, offset = 0;
         while (!ready) {
             while (block < blocks.size() && offset == blocks[block].second) { ++block; offset = 0; }
@@ -846,7 +850,7 @@ struct Request::State {
         if (chunked) {
             if (chunkTerminator) { Require(Line(deadline).empty(), "sceHttp2: invalid chunk terminator"); chunkTerminator = false; }
             if (!chunkRemaining) {
-                const auto line = Line(deadline);
+                const auto line = Line(deadline, ConnectionEnded);
                 const auto extension = line.find(';');
                 auto digits = std::string_view(line).substr(0, extension);
                 if (extension != std::string::npos) {
@@ -873,7 +877,8 @@ struct Request::State {
             size = static_cast<std::size_t>(std::min<std::uint64_t>(size, chunkRemaining));
         } else if (hasLength) size = static_cast<std::size_t>(std::min<std::uint64_t>(size, remaining));
         const int count = PendingRead(output, size, deadline);
-        if (count == 0 && hasLength && !url.secure) {
+        if (count == 0 && chunked) Raise(ConnectionEnded, "sceHttp2: truncated chunk");
+        if (count == 0 && hasLength) {
             ended = true;
             return 0;
         }
@@ -945,10 +950,22 @@ struct Request::State {
     static int Frame(nghttp2_session*, const nghttp2_frame* frame, void* data) {
         auto& state = *static_cast<State*>(data);
         return Callback(state, [&] {
-            if (frame->hd.type == NGHTTP2_GOAWAY)
-                Require(frame->goaway.error_code == NGHTTP2_NO_ERROR && frame->goaway.last_stream_id >= state.stream,
-                    "sceHttp2: GOAWAY rejected request");
+            if (frame->hd.type == NGHTTP2_GOAWAY) {
+                const auto error = frame->goaway.error_code;
+                const bool graceful = error == NGHTTP2_NO_ERROR && frame->goaway.last_stream_id >= state.stream;
+                if (!state.ready && error <= MeasuredStreamErrors && (graceful || frame->goaway.last_stream_id < state.stream))
+                    state.Raise(GoawayReceived + static_cast<int>(error), "sceHttp2: GOAWAY");
+                Require(graceful, "sceHttp2: GOAWAY rejected request");
+            }
             if (frame->hd.stream_id != state.stream) return;
+            if (frame->hd.type == NGHTTP2_RST_STREAM && !state.ended) {
+                const auto error = frame->rst_stream.error_code;
+                Require(error <= MeasuredStreamErrors && (!state.ready || error == NGHTTP2_CANCEL),
+                    "sceHttp2: RST_STREAM; console error mapping is unknown");
+                if (!state.ready) state.Raise(StreamReset + static_cast<int>(error), "sceHttp2: RST_STREAM");
+                state.streamFailure = StreamReset + static_cast<int>(error);
+                return;
+            }
             if (frame->hd.type == NGHTTP2_HEADERS && state.trailerBlock) {
                 state.trailerHeaders.clear();
                 for (const auto& [key, value] : state.blockHeaders) state.trailerHeaders += key + ": " + value + "\r\n";
@@ -989,7 +1006,7 @@ struct Request::State {
     static int End(nghttp2_session*, std::int32_t streamId, std::uint32_t error, void* data) {
         auto& state = *static_cast<State*>(data);
         return Callback(state, [&] {
-            if (streamId != state.stream) return;
+            if (streamId != state.stream || state.streamFailure) return;
             Require(error == NGHTTP2_NO_ERROR && state.ended, "sceHttp2: stream failed or response is incomplete");
             state.ended = true;
         });
@@ -1055,7 +1072,7 @@ struct Request::State {
     }
 
     void Pump(Limit deadline) {
-        Flush(Earlier(deadline, Deadline(settings.sendTimeout, SendTimeoutCode())));
+        Flush(Earlier(deadline, Deadline(settings.sendTimeout, SendTimedOut)));
         Receive(deadline);
     }
 
@@ -1063,7 +1080,7 @@ struct Request::State {
         std::array<std::uint8_t, 16384> buffer;
         {
             const int size = RawRead(buffer.data(), buffer.size(), deadline);
-            Require(size > 0, "sceHttp2: TLS read failed or response truncated; console error mapping is unknown");
+            if (size == 0) Raise(ready ? ConnectionReset : ConnectionEnded, "sceHttp2: HTTP/2 connection ended");
             const auto consumed = nghttp2_session_mem_recv2(session, buffer.data(), static_cast<std::size_t>(size));
             if (callbackFailure) std::rethrow_exception(callbackFailure);
             CheckNg(static_cast<int>(consumed));
@@ -1115,11 +1132,12 @@ int Request::Send(const void* data, std::size_t size) {
             if (state->version < 3) state->SendHttp1(payload, payloadSize);
             else {
                 state->Setup(payload, payloadSize);
-                const auto sendDeadline = state->Deadline(state->settings.sendTimeout, state->SendTimeoutCode());
+                const auto sendDeadline = Earlier(state->Deadline(state->settings.sendTimeout, SendTimedOut),
+                    state->Deadline(state->settings.recvTimeout, ReceiveTimedOut));
                 auto receiveDeadline = sendDeadline;
                 bool uploaded = false;
                 for (;;) {
-                    state->Flush(uploaded ? state->Deadline(state->settings.sendTimeout, state->SendTimeoutCode()) : sendDeadline);
+                    state->Flush(uploaded ? state->Deadline(state->settings.sendTimeout, SendTimedOut) : sendDeadline);
                     if (!uploaded && state->uploadOffset == payloadSize) {
                         uploaded = true;
                         receiveDeadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
@@ -1173,6 +1191,7 @@ int Request::Send(const void* data, std::size_t size) {
             state->upload = nullptr;
             state->uploadSize = state->uploadOffset = 0;
             state->callbackFailure = nullptr;
+            state->streamFailure = 0;
             state->stream = -1;
             state->pending.clear();
             state->pendingOffset = 0;
@@ -1208,7 +1227,8 @@ int Request::Read(void* data, std::size_t size) {
         }
         const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
         state->Check(deadline);
-        while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
+        while (!state->ended && !state->streamFailure && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
+        if (state->streamFailure) state->Raise(state->streamFailure, "sceHttp2: RST_STREAM");
         const auto count = std::min({size, state->body.size() - state->bodyOffset, static_cast<std::size_t>(std::numeric_limits<int>::max())});
         state->Check(deadline);
         if (count) std::memcpy(data, state->body.data() + state->bodyOffset, count);
@@ -1281,8 +1301,9 @@ int Request::TrailingHeaders(char** header, std::size_t* size) {
 
 void Request::Cancel() { state->cancelled.store(true); }
 
-void Request::Stop() {
-    state->stopped.store(true);
+void Request::Stop(bool terminated) {
+    state->stopped.store(terminated);
+    state->deleted.store(true);
     Cancel();
     std::lock_guard lock(state->mutex);
     state->Close();
