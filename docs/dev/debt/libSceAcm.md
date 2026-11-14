@@ -10,7 +10,8 @@
 
 ### Unknown function info
 
-- [sceAcmBatchStartBuffer, sceAcmBatchStartBuffers and sceAcmContextCreate](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - returning `0x81940006` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
+- [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) - in Firmware 13.42, sceAcmBatchStartBuffers requires batch_error to be null returning SCE_ACM_ERROR_BAD_POINTER when non-null (sceAcmBatchStartBuffer has no checks of its own and passes batch_error unchanged to the same combined test), and stores directly through context and batch pointers after null checks (read from disassembly, not measured on a console), so the console faults on an inaccessible non-null pointer; AnyPS5 returns SCE_ACM_ERROR_BAD_POINTER instead.
+
 - [Additional ACM exports](../../../core/libs/prx/libSceAcm/Export.cpp) - the eleven name/NID pairs below are defined exports in the [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl). Their ABIs and behaviour are unknown. Parameterless `int` declarations are import-resolution placeholders, not established signatures; every call throws `NotImplemented_nid_no_patch`. No audio-chain, reverb or telemetry behaviour is implemented.
 
 | Name | NID |

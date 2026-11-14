@@ -220,19 +220,12 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput_2() {
 int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_commands, size_t batch_size, AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_commands;
     (void)batch_size;
-    if (!batch) return SCE_ACM_ERROR_BAD_POINTER;
+    if (!batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
     if (context == 0) return SCE_ACM_ERROR_BAD_CONTEXT;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    if (batch_error) {
-        AcmBatchError err{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(batch_error, &err, sizeof(err));
-        errno = savedErrno;
-        if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
-    }
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
     errno = savedErrno;
@@ -243,19 +236,12 @@ int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_com
 int APS5_VABI sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_count, const AcmBatchInfo* const batch_info[], AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_info_count;
     (void)batch_info;
-    if (!batch) return SCE_ACM_ERROR_BAD_POINTER;
+    if (!batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
     if (context == 0) return SCE_ACM_ERROR_BAD_CONTEXT;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    if (batch_error) {
-        AcmBatchError err{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(batch_error, &err, sizeof(err));
-        errno = savedErrno;
-        if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
-    }
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
     errno = savedErrno;
