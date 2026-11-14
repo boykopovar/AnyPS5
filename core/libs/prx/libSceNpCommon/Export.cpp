@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -72,7 +73,14 @@ extern "C" {
 
 int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2) {
     if (!onlineId1 || !onlineId2) return NP_ERROR_INVALID_ARGUMENT;
-    if (std::strncmp(onlineId1->data, onlineId2->data, ONLINE_ID_MAX_LENGTH) != 0) return NP_UTIL_ERROR_NOT_MATCH;
+    NpOnlineId localId1{};
+    NpOnlineId localId2{};
+    const int savedErrno = errno;
+    const bool copied1 = GuestCopyIn_nid_no_patch(&localId1, onlineId1, sizeof(localId1));
+    const bool copied2 = GuestCopyIn_nid_no_patch(&localId2, onlineId2, sizeof(localId2));
+    errno = savedErrno;
+    if (!copied1 || !copied2) return NP_ERROR_INVALID_ARGUMENT;
+    if (std::strncmp(localId1.data, localId2.data, ONLINE_ID_MAX_LENGTH) != 0) return NP_UTIL_ERROR_NOT_MATCH;
     return 0;
 }
 
