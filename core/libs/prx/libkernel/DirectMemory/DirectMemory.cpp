@@ -1460,6 +1460,7 @@ struct GuestImageOverlap {
 struct GuestImageSearch {
     std::uintptr_t start = 0;
     std::uintptr_t end = 0;
+    std::uintptr_t requested = 0;
     std::uintptr_t pageSize = 0;
     bool first = true;
     std::vector<GuestImageOverlap> images;
@@ -1478,7 +1479,7 @@ static int FindImagesOverlapping(dl_phdr_info* image, std::size_t, void* data) {
         const auto end = (image->dlpi_addr + header.p_vaddr + header.p_memsz + search.pageSize - 1) & ~(search.pageSize - 1);
         if (search.end <= start || search.start >= end) continue;
         overlaps = true;
-        if (search.start >= start) overlap.containsStart = true;
+        if (search.requested >= start && search.requested < end) overlap.containsStart = true;
     }
     if (overlaps && !main) search.images.push_back(overlap);
     return 0;
@@ -1562,7 +1563,7 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     }
 #else
     mutation.RegisterMainImage();
-    GuestImageSearch search{.start = first, .end = end, .pageSize = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE))};
+    GuestImageSearch search{.start = first, .end = end, .requested = address, .pageSize = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE))};
     dl_iterate_phdr(FindImagesOverlapping, &search);
     for (const auto& image : search.images) {
         if (image.guestModule) mutation.RegisterImage(reinterpret_cast<const void*>(image.base));
