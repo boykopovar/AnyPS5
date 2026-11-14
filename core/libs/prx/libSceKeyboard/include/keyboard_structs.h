@@ -29,6 +29,14 @@ constexpr std::uint32_t KEYBOARD_MOD_RIGHT_SHIFT = 32;
 constexpr std::uint16_t KEYBOARD_KEY_LEFT_CTRL = 0xe0;
 constexpr std::uint16_t KEYBOARD_KEY_RIGHT_GUI = 0xe7;
 
+struct KeyboardDeviceInfo {
+    std::uint8_t data[168];
+};
+
+struct KeyboardProcessFocus {
+    std::uint32_t focus;
+};
+
 static_assert(sizeof(KeyboardData) == 96);
 static_assert(alignof(KeyboardData) == 8);
 static_assert(offsetof(KeyboardData, timestamp) == 0);
@@ -42,5 +50,6 @@ static_assert(offsetof(KeyboardData, reserve2) == 64);
 static_assert(sizeof(KeyboardCharData) == 20);
 static_assert(offsetof(KeyboardCharData, length) == 4);
 static_assert(offsetof(KeyboardCharData, char_code) == 8);
+static_assert(sizeof(KeyboardDeviceInfo) == 168);
 
 #endif

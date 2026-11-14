@@ -24,6 +24,9 @@ int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId);
 int DisconnectAll();
 int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index);
 int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode, KeyboardCharData* charData);
+int SetProcessPrivilege(std::uint8_t privilege);
+int SetProcessFocus(const KeyboardProcessFocus* focus);
+int GetDeviceInfo(std::int32_t deviceId, KeyboardDeviceInfo* info);
 void Publish(const KeyboardInputEvent& event);
 }
 

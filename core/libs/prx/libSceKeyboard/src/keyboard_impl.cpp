@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <mutex>
 
 namespace {
@@ -20,6 +21,8 @@ std::uint32_t led = 0;
 std::uint32_t modifiers = 0;
 std::array<std::uint16_t, KEYBOARD_MAX_KEYCODES> keys{};
 int keyCount = 0;
+std::uint8_t processPrivilege = 0;
+std::uint32_t processFocus = 0;
 
 constexpr char US_NORMAL[] = "1234567890\n\0\b\t -=[]\\\\;'`,./";
 constexpr char US_SHIFTED[] = "!@#$%^&*()\n\0\b\t _+{}||:\"~<>?";
@@ -130,6 +133,8 @@ int Open(int userId, std::int32_t type, std::int32_t index) {
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
     opened = true;
     openedUser = userId;
+    processPrivilege = 0;
+    processFocus = 0;
     clearKeys();
     head = 0;
     count = 0;
@@ -143,6 +148,8 @@ int Close(std::int32_t handle) {
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     opened = false;
     openedUser = 0;
+    processPrivilege = 0;
+    processFocus = 0;
     clearKeys();
     head = 0;
     count = 0;
@@ -220,6 +227,32 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
     charData->processed = converted != 0;
     charData->length = charData->processed ? 1 : 0;
     return KEYBOARD_OK;
+}
+
+int SetProcessPrivilege(std::uint8_t privilege) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    processPrivilege = privilege;
+    return KEYBOARD_OK;
+}
+
+int SetProcessFocus(const KeyboardProcessFocus* focus) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (focus == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
+    processFocus = focus->focus;
+    return KEYBOARD_OK;
+}
+
+int GetDeviceInfo(std::int32_t deviceId, KeyboardDeviceInfo* info) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (info == nullptr || deviceId != KEYBOARD_DEVICE_ID) return KEYBOARD_ERROR_INVALID_ARG;
+    KeyboardDeviceInfo deviceRecord{};
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(info, &deviceRecord, sizeof(deviceRecord));
+    errno = savedErrno;
+    return written ? KEYBOARD_OK : KEYBOARD_ERROR_INVALID_ARG;
 }
 
 void Publish(const KeyboardInputEvent& event) {

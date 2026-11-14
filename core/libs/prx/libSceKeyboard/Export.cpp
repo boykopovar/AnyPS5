@@ -72,9 +72,7 @@ int APS5_VABI sceKeyboardDisconnectPort(std::int32_t first, std::int32_t second)
 }
 
 int APS5_VABI sceKeyboardGetDeviceInfo(std::int32_t deviceId, KeyboardDeviceInfo* info) {
-    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::GetDeviceInfo(deviceId, info);
 }
 
 int APS5_VABI sceKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
@@ -87,17 +85,12 @@ int APS5_VABI sceKeyboardMbusInit(void) {
     return 0;
 }
 
-
 int APS5_VABI sceKeyboardSetProcessFocus(const KeyboardProcessFocus* focus) {
-    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::SetProcessFocus(focus);
 }
 
 int APS5_VABI sceKeyboardSetProcessPrivilege(std::uint8_t privilege) {
-    if (!Keyboard::IsInitialized()) return KEYBOARD_ERROR_NOT_INITIALIZED;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::SetProcessPrivilege(privilege);
 }
 
 int APS5_VABI sceDbgKeyboardClose(int32_t handle) {

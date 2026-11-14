@@ -1,11 +1,8 @@
 #pragma once
 
 #include "prx/libSceKeyboard/include/PadEmulate.hpp"
+#include "prx/libSceKeyboard/include/keyboard_structs.h"
 #include "SceTypes.hpp"
-
-struct KeyboardDeviceInfo;
-
-struct KeyboardProcessFocus;
 
 extern "C" {
 
