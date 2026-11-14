@@ -253,6 +253,16 @@ int APS5_VABI _Mtx_lock_nid_postfix(void** handle) {
 }
 
 int APS5_VABI _Mtx_trylock_nid_postfix(void** handle) {
+    if (handle && !*handle) {
+        auto* created = new (std::nothrow) DinkumwareMutex();
+        if (!created)
+            return threadNomem;
+        void* expected = nullptr;
+        if (!__atomic_compare_exchange_n(handle, &expected, static_cast<void*>(created), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+            delete created;
+    }
+    if (handle && *handle && static_cast<const DinkumwareMutex*>(*handle)->tag != mutexTag)
+        return threadError;
     auto* mutex = ResolveMutex(handle, "_Mtx_trylock");
     const auto self = std::this_thread::get_id();
     if (mutex->owner.load(std::memory_order_acquire) == self) {
