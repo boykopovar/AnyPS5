@@ -84,6 +84,9 @@ std::int32_t InitializeFresh(std::vector<std::uint8_t>& memory, const VrTracker2
 void CheckInitializeValidation(std::vector<std::uint8_t>& memory) {
     const auto valid = TrackerParameter(memory);
     Require(sceVrTracker2Initialize(nullptr) == InvalidArgument, "initialize null");
+    errno = 70;
+    Require(sceVrTracker2Initialize(reinterpret_cast<const VrTracker2InitializeParameter*>(0x10)) == InvalidArgument, "initialize unmapped");
+    Require(errno == 70, "initialize unmapped errno");
     for (const std::uint32_t size : {0u, 71u, 73u}) {
         auto parameter = valid;
         parameter.size = size;
@@ -218,6 +221,9 @@ int main() {
     Require(VrTracker2ClearWord(word.data()) == 0, "clear word return");
     Require(AllEqual(word.data(), word.data() + 4, 0) && AllEqual(word.data() + 4, word.data() + 32, 0xAA), "clear word clears 4 bytes");
     Require(Throws([] { VrTracker2ClearWord(nullptr); }), "clear word null");
+    errno = 75;
+    Require(Throws([] { VrTracker2ClearWord(reinterpret_cast<void*>(0x10)); }), "clear word unwritable");
+    Require(errno == 75, "clear word unwritable errno");
 
     std::array<std::uint8_t, 40> parameter{};
     parameter[0] = 0x20;
@@ -233,6 +239,9 @@ int main() {
     errno = 71;
     Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), reinterpret_cast<VrTracker2MemoryRequirement*>(0x10)) == InvalidArgument, "query unwritable requirement");
     Require(errno == 71, "errno modified by unwritable requirement check");
+    errno = 72;
+    Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(0x10), reinterpret_cast<VrTracker2MemoryRequirement*>(requirement.data())) == InvalidArgument, "query unmapped parameter");
+    Require(errno == 72, "errno modified by unmapped parameter check");
     for (std::size_t offset = 4; offset < 32; ++offset) {
         auto rejected = parameter;
         rejected[offset] = 1;

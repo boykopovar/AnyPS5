@@ -10,6 +10,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestTime.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
@@ -126,6 +127,10 @@ static std::uint64_t GetStartNanos() {
 }
 
 static const std::uint64_t g_processStart = GetStartNanos();
+static const bool g_clockSourceInstalled = [] {
+    LibcSetProcessTimeSource_nid_no_patch(&sceKernelGetProcessTime);
+    return true;
+}();
 
 #ifdef _WIN32
 // Every relative wait in the process (winpthreads nanosleep, std::condition_variable::wait_for, the
@@ -496,10 +501,24 @@ static bool ProcessCpuResolutionNanos(std::uint64_t* nanos) {
 }
 #endif
 
+static constexpr int SLOW_CLOCK_ID = 20;
+
 static int ReadClock(int clockId, KernelTimespec* tp) {
     if (clockId == 21) {
         if (ReadClock(2, tp) != 0) return -1;
         tp->tv_nsec -= tp->tv_nsec % 1000;
+        return 0;
+    }
+    if (clockId == SLOW_CLOCK_ID) {
+        KernelTimespec monotonic{};
+        if (ReadClock(4, &monotonic) != 0) return -1;
+        constexpr std::int64_t rateDivisor = 64;
+        constexpr std::int64_t ticksPerSecond = 32768;
+        constexpr std::int64_t monotonicTicksPerSecond = ticksPerSecond / rateDivisor;
+        const auto ticks = (monotonic.tv_sec % rateDivisor) * monotonicTicksPerSecond
+            + monotonic.tv_nsec * monotonicTicksPerSecond / 1000000000;
+        tp->tv_sec = monotonic.tv_sec / rateDivisor;
+        tp->tv_nsec = (ticks * 1000000 / ticksPerSecond) * 1000;
         return 0;
     }
     if (IsCpuClock(clockId)) {

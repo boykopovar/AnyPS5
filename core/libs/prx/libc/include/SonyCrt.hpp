@@ -56,8 +56,8 @@ inline void SonyRefreshHostZone_nid_no_patch() {
 
 inline SonyHostTimeZone SonyHostZoneAt_nid_no_patch(std::int64_t utcTime) {
     std::tm local{};
-#ifdef _WIN32
     constexpr std::int64_t cycleSeconds = 146097LL * 86400LL;
+#ifdef _WIN32
     constexpr std::int64_t lastHostSecond = 32535215999LL;
     const std::int64_t cycles = utcTime >= 0 && utcTime <= lastHostSecond ? 0 : (utcTime >= 0 ? utcTime / cycleSeconds : -((-(utcTime + 1)) / cycleSeconds + 1));
     const std::time_t t = static_cast<std::time_t>(utcTime - cycles * cycleSeconds);
@@ -69,9 +69,13 @@ inline SonyHostTimeZone SonyHostZoneAt_nid_no_patch(std::int64_t utcTime) {
     _get_dstbias(&daylightBias);
     return {-static_cast<std::int64_t>(standardBias), local.tm_isdst > 0 ? -static_cast<std::int64_t>(daylightBias) : 0};
 #else
-    const std::time_t t = static_cast<std::time_t>(utcTime);
+    std::time_t t = static_cast<std::time_t>(utcTime);
     ::tzset();
-    if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    if (localtime_r(&t, &local) == nullptr) {
+        const std::int64_t offset = utcTime % cycleSeconds;
+        t = static_cast<std::time_t>(offset < 0 ? offset + cycleSeconds : offset);
+        if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    }
     const std::int64_t daylight = local.tm_isdst > 0 ? static_cast<std::int64_t>(local.tm_gmtoff) + ::timezone : 0;
     return {static_cast<std::int64_t>(local.tm_gmtoff) - daylight, daylight};
 #endif
@@ -153,44 +157,46 @@ inline char* SonyStrtokS(char* str, std::size_t* remaining, const char* delimite
     return token;
 }
 
-inline int SonyFormatAsctime(char* buffer, std::size_t size, const GuestTm& time) {
+inline int SonyAsctimeViolation(const char* message, char* buffer) {
+    if (buffer) buffer[0] = '\0';
+    SonyInvokeConstraintHandler(message, nullptr, EINVAL);
+    return EINVAL;
+}
+
+inline bool SonyAsctimeDestination(const char* buffer, std::size_t size) {
+    return buffer && size != 0 && size <= (SIZE_MAX >> 3);
+}
+
+inline int SonyFormatAsctime(char* buffer, std::size_t size, const GuestTm& time, const char* badArgument) {
     static const char* const days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     static const char* const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    if (!buffer || size < 26) return EINVAL;
     const std::int64_t year = std::int64_t{time.tm_year} + 1900;
-    if (time.tm_wday < 0 || time.tm_wday > 6 || time.tm_mon < 0 || time.tm_mon > 11 ||
+    if (size < 26 || time.tm_wday < 0 || time.tm_wday > 6 || time.tm_mon < 0 || time.tm_mon > 11 ||
         time.tm_mday < 1 || time.tm_mday > 31 || time.tm_hour < 0 || time.tm_hour > 23 ||
         time.tm_min < 0 || time.tm_min > 59 || time.tm_sec < 0 || time.tm_sec > 60 ||
-        year < 0 || year > 9999) {
-        buffer[0] = '\0';
-        return EINVAL;
+        time.tm_yday < 0 || time.tm_yday > 365 || year < 0 || year > 9999) {
+        return SonyAsctimeViolation(badArgument, buffer);
     }
-    std::snprintf(buffer, size, "%.3s %.3s %2d %.2d:%.2d:%.2d %4d\n", days[time.tm_wday], months[time.tm_mon],
+    std::snprintf(buffer, 26, "%.3s %.3s %2d %.2d:%.2d:%.2d %04d\n", days[time.tm_wday], months[time.tm_mon],
         time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec, static_cast<int>(year));
     return 0;
 }
 
 inline int SonyCtimeS(char* buffer, std::size_t size, const std::int64_t* time) {
-    if (!buffer || size < 26) return EINVAL;
-    if (!time) {
-        buffer[0] = '\0';
-        return EINVAL;
-    }
+    if (!SonyAsctimeDestination(buffer, size)) return SonyAsctimeViolation("ctime_s: bad destination argument", nullptr);
+    if (size < 26 || !time) return SonyAsctimeViolation("ctime_s: bad argument", buffer);
     GuestTm parts{};
     if (!localtime_s_nid_postfix(time, &parts)) {
         buffer[0] = '\0';
         return EINVAL;
     }
-    return SonyFormatAsctime(buffer, size, parts);
+    return SonyFormatAsctime(buffer, size, parts, "ctime_s: bad argument");
 }
 
 inline int SonyAsctimeS(char* buffer, std::size_t size, const GuestTm* time) {
-    if (!buffer || size < 26) return EINVAL;
-    if (!time) {
-        buffer[0] = '\0';
-        return EINVAL;
-    }
-    return SonyFormatAsctime(buffer, size, *time);
+    if (!SonyAsctimeDestination(buffer, size)) return SonyAsctimeViolation("asctime_s: bad destination argument", nullptr);
+    if (!time) return SonyAsctimeViolation("asctime_s: bad argument", buffer);
+    return SonyFormatAsctime(buffer, size, *time, "asctime_s: bad argument");
 }
 
 constexpr std::size_t SonyRsizeMax = (std::size_t{1} << 61) - 1;
