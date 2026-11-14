@@ -374,6 +374,37 @@ public:
         return created;
     }
 
+    Allocation allocateReinterpret(VkFormat format) {
+        Allocation created;
+        try {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = format;
+            info.extent = {target.extent.width, target.extent.height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = static_cast<VkSampleCountFlagBits>(target.samples);
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &created.image), "vkCreateImage multisampled reinterpretation");
+            VkMemoryRequirements requirements{};
+            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, created.image, &requirements);
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            created.bytes = requirements.size;
+            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            created.memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory multisampled reinterpretation");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, created.image, created.memory, 0), "vkBindImageMemory multisampled reinterpretation");
+            recordCommands(context, [&](VkCommandBuffer commands, Recorder*) { recordToGeneral(commands, created.image); });
+        } catch (...) {
+            destroy(created);
+            throw;
+        }
+        return created;
+    }
+
     void destroy(const Allocation& allocation) noexcept {
         if (allocation.view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, allocation.view, nullptr);
         if (allocation.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, allocation.image, nullptr);
@@ -583,6 +614,39 @@ public:
         return {shared_from_this(), texture.get()};
     }
 
+    bool Reinterpretable(VkFormat format) {
+        if (format == VK_FORMAT_UNDEFINED || !sampleable) return false;
+        const auto known = reinterpretable.find(format);
+        if (known != reinterpretable.end()) return known->second;
+        VkImageFormatProperties supported{};
+        const bool accepted = context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &supported) == VK_SUCCESS && (supported.sampleCounts & static_cast<VkSampleCountFlagBits>(target.samples)) != 0;
+        reinterpretable.emplace(format, accepted);
+        return accepted;
+    }
+
+    std::shared_ptr<Texture> SampledAs(VkFormat format, VkComponentMapping components, VkImageViewType viewType) {
+        const auto source = Sampled({}, viewType);
+        auto& copy = reinterpretCopies[format];
+        if (copy.allocation.image == VK_NULL_HANDLE) copy.allocation = allocateReinterpret(format);
+        recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            VkImageCopy region{};
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.dstSubresource = region.srcSubresource;
+            region.extent = {target.extent.width, target.extent.height, 1};
+            context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, image, source->Layout(), copy.allocation.image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+            if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+        });
+        const std::array<std::uint32_t, 5> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a), static_cast<std::uint32_t>(viewType)};
+        auto& texture = copy.textures[key];
+        if (texture == nullptr) {
+            texture = std::make_shared<Texture>(context, copy.allocation.image, format, VK_IMAGE_ASPECT_COLOR_BIT, components, viewType);
+            texture->MarkRefreshedPerUse();
+        }
+        return {shared_from_this(), texture.get()};
+    }
+
     std::shared_ptr<Texture> FirstSample(VkComponentMapping components) {
         const auto source = Sampled({});
         if (firstSampleCopy == nullptr) firstSampleCopy = std::make_unique<FirstSampleCopy>(context, target.format, target.extent);
@@ -722,6 +786,12 @@ private:
     std::vector<std::shared_ptr<Texture>> retiredTextures;
     std::unique_ptr<FirstSampleCopy> firstSampleCopy;
     std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> firstSampleTextures;
+    struct ReinterpretCopy {
+        Allocation allocation;
+        std::map<std::array<std::uint32_t, 5>, std::shared_ptr<Texture>> textures;
+    };
+    std::map<VkFormat, ReinterpretCopy> reinterpretCopies;
+    std::map<VkFormat, bool> reinterpretable;
     std::vector<GuestMemory::UnchangedQuery> dccRanges;
     struct DccCopy {
         bool compared = false;
@@ -913,6 +983,11 @@ private:
         retiredTextures.clear();
         firstSampleTextures.clear();
         firstSampleCopy.reset();
+        for (auto& [format, copy] : reinterpretCopies) {
+            copy.textures.clear();
+            destroy(copy.allocation);
+        }
+        reinterpretCopies.clear();
         for (const auto& [format, resolvePass] : resolvePasses) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
         if (uploadView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uploadView, nullptr);
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
@@ -1599,6 +1674,7 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
         const bool sameShape = rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0;
         if (sameShape && rendered.format == format) return target->Sampled(components, viewType);
         if (sameShape && redBlueSwapped(rendered.format, format)) return target->Sampled(swapRedBlue(components), viewType);
+        if (sameShape && rendered.elementBytes == BytesPerElement(resource.format) && target->Reinterpretable(format)) return target->SampledAs(format, components, viewType);
         other = target.get();
     }
     if (other == nullptr) {
