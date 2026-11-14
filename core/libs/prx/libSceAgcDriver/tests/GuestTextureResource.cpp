@@ -494,7 +494,8 @@ void RunGuestTextureResourceTests() {
     Fields singleSampleType = multisampled;
     singleSampleType.lastLevel = 0;
     singleSampleType.maxMip = 0;
-    rejectFields(singleSampleType, "same sample count");
+    const auto oneFragment = DecodeTextureResource(pack(singleSampleType));
+    Require(oneFragment.dimension == TextureDimension::k2D && oneFragment.samples == 1 && oneFragment.width == 297 && oneFragment.height == 297 && oneFragment.mipCount == 1, "a one-fragment multisampled descriptor did not decode as the single-sample 2D image it describes");
     Fields offsetLevel = multisampled;
     offsetLevel.baseLevel = 1;
     rejectFields(offsetLevel, "same sample count");

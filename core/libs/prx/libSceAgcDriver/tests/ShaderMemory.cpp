@@ -12101,6 +12101,23 @@ void verifyMultisamplePlaneReadMode() {
     refused(other, "a 2D storage access to a 2D MSAA T# was accepted");
 }
 
+void verifyOneFragmentMultisampleRead() {
+    using namespace ShaderRecompiler;
+    const DescriptorValue descriptor{{0x148e2800u, 0xc1400000u, 0x010dc1dfu, 0xe1800204u, 0u, 0x00700000u, 0u, 0u}, 8u};
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    for (const bool faceCompatible : {true, false}) {
+        image.cubeFaceCompatible = faceCompatible;
+        const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+        require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].dimension == RdnaImageDimension::Dim2D, "a 2D read of a one-fragment 2D MSAA T# (PPSA34299's) did not select a 2D runtime mode");
+    }
+    auto multisample = image;
+    multisample.dimension = RdnaImageDimension::Dim2DMsaa;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(multisample, descriptor, ResourceMaterializer::RuntimeImageModes(multisample))); }, "one-fragment multisampled descriptor is not implemented", "a multisample read of a one-fragment 2D MSAA T# was accepted");
+}
+
 void verifyVolumeBiasTableRejection() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -12686,6 +12703,7 @@ int main(int argc, char** argv) {
         verifyVolumeArrayLoadMode();
         verifyArrayVolumeStoreMode();
         verifyMultisamplePlaneReadMode();
+        verifyOneFragmentMultisampleRead();
         verifyVolumeBiasTableRejection();
         verifySamplerTableDeduplication();
         verifyDynamicStorageMipChain();
