@@ -482,6 +482,12 @@ static void CheckGlyphScale(FontHandle font, const FontMemory* memory, float exp
     FontGlyph glyph = nullptr;
     Require(sceFontGenerateCharGlyph(font, 'A', nullptr, &glyph) == SCE_FONT_OK && glyph != nullptr);
     Require(sceFontGlyphGetScalePixel(glyph, &width, &height) == SCE_FONT_OK);
+    errno = 71;
+    Require(sceFontGlyphGetScalePixel(glyph, reinterpret_cast<float*>(0x10), &height) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGlyphGetScalePixel(glyph, &width, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     if (width != expectedW || height != expectedH) {
         std::fprintf(stderr, "Generated glyph scale %.3f x %.3f differs from font scale %.3f x %.3f\n", width, height, expectedW, expectedH);
     }
