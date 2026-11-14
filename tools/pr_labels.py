@@ -75,7 +75,7 @@ def has_numbers(body):
         if not text.startswith("{"):
             continue
         try:
-            summary = json.loads(text)
+            summary = json.loads(text, object_pairs_hook=performance_compare.unique_json_object)
             if isinstance(summary, dict):
                 commits.add(performance_compare.validate(summary)["commit"])
         except (ValueError, RecursionError):
