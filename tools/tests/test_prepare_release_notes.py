@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import prepare_release_notes
@@ -219,6 +220,35 @@ class PrepareDestinationTests(ReleaseNotesCase):
         prepare_release_notes.prepare_notes(self.source, link, self.full)
         self.assertTrue(link.is_symlink())
         self.assertEqual((self.root / "missing.md").read_bytes(), b"## New Contributors\n* a\n")
+
+
+class PrepareFailureCleanupTests(ReleaseNotesCase):
+    def setUp(self):
+        super().setUp()
+        self.out = self.root / "out"
+        self.out.mkdir()
+        self.body = self.out / "body.md"
+        self.full = self.out / "full.md"
+        self.body.write_bytes(b"previous body")
+        self.full.write_bytes(b"previous full")
+
+    def assertOutputsKept(self):
+        self.assertEqual(self.body.read_bytes(), b"previous body")
+        self.assertEqual(self.full.read_bytes(), b"previous full")
+        self.assertEqual(sorted(path.name for path in self.out.iterdir()), ["body.md", "full.md"])
+
+    def test_encoding_failure_while_staging_keeps_outputs_and_removes_temporaries(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* \ud800\n"}))
+        with self.assertRaises(ValueError):
+            prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertOutputsKept()
+
+    def test_failed_replace_keeps_outputs_and_removes_temporaries(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n* a\n"}))
+        with patch.object(prepare_release_notes.os, "replace", side_effect=OSError("replace refused")), \
+                self.assertRaisesRegex(OSError, "replace refused"):
+            prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertOutputsKept()
 
 
 class ReleaseBodyTests(unittest.TestCase):
