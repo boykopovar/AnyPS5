@@ -738,11 +738,16 @@ int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
         GuestTm early{};
         GuestTm late{};
         constexpr std::int64_t searchSeconds = 12 * 2629746 + SECONDS_PER_DAY;
-        if (utcCalendarFields(local - searchSeconds, early) && utcCalendarFields(local + searchSeconds, late)) {
+        constexpr std::int64_t cycleSeconds = 146097 * SECONDS_PER_DAY;
+        const auto searchable = [&](std::int64_t time) {
+            return utcCalendarFields(time - searchSeconds, early) && utcCalendarFields(time + searchSeconds, late);
+        };
+        const std::int64_t probe = searchable(local) ? local : local + (local < 0 ? cycleSeconds : -cycleSeconds);
+        if (searchable(probe)) {
             const int saved = *__error_nid_postfix();
-            const auto guess = SonyHostZoneAt_nid_no_patch(local);
-            const auto zone = SonyHostZoneAt_nid_no_patch(local - guess.standardEast - guess.daylight);
-            const auto daylight = SonyHostDaylightAmount_nid_no_patch(local - zone.standardEast - zone.daylight);
+            const auto guess = SonyHostZoneAt_nid_no_patch(probe);
+            const auto zone = SonyHostZoneAt_nid_no_patch(probe - guess.standardEast - guess.daylight);
+            const auto daylight = SonyHostDaylightAmount_nid_no_patch(probe - zone.standardEast - zone.daylight);
             *__error_nid_postfix() = saved;
             if (daylight == 0) host.tm_isdst = -1;
         }
