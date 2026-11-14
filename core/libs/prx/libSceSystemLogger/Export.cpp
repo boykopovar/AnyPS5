@@ -1,9 +1,12 @@
 #include "prx/libSceSystemLogger/include/Api.hpp"
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -27,12 +30,6 @@ bool isTagCharacter(unsigned char character) {
     return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
 }
 
-std::size_t tagLength(const char* tag) {
-    std::size_t length = 0;
-    while (length <= MAX_TAG_LENGTH && tag[length] != '\0') ++length;
-    return length;
-}
-
 } // namespace
 
 extern "C" {
@@ -48,26 +45,36 @@ int APS5_VABI sceSystemLoggerSetLogData(const char* tag, uint32_t count, const S
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return SCE_SYSTEM_LOGGER_ERROR_NOT_INITIALIZED;
     if (!tag) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
-    const std::size_t length = tagLength(tag);
+    const int savedErrno = errno;
+    std::string localTag;
+    if (CopyGuestString_nid_no_patch(tag, MAX_TAG_LENGTH + 1, localTag) != 0) {
+        errno = savedErrno;
+        return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
+    }
+    const std::size_t length = localTag.size();
     if (length > MAX_TAG_LENGTH) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     for (std::size_t index = 0; index < length; ++index) {
-        if (!isTagCharacter(static_cast<unsigned char>(tag[index]))) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
+        if (!isTagCharacter(static_cast<unsigned char>(localTag[index]))) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     }
     if (count > MAX_ENTRY_COUNT) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
     if (count != 0 && !data) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
+    std::array<SystemLoggerLogData, MAX_ENTRY_COUNT> entries;
+    if (!GuestCopyIn_nid_no_patch(entries.data(), data, static_cast<std::size_t>(count) * sizeof(SystemLoggerLogData))) {
+        errno = savedErrno;
+        return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
+    }
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (data[index].size > MAX_ENTRY_SIZE) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
-        for (const std::uint8_t byte : data[index].reserved) {
+        if (entries[index].size > MAX_ENTRY_SIZE) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
+        for (const std::uint8_t byte : entries[index].reserved) {
             if (byte != 0) return SCE_SYSTEM_LOGGER_ERROR_INVALID_ARGUMENT;
         }
     }
-    char tagBuffer[MAX_TAG_LENGTH + 1] = {};
-    if (length != 0) std::memcpy(tagBuffer, tag, length);
     for (std::uint32_t index = 0; index < count; ++index) {
-        std::fprintf(stderr, "[sceSystemLogger:%s] ", tagBuffer);
-        std::fwrite(data[index].data, 1, data[index].size, stderr);
+        std::fprintf(stderr, "[sceSystemLogger:%s] ", localTag.c_str());
+        std::fwrite(entries[index].data, 1, entries[index].size, stderr);
         std::fputc('\n', stderr);
     }
+    errno = savedErrno;
     return 0;
 }
 
