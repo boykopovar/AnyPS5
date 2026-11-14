@@ -301,3 +301,17 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceSystemService PRIVATE InventoryExports.cpp)
+target_sources(libSceSystemService PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AppMessaging.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_system_service_app_messaging_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestSystemServiceAppMessaging.cpp)
+    target_include_directories(guest_system_service_app_messaging_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_app_messaging_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_app_messaging_tests)
+    add_test(NAME guest_system_service_app_messaging COMMAND guest_system_service_app_messaging_tests)
+    set_tests_properties(guest_system_service_app_messaging PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_service_app_messaging PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
