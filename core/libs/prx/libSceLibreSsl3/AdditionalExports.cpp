@@ -254,10 +254,6 @@ int APS5_VABI SSL_set_quic_transport_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_is_quic_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_MD_block_size_nid_postfix(const void* md) {
     if (!md) return -1;
     if (md == EVP_sha1_nid_postfix() || md == EVP_sha224_nid_postfix()) return static_cast<const LibreSsl3::DigestMethod*>(md)->blockSize;

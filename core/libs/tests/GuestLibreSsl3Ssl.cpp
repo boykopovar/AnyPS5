@@ -307,6 +307,30 @@ void CheckClientRandom() {
     Require(SSL_get_client_random_nid_postfix(&ssl, out.data(), 0) == 0, "an empty copy does not read SSL3 state");
 }
 
+void CheckIsQuic() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    auto expected = Bytes(guarded);
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 1, "connection with a QUIC method");
+    Require(Same(guarded, expected), "QUIC query changed the connection");
+    guarded.object.quicMethod = nullptr;
+    expected = Bytes(guarded);
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 0, "connection without a QUIC method");
+    Require(Same(guarded, expected), "QUIC query changed the connection");
+    guarded.object.method = nullptr;
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 0, "the TLS method is not the QUIC method");
+    guarded.object.method = reinterpret_cast<const LibreSsl3SslMethod*>(&guarded);
+    guarded.object.quicMethod = &guarded;
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 1, "any QUIC method");
+    bool threw = false;
+    try {
+        SSL_is_quic_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null connection");
+}
+
 struct VersionResult {
     std::int64_t value;
     std::uint64_t error;
@@ -423,6 +447,7 @@ int main() {
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
+    CheckIsQuic();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckTlsMethod();
     CheckX509Version();

@@ -72,6 +72,12 @@ int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
     return Retain_nid_no_patch(ssl->references);
 }
 
+int APS5_VABI SSL_is_quic_nid_postfix(const LibreSsl3Ssl* ssl) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_is_quic requires an SSL");
+    return ssl->quicMethod != nullptr;
+}
+
 const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix() {
     static constexpr LibreSsl3SslMethod method{0, 1, Tls13Version, Tls1Version, Tls13Version};
     return &method;
