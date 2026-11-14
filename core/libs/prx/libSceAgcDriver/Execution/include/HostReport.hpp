@@ -22,6 +22,7 @@ enum class HostDriverVersionScheme {
     Vulkan,
     Nvidia,
     IntelWindows,
+    MoltenVk,
 };
 
 struct HostGpuFacts {

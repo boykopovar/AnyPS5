@@ -135,6 +135,8 @@ void DriverVersionsAreDecoded() {
     Check(DecodedDriverVersion(Scheme::Nvidia, (580u << 22) | (95u << 14) | (5u << 6) | 1u) == "580.95.5.1", "the lower NVIDIA fields were not decoded");
     Check(DecodedDriverVersion(Scheme::IntelWindows, 0x0019485cu) == "101.2140", "Intel 101.2140 on Windows was not decoded");
     Check(DecodedDriverVersion(Scheme::Vulkan, (25u << 22) | (2u << 12) | 8u) == "25.2.8", "a Vulkan-encoded version was not decoded");
+    Check(DecodedDriverVersion(Scheme::MoltenVk, 10402u) == "1.4.2", "MoltenVK 1.4.2 was not decoded");
+    Check(DecodedDriverVersion(Scheme::MoltenVk, 11210u) == "1.12.10", "a MoltenVK version with two-digit fields was not decoded");
     Check(DecodedDriverVersion(Scheme::Unknown, 0x9b438000u) == "unknown", "a version without a known encoding was decoded");
     const auto text = AgcDriver::FormatHostReport(SampleFacts());
     Check(text.find("driver_version: ") < text.find("driver_version_raw: "), "the decoded version does not precede the raw value");

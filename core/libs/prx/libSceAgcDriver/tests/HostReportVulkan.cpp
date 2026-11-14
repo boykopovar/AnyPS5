@@ -163,7 +163,7 @@ void DriverVersionSchemeFollowsTheDriver() {
     };
     Check(scheme(VK_DRIVER_ID_NVIDIA_PROPRIETARY) == Scheme::Nvidia, "NVIDIA's driver did not get its version encoding");
     Check(scheme(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) == Scheme::IntelWindows, "Intel's Windows driver did not get its version encoding");
-    Check(scheme(VK_DRIVER_ID_MOLTENVK) == Scheme::Unknown, "MoltenVK's version was given an encoding");
+    Check(scheme(VK_DRIVER_ID_MOLTENVK) == Scheme::MoltenVk, "MoltenVK's driver did not get its version encoding");
     for (const auto driver : {VK_DRIVER_ID_MESA_RADV, VK_DRIVER_ID_AMD_PROPRIETARY, VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, VK_DRIVER_ID_MESA_LLVMPIPE, VK_DRIVER_ID_MESA_NVK})
         Check(scheme(driver) == Scheme::Vulkan, "a driver did not get the Vulkan version encoding");
 }
