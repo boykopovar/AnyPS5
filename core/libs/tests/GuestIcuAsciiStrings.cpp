@@ -40,11 +40,24 @@ void TestAsciiToLower() {
         Require(uprv_asciitolower_nid_postfix(static_cast<char>(value)) == static_cast<char>(std::tolower(value)), "asciitolower agrees with the C locale");
 }
 
+void TestStricmp() {
+    Require(uprv_stricmp_nid_postfix(nullptr, nullptr) == 0, "stricmp: two null strings are equal");
+    Require(uprv_stricmp_nid_postfix(nullptr, "a") == -1, "stricmp: a null first string sorts first");
+    Require(uprv_stricmp_nid_postfix("a", nullptr) == 1, "stricmp: a null second string sorts last");
+    Require(uprv_stricmp_nid_postfix("abc", "ABC") == 0, "stricmp ignores ASCII case");
+    Require(uprv_stricmp_nid_postfix("a", "B") == -1, "stricmp returns the lowercase difference");
+    Require(uprv_stricmp_nid_postfix("Z", "[") == 31, "stricmp lowercases before comparing");
+    Require(uprv_stricmp_nid_postfix("ab", "abc") == -1, "stricmp: a shorter prefix sorts first");
+    Require(uprv_stricmp_nid_postfix("abc", "ab") == 1, "stricmp: a longer string sorts last");
+    Require(uprv_stricmp_nid_postfix("\xC3", "\xE3") == -32, "stricmp compares bytes above 127 unsigned without case folding");
+}
+
 }
 
 int main() {
     TestIsASCIILetter();
     TestToUpper();
     TestAsciiToLower();
+    TestStricmp();
     return 0;
 }
