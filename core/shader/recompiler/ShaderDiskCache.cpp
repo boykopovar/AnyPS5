@@ -113,8 +113,8 @@ static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 216, "DescriptorSource changed: update the plan encoder");
-static_assert(sizeof(TableColumn) == 112, "TableColumn changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 248, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(TableColumn) == 144, "TableColumn changed: update the plan encoder");
 static_assert(sizeof(KeyDomain) == 16, "KeyDomain changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 104, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
@@ -154,7 +154,7 @@ static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 19, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 22, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 5, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -1185,10 +1185,24 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
             hops.Value(hop.offset);
             hops.Value(hop.immediate);
         });
+        out.List(column.pointerChases, [](Writer& chases, const PointerChase& chase) {
+            chases.Value(chase.offset);
+            chases.Value(chase.immediate);
+            chases.Value(chase.readOffset);
+            chases.Value(chase.readImmediate);
+            chases.Value(chase.readHighImmediate);
+            for (const auto& edit : chase.edits) {
+                chases.Value(edit.shift);
+                chases.Value(edit.mask);
+                chases.Value(edit.bits);
+            }
+        });
+        out.Value(column.pointerChaseDepth);
         out.Value(column.foldedAddend);
         out.Value(column.foldedCarry);
         out.Value(column.selected);
         out.Value(column.selection);
+        out.Value(column.pointerKeyed);
         out.Values(std::span<const std::uint32_t>(source.requiredBlocks));
     });
     writer.List(plan.controlFlow, [&](Writer& out, const ResourceBlock& block) {
@@ -1323,7 +1337,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         value.SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
     }
     reader.List(plan.memoryInfo, 79, decodeMemoryInfo);
-    reader.List(plan.descriptorSources, 81, [&](Reader& in, DescriptorSource& source) {
+    reader.List(plan.descriptorSources, 82, [&](Reader& in, DescriptorSource& source) {
         for (auto& dword : source.dwords) dword = valueAt(in.Get<std::uint32_t>());
         in.Value(source.dwordCount);
         const bool table = in.Get<bool>();
@@ -1351,10 +1365,24 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             hops.Value(hop.offset);
             hops.Value(hop.immediate);
         });
+        in.List(column.pointerChases, 64, [](Reader& chases, PointerChase& chase) {
+            chases.Value(chase.offset);
+            chases.Value(chase.immediate);
+            chases.Value(chase.readOffset);
+            chases.Value(chase.readImmediate);
+            chases.Value(chase.readHighImmediate);
+            for (auto& edit : chase.edits) {
+                chases.Value(edit.shift);
+                chases.Value(edit.mask);
+                chases.Value(edit.bits);
+            }
+        });
+        in.Value(column.pointerChaseDepth);
         in.Value(column.foldedAddend);
         in.Value(column.foldedCarry);
         in.Value(column.selected);
         in.Value(column.selection);
+        in.Value(column.pointerKeyed);
         source.tableColumn = table ? std::optional(std::move(column)) : std::nullopt;
         in.Values(source.requiredBlocks);
     });
@@ -1396,7 +1424,11 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         const auto& column = *source.tableColumn;
         if (column.buffer && (column.sampler || column.dwordCount != 4u)) return false;
         const auto& parent = plan.descriptorSources[column.heapSource].tableColumn;
-        if (parent.has_value() && (column.buffer || column.sampler || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
+        if (parent.has_value() && (column.buffer || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
+        if (column.pointerKeyed && (!column.indirect || column.buffer || parent.has_value())) return false;
+        if (column.pointerChases.empty() != (column.pointerChaseDepth == 0u) || column.pointerChaseDepth > MaxPointerChaseDepth || (column.pointerChaseDepth != 0u && !column.pointerKeyed)) return false;
+        if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return chase.readHighImmediate % sizeof(std::uint32_t) != 0u || chase.readHighImmediate == chase.readImmediate; })) return false;
+        if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return std::ranges::any_of(chase.edits, [](const DescriptorWordEdit& edit) { return edit.shift > 31u; }); })) return false;
     }
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;
