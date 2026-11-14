@@ -393,5 +393,22 @@ class AbSplitTests(unittest.TestCase):
         for lines in cases:
             with self.subTest(lines=lines), self.assertRaises(ValueError):
                 ab_split.read_log(lines)
+
+    def test_mismatched_settlement_cannot_silently_change_phase_means(self):
+        for replacement in ("phase B 0 settled", "phase A 7 settled"):
+            with self.subTest(replacement=replacement):
+                lines = [line.replace("phase A 0 settled", replacement) for line in log()]
+                with self.assertRaisesRegex(ValueError, "settled does not match active phase"):
+                    ab_split.split(lines)
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "mismatched.log"
+                    path.write_text("".join(lines), encoding="utf-8")
+                    for script, flags in (("ab_split.py", []), ("ab_split.py", ["--json"]), ("ab_split_csv.py", [])):
+                        run = subprocess.run([sys.executable, str(Path(ab_split.__file__).with_name(script)), str(path), *flags],
+                                             capture_output=True, text=True, encoding="utf-8", timeout=5)
+                        self.assertEqual(run.returncode, 2)
+                        self.assertEqual(run.stdout, "")
+                        self.assertIn("settled does not match active phase", run.stderr)
+                        self.assertNotIn("Traceback", run.stderr)
 if __name__ == "__main__":
     unittest.main()

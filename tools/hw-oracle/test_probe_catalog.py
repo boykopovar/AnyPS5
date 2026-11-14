@@ -409,6 +409,19 @@ class ProbeCatalogCliTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertTrue((Path(temporary) / "v-add-f32-edge-values" / "body.s").is_file())
 
+    def test_generate_reports_a_non_ascii_output_directory_as_utf8(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "界"
+            output = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with contextlib.redirect_stdout(output):
+                result = probe_catalog.main([
+                    "generate", "--output-dir", str(directory),
+                    "--probe", "v-add-f32-edge-values",
+                ])
+                output.flush()
+            self.assertEqual(result, 0)
+            self.assertIn(str(directory / "v-add-f32-edge-values"), output.buffer.getvalue().decode("utf-8"))
+
     def test_coverage_cli_emits_json_for_missing_measurements(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = io.StringIO()

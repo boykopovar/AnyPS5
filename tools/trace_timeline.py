@@ -1,5 +1,6 @@
 import argparse
 import html
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -68,9 +69,19 @@ def nonnegative_number(value):
     try:
         number = float(value)
     except ValueError:
-        raise argparse.ArgumentTypeError("must be a number")
-    if number < 0:
-        raise argparse.ArgumentTypeError("must be a number")
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
+    if not math.isfinite(number) or not 0 <= number < 1e300:
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
+    return number
+
+
+def positive_integer(value):
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
     return number
 
 
@@ -81,8 +92,8 @@ def main(arguments=None):
     parser.add_argument("--from-ms", type=nonnegative_number, default=0.0, help="start of the window, in ms from the trace start")
     parser.add_argument("--to-ms", type=nonnegative_number, help="end of the window, in ms (default: the end of the trace)")
     parser.add_argument("--thread", action="append", default=[], metavar="NAME", help="draw only threads with this name; repeat to select several")
-    parser.add_argument("--max-slices", type=int, default=5000, help="bars to draw, longest first (default 5000)")
-    parser.add_argument("--width", type=int, default=1000, help="width of the time axis in pixels (default 1000)")
+    parser.add_argument("--max-slices", type=positive_integer, default=5000, help="bars to draw, longest first (default 5000)")
+    parser.add_argument("--width", type=positive_integer, default=1000, help="width of the time axis in pixels (default 1000)")
     options = parser.parse_args(arguments)
     trace = trace_digest.load_trace(options.trace)
     if options.thread:
