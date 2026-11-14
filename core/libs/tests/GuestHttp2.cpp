@@ -147,6 +147,7 @@ int main() {
     const int box = sceHttp2CreateCookieBox(0x10000);
     Require(sceHttp2Init(1, 1, 0x10000, 0) == static_cast<int>(0x817B11FE));
     Require(Throws([] { sceHttp2Init(1, 1, 0x10000, -1); }));
+    Require(sceHttp2Init(1, 0, 0x40000, 1) == static_cast<int>(0x8095F006));
     const int context = sceHttp2Init(1, 1, 0x10000, 4);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 3, 0);
     const int proxyTemplate = sceHttp2CreateTemplate(context, "agent", 3, 1);
@@ -203,6 +204,11 @@ int main() {
     Require(sceHttp2SetResolveRetry(tmpl, 0) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 3) == 0);
     Require(Throws([&] { sceHttp2SetResolveRetry(tmpl, -1); }));
+    Require(sceHttp2SetConnectionWaitTimeOut(-1, 1000000) == InvalidId);
+    for (const int id : {tmpl, request}) {
+        Require(sceHttp2SetConnectionWaitTimeOut(id, 1000000) == 0);
+        Require(sceHttp2SetConnectionWaitTimeOut(id, 0xffffffffu) == 0);
+    }
     Require(sceHttp2SetRequestNoContentLength(request) == 0);
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "bad:name", "value", 0); }));
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "x-header", "value\r\ninjected: yes", 0); }));
@@ -234,6 +240,10 @@ int main() {
     std::uint32_t timeout = 500;
     Require(Throws([&] { sceHttp2WaitAsync(request, &result, &timeout, nullptr); }));
     Require(result.req_id == 123 && timeout == 500);
+    Require(sceHttp2WaitAsync(request, nullptr, &timeout, nullptr) == static_cast<int>(0x817B1225));
+    Require(sceHttp2WaitAsync(request, &result, &timeout, reinterpret_cast<void*>(0x10)) == static_cast<int>(0x817B11FE));
+    Require(sceHttp2WaitAsync(-1, &result, &timeout, nullptr) == InvalidId);
+    Require(sceHttp2ReadDataAsync(request, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80436063));
     KernelEvent event{};
     int count = 123;
     const KernelUseconds poll = 0;

@@ -3,6 +3,7 @@
 #include "prx/libSceSystemService/libSceSystemService.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -64,22 +65,39 @@ bool RejectsNullOutput(TCall call, int error) {
     return call(nullptr) == error;
 }
 
+template<typename TCall>
+bool RejectsUnwritableOutput(TCall call, int error) {
+    return call(reinterpret_cast<bool*>(std::uintptr_t{0x10})) == error;
+}
+
 void TestSessions() {
     Case("sceShellCoreUtilGetRemotePlayStatus", [] { return ReportsInactive(sceShellCoreUtilGetRemotePlayStatus); });
     Case("sceShellCoreUtilGetRemotePlayStatus null output", [] {
         return RejectsNullOutput(sceShellCoreUtilGetRemotePlayStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
     });
+    Case("sceShellCoreUtilGetRemotePlayStatus unwritable output", [] {
+        return RejectsUnwritableOutput(sceShellCoreUtilGetRemotePlayStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
     Case("sceSystemServiceGetRemoteplayStatus", [] { return ReportsInactive(sceSystemServiceGetRemoteplayStatus); });
     Case("sceSystemServiceGetRemoteplayStatus null output", [] {
         return RejectsNullOutput(sceSystemServiceGetRemoteplayStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
+    Case("sceSystemServiceGetRemoteplayStatus unwritable output", [] {
+        return RejectsUnwritableOutput(sceSystemServiceGetRemoteplayStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
     });
     Case("sceShellCoreUtilGetSharePlayStatus", [] { return ReportsInactive(sceShellCoreUtilGetSharePlayStatus); });
     Case("sceShellCoreUtilGetSharePlayStatus null output", [] {
         return RejectsNullOutput(sceShellCoreUtilGetSharePlayStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
     });
+    Case("sceShellCoreUtilGetSharePlayStatus unwritable output", [] {
+        return RejectsUnwritableOutput(sceShellCoreUtilGetSharePlayStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
     Case("sceShellCoreUtilGetGameLiveStreamingStatus", [] { return ReportsInactive(sceShellCoreUtilGetGameLiveStreamingStatus); });
     Case("sceShellCoreUtilGetGameLiveStreamingStatus null output", [] {
         return RejectsNullOutput(sceShellCoreUtilGetGameLiveStreamingStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+    });
+    Case("sceShellCoreUtilGetGameLiveStreamingStatus unwritable output", [] {
+        return RejectsUnwritableOutput(sceShellCoreUtilGetGameLiveStreamingStatus, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
     });
     Case("sceShellCoreUtilIsGameLiveStreamingOnAir", [] { return !sceShellCoreUtilIsGameLiveStreamingOnAir(); });
     Case("sceSystemServiceIsGameLiveStreamingOnAir", [] {
@@ -111,6 +129,20 @@ void TestShell() {
         return ReportsNotAdjusted(sceSystemServiceIsEyeToEyeDistanceAdjusted) &&
             sceSystemServiceIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER;
     });
+    Case("sceShellCoreUtilIsEyeToEyeDistanceAdjusted unwritable output", [] {
+        errno = 73;
+        try {
+            sceShellCoreUtilIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, reinterpret_cast<std::uint8_t*>(0x10));
+        } catch (const std::runtime_error&) {
+            return errno == 73;
+        }
+        return false;
+    });
+    Case("sceSystemServiceIsEyeToEyeDistanceAdjusted unwritable output", [] {
+        errno = 73;
+        return sceSystemServiceIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, reinterpret_cast<std::uint8_t*>(0x10)) ==
+            SYSTEM_SERVICE_ERROR_PARAMETER && errno == 73;
+    });
 }
 
 void TestDevices() {
@@ -124,6 +156,7 @@ void TestDevices() {
     Case("sceShellCoreUtilIsExternalStorageAppMoveInProgress", [] { return !sceShellCoreUtilIsExternalStorageAppMoveInProgress(); });
     Case("sceLncUtilIsPs2Emu", [] { return ReportsInactive(sceLncUtilIsPs2Emu); });
     Case("sceLncUtilIsPs2Emu null output", [] { return RejectsNullOutput(sceLncUtilIsPs2Emu, LNC_UTIL_ERROR_INVALID_ARGUMENT); });
+    Case("sceLncUtilIsPs2Emu unwritable output", [] { return RejectsUnwritableOutput(sceLncUtilIsPs2Emu, LNC_UTIL_ERROR_INVALID_ARGUMENT); });
 }
 
 }

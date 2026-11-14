@@ -41,7 +41,8 @@ def prepare_notes(source, body, full, check=False):
     paths = (source, body, full)
     for index, first in enumerate(paths):
         for second in paths[index + 1:]:
-            if os.path.realpath(first) == os.path.realpath(second) or (first.exists() and second.exists() and first.samefile(second)):
+            if (os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second)) or
+                    (first.exists() and second.exists() and first.samefile(second))):
                 raise ValueError("Release note input and outputs must be distinct files")
     try:
         payload = json.loads(source.read_text(encoding="utf-8-sig"))

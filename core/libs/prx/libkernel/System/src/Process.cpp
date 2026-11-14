@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestGs.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/System/include/ProcessWait.hpp"
 #include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -61,6 +62,10 @@
 #include <vector>
 #ifndef _WIN32
 #include <sys/resource.h>
+#endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#include <mach/mach.h>
 #endif
 
 extern char** environ;
@@ -207,6 +212,11 @@ public:
             if (_wputenv_s(L"ANYPS5_LOADEXEC_ARGV_SKIP", L"") != 0 || !SetEnvironmentVariableW(L"ANYPS5_LOADEXEC_ARGV_SKIP", nullptr))
                 throw std::runtime_error("LoadExec: cannot clear the argument marker");
         }
+#elif defined(__APPLE__)
+        const int count = *_NSGetArgc();
+        char** values = *_NSGetArgv();
+        for (int index = 0; index < count; ++index)
+            arguments.push_back(values[index]);
 #else
         std::ifstream stream("/proc/self/cmdline", std::ios::binary);
         if (!stream)
@@ -540,6 +550,12 @@ int APS5_VABI getpid_nid_postfix(void) {
     return static_cast<int>(pid);
 }
 
+int APS5_VABI sceKernelGetProcessAbiType(int pid) {
+    if (pid == -1 || pid == getpid_nid_postfix()) return 1;
+    if (pid == 0) return 0;
+    throw std::runtime_error("sceKernelGetProcessAbiType: unsupported process id " + std::to_string(pid));
+}
+
 int APS5_VABI getsid_nid_postfix(int pid) {
     const int self = getpid_nid_postfix();
     if (pid == 0 || pid == self) return self;
@@ -668,27 +684,60 @@ int APS5_VABI system_nid_postfix(const char* command) {
     return command == nullptr ? 1 : shellNotExecuted;
 }
 
+#ifndef _WIN32
+static GuestResourceUsage ResourceUsage(const struct rusage& native) {
+    GuestResourceUsage result{};
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
+    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
+    result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
+    result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
+    result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
+    result.ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
+    result.ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
+    result.ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
+    result.ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
+    result.ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
+    result.ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
+    result.ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
+    result.ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
+    result.ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
+    result.ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
+    return result;
+}
+#endif
+
 int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
+    return WaitProcess_nid_no_patch(pid, status, options, nullptr);
+}
+
+int WaitProcess_nid_no_patch(int pid, int* status, int options, GuestResourceUsage* usage) {
     if ((static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
     }
 #ifdef _WIN32
     int encoded = 0;
-    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded);
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded, usage != nullptr);
     if (reaped == -2) {
         *__error_nid_postfix() = errnoNoChild;
         return -1;
     }
     if (reaped == -1) return -1;
     if (reaped == 0) return 0;
-    if (status != nullptr) *status = encoded;
+    if (status != nullptr && !WriteGuest(status, &encoded, sizeof(encoded))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     return static_cast<int>(reaped);
 #else
     unsigned hostOptions = static_cast<unsigned>(options) & 3u;
     if ((static_cast<unsigned>(options) & 4u) != 0) hostOptions |= static_cast<unsigned>(WCONTINUED);
     int encoded = 0;
-    const int result = ::waitpid(pid, &encoded, static_cast<int>(hostOptions));
+    struct rusage native{};
+    const int result = ::wait4(pid, &encoded, static_cast<int>(hostOptions), usage == nullptr ? nullptr : &native);
     if (result < 0) {
         *__error_nid_postfix() = errno;
         return -1;
@@ -720,7 +769,17 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
 #endif
         encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
     }
-    if (status != nullptr) *status = encoded;
+    if (status != nullptr && !WriteGuest(status, &encoded, sizeof(encoded))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
+    if (usage != nullptr) {
+        const auto resources = ResourceUsage(native);
+        if (!WriteGuest(usage, &resources, sizeof(resources))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
+    }
     return result;
 #endif
 }
@@ -860,6 +919,11 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
             throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
         index += count;
     }
+#elif defined(__APPLE__)
+    std::size_t cpu = 0;
+    if (const int error = ::pthread_cpu_number_np(&cpu); error != 0)
+        throw std::system_error(error, std::generic_category(), "Reading current processor");
+    const auto index = static_cast<unsigned>(cpu);
 #else
     const int cpu = ::sched_getcpu();
     if (cpu < 0)
@@ -948,10 +1012,15 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     constexpr int getFsBase = 128;
     constexpr int getGsBase = 130;
     constexpr int setGsBase = 131;
+    constexpr std::array<int, 2> xfpuStateOperations{11, 132};
     constexpr std::uint64_t userAddressEnd = 0x0000800000000000ull;
     constexpr std::array<int, 14> definedOperations{0, 1, 3, 4, 7, 8, 9, 10, 11, 128, 129, 130, 131, 132};
     if (std::find(definedOperations.begin(), definedOperations.end(), operation) == definedOperations.end()) {
         *__error_nid_postfix() = guestInvalid;
+        return -1;
+    }
+    if (parameters == nullptr && std::find(xfpuStateOperations.begin(), xfpuStateOperations.end(), operation) != xfpuStateOperations.end()) {
+        *__error_nid_postfix() = guestFault;
         return -1;
     }
     const bool i386 = operation == i386GetFsBase || operation == i386GetGsBase;
@@ -1047,26 +1116,28 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
+#ifdef __APPLE__
+    if (who == 0) {
+        if (::getrusage(RUSAGE_SELF, &native) != 0)
+            throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+    } else {
+        thread_basic_info_data_t info{};
+        mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+        const mach_port_t thread = mach_thread_self();
+        const kern_return_t status = thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count);
+        mach_port_deallocate(mach_task_self(), thread);
+        if (status != KERN_SUCCESS)
+            throw std::runtime_error("getrusage: thread_info failed");
+        native.ru_utime.tv_sec = info.user_time.seconds;
+        native.ru_utime.tv_usec = info.user_time.microseconds;
+        native.ru_stime.tv_sec = info.system_time.seconds;
+        native.ru_stime.tv_usec = info.system_time.microseconds;
+    }
+#else
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
-    result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
-    result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
-    result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
-    result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
-    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
-    result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
-    result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
-    result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
-    result.ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
-    result.ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
-    result.ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
-    result.ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
-    result.ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
-    result.ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
-    result.ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
-    result.ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
-    result.ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
-    result.ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
+#endif
+    result = ResourceUsage(native);
 #endif
     if (!WriteGuest(usage, &result, sizeof(result))) {
         *__error_nid_postfix() = guestFault;
@@ -1214,8 +1285,11 @@ int APS5_VABI sceKernelHasTrinityMode(void) {
 void APS5_VABI sceKernelGetOperationMode(int* mode, int* submode) {
     if (!mode || !submode)
         throw std::invalid_argument("sceKernelGetOperationMode: null output");
-    *mode = 2;
-    *submode = 0;
+    constexpr int guestMode = 2;
+    constexpr int guestSubmode = 0;
+    if (!GuestCopyOut_nid_no_patch(mode, &guestMode, sizeof(guestMode)) ||
+        !GuestCopyOut_nid_no_patch(submode, &guestSubmode, sizeof(guestSubmode)))
+        throw std::invalid_argument("sceKernelGetOperationMode: output is not writable");
 }
 
 int APS5_VABI seteuid_nid_postfix(std::uint32_t euid) {

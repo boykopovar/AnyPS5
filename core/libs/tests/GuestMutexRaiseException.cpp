@@ -34,6 +34,9 @@ int main() {
     Require(sceKernelRaiseException(worker, SigUsr1) == 0);
     for (int i = 0; i < 5000 && deliveries.load() == 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(deliveries.load() == 1);
+    Require(sceKernelRaiseException(worker, SigUsr1) == 0);
+    for (int i = 0; i < 5000 && deliveries.load() < 2; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(deliveries.load() == 2 && !context.acquired.load());
     Require(scePthreadMutexUnlock(&context.mutex) == 0);
     Require(scePthreadJoin(worker, nullptr) == 0);
     Require(context.acquired.load());
