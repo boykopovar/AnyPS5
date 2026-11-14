@@ -154,11 +154,13 @@ bool memorySelector(std::uint32_t selector) {
 }
 
 std::uint32_t dmaSource(std::span<const std::uint32_t> packet) {
-    return ((packet[1] >> 29u) & 3u) | ((packet[6] >> 24u) & 4u) | ((packet[6] >> 25u) & 8u);
+    const auto selector = ((packet[1] >> 29u) & 3u) | ((packet[6] >> 24u) & 4u) | ((packet[6] >> 25u) & 8u);
+    return selector == (DmaSelectGds | 12u) ? DmaSelectGds : selector;
 }
 
 std::uint32_t dmaDestination(std::span<const std::uint32_t> packet) {
-    return ((packet[1] >> 20u) & 3u) | ((packet[6] >> 25u) & 4u) | ((packet[6] >> 26u) & 8u);
+    const auto selector = ((packet[1] >> 20u) & 3u) | ((packet[6] >> 25u) & 4u) | ((packet[6] >> 26u) & 8u);
+    return selector == (DmaSelectGds | 12u) ? DmaSelectGds : selector;
 }
 
 // The bytes a COPY_DATA or DMA_DATA stores: an immediate is a repeating 32-bit pattern, a memory

@@ -614,6 +614,58 @@ void testMemory() {
     expectFailure([&] { execute(state, makePacket(0x40, {0x10105, 0, 0, low(data.data()), high(data.data())})); }, "64-bit immediate");
 }
 
+void testDmaGdsAddressControls() {
+    using namespace AgcDriver::Pm4;
+    AgcDriver::QueueState state;
+    alignas(8) std::array<std::uint32_t, 4> source{0x12345678, 0xabcdef01, 0x87654321, 0x10203040};
+    alignas(8) std::array<std::uint32_t, 4> destination{};
+    const auto packet = [](std::uint32_t selectors, std::uint64_t sourceAddress, std::uint64_t destinationAddress, std::uint32_t controls) {
+        return makePacket(0x50, {selectors, static_cast<std::uint32_t>(sourceAddress), static_cast<std::uint32_t>(sourceAddress >> 32u), static_cast<std::uint32_t>(destinationAddress), static_cast<std::uint32_t>(destinationAddress >> 32u), controls | 16u});
+    };
+    const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source.data());
+    const auto destinationAddress = reinterpret_cast<std::uintptr_t>(destination.data());
+    const auto compareStores = [&](const auto& encoded, const auto& plain) {
+        Validate(encoded, 0);
+        const auto resolved = ResolveStore(encoded, state, 64);
+        const auto baseline = ResolveStore(plain, state, 64);
+        check(resolved.has_value() && baseline.has_value() && resolved->address == baseline->address && resolved->Bytes().size() == 16 && baseline->Bytes().size() == 16 && std::memcmp(resolved->Bytes().data(), baseline->Bytes().data(), 16) == 0, "GDS address controls changed ResolveStore");
+        const auto decoded = DecodeStores(encoded);
+        const auto expected = DecodeStores(plain);
+        check(decoded.size() == expected.size(), "GDS address controls changed DecodeStores count");
+        if (!decoded.empty()) check(decoded[0].address == expected[0].address && decoded[0].bytes == expected[0].bytes && decoded[0].value == expected[0].value, "GDS address controls changed DecodeStores");
+    };
+    const auto toGds = packet(0x60100000, sourceAddress, 0x300, 0x28000000);
+    compareStores(toGds, packet(0x60100000, sourceAddress, 0x300, 0));
+    check(DecodeStores(toGds).empty(), "GDS destination decoded as a guest memory store");
+    execute(state, toGds);
+    const auto fromGds = packet(0x20000000, 0x300, destinationAddress, 0x14000000);
+    compareStores(fromGds, packet(0x20000000, 0x300, destinationAddress, 0));
+    execute(state, fromGds);
+    check(destination == source, "DMA_DATA controlled GDS round trip did not advance every word");
+    const auto betweenGds = packet(0x20100000, 0x300, 0xfff0, 0x3c000000);
+    compareStores(betweenGds, packet(0x20100000, 0x300, 0xfff0, 0));
+    execute(state, betweenGds);
+    destination = {};
+    execute(state, packet(0x20000000, 0xfff0, destinationAddress, 0x14000000));
+    check(destination == source, "DMA_DATA controlled GDS copy did not advance every word");
+    const auto fill = packet(0x40100000, 0x5eed1234, 0x400, 0x28000000);
+    compareStores(fill, packet(0x40100000, 0x5eed1234, 0x400, 0));
+    execute(state, fill);
+    execute(state, packet(0x20000000, 0x400, destinationAddress, 0x14000000));
+    check(std::all_of(destination.begin(), destination.end(), [](auto word) { return word == 0x5eed1234; }), "DMA_DATA controlled GDS immediate fill failed");
+    for (const auto offset : {0xfff4ull, 0x10001ull, 0x100000300ull}) {
+        expectFailure([&] { Validate(packet(0x60100000, sourceAddress, offset, 0x28000000), 0); }, "DMA_DATA GDS destination range exceeds the GDS");
+        expectFailure([&] { Validate(packet(0x20000000, offset, destinationAddress, 0x14000000), 0); }, "DMA_DATA GDS source range exceeds the GDS");
+    }
+    for (std::uint32_t selector = 0; selector < 4; ++selector) {
+        for (const auto controls : {4u, 8u, 12u}) {
+            if (selector == 1 && controls == 12) continue;
+            expectFailure([&] { Validate(packet(selector << 29u, 0x300, destinationAddress, ((controls & 4u) << 24u) | ((controls & 8u) << 25u)), 0); }, "DMA_DATA register source is not implemented");
+            expectFailure([&] { Validate(packet(0x60000000 | (selector << 20u), sourceAddress, 0x300, ((controls & 4u) << 25u) | ((controls & 8u) << 26u)), 0); }, "DMA_DATA register destination is not implemented");
+        }
+    }
+}
+
 void testCopies() {
     AgcDriver::QueueState state;
     alignas(8) std::array<std::uint32_t, 4> source{11, 12, 13, 14};
@@ -2721,6 +2773,7 @@ int main(int argc, char** argv) {
         testTagMarkers();
         testUserDataWriters();
         testCopies();
+        testDmaGdsAddressControls();
         testMemoryCopyDecode();
         testMemorySynchronization();
         testConditionalValidation();
