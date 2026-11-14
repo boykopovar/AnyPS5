@@ -390,7 +390,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     timing.Mark("device_setup");
     phaseTiming.Phase(DrawRowVectors);
 
-    const bool useDrawEntries = drawEntries() && !ShaderRecompiler::DebugProbeActive() && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0;
+    const bool useDrawEntries = drawEntries() && !ShaderRecompiler::DebugProbeActive() && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0 && drawEntriesThisDraw();
     tail.registerKey = useDrawEntries && registerKeyEnabled();
     const bool registerKey = tail.registerKey;
     auto& drawKey = tail.drawKey;
@@ -469,7 +469,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                     const auto kept = drawCache.find(shape->second);
                     if (kept != drawCache.end() && kept->second->decode != nullptr && kept->second->shape == shapeKey) dataEntry = kept->second;
                 }
-                if (dataEntry != nullptr) ++drawEntryCounters.dataHits;
+                if (dataEntry != nullptr) {
+                    ++drawEntryCounters.dataHits;
+                    drawCacheUseful().fetch_add(1, std::memory_order_relaxed);
+                }
             }
         }
         if (traceDrawCache()) traceDrawKeyLookup(drawKeyComponents, found == drawCache.end());

@@ -1,5 +1,6 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
@@ -225,7 +226,10 @@ int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
     unsigned char report[RUDP_STATUS_SIZE] = {};
     const auto contexts = static_cast<uint32_t>(g_ctx.size());
     std::memcpy(report + RUDP_STATUS_CURRENT_CONTEXTS, &contexts, sizeof(contexts));
-    if (!GuestCopyOut_nid_no_patch(status, report, size)) return RUDP_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
+    errno = savedErrno;
+    if (!copied) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -432,7 +436,10 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, std::size_t size
     }
     unsigned char report[RUDP_CONTEXT_STATUS_SIZE] = {};
     std::memset(report + RUDP_CONTEXT_STATUS_PARENT, 0xFF, sizeof(std::int32_t));
-    std::memcpy(status, report, size);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
+    errno = savedErrno;
+    if (!copied) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

@@ -839,7 +839,7 @@ public:
 
     void RecordCompute(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) {
         if (!Enabled() || !bound.load(std::memory_order_acquire)) return;
-        const auto identity = shader.Identity();
+        const auto identity = DescribedPipelineIdentity(shader);
         if (identity.Empty()) return;
         Pending pending;
         pending.kind = ComputeRecord;
@@ -958,7 +958,7 @@ private:
                     if (decode && !loaded.indexModules.contains(identity)) {
                         ShaderRecompiler::RecompileResult result;
                         std::vector<std::byte> module;
-                        decoded = expandModule(payload, module) && ShaderRecompiler::ShaderDiskCache::DecodeResult(module, result) && result.Identity() == identity;
+                        decoded = expandModule(payload, module) && ShaderRecompiler::ShaderDiskCache::DecodeResult(module, result) && (static_cast<ShaderRecompiler::ShaderStage>(stage) == ShaderRecompiler::ShaderStage::Compute ? DescribedPipelineIdentity(result) : result.Identity()) == identity;
                         if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), payloadOffset, record.payloadBytes, record.payloadHash, static_cast<std::uint32_t>(module.size())});
                         else ++dropped;
                     }
@@ -1462,7 +1462,7 @@ private:
         auto bytes = std::make_shared<std::vector<std::byte>>();
         if (!expandModule(payload, *bytes)) return nullptr;
         auto result = std::make_shared<ShaderRecompiler::RecompileResult>();
-        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(*bytes, *result, bytes) || !(result->Identity() == identity)) return nullptr;
+        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(*bytes, *result, bytes) || !((module.stage == ShaderRecompiler::ShaderStage::Compute ? DescribedPipelineIdentity(*result) : result->Identity()) == identity)) return nullptr;
         return result;
     }
 
