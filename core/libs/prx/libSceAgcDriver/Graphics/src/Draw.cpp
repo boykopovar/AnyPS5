@@ -1448,7 +1448,7 @@ struct DrawTimer {
     bool profile;
     std::chrono::steady_clock::time_point phaseStart;
     std::array<double, PhaseCount> us{};
-    explicit DrawTimer(bool profile) : profile(profile), phaseStart(std::chrono::steady_clock::now()) {}
+    explicit DrawTimer(bool profile) : profile(profile), phaseStart(profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
     void phase(DrawPhase which) {
         if (!profile) return;
         const auto now = std::chrono::steady_clock::now();

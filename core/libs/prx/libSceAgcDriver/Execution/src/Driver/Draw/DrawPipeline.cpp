@@ -439,6 +439,7 @@ void DrawPipeline::run() {
     PerformanceTrace::BindThread("draw committer");
     ReserveCommitterCore();
     StartCommitterSampler();
+    static const bool timed = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
     for (;;) {
         Commit* commit = nullptr;
         bool isDraw = false;
@@ -452,7 +453,7 @@ void DrawPipeline::run() {
             commit = stopped ? nullptr : &items.front().commit;
             isDraw = items.front().draw;
         }
-        const auto start = std::chrono::steady_clock::now();
+        const auto start = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         std::exception_ptr fatal;
         bool failed = false;
         bool shutdown = false;
@@ -468,7 +469,7 @@ void DrawPipeline::run() {
         } catch (...) {
             fatal = std::current_exception();
         }
-        const auto spent = elapsedNs(start);
+        const auto spent = timed ? elapsedNs(start) : 0u;
         if (fatal != nullptr && !stopped) {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);
