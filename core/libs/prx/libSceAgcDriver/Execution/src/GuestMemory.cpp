@@ -1476,9 +1476,58 @@ struct WriteTracker {
     std::unordered_map<std::uint64_t, CpuPages> walkPages;
     std::unordered_map<std::uint64_t, CpuPages> windowPages;
     std::map<std::uint64_t, std::uint64_t> refused;
+    struct UnreachedPage {
+        std::uint64_t generation = 0;
+        std::uint64_t before = 0;
+    };
+    struct UnreachedPages {
+        std::array<UnreachedPage, WritePagesPerBlock> pages{};
+    };
+    std::unordered_map<std::uint64_t, UnreachedPages> unreachedPages;
 
     void noteCpuStore(std::uint64_t begin, std::uint64_t end, std::uint64_t stampGeneration) {
         notePages(cpuPages, begin, end, stampGeneration);
+    }
+
+    void noteUnreached(std::uint64_t begin, std::uint64_t end, std::uint64_t stampGeneration) {
+        for (auto block = blockOf(begin); block <= blockOf(end - 1); ++block) {
+            const auto blockStart = blockBegin(block);
+            const auto from = std::max(begin, blockStart) - blockStart;
+            const auto to = std::min<std::uint64_t>(end, blockStart + WriteBlockBytes) - blockStart;
+            const auto stamps = cpuPages.find(block);
+            auto& entry = unreachedPages[block];
+            for (auto page = from / WritePageBytes; page <= (to - 1) / WritePageBytes; ++page) {
+                auto& mark = entry.pages[page];
+                if (mark.generation == stampGeneration) continue;
+                const auto stamp = stamps != cpuPages.end() ? stamps->second.pages[page] : 0;
+                mark = {stampGeneration, mark.generation != 0 && stamp == mark.generation ? mark.before : stamp};
+            }
+        }
+    }
+
+    std::uint64_t newestUnknownMark(std::uint64_t block) const {
+        std::uint64_t newest = 0;
+        if (const auto found = refused.find(block); found != refused.end()) newest = found->second;
+        if (const auto found = unreachedPages.find(block); found != unreachedPages.end()) {
+            for (const auto& mark : found->second.pages) newest = std::max(newest, mark.generation);
+        }
+        return newest;
+    }
+
+    bool provenCpuStore(std::uint64_t block, std::uint64_t since, std::uint64_t newestMark) const {
+        if (cpuStampOf(block) > newestMark) return true;
+        const auto stamps = cpuPages.find(block);
+        if (stamps == cpuPages.end()) return false;
+        const auto marks = unreachedPages.find(block);
+        for (std::size_t page = 0; page < WritePagesPerBlock; ++page) {
+            auto stamp = stamps->second.pages[page];
+            if (marks != unreachedPages.end()) {
+                const auto& mark = marks->second.pages[page];
+                if (mark.generation != 0 && stamp == mark.generation) stamp = mark.before;
+            }
+            if (stamp > since) return true;
+        }
+        return false;
     }
 
     void noteWalkStore(std::uint64_t begin, std::uint64_t end, std::uint64_t stampGeneration) {
@@ -1938,6 +1987,14 @@ void stampWrittenRun(void* context, std::uintptr_t begin, std::uintptr_t end) {
 #endif
 }
 
+#ifndef _WIN32
+void stampUnreachedRun(void* context, std::uintptr_t begin, std::uintptr_t end) {
+    auto& runs = *static_cast<StampRuns*>(context);
+    if (end <= begin) return;
+    runs.tracker.noteUnreached(begin, end, runs.tracker.generation.load(std::memory_order_relaxed));
+}
+#endif
+
 void stampWindowRuns(StampRuns& runs) {
     const auto pages = PagesOf(runs.windowRuns);
     const auto trapped = TrappedPages(pages);
@@ -2013,8 +2070,8 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
     const bool complete = collectWindowsWrites(runs, first, stop, armedOnly);
 #else
     const auto dirtyRuns = collectDirtyRuns.load(std::memory_order_relaxed);
-    const auto collect = armedOnly ? &GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix : &GuestWriteWatch::GuestWriteWatchCollect_nid_postfix;
-    const bool complete = collect(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first), &stampWrittenRun, &runs);
+    const auto collect = armedOnly ? &GuestWriteWatch::GuestWriteWatchCollectArmedReporting_nid_postfix : &GuestWriteWatch::GuestWriteWatchCollectReporting_nid_postfix;
+    const bool complete = collect(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first), &stampWrittenRun, &stampUnreachedRun, &runs);
     if (collectDirtyRuns.load(std::memory_order_relaxed) != dirtyRuns) collectDirty.fetch_add(1, std::memory_order_relaxed);
 #endif
     if (window != nullptr) stampWindowRuns(runs);
@@ -2891,6 +2948,31 @@ bool ChangedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std
         const auto generation = generations[k];
         changed[k] = generation == 0 || tracker.stampOf(block) > generation ? BlockWritten : BlockUnchanged;
         if (k < cpu.size()) cpu[k] = generation == 0 || tracker.cpuStampOf(block) > generation ? 1 : 0;
+    }
+    return true;
+}
+
+bool ChangedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> generations, std::span<std::uint8_t> changed, std::span<std::uint8_t> cpu, std::span<std::uint8_t> unknown) {
+    std::fill(changed.begin(), changed.end(), BlockWritten);
+    std::fill(cpu.begin(), cpu.end(), std::uint8_t{1});
+    std::fill(unknown.begin(), unknown.end(), std::uint8_t{1});
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || bytes == 0 || !tracker.covers(address, bytes)) return false;
+    const auto first = tracker.blockOf(address);
+    const auto last = tracker.blockOf(address + bytes - 1);
+    for (auto block = first; block <= last; ++block) {
+        const auto k = block - first;
+        if (k >= generations.size() || k >= changed.size()) break;
+        const auto generation = generations[k];
+        if (generation == 0) continue;
+        const auto newest = tracker.newestUnknownMark(block);
+        const bool proven = newest > generation && tracker.provenCpuStore(block, generation, newest);
+        if (newest > generation && !proven) continue;
+        changed[k] = proven || tracker.stampOf(block) > generation ? BlockWritten : BlockUnchanged;
+        if (k < cpu.size()) cpu[k] = proven || tracker.cpuStampOf(block) > generation ? 1 : 0;
+        if (k < unknown.size()) unknown[k] = 0;
     }
     return true;
 }

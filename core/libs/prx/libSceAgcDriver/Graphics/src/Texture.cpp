@@ -2578,7 +2578,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // Per 64 KiB block of the surface (blockGenerations): stamped since its layer's generation, and
     // by a CPU store; scanned once when anything changed.
     std::vector<std::uint64_t> generations;
-    std::vector<std::uint8_t> stampedBlocks, cpuBlocks;
+    std::vector<std::uint8_t> stampedBlocks, cpuBlocks, unknownBlocks;
     std::vector<bool> outside;
     // Units taken from the alias's image instead of guest memory.
     std::vector<bool> borrowed;
@@ -2600,14 +2600,53 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             if (scoped) return GuestMemory::EqualsCommitted(scopeBegin, std::span<const std::byte>(original).subspan(static_cast<std::size_t>(scopeBegin - descriptor.baseAddress), scopeBytes));
             return GuestMemory::EqualsCommitted(descriptor.baseAddress, original);
         };
+        const auto compareUnknown = [&](std::size_t firstBlock, std::size_t blocks) {
+            unknownBlocks.assign(generations.size(), 0);
+            if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks, unknownBlocks)) return false;
+            if (std::none_of(unknownBlocks.begin(), unknownBlocks.end(), [](auto value) { return value != 0; })) return true;
+            awaitStoredSave(nullptr);
+            const auto baseBlock = descriptor.baseAddress / 65536;
+            for (auto k = firstBlock; k < firstBlock + blocks;) {
+                if (unknownBlocks[k] == 0) {
+                    ++k;
+                    continue;
+                }
+                auto stop = k;
+                while (stop < firstBlock + blocks && unknownBlocks[stop] != 0) ++stop;
+                const auto from = std::max<std::uint64_t>(scopeBegin, (baseBlock + k) * 65536);
+                const auto to = std::min<std::uint64_t>(scopeBegin + scopeBytes, (baseBlock + stop) * 65536);
+                if (!compareUntracked(from, static_cast<std::size_t>(to - from), std::span(stampedBlocks).subspan(k, stop - k), true)) return false;
+                k = stop;
+            }
+            for (const auto& [from, unitGeneration] : keptAtUnwatch) {
+                const auto block = static_cast<std::size_t>(from / 65536 - baseBlock);
+                const auto unit = static_cast<std::uint32_t>((from - descriptor.baseAddress) / trackedLayerBytes);
+                if (block < unknownBlocks.size() && unknownBlocks[block] != 0 && keptAtUnwatchHolds(from, unit)) stampedBlocks[block] = GuestMemory::BlockWritten;
+            }
+            for (std::size_t k = 0; k < unknownBlocks.size(); ++k) {
+                if (unknownBlocks[k] != 0) cpuBlocks[k] = stampedBlocks[k] != GuestMemory::BlockUnchanged ? 1 : 0;
+            }
+            return true;
+        };
         const auto scanBlocks = [&] {
             blockGenerations(generations);
             stampedBlocks.assign(generations.size(), 0);
             cpuBlocks.assign(generations.size(), 0);
-            tracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks);
-            if (!tracked) awaitStoredSave(nullptr);
+            unknownBlocks.clear();
+            tracked = current != 0 && GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks);
             const auto firstBlock = static_cast<std::size_t>(scopeBegin / 65536 - descriptor.baseAddress / 65536);
             const auto blocks = static_cast<std::size_t>((scopeBegin + scopeBytes - 1) / 65536 - scopeBegin / 65536 + 1);
+            if (!tracked && current == 0 && compareUnknown(firstBlock, blocks)) {
+                tracked = true;
+                compared = false;
+                return;
+            }
+            unknownBlocks.clear();
+            if (!tracked) {
+                std::fill(stampedBlocks.begin(), stampedBlocks.end(), GuestMemory::BlockWritten);
+                std::fill(cpuBlocks.begin(), cpuBlocks.end(), std::uint8_t{1});
+                awaitStoredSave(nullptr);
+            }
             compared = !tracked && (scoped ? compareUntracked(scopeBegin, scopeBytes, std::span(stampedBlocks).subspan(firstBlock, blocks), true) : compareUntracked(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), stampedBlocks, true));
             unitTracked.clear();
             unitCompared.clear();
@@ -2678,10 +2717,11 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         }
         // "cpu" names a CPU store in both models; a block without a generation (untracked) says
         // nothing about who wrote it.
-        if (compared && !keysChanged) {
+        if ((compared || !unknownBlocks.empty()) && !keysChanged) {
             for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
                 const auto first = layerBegin(layer) / 65536 - descriptor.baseAddress / 65536;
                 const auto last = (layerBegin(layer) + layerBytes(layer) - 1) / 65536 - descriptor.baseAddress / 65536;
+                if (!compared && std::none_of(unknownBlocks.begin() + first, unknownBlocks.begin() + last + 1, [](auto value) { return value != 0; })) continue;
                 changed[layer] = std::any_of(stampedBlocks.begin() + first, stampedBlocks.begin() + last + 1, [](auto value) { return value != GuestMemory::BlockUnchanged; });
             }
             unchanged = std::none_of(changed.begin(), changed.end(), [](bool value) { return value; });
@@ -2696,7 +2736,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             unchanged = std::none_of(changed.begin(), changed.end(), [](bool value) { return value; });
         }
         for (std::size_t k = 0; k < cpuBlocks.size(); ++k) {
-            if (cpuBlocks[k] != 0 && (compared || (tracked && generations[k] != 0))) cpuWrote = true;
+            if (cpuBlocks[k] != 0 && (compared || (k < unknownBlocks.size() && unknownBlocks[k] != 0) || (tracked && generations[k] != 0))) cpuWrote = true;
         }
         // Unchanged bytes rescue an upload only when nothing else moved: with the keys changed
         // the same bytes read differently, and a changed unit holding pending results must take
@@ -2777,7 +2817,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // unit's stamps say nothing, so it is stored.
     const auto droppable = [&](std::uint32_t unit) {
         if (keysChanged && IsDccClear(keys)) return true;
-        if (unitCompared.empty() ? compared : unitCompared[unit]) return stampedBlocks.at(unit) == GuestMemory::BlockWritten;
+        if ((unitCompared.empty() ? compared : unitCompared[unit]) || (unit < unknownBlocks.size() && unknownBlocks[unit] != 0)) return stampedBlocks.at(unit) == GuestMemory::BlockWritten;
         if (!(unitTracked.empty() ? tracked : unitTracked[unit]) || layerGeneration[unit] == 0 || unit >= stampedBlocks.size() || stampedBlocks[unit] != GuestMemory::BlockWritten) return false;
         const auto begin = layerBegin(unit);
         const auto bytes = layerBytes(unit);
@@ -7158,7 +7198,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // bypasses the per-packet collect memo (a Refresh collect earlier in the same packet would
     // satisfy it); the unselected layers keep their own generations and are collected by their
     // own refreshes. One tracker lock then reads the span's stamps against the layers' generations.
-    GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored));
+    const bool walked = GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored)) != 0;
     std::vector<std::uint64_t> generations(spanBlocks, 0);
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layers[layer]) continue;
@@ -7168,10 +7208,58 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     const auto drawn = drawnArea();
     std::vector<std::uint8_t> changedBlocks(spanBlocks);
     std::vector<std::uint8_t> cpuBlocks(drawn.drawn ? spanBlocks : 0);
-    const bool tracked = GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks);
+    std::vector<std::uint8_t> unknownBlocks;
     std::vector<bool> compared(trackedLayers, false);
     std::vector<bool> unitTracked;
+    const auto compareUnknown = [&] {
+        unknownBlocks.assign(spanBlocks, 0);
+        cpuBlocks.assign(spanBlocks, 0);
+        if (!GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks, unknownBlocks)) return false;
+        std::vector<bool> uncertain(trackedLayers, false);
+        bool anyUncertain = false;
+        for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+            if (!layers[layer]) continue;
+            const auto first = static_cast<std::size_t>(((layerBegin(layer) & ~(block - 1)) - spanBegin) / block);
+            const auto last = static_cast<std::size_t>((layerBegin(layer) + layerBytes(layer) - 1 - spanBegin) / block);
+            uncertain[layer] = std::any_of(unknownBlocks.begin() + first, unknownBlocks.begin() + last + 1, [](auto value) { return value != 0; });
+            anyUncertain = anyUncertain || uncertain[layer];
+        }
+        if (!anyUncertain) return true;
+        awaitStoredSave(&layers);
+        for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+            if (uncertain[layer] && !layerOriginal[layer]) return false;
+        }
+        std::vector<std::uint8_t> bytesChanged(spanBlocks, GuestMemory::BlockUnchanged);
+        for (const auto& [begin, end] : unitRuns(uncertain)) {
+            const auto stop = descriptor.baseAddress + end;
+            for (auto at = descriptor.baseAddress + begin; at < stop;) {
+                const auto index = static_cast<std::size_t>((at - spanBegin) / block);
+                auto runEnd = std::min(stop, (at & ~(block - 1)) + block);
+                if (unknownBlocks[index] == 0) {
+                    at = runEnd;
+                    continue;
+                }
+                while (runEnd < stop && unknownBlocks[static_cast<std::size_t>((runEnd - spanBegin) / block)] != 0) runEnd = std::min(stop, runEnd + block);
+                std::vector<std::uint8_t> run(static_cast<std::size_t>((runEnd - 1) / block - at / block + 1));
+                if (!compareUntracked(at, static_cast<std::size_t>(runEnd - at), run)) return false;
+                for (std::size_t k = 0; k < run.size(); ++k) bytesChanged[index + k] |= run[k];
+                at = runEnd;
+            }
+        }
+        for (std::size_t index = 0; index < spanBlocks; ++index) {
+            if (unknownBlocks[index] == 0) continue;
+            changedBlocks[index] = bytesChanged[index];
+            if (index < cpuBlocks.size()) cpuBlocks[index] = bytesChanged[index];
+        }
+        compared = uncertain;
+        return true;
+    };
+    bool tracked = walked && GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks);
+    if (!tracked && !walked) tracked = compareUnknown();
     if (!tracked) {
+        unknownBlocks.clear();
+        compared.assign(trackedLayers, false);
+        cpuBlocks.assign(drawn.drawn ? spanBlocks : 0, 0);
         awaitStoredSave(&layers);
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (!layers[layer] || layerOriginal[layer]) continue;
@@ -7208,7 +7296,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         const auto begin = layerBegin(layer);
         const auto end = begin + layerBytes(layer);
         const bool layerTracked = unitTracked.empty() ? tracked : unitTracked[layer];
-        const bool unknown = layerTracked ? layerGeneration[layer] == 0 : !compared[layer];
+        const bool unknown = layerTracked ? layerGeneration[layer] == 0 && !compared[layer] : !compared[layer];
         if (unknown && !drawn.rect) {
             if (!layerTracked && !unsavedOutsideWatch) unsavedCause = std::string("storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented (unit ") + std::to_string(layer) + " of " + std::to_string(trackedLayers) + ": " + BaselineMissText(pendingMiss[layer]) + ")";
             unsavedOutsideWatch = unsavedOutsideWatch || !layerTracked;
@@ -7222,8 +7310,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             const bool edge = from != at || to != at + block;
             const auto index = static_cast<std::size_t>((at - spanBegin) / block);
             const bool kept = keptAtUnwatchHolds(from, layer);
-            const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !cpuLeftUnchanged(layer, from, to, edge));
-            if (written && (!drawn.rect || (layerTracked && !kept && !unknown && cpuBlocks[index] == 0))) {
+            const bool byBytes = unknownBlocks.empty() ? compared[layer] : unknownBlocks[index] != 0;
+            const bool cpuSeen = !unknownBlocks.empty() && !byBytes && cpuBlocks[index] != 0;
+            const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (byBytes || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && (cpuSeen || !cpuLeftUnchanged(layer, from, to, edge)));
+            if (written && (!drawn.rect || (layerTracked && !byBytes && !kept && !unknown && cpuBlocks[index] == 0))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
                 keptBlocks.emplace_back(from, layer);
