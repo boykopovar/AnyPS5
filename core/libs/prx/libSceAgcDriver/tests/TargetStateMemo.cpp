@@ -84,6 +84,8 @@ const std::span<std::byte, 2 * PlaneBytes> OuterStorage{reinterpret_cast<std::by
 alignas(4096) std::array<std::byte, 2 * PlaneBytes> SourceBlock{};
 alignas(4096) std::array<std::byte, 4 * PlaneBytes> MultisampleBlock{};
 const std::span<std::byte, PlaneBytes> SourceStorage{reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(SourceBlock.data()) + PlaneBytes - 1u) & ~std::uintptr_t{PlaneBytes - 1u}), PlaneBytes};
+alignas(4096) std::array<std::byte, 2 * PlaneBytes> StencilBlock{};
+const std::span<std::byte, PlaneBytes> StencilStorage{reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(StencilBlock.data()) + PlaneBytes - 1u) & ~std::uintptr_t{PlaneBytes - 1u}), PlaneBytes};
 const std::span<std::byte, 2 * PlaneBytes> MultisampleStorage{reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(MultisampleBlock.data()) + PlaneBytes - 1u) & ~std::uintptr_t{PlaneBytes - 1u}), 2 * PlaneBytes};
 
 std::uint64_t address(const void* data) {
@@ -126,6 +128,7 @@ struct DrawOptions {
     std::uint32_t colorWriteMask = 15;
     bool prepareOnly = false;
     bool changePadding = false;
+    std::optional<std::uint8_t> stencilWrite;
 };
 
 void setDescriptorPadding(ColorTarget& color, DepthTarget* depth, std::uint8_t padding) {
@@ -153,6 +156,10 @@ State drawState(const ColorTarget& color, const DrawOptions& options) {
     state.depthTest = options.depth.has_value();
     state.depthWrite = options.depthWrite;
     state.depthCompare = options.compare;
+    if (options.stencilWrite) {
+        state.stencilTest = true;
+        state.stencilFront = state.stencilBack = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, *options.stencilWrite};
+    }
     state.renderExtent = {Width, Height};
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, 0, static_cast<float>(Width), static_cast<float>(Height), options.depthValue, options.depthValue};
@@ -1348,6 +1355,40 @@ void untrackedMetadataClear(AgcDriver::VulkanDevice& device, bool dcc) {
     std::ranges::fill(Cmask, std::uint8_t{0xff});
 }
 
+void untrackedStencilWrite(AgcDriver::VulkanDevice& device) {
+    const auto color = colorTarget();
+    reset(device, color);
+    auto depth = depthTarget(true);
+    depth.format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    depth.stencilAddress = address(StencilStorage.data());
+    const auto stencilBytes = static_cast<std::size_t>(DepthSliceBytes(depth.extent, 1u));
+    Require(stencilBytes <= StencilStorage.size(), "the stencil plane does not fit its fixture");
+    Require(!AgcDriver::GuestMemory::Watched(depth.stencilAddress, stencilBytes), "the untracked stencil fixture is write-watched");
+    const auto stencil = StencilStorage.first(stencilBytes);
+    const auto holding = [&](std::uint8_t value) { return std::ranges::count(stencil, std::byte{value}) == static_cast<std::ptrdiff_t>(Width * Height); };
+    const auto store = [&] {
+        static_cast<void>(FlushDepthPlanes(depth.stencilAddress, stencilBytes));
+        device.WaitIdle();
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        StorageTexture::FlushPending(depth.stencilAddress, stencilBytes, nullptr, "test");
+        device.WaitIdle();
+    };
+    std::ranges::fill(stencil, std::byte{0});
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    arm(device, color, {.scissor = Whole, .depth = depth, .compare = VK_COMPARE_OP_ALWAYS, .stencilWrite = 0x18u});
+    store();
+    Require(holding(0x18u), "the stencil written by repeated draws did not reach guest memory");
+    arm(device, color, {.scissor = Whole, .depth = depth, .compare = VK_COMPARE_OP_ALWAYS, .stencilWrite = 0x18u});
+    const ProofFields before;
+    std::ranges::fill(stencil, std::byte{0x44});
+    requireMoved(before, "", "a CPU write to an untracked stencil plane");
+    draw(device, color, {.scissor = Whole, .depth = depth, .compare = VK_COMPARE_OP_ALWAYS, .stencilWrite = 0x55u});
+    store();
+    Require(holding(0x55u), "a stencil write repeated after the guest wrote an untracked stencil plane was dropped as older than the guest's write");
+    std::ranges::fill(stencil, std::byte{0});
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+}
+
 void untrackedDccClear(AgcDriver::VulkanDevice& device) {
     untrackedMetadataClear(device, true);
 }
@@ -1414,9 +1455,10 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     }
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 15> R3Scenarios{{
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 16> R3Scenarios{{
     {"untracked-dcc", untrackedDccClear},
     {"untracked-cmask", untrackedCmaskClear},
+    {"untracked-stencil", untrackedStencilWrite},
     {"resident-dcc", residentDccClear},
     {"claim", claimAfterAbsorbedFill},
     {"depth-proof", depthProofAfterMetadataWrite},
@@ -1497,6 +1539,7 @@ int main(int argc, char** argv) {
             mutation.Add(SourceStorage.data(), SourceStorage.size(), true, true, true);
             mutation.Add(OuterStorage.data(), OuterStorage.size(), true, true, true);
             mutation.Add(MultisampleStorage.data(), MultisampleStorage.size(), true, true, true);
+            mutation.Add(StencilStorage.data(), StencilStorage.size(), true, true, true);
         }
         AgcDriver::GuestMemory::MarkProofThread();
         AgcDriver::GuestMemory::BumpCollectEpoch();
@@ -1527,6 +1570,7 @@ int main(int argc, char** argv) {
             mutation.Remove(SourceStorage.data());
             mutation.Remove(OuterStorage.data());
             mutation.Remove(MultisampleStorage.data());
+            mutation.Remove(StencilStorage.data());
         }
         std::cout << "target state memo tests passed\n";
         return 0;

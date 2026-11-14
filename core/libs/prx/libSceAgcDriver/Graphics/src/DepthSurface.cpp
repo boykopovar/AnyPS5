@@ -3474,7 +3474,7 @@ VkImageView RepeatDepthSurfaceView(const Context& context, const DepthTarget& ta
             noteStalePlane(target.address, target.address + planeBytes);
         }
     }
-    if (stencilWritten) surface->MarkStencilStale();
+    if (stencilWritten) surface->MarkStencilStale(true);
     return surface->view;
 }
 
