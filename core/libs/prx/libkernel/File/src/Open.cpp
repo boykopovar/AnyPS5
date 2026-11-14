@@ -517,6 +517,8 @@ std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
 }
 
 constexpr int GuestEfault = 14;
+constexpr int GuestEperm = 1;
+constexpr int GuestEinval = 22;
 
 static int StatNative(const std::filesystem::path& native, bool directory, FileStat* sb) {
     std::error_code error;
@@ -577,7 +579,7 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
     path = copy.c_str();
     if (copy.empty()) return SceErrorFromErrno(2);
-    if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
+    if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot == GuestEinval ? GuestEperm : dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
 #ifdef _WIN32

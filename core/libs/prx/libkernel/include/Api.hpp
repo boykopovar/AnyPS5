@@ -354,6 +354,7 @@ int64_t APS5_VABI preadv_nid_postfix(int d, const KernelIovec* iov, int iovcnt, 
 int64_t APS5_VABI pwritev_nid_postfix(int d, const KernelIovec* iov, int iovcnt, int64_t offset);
 int APS5_VABI sceKernelRename(const char* from, const char* to);
 int APS5_VABI sceKernelRmdir(const char* path);
+int APS5_VABI sceKernelUnlink(const char* path);
 int APS5_VABI rmdir_nid_postfix(const char* path);
 int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode);
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode);
