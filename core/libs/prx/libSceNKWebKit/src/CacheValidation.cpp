@@ -1,3 +1,4 @@
+// Derived from Source/WebCore/platform/network/CacheValidation.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2014-2017 Apple Inc. All rights reserved.
  *
