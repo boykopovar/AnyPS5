@@ -3724,7 +3724,6 @@ int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxC2Ev();
 int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxD0Ev();
 int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxD1Ev();
 int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxD2Ev();
-int APS5_VABI _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv();
 int APS5_VABI _ZN7WebCore36visiblePositionForPositionWithOffsetERKNS_15VisiblePositionEi();
 int APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD0Ev();
 int APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisabler39setCrossOriginAccessControlCheckEnabledEb();
