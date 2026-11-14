@@ -520,11 +520,6 @@ int APS5_VABI SSL_free_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_get0_param_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void* APS5_VABI SSL_get1_session_nid_postfix(LibreSslSsl* ssl) {
     if (!ssl) NotImplemented_nid_no_patch(__func__);
     if (!ssl->session) return nullptr;
