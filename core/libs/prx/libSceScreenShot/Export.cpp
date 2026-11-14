@@ -79,7 +79,7 @@ int SetOverlayImage(const char* path, int offsetX, int offsetY) {
     const int maxY = large ? 2159 : 1079;
     const std::int64_t maxSize = large ? 8 * 1024 * 1024 : 2 * 1024 * 1024;
     if (!path || offsetX < 0 || offsetX > maxX || offsetY < 0 || offsetY > maxY) return ErrorArgument;
-    if (strnlen(path, MaxOverlayPath) >= MaxOverlayPath) return ErrorArgument;
+    if (!StringFits(path, MaxOverlayPath - 1)) return ErrorArgument;
     const int descriptor = sceKernelOpen(path, 0, 0);
     if (descriptor < 0) return ErrorOverlayFile;
     FileStat stat{};
