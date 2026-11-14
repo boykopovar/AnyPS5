@@ -1361,8 +1361,13 @@ int APS5_VABI EVP_DigestSignFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
     unsigned char digest[LibreSsl3MaximumDigestSize];
     unsigned int digestLength = 0;
     auto result = 0;
-    if (DigestCopy(&copy, ctx) && DigestFinal(&copy, digest, &digestLength))
-        result = EVP_PKEY_sign_nid_postfix(pctx, sigret, siglen, digest, digestLength) > 0;
+    try {
+        if (DigestCopy(&copy, ctx) && DigestFinal(&copy, digest, &digestLength))
+            result = EVP_PKEY_sign_nid_postfix(pctx, sigret, siglen, digest, digestLength) > 0;
+    } catch (...) {
+        try { if (copy.data) free_nid_postfix(copy.data); } catch (...) {}
+        throw;
+    }
     if (copy.data) free_nid_postfix(copy.data);
     for (unsigned int i = 0; i < digestLength; ++i) digest[i] = 0;
     return result;
@@ -1379,21 +1384,27 @@ int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned 
 
     *siglen = 0;
 
-    if (!DigestCopy(&copy, ctx)) goto err;
-    if (!DigestFinal(&copy, digest, &digestLength)) goto err;
+    try {
+        if (!DigestCopy(&copy, ctx)) goto err;
+        if (!DigestFinal(&copy, digest, &digestLength)) goto err;
 
-    sltmp = EVP_PKEY_size_nid_postfix(pkey);
+        sltmp = EVP_PKEY_size_nid_postfix(pkey);
 
-    pkctx = EVP_PKEY_CTX_new_nid_postfix(pkey, nullptr);
-    if (!pkctx) goto err;
-    if (EVP_PKEY_sign_init_nid_postfix(pkctx) <= 0) goto err;
-    if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
-            LibreSsl3PkeyControlMessageDigest, 0,
-            static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
-        goto err;
-    if (EVP_PKEY_sign_nid_postfix(pkctx, sigret, &sltmp, digest, digestLength) <= 0) goto err;
-    *siglen = static_cast<unsigned int>(sltmp);
-    ret = 1;
+        pkctx = EVP_PKEY_CTX_new_nid_postfix(pkey, nullptr);
+        if (!pkctx) goto err;
+        if (EVP_PKEY_sign_init_nid_postfix(pkctx) <= 0) goto err;
+        if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
+                LibreSsl3PkeyControlMessageDigest, 0,
+                static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
+            goto err;
+        if (EVP_PKEY_sign_nid_postfix(pkctx, sigret, &sltmp, digest, digestLength) <= 0) goto err;
+        *siglen = static_cast<unsigned int>(sltmp);
+        ret = 1;
+    } catch (...) {
+        try { if (copy.data) free_nid_postfix(copy.data); } catch (...) {}
+        try { EVP_PKEY_CTX_free_nid_postfix(pkctx); } catch (...) {}
+        throw;
+    }
 
 err:
     if (copy.data) free_nid_postfix(copy.data);
@@ -1409,18 +1420,24 @@ int APS5_VABI EVP_VerifyFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
     LibreSsl3PkeyContext* pkctx = nullptr;
     int ret = 0;
 
-    if (!DigestCopy(&copy, ctx)) goto err;
-    if (!DigestFinal(&copy, digest, &digestLength)) goto err;
+    try {
+        if (!DigestCopy(&copy, ctx)) goto err;
+        if (!DigestFinal(&copy, digest, &digestLength)) goto err;
 
-    ret = -1;
-    pkctx = EVP_PKEY_CTX_new_nid_postfix(pkey, nullptr);
-    if (!pkctx) goto err;
-    if (EVP_PKEY_verify_init_nid_postfix(pkctx) <= 0) goto err;
-    if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
-            LibreSsl3PkeyControlMessageDigest, 0,
-            static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
-        goto err;
-    ret = EVP_PKEY_verify_nid_postfix(pkctx, sigbuf, siglen, digest, digestLength);
+        ret = -1;
+        pkctx = EVP_PKEY_CTX_new_nid_postfix(pkey, nullptr);
+        if (!pkctx) goto err;
+        if (EVP_PKEY_verify_init_nid_postfix(pkctx) <= 0) goto err;
+        if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
+                LibreSsl3PkeyControlMessageDigest, 0,
+                static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
+            goto err;
+        ret = EVP_PKEY_verify_nid_postfix(pkctx, sigbuf, siglen, digest, digestLength);
+    } catch (...) {
+        try { if (copy.data) free_nid_postfix(copy.data); } catch (...) {}
+        try { EVP_PKEY_CTX_free_nid_postfix(pkctx); } catch (...) {}
+        throw;
+    }
 
 err:
     if (copy.data) free_nid_postfix(copy.data);

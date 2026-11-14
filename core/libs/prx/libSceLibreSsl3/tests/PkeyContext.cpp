@@ -20,6 +20,11 @@
 namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
+struct FinalCleanupFailure { unsigned ordinal; };
+bool trackFinalCleanup = false;
+unsigned finalCleanupCalls = 0;
+unsigned finalCleanupThrows = 0;
+std::array<void*, 4> finalCleanupPointers {};
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -38,7 +43,14 @@ void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
 void APS5_VABI Free_nid_no_patch(void* pointer) {
     if (!pointer) return;
     Require(allocations.erase(pointer) == 1);
+    unsigned ordinal = 0;
+    if (trackFinalCleanup) {
+        Require(finalCleanupCalls < finalCleanupPointers.size());
+        finalCleanupPointers[finalCleanupCalls++] = pointer;
+        ordinal = finalCleanupCalls;
+    }
     std::free(pointer);
+    if (ordinal && (finalCleanupThrows & (1u << (ordinal - 1)))) throw FinalCleanupFailure{ordinal};
 }
 
 void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) {
@@ -991,6 +1003,166 @@ void KeyConsistency() {
 
 } // namespace
 
+enum class FinalFailure { None, Copy, Finalize, Cleanup };
+struct FinalFailureSentinel { FinalFailure phase; };
+FinalFailure finalFailure = FinalFailure::None;
+
+int APS5_VABI FinalCopy(LibreSsl3::DigestContext*, const LibreSsl3::DigestContext*) {
+    if (finalFailure == FinalFailure::Copy) throw FinalFailureSentinel{finalFailure};
+    return 1;
+}
+
+int APS5_VABI FinalDigest(LibreSsl3::DigestContext* context, unsigned char* output) {
+    if (finalFailure == FinalFailure::Finalize) throw FinalFailureSentinel{finalFailure};
+    return EVP_sha1_nid_postfix()->finalize(context, output);
+}
+
+int APS5_VABI FinalCleanup(LibreSsl3::DigestContext*) {
+    if (finalFailure == FinalFailure::Cleanup) throw FinalFailureSentinel{finalFailure};
+    return 1;
+}
+
+void FinalizationCallbackFailures() {
+    for (int operation = 0; operation != 3; ++operation) {
+        for (const auto phase : {FinalFailure::Copy, FinalFailure::Finalize, FinalFailure::Cleanup}) {
+            auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+            auto* md = EVP_MD_CTX_new_nid_postfix();
+            Require(md != nullptr);
+            auto method = *EVP_sha1_nid_postfix();
+            method.copy = FinalCopy;
+            method.finalize = FinalDigest;
+            method.cleanup = FinalCleanup;
+            if (operation == 0)
+                Require(EVP_DigestSignInit_nid_postfix(md, nullptr, &method, nullptr, key) == 1);
+            else
+                Require(EVP_DigestInit_nid_postfix(md, &method) == 1);
+            Require(md->update(md, MessageBytes(), MessageLength) == 1);
+            const auto before = allocations;
+            const auto original = *md;
+            const auto references = key->references;
+            const auto* bytes = static_cast<const unsigned char*>(md->data);
+            const std::vector<unsigned char> data(bytes, bytes + method.contextSize);
+            std::array<unsigned char, 256> signature {};
+            unsigned int length = signature.size();
+            std::size_t wideLength = signature.size();
+            finalFailure = phase;
+            finalCleanupCalls = 0;
+            finalCleanupThrows = 1;
+            trackFinalCleanup = true;
+            bool caught = false;
+            try {
+                if (operation == 0) EVP_DigestSignFinal_nid_postfix(md, signature.data(), &wideLength);
+                else if (operation == 1) EVP_SignFinal_nid_postfix(md, signature.data(), &length, key);
+                else EVP_VerifyFinal_nid_postfix(md, Pkcs1Sha1Signature, sizeof(Pkcs1Sha1Signature), key);
+            } catch (const FinalFailureSentinel& failure) {
+                caught = failure.phase == phase;
+            }
+            finalFailure = FinalFailure::None;
+            trackFinalCleanup = false;
+            finalCleanupThrows = 0;
+            Require(caught && finalCleanupCalls == 1);
+            Require(allocations == before && key->references == references);
+            Require(std::memcmp(&original, md, sizeof(original)) == 0);
+            Require(std::memcmp(md->data, data.data(), data.size()) == 0);
+            ExpectErrors({});
+            if (operation == 0) {
+                Require(EVP_DigestSignFinal_nid_postfix(md, signature.data(), &wideLength) == 1);
+                Require(std::memcmp(signature.data(), Pkcs1Sha1Signature, signature.size()) == 0);
+            } else if (operation == 1) {
+                Require(EVP_SignFinal_nid_postfix(md, signature.data(), &length, key) == 1);
+                Require(std::memcmp(signature.data(), Pkcs1Sha1Signature, signature.size()) == 0);
+            } else {
+                Require(EVP_VerifyFinal_nid_postfix(md, Pkcs1Sha1Signature, sizeof(Pkcs1Sha1Signature), key) == 1);
+            }
+            Require(allocations == before && key->references == references);
+            EVP_MD_CTX_free_nid_postfix(md);
+            ReleaseKey(key);
+        }
+    }
+}
+
+void FinalizationGuardFailures() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* md = EVP_MD_CTX_new_nid_postfix();
+    Require(md != nullptr);
+    Require(EVP_DigestSignInit_nid_postfix(md, nullptr, EVP_sha1_nid_postfix(), nullptr, key) == 1);
+    Require(md->update(md, MessageBytes(), MessageLength) == 1);
+    std::array<unsigned char, 256> signature {};
+    const auto before = allocations;
+    const auto references = key->references;
+    bool caught = false;
+    try {
+        EVP_DigestSignFinal_nid_postfix(md, signature.data(), nullptr);
+    } catch (const std::invalid_argument& error) {
+        caught = std::strstr(error.what(), "without an output length") != nullptr;
+    }
+    Require(caught && allocations == before && key->references == references);
+    ExpectErrors({});
+    std::size_t length = signature.size();
+    Require(EVP_DigestSignFinal_nid_postfix(md, signature.data(), &length) == 1);
+    Require(std::memcmp(signature.data(), Pkcs1Sha1Signature, signature.size()) == 0);
+    EVP_MD_CTX_free_nid_postfix(md);
+    ReleaseKey(key);
+
+    for (const bool verify : {false, true}) {
+        for (const unsigned cleanupThrows : {0u, 1u, 4u, 5u}) {
+            key = NewNativeKey(LibreSsl3PkeyRsaPss);
+            md = EVP_MD_CTX_new_nid_postfix();
+            Require(md != nullptr);
+            Require(EVP_DigestInit_nid_postfix(md, EVP_sha1_nid_postfix()) == 1);
+            Require(md->update(md, MessageBytes(), MessageLength) == 1);
+            auto* rsa = static_cast<LibreSsl3Rsa*>(key->key);
+            int restriction = 0;
+            rsa->pss = &restriction;
+            const auto live = allocations;
+            const auto retained = key->references;
+            caught = false;
+            unsigned int signatureLength = signature.size();
+            finalCleanupCalls = 0;
+            finalCleanupThrows = cleanupThrows;
+            trackFinalCleanup = true;
+            try {
+                if (verify) EVP_VerifyFinal_nid_postfix(md, Pkcs1Sha1Signature, sizeof(Pkcs1Sha1Signature), key);
+                else EVP_SignFinal_nid_postfix(md, signature.data(), &signatureLength, key);
+            } catch (const std::exception& error) {
+                caught = std::strstr(error.what(), "RSA-PSS key restrictions") != nullptr;
+            }
+            trackFinalCleanup = false;
+            finalCleanupThrows = 0;
+            rsa->pss = nullptr;
+            Require(caught && finalCleanupCalls == 3 && allocations == live && key->references == retained);
+            ExpectErrors({});
+            EVP_MD_CTX_free_nid_postfix(md);
+            ReleaseKey(key);
+        }
+    }
+}
+
+void FinalizationNormalCleanupFailure() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* md = EVP_MD_CTX_new_nid_postfix();
+    Require(md != nullptr);
+    Require(EVP_DigestSignInit_nid_postfix(md, nullptr, EVP_sha1_nid_postfix(), nullptr, key) == 1);
+    Require(md->update(md, MessageBytes(), MessageLength) == 1);
+    const auto before = allocations;
+    const auto references = key->references;
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = signature.size();
+    finalCleanupCalls = 0;
+    finalCleanupThrows = 1;
+    trackFinalCleanup = true;
+    bool caught = false;
+    try { EVP_DigestSignFinal_nid_postfix(md, signature.data(), &length); }
+    catch (const FinalCleanupFailure& failure) { caught = failure.ordinal == 1; }
+    trackFinalCleanup = false;
+    finalCleanupThrows = 0;
+    Require(caught && finalCleanupCalls == 1 && allocations == before && key->references == references);
+    Require(std::memcmp(signature.data(), Pkcs1Sha1Signature, signature.size()) == 0);
+    ExpectErrors({});
+    EVP_MD_CTX_free_nid_postfix(md);
+    ReleaseKey(key);
+}
+
 void ChineseRemainderKey() {
     auto* key = EVP_PKEY_new_nid_disambig1_nid_postfix();
     Require(key != nullptr);
@@ -1108,6 +1280,9 @@ int main() {
         reinterpret_cast<void*>(Align_nid_no_patch), reinterpret_cast<void*>(Realign_nid_no_patch),
         reinterpret_cast<void*>(PosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
+    FinalizationCallbackFailures();
+    FinalizationGuardFailures();
+    FinalizationNormalCleanupFailure();
     AlgorithmMethodSelection();
     OperationGuards();
     Pkcs1Vector();
