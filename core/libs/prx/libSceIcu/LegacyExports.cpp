@@ -3602,10 +3602,6 @@ int APS5_VABI _ZN6icu_6813LocaleUtility23getAvailableLocaleNamesERKNS_13UnicodeS
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_uint32Comparator_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_Ks0DybWzY3c_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

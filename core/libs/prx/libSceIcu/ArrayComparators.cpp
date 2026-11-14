@@ -22,4 +22,13 @@ std::int32_t APS5_VABI uprv_int32Comparator_nid_postfix(const void* context, con
     return static_cast<std::int32_t>(l - r);
 }
 
+std::int32_t APS5_VABI uprv_uint32Comparator_nid_postfix(const void* context, const void* left, const void* right) {
+    (void)context;
+    const auto l = *static_cast<const std::uint32_t*>(left);
+    const auto r = *static_cast<const std::uint32_t*>(right);
+    if (l < r) return -1;
+    if (l == r) return 0;
+    return 1;
+}
+
 }

@@ -845,7 +845,7 @@ int APS5_VABI _ZN6icu_686Locale14setFromPOSIXIDEPKc_nid_postfix();
 int APS5_VABI ures_getUTF8String_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Kr8Q8xo3B8M_nid_no_patch();
 int APS5_VABI _ZN6icu_6813LocaleUtility23getAvailableLocaleNamesERKNS_13UnicodeStringE_nid_postfix();
-int APS5_VABI uprv_uint32Comparator_nid_postfix();
+std::int32_t APS5_VABI uprv_uint32Comparator_nid_postfix(const void* context, const void* left, const void* right);
 int APS5_VABI sceIcuLegacyUnknown_Ks0DybWzY3c_nid_no_patch();
 int APS5_VABI _ZNK6icu_6819FilteredNormalizer212isNormalizedERKNS_13UnicodeStringER10UErrorCode_nid_postfix();
 int APS5_VABI _ZN6icu_6818UnicodeSetIteratorC1ERKNS_10UnicodeSetE_nid_postfix();
