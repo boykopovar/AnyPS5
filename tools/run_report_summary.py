@@ -56,7 +56,8 @@ def render(report):
 
     gpu = system.get("gpu")
     gpu_name = gpu.get("name") if isinstance(gpu, dict) else None
-    system_summary = [text(system.get("os")).capitalize(), text(system.get("osVersion"))]
+    os_name = text(system.get("os"))
+    system_summary = [{"linux": "Linux", "windows": "Windows", "macos": "macOS"}.get(os_name, os_name), text(system.get("osVersion"))]
     if system.get("cpu"):
         system_summary.append(text(system["cpu"]))
     if system.get("ramGiB") is not None:

@@ -34,7 +34,6 @@ extern SonyDconst _LDenorm_nid_postfix;
 extern SonyDconst _LInf_nid_postfix;
 extern SonyDconst _LNan_nid_postfix;
 extern SonyDconst _LSnan_nid_postfix;
-
 extern int signgam_nid_postfix;
 
 struct DinkumwareFloatCharacteristics {
@@ -2922,6 +2921,64 @@ static void CheckCoshfMsunBoundaries() {
     Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x7fc12345u))) == 0x7fc12345u);
 }
 
+struct MeasuredScaledSine {
+    float x;
+    float y;
+    std::uint32_t bits;
+};
+
+constexpr MeasuredScaledSine MeasuredScaledSines[] = {
+    {0x1.c34368p-1f, 0x1.fffffep+127f, 0x7f7fffffu},
+    {0x1p+3f, 0x1.5af1d8p+66f, 0x65fc7f3bu},
+    {0x1p+3f, 0x1p-140f, 0x000ba800u},
+    {0x1p+3f, 0x1p-149f, 0x00000800u},
+    {0x1.4p+3f, 0x1p-140f, 0x00560000u},
+    {0x1.4p+3f, 0x1p-149f, 0x00002000u},
+    {0x1.4p+4f, 0x1p-140f, 0x07678000u},
+    {0x1.4p+4f, 0x1p-149f, 0x03000000u},
+    {0x1.9p+5f, 0x1p-140f, 0x1d0c8000u},
+    {0x1.9p+5f, 0x1p-149f, 0x18800000u},
+    {0x1.6p+6f, 0x1p-140f, 0x38788000u},
+    {0x1.6p+6f, 0x1p-149f, 0x34000000u},
+    {0x1.68p+6f, 0x1p-140f, 0x39e58000u},
+    {0x1.68p+6f, 0x1p-149f, 0x35800000u},
+    {0x1.9p+6f, 0x1.16c2p-133f, 0x44a80180u},
+    {0x1.9p+6f, 0x1p-140f, 0x411a4000u},
+    {0x1.9p+6f, 0x1p-149f, 0x3c800000u},
+    {0x1.2cp+7f, 0x1p-140f, 0x65298000u},
+    {0x1.2cp+7f, 0x1p-149f, 0x60800000u},
+    {0x1.68p+7f, 0x1p-140f, 0x7ace0000u},
+    {0x1.68p+7f, 0x1p-149f, 0x76800000u},
+    {0x1.74e9c2p+7f, 0x1p-140f, 0x7f800000u},
+    {0x1.74e9c4p+7f, 0x1p-140f, 0x7f800000u},
+    {0x1.74e9c6p+7f, 0x1p-140f, 0x7f800000u},
+    {0x1.7cp+7f, 0x1p-149f, 0x7d800000u},
+    {0x1.8163c8p+7f, 0x1p-149f, 0x7f800000u},
+    {0x1.8163cap+7f, 0x1p-149f, 0x7f800000u},
+    {0x1.8163ccp+7f, 0x1p-149f, 0x7f800000u},
+};
+
+static void CheckScaledSineBits() {
+    const struct {
+        float x;
+        float y;
+        float expected;
+    } cases[] = {
+        {-0x1.004c8ep-15f, 3.0f, -0x1.8072d4p-14f},
+        {0x1.1c89aep-18f, 3.0f, 0x1.aace84p-17f},
+        {-0x1.6a06eap-2f, 3.0f, -0x1.153648p+0f},
+        {-0x1.99be9p-2f, 2.0f, -0x1.a4c436p-1f},
+        {0x1.913af8p-1f, 0.5f, 0x1.bb939ep-2f},
+        {0x1p+2f, 1.0f, 0x1.b4a37ep+4f},
+        {0x1.1d374cp+2f, 0.5f, 0x1.58b1e6p+4f},
+        {-0x1.b81f22p+4f, 0.5f, -0x1.9b9826p+37f},
+        {0x1.b265fep+5f, 3.0f, 0x1.e56528p+78f},
+        {0x1.64dcc6p+6f, 0.5f, 0x1.a3072p+126f},
+    };
+    for (const auto& test : cases)
+        Require(std::bit_cast<std::uint32_t>(_FSinh_nid_postfix(test.x, test.y)) == std::bit_cast<std::uint32_t>(test.expected));
+}
+
 static void CheckLog10fLog2fConsoleBits() {
     constexpr struct {
         std::uint32_t input;
@@ -2961,14 +3018,20 @@ static void CheckScaledHyperbolic() {
         const char* name = sine ? "_FSinh" : "_FCosh";
         const auto checkValue = [&](float x, float y) {
             const long double value = sine ? std::sinh(static_cast<long double>(x)) : std::cosh(static_cast<long double>(x));
-            const float expected = static_cast<float>(value * static_cast<long double>(y));
+            float expected = static_cast<float>(value * static_cast<long double>(y));
+            bool exact = expected == 0.0f || std::isinf(expected);
+            for (const auto& measured : MeasuredScaledSines) {
+                if (sine && measured.x == std::fabs(x) && measured.y == std::fabs(y)) {
+                    expected = std::bit_cast<float>(measured.bits | (std::signbit(x) != std::signbit(y) ? 0x80000000u : 0u));
+                    exact = true;
+                }
+            }
             std::feclearexcept(FE_ALL_EXCEPT);
             errno = 12345;
             const float result = function(x, y);
             const auto actualBits = std::bit_cast<std::uint32_t>(result);
             const auto expectedBits = std::bit_cast<std::uint32_t>(expected);
             const auto distance = actualBits > expectedBits ? actualBits - expectedBits : expectedBits - actualBits;
-            const bool exact = expected == 0.0f || std::isinf(expected);
             if ((exact ? actualBits != expectedBits : !std::isfinite(result) || distance > 2) ||
                 (std::isfinite(expected) && (std::fetestexcept(FE_OVERFLOW | FE_INVALID) != 0 || errno != 12345))) {
                 std::fprintf(stderr, "%s(%a, %a): got %08x, expected %08x, errno %d, flags %x\n",
@@ -4324,6 +4387,89 @@ int main() {
     Require(lgamma_nid_postfix(1.) == 0. && lgamma_nid_postfix(2.) == 0. && std::isinf(lgamma_nid_postfix(0.)));
     Require(std::abs(lgamma_nid_postfix(0.5) - 0.5723649429247001) < 1e-15 && std::abs(lgamma_nid_postfix(10.) - 12.801827480081469) < 1e-13);
     Require(std::abs(lgamma_nid_postfix(-0.5) - 1.2655121234846454) < 1e-15);
+    Require(tgamma_nid_postfix(1.) == 1. && tgamma_nid_postfix(2.) == 1. && tgamma_nid_postfix(3.) == 2.);
+    Require(std::abs(tgamma_nid_postfix(0.5) - 1.7724538509055160) < 1e-15);
+    errno = 0;
+    Require(std::isnan(tgamma_nid_postfix(-1.)));
+    Require(errno == EDOM);
+    errno = 0;
+    Require(std::isinf(tgamma_nid_postfix(200.)));
+    Require(errno == 0);
+    const double negativeDoubleGammaUnderflow = tgamma_nid_postfix(-190.5);
+    const double positiveDoubleGammaUnderflow = tgamma_nid_postfix(-191.5);
+    Require(negativeDoubleGammaUnderflow == 0.0 && std::signbit(negativeDoubleGammaUnderflow));
+    Require(positiveDoubleGammaUnderflow == 0.0 && !std::signbit(positiveDoubleGammaUnderflow));
+    Require(errno == 0);
+    int rSign = 7;
+    Require(lgamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
+    rSign = 7;
+    Require(std::abs(lgamma_r_nid_postfix(-0.5, &rSign) - 1.2655121234846454) < 1e-15 && rSign == -1);
+    Require(lgammaf_nid_postfix(1.f) == 0.f && lgammaf_nid_postfix(2.f) == 0.f);
+    Require(std::abs(lgammaf_nid_postfix(0.5f) - 0.57236494f) < 1e-6f);
+    signgam_nid_postfix = 7;
+    Require(lgammaf_nid_postfix(-0.5f) > 0.f && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(lgammaf_r_nid_postfix(1.f, &rSign) == 0.f && rSign == 1);
+    rSign = 7;
+    Require(lgammaf_r_nid_postfix(-0.5f, &rSign) > 0.f && rSign == -1);
+    signgam_nid_postfix = 7;
+    Require(gamma_nid_postfix(1.) == 0. && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(gamma_nid_postfix(-0.5) > 0. && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(gamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
+    rSign = 7;
+    Require(gamma_r_nid_postfix(-0.5, &rSign) > 0. && rSign == -1);
+    signgam_nid_postfix = 7;
+    Require(gammaf_nid_postfix(1.f) == 0.f && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(gammaf_nid_postfix(-0.5f) > 0.f && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(gammaf_r_nid_postfix(1.f, &rSign) == 0.f && rSign == 1);
+    rSign = 7;
+    Require(gammaf_r_nid_postfix(-0.5f, &rSign) > 0.f && rSign == -1);
+    threw = false;
+    try { lgamma_r_nid_postfix(1.0, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { lgammaf_r_nid_postfix(1.0f, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { gamma_r_nid_postfix(1.0, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { gammaf_r_nid_postfix(1.0f, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    rSign = 7;
+    Require(std::isinf(lgamma_r_nid_postfix(-0., &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(lgammaf_r_nid_postfix(-0.f, &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(gamma_r_nid_postfix(-0., &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(gammaf_r_nid_postfix(-0.f, &rSign)) && rSign == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(lgammaf_nid_postfix(-0.f)) && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(gamma_nid_postfix(-0.)) && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(gammaf_nid_postfix(-0.f)) && signgam_nid_postfix == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(-0., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(0., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(-1., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(1., &rSign);
+    Require(errno == 0 && rSign == 1);
     for (const double sign : {1.0, -1.0}) {
         std::feclearexcept(FE_ALL_EXCEPT);
         Require(std::abs(lgamma_nid_postfix(sign * std::numeric_limits<double>::denorm_min()) - 744.44007192138122) < 1e-12);
@@ -4338,10 +4484,19 @@ int main() {
 
         return signgam_nid_postfix;
     };
-    Require(gammaSign(0.5) == 1 && gammaSign(10.) == 1 && gammaSign(0.) == 1 && gammaSign(-0.) == -1);
+    Require(gammaSign(0.5) == 1 && gammaSign(10.) == 1 && gammaSign(0.) == 1 && gammaSign(-0.) == 1);
     Require(gammaSign(-0.5) == -1 && gammaSign(-1.5) == 1 && gammaSign(-2.5) == -1 && gammaSign(-0x1p-80) == -1);
     Require(gammaSign(-1.) == 1 && gammaSign(-2.) == 1 && gammaSign(-0x1p60) == 1 && gammaSign(-4503599627370495.5) == 1);
     Require(gammaSign(INFINITY) == 1 && gammaSign(-INFINITY) == 1 && gammaSign(NAN) == 1);
+    const auto gammaErrno = [](std::uint64_t bits) {
+        errno = 0;
+        lgamma_nid_postfix(std::bit_cast<double>(bits));
+        return errno;
+    };
+    for (const std::uint64_t pole : {0x0000000000000000ull, 0x8000000000000000ull, 0xbff0000000000000ull, 0xc000000000000000ull, 0xc330000000000000ull, 0xff76c8e5ca239029ull})
+        Require(gammaErrno(pole) == ERANGE);
+    for (const std::uint64_t other : {0x3fe0000000000000ull, 0xc004000000000000ull, 0xc32fffffffffffffull, 0x7f76c8e5ca239029ull, 0x7ff0000000000000ull, 0xfff0000000000000ull, 0x7ff8000000000000ull})
+        Require(gammaErrno(other) == 0);
     Require(llroundl_nid_postfix(2.5L) == 3 && llroundl_nid_postfix(-2.5L) == -3 && llroundl_nid_postfix(0.49999999999999999L) == 0);
     Require(llroundl_nid_postfix(9007199254740993.0L) == 9007199254740993LL && llroundl_nid_postfix(-1e30L) == INT64_MIN);
     for (const int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
@@ -4571,6 +4726,7 @@ int main() {
     CheckExp2fConsoleBits();
     CheckAsinhfMsunBoundaries();
     CheckScaledHyperbolic();
+    CheckScaledSineBits();
     CheckLog10fLog2fConsoleBits();
     CheckSinhf();
     CheckAtanhf();

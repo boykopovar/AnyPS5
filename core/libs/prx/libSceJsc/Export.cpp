@@ -1625,10 +1625,6 @@ int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF31integerToSixCharacterHashStringEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1725,15 +1721,7 @@ int APS5_VABI _ZN3WTF7Unicode43convertUTF8ToUTF16ReplacingInvalidSequencesEPKcS2
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF8Internal9appendHexEPhjmjNS_17HexConversionModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF8JSONImpl5Value12escapeStringERNS_13StringBuilderENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF8pageMaskEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1994,10 +1982,6 @@ int APS5_VABI _ZNK3WTF6String5splitERKS0_() {
 }
 
 int APS5_VABI _ZNK3WTF6String9substringEjj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF9MediaTimeneERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 

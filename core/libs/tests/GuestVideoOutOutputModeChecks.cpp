@@ -49,7 +49,7 @@ int main() {
         handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
     } catch (const std::runtime_error& error) {
         if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw;
-        std::printf("skipped the open-port rows, no display or Vulkan device: %s\n", error.what());
+        std::printf("skipped, no display or Vulkan device for the open-port rows: %s\n", error.what());
         return 77;
     }
     Require(handle > 0, "sceVideoOutOpen failed");

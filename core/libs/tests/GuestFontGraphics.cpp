@@ -85,6 +85,7 @@ void Regions() {
     RequireError(sceFontGraphicsRegionInit(&region, 0.0f, 0.0f, -1.0f, 1.0f), InvalidParameter);
     RequireError(sceFontGraphicsRegionInit(&region, 0.0f, 0.0f, 1.0f, -1.0f), InvalidParameter);
     RequireError(sceFontGraphicsRegionInit(nullptr, 0.0f, 0.0f, 1.0f, 1.0f), InvalidParameter);
+    RequireError(sceFontGraphicsRegionInit(reinterpret_cast<FontGraphicsRegion*>(0x10), 0.0f, 0.0f, 1.0f, 1.0f), InvalidParameter);
     Require(AllBytes(region, 0, sizeof(region), 0xa5));
 
     Require(sceFontGraphicsRegionInitCircular(&region, 10.0f, 20.0f, 4.0f, 1.0f) == 0);
@@ -95,6 +96,7 @@ void Regions() {
     RequireError(sceFontGraphicsRegionInitCircular(&region, 0.0f, 0.0f, 0.0f, 0.0f), InvalidParameter);
     RequireError(sceFontGraphicsRegionInitCircular(&region, 0.0f, 0.0f, 1.0f, 0.0f), InvalidParameter);
     RequireError(sceFontGraphicsRegionInitCircular(nullptr, 0.0f, 0.0f, 2.0f, 1.0f), InvalidParameter);
+    RequireError(sceFontGraphicsRegionInitCircular(reinterpret_cast<FontGraphicsRegion*>(0x10), 0.0f, 0.0f, 2.0f, 1.0f), InvalidParameter);
 
     Require(sceFontGraphicsRegionInitRoundish(&region, 1.0f, 2.0f, 10.0f, 8.0f, 4.0f, 2.0f, 0x5) == 0);
     Require(region.width == 10.0f && region.height == 8.0f && region.flags == 0x5 && region.tag == 0xf60);
@@ -105,6 +107,8 @@ void Regions() {
     RequireError(sceFontGraphicsRegionInitRoundish(&region, 0.0f, 0.0f, 10.0f, 8.0f, 2.0f, 1.0f, 0x100), InvalidParameter);
     RequireError(sceFontGraphicsRegionInitRoundish(&region, 0.0f, 0.0f, 0.0f, 8.0f, 0.0f, 0.0f, 0), InvalidParameter);
     RequireError(sceFontGraphicsRegionInitRoundish(&region, 0.0f, 0.0f, 10.0f, 8.0f, -1.0f, 0.0f, 0), InvalidParameter);
+    RequireError(sceFontGraphicsRegionInitRoundish(nullptr, 0.0f, 0.0f, 10.0f, 8.0f, 2.0f, 1.0f, 0), InvalidParameter);
+    RequireError(sceFontGraphicsRegionInitRoundish(reinterpret_cast<FontGraphicsRegion*>(0x10), 0.0f, 0.0f, 10.0f, 8.0f, 2.0f, 1.0f, 0), InvalidParameter);
 }
 
 void FillMethods() {
@@ -118,6 +122,7 @@ void FillMethods() {
     for (std::int32_t mode : {0x01, 0x08, 0x60, -0x10}) RequireError(sceFontGraphicsFillMethodInit(&method, mode, 1), InvalidParameter);
     for (std::int32_t type : {0, 8, 11, 13, -1}) RequireError(sceFontGraphicsFillMethodInit(&method, 0, type), InvalidParameter);
     RequireError(sceFontGraphicsFillMethodInit(nullptr, 0, 1), InvalidParameter);
+    RequireError(sceFontGraphicsFillMethodInit(reinterpret_cast<FontGraphicsFillMethod*>(0x10), 0, 1), InvalidParameter);
 }
 
 void FillPlots() {

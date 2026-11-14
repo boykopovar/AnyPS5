@@ -16,8 +16,8 @@ constexpr std::uint32_t RemotePlayPortFlag = 1;
 
 extern "C" {
 
-int APS5_VABI sceNpRemotePlaySessionSignalingCreateJoinSession() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingCreateJoinSession(const char* sessionId, std::uint32_t* groupId, std::uint32_t* connectionId) {
+    return sceNpSessionSignalingCreateJoinActivate(sessionId, groupId, connectionId);
 }
 
 int32_t APS5_VABI sceNpRemotePlaySessionSignalingGetConnectionStatus(std::uint32_t contextId, std::uint32_t connectionId, std::int32_t* status, std::uint32_t* peerAddress, std::uint16_t* peerPort) {
@@ -102,8 +102,8 @@ int APS5_VABI sceNpRemotePlaySessionSignalingInitialize(const SessionSignalingIn
     return sceNpSessionSignalingInitializeWithPort(&copy, RemotePlayPort, RemotePlayPortFlag);
 }
 
-int APS5_VABI sceNpRemotePlaySessionSignalingJoinSession() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpRemotePlaySessionSignalingJoinSession(const char* sessionId, const void* param, std::uint32_t* groupId, std::uint32_t* connectionId) {
+    return sceNpSessionSignalingJoinActivate(sessionId, param, groupId, connectionId);
 }
 
 int APS5_VABI sceNpRemotePlaySessionSignalingLeaveSession(std::uint32_t contextId) {

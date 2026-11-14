@@ -1313,6 +1313,19 @@ if(BUILD_TESTING)
         add_subdirectory(tests/register_context)
     endif()
 
+    add_test_executable(guest_savedata_progress_tests tests/GuestSaveDataProgress.cpp)
+    target_include_directories(guest_savedata_progress_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_savedata_progress_tests PRIVATE libSceSaveData.native)
+    configure_windows_unwind(guest_savedata_progress_tests)
+    add_test(NAME guest_savedata_progress COMMAND guest_savedata_progress_tests)
+    if(MINGW)
+        target_compile_options(guest_savedata_progress_tests PRIVATE -fasynchronous-unwind-tables)
+    endif()
+    if(WIN32)
+        set_tests_properties(guest_savedata_progress PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
+
     add_test_executable(guest_kernel_sys_mqueue_tests tests/GuestKernelSysMqueue.cpp)
     target_include_directories(guest_kernel_sys_mqueue_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_mqueue_tests PRIVATE libkernel_sys libkernel libc)
@@ -1409,6 +1422,16 @@ if(BUILD_TESTING)
             -DOBJDUMP=${CMAKE_OBJDUMP} -DPATTERN=ThreadLocalDestructors.cmake -DMODULES=${CMAKE_CURRENT_SOURCE_DIR}/tests
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ThreadLocalDestructors.cmake)
         set_tests_properties(thread_local_destructors_unusable_nm PROPERTIES WILL_FAIL TRUE TIMEOUT 30)
+    endif()
+
+    add_test_executable(guest_np_cpp_web_api_catalog_leaderboards_tests tests/GuestNpCppWebApiCatalogLeaderboards.cpp)
+    target_include_directories(guest_np_cpp_web_api_catalog_leaderboards_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_catalog_leaderboards_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_catalog_leaderboards_tests)
+    add_test(NAME guest_np_cpp_web_api_catalog_leaderboards COMMAND guest_np_cpp_web_api_catalog_leaderboards_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_catalog_leaderboards PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCppWebApi>")
     endif()
 
     add_test_executable(guest_np_cpp_web_api_intrusive_ptr_tests tests/GuestNpCppWebApiIntrusivePtr.cpp)
