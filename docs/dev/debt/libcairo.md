@@ -14,6 +14,8 @@
 
 - [GlyphDrawing.cpp](../../../core/libs/prx/libcairo/GlyphDrawing.cpp) - console behaviour of `cairo_show_glyphs` and `cairo_glyph_path` is unmeasured. They forward to the bundled Cairo 1.18.0, which draws or traces the glyphs with the context's current scaled font. No export here selects a font yet, so that is Cairo's default toy face, and this build has no FreeType font backend: the toy face falls back to Cairo's built-in twin font, where the console's Cairo, which exports the FreeType and fontconfig `cairo_ft_*` functions, would resolve it through FreeType to a system font. Glyph shapes, coverage and paths therefore differ from the console. A glyph index above `ULONG_MAX` throws through `NotImplemented_nid_no_patch` on hosts whose `unsigned long` is 32 bits, because Cairo's `cairo_glyph_t` cannot hold it there.
 
+- [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) and [ContextFontOptions.cpp](../../../core/libs/prx/libcairo/ContextFontOptions.cpp) - console behaviour of `cairo_set_font_options` is unmeasured. It copies the four values these exports can set into a bundled Cairo 1.18.0 options object and forwards it; the fields no export sets keep Cairo's defaults. A null options pointer gives `CAIRO_STATUS_NULL_POINTER` and the failed-allocation object gives `CAIRO_STATUS_NO_MEMORY`, as Cairo answers; a null context reaches Cairo unchanged. With the twin font only antialiasing and hint style change the drawn glyphs.
+
 - [Mesh.cpp](../../../core/libs/prx/libcairo/Mesh.cpp) - console equivalence of mesh construction, automatic patch completion, error states and rasterization is unmeasured. The seven exports use the bundled Cairo 1.18.0 pattern objects and mesh implementation. Null or foreign pattern pointers reach Cairo unchanged.
 
 ### Functional font options
@@ -32,7 +34,6 @@
 | --- | --- |
 | `cairo_scaled_font_get_font_face` | `+BL3-h8zGDo` |
 | `cairo_paint` | `+PEo5Z7DOlY` |
-| `cairo_set_font_options` | `-aqFIBn0h78` |
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |

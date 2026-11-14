@@ -130,7 +130,6 @@ int APS5_VABI _ZN3JSC41DeferredStructureTransitionWatchpointFireD2Ev();
 int APS5_VABI _ZN3JSC4Heap16objectTypeCountsEv();
 int APS5_VABI _ZN3JSC4Heap20addMarkingConstraintESt10unique_ptrINS_17MarkingConstraintESt14default_deleteIS2_EE();
 int APS5_VABI _ZN3JSC4Heap25protectedObjectTypeCountsEv();
-int APS5_VABI _ZN3JSC4Yarr10parseFlagsEN3WTF10StringViewE();
 int APS5_VABI _ZN3JSC4Yarr11YarrPatternC1ERKN3WTF6StringENS2_9OptionSetINS0_5FlagsEEERNS0_9ErrorCodeE();
 int APS5_VABI _ZN3JSC4Yarr11YarrPatternC2ERKN3WTF6StringENS2_9OptionSetINS0_5FlagsEEERNS0_9ErrorCodeE();
 int APS5_VABI _ZN3JSC4Yarr11byteCompileERNS0_11YarrPatternEPN3WTF20BumpPointerAllocatorERNS0_9ErrorCodeEPNS3_4LockE();
@@ -235,7 +234,6 @@ int APS5_VABI _ZN3WTF24acquireLineBreakIteratorENS_10StringViewERKNS_10AtomStrin
 int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator();
 int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv();
 int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE();
-int APS5_VABI _ZN3WTF6Logger9observersEv();
 int APS5_VABI _ZN3WTF6String23make16BitFrom8BitSourceEPKhm();
 int APS5_VABI _ZN3WTF6String23make8BitFrom16BitSourceEPKDsm();
 int APS5_VABI _ZN3WTF6String6appendEDs();
