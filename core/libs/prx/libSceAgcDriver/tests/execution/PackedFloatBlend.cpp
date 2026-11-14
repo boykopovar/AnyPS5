@@ -106,7 +106,9 @@ float Unpacked(std::uint32_t raw, std::uint32_t mantissaBits) {
 constexpr std::array<std::uint32_t, 3> FieldOffset{0u, 10u, 21u};
 constexpr std::array<std::uint32_t, 3> FieldMantissa{5u, 6u, 6u};
 
-float Factor(std::uint32_t code, float source, float destination, float sourceAlpha) {
+constexpr std::array<float, 4> BlendConstants{0.25f, 1.5f, 0.75f, 0.625f};
+
+float Factor(std::uint32_t code, float source, float destination, float sourceAlpha, float constant) {
     switch (code) {
         case 0: return 0.0f;
         case 1: return 1.0f;
@@ -119,22 +121,26 @@ float Factor(std::uint32_t code, float source, float destination, float sourceAl
         case 8: return destination;
         case 9: return 1.0f - destination;
         case 10: return std::fmin(sourceAlpha, 0.0f);
+        case 13: return constant;
+        case 14: return 1.0f - constant;
+        case 19: return BlendConstants[3];
+        case 20: return 1.0f - BlendConstants[3];
         default: throw std::runtime_error("the test uses a blend factor the reference does not model");
     }
 }
 
-float Term(std::uint32_t code, float value, float source, float destination, float sourceAlpha) {
+float Term(std::uint32_t code, float value, float source, float destination, float sourceAlpha, float constant) {
     if (code == 0u) return 0.0f;
     if (code == 1u) return value;
-    return value * Factor(code, source, destination, sourceAlpha);
+    return value * Factor(code, source, destination, sourceAlpha, constant);
 }
 
-float BlendChannel(std::uint32_t control, float source, float destination, float sourceAlpha) {
+float BlendChannel(std::uint32_t control, float source, float destination, float sourceAlpha, float constant) {
     const auto sourceFactor = control & 0x1fu;
     const auto combine = (control >> 5u) & 7u;
     const auto destinationFactor = (control >> 8u) & 0x1fu;
-    const auto s = Term(sourceFactor, source, source, destination, sourceAlpha);
-    const auto d = Term(destinationFactor, destination, source, destination, sourceAlpha);
+    const auto s = Term(sourceFactor, source, source, destination, sourceAlpha, constant);
+    const auto d = Term(destinationFactor, destination, source, destination, sourceAlpha, constant);
     switch (combine) {
         case 0: return s + d;
         case 1: return s - d;
@@ -150,7 +156,7 @@ std::uint32_t Blended(std::uint32_t control, std::uint32_t wordMask, std::array<
     std::uint32_t word = 0;
     for (std::uint32_t field = 0; field < 3; ++field) {
         const auto destination = Unpacked((stored >> FieldOffset[field]) & ((1u << (FieldMantissa[field] + 5u)) - 1u), FieldMantissa[field]);
-        const auto value = control == 0u ? source[field] : BlendChannel(control, source[field], destination, rgba[3]);
+        const auto value = control == 0u ? source[field] : BlendChannel(control, source[field], destination, rgba[3], BlendConstants[2u - field]);
         word |= SmallFloat(value, FieldMantissa[field]) << FieldOffset[field];
     }
     return (stored & ~wordMask) | (word & wordMask);
@@ -321,7 +327,7 @@ std::uint32_t Draw(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ColorTa
     blend.colorWriteMask = merged ? 0u : VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
     state.blends = {blend};
     state.blend = blend;
-    state.blendConstants = {};
+    state.blendConstants = {BlendConstants[2], BlendConstants[1], BlendConstants[0], BlendConstants[3]};
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
     const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, setup.inputs}, {0x1b4, setup.inputs}, {0x203, 0}, {0x1c5, Float32Export}};
@@ -643,7 +649,7 @@ int main(int argc, char** argv) {
         Block block(layout.Bytes());
         const auto color = DecodeTarget(block);
         Require(AgcDriver::Graphics::PackedWriteMask(color.packing, color.componentMapping, 1u) == 0xffe00000u && AgcDriver::Graphics::PackedWriteMask(color.packing, color.componentMapping, 4u) == 0x000003ffu && AgcDriver::Graphics::PackedWriteMask(color.packing, color.componentMapping, 7u) == 0xffffffffu, "the export components did not map to the guest fields (red in 31..21, blue in 9..0)");
-        const std::array<Case, 11> cases{{
+        const std::array<Case, 14> cases{{
             {0x65040504u, 0xfu, {1.0f, 0.5f, 0.25f, 0.25f}, "a source-over blend"},
             {0x60010101u, 0xfu, {0.5f, 0.75f, 2.0f, 1.0f}, "an additive blend"},
             {0x40000121u, 0xfu, {4.0f, 0.125f, 0.0f, 1.0f}, "a subtracting blend"},
@@ -655,6 +661,9 @@ int main(int argc, char** argv) {
             {0x40000302u, 0xfu, {0.5f, 0.75f, 0.25f, 1.0f}, "a SRC_COLOR, ONE_MINUS_SRC_COLOR blend"},
             {0x40000706u, 0xfu, {0.5f, 0.75f, 0.25f, 1.0f}, "a DST_ALPHA, ONE_MINUS_DST_ALPHA blend into the alpha-less target"},
             {0x4000010au, 0xfu, {0.5f, 0.75f, 0.25f, 0.5f}, "a SRC_ALPHA_SATURATE, ONE blend into the alpha-less target"},
+            {0x40000e0du, 0xfu, {0.5f, 0.75f, 0.25f, 1.0f}, "a CONSTANT_COLOR, ONE_MINUS_CONSTANT_COLOR blend"},
+            {0x40001413u, 0xfu, {2.0f, 0.75f, 0.25f, 1.0f}, "a CONSTANT_ALPHA, ONE_MINUS_CONSTANT_ALPHA blend"},
+            {0x4000012du, 0xfu, {0.5f, 3.0f, 0.25f, 1.0f}, "a subtracting CONSTANT_COLOR, ONE blend"},
         }};
         for (std::size_t index = 0; index < cases.size(); ++index) {
             const std::array<Case, 1> one{cases[index]};

@@ -12272,6 +12272,11 @@ void float11_11_10TargetTests() {
         ShaderRecompiler::RecompileCacheKey::BuildInterface(flat, flatKey);
         ShaderRecompiler::RecompileCacheKey::BuildInterface(shifted, shiftedKey);
         Require(layeredKey != flatKey && layeredKey != shiftedKey, "the static shader key does not separate a layered merge from a one-layer merge or from another first slice");
+        auto tinted = merging;
+        tinted.context.pixel->targetMerges.front().blendConstants[2] = 0x3f000000u;
+        std::vector<std::uint64_t> tintedKey;
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(tinted, tintedKey);
+        Require(tintedKey != layeredKey, "the static shader key does not separate a merge's blend constants");
         const auto words = ShaderRecompiler::Recompile(merging).spirv.Copy();
         bool arrayed = false, layer = false, geometry = false, clamped = false;
         for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
@@ -12294,7 +12299,11 @@ void float11_11_10TargetTests() {
         Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Float11_11_10 && replaced.color.componentMapping == 0xc6u && replaced.color.mergeBlend == 0u && replaced.color.partialWriteMask == 0u, "a blend that writes the source color into an 11_11_10 float target was refused or kept blending");
     }
     changed.context[0x1e0] = 0x40000d01u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target with a constant color factor");
+    for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = std::bit_cast<std::uint32_t>(0.25f * static_cast<float>(i + 1u));
+    const auto constantBlend = AgcDriver::Graphics::DecodeState(changed);
+    Require(constantBlend.color.mergeBlend == 0x40000d01u && AgcDriver::Graphics::ExportTargetMerges(constantBlend).at(0).blendConstants == std::array<std::uint32_t, 4>{std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.5f), std::bit_cast<std::uint32_t>(0.25f), std::bit_cast<std::uint32_t>(1.0f)}, "a CONSTANT_COLOR blend into an 11_11_10 float target did not carry the blend constants in the target's field order");
+    changed.context[0x1e0] = 0x65040504u;
+    Require(AgcDriver::Graphics::ExportTargetMerges(AgcDriver::Graphics::DecodeState(changed)).at(0).blendConstants == std::array<std::uint32_t, 4>{}, "a blend into an 11_11_10 float target without a constant factor carried the blend constants");
     changed.context[0x1e0] = 0x40000f01u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "dual-source blending into an 11_11_10 float color target");
     changed.context[0x1e0] = 0x400001a1u;

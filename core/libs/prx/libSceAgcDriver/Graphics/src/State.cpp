@@ -2088,6 +2088,10 @@ std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std:
     return mask;
 }
 
+static bool PackedConstantFactor(std::uint32_t factor) {
+    return factor == 13u || factor == 14u || factor == 19u || factor == 20u;
+}
+
 std::uint32_t PackedBlendControl(std::uint32_t blendControl) {
     const auto source = blendControl & 0x1fu;
     const auto combine = (blendControl >> 5u) & 7u;
@@ -2097,8 +2101,7 @@ std::uint32_t PackedBlendControl(std::uint32_t blendControl) {
     Require(combine <= 4u, std::string("blending into an 11_11_10 float color target with an unknown combine function is not implemented") + detail);
     const auto factor = [&](std::uint32_t value) {
         if (value >= 15u && value <= 18u) Require(false, std::string("dual-source blending into an 11_11_10 float color target is not implemented") + detail);
-        if (value == 13u || value == 14u || value == 19u || value == 20u) Require(false, std::string("blending into an 11_11_10 float color target with a constant color factor is not implemented") + detail);
-        Require(value <= 10u, std::string("blending into an 11_11_10 float color target with an unknown blend factor is not implemented") + detail);
+        Require(value <= 10u || PackedConstantFactor(value), std::string("blending into an 11_11_10 float color target with an unknown blend factor is not implemented") + detail);
     };
     factor(source);
     factor(destination);
@@ -2152,6 +2155,9 @@ std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state
         merge.samples = static_cast<std::uint8_t>(color.samples);
         merge.packing = color.packing;
         merge.blendControl = color.mergeBlend;
+        if (PackedConstantFactor(color.mergeBlend & 0x1fu) || PackedConstantFactor((color.mergeBlend >> 8u) & 0x1fu)) {
+            for (std::size_t i = 0; i < 4; ++i) merge.blendConstants[i] = std::bit_cast<std::uint32_t>(state.blendConstants[i]);
+        }
         merge.layered = color.arrayLastSlice != 0u;
         merge.firstSlice = merge.layered ? color.arraySlice : 0u;
         merge.lastSlice = merge.layered ? color.arraySlice + color.layers - 1u : 0u;

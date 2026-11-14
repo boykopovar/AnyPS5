@@ -8802,7 +8802,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTkAAAA=", "new requests did not use serialization version 57");
+    require(requestPrefix(encoded, 8u) == "NVNQQToAAAA=", "new requests did not use serialization version 58");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8923,7 +8923,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTsAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -8981,7 +8981,7 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
 }
 
 std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
-    require(bytes.size() > 13u && bytes[4] == 57u, "a legacy fixture did not start from serialization version 57");
+    require(bytes.size() > 13u && bytes[4] == 58u, "a legacy fixture did not start from serialization version 58");
     bytes.resize(bytes.size() - 5u);
     bytes[4] = 56u;
     return bytes;
@@ -9244,12 +9244,13 @@ void verifyVertexInfoVersion19() {
     const auto orderOffset = blendOffset + 4u + iterationBytes;
     const auto mergeOffset = static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes);
     auto merging = pixel;
-    merging.context.pixel->targetMerges = {{.target = 3u, .mask = 0xf00fu, .samples = 2u, .packing = ColorExportPacking::Float11_11_10, .blendControl = 0x20010001u, .layered = true, .firstSlice = 2u, .lastSlice = 0x105u, .descriptor = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x89abcdefu}, .depthStencilWrites = true, .depthStencilTests = true}};
+    merging.context.pixel->targetMerges = {{.target = 3u, .mask = 0xf00fu, .samples = 2u, .packing = ColorExportPacking::Float11_11_10, .blendControl = 0x20010001u, .blendConstants = {0x3e800000u, 0x3f000000u, 0x3f400000u, 0x3f200000u}, .layered = true, .firstSlice = 2u, .lastSlice = 0x105u, .descriptor = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x89abcdefu}, .depthStencilWrites = true, .depthStencilTests = true}};
     const auto mergingBytes = decodeBase64(serializer.Serialize(merging));
-    require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && mergingBytes[mergeOffset + 40] == 0u && mergingBytes[mergeOffset + 41] == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10) && mergingBytes[mergeOffset + 42] == 0x01u && mergingBytes[mergeOffset + 45] == 0x20u && mergingBytes[mergeOffset + 46] == 1u && mergingBytes[mergeOffset + 47] == 2u && mergingBytes[mergeOffset + 51] == 0x05u && mergingBytes[mergeOffset + 52] == 0x01u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 55 bytes the version 54 pixel info adds after the sample order");
+    constexpr std::size_t mergeConstantBytes = 16u;
+    require(mergingBytes.size() == plainPixel.size() + mergeConstantBytes && mergingBytes[mergingBytes.size() - 13u] == 0x3eu && mergingBytes[mergingBytes.size() - 1u] == 0x3fu && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && mergingBytes[mergeOffset + 40] == 0u && mergingBytes[mergeOffset + 41] == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10) && mergingBytes[mergeOffset + 42] == 0x01u && mergingBytes[mergeOffset + 45] == 0x20u && mergingBytes[mergeOffset + 46] == 1u && mergingBytes[mergeOffset + 47] == 2u && mergingBytes[mergeOffset + 51] == 0x05u && mergingBytes[mergeOffset + 52] == 0x01u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 55 bytes the version 54 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == merging.context.pixel->targetMerges, "a serialized request lost its color target merge");
     auto version54 = mergingBytes;
-    version54.resize(version54.size() - 5u);
+    version54.resize(version54.size() - 5u - mergeConstantBytes);
     version54.erase(version54.begin() + mergeOffset + 40, version54.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
     version54[4] = 54u;
     auto version53 = version54;
@@ -9261,6 +9262,7 @@ void verifyVertexInfoVersion19() {
     auto mergeAt49 = merging.context.pixel->targetMerges.front();
     mergeAt49.packing = ColorExportPacking::Unorm4_4_4_4;
     mergeAt49.blendControl = 0u;
+    mergeAt49.blendConstants = {};
     mergeAt49.layered = false;
     mergeAt49.firstSlice = 0u;
     mergeAt49.lastSlice = 0u;
@@ -9276,7 +9278,7 @@ void verifyVertexInfoVersion19() {
     blendMerging.context.pixel->targetMerges = {{.target = 1u, .mask = 0xffffu, .samples = 1u, .descriptor = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, .depthStencilWrites = true, .depthStencilTests = false, .blend = {true, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {0x3fc00000u, 0xbe800000u, 0x3f000000u, 0x40000000u}}}};
     const auto blendMergingBytes = decodeBase64(serializer.Serialize(blendMerging));
     constexpr std::size_t blendPayloadBytes = 24u;
-    require(blendMergingBytes.size() == plainPixel.size() + blendPayloadBytes && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, blendMergingBytes.begin()) && blendMergingBytes[mergeOffset] == 1u && blendMergingBytes[mergeOffset + 1] == 0xffu && blendMergingBytes[mergeOffset + 2] == 0xffu && blendMergingBytes[mergeOffset + 3] == 0u && blendMergingBytes[mergeOffset + 4] == 0u && blendMergingBytes[mergeOffset + 40] == 1u && blendMergingBytes[mergeOffset + 41] == 1u, "a color target blend is not flagged after the merge's depth and stencil flags, or changed the bytes before the merge");
+    require(blendMergingBytes.size() == plainPixel.size() + blendPayloadBytes + mergeConstantBytes && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, blendMergingBytes.begin()) && blendMergingBytes[mergeOffset] == 1u && blendMergingBytes[mergeOffset + 1] == 0xffu && blendMergingBytes[mergeOffset + 2] == 0xffu && blendMergingBytes[mergeOffset + 3] == 0u && blendMergingBytes[mergeOffset + 4] == 0u && blendMergingBytes[mergeOffset + 40] == 1u && blendMergingBytes[mergeOffset + 41] == 1u, "a color target blend is not flagged after the merge's depth and stencil flags, or changed the bytes before the merge");
     require(serializer.Deserialize(serializer.Serialize(blendMerging)).request.context.pixel->targetMerges == blendMerging.context.pixel->targetMerges, "a serialized request lost its color target blend");
     const auto blendRecordToVersion49 = [&](std::vector<std::uint8_t>& bytes, std::ptrdiff_t record) {
         const auto at = bytes.begin() + record;
@@ -9286,7 +9288,7 @@ void verifyVertexInfoVersion19() {
         at[3] = flags;
     };
     auto blendVersion49 = blendMergingBytes;
-    blendVersion49.resize(blendVersion49.size() - 5u);
+    blendVersion49.resize(blendVersion49.size() - 5u - mergeConstantBytes);
     blendRecordToVersion49(blendVersion49, mergeOffset);
     blendVersion49.resize(blendVersion49.size() - 5u);
     blendVersion49[4] = 49u;
@@ -9295,10 +9297,10 @@ void verifyVertexInfoVersion19() {
     twoMerging.context.pixel->targetMerges.push_back({.target = 3u, .mask = 0xffffu, .samples = 1u, .descriptor = {9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u}, .depthStencilWrites = true, .depthStencilTests = false, .blend = {true, false, 4u, 5u, 0u, 4u, 5u, 0u, 0x3u, {}}});
     const auto twoMergingBytes = decodeBase64(serializer.Serialize(twoMerging));
     const auto twoMergingFlags = mergeOffset + 40;
-    require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes && twoMergingBytes[static_cast<std::size_t>(twoMergingFlags)] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset, blendMergingBytes.begin() + twoMergingFlags, twoMergingBytes.begin() + mergeOffset) && std::equal(blendMergingBytes.begin() + twoMergingFlags + 1, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + twoMergingFlags + 1), "a second color target merge did not follow the first, counted in the first merge's flags");
+    require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes + mergeConstantBytes && twoMergingBytes[static_cast<std::size_t>(twoMergingFlags)] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset, blendMergingBytes.begin() + twoMergingFlags, twoMergingBytes.begin() + mergeOffset) && std::equal(blendMergingBytes.begin() + twoMergingFlags + 1, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + twoMergingFlags + 1), "a second color target merge did not follow the first, counted in the first merge's flags");
     require(serializer.Deserialize(serializer.Serialize(twoMerging)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a serialized request lost its second color target merge");
     auto twoVersion49 = twoMergingBytes;
-    twoVersion49.resize(twoVersion49.size() - 5u);
+    twoVersion49.resize(twoVersion49.size() - 5u - 2u * mergeConstantBytes);
     blendRecordToVersion49(twoVersion49, mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes));
     blendRecordToVersion49(twoVersion49, mergeOffset);
     twoVersion49.resize(twoVersion49.size() - 5u);

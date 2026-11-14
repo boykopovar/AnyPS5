@@ -247,6 +247,7 @@ private:
             append(key, merge.samples);
             append(key, merge.packing);
             append(key, merge.blendControl);
+            append(key, merge.blendConstants);
             append(key, merge.layered);
             append(key, merge.firstSlice);
             append(key, merge.lastSlice);
