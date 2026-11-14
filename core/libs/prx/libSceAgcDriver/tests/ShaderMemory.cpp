@@ -4779,6 +4779,197 @@ void verifyTableEdgeStore() {
     std::cout << "table edge store passed\n";
 }
 
+void verifySharedImageTableResolution() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    for (const auto count : {1u, 32u, 64u, 65u, 129u}) {
+        ShaderInfo info;
+        ImageResource image;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.numericClass = IrTextureNumericClass::Uint;
+        image.read = true;
+        image.tableOperation = TableOperation::Supported;
+        info.images.assign(count, image);
+        info.images.back().table = 0u;
+        for (const auto& resource : info.images) info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(resource));
+        info.samplers.resize(1u);
+        info.sampledPairs.push_back({count - 1u, 0u});
+        ResourceSnapshot snapshot;
+        snapshot.samplers.push_back({{0x600u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u});
+        snapshot.tables.tables.resize(1u);
+        auto& column = snapshot.tables.tables[0];
+        column.base = 0x100000u;
+        column.size = 32u;
+        column.records = 1u;
+        column.keys = 1u;
+        column.codes = SharedValues<std::uint32_t>({0u});
+        const DescriptorValue words{TableT(reinterpret_cast<const void*>(std::uintptr_t{0x100000000ull}), TableFormat32UInt, TableType2D), 8u, 0xffu};
+        column.words = SharedValues<DescriptorValue>({words});
+        const auto memoKey = 0x72736f6c76650000ull + count;
+        const auto held = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+        require(held->faults == 0u && held->elements.size() == 1u && held->elements[0].words == words.dwords, "shared image tables: the integer image was not resolved");
+        const auto before = allocationCount;
+        for (unsigned call = 0; call < 100u; ++call) {
+            const auto resolved = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+            require(resolved == held, "shared image tables: an unchanged snapshot was not reused");
+        }
+        const auto allocations = allocationCount - before;
+        require(allocations <= (count <= 64u ? 0u : 100u), ("shared image tables: " + std::to_string(count) + " images required " + std::to_string(allocations) + " allocations on cache hits").c_str());
+        snapshot.samplers[0].dwords[0] |= 1u << 29u;
+        const auto reducing = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+        const auto mapStart = reducing->map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        const auto record = reducing->map.at(mapStart);
+        const auto flags = reducing->map.at(record + Abi::ImageRecordFlags);
+        require(reducing != held && reducing->faults == 1u && (flags & Abi::PoisonFlag) != 0u && reducing->poison.at(flags & ~Abi::PoisonFlag).reason == Abi::PoisonReason::Reduction, "shared image tables: a changed reduction sampler reused an incompatible image");
+        snapshot.samplers[0].dwords[0] &= ~(1u << 29u);
+        require(ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey) == held, "shared image tables: restoring the sampler did not restore its resolution");
+        auto changed = words;
+        changed.dwords[0] += 16u;
+        column.words = SharedValues<DescriptorValue>({changed});
+        const auto rewritten = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+        require(rewritten != held && rewritten->elements.size() == 1u && rewritten->elements[0].words == changed.dwords && held->elements[0].words == words.dwords, "shared image tables: replacing the snapshot reused stale descriptors or changed a held result");
+        snapshot.samplers[0].dwords[0] |= 1u << 29u;
+        info.sampledPairs[0].image = count;
+        bool rejected = false;
+        try {
+            static_cast<void>(ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey));
+        } catch (const std::out_of_range&) {
+            rejected = true;
+        }
+        require(rejected, "shared image tables: an invalid sampled image index was accepted");
+    }
+}
+
+void verifyImageTableResolutionGrowth() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    for (const auto count : {1u, 8u, 64u, 256u, 1024u}) {
+        ShaderInfo info;
+        ImageResource image;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.numericClass = IrTextureNumericClass::Uint;
+        image.read = true;
+        image.tableOperation = TableOperation::Supported;
+        image.table = 0u;
+        info.images.assign(1u, image);
+        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(info.images[0]));
+        info.samplers.resize(1u);
+        info.sampledPairs.push_back({0u, 0u});
+        ResourceSnapshot snapshot;
+        snapshot.samplers.push_back({{0x600u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u});
+        snapshot.tables.tables.resize(1u);
+        auto& column = snapshot.tables.tables[0];
+        column.base = 0x100000u;
+        column.size = 32u * count;
+        column.records = count;
+        column.keys = count;
+        std::vector<std::uint32_t> codes(count);
+        std::vector<DescriptorValue> words;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            codes[index] = index;
+            words.push_back({TableT(reinterpret_cast<const void*>(std::uintptr_t{0x100000000ull + index * 256ull}), TableFormat32UInt, TableType2D), 8u, 0xffu});
+        }
+        column.codes = SharedValues<std::uint32_t>(codes);
+        column.words = SharedValues<DescriptorValue>(words);
+        const auto before = allocationCount;
+        const auto resolved = ResourceMaterializer::ResolveImageTables(info, snapshot);
+        const auto allocations = allocationCount - before;
+        require(resolved.faults == 0u && resolved.elements.size() == count && resolved.samplers.empty(), "image table resolution: distinct elements were not all resolved");
+        const auto mapStart = resolved.map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            require(resolved.elements[index].words == words[index].dwords, "image table resolution: an element changed");
+            const auto record = resolved.map.at(mapStart + index);
+            require(resolved.map.at(record + Abi::ImageRecordElement) == index && (resolved.map.at(record + Abi::ImageRecordFlags) & Abi::PoisonFlag) == 0u, "image table resolution: a record does not name its element");
+        }
+        require(allocations <= 12u, ("image table resolution: " + std::to_string(count) + " distinct elements required " + std::to_string(allocations) + " allocations, expected a fixed number of output arrays").c_str());
+    }
+}
+
+void verifyEmptyImageTableResolution() {
+    using namespace ShaderRecompiler;
+    using Result = std::shared_ptr<const ResolvedImageTables>;
+    std::array<std::promise<Result>, 4> outputs;
+    std::array<std::thread, 4> workers;
+    for (std::size_t index = 0; index < workers.size(); ++index) {
+        workers[index] = std::thread([&, index] {
+            try {
+                const ShaderInfo info;
+                const ResourceSnapshot snapshot;
+                auto held = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, 0);
+                const auto before = allocationCount;
+                for (unsigned call = 0; call < 1000; ++call) {
+                    const auto resolved = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, 0);
+                    require(resolved && resolved->map.empty() && resolved->elements.empty() && resolved->samplers.empty() && resolved->poison.empty() && resolved->faults == 0u, "empty image tables: a resolution acquired table data");
+                }
+                require(allocationCount == before, "empty image tables: repeated resolutions allocate");
+                ShaderInfo invalid;
+                invalid.images.resize(1);
+                invalid.images[0].table = 0u;
+                expectFailure([&] { static_cast<void>(ResourceMaterializer::ResolveImageTablesShared(invalid, snapshot, 0)); }, "image table snapshot disagrees", "empty image tables: a missing static table was accepted");
+                outputs[index].set_value(std::move(held));
+            } catch (...) {
+                outputs[index].set_exception(std::current_exception());
+            }
+        });
+    }
+    for (auto& worker : workers) worker.join();
+    for (auto& output : outputs) {
+        const auto held = output.get_future().get();
+        require(held && held->map.empty() && held->elements.empty() && held->samplers.empty() && held->poison.empty() && held->faults == 0u, "empty image tables: a result did not survive its resolving thread");
+    }
+}
+
+void verifyImageTableBindingGrowth() {
+    using namespace ShaderRecompiler;
+    DescriptorBindingBuilder builder;
+    CompiledBindingLayout compiled;
+    compiled.layout.descriptors = {{DescriptorBindingKind::ImageTable, {}}, {DescriptorBindingKind::SamplerTable, {}}};
+    const ResourceSnapshot snapshot;
+    const auto plan = builder.Prepare(compiled.layout, ShaderInfo{}, IrShaderStage::Compute, snapshot);
+    ImageResource sampled{};
+    sampled.resourceClass = ImageResourceClass::Sampled;
+    sampled.numericClass = IrTextureNumericClass::Float;
+    sampled.dimension = RdnaImageDimension::Dim2D;
+    auto storage = sampled;
+    storage.resourceClass = ImageResourceClass::Storage;
+    const auto sampledKind = DescriptorBindingForImage(sampled);
+    const auto storageKind = DescriptorBindingForImage(storage);
+    for (const auto count : {0u, 1u, 64u, 65u, 256u, 3000u}) {
+        ResolvedImageTables tables;
+        tables.elements.resize(count);
+        tables.samplers.resize(count);
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            for (std::uint32_t index = 0; index < count; ++index) {
+                auto& image = tables.elements[index];
+                image.words[0] = index + pass * count;
+                image.words[7] = count - index;
+                image.dimension = RdnaImageDimension::Dim2D;
+                image.depthCompare = (index + pass) % 3u == 0u;
+                image.kind = (index + pass) % 2u == 0u ? sampledKind : storageKind;
+                tables.samplers[index].words = {index, pass, count, index + pass};
+                tables.samplers[index].compare = (index + pass) % 2u != 0u;
+            }
+            BindingAllocationResult allocation;
+            const auto before = allocationCount;
+            builder.Populate(allocation, compiled, plan, 0u, snapshot, {}, &tables);
+            const auto allocations = allocationCount - before;
+            require(allocation.bindings.size() == 2u, "image table bindings: a prepared binding was lost");
+            const auto& images = allocation.bindings[0];
+            const auto& samplers = allocation.bindings[1];
+            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
+            require(samplers.count == count && samplers.guestDescriptor.size() == count * 4u && samplers.samplerDepthCompare.size() == count, "image table bindings: sampler metadata count differs from the descriptors");
+            for (std::uint32_t index = 0; index < count; ++index) {
+                require(std::equal(tables.elements[index].words.begin(), tables.elements[index].words.end(), images.guestDescriptor.begin() + index * 8u), "image table bindings: image words changed");
+                require(images.imageShapes[index] == DescriptorImageShape::Image2D && images.imageDepthCompare[index] == tables.elements[index].depthCompare && images.imageWritten[index] == ((index + pass) % 2u != 0u) && !images.imageAtomic[index] && images.imageSamplers[index] == 0u, "image table bindings: an element inherited another element's metadata");
+                require(std::equal(tables.samplers[index].words.begin(), tables.samplers[index].words.end(), samplers.guestDescriptor.begin() + index * 4u) && samplers.samplerDepthCompare[index] == tables.samplers[index].compare, "image table bindings: sampler words or comparison state changed");
+            }
+            require(allocations <= 10u, ("image table bindings: " + std::to_string(count) + " elements required " + std::to_string(allocations) + " allocations, expected at most one per output array").c_str());
+        }
+    }
+}
+
 void verifyImageTableScratchReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -5660,6 +5851,109 @@ void verifyImageTableFirstLaneScale() {
     require(snapshot.records == 4u && snapshot.keys == 4u && snapshot.fault == 0u, "image table first-lane scale: the snapshot does not hold the four 96-byte records");
     const auto codes = TableCodes(TableMap(*compiled.result), 0);
     require(codes.size() == 4u && codes[0] == codes[3] && codes[2] == Abi::NullCode && codes[1] != codes[0] && (codes[0] & Abi::PoisonFlag) == 0u && (codes[1] & Abi::PoisonFlag) == 0u, "image table first-lane scale: the table map is wrong");
+}
+
+void verifyImageTableKeyBounds() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    for (std::uint32_t entry = 0; entry < 32u; entry++) heap[entry] = TableT(textures[entry % 2u].bytes.data(), entry % 2u == 0u ? TableFormat8888UNorm : TableFormat32UInt, TableType2D, entry + 1u);
+    const auto userData = TableUserData(guest);
+    const auto wholeWith = [](std::initializer_list<std::uint32_t> words) {
+        std::vector<std::uint32_t> code(TableWholeCode);
+        const auto first = std::find(code.begin(), code.end(), 0x7e200500u);
+        require(first != code.end(), "image table key bounds: the program has no v_readfirstlane key");
+        code.insert(first, words);
+        return code;
+    };
+    const auto columnOf = [](const IrResourcePlan& plan) {
+        require(plan.info.images.size() == 1u && plan.info.images[0].table == 0u, "image table key bounds: the T# was not planned as a table");
+        const auto& column = plan.descriptorSources.at(plan.info.images[0].source).tableColumn;
+        require(column.has_value(), "image table key bounds: the table has no column");
+        return *column;
+    };
+    {
+        FillTableSrt(guest, heap.data(), 32u, 4u);
+        const auto code = wholeWith({0x36000083u, 0x4a000081u, 0x36000083u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 3u, "image table key bounds: (i + 1) & 3 was bounded below its keys");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 4u && snapshot.records == 4u && !snapshot.outside && snapshot.codes.size() == 4u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: the ring index did not enumerate its four keys");
+        for (std::uint32_t key = 0u; key < 4u; key++) require(TableCovered(compiled.regions, heap[key].data(), sizeof(heap[key])), "image table key bounds: a ring key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 4u);
+        const auto code = wholeWith({0x7e007400u, 0x4a000081u, 0x3600009fu});
+        const auto plan = GetResourcePlan(TableRequest(code, userData));
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 31u && Abi::KeyRecords(column.maxKey, column.stride) == 32u, "image table key bounds: (findLSB(m) + 1) & 31 was not bounded to 32 keys");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 32u);
+        const auto code = wholeWith({0x4a000081u, 0x3600009fu});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 31u, "image table key bounds: a bounded key lost its 32-key bound");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 32u && snapshot.records == 32u && !snapshot.outside && snapshot.codes.size() == 32u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: a bounded key did not enumerate 32 keys");
+        require(TableCovered(compiled.regions, heap[31].data(), sizeof(heap[31])), "image table key bounds: the last bounded key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 4u);
+        auto code = TableMaterialCode;
+        const auto scaled = std::find(code.begin(), code.end(), 0x93109010u);
+        require(scaled != code.end(), "image table key bounds: the material program has no key scale");
+        *scaled = 0x87108f10u;
+        code.insert(scaled + 1, 0x81108110u);
+        const auto plan = GetResourcePlan(TableRequest(code, userData));
+        const auto column = columnOf(*plan);
+        require(column.keyDomains.size() == 1u && column.keyDomains[0].stride == 4u, "image table key bounds: an offset add changed the key domain's four-byte stride");
+    }
+    {
+        for (std::uint32_t entry = 0; entry < 128u; entry++) heap[entry] = TableT(textures[entry % 2u].bytes.data(), entry % 2u == 0u ? TableFormat8888UNorm : TableFormat32UInt, TableType2D, entry + 1u);
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x260000c0u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 64u && Abi::KeyRecords(column.maxKey, column.stride) == 65u, "image table key bounds: a v_min_u32 clamp was not bounded to its 65 keys");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 65u && snapshot.records == 65u && !snapshot.outside && snapshot.codes.size() == 65u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: a v_min_u32 clamp did not enumerate 65 keys");
+        require(TableCovered(compiled.regions, heap[64].data(), sizeof(heap[64])), "image table key bounds: the last clamped key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x7e007500u, 0x7e027501u, 0x4a000101u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 62u && Abi::KeyRecords(column.maxKey, column.stride) == 63u, "image table key bounds: adding two findLSB sentinels was not bounded to their sum");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 63u && snapshot.records == 63u && !snapshot.outside && snapshot.codes.size() == 63u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: adding two findLSB bounds did not enumerate 63 keys");
+        require(TableCovered(compiled.regions, heap[62].data(), sizeof(heap[62])), "image table key bounds: the last summed findLSB key's record was not captured");
+    }
+    {
+        FillTableSrt(guest, heap.data(), 32u, 128u);
+        const auto code = wholeWith({0x7e007500u, 0x280000a8u});
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        const auto column = columnOf(*plan);
+        require(column.maxKey == 40u && Abi::KeyRecords(column.maxKey, column.stride) == 41u, "image table key bounds: an unsigned max of a findLSB sentinel and 40 was not bounded to 40");
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.keys == 41u && snapshot.records == 41u && !snapshot.outside && snapshot.codes.size() == 41u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [](std::uint32_t code) { return (code & Abi::PoisonFlag) != 0u; }), "image table key bounds: the sentinel-preserving unsigned max did not enumerate 41 keys");
+        require(TableCovered(compiled.regions, heap[40].data(), sizeof(heap[40])), "image table key bounds: the unsigned max key's record was not captured");
+    }
 }
 
 void verifyImageTableRegistration() {
@@ -11547,6 +11841,81 @@ void verifyQuadMaskNeighbourReads() {
         return false;
     };
     require(declares(compile(constant, true, false), spv::OpKill), "a quad mask without neighbour reads did not retain its kill fallback");
+    const auto outputStoresNested = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::set<std::uint32_t> outputs;
+        std::vector<std::uint32_t> merges;
+        bool stored = false;
+        bool nested = false;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad mask: truncated SPIR-V instruction");
+            const auto opcode = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            if (opcode == spv::OpVariable && words[cursor + 3] == spv::StorageClassOutput) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpAccessChain && outputs.contains(words[cursor + 3])) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpFunction) merges.clear();
+            if (opcode == spv::OpSelectionMerge || opcode == spv::OpLoopMerge) merges.push_back(words[cursor + 1]);
+            if (opcode == spv::OpLabel && !merges.empty() && merges.back() == words[cursor + 1]) merges.pop_back();
+            if (opcode == spv::OpStore && outputs.contains(words[cursor + 1])) {
+                stored = true;
+                nested = nested || !merges.empty();
+            }
+            cursor += count;
+        }
+        require(stored, "quad mask: the pixel program stores no output");
+        return nested;
+    };
+    const auto outputStoresKeepInactiveColor = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::set<std::uint32_t> outputs;
+        std::set<std::uint32_t> selects;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> stores;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad mask: truncated SPIR-V instruction");
+            const auto opcode = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            if (opcode == spv::OpVariable && words[cursor + 3] == spv::StorageClassOutput) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpSelect) selects.insert(words[cursor + 2]);
+            if (opcode == spv::OpStore) stores.emplace_back(words[cursor + 1], words[cursor + 2]);
+            cursor += count;
+        }
+        bool stored = false;
+        for (const auto& [pointer, value] : stores) {
+            if (!outputs.contains(pointer)) continue;
+            stored = true;
+            if (!selects.contains(value)) return false;
+        }
+        require(stored, "quad mask: the pixel program stores no output");
+        return true;
+    };
+    {
+        constexpr std::array<std::uint32_t, 3> sampleBarycentrics{0xf800180fu, 0x01000100u, 0xbf810000u};
+        constexpr std::array<std::uint32_t, 2> offsetCapabilities{spv::CapabilityShader, spv::CapabilityInterpolationFunction};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x58000u, sampleBarycentrics, 0, {}};
+        request.context.waveSize = 32u;
+        request.context.pixel = ShaderPixelStageInfo{};
+        request.context.pixel->inputAddr = PixelInputBit(PixelInput::PerspectiveSample);
+        request.context.pixel->sampleLocations[0] = 0x26u;
+        request.context.pixel->targetOutputMode[0] = 9u;
+        request.context.pixel->targetExportMapping.fill(0xe4u);
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.fragmentShaderBarycentricEnabled = true;
+        request.target.supportedCapabilities = offsetCapabilities;
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        const auto offset = Recompile(request);
+        require(declares(offset, spv::OpExtInst), "the sample barycentric test did not interpolate at an offset");
+        require(!outputStoresNested(offset), "a color export of a pixel program that interpolates at an offset is stored inside an EXEC branch, which lets drivers move the interpolation out of uniform control flow");
+        require(outputStoresKeepInactiveColor(offset), "a color export of a pixel program that interpolates at an offset does not keep an inactive lane's previous color, so a later valid-mask export would show a color written under EXEC clear");
+    }
+    constexpr std::array<std::uint32_t, 6> livePermute{0x7e040284u, 0xdac80000u, 0x01000002u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    for (const bool masked : {false, true}) {
+        require(!outputStoresNested(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes is stored inside an EXEC branch, which lets drivers move those reads out of uniform control flow");
+        require(outputStoresKeepInactiveColor(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes does not keep an inactive lane's previous color, so a later valid-mask export would show a color written under EXEC clear");
+    }
     for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
         const auto unmasked = compile(code, false, false);
         require(declares(unmasked, spv::OpGroupNonUniformShuffle), "the neighbour-read test did not retain its cross-lane shuffle");
@@ -12233,6 +12602,26 @@ int main(int argc, char** argv) {
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--shared-table-resolution") {
+            verifySharedImageTableResolution();
+            std::cout << "Shared image table resolutions reuse allocations and preserve sampler invalidation\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-binding-growth") {
+            verifyImageTableBindingGrowth();
+            std::cout << "Image and sampler table bindings preserve metadata with bounded allocations\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-resolution-growth") {
+            verifyImageTableResolutionGrowth();
+            std::cout << "Image table resolutions bound their allocations by output array\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--empty-table-resolution") {
+            verifyEmptyImageTableResolution();
+            std::cout << "Empty image table resolutions preserve errors and survive their resolving threads\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--quad-mask-no-demote") {
             verifyQuadMaskNeighbourReads();
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
@@ -12282,6 +12671,7 @@ int main(int argc, char** argv) {
             verifyImageTableSrtKey();
             verifyImageTableMaskedOffset();
             verifyImageTableFirstLaneScale();
+            verifyImageTableKeyBounds();
             verifyImageTableKeyUnion();
             verifyImageTableLateKey();
             verifyImageTableUnkeyedAccess();
@@ -12396,6 +12786,7 @@ int main(int argc, char** argv) {
         verifyTargetFeatureKey();
         verifyImageTableKeys();
         verifyImageTables();
+        verifyImageTableKeyBounds();
         verifySpecializedModuleRelease();
         verifyLayerSpecializationRelease();
         verifyImageTableRegistration();

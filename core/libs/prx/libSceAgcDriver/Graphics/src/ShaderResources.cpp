@@ -104,12 +104,36 @@ struct AllocationIdentity {
     bool operator==(const AllocationIdentity&) const = default;
 };
 
+AllocationIdentity LookupAllocationIdentity(std::uintptr_t address) {
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(address, false);
+    if (range == nullptr) return {};
+    return {range->address, range->bytes, range->allocationAddress, range->allocationBytes, range->backingSerial, (range->readable ? 1u : 0u) | (range->writable ? 2u : 0u) | (range->gpu ? 4u : 0u)};
+}
+
+struct AllocationIdentityMemo {
+    std::uintptr_t address = 0;
+    std::uint64_t generation = 0;
+    bool valid = false;
+    AllocationIdentity identity;
+};
+
+constexpr std::size_t AllocationIdentitySlots = 4096;
+struct AllocationIdentityTag {};
+
 AllocationIdentity ImageAllocationIdentity(std::span<const std::uint32_t> words) {
     const auto address = TextureResourceAllocationAddress(words);
     if (!address) return {};
-    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(*address), false);
-    if (range == nullptr) return {};
-    return {range->address, range->bytes, range->allocationAddress, range->allocationBytes, range->backingSerial, (range->readable ? 1u : 0u) | (range->writable ? 2u : 0u) | (range->gpu ? 4u : 0u)};
+    const auto key = static_cast<std::uintptr_t>(*address);
+    const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    auto& memos = HostThreadLocal<std::unique_ptr<std::array<AllocationIdentityMemo, AllocationIdentitySlots>>, AllocationIdentityTag>();
+    if (memos == nullptr) memos = std::make_unique<std::array<AllocationIdentityMemo, AllocationIdentitySlots>>();
+    auto& memo = (*memos)[((static_cast<std::uint64_t>(key) * 0x9e3779b97f4a7c15ull) >> 32u) % AllocationIdentitySlots];
+    if (memo.valid && memo.address == key && memo.generation == generation) return memo.identity;
+    memo.identity = LookupAllocationIdentity(key);
+    memo.address = key;
+    memo.generation = generation;
+    memo.valid = true;
+    return memo.identity;
 }
 
 struct TextureKey {
@@ -1068,6 +1092,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
     }
     if (source != nullptr && resource.dccAddress != 0 && (keys.has_value() ? *keys : scanKeys()) == DccKeys::ClearSingle) source.reset();
+    if (source != nullptr && resource.dccAddress != 0 && source->Descriptor().dccAddress != resource.dccAddress && (keys.has_value() ? IsDccClear(*keys) : IsDccClear(scanKeys()))) source.reset();
 
     // Otherwise a surface in host-imported memory is viewed through its cached storage image (made
     // here when there is none): its refresh after a CPU or GPU write is a GPU-direct detile from the
@@ -1112,7 +1137,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // after them is current at the generation of a second (memoized) collect. The store marks the
     // surface's DCC keys uncompressed, so the keys are read after it.
     const auto flushStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const bool stagedClear = source != nullptr && resource.dccAddress != 0 && [&] {
+    const bool stagedClear = source != nullptr && source->AnyLayerPending() && resource.dccAddress != 0 && source->Descriptor().dccAddress == resource.dccAddress && [&] {
         const auto observedKeys = keys.has_value() ? *keys : scanKeys();
         return IsDccClear(observedKeys) || observedKeys == DccKeys::ClearSingle;
     }();
@@ -2732,6 +2757,29 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     return result;
 }
 
+ShaderRecompiler::PipelineIdentity DescribedPipelineIdentity(const ShaderRecompiler::RecompileResult& shader) {
+    const auto hash = shader.spirv.ContentHash();
+    if (hash == ShaderRecompiler::SpirvContentHash{}) return {};
+    ShaderRecompiler::PipelineIdentity identity{hash.low, hash.high};
+    const auto mix = [&](std::uint64_t value) {
+        identity.low = (identity.low ^ value) * 0x9e3779b97f4a7c15ull;
+        identity.low ^= identity.low >> 29u;
+        identity.high = (identity.high ^ (value + 0x7f4a7c159e3779b9ull)) * 0xc2b2ae3d27d4eb4full;
+        identity.high ^= identity.high >> 31u;
+    };
+    mix(shader.specialization.size());
+    for (const auto& constant : shader.specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
+    mix(shader.hostSubgroupSize | (shader.fullSubgroups ? 0x10000u : 0u) | (static_cast<std::uint64_t>(shader.workgroupMemoryDwords) << 32u));
+    mix(shader.bindings.size());
+    for (const auto& binding : shader.bindings) {
+        const bool fixedCapacity = binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable;
+        const std::uint64_t count = fixedCapacity ? 0u : binding.count;
+        mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (count << 48u));
+    }
+    if (identity.Empty()) identity.low = 1;
+    return identity;
+}
+
 void ShaderResources::buildComplete() {
     PerformanceTimer frameTiming("Resources.Complete");
     BuildLookups lookups;
@@ -3681,7 +3729,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         auto& surface = validatedTextures[i];
         if (!surface.valid) return fail(FastFail::NoRecord);
         if (surface.depth) {
-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
+            if (!textures[i]->HasReuseLookup() && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
         }
         if (textures[i]->Released()) return fail(FastFail::Replaced);
@@ -3822,7 +3870,7 @@ bool ShaderResources::fastRevalidateEach() {
         auto& surface = validatedTextures[i];
         if (!surface.valid) return false;
         if (surface.depth) {
-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
+            if (!textures[i]->HasReuseLookup() && !DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
             continue;
         }
         if (textures[i]->Released()) return false;
@@ -4049,7 +4097,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
     depthCopyTextures.clear();
     indexElements.assign(textures.size(), {});
     for (std::size_t i = 0; i < textures.size(); ++i) {
-        if (textures[i] != nullptr && textures[i]->IsDepthCopy()) depthCopyTextures.push_back(i);
+        if (textures[i] != nullptr && (textures[i]->IsDepthCopy() || textures[i]->HasReuseLookup())) depthCopyTextures.push_back(i);
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     ranges.reserve(textures.size() + 4);
@@ -4211,7 +4259,7 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
         recorder->Keep(textures[i]);
         textures[i] = std::move(texture);
         depthCopyTextures.erase(std::remove(depthCopyTextures.begin(), depthCopyTextures.end(), i), depthCopyTextures.end());
-        if (textures[i]->IsDepthCopy()) depthCopyTextures.insert(std::lower_bound(depthCopyTextures.begin(), depthCopyTextures.end(), i), i);
+        if (textures[i]->IsDepthCopy() || textures[i]->HasReuseLookup()) depthCopyTextures.insert(std::lower_bound(depthCopyTextures.begin(), depthCopyTextures.end(), i), i);
         const auto first = std::lower_bound(indexImagePositions.begin(), indexImagePositions.end(), i, [](const ImagePosition& entry, std::size_t texture) { return entry.texture < texture; });
         for (auto entry = first; entry != indexImagePositions.end() && entry->texture == i; ++entry) {
             const auto& current = textures[i];
@@ -4367,7 +4415,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const bool ok = revalidateFull(shaders, report);
         noteEpochProof(false, false, false);
         if (ok) {
-            provedEpoch = epoch;
+            provedEpoch = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); }) ? 0 : epoch;
             provedProof = proof;
             provedPending = pending;
         } else {
@@ -4658,10 +4706,21 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         comparedTableSpans.erase(std::remove_if(comparedTableSpans.begin(), comparedTableSpans.end(), [](const auto& span) { return span.second.empty(); }), comparedTableSpans.end());
     }
     if (writeSubscription != nullptr) {
-        for (const auto index : depthCopyTextures) textures[index]->RefreshDepthCopy();
+        for (const auto index : depthCopyTextures) {
+            if (textures[index]->HasReuseLookup()) {
+                if (!textures[index]->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
+            } else {
+                textures[index]->RefreshDepthCopy();
+            }
+        }
     } else {
         for (const auto& texture : textures) {
-            if (texture != nullptr && texture->IsDepthCopy()) texture->RefreshDepthCopy();
+            if (texture == nullptr) continue;
+            if (texture->HasReuseLookup()) {
+                if (!texture->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
+            } else if (texture->IsDepthCopy()) {
+                texture->RefreshDepthCopy();
+            }
         }
     }
     return finish(fast, true);
@@ -5399,8 +5458,7 @@ std::size_t ShaderResources::addGuestBuffer(const ShaderRecompiler::DescriptorBi
     Require(!written || !overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");
     written = written || allWritten;
     const std::uint64_t recordBytes = descriptor.Stride() != 0 ? descriptor.Stride() : extent;
-    constexpr std::uint64_t WidestBufferStoreBytes = 16;
-    const bool swept = (read || (context.discreteGpu && descriptor.Stride() > WidestBufferStoreBytes)) && dispatchThreads != 0 && recordBytes != 0 && dispatchThreads * recordBytes * 2u >= byteSize;
+    const bool swept = (read || (context.discreteGpu && descriptor.Stride() != 0)) && dispatchThreads != 0 && recordBytes != 0 && dispatchThreads * recordBytes * 2u >= byteSize;
     if (written) guestMemory.AddWritable(address, size, atomic, swept);
     else {
         guestMemory.AddReadable(address, size);

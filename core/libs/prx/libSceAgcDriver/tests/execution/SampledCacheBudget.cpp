@@ -1095,6 +1095,21 @@ void collidingKeyTests(const Context& context) {
     Require(kept == capacity && TextureCacheUsage().sampledEntries == capacity, "the first use of a descriptor whose cache key hash equals that of another descriptor first used in the frame left " + std::to_string(kept) + " of the " + std::to_string(capacity) + " textures the last frame used cached");
 }
 
+void allocationIdentityTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto address = block.Surface(0);
+    const auto first = Sampled(context, address);
+    Require(Sampled(context, address) == first, "a second lookup of a surface whose allocation is unchanged made another texture");
+    GuestAllocations::Mutation().Protect(reinterpret_cast<const void*>(address), BlockBytes, true, false, true, [] {});
+    const auto reprotected = Sampled(context, address);
+    Require(reprotected != first, "a lookup after the surface's allocation changed its protection reused the texture made under the old allocation identity");
+    Require(Sampled(context, address) == reprotected, "a second lookup after the protection change made another texture");
+    GuestAllocations::Mutation().Protect(reinterpret_cast<const void*>(address), BlockBytes, true, true, true, [] {});
+    Require(Sampled(context, address) != reprotected, "a lookup after the protection was restored reused the texture made under the read-only allocation identity");
+}
+
 constexpr std::uint64_t ReportedBudget = 64ull << 30u;
 constexpr std::uint64_t ReportedUsage = 12ull << 30u;
 
@@ -1566,6 +1581,7 @@ int main(int argc, char** argv) {
             secondUseTests(context);
             earlyMissTests(context);
             collidingKeyTests(context);
+            allocationIdentityTests(context);
             spareAgeTests(context);
             ClearCachedTextures(context.device);
         }

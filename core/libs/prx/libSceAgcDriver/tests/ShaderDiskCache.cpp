@@ -483,12 +483,15 @@ void verifyResultRoundTrip() {
 
 void verifyElementFlags() {
     ElementFlags flags;
+    flags.reserve(256);
+    require(flags.empty(), "reserving element flags changed their size");
     std::vector<bool> expected;
     for (std::size_t index = 0; index < 70; ++index) {
         flags.push_back(index % 3 == 0);
         expected.push_back(index % 3 == 0);
         require(flags == expected, "element flags differ from a vector after " + std::to_string(index + 1) + " entries");
     }
+    flags.reserve(512);
     const auto copy = flags;
     require(copy == flags && copy.size() == 70 && copy.at(69) && !copy.at(68), "a copy of spilled element flags differs");
     require(std::count(flags.begin(), flags.end(), true) == 24, "spilled element flags do not iterate");

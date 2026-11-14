@@ -1569,10 +1569,6 @@ int APS5_VABI _ZN3WTF11setDataFileEOSt10unique_ptrINS_11PrintStreamESt14default_
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF12randomNumberEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14AtomStringImpl3addEPKDs() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1593,10 +1589,6 @@ int APS5_VABI _ZN3WTF15FilePrintStream4openEPKcS2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF16weakRandomUint32Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF17PrivateSymbolImpl16createNullSymbolEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1610,14 +1602,6 @@ int APS5_VABI _ZN3WTF17TextBreakIteratorC2ENS_10StringViewENS0_4ModeERKNS_10Atom
 }
 
 int APS5_VABI _ZN3WTF19initializeThreadingEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF20ObjectIdentifierBase26generateIdentifierInternalEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF20ObjectIdentifierBase36generateThreadSafeIdentifierInternalEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1638,10 +1622,6 @@ int APS5_VABI _ZN3WTF24releaseLineBreakIteratorEP14UBreakIterator() {
 }
 
 int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF29cryptographicallyRandomNumberEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

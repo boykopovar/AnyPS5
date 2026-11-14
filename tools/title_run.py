@@ -777,6 +777,9 @@ def write_summary(output, summary):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
