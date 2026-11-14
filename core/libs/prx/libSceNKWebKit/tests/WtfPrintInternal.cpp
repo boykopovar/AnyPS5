@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -211,6 +212,74 @@ void TestDouble() {
     Require(stream.real == -2.5);
 }
 
+void TestSmallIntegers() {
+    FakeStream stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEa(Out(stream), static_cast<signed char>(-128));
+    RequireInt32(stream, "%d", static_cast<std::uint32_t>(-128));
+
+    stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEa(Out(stream), static_cast<signed char>(5));
+    RequireInt32(stream, "%d", 5);
+
+    stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEh(Out(stream), static_cast<unsigned char>(0xFF));
+    RequireInt32(stream, "%u", 0xFFu);
+
+    stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEs(Out(stream), static_cast<short>(-32768));
+    RequireInt32(stream, "%d", static_cast<std::uint32_t>(-32768));
+
+    stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEt(Out(stream), static_cast<unsigned short>(0xFFFF));
+    RequireInt32(stream, "%u", 0xFFFFu);
+}
+
+void TestLongLong() {
+    FakeStream stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEx(Out(stream), INT64_MIN);
+    RequireInteger(stream, "%lld", static_cast<std::uint64_t>(INT64_MIN));
+
+    stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEy(Out(stream), UINT64_MAX);
+    RequireInteger(stream, "%llu", UINT64_MAX);
+}
+
+void TestFloat() {
+    FakeStream stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEf(Out(stream), 1.5f);
+    RequireFormat(stream, "%lf", Kind::Double);
+    Require(stream.real == 1.5);
+
+    stream = Make();
+    _ZN3WTF13printInternalERNS_11PrintStreamEf(Out(stream), 0.1f);
+    RequireFormat(stream, "%lf", Kind::Double);
+    Require(stream.real == static_cast<double>(0.1f));
+}
+
+void TestClockType() {
+    static const char* const names[] = {"Wall", "Monotonic", "Approximate"};
+    for (std::uint32_t value = 0; value < 3; ++value) {
+        FakeStream target = Make();
+        FakeStream stream = Make();
+        stream.beginResult = &target;
+        _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(Out(stream), static_cast<WTF::ClockType>(value));
+        Require(stream.beginCalls == 1 && stream.endCalls == 1 && stream.vprintfCalls == 0);
+        Require(target.beginCalls == 0 && target.endCalls == 0 && target.vprintfCalls == 1);
+        Require(!std::strcmp(target.format, "%s"));
+        Require(!std::strcmp(reinterpret_cast<const char*>(target.integer), names[value]));
+    }
+
+    FakeStream stream = Make();
+    bool rejected = false;
+    try {
+        _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(Out(stream), static_cast<WTF::ClockType>(3));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+    Require(stream.beginCalls == 0 && stream.endCalls == 0 && stream.vprintfCalls == 0);
+}
+
 void TestPointer() {
     int object = 0;
     FakeStream stream = Make();
@@ -237,6 +306,10 @@ int main() {
     TestBool();
     TestIntegers();
     TestDouble();
+    TestSmallIntegers();
+    TestLongLong();
+    TestFloat();
+    TestClockType();
     TestPointer();
     TestCharacter();
     std::puts("WTF printInternal tests passed");

@@ -31,6 +31,7 @@
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 
 namespace {
 
@@ -55,6 +56,12 @@ Function Slot(PrintStream& out, std::size_t slot) {
 
 const char* BoolForPrinting(bool value) {
     return value ? "true" : "false";
+}
+
+void PrintAtomically(PrintStream& out, const char* string) {
+    PrintStream* stream = Slot<BeginFunction>(out, NKWebKit::WtfAbi::PrintStreamBegin)(&out);
+    _ZN3WTF13printInternalERNS_11PrintStreamEPKc(*stream, string);
+    Slot<EndFunction>(out, NKWebKit::WtfAbi::PrintStreamEnd)(&out);
 }
 
 }  // namespace
@@ -84,9 +91,7 @@ void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE(PrintStre
 }
 
 void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEb(PrintStream& out, bool value) {
-    PrintStream* stream = Slot<BeginFunction>(out, NKWebKit::WtfAbi::PrintStreamBegin)(&out);
-    _ZN3WTF13printInternalERNS_11PrintStreamEPKc(*stream, BoolForPrinting(value));
-    Slot<EndFunction>(out, NKWebKit::WtfAbi::PrintStreamEnd)(&out);
+    PrintAtomically(out, BoolForPrinting(value));
 }
 
 void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEi(PrintStream& out, int value) {
@@ -105,8 +110,51 @@ void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEm(PrintStream& out, std:
     _ZN3WTF11PrintStream6printfEPKcz(&out, "%lu", value);
 }
 
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEa(PrintStream& out, signed char value) {
+    _ZN3WTF11PrintStream6printfEPKcz(&out, "%d", static_cast<int>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEh(PrintStream& out, unsigned char value) {
+    _ZN3WTF11PrintStream6printfEPKcz(&out, "%u", static_cast<unsigned>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEs(PrintStream& out, short value) {
+    _ZN3WTF11PrintStream6printfEPKcz(&out, "%d", static_cast<int>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEt(PrintStream& out, unsigned short value) {
+    _ZN3WTF11PrintStream6printfEPKcz(&out, "%u", static_cast<unsigned>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEx(PrintStream& out, long long value) {
+    _ZN3WTF11PrintStream6printfEPKcz(&out, "%lld", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEy(PrintStream& out, unsigned long long value) {
+    _ZN3WTF11PrintStream6printfEPKcz(&out, "%llu", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEf(PrintStream& out, float value) {
+    _ZN3WTF13printInternalERNS_11PrintStreamEd(out, static_cast<double>(value));
+}
+
 void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEd(PrintStream& out, double value) {
     _ZN3WTF11PrintStream6printfEPKcz(&out, "%lf", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(PrintStream& out, WTF::ClockType type) {
+    switch (type) {
+    case WTF::ClockType::Wall:
+        PrintAtomically(out, "Wall");
+        return;
+    case WTF::ClockType::Monotonic:
+        PrintAtomically(out, "Monotonic");
+        return;
+    case WTF::ClockType::Approximate:
+        PrintAtomically(out, "Approximate");
+        return;
+    }
+    throw std::invalid_argument("WTF::printInternal: invalid WTF::ClockType");
 }
 
 void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE(PrintStream& out, RawPointer value) {
