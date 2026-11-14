@@ -109,8 +109,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 64 still-unimplemented callable exports: 60 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 56 still-unimplemented callable exports: 52 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 55 still-unimplemented callable exports: 51 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -148,8 +147,6 @@
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
-| `d2i_PKCS8_PRIV_KEY_INFO` | `as+t2ZOg5fw` |
-| `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
 | `SSL_CTX_set_ciphersuites` | `bpOQdoGE2es` |
 | `PEM_write_bio_PrivateKey` | `dQE7FIbNsUE` |
