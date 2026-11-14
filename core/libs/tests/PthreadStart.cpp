@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <future>
 #include <iostream>
 #include <stdexcept>
@@ -20,7 +21,8 @@ struct WorkerTlsHook {
         workerMxcsrAfterReturn.store(mxcsr, std::memory_order_relaxed);
     }
 };
-static thread_local WorkerTlsHook workerTlsHook;
+struct WorkerTlsHookTag {};
+static WorkerTlsHook& workerTlsHook() { return HostThreadLocal<WorkerTlsHook, WorkerTlsHookTag>(); }
 
 static void APS5_VABI WorkerThreadDtor() {
     std::uint32_t mxcsr = 0;
@@ -49,7 +51,7 @@ static void* APS5_VABI CheckThread(void* arg) {
     std::uint32_t threadMxcsr = 0;
     asm volatile("stmxcsr %0" : "=m"(threadMxcsr));
     if ((threadMxcsr & 0x9fc0) != 0x9fc0) throw std::runtime_error("Guest thread MXCSR does not have FTZ and DAZ bits set");
-    workerTlsHook.active = true;
+    workerTlsHook().active = true;
     context.incomingHostMxcsr = context.thread->hostMxcsr;
 #ifdef _WIN32
     if (scePthreadSelf() != context.thread)
@@ -166,7 +168,7 @@ int main() {
         throw std::runtime_error("Host MXCSR was modified by guest execution");
     std::atomic<bool> adoptedCompleted{false};
     std::thread nativeWorker([&] {
-        workerTlsHook.active = true;
+        workerTlsHook().active = true;
         const std::uint32_t adoptedMxcsr = 0x1fc0;
         asm volatile("ldmxcsr %0" : : "m"(adoptedMxcsr));
         Pthread adoptedSelf = scePthreadSelf();
