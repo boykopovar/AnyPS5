@@ -18,6 +18,10 @@
 
 - [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
 
+### Functional toy-font text
+
+- [ToyText.cpp](../../../core/libs/prx/libcairo/ToyText.cpp) implements `cairo_select_font_face`, `cairo_set_font_size` and `cairo_show_text` as guest-ABI thunks to the pinned Cairo 1.18.0 image backend. The public C prototypes use an opaque context pointer, optional NUL-terminated family name, 32-bit slant/weight enums, a double font size and UTF-8 text. Non-null guest strings are copied through `CopyGuestString_nid_no_patch`, with a 1 MiB limit; unreadable, oversized or unterminated strings use the existing `NotImplemented_nid_no_patch` guest failure path instead of crashing native Cairo, and the caller's errno is preserved. A null family or text is forwarded unchanged; font-face or text errors on otherwise valid inputs are Cairo's own. Other invalid context pointers still follow native Cairo's undefined behavior. Console behavior is unmeasured. Source-linked tests compare raster pixels and text advances with independent calls to the pinned backend.
+
 ### Callable exports
 
 - [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - The remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
@@ -38,7 +42,6 @@
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
-| `cairo_set_font_size` | `A-0StSi2AwA` |
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
@@ -79,12 +82,10 @@
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_push_group` | `hlh15JjNtWg` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
-| `cairo_select_font_face` | `ldk9m5h+-no` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
-| `cairo_show_text` | `psdqLsaPnkk` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
