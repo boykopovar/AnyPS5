@@ -548,6 +548,18 @@ static void CheckPointAndDpiScale(FontHandle font, FontLibrary library, const Fo
     float width = 0.0f;
     float height = 0.0f;
     Require(sceFontGetScalePixel(fresh, &width, &height) == SCE_FONT_OK);
+    Require(sceFontGetScalePixel(fresh, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    float testW = 0.0f;
+    float testH = 0.0f;
+    errno = 71;
+    Require(sceFontGetScalePixel(fresh, reinterpret_cast<float*>(0x10), &testH) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGetScalePixel(fresh, &testW, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    testW = 1.0f;
+    testH = 1.0f;
+    Require(sceFontGetScalePixel(nullptr, &testW, &testH) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && testW == 0.0f && testH == 0.0f);
     CheckGlyphScale(fresh, memory, width, height);
     Require(sceFontCloseFont(fresh) == SCE_FONT_OK);
     Require(sceFontSetResolutionDpi(font, 144, 144) == SCE_FONT_OK);
