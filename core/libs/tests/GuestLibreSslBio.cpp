@@ -1187,6 +1187,46 @@ void TestCertificateFileLoadPaths() {
 }
 #endif
 
+#ifndef ANYPS5_BIO_DYNAMIC
+int APS5_VABI ShortWrite(LibreSsl::Bio*, const char*, int size) {
+    return size > 0 ? 1 : 0;
+}
+
+int APS5_VABI InitShort(LibreSsl::Bio* bio) {
+    bio->initialized = 1;
+    return 1;
+}
+
+void TestPrintfShortWrite() {
+    LibreSsl::BioMethod method{};
+    method.name = "short";
+    method.write = ShortWrite;
+    method.create = InitShort;
+    Bio* bio = BIO_new_nid_postfix(&method);
+    Require(bio != nullptr, "new short-write BIO");
+    Require(BIO_printf_nid_postfix(bio, "%s", "abc") == 1, "BIO_printf returns what BIO_write returns on a short write");
+    Require(bio->bytesWritten == 1, "a short write counts the bytes it wrote");
+    Require(BIO_free_nid_postfix(bio) == 1, "free short-write BIO");
+}
+
+void TestPrintf() {
+    Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "new memory BIO for BIO_printf");
+    Require(BIO_printf_nid_postfix(bio, "%s-%d", "ab", 42) == 5, "BIO_printf returns the formatted length");
+    RequireData(bio, "ab-42");
+    Require(BIO_printf_nid_postfix(bio, "%0600d", 7) == 600, "BIO_printf output longer than the stack buffer");
+    RequireData(bio, "ab-42" + std::string(599, '0') + "7");
+    Require(BIO_printf_nid_postfix(bio, "") == 0, "BIO_printf empty format writes nothing");
+    Require(BIO_free_nid_postfix(bio) == 1, "free BIO_printf BIO");
+
+    Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly != nullptr, "read-only memory BIO for BIO_printf");
+    Require(BIO_printf_nid_postfix(readOnly, "y") == -1, "BIO_printf on a read-only BIO fails");
+    RequireError(0x20fff07e);
+    Require(BIO_free_nid_postfix(readOnly) == 1, "free read-only BIO_printf BIO");
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1215,6 +1255,8 @@ int main(int argc, char** argv) {
     TestCertificateChainFileErrorPaths();
     TestPemReadX509FileWrapper();
     TestCertificateFileLoadPaths();
+    TestPrintf();
+    TestPrintfShortWrite();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
