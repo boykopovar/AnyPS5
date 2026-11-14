@@ -26,22 +26,38 @@
 
 #include "prx/libkernel/include/Api.hpp"
 
+#include <atomic>
 #include <cstdint>
-
-namespace NKWebKit {
 
 namespace {
 
 constexpr int ScNprocessorsOnln = 58;
 constexpr int DefaultIfUnavailable = 1;
 
+using SysconfQuery = std::int64_t (*)(int);
+
+std::int64_t GuestSysconf(int name) {
+    return sysconf_nid_postfix(name);
+}
+
+std::atomic<SysconfQuery> g_sysconf{GuestSysconf};
+std::atomic<int> g_numberOfCores{-1};
+
 } // namespace
 
+extern "C" void NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfQuery query) {
+    g_sysconf = query ? query : GuestSysconf;
+    g_numberOfCores = -1;
+}
+
+namespace NKWebKit {
+
 int NumberOfProcessorCores() {
-    static const int numberOfCores = [] {
-        const std::int64_t result = sysconf_nid_postfix(ScNprocessorsOnln);
-        return result < 0 ? DefaultIfUnavailable : static_cast<int>(result);
-    }();
+    const int cached = g_numberOfCores;
+    if (cached > 0) return cached;
+    const std::int64_t result = g_sysconf.load()(ScNprocessorsOnln);
+    const int numberOfCores = result < 0 ? DefaultIfUnavailable : static_cast<int>(result);
+    g_numberOfCores = numberOfCores;
     return numberOfCores;
 }
 
