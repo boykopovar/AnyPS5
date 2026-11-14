@@ -227,6 +227,7 @@ struct Context {
     // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
+    bool changedCopyBacks = true;
     bool discreteGpu = false;
     bool integratedGpu = false;
     bool dmaBufImport = false;
