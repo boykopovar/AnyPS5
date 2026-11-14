@@ -408,6 +408,28 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertIn(f"MINI_ODD:INTERNAL={value}\n", seeded)
         self.assertEqual(configure_seed.checks(self.root / "odd-seeded" / "CMakeCache.txt")["MINI_ODD"][0], value)
 
+    def test_values_cmake_quotes_for_trailing_whitespace_round_trip(self):
+        source = self.root / "quoted-source"
+        source.mkdir(exist_ok=True)
+        (source / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.20)\nproject(quoted_check NONE)\nif(NOT DEFINED MINI_SPACE)\n"
+            '  set(MINI_SPACE "abc " CACHE INTERNAL "Test MINI_SPACE")\n'
+            '  set(MINI_TAB "a\\t" CACHE INTERNAL "Test MINI_TAB")\nendif()\n'
+            'message(STATUS "MINI_SPACE=[${MINI_SPACE}] MINI_TAB=[${MINI_TAB}]")\n', encoding="utf-8")
+
+        def configure(name, *extra):
+            return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja"],
+                                  check=True, capture_output=True, text=True).stdout
+
+        self.assertIn("MINI_SPACE=[abc ] MINI_TAB=[a\t]", configure("quoted-fresh"))
+        cache = self.root / "quoted-fresh" / "CMakeCache.txt"
+        self.assertIn("MINI_SPACE:INTERNAL='abc '\n", cache.read_text(encoding="utf-8"))
+        self.assertEqual({name: entry[0] for name, entry in configure_seed.checks(cache).items()},
+                         {"MINI_SPACE": "abc ", "MINI_TAB": "a\t"})
+        output = configure("quoted-seeded", "-C", str(self.seed(cache, "quoted.cmake")))
+        self.assertIn("MINI_SPACE=[abc ] MINI_TAB=[a\t]", output)
+        self.assertEqual(configure_seed.checks(self.root / "quoted-seeded" / "CMakeCache.txt"), configure_seed.checks(cache))
+
 
 
 class ChecksParsingTests(unittest.TestCase):
