@@ -120,6 +120,13 @@ static void CheckSoloSched() {
     }
     Require(pthread_attr_setsolosched_np_nid_postfix(&attr, 0) == 0);
     Require(scePthreadAttrGetsolosched(&attr, &soloSched) == SCE_OK && soloSched == 0);
+    PthreadAttr fresh = nullptr;
+    Require(scePthreadAttrInit(&fresh) == SCE_OK);
+    for (int rejected : {1, 2, -1, 0x7fffffff, static_cast<int>(0x80000000u)}) {
+        Require(scePthreadAttrSetsolosched(&fresh, rejected) == SceKernelErrorEopnotsupp);
+        Require(scePthreadAttrGetsolosched(&fresh, &soloSched) == SCE_OK && soloSched == 0);
+    }
+    Require(scePthreadAttrDestroy(&fresh) == SCE_OK);
     PthreadAttr unset = nullptr;
     Require(scePthreadAttrSetsolosched(&unset, 16) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrSetsolosched(nullptr, 16) == SCE_KERNEL_ERROR_EINVAL);

@@ -626,6 +626,10 @@ StringImpl* EmptyStringImpl() {
     return EmptyImpl();
 }
 
+StringImpl* CreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
+    return NewImpl(length, is8Bit, characters);
+}
+
 String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length) {
     return FromUTF8(input, length, true);
 }
