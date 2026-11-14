@@ -530,6 +530,13 @@ bool SourceFaults(const void* pointer, std::uint64_t length) {
     return !GuestReadable(pointer, length);
 }
 #endif
+#ifdef __APPLE__
+void DropFaultedDatagram(const Socket& socket, int flags) {
+    if (socket.type != 2 || (flags & GuestPeek) != 0) return;
+    char probe[1];
+    ::recv(socket.value, probe, sizeof(probe), MSG_DONTWAIT);
+}
+#endif
 bool ReportAddress(void* address, std::uint32_t* addressLength, const void* name, std::uint32_t size) {
     return (address == nullptr || GuestCopyOut_nid_no_patch(address, name, size)) && GuestCopyOut_nid_no_patch(addressLength, &size, sizeof(size));
 }
@@ -973,6 +980,18 @@ int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
     sockaddr_storage peer{};
     socklen_t size = sizeof(peer);
     return ::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &size) == 0 ? 0 : NativeError();
+}
+
+int UnsupportedLevelError(const Socket& socket, int level, int option, bool set) {
+    if (socket.family == GuestUnix) {
+        if (level != 0) return 22;
+        const bool handledByFreeBsd = set ? option == 2 || option == 4 : option == 1 || option == 2 || option == 4;
+        if (handledByFreeBsd) NotImplemented_nid_no_patch("setsockopt, getsockopt: LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT on an AF_UNIX socket");
+        return 45;
+    }
+    const bool ownProtocol = level == 17 && socket.type == 2 && socket.family == 2;
+    const bool ownFamily = socket.family == 2 && level == 0;
+    return ownProtocol || ownFamily ? 42 : 22;
 }
 bool SendBeforeConnect(Socket& socket) {
     if (socket.type != 1) return false;
@@ -1513,7 +1532,7 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
+    if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, true));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 0    ? GuestSockets::SetIpLevelOption(native, socket->options, socket->family == 2, socket->type == 2, option, value, length)
@@ -1534,7 +1553,7 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
+    if (level != 0xffff && (level != 0 || socket->family == GuestUnix) && level != 6 && level != 41) return Fail(UnsupportedLevelError(*socket, level, option, false));
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
     const int error = level == 0    ? GuestSockets::GetIpLevelOption(socket->options, socket->family == 2, socket->type == 2, option, value, &declared)
@@ -2128,7 +2147,13 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
 #ifdef _WIN32
     if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(limit);
 #endif
-    if (result < 0) return Fail(NativeError());
+    if (result < 0) {
+        const int error = NativeError();
+#ifdef __APPLE__
+        if (error == 14) DropFaultedDatagram(*socket, flags);
+#endif
+        return Fail(error);
+    }
     if (!addressLength) return result;
     unsigned char name[28]{};
     std::uint32_t reported = address ? 0 : capacity;
@@ -2295,10 +2320,20 @@ private:
     std::vector<int> numbers;
 };
 #endif
+static bool ReadGuest(void* destination, const void* source, std::size_t bytes);
 std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
-    const auto total = MessageLength(message);
+    GuestMsghdr header{};
+    if (!message || !ReadGuest(&header, message, sizeof(header))) return Fail(14);
+    if (header.iovLength < 0 || header.iovLength > 1024) return Fail(40);
+    std::vector<KernelIovec> vectors(static_cast<std::size_t>(header.iovLength));
+    if (!ReadGuest(vectors.data(), header.iov, vectors.size() * sizeof(KernelIovec))) return Fail(14);
+    header.iov = vectors.data();
+    const auto total = MessageLength(&header);
     if (total < 0) return -1;
-    const bool control = message->control && message->controlLength;
+    unsigned char name[255];
+    if (header.name && !ReadGuest(name, header.name, std::min<std::size_t>(header.nameLength, sizeof(name)))) return Fail(14);
+    if (!Lookup(descriptor)) return -1;
+    const bool control = header.control && header.controlLength;
 #ifdef _WIN32
     if (control) throw std::runtime_error("sendmsg: control data is not supported on Windows");
 #else
@@ -2316,14 +2351,14 @@ std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* me
         return Fail(55);
     }
     std::size_t offset = 0;
-    for (int i = 0; i < message->iovLength; ++i) {
-        if (message->iov[i].length) std::memcpy(buffer.data() + offset, message->iov[i].base, message->iov[i].length);
-        offset += message->iov[i].length;
+    for (const auto& vector : vectors) {
+        if (!ReadGuest(buffer.data() + offset, vector.base, vector.length)) return Fail(14);
+        offset += vector.length;
     }
 #ifndef _WIN32
-    if (passing) return SendPassing(*passing, *message, buffer, flags);
+    if (passing) return SendPassing(*passing, header, buffer, flags);
 #endif
-    return sendto_nid_postfix(descriptor, buffer.data(), buffer.size(), flags, message->name, message->name ? message->nameLength : 0u);
+    return sendto_nid_postfix(descriptor, buffer.data(), buffer.size(), flags, header.name ? name : nullptr, header.name ? header.nameLength : 0u);
 }
 #ifdef _WIN32
 static bool GuestPagesAllow(std::uintptr_t start, std::size_t bytes, DWORD allowed) {

@@ -2613,9 +2613,11 @@ void DepthStencilTests() {
         split.context[0x200] = 0x00700717u;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
         split.context[0x200] = 0x00700711u;
-        for (const auto control : {0x01u, 0x20u, 0x40u, 0x60u}) {
+        split.context[0x000] = 0x01u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
+        for (const auto control : {0x20u, 0x40u, 0x60u}) {
             split.context[0x000] = control;
-            expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "an out-of-place DB expand");
         }
     }
     for (const auto clear : {0u, 1u, 2u, 3u}) {
@@ -3185,6 +3187,144 @@ void depthMaintenanceTests() {
         auto missing = readOnly;
         missing.context.erase(offset);
         Require(!AgcDriver::Graphics::DepthMaintenanceRejection(missing).empty(), "a resummarize draw without a required register passed");
+    }
+}
+
+void depthExpandPassTests() {
+    const auto expand = [] {
+        auto queue = makeState();
+        for (const auto [offset, value] : {std::pair{0x000u, 0x60u}, {0x002u, 0u}, {0x005u, 0x20293e00u}, {0x007u, (2159u << 16u) | 1919u}, {0x00au, 0u}, {0x00bu, 0u},
+                 {0x010u, 0x20000183u}, {0x011u, 0x20000181u}, {0x012u, 0x202a8a00u}, {0x013u, 0x20294300u}, {0x014u, 0x20298b00u}, {0x015u, 0x20294300u},
+                 {0x01au, 0u}, {0x01bu, 0u}, {0x01cu, 0u}, {0x01du, 0u}, {0x01eu, 0u}, {0x200u, 0u}, {0x201u, 0u}, {0x202u, 0x00cc0000u}, {0x203u, 0u},
+                 {0x8eu, 0xffffffffu}, {0x8fu, 0u}, {0x2f8u, 0x00108001u}, {0xdu, (2160u << 16u) | 1920u}, {0x82u, (2160u << 16u) | 1920u}, {0x91u, (2160u << 16u) | 1920u}, {0x95u, (2160u << 16u) | 1920u}}) {
+            queue.context[offset] = value;
+        }
+        queue.context[0x10f] = std::bit_cast<std::uint32_t>(960.0f);
+        queue.context[0x110] = std::bit_cast<std::uint32_t>(960.0f);
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(-1080.0f);
+        queue.context[0x112] = std::bit_cast<std::uint32_t>(1080.0f);
+        return queue;
+    };
+    const auto pass = AgcDriver::Graphics::DecodeDepthExpandPass(expand());
+    Require(pass.has_value(), "the game's out-of-place DB expand was not recognised");
+    const auto& source = pass->source;
+    Require(source.address == 0x202a8a0000ull && pass->destination == 0x20298b0000ull && source.stencilAddress == 0x2029430000ull && source.htileAddress == 0x20293e0000ull, "the DB expand's bases changed");
+    Require(source.extent.width == 1920u && source.extent.height == 2160u && source.format == VK_FORMAT_D32_SFLOAT_S8_UINT && source.samples == 1u, "the DB expand's read surface changed");
+    Require(AgcDriver::Graphics::DepthMaintenanceRejection(expand()).find("is run by the draw precheck, in order, and is not drawn") != std::string::npos, "an out-of-place DB expand that reached the draw path was not refused");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(expand()); }, "is run by the draw precheck, in order, and is not drawn");
+    for (const auto [offset, value] : {std::pair{0x000u, 0u}, {0x000u, 0x2000u}, {0x014u, 0x202a8a00u}, {0x002u, 0x01000000u}}) {
+        auto other = expand();
+        other.context[offset] = value;
+        Require(!AgcDriver::Graphics::DecodeDepthExpandPass(other).has_value(), "a draw without compress-disable bits, an in-place expand or a read-only depth view was taken for an out-of-place DB expand");
+    }
+    auto absent = expand();
+    absent.context.erase(0x000);
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(absent).has_value(), "a draw without DB_RENDER_CONTROL was taken for a DB expand");
+    auto readOnlyStencilView = expand();
+    readOnlyStencilView.context[0x002] = 0x02000000u;
+    const auto stencilKept = AgcDriver::Graphics::DecodeDepthExpandPass(readOnlyStencilView);
+    Require(stencilKept.has_value() && stencilKept->destination == 0x20298b0000ull && stencilKept->source.stencilAddress == 0x2029430000ull, "the DB expand of a depth plane with a read-only stencil plane was not taken");
+    const std::vector<std::tuple<std::uint32_t, std::uint32_t, std::string_view>> rejections{
+        {0x015u, 0x20294401u, "between bases that are not 64 KiB aligned"},
+        {0x000u, 0x61u, "with clear, copy, resummarize or decompress bits"},
+        {0x000u, 0x20u, "without DEPTH_COMPRESS_DISABLE"},
+        {0x200u, 0x2u, "with depth, stencil or depth bounds tests"},
+        {0x200u, 0x8u, "with depth, stencil or depth bounds tests"},
+        {0x010u, 0x20000182u, "of a Z_24 depth plane"},
+        {0x010u, 0x20000187u, "of a multisampled depth surface"},
+        {0x010u, 0x20000003u, "in a swizzle mode other than SW_64KB_Z_X"},
+        {0x010u, 0x20010183u, "of a partially resident or mipmapped depth surface"},
+        {0x002u, 1u << 26u, "of a depth view with a mip level"},
+        {0x002u, 0x02000000u | (1u << 26u), "of a depth view with a mip level"},
+        {0x207u, 1u << 18u, "with layer exports"},
+        {0x014u, 0x20298b01u, "between bases that are not 64 KiB aligned"},
+        {0x10fu, std::bit_cast<std::uint32_t>(480.0f), "over part of the depth surface"},
+        {0x91u, (1080u << 16u) | 1920u, "over part of the depth surface"},
+    };
+    for (const auto& [offset, value, reason] : rejections) {
+        auto other = expand();
+        other.context[offset] = value;
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(other); }, reason);
+    }
+    for (const auto view : {2u | (2u << 13u), 2u | (5u << 13u), 0x02000000u | 2u | (2u << 13u)}) {
+        auto sliced = expand();
+        sliced.context[0x002] = view;
+        const auto slice = AgcDriver::Graphics::DecodeDepthExpandPass(sliced);
+        Require(slice.has_value() && slice->source.firstSlice == 2u, "the DB expand of a depth view's third slice was not taken");
+        const auto offset = slice->source.address - 0x202a8a0000ull;
+        Require(offset != 0 && offset % 0x10000u == 0 && slice->destination - 0x20298b0000ull == offset && slice->source.stencilAddress > 0x2029430000ull, "the DB expand of a depth view's third slice did not move the read and write bases by the same two slices");
+    }
+    auto colored = expand();
+    colored.context[0x202] = 0x00cc0010u;
+    colored.context[0x8f] = 0xfu;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(colored); }, "with color writes");
+    auto formatless = colored;
+    formatless.context[0x31c] = 0u;
+    Require(AgcDriver::Graphics::DecodeDepthExpandPass(formatless).has_value(), "the DB expand of a draw whose only color target has an INVALID format was refused for color writes");
+    for (const auto [disable, selection] : {std::pair{0x40u, 0x80u}, {0x60u, 0x80u}, {0x60u, 0xf00u}, {0x60u, 0xf80u}}) {
+        auto selected = expand();
+        selected.context[0x000] = disable | selection;
+        const auto taken = AgcDriver::Graphics::DecodeDepthExpandPass(selected);
+        Require(taken.has_value() && taken->destination == 0x20298b0000ull, "a DB expand with a copy sample selection and no copy (Forspoken's DB_RENDER_CONTROL 0xc0) was refused");
+        selected.context[0x000] = disable | 4u | selection;
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(selected); }, "with clear, copy, resummarize or decompress bits");
+    }
+    auto nonFinite = expand();
+    nonFinite.context[0x00b] = 0x7fc00000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(nonFinite); }, "non-finite register");
+
+    auto alwaysPass = expand();
+    alwaysPass.context[0x014] = alwaysPass.context[0x012];
+    alwaysPass.context[0x200] = 0x76u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(alwaysPass).has_value(), "an always-pass depth draw with equal bases and compress-disable bits was taken for a DB expand");
+    Require(AgcDriver::Graphics::DepthMaintenanceRejection(alwaysPass).empty(), "an always-pass depth draw with equal bases and compress-disable bits was refused as an out-of-place DB expand");
+    alwaysPass.context[0x000] = 0u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(alwaysPass).has_value(), "an always-pass depth draw with equal bases was taken for a DB expand");
+    auto noTarget = expand();
+    noTarget.context[0x010] = 0x20000180u;
+    noTarget.context[0x011] = 0x20000180u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(noTarget).has_value(), "a draw without depth or stencil planes was taken for a DB expand");
+    auto readOnlyStencil = expand();
+    readOnlyStencil.context[0x014] = readOnlyStencil.context[0x012];
+    readOnlyStencil.context[0x015] = 0x20294400u;
+    readOnlyStencil.context[0x002] = 0x02000000u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(readOnlyStencil).has_value(), "a read-only stencil plane with another write base was taken for a DB expand");
+    auto noStencil = expand();
+    noStencil.context[0x011] = 0x20000180u;
+    noStencil.context[0x015] = 0x20294400u;
+    const auto depthOnly = AgcDriver::Graphics::DecodeDepthExpandPass(noStencil);
+    Require(depthOnly.has_value() && depthOnly->source.format == VK_FORMAT_D32_SFLOAT && depthOnly->source.stencilAddress == 0 && depthOnly->destination == 0x20298b0000ull, "the DB expand of a surface without a stencil plane was not taken as a depth-only expand");
+    auto noHtile = expand();
+    noHtile.context[0x010] = 0x00000183u;
+    const auto withoutHtile = AgcDriver::Graphics::DecodeDepthExpandPass(noHtile);
+    Require(withoutHtile.has_value() && withoutHtile->source.htileAddress == 0, "the DB expand of a surface without HTILE kept an HTILE address");
+    auto stencilOnly = expand();
+    stencilOnly.context[0x014] = stencilOnly.context[0x012];
+    stencilOnly.context[0x015] = 0x20294400u;
+    const auto stencilMoved = AgcDriver::Graphics::DecodeDepthExpandPass(stencilOnly);
+    Require(stencilMoved.has_value() && stencilMoved->destination == 0 && stencilMoved->stencilDestination == 0x2029440000ull && stencilMoved->source.stencilAddress == 0x2029430000ull, "the DB expand of a stencil plane alone was not taken with the depth plane left in place");
+    auto bothMoved = expand();
+    bothMoved.context[0x015] = 0x20294400u;
+    const auto both = AgcDriver::Graphics::DecodeDepthExpandPass(bothMoved);
+    Require(both.has_value() && both->destination == 0x20298b0000ull && both->stencilDestination == 0x2029440000ull, "the DB expand of the depth and stencil planes did not take both write bases");
+    Require(pass->stencilDestination == 0, "the game's DB expand, whose stencil plane stays in place, took a stencil write base");
+    auto stencilOnlyNoDepth = stencilOnly;
+    stencilOnlyNoDepth.context[0x010] = 0x20000180u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(stencilOnlyNoDepth); }, "of a surface without a depth plane");
+    for (const auto stencilInfo : {0x20000181u, 0x20000180u}) {
+        auto z16 = expand();
+        z16.context[0x010] = 0x20000181u;
+        z16.context[0x011] = stencilInfo;
+        const auto sixteen = AgcDriver::Graphics::DecodeDepthExpandPass(z16);
+        Require(sixteen.has_value() && sixteen->source.format == ((stencilInfo & 1u) != 0 ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) && sixteen->destination == 0x20298b0000ull, "the DB expand of a Z_16 depth plane was not taken as a 16-bit expand");
+        auto z24 = z16;
+        z24.context[0x010] = 0x20000182u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(z24); }, "of a Z_24 depth plane");
+    }
+    for (const auto swizzle : {8u, 20u, 27u, 28u}) {
+        auto other = expand();
+        other.context[0x010] = (0x20000183u & ~0x1f0u) | (swizzle << 4u);
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(other); }, "in a swizzle mode other than SW_64KB_Z_X");
     }
 }
 
@@ -5757,6 +5897,7 @@ struct MockVulkan {
     std::map<VkDeviceMemory, VkDeviceSize> importSizes;
     VkDeviceSize importedBytes = 0;
     std::uint32_t bufferMemoryTypeBits = 1;
+    std::uint32_t hostPointerTypeBits = 1;
     std::vector<std::uint32_t> allocationTypes;
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
     VkDescriptorSetLayoutCreateFlags layoutFlags = 0;
@@ -6011,7 +6152,7 @@ VKAPI_ATTR void VKAPI_CALL mockCmdBindDescriptorSets(VkCommandBuffer, VkPipeline
 
 VKAPI_ATTR VkResult VKAPI_CALL mockGetMemoryHostPointerProperties(VkDevice, VkExternalMemoryHandleTypeFlagBits type, const void* pointer, VkMemoryHostPointerPropertiesEXT* properties) {
     Require(type == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT && pointer != nullptr, "invalid host pointer import query");
-    properties->memoryTypeBits = 1;
+    properties->memoryTypeBits = mock.hostPointerTypeBits;
     return VK_SUCCESS;
 }
 
@@ -9868,6 +10009,70 @@ void copiedWriterIndirectOverlapTests() {
     ::operator delete(copiedBlock, std::align_val_t{half});
 }
 
+void hostImportMemoryTypeTests() {
+    using namespace AgcDriver::Graphics;
+
+    constexpr std::size_t half = 65536;
+    void* block = ::operator new(half, std::align_val_t{half});
+    void* other = ::operator new(half, std::align_val_t{half});
+    std::memset(block, 0xaa, half);
+    std::memset(other, 0xbb, half);
+    const auto add = [&](void* pointer) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, pointer, half, true, true, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto remove = [&](void* pointer) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, pointer);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto allocated = [](std::uint32_t type) { return std::count(mock.allocationTypes.begin(), mock.allocationTypes.end(), type) != 0; };
+
+    add(block);
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.hostImportAlignment = half;
+        context.dmaBufImport = false;
+        context.memory.memoryTypeCount = 2;
+        context.memory.memoryTypes[0] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+        context.memory.memoryTypes[1] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0};
+        mock.bufferMemoryTypeBits = 0b11u;
+        mock.hostPointerTypeBits = 0b11u;
+
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        Require(HostImportCovers(context, reinterpret_cast<std::uintptr_t>(block), half), "the registered range is not imported");
+        Require(allocated(1), "the import did not take the coherent memory type");
+        Require(!allocated(0), "the import took a memory type that is not host-coherent");
+        memory.Upload(false);
+        memory.WriteBack();
+    }
+    remove(block);
+
+    add(other);
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.hostImportAlignment = half;
+        context.dmaBufImport = false;
+        context.memory.memoryTypeCount = 2;
+        context.memory.memoryTypes[0] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+        context.memory.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1};
+        mock.bufferMemoryTypeBits = 0b11u;
+        mock.hostPointerTypeBits = 0b11u;
+
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        Require(!HostImportCovers(context, reinterpret_cast<std::uintptr_t>(other), half), "a device with no host-coherent candidate imported the range anyway");
+    }
+    remove(other);
+
+    ::operator delete(block, std::align_val_t{half});
+    ::operator delete(other, std::align_val_t{half});
+}
+
 void registeredReadableCoverTests() {
     using namespace AgcDriver::Graphics;
 
@@ -12394,10 +12599,15 @@ void validationTests() {
             const std::array selective{attribute, clamped};
             Require(!AgcDriver::Graphics::ZeroFetchVertex(selective).has_value(), "an attribute with out-of-bounds select 2 was taken to read zeros past its records");
             std::array<std::uint32_t, 4> indices{0xffffffffu, 2u, 0x12345u, 0xffffffffu};
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, true, 9u) == 9u && indices == std::array<std::uint32_t, 4>{0xffffffffu, 2u, 9u, 0xffffffffu}, "clamping kept an index past the limit or moved a restart index");
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, false, 9u) == 9u && indices == std::array<std::uint32_t, 4>{9u, 2u, 9u, 9u}, "clamping without restart kept a 0xffffffff index");
+            const auto clampedTo = [](const auto& bounds, std::uint32_t lowest, std::uint32_t highest) { return bounds.has_value() && bounds->lowest == lowest && bounds->highest == highest; };
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, true, 9u), 2u, 9u) && indices == std::array<std::uint32_t, 4>{0xffffffffu, 2u, 9u, 0xffffffffu}, "clamping kept an index past the limit or moved a restart index");
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(indices)), 4, false, 9u), 2u, 9u) && indices == std::array<std::uint32_t, 4>{9u, 2u, 9u, 9u}, "clamping without restart kept a 0xffffffff index");
             std::array<std::uint16_t, 2> narrow{0xffffu, 1u};
-            Require(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(narrow)), 2, false, 4u) == 4u && narrow[0] == 4u && narrow[1] == 1u, "clamping 16-bit indices failed");
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(narrow)), 2, false, 4u), 1u, 4u) && narrow[0] == 4u && narrow[1] == 1u, "clamping 16-bit indices failed");
+            std::array<std::uint32_t, 3> past{0x30000u, 0xffffffffu, 0x20000u};
+            Require(clampedTo(AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(past)), 4, true, 9u), 9u, 9u) && past == std::array<std::uint32_t, 3>{9u, 0xffffffffu, 9u}, "clamping every index kept a lowest index past the limit");
+            std::array<std::uint16_t, 2> restarts{0xffffu, 0xffffu};
+            Require(!AgcDriver::Graphics::ClampDrawIndices(std::as_writable_bytes(std::span(restarts)), 2, true, 4u).has_value(), "a draw of only restart indices reached a vertex after clamping");
         }
         attribute.fetchIndex = 1;
         Require(AgcDriver::Graphics::VertexBufferReadOffset(attribute, 2, 7) == 224, "instance range includes records before the first instance");
@@ -12841,7 +13051,11 @@ void debugBranchTests() {
 }
 
 void highestDrawIndexTests() {
-    using AgcDriver::Graphics::HighestDrawIndex;
+    const auto HighestDrawIndex = [](std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) -> std::optional<std::uint32_t> {
+        const auto bounds = AgcDriver::Graphics::DrawIndexRange(indices, indexSize, skipRestart);
+        if (!bounds) return std::nullopt;
+        return bounds->highest;
+    };
     const auto bytesOf = [](const auto& values) { return std::as_bytes(std::span(values)); };
     const std::array<std::uint16_t, 5> narrow{0, 7, 0xffff, 3, 0xffff};
     Require(HighestDrawIndex(bytesOf(narrow), 2, true) == 7, "a 16-bit restart index counted as a vertex");
@@ -12872,6 +13086,42 @@ void highestDrawIndexTests() {
         std::memcpy(shifted.data() + 1 + 2 * i, &value, sizeof(value));
     }
     Require(HighestDrawIndex(std::span<const std::byte>(shifted).subspan(1, 2 * 1000 + 1), 2, false) == 0x8001u, "an unaligned 16-bit range with a trailing byte");
+}
+
+void drawIndexRangeTests() {
+    using AgcDriver::Graphics::DrawIndexRange;
+    const auto bytesOf = [](const auto& values) { return std::as_bytes(std::span(values)); };
+    const auto bounds = [](const auto& range, std::uint32_t lowest, std::uint32_t highest) { return range.has_value() && range->lowest == lowest && range->highest == highest; };
+    const std::array<std::uint16_t, 5> narrow{0xffff, 7, 4, 0xffff, 9};
+    Require(bounds(DrawIndexRange(bytesOf(narrow), 2, true), 4, 9), "a 16-bit restart index counted as the lowest or highest vertex");
+    Require(bounds(DrawIndexRange(bytesOf(narrow), 2, false), 4, 0xffff), "a 16-bit all-ones index without restart was skipped");
+    const std::array<std::uint32_t, 4> wide{0xffffffffu, 0x10000u, 0xffffu, 0x80000000u};
+    Require(bounds(DrawIndexRange(bytesOf(wide), 4, true), 0xffff, 0x80000000u), "a 32-bit restart index counted as a vertex, or 0xffff was taken for it");
+    Require(bounds(DrawIndexRange(bytesOf(wide), 4, false), 0xffff, 0xffffffffu), "a 32-bit all-ones index without restart was skipped");
+    const std::array<std::uint16_t, 3> restartOnly{0xffff, 0xffff, 0xffff};
+    Require(!DrawIndexRange(bytesOf(restartOnly), 2, true).has_value(), "a draw of only restart indices reached a vertex");
+    Require(bounds(DrawIndexRange(bytesOf(restartOnly), 2, false), 0xffff, 0xffff), "a 16-bit all-ones index without restart was skipped");
+    const std::array<std::uint16_t, 1> single{0};
+    Require(bounds(DrawIndexRange(bytesOf(single), 2, true), 0, 0), "a draw of index 0 alone");
+    Require(!DrawIndexRange({}, 2, false).has_value() && !DrawIndexRange({}, 4, true).has_value(), "an empty index range reached a vertex");
+    Require(bounds(DrawIndexRange(bytesOf(narrow).subspan(2, 4), 2, true), 4, 7), "the scan read outside its index range");
+    expectFailure([&] { DrawIndexRange(bytesOf(narrow), 3, false); }, "unsupported index size");
+    std::vector<std::uint16_t> long16(1027);
+    for (std::size_t i = 0; i < long16.size(); ++i) long16[i] = static_cast<std::uint16_t>(500u + i % 300u);
+    Require(bounds(DrawIndexRange(std::as_bytes(std::span(long16)), 2, true), 500, 799), "a long 16-bit range");
+    long16[1026] = 17;
+    long16[3] = 0xffff;
+    Require(bounds(DrawIndexRange(std::as_bytes(std::span(long16)), 2, true), 17, 799), "a lowest 16-bit index in the tail was missed");
+    std::vector<std::uint32_t> long32(1029, 0xffffffffu);
+    long32[700] = 0x7fffffffu;
+    long32[701] = 0x12345u;
+    Require(bounds(DrawIndexRange(std::as_bytes(std::span(long32)), 4, true), 0x12345u, 0x7fffffffu), "restart indices around a long 32-bit range");
+    std::vector<std::byte> shifted(2 * 1000 + 3);
+    for (std::size_t i = 0; i < 1000; ++i) {
+        const auto value = static_cast<std::uint16_t>(i == 777 ? 3u : 100u + i % 300u);
+        std::memcpy(shifted.data() + 1 + 2 * i, &value, sizeof(value));
+    }
+    Require(bounds(DrawIndexRange(std::span<const std::byte>(shifted).subspan(1, 2 * 1000 + 1), 2, false), 3, 399), "an unaligned 16-bit range with a trailing byte");
 }
 
 void compactListRestartTests() {
@@ -12956,6 +13206,52 @@ void vertexCopyTests() {
     {
         const std::array<VertexFetch, 1> empty{{{0x4000, 0x4000, 16, 0, 4}}};
         expectFailure([&] { PlanVertexCopies(empty); }, "empty vertex fetch");
+    }
+}
+
+void vertexCopyStartTests() {
+    using AgcDriver::Graphics::PlanVertexCopies;
+    using AgcDriver::Graphics::VertexCopyStarts;
+    using AgcDriver::Graphics::VertexFetch;
+    {
+        const std::array<VertexFetch, 1> fetches{{{0x1000, 0x1000 + 32 * 9 + 12, 32, 0, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(VertexCopyStarts(plan, fetches, 0, 0) == std::vector<std::size_t>{0}, "a draw from vertex 0 skipped bytes");
+        Require(VertexCopyStarts(plan, fetches, 4, 0) == std::vector<std::size_t>{128}, "a draw from vertex 4 does not start at its record");
+        Require(VertexCopyStarts(plan, fetches, 9, 7) == std::vector<std::size_t>{288}, "a draw of the last record does not start at it");
+        expectFailure([&] { VertexCopyStarts(plan, fetches, 10, 0); }, "vertex copy starts past its range");
+    }
+    {
+        const std::array<VertexFetch, 3> fetches{{{0x1018, 0x1018 + 32 * 9 + 8, 32, 0, 4}, {0x1000, 0x1000 + 32 * 9 + 12, 32, 0, 4}, {0x100c, 0x100c + 32 * 9 + 12, 32, 0, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(plan.copies.size() == 1 && VertexCopyStarts(plan, fetches, 5, 0) == std::vector<std::size_t>{160}, "interleaved attributes do not start at the record of their lowest vertex");
+    }
+    {
+        const std::array<VertexFetch, 2> fetches{{{0x100c, 0x100c + 32 * 9 + 12, 32, 0, 4}, {0x1018, 0x1018 + 32 * 9 + 8, 32, 0, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(plan.copies.size() == 1 && VertexCopyStarts(plan, fetches, 5, 0) == std::vector<std::size_t>{160}, "a union starts past its first attribute's fetch");
+    }
+    {
+        const std::array<VertexFetch, 4> fetches{{
+            {0x2000, 0x2000 + 16 * 99 + 16, 16, 0, 4},
+            {0x3000, 0x3000 + 24 * 49 + 8, 24, 1, 4},
+            {0x4000, 0x4010, 0, 0, 4},
+            {0x5000, 0x5010, 0, 1, 4},
+        }};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(plan.copies.size() == 4, "fetches of other strides or rates shared a copy");
+        const auto starts = VertexCopyStarts(plan, fetches, 90, 40);
+        Require(starts[plan.copyOf[0]] == 16u * 90u, "a vertex attribute does not start at the lowest vertex");
+        Require(starts[plan.copyOf[1]] == 24u * 40u, "an instance attribute does not start at the first instance");
+        Require(starts[plan.copyOf[2]] == 0 && starts[plan.copyOf[3]] == 0, "a zero-stride attribute skipped its only value");
+        expectFailure([&] { VertexCopyStarts(plan, fetches, 90, 50); }, "vertex copy starts past its range");
+    }
+    {
+        std::array<VertexFetch, 1> fetches{{{0x1000, 0x1100, 16, 2, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        expectFailure([&] { VertexCopyStarts(plan, fetches, 0, 0); }, "unsupported vertex fetch index");
+        const std::array<VertexFetch, 0> none{};
+        expectFailure([&] { VertexCopyStarts(plan, none, 0, 0); }, "vertex copy plan does not match its fetches");
     }
 }
 
@@ -13539,6 +13835,29 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
             return result;
         };
         for (std::size_t flag = 0; flag < 4u; ++flag) Require(!(flagged(flag).Identity() == flagged(4u).Identity()), "an embedded sampler flag did not enter the identity");
+        Require(DescribedPipelineIdentity(ShaderRecompiler::RecompileResult{}).Empty(), "a result without a module has a described identity");
+        const auto withTable = [&](Role role, std::uint32_t elements, std::uint32_t buffers) {
+            auto result = module(1);
+            result.bindings.push_back(makeBinding(Role::GuestBuffers, 0, buffers, std::vector<std::uint32_t>(4 * buffers)));
+            auto table = makeBinding(role, role == Role::ImageStorageTable ? ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding : ShaderRecompiler::RuntimeAbi::ImageTableBinding, elements, std::vector<std::uint32_t>(8 * elements));
+            table.kind = role == Role::SamplerTable ? Kind::Sampler : role == Role::ImageStorageTable ? Kind::StorageImage : Kind::SampledImage;
+            result.bindings.push_back(std::move(table));
+            return result;
+        };
+        auto plain = module(1);
+        plain.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, std::vector<std::uint32_t>(8)));
+        Require(DescribedPipelineIdentity(plain) == plain.Identity(), "the described identity of a result without tables differs from its identity");
+        for (const auto role : {Role::ImageTable, Role::ImageStorageTable, Role::SamplerTable}) {
+            const auto small = withTable(role, 10, 1);
+            const auto large = withTable(role, 20, 1);
+            Require(!(small.Identity() == large.Identity()), "the table's element count did not enter the identity");
+            Require(DescribedPipelineIdentity(small) == DescribedPipelineIdentity(large), "a table's element count entered the described identity, which the fixed-capacity layout does not see");
+            Require(!(DescribedPipelineIdentity(small) == DescribedPipelineIdentity(withTable(role, 10, 2))), "a buffer binding's count did not enter the described identity");
+            auto specializedTable = withTable(role, 10, 1);
+            specializedTable.specialization.push_back({3, 4});
+            Require(!(DescribedPipelineIdentity(specializedTable) == DescribedPipelineIdentity(small)), "specialization constants did not enter the described identity");
+        }
+        Require(!(DescribedPipelineIdentity(withTable(Role::ImageTable, 10, 1)) == DescribedPipelineIdentity(withTable(Role::ImageStorageTable, 10, 1))), "a sampled and a storage image table share a described identity");
     }
     mock = MockVulkan{};
     auto context = mockContext();
@@ -13869,6 +14188,30 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
             Require(recovered != nullptr, "the replay after the external append did not start");
             recovered->Wait();
             Require(PipelineJournalTotals().loadedModules == 5 && PipelineJournalTotals().loadedRecipes == 4 && PipelineJournalTotals().droppedRecords == 0, "the external append and torn-tail recovery did not replay cleanly");
+        }
+        {
+            const auto tableResult = [&](std::uint32_t elements) {
+                auto result = module(5);
+                result.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, std::vector<std::uint32_t>(4)));
+                auto table = makeBinding(Role::ImageTable, ShaderRecompiler::RuntimeAbi::ImageTableBinding, elements, std::vector<std::uint32_t>(8 * elements));
+                table.kind = Kind::SampledImage;
+                result.bindings.push_back(std::move(table));
+                return result;
+            };
+            auto ahead = StartPipelineJournalReplay(context, fingerprint, hooks);
+            Require(ahead != nullptr, "the replay before the table variants did not start");
+            ahead->Wait();
+            const auto before = PipelineJournalTotals();
+            RecordComputePipeline(tableResult(10), false);
+            RecordComputePipeline(tableResult(20), false);
+            FlushPipelineJournal();
+            const auto recordedTables = PipelineJournalTotals();
+            Require(recordedTables.recordedCompute == before.recordedCompute + 1 && recordedTables.recordedModules == before.recordedModules + 1 && recordedTables.writeFailures == 0, "compute results that differ only in their image table's element count were recorded as two pipelines");
+            auto reread = StartPipelineJournalReplay(context, fingerprint, hooks);
+            Require(reread != nullptr, "the replay after the table variants did not start");
+            reread->Wait();
+            const auto reloadedTables = PipelineJournalTotals();
+            Require(reloadedTables.droppedRecords == 0 && reloadedTables.loadedModules == before.loadedModules + 1 && reloadedTables.replayRejected == 0 && reloadedTables.replayFailed == 0, "the journal did not reload the table variant's module under its described identity");
         }
         {
             const auto before = PipelineJournalTotals();
@@ -14312,6 +14655,7 @@ int main(int argc, char** argv) {
         framebufferOwnerTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
+        depthExpandPassTests();
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();
@@ -14429,7 +14773,9 @@ int main(int argc, char** argv) {
         stagingPoolBudgetTests();
         validationTests();
         vertexCopyTests();
+        vertexCopyStartTests();
         highestDrawIndexTests();
+        drawIndexRangeTests();
         compactListRestartTests();
         storeAtFlipTests();
         storeAtLabelTests();
@@ -14445,6 +14791,7 @@ int main(int argc, char** argv) {
         floatControlsModeTests();
         barycentricEmulationTests();
         copiedWriterIndirectOverlapTests();
+        hostImportMemoryTypeTests();
         registeredReadableCoverTests();
         mock = MockVulkan{};
         auto bdaContext = mockContext();
