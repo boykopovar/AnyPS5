@@ -8,6 +8,8 @@
 
 - [sceAudio3dObjectReserve](../../../core/libs/prx/libSceAudio3d/Export.cpp) (libSceAudio3d) - returning `0x80EA0004` (`AUDIO3D_ERROR_INVALID_PARAMETER`) when the `object_id` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving caller errno; console hardware fault behavior on unmapped memory is unmeasured.
 
+- [sceAudio3dAudioOutOutput and sceAudio3dAudioOutOutputs](../../../core/libs/prx/libSceAudio3d/Export.cpp) (libSceAudio3d) - each output block and `AudioOutOutputParam` entry is now read through `GuestCopyIn_nid_no_patch`; an unreadable guest pointer returns `0x80EA0004` (`AUDIO3D_ERROR_INVALID_PARAMETER`) preserving caller errno instead of crashing the host, a host-safety fallback whose console hardware-fault behavior on unmapped memory is unmeasured.
+
 - [libSceAudio3d bed path](../../../core/libs/prx/libSceAudio3d/Export.cpp) (libSceAudio3d) - bed PCM is mixed and played: `sceAudio3dBedWrite` and `sceAudio3dBedWrite2` queue a bed, bounded by `queue_depth` and `NOT_READY` when full, `sceAudio3dPortAdvance` consumes one and mixes it into a stereo frame with a linear-balance pan and a 5.1/7.1 downmix, and an advance with no bed queued mixes silence ([Mixer.hpp](../../../core/libs/prx/libSceAudio3d/Mixer.hpp)) and queues the frame, and `sceAudio3dPortPush` opens a type-126 AudioOut port on first use and submits the queued frames to it. The explicit `sceAudio3dAudioOutOpen`, `sceAudio3dAudioOutOutput` and `sceAudio3dAudioOutOutputs` exports queue their blocks and the port drains them. The attribute enum values and the panning model are unverified
 
 ### Unknown function info
