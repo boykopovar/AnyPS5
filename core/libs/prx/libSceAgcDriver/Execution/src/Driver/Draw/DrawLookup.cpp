@@ -147,7 +147,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     auto outcome = EntryOutcome::Differing;
                     bool anyLayout = false;
                     for (std::size_t rank = 0; rank < variants.size(); ++rank) {
-                        const auto& variant = variants[rank];
+                        auto variant = variants[rank];
                         if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                         if (variant->pushOffset != cursor) continue;
                         if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh && !std::equal(variant->meshIndexDescriptor.begin(), variant->meshIndexDescriptor.end(), programs[i].userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord)) {
@@ -159,8 +159,19 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                         regions.clear();
                         appendEntryRegions(*variant, regions);
                         ++compared;
-                        auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, live);
-                        if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, live);
+                        const bool data = drawRelocationEnabled() && !variant->bufferWordBuffers.empty();
+                        auto* validateLive = data ? &liveData : live;
+                        auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, validateLive);
+                        if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling, validateLive);
+                        if (data && result == EntryOutcome::EqualData) {
+                            auto patched = patchBufferWords(*variant, liveData);
+                            result = patched != nullptr ? EntryOutcome::Equal : EntryOutcome::Differing;
+                            if (patched != nullptr) {
+                                variant = std::move(patched);
+                                regions.clear();
+                                appendEntryRegions(*variant, regions);
+                            }
+                        }
                         if (!anyLayout) outcome = result;
                         anyLayout = true;
                         if (result != EntryOutcome::Equal && result != EntryOutcome::EqualData) continue;
@@ -249,7 +260,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 phaseMs[DrawRowValidateWait] += waited;
                 counters.validateUs += phaseMs[DrawRowKeyLookupValidate] * 1000;
             }
-        } else if (dataEntry != nullptr && graphics.stages.path == Graphics::ShaderPath::Vertex && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
+        } else if (dataEntry != nullptr && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
             std::uint64_t imagesFlushed = 0, runsSynced = 0;
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
             std::optional<SampledReadScope> sampling;
@@ -261,16 +272,83 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 for (const auto& variant : dataEntry->stages[i]) {
                     if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                     bool usedEqual = true;
+                    std::vector<DrawUserPatch> moves;
                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
-                        if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;
+                        if (now[w] == was[w]) continue;
+                        if (w >= 64u || ((variant->userDataMask >> w) & 1u) == 0u) continue;
+                        if (((variant->valueWords >> w) & 1u) != 0u) {
+                            moves.push_back({i, static_cast<std::uint32_t>(w), now[w]});
+                            continue;
+                        }
+                        if ((((variant->relocatableWords | variant->calleeWords) >> w) & 1u) == 0u) {
+                            usedEqual = false;
+                            break;
+                        }
+                        if (was[w] == 0 || now[w] == 0 || ((was[w] ^ now[w]) & 3u) != 0u) {
+                            usedEqual = false;
+                            break;
+                        }
+                        if (((variant->calleeWords >> w) & 1u) != 0u) {
+                            if (w + 1 >= now.size()) {
+                                usedEqual = false;
+                                break;
+                            }
+                            RelocatableUserWord word{static_cast<std::uint32_t>(w), {}, false};
+                            for (const auto& [callee, length] : variant->calleeReads) {
+                                if (callee == w) word.reads.emplace_back(0, length);
+                            }
+                            word.high = static_cast<std::uint32_t>(was[w + 1]);
+                            bool readable = true;
+                            const auto from = relocatedContentKey(word, was[w], readable);
+                            word.high = now[w + 1];
+                            const auto to = relocatedContentKey(word, now[w], readable);
+                            if (!readable || from != to) {
+                                usedEqual = false;
+                                break;
+                            }
+                        }
+                        moves.push_back({i, static_cast<std::uint32_t>(w), now[w]});
                     }
                     if (!usedEqual) continue;
                     if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == variant->pushOffset; })) continue;
+                    std::shared_ptr<DispatchVariant> candidate = variant;
+                    if (!moves.empty() && variant->compiled != nullptr) {
+                        auto relocated = cloneVariant(*variant);
+                        for (const auto& move : moves) {
+                            const bool value = ((variant->valueWords >> move.index) & 1u) != 0u;
+                            if (!value) {
+                                const auto delta = static_cast<std::uint64_t>(move.value & ~3u) - static_cast<std::uint64_t>(was[move.index] & ~3u);
+                                for (std::size_t run = 0; run < relocated->runs.size() && run < relocated->runBases.size(); ++run) {
+                                    if (relocated->runBases[run] != static_cast<std::int8_t>(move.index)) continue;
+                                    relocated->runs[run].first += delta;
+                                    relocated->runs[run].second += delta;
+                                }
+                            }
+                            for (const auto& [index, binding, word] : variant->valueSlots) {
+                                if (index == move.index) relocated->descriptorPatches.push_back({binding, word, move.value});
+                            }
+                            const auto& forwarded = variant->compiled->shaderDataUserWords;
+                            for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
+                                if (forwarded[slot] == move.index) relocated->shaderDataPatches.emplace_back(slot, move.value);
+                            }
+                        }
+                        applyShaderDataPatches(*relocated);
+                        candidate = std::move(relocated);
+                    }
                     std::vector<ShaderRecompiler::MemoryRegion> regions;
-                    appendEntryRegions(*variant, regions);
-                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (result == EntryOutcome::Equal) candidates.emplace_back(variant, std::move(regions));
+                    appendEntryRegions(*candidate, regions);
+                    std::vector<std::pair<std::uint32_t, std::uint32_t>> liveData;
+                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling, &liveData);
+                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling, &liveData);
+                    if (result == EntryOutcome::EqualData) {
+                        auto patched = patchStageDataWords(*candidate, liveData);
+                        if (patched == nullptr) continue;
+                        candidate = std::move(patched);
+                        regions.clear();
+                        appendEntryRegions(*candidate, regions);
+                        result = EntryOutcome::Equal;
+                    }
+                    if (result == EntryOutcome::Equal) candidates.emplace_back(candidate, std::move(regions));
                 }
             }
         }

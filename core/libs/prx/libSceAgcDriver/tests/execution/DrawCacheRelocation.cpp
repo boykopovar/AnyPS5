@@ -49,6 +49,7 @@ alignas(256) constexpr std::array<std::uint32_t, 16> ForwardedPixelCode{
     0xf4040080u, 0xfa000000u, 0xbf8cc07fu, 0xf4000101u, 0xfa000000u, 0xbf8cc07fu, 0x7e000204u, 0xd5480001u,
     0x02050800u, 0x7e020d01u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 16> DataOnlyPixelCode = ForwardedPixelCode;
 alignas(16) std::array<float, 4> Other{0.5f, 0.0f, 0.0f, 0.0f};
 alignas(16) std::array<float, 4> ForwardedData{};
 alignas(32) std::array<std::array<std::uint64_t, 4>, 6> AlignedTables{};
@@ -69,6 +70,7 @@ alignas(8) Header SecondVertexHeader{};
 alignas(8) Header RecipeVertexHeader{};
 alignas(8) Header TriangleVertexHeader{};
 alignas(8) Header ForwardedPixelHeader{};
+alignas(8) Header DataOnlyPixelHeader{};
 
 const Shader* Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -363,6 +365,41 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     Require(moved.empty(), mode + ": a relocated stage data hit did not draw with the moved user word: " + moved);
 }
 
+void DataOnlyMovedTableKeepsItsStage(bool libraries) {
+    Registered(TriangleVertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
+    Registered(DataOnlyPixelHeader, DataOnlyPixelCode.data(), sizeof(DataOnlyPixelCode), 1);
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    constexpr std::byte Kept{0x40};
+    const auto draw = [&](const void* table) {
+        ColorMemory.fill(Kept);
+        auto commands = DrawFrom({table}, TriangleVertexCode.data(), DataOnlyPixelCode.data(), ColorMemory.data(), LinearAttrib3);
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
+        return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    };
+    const auto data = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(ForwardedData.data()));
+    for (auto& table : AlignedTables) table[0] = data;
+    ForwardedData = {1.0f, 0.0f, 0.0f, 0.0f};
+    draw(AlignedTables[0].data());
+    const auto before = draw(AlignedTables[0].data());
+    ForwardedData[0] = 0.25f;
+    const auto after = draw(AlignedTables[1].data());
+    Require(after.lookups == before.lookups + 1, mode + ": the moved-table draw did not run exactly once");
+    Require(after.dataHits == before.dataHits + 1, mode + ": a draw whose table pointer moved was not a data-only hit (" + std::to_string(after.dataHits - before.dataHits) + " data-only hits, " + std::to_string(after.dataStagesReused - before.dataStagesReused) + " stages reused, " + std::to_string(after.dataStagesCompiled - before.dataStagesCompiled) + " compiled)");
+    Require(after.dataStagesCompiled == before.dataStagesCompiled, mode + ": a draw whose table pointer moved compiled a stage (" + std::to_string(after.dataStagesCompiled - before.dataStagesCompiled) + " compiled)");
+    Require(after.dataStagesReused == before.dataStagesReused + 2, mode + ": a draw whose table pointer moved reused " + std::to_string(after.dataStagesReused - before.dataStagesReused) + " stages, expected both");
+    std::size_t drawn = 0;
+    for (std::size_t at = 0; at < ColorMemory.size(); at += 4u) {
+        const std::array<std::uint8_t, 4> pixel{static_cast<std::uint8_t>(ColorMemory[at]), static_cast<std::uint8_t>(ColorMemory[at + 1]), static_cast<std::uint8_t>(ColorMemory[at + 2]), static_cast<std::uint8_t>(ColorMemory[at + 3])};
+        if (pixel == std::array<std::uint8_t, 4>{0x40u, 0x40u, 0x40u, 0x40u}) continue;
+        Require(pixel == std::array<std::uint8_t, 4>{64u, 0u, 0u, 64u}, mode + ": a data-only hit through the moved table drew a stale pixel " + std::to_string(at / 4u) + " = " + std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," + std::to_string(pixel[3]));
+        ++drawn;
+    }
+    Require(drawn != 0u, mode + ": a data-only hit through the moved table wrote no pixels");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -393,6 +430,7 @@ int main(int argc, char** argv) {
         RelocatedDrawsReuseTheirRecipe(libraries);
         UnrelocatedAliasesStayOut(libraries);
         MovedForwardedWordReachesStageDataHit(libraries);
+        DataOnlyMovedTableKeepsItsStage(libraries);
         if (std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr) {
             const auto counters = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
             Require(counters.verifyDecodeMismatches == 0, "the effective relocated draw decode differed from its full decode");

@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
+#include "UserDataUse.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -16,7 +17,6 @@
 #include <map>
 #include <memory>
 #include <set>
-#include <span>
 #include <span>
 #include <utility>
 #include <vector>
@@ -62,6 +62,8 @@ struct DispatchVariant {
     std::uint32_t flatBinding = NoFlatBinding;
 
     std::uint32_t pushOffset = 0;
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> prepared;
+    std::vector<std::vector<std::pair<std::uint32_t, std::uint32_t>>> bufferWordBuffers;
     std::vector<std::int8_t> runBases;
     std::uint64_t relocatableWords = 0;
     std::uint64_t userWordsWalked = 0;
@@ -73,6 +75,8 @@ struct DispatchVariant {
     std::shared_ptr<DispatchVariant> donor;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    std::vector<std::byte> patchedPushConstants;
+    bool dataPatched = false;
     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;
 
     std::shared_ptr<ShaderMemory> memory;
@@ -80,6 +84,8 @@ struct DispatchVariant {
     std::vector<std::pair<std::uint64_t, std::size_t>> spans;
     std::atomic<std::uint64_t> generation{0};
 };
+
+void TagDrawBufferBases_nid_no_patch(DispatchVariant& variant, std::span<const ShaderRecompiler::BufferBaseWord> bufferBaseWords, bool enabled);
 
 struct DispatchEntry {
     std::vector<std::shared_ptr<DispatchVariant>> variants;

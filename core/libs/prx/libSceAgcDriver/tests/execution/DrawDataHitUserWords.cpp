@@ -177,10 +177,13 @@ void UnreadUserWordsKeepTheStage(bool verify) {
     const auto moved = counters;
     counters = Submit(std::move(commands));
     Require(counters.dataHits == moved.dataHits + 1, "a draw that pointed the pixel stage at another buffer descriptor was not a data-only hit: " + Counts(counters));
-    Require(counters.dataStagesCompiled - moved.dataStagesCompiled >= 1, "a draw that pointed the pixel stage at another buffer descriptor reused the pixel stage: " + Counts(counters));
-    if (!verify) Require(counters.dataStagesReused - moved.dataStagesReused == 1, "a draw that changed only the pixel stage's descriptor pointer did not reuse the vertex stage: " + Counts(counters));
+    if (verify) {
+        Require(counters.dataStagesCompiled - moved.dataStagesCompiled >= 1, "verify mode: a draw that pointed the pixel stage at another buffer descriptor did not build its pixel stage for the comparison: " + Counts(counters));
+    } else {
+        Require(counters.dataStagesCompiled == moved.dataStagesCompiled, "a draw that pointed the pixel stage at another buffer descriptor compiled a stage: " + Counts(counters));
+        Require(counters.dataStagesReused - moved.dataStagesReused == 2, "a draw that pointed the pixel stage at another buffer descriptor did not reuse both stages: " + Counts(counters));
+    }
 
-    const bool refresh = std::getenv("APS5_DRAW_PIPELINE") != nullptr;
     for (const std::uint32_t unread : {0x33u, 0x44u}) {
         commands.clear();
         PixelUserData(commands, second, unread);
@@ -189,10 +192,8 @@ void UnreadUserWordsKeepTheStage(bool verify) {
         counters = Submit(std::move(commands));
         Require(counters.dataHits == last.dataHits + 1 && counters.inserts == last.inserts, "a draw at the moved pointer with a new unread word: " + Counts(counters));
         if (verify) continue;
-        const auto compiled = counters.dataStagesCompiled - last.dataStagesCompiled;
-        const bool expectReuse = refresh && unread == 0x44u;
-        Require(compiled == (expectReuse ? 0u : 1u), std::string(expectReuse ? "after a refresh, the draw at the moved pointer compiled its pixel stage again: " : "the draw at the moved pointer did not compile its pixel stage: ") + Counts(counters));
-        Require(counters.shapeUpdates - last.shapeUpdates == (refresh && unread == 0x33u ? 1u : 0u), "shape refreshes: " + std::to_string(counters.shapeUpdates - last.shapeUpdates) + " (" + Counts(counters) + ")");
+        Require(counters.dataStagesCompiled == last.dataStagesCompiled, "a draw at the moved pointer with a new unread word compiled a stage: " + Counts(counters));
+        Require(counters.dataStagesReused - last.dataStagesReused == 2, "a draw at the moved pointer with a new unread word did not reuse both stages: " + Counts(counters));
     }
 }
 
@@ -225,7 +226,7 @@ void ReadUserWordsChangeTheOutput() {
     Require(closeTo(second, 191), "a pixel stage adding user word 2 changed to 0.5 wrote " + std::to_string(second) + ", expected 191 (" + Counts(after) + ", before: " + Counts(before) + ")");
 }
 
-void DirectBufferBaseMovesWithItsPayload() {
+void DirectBufferBaseMovesWithItsPayload(bool verify) {
     Registered(VertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
     Registered(DirectBufferPixelHeader, DirectBufferPixelCode.data(), sizeof(DirectBufferPixelCode), 1);
     auto* ring = GuestBlock();
@@ -255,7 +256,12 @@ void DirectBufferBaseMovesWithItsPayload() {
     const auto after = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     Require(moved > repeated, "a draw whose descriptor base and payload both moved read the old payload: " + std::to_string(repeated) + " then " + std::to_string(moved) + " (" + Counts(after) + ", before: " + Counts(before) + ")");
     Require(after.dataHits == before.dataHits + 1, "a draw whose descriptor base and payload moved was not a data-only hit (" + Counts(after) + ", before: " + Counts(before) + ")");
-    Require(after.dataStagesCompiled - before.dataStagesCompiled >= 1, "a draw whose descriptor base moved reused the pixel stage built for the old base: the rebuild this test documents is gone, flip it to a reuse check (" + Counts(after) + ", before: " + Counts(before) + ")");
+    if (verify) {
+        Require(after.dataStagesCompiled - before.dataStagesCompiled >= 1, "verify mode: a draw whose descriptor base moved did not build its pixel stage for the comparison (" + Counts(after) + ", before: " + Counts(before) + ")");
+    } else {
+        Require(after.dataStagesCompiled == before.dataStagesCompiled, "a draw whose descriptor base moved compiled a stage (" + Counts(after) + ", before: " + Counts(before) + ")");
+        Require(after.dataStagesReused - before.dataStagesReused == 2, "a draw whose descriptor base moved did not reuse both stages (" + Counts(after) + ", before: " + Counts(before) + ")");
+    }
 }
 
 void UnreadPixelWordsKeepACompleteStage(bool verify) {
@@ -303,7 +309,7 @@ int main() {
         const bool verify = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
         UnreadUserWordsKeepTheStage(verify);
         ReadUserWordsChangeTheOutput();
-        DirectBufferBaseMovesWithItsPayload();
+        DirectBufferBaseMovesWithItsPayload(verify);
         UnreadPixelWordsKeepACompleteStage(verify);
         AgcDriverShutdown_nid_postfix();
         std::cout << "Data-only hits " << (verify ? "verified" : "reused") << " the stages whose read user words did not change\n";
