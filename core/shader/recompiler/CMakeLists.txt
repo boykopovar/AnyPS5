@@ -419,6 +419,25 @@ function(add_shader_recompiler target runtimeTarget)
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endif()
+    if(BUILD_TESTING AND NOT TARGET shader_special_registers_tests)
+        add_test_executable(shader_special_registers_tests
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/ShaderSpecialRegistersTests.cpp")
+        target_link_libraries(shader_special_registers_tests PRIVATE ${target} ${runtimeTarget})
+        target_include_directories(shader_special_registers_tests PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/include")
+        set_target_properties(shader_special_registers_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(shader_special_registers_tests)
+        add_test(NAME shader_special_registers COMMAND shader_special_registers_tests)
+        set_tests_properties(shader_special_registers PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            target_link_libraries(shader_special_registers_tests PRIVATE libc)
+            set_tests_properties(shader_special_registers PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
     if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS AND NOT ANYPS5_USE_SYSTEM_DEPS AND NOT TARGET spirv_validator_exit_tests)
         add_test_executable(spirv_validator_exit_tests "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/SpirvValidatorExit.cpp")
         target_link_libraries(spirv_validator_exit_tests PRIVATE SPIRV-Tools-static)
