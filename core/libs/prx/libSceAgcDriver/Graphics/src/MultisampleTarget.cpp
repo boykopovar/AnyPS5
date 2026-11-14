@@ -1493,11 +1493,16 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     Require(target.elementBytes != 0u && target.elementBytes <= 16u && 16u % target.elementBytes == 0u, "initial multisample color texel size is not implemented");
     const auto bytes = MultisampledColorBytes(target);
     Require(bytes != 0u && bytes <= std::numeric_limits<std::size_t>::max() && target.address <= std::numeric_limits<std::uint64_t>::max() - bytes, "initial multisample color footprint is not implemented");
-    const auto requireUnowned = [&] {
-        Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
+    const auto requireNoColorOwner = [&] {
         std::shared_lock guardLock(guardedMutex());
         Require(std::ranges::none_of(guarded(), [&](const GuardedRange& range) { return range.active->load(std::memory_order_acquire) && target.address < range.address + range.bytes && range.address < target.address + bytes; }), "initial multisample color contents overlap another native owner");
     };
+    const auto requireUnowned = [&] {
+        Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
+        requireNoColorOwner();
+    };
+    requireNoColorOwner();
+    RequireNoResidentDepthRead_nid_no_patch(target.address, static_cast<std::size_t>(bytes), std::nullopt, true, DepthReadCause::Attachment);
     requireUnowned();
     Require(GuestMemory::Accessible(reinterpret_cast<const void*>(target.address), static_cast<std::size_t>(bytes)), "initial multisample color contents are not fully mapped");
     std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));
@@ -1848,8 +1853,8 @@ std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTa
     return changed ? std::optional(std::move(filtered)) : std::nullopt;
 }
 
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
-    RequireNoResidentDepthRead_nid_no_patch(address, bytes);
+void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access, DepthReadCause cause) {
+    RequireNoResidentDepthRead_nid_no_patch(address, bytes, std::nullopt, true, cause);
     RequireNoMultisampleColorTarget(address, bytes, access);
 }
 

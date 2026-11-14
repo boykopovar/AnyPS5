@@ -1306,11 +1306,12 @@ void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto view = DepthSurfaceView(context, depth);
         Require(ResidentDepthGuardOverlaps_nid_no_patch(depth.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(depth.extent, 4u, Samples))), "initial color refusal fixture has no resident depth guard");
+        NoteDepthSurfaceWrite(context, depth);
         std::string refusal;
         try { PrepareMultisampleTargetForDraw_nid_no_patch(context, DecodeTarget(depthMemory)); }
         catch (const std::runtime_error& error) { refusal = error.what(); }
-        Require(DepthSurfaceAt(depth.address), "refused initial color capture retired an unwritten native depth owner");
-        Require(refusal.find("overlap resident native depth") != std::string::npos, "initial color capture did not refuse a resident depth owner");
+        Require(DepthSurfaceAt(depth.address), "refused initial color capture retired a written native depth owner");
+        Require(refusal.find("publication of native multisample depth is not implemented for this owner") != std::string::npos, "initial color capture did not refuse a resident depth owner it cannot publish");
         Require(DepthSurfaceView(context, depth) == view, "refused color capture replaced the native depth image");
     }
     device.SubmitRecorded(true);
