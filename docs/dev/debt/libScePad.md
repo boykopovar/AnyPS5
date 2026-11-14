@@ -105,6 +105,7 @@
 
 ### Functional
 
+- [scePadGetControllerType](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returning PAD_ERROR_INVALID_ARG for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [scePadGetJackState](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returning PAD_ERROR_INVALID_ARG for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [scePadGetControllerBusType](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returning PAD_ERROR_INVALID_ARG for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [scePadGetInfo](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - builds the same 89-byte host controller summary locally, then guards the write to the guest output. A non-null unwritable output returns `PAD_ERROR_INVALID_ARG` and leaves host `errno` unchanged. This is a host-safety choice; the console's behavior for an invalid non-null output pointer has not been measured.
