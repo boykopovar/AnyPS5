@@ -13374,7 +13374,12 @@ void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
     TextureCache cache(context);
     context.textureCache = &cache;
     const DepthTarget target{address, 0, {side, side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
-    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the depth surface has no view");
+    const auto targetView = DepthSurfaceView(context, target);
+    Require(targetView != VK_NULL_HANDLE, "the depth surface has no view");
+    Require(RepeatDepthSurfaceView(context, target, false, false) == targetView, "the proved depth surface did not repeat its view");
+    auto differentTarget = target;
+    differentTarget.address += bytes;
+    Require(RepeatDepthSurfaceView(context, differentTarget, false, false) == VK_NULL_HANDLE, "a different depth identity repeated the old view");
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
     binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;

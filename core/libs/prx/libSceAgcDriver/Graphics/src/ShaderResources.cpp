@@ -1583,7 +1583,9 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             while (!cache.entries.empty()) {
                 const bool overBudget = cache.bytes + entry.accounted > budget;
                 if (!overBudget && cache.entries.size() < storageEntries()) break;
-                evicted.push_back(evictStorage(cache, std::prev(cache.entries.end()), true, overBudget ? "cache eviction" : "entry cap"));
+                const auto back = std::prev(cache.entries.end());
+                if (back->texture->TakeUsed()) cache.entries.splice(cache.entries.begin(), cache.entries, back);
+                else evicted.push_back(evictStorage(cache, back, true, overBudget ? "cache eviction" : "entry cap"));
             }
             cache.bytes += entry.accounted;
             texture = entry.texture;
@@ -1819,16 +1821,24 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                             break;
                         }
                         storageKept = 0;
+                        bool spared = false;
                         for (auto it = cache.entries.end(); it != cache.entries.begin();) {
                             --it;
                             if (it->texture->Dirty()) {
                                 ++storageKept;
                                 continue;
                             }
+                            if (it->texture->TakeUsed()) {
+                                spared = true;
+                                continue;
+                            }
                             image = evictStorage(cache, it);
                             break;
                         }
-                        if (image == nullptr) break;
+                        if (image == nullptr) {
+                            if (spared) continue;
+                            break;
+                        }
                     }
                     std::vector<std::shared_ptr<ShaderResources>> resources;
                     const bool removed = SharedResourceCache().TryRemoveImage(image.get(), &resources);

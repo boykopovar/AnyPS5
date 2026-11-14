@@ -201,8 +201,12 @@ int main(int argc, char** argv) {
                 Require(AgcDriver::Graphics::ReleaseTextureCaches(allocated) == allocated, "a release with a dirty oldest image did not free one clean allocation");
                 Require(StorageTexture::FindLive(base + 3u * Stride, SurfaceBytes) != nullptr, "a release took the dirty oldest image before a clean one");
                 Require(StorageTexture::FindLive(base + 4u * Stride, SurfaceBytes) == nullptr && images[4].expired(), "a release did not take the oldest clean image");
+                images[5].lock()->NoteUsed();
+                Require(AgcDriver::Graphics::ReleaseTextureCaches(allocated) == allocated, "a release past a repeated image did not free one clean allocation");
+                Require(StorageTexture::FindLive(base + 5u * Stride, SurfaceBytes) != nullptr, "a release took an image used since eviction last reached it");
+                Require(StorageTexture::FindLive(base + 6u * Stride, SurfaceBytes) == nullptr && images[6].expired(), "a release spared an unused image ahead of a repeated one");
                 const auto rest = AgcDriver::Graphics::ReleaseTextureCaches(~std::uint64_t{0});
-                Require(rest == allocated * (capacity - 3u), "a release of everything counted " + std::to_string(rest) + " bytes, not the " + std::to_string(allocated * (capacity - 3u)) + " bytes allocated");
+                Require(rest == allocated * (capacity - 4u), "a release of everything counted " + std::to_string(rest) + " bytes, not the " + std::to_string(allocated * (capacity - 4u)) + " bytes allocated");
                 device->WaitIdle();
                 for (std::uint32_t surface = 0; surface < capacity + 2u; ++surface) {
                     if (surface == 3u) continue;

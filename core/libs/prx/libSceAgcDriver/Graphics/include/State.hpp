@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include <vector>
+#include <bit>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -93,6 +94,22 @@ struct ColorTarget {
     std::uint16_t stagedMask = 0;
     VkFormat stagedFormat = VK_FORMAT_UNDEFINED;
 
+    bool operator==(const ColorTarget& other) const {
+        return address == other.address && extent.width == other.extent.width && extent.height == other.extent.height && format == other.format &&
+            bytes == other.bytes && componentMapping == other.componentMapping && tileMode == other.tileMode && elementBytes == other.elementBytes &&
+            packing == other.packing && dccAddress == other.dccAddress && chainDccAddress == other.chainDccAddress &&
+            dccAlphaOnMsb == other.dccAlphaOnMsb && dccPipeAligned == other.dccPipeAligned && cmaskAddress == other.cmaskAddress &&
+            cmaskBytes == other.cmaskBytes && cmaskFastClear == other.cmaskFastClear && eqaaFragments == other.eqaaFragments &&
+            surfaceAddress == other.surfaceAddress && surfaceExtent.width == other.surfaceExtent.width &&
+            surfaceExtent.height == other.surfaceExtent.height && mipCount == other.mipCount && mip == other.mip && mipTail == other.mipTail &&
+            clearWords == other.clearWords && slot == other.slot && depth == other.depth && depthSlice == other.depthSlice &&
+            arrayAddress == other.arrayAddress && arrayLastSlice == other.arrayLastSlice && arraySlice == other.arraySlice && layers == other.layers &&
+            exportIndex == other.exportIndex && uintExport == other.uintExport && volume == other.volume && pipeBankXor == other.pipeBankXor &&
+            samples == other.samples && coverageSamples == other.coverageSamples && dccControl == other.dccControl &&
+            fmaskAddress == other.fmaskAddress && fmaskPipeBankXor == other.fmaskPipeBankXor && partialWriteMask == other.partialWriteMask &&
+            staged == other.staged && stagedMask == other.stagedMask && stagedFormat == other.stagedFormat;
+    }
+
     std::uint64_t MemoryAddress() const {
         return volume && tileMode != ColorTileMode::Linear ? surfaceAddress : address;
     }
@@ -119,6 +136,16 @@ struct DepthTarget {
     bool gcn = false;
     bool depthPartiallyResident = false;
     bool stencilPartiallyResident = false;
+
+    bool operator==(const DepthTarget& other) const {
+        return address == other.address && stencilAddress == other.stencilAddress && extent.width == other.extent.width &&
+            extent.height == other.extent.height && format == other.format &&
+            std::bit_cast<std::uint32_t>(clearDepth) == std::bit_cast<std::uint32_t>(other.clearDepth) && clearStencil == other.clearStencil &&
+            htileAddress == other.htileAddress && htileStencil == other.htileStencil && samples == other.samples && depthSwizzle == other.depthSwizzle &&
+            pipeBankXor == other.pipeBankXor && firstSlice == other.firstSlice && lastSlice == other.lastSlice && iterate256 == other.iterate256 &&
+            htilePipeAligned == other.htilePipeAligned && htileVrsEncoding == other.htileVrsEncoding && htileDepthOnly == other.htileDepthOnly &&
+            gcn == other.gcn && depthPartiallyResident == other.depthPartiallyResident && stencilPartiallyResident == other.stencilPartiallyResident;
+    }
 };
 
 struct State {

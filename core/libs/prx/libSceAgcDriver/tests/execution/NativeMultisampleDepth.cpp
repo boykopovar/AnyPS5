@@ -1013,6 +1013,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
     if (importedAlias) MultisampleTargetView(context, alias);
     if (stencilAlias) fillStencilAlias();
     const auto view = DepthSurfaceView(context, target);
+    Require(RepeatDepthSurfaceView(context, target, false, false) == VK_NULL_HANDLE, "native multisample depth unexpectedly acquired a repeat certificate");
     if (importedAlias) Require(MultisampleColorTargetOver(alias.address, aliasBytes).has_value(), "the colour target over the depth or stencil plane was retired by the depth import");
     if (write == PublicationWrite::StencilAliasRefilled) {
         fillStencilAlias();

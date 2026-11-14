@@ -956,6 +956,11 @@ std::atomic<std::uint64_t>& guardedGeneration() {
     return generation;
 }
 
+std::atomic<std::uint64_t>& claimsReleased() {
+    static std::atomic<std::uint64_t> released{0};
+    return released;
+}
+
 std::atomic<std::uint64_t>& guardSpansGeneration() {
     static std::atomic<std::uint64_t> generation{0};
     return generation;
@@ -1052,7 +1057,10 @@ void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUs
 }
 
 void stampUse(TargetUse& use, std::uint64_t address, std::uint64_t bytes) {
-    use.claimed.store(false, std::memory_order_release);
+    if (use.claimed.load(std::memory_order_acquire)) {
+        claimsReleased().fetch_add(1, std::memory_order_seq_cst);
+        use.claimed.store(false, std::memory_order_seq_cst);
+    }
     if (bytes == 0) return;
     if (GuestMemory::Watched(address, static_cast<std::size_t>(bytes))) use.writes.store(GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)), std::memory_order_release);
     std::shared_lock lock(guardedMutex());
@@ -1788,6 +1796,7 @@ void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
     const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
     if (!known) {
         guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, std::make_shared<TargetUse>(), true});
+        guardedGeneration().fetch_add(1, std::memory_order_release);
         moveGuardSpans();
     }
     anyGuarded().store(true, std::memory_order_release);
@@ -1802,6 +1811,10 @@ bool HoldsMultisampleTargetsLock() {
 std::uint64_t MultisampleTargetRangeGeneration() {
     std::shared_lock lock(guardedMutex());
     return guardedGeneration().load(std::memory_order_acquire);
+}
+
+std::uint64_t MultisampleClaimSerial() {
+    return guardedGeneration().load(std::memory_order_acquire) + claimsReleased().load(std::memory_order_acquire);
 }
 
 std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
@@ -1942,7 +1955,7 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
         retired.push_back(range.active);
     }
     for (const auto& active : retired) active->store(false, std::memory_order_release);
-    std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); });
+    if (std::erase_if(guarded(), [&](const auto& range) { return std::find(retired.begin(), retired.end(), range.active) != retired.end(); }) != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
     if (!retired.empty()) moveGuardSpans();
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }

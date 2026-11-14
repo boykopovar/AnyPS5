@@ -17,6 +17,8 @@ enum class RuntimeSwitch : std::size_t {
     NoSizeOnlySurfaceBytes,
     PipelineDispatchMisses,
     NoExtendedFastProofs,
+    NoTargetMemo,
+    NoTargetMemoOverlapCache,
     Count,
 };
 
