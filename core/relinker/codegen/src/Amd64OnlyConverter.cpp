@@ -324,7 +324,10 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
             std::int32_t displacement;
             std::memcpy(&displacement, seg.data() + match.Offset + info.RipRelativeDispOffset, sizeof(displacement));
             auto table = next + static_cast<std::uint64_t>(displacement);
-            if (info.AddressSize32) table = static_cast<std::uint32_t>(table);
+            const auto prefixes = std::span(seg).subspan(match.Offset, info.OpcodeOffset);
+            const bool operandSize32 = (info.RexPrefix & X64OpcodeConstants::RexWBit) == 0 &&
+                std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixOperandSize) == prefixes.end();
+            if (info.AddressSize32 || operandSize32) table = static_cast<std::uint32_t>(table);
             for (const auto& data : segments) {
                 if (data.Type != kLoadSegment || table < data.MappedAddress || table - data.MappedAddress >= data.FileSize)
                     continue;
