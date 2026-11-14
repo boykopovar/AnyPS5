@@ -141,6 +141,11 @@ void TestQueries() {
     check(sceGnmLogicalCuMaskToPhysicalCuMask(1, 0xabcdu) == 0xabcdu, "the CU mask with a first argument of 1 was changed");
     check(sceGnmLogicalCuMaskToPhysicalCuMask(0xffffffffu, 0xffffffffu) == 0xffffffffu, "the CU mask with a first argument of 0xffffffff was changed");
     check(sceGnmLogicalCuMaskToPhysicalCuMask(7, 0) == 0, "an empty CU mask was changed");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 0) == -1, "the CU index with engine 0 and cuIndex 0 was not -1");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(1, 8) == -1, "the CU index with engine 1 and cuIndex 8 was not -1");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(2, 0) == 0, "the CU index with engine 2 was not 0");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 9) == 0, "the CU index with cuIndex 9 was not 0");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0xffffffffu, 0xffffffffu) == 0, "the CU index with engine and cuIndex 0xffffffff was not 0");
 }
 
 void TestEmbeddedShaders() {
