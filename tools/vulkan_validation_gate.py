@@ -337,6 +337,9 @@ def save(output, report):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Build and repeatedly compare focused Vulkan CTests on two pinned clean worktrees")
     parser.add_argument("--baseline", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))
     parser.add_argument("--candidate", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))

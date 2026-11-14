@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Ctype.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,21 +15,24 @@ void Require(bool condition, const char* message) {
 }
 
 void TestNarrowCase() {
-    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(nullptr, 'A') == 'a', "tolower A");
-    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(nullptr, 'z') == 'z', "tolower z");
-    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(nullptr, '[') == '[', "tolower [");
-    Require(_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(nullptr, 'q') == 'Q', "toupper q");
-    Require(_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(nullptr, '7') == '7', "toupper 7");
-    Require(_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(nullptr, static_cast<char>(0xe4)) == static_cast<char>(0xe4), "toupper high byte");
-    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(nullptr, static_cast<char>(0xc4)) == static_cast<char>(0xc4), "tolower high byte");
+    GuestLocale::CtypeFacet facet{};
+    facet.lower = _Getptolower_nid_postfix();
+    facet.upper = _Getptoupper_nid_postfix();
+    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(&facet, 'A') == 'a', "tolower A");
+    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(&facet, 'z') == 'z', "tolower z");
+    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(&facet, '[') == '[', "tolower [");
+    Require(_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(&facet, 'q') == 'Q', "toupper q");
+    Require(_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(&facet, '7') == '7', "toupper 7");
+    Require(_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(&facet, static_cast<char>(0xe4)) == static_cast<char>(0xe4), "toupper high byte");
+    Require(_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(&facet, static_cast<char>(0xc4)) == static_cast<char>(0xc4), "tolower high byte");
 
     char text[] = "Mixed Case 42!";
     const char* end = text + std::strlen(text);
-    Require(_ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix(nullptr, text, end) == end, "tolower range end");
+    Require(_ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix(&facet, text, end) == end, "tolower range end");
     Require(std::strcmp(text, "mixed case 42!") == 0, "tolower range");
-    Require(_ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix(nullptr, text, end) == end, "toupper range end");
+    Require(_ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix(&facet, text, end) == end, "toupper range end");
     Require(std::strcmp(text, "MIXED CASE 42!") == 0, "toupper range");
-    Require(_ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix(nullptr, text, text) == text, "empty range");
+    Require(_ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix(&facet, text, text) == text, "empty range");
 }
 
 void TestWideCase() {

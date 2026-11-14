@@ -105,9 +105,10 @@ void ExportBorder(void* stroker, std::int32_t border, GuestOutline* outline, con
 extern "C" {
 
 int APS5_VABI FT_Stroker_New_nid_postfix(GuestLibrary* library, void** stroker) {
+    FT_Library host = library ? library->host : nullptr;
     FT_Stroker native = nullptr;
-    const FT_Error error = FT_Stroker_New(library ? library->host : nullptr, stroker ? &native : nullptr);
-    if (stroker) *stroker = native;
+    const FT_Error error = FT_Stroker_New(host, stroker ? &native : nullptr);
+    if (stroker && host) *stroker = native;
     return error;
 }
 

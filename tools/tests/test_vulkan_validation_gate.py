@@ -164,6 +164,27 @@ class ReportTests(unittest.TestCase):
                     self.assertFalse(output.exists())
 
 
+@unittest.skipUnless(shutil.which("git"), "requires Git")
+class EncodingTests(unittest.TestCase):
+    def test_a_non_ascii_source_path_error_reports_as_utf8(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary).resolve() / "界"
+            source = repository / "sub"
+            source.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            output = Path(temporary) / "evidence"
+            arguments = ["--baseline", str(source), "0" * 40, "--candidate", str(source), "0" * 40,
+                         "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+            stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with contextlib.redirect_stderr(stderr):
+                code = gate.main(arguments)
+                stderr.flush()
+            self.assertEqual(code, 2)
+            self.assertIn(f"validation gate: {source}: must be a source worktree root",
+                          stderr.buffer.getvalue().decode("utf-8"))
+            self.assertFalse(output.exists())
+
+
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
 class FixtureTests(unittest.TestCase):
     def setUp(self):
