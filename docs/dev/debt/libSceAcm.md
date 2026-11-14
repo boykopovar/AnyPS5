@@ -2,6 +2,7 @@
 
 ### Functional
 
+- [Guest output fallback](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - `sceAcm_ConvReverb_SharedInput` reads its batch and writes it back through `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch`; an unmapped batch pointer returns `0x81940006` (`SCE_ACM_ERROR_BAD_POINTER`). Console behaviour on unmapped batch pointers is not measured.
 - [sceAcmBatchJobPriority](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - returning `0x81940006` (`SCE_ACM_ERROR_BAD_POINTER`) when the `batch` pointer or its buffer is unwritable or unreadable via `GuestCopyIn_nid_no_patch` or `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving caller errno; console hardware fault behavior on unmapped memory is unmeasured.
 
 ### Silent stubs

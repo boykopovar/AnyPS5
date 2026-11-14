@@ -28,6 +28,14 @@ static constexpr int SCE_APP_CONTENT_ERROR_GET_STORE_COUNTRY = static_cast<int>(
 static constexpr uint32_t APPPARAM_ID_SKU_FLAG = 0;
 static constexpr int32_t SKU_FLAG_FULL = 3;
 
+template <typename T>
+static bool copyOutGuest(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
 static constexpr char TEMPORARY_MOUNT_POINT[] = "/temp0";
 static constexpr char DOWNLOAD_MOUNT_POINT[] = "/download0";
 static constexpr uint32_t TEMPORARY_DATA_OPTION_FORMAT = 1;
@@ -203,8 +211,7 @@ int APS5_VABI sceAppContentGetAddcontInfo(uint32_t service_label, const NpUnifie
     std::lock_guard lock(addcontMutex);
     for (const auto& addon : AddonEntries()) {
         if (std::strncmp(addon.info.entitlement_label.data, entitlement_label->data, sizeof(entitlement_label->data)) == 0) {
-            *info = addon.info;
-            return 0;
+            return copyOutGuest(info, addon.info) ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
         }
     }
     return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
@@ -281,10 +288,7 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     } else if (std::strncmp(mountPoint->data, "/download2", sizeof(mountPoint->data)) == 0) {
         quotaKb = download2QuotaBytes.load() / 1024u;
     }
-    if (quotaKb == 0) {
-        *availableSpaceKb = 0;
-        return 0;
-    }
+    if (quotaKb == 0) return copyOutGuest(availableSpaceKb, std::size_t{0}) ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
     const auto directory = ResolvePath_nid_no_patch(mountPoint->data);
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     std::uint64_t usedKb = 0;
@@ -292,8 +296,7 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
         if (entry.is_regular_file()) usedKb += (entry.file_size() + 1023u) / 1024u;
     }
     const std::uint64_t hostKb = std::filesystem::space(directory).available / 1024u;
-    *availableSpaceKb = static_cast<size_t>(std::min(quotaKb - std::min(quotaKb, usedKb), hostKb));
-    return 0;
+    return copyOutGuest(availableSpaceKb, static_cast<size_t>(std::min(quotaKb - std::min(quotaKb, usedKb), hostKb))) ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentInitialize(const AppContentInitParam* initParam, AppContentBootParam* bootParam) {
@@ -327,8 +330,7 @@ int APS5_VABI sceAppContentTemporaryDataGetAvailableSpaceKb(const AppContentMoun
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
     if (!state.mounted || !IsTemporaryMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    *availableSpaceKb = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
-    return 0;
+    return copyOutGuest(availableSpaceKb, static_cast<size_t>(std::filesystem::space(state.directory).available / 1024)) ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentTemporaryDataMount2(uint32_t option, AppContentMountPoint* mountPoint) {
@@ -503,8 +505,7 @@ int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnif
 int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!pftFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    *pftFlag = 0;
-    return 0;
+    return copyOutGuest(pftFlag, std::uint32_t{0}) ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentGetRegion(void* region) {

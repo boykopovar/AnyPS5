@@ -96,6 +96,7 @@ int main() {
     Require(getGameTrialsFlag(nullptr) == Parameter, "a null game trials flag was taken");
     Require(getPftFlag(&pftFlag) == 0 && pftFlag == 0, "the pft flag was not 0");
     Require(getPftFlag(nullptr) == Parameter, "a null pft flag was taken");
+    Require(getPftFlag(reinterpret_cast<std::uint32_t*>(0x10)) == Parameter, "an unwritable pft flag was accepted");
     errno = 71;
     Require(getGameTrialsFlag(reinterpret_cast<std::uint32_t*>(0x10)) == Parameter, "unwritable game trials flag pointer");
     Require(errno == 71, "errno modified by invalid pointer check");

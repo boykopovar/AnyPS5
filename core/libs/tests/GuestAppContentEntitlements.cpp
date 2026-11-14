@@ -100,6 +100,7 @@ int main() {
     NpUnifiedEntitlementLabel label0{};
     std::memcpy(label0.data, "ADDON00000000001", 16);
     AppContentAddcontInfo info{};
+    Require(sceAppContentGetAddcontInfo(0, &label0, reinterpret_cast<AppContentAddcontInfo*>(0x10)) == ErrorParameter);
     Require(sceAppContentGetAddcontInfo(0, &label0, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "ADDON00000000001") == 0);
     Require(info.status == 4);

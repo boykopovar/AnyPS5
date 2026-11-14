@@ -250,6 +250,7 @@ int main() {
     errno = 71;
     Require(sceAudioPropagationSystemQueryInfo(system, reinterpret_cast<AudioPropagation::SystemInfo*>(0x10), sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted unmapped output");
     Require(errno == 71, "system query info preserved errno");
+    Require(sceAudioPropagationRoomCreate(system, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "room create accepted unmapped output");
     Require(sceAudioPropagationSystemQueryInfo(system, nullptr, sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted null output");
     Require(sceAudioPropagationSystemUnlock(system) == AudioPropagation::ErrorInvalidArgument, "unbalanced system unlock was accepted");
     Require(sceAudioPropagationSystemLock(system) == 0, "system lock failed");
@@ -378,6 +379,9 @@ int main() {
     errno = 71;
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path output");
     Require(errno == 71, "errno preserved on unwritable path output");
+    Require(sceAudioPropagationSourceGetAudioPathCount(source, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path count");
+    Require(sceAudioPropagationPathGetNumPoints(path, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path point count");
+    Require(sceAudioPropagationSourceGetRays(source, &count, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable source ray count");
     Require(sceAudioPropagationSourceGetAudioPath(0, 0, nullptr) == AudioPropagation::ErrorInvalidHandle, "path lookup handle precedence");
     Require(sceAudioPropagationPathGetNumPoints(path, &count) == 0 && count == 0, "initial path has points");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(source, &count); }, "source used as a path");

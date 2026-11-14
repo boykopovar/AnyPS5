@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
         Require(std::filesystem::exists(backing) == existed, "overflow created storage");
     } else {
         Require(sceAppContentDownloadDataGetAvailableSpaceKb(&mount, &available) == 0, "valid quota query failed");
+        Require(sceAppContentDownloadDataGetAvailableSpaceKb(&mount, reinterpret_cast<size_t*>(0x10)) == static_cast<int>(0x80D90002u), "unwritable available space was accepted");
         if (quotaMiB == 0) {
             Require(available == 0, "zero quota returned space");
         } else if (quotaMiB == 1) {
