@@ -189,7 +189,7 @@ def test_owner(command, targets_by_name):
 def ctest_resolutions(build_dir, targets_by_name, selected=None):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
-        capture_output=True, text=True, check=True)
+        capture_output=True, text=True, encoding="utf-8", check=True)
     document = json.loads(result.stdout)
     resolutions = {}
     for index, test in enumerate(document.get("tests", []), 1):

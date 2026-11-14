@@ -274,7 +274,7 @@ class Symbolizer:
             return symbol
         if symbol not in self.demangled:
             plain = symbol.lstrip("~")
-            result = subprocess.run(["c++filt", plain], capture_output=True, text=True)
+            result = subprocess.run(["c++filt", plain], capture_output=True, text=True, encoding="utf-8", errors="replace")
             text = result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else plain
             self.demangled[symbol] = ("~" if symbol.startswith("~") else "") + text
         return self.demangled[symbol]

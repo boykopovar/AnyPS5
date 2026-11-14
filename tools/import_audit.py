@@ -995,11 +995,11 @@ def write_json(path, result):
 
 def git_stamp(source=ROOT):
     try:
-        commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        commit = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None, None
     try:
-        dirty = bool(subprocess.run(["git", "-C", str(source), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip())
+        dirty = bool(subprocess.run(["git", "-C", str(source), "status", "--porcelain"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout.strip())
     except (OSError, subprocess.CalledProcessError):
         dirty = None
     return commit, dirty
