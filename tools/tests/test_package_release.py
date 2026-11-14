@@ -494,7 +494,7 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
             self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
 
-    def test_cairo_and_pixman_licenses_in_archives(self):
+    def test_cairo_pixman_and_libpng_licenses_in_archives(self):
         (self.source / "core/libs/prx/libcairo").mkdir()
         (self.unpatched.parent / "libcairo.prx").write_bytes(b"unpatched library")
         (self.build / "core/libs/libs/libcairo.prx").write_bytes(b"cairo")
@@ -503,6 +503,7 @@ class ReleasePackageTests(unittest.TestCase):
             "cairo/COPYING-LGPL-2.1": ("cairo-lgpl-2.1.txt", b"cairo LGPL"),
             "cairo/COPYING-MPL-1.1": ("cairo-mpl-1.1.txt", b"cairo MPL"),
             "pixman/COPYING": ("pixman.txt", b"pixman notice"),
+            "libpng/LICENSE": ("libpng.txt", b"libpng notice"),
         }
         for source, (_, content) in notices.items():
             path = self.source / "3rdparty" / source
