@@ -210,5 +210,41 @@ class RebaseVerifyTests(unittest.TestCase):
         self.assertEqual(self.verify(), [])
 
 
+class RebaseDiffTextTests(unittest.TestCase):
+    def changes(self, text, sign="+"):
+        from unittest.mock import patch
+        diff = "diff --git a/f.cpp b/f.cpp\n--- a/f.cpp\n+++ b/f.cpp\n@@ -1 +1 @@\n" + sign + text + "\n"
+        with patch.object(rebase_verify, "git", return_value=diff):
+            return rebase_verify.changed_lines(Path("."), "base", "head")
+
+    def test_unicode_separators_cannot_hide_changed_added_text(self):
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                before = 'const char* s = "prefix' + separator + 'before";'
+                after = 'const char* s = "prefix' + separator + 'after";'
+                old, _ = self.changes(before)
+                new, _ = self.changes(after)
+                self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+                self.assertEqual(old["f.cpp"], {before: 1})
+
+    def test_unicode_separators_cannot_hide_changed_deleted_text(self):
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                before, after = "prefix" + separator + "before", "prefix" + separator + "after"
+                _, old = self.changes(before, "-")
+                _, new = self.changes(after, "-")
+                self.assertEqual(len(rebase_verify.differences(old, new, deleted=True)), 2)
+                self.assertEqual(old["f.cpp"], {before: 1})
+
+    def test_unchanged_unicode_and_ordinary_line_controls(self):
+        for text in ("ordinary", "prefix\u2028tail"):
+            old, _ = self.changes(text)
+            new, _ = self.changes(text)
+            self.assertEqual(rebase_verify.differences(old, new), [])
+        old, _ = self.changes("before")
+        new, _ = self.changes("after")
+        self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
