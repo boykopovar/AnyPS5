@@ -97,6 +97,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
 - [WKApplicationCacheManager](../../../core/libs/prx/libSceNKWebKit/src/ApplicationCacheManager.cpp) (libSceNKWebKit) - `WKApplicationCacheManagerDeleteAllEntries`, `WKApplicationCacheManagerDeleteEntriesForOrigin` and `WKApplicationCacheManagerGetApplicationCacheOrigins` are empty no-ops following [WKApplicationCacheManager.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKApplicationCacheManager.cpp) at revision `80f77e94c6`; console runtime binaries have not been measured. Closes when: compared with a console module.
 - [WebCore::registerMemoryReleaseNotifyCallbacks](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - empty no-op whose console body was not checked. It follows the non-Cocoa definition `void registerMemoryReleaseNotifyCallbacks() { }` in [MemoryRelease.cpp L239-L244](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/MemoryRelease.cpp#L239-L244), declared `void` in [MemoryRelease.h L46](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/MemoryRelease.h#L46); [WebKit e12a212a531a](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WebCore/page/MemoryRelease.cpp#L226-L231) has the same body. Closes when: compared with a console module.
+- [WTF accumulated logs and dataLogFString](../../../core/libs/prx/libSceNKWebKit/src/WtfAssert.cpp) (libSceNKWebKit) - `WTFLogWithLevel` does not yet accumulate, `dataLogFString` shares `dataLogF`'s sink (stderr on Linux) where the PlayStation `dataFile()` is stdout, and console execution is unverified. Otherwise `WTFLog` on an `OnWithAccumulation` (2) channel appends the formatted line, newline-terminated, to a locked accumulator and stderr; `getAndResetAccumulatedLogs` returns it as an 8-bit `WTF::String` (empty, non-null when unset) and clears it, following [Assertions.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Assertions.cpp#L407-L501) and [DataLog.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/DataLog.cpp#L151-L196). Closes when: compared with a console module.
 
 - [User content URL pattern matching](../../../core/libs/prx/libSceNKWebKit/src/UserContentURLPattern.cpp) (libSceNKWebKit) - URL canonicalization, port matching, non-standard schemes and console execution remain unverified against the device. Host matching follows the pinned [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/UserContentURLPattern.cpp).
 
@@ -1435,7 +1436,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF14SymbolRegistryD1Ev` | `4wHuG6WpyF0` |
 | `_ZN3WTF14SymbolRegistryD2Ev` | `l8UKHjO29+w` |
 | `_ZN3WTF14createIteratorENS_10StringViewE` | `svIkqWCw-LU` |
-| `_ZN3WTF14dataLogFStringEPKc` | `xQQ4VSubx-k` |
 | `_ZN3WTF14dupCloseOnExecEi` | `wQ9-tXakN90` |
 | `_ZN3WTF15AtomStringTableD1Ev` | `YHjoCx7QaOs` |
 | `_ZN3WTF15AtomStringTableD2Ev` | `JxkGFAxlPa8` |
@@ -1503,7 +1503,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF20ParallelHelperClient6finishEv` | `X+GUHRxWSq4` |
 | `_ZN3WTF20ParallelHelperClientD1Ev` | `pCPHOY0VhUY` |
 | `_ZN3WTF20ParallelHelperClientD2Ev` | `80LTtL71Ics` |
-| `_ZN3WTF20resetAccumulatedLogsEv` | `v4r2uz0R1ys` |
 | `_ZN3WTF21MemoryPressureHandler12setPageCountEj` | `AAkVf-cyiwM` |
 | `_ZN3WTF21MemoryPressureHandler13releaseMemoryENS_8CriticalENS_11SynchronousE` | `LiJyR7R9j9s` |
 | `_ZN3WTF21MemoryPressureHandler24currentMemoryUsagePolicyEv` | `3pFQHWls4Ug` |
@@ -1540,7 +1539,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF24AutomaticThreadConditionD2Ev` | `qjebiZKT83w` |
 | `_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE` | `uTDkdY+Gquc` |
 | `_ZN3WTF25activateSignalHandlersForENS_6SignalE` | `Pyu7Zyt6XUE` |
-| `_ZN3WTF26getAndResetAccumulatedLogsEv` | `bD3nxh6Om44` |
 | `_ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj` | `3PZOiy2oZ9w` |
 | `_ZN3WTF31NonSharedCharacterBreakIteratorC1ENS_10StringViewE` | `Ug-4pREiQoY` |
 | `_ZN3WTF31NonSharedCharacterBreakIteratorC2ENS_10StringViewE` | `I5vyOoVvcEw` |

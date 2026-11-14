@@ -8,6 +8,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -16,12 +21,84 @@
 #define StrCaseCmp strcasecmp
 #endif
 
+// Derived from Source/WTF/wtf/Assertions.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from Source/WTF/wtf/DataLog.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+
 struct WTFLogChannel {
     std::uint8_t state;
     const char* name;
     std::uint8_t level;
     const char* subsystem;
 };
+
+static_assert(sizeof(WTFLogChannel) == 32);
+static_assert(offsetof(WTFLogChannel, state) == 0);
+static_assert(offsetof(WTFLogChannel, name) == 8);
+static_assert(offsetof(WTFLogChannel, level) == 16);
+static_assert(offsetof(WTFLogChannel, subsystem) == 24);
+
+namespace {
+
+constexpr std::uint8_t LogChannelStateOn = 1;
+
+std::mutex& AccumulatorLock() {
+    static auto* lock = new std::mutex;
+    return *lock;
+}
+
+std::string& Accumulator() {
+    static auto* text = new std::string;
+    return *text;
+}
+
+#ifdef _WIN32
+std::string FormatText(const char* format, const void* args) {
+    std::string text;
+    LibcDetail::FormatWindows(nullptr, 0, format, args, &text);
+    return text;
+}
+#else
+std::string FormatText(const char* format, std::va_list args) {
+    std::va_list copy;
+    va_copy(copy, args);
+    const int length = std::vsnprintf(nullptr, 0, format, copy);
+    va_end(copy);
+    if (length <= 0) {
+        return {};
+    }
+    std::string text(static_cast<std::size_t>(length) + 1, '\0');
+    std::vsnprintf(text.data(), text.size(), format, args);
+    text.resize(static_cast<std::size_t>(length));
+    return text;
+}
+#endif
+
+void AccumulateAndLog(std::string text) {
+    if (text.empty() || text.back() != '\n') {
+        text.push_back('\n');
+    }
+    {
+        std::lock_guard lock(AccumulatorLock());
+        auto& accumulator = Accumulator();
+        if (text.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) - accumulator.size()) {
+            throw std::length_error("WTF accumulated logs exceed the maximum string length");
+        }
+        accumulator += text;
+    }
+    std::string utf8;
+    utf8.reserve(text.size());
+    for (const unsigned char character : text) {
+        if (character < 0x80) {
+            utf8.push_back(static_cast<char>(character));
+        } else {
+            utf8.push_back(static_cast<char>(0xC0 | (character >> 6)));
+            utf8.push_back(static_cast<char>(0x80 | (character & 0x3F)));
+        }
+    }
+    std::fputs(utf8.c_str(), stderr);
+}
+
+}  // namespace
 
 extern "C" {
 [[noreturn]] void APS5_VABI WTFCrash() {
@@ -182,6 +259,21 @@ void APS5_VABI WTFLog(void* channel, const char* format, ...) {
     }
     const auto* ch = static_cast<const WTFLogChannel*>(channel);
     if (ch->state == 0) {
+        return;
+    }
+    if (ch->state != LogChannelStateOn) {
+#ifdef _WIN32
+        __builtin_sysv_va_list args;
+        __builtin_sysv_va_start(args, format);
+        std::string text = FormatText(format, args);
+        __builtin_sysv_va_end(args);
+#else
+        std::va_list args;
+        va_start(args, format);
+        std::string text = FormatText(format, args);
+        va_end(args);
+#endif
+        AccumulateAndLog(std::move(text));
         return;
     }
 #ifdef _WIN32
@@ -345,6 +437,24 @@ void APS5_VABI _ZN3WTF9dataLogFVEPKcP13__va_list_tag(const char* format, void* a
 #else
     std::vfprintf(stderr, format, *reinterpret_cast<std::va_list*>(argList));
 #endif
+}
+
+void APS5_VABI _ZN3WTF14dataLogFStringEPKc(const char* str) {
+    _ZN3WTF8dataLogFEPKcz("%s", str);
+}
+
+void APS5_VABI _ZN3WTF20resetAccumulatedLogsEv() {
+    std::lock_guard lock(AccumulatorLock());
+    Accumulator().clear();
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF26getAndResetAccumulatedLogsEv() {
+    std::string text;
+    {
+        std::lock_guard lock(AccumulatorLock());
+        text.swap(Accumulator());
+    }
+    return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text.data()), static_cast<unsigned>(text.size()));
 }
 
 }
