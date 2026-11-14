@@ -34,6 +34,8 @@ struct RegEntry {
     std::vector<uint8_t> binVal;
 };
 
+constexpr std::size_t SCE_REG_MGR_MAX_BINARY_SIZE = 1024 * 1024;
+
 class RegistryStore {
 public:
     RegistryStore() = default;
@@ -119,6 +121,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        if (size > SCE_REG_MGR_MAX_BINARY_SIZE) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         std::vector<std::uint8_t> bytes(size);
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(bytes.data(), value, size);
