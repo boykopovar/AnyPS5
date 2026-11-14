@@ -823,6 +823,7 @@ def main(argv=None):
     summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
                "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
+    progress = sys.stderr if args.json else sys.stdout
     for title_id in ids:
         entry = titles.get(title_id, {})
         seconds = args.seconds or entry.get("seconds", 60)
@@ -836,7 +837,7 @@ def main(argv=None):
             (work / "relink.log").write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
             executable = None
         if missing:
-            print(f"{title_id}: --content lacks {', '.join(missing)}; running without", flush=True)
+            print(f"{title_id}: --content lacks {', '.join(missing)}; running without", file=progress, flush=True)
         (output / title_id).mkdir(parents=True, exist_ok=True)
         shutil.copyfile(work / "relink.log", output / title_id / "relink.log")
         runs = []
@@ -852,7 +853,7 @@ def main(argv=None):
                     value = result.pop(key)
                     summary["machine"][key] = summary["machine"][key] or value
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
-            print(f"{title_id} run{number}: {result['outcome']}", flush=True)
+            print(f"{title_id} run{number}: {result['outcome']}", file=progress, flush=True)
         summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "missing_content": missing, "runs": runs}
         write_summary(output, summary)
     write_summary(output, summary)
@@ -862,7 +863,7 @@ def main(argv=None):
         print(compare_json(summary, previous))
     else:
         print(report)
-    print(f"written to {output}")
+    print(f"written to {output}", file=progress)
     return 0
 
 
