@@ -53,9 +53,11 @@ public:
         }
         const auto percent = event.Total == 0 ? 100u : static_cast<unsigned>(100.0L * event.Completed / event.Total);
         const bool changed = lastStage != event.Stage || lastInput != event.Input;
+        const bool countChanged = event.Stage == Domain::ProgressStage::Modules &&
+            (lastCompleted != event.Completed || lastTotal != event.Total);
         const bool complete = event.Completed == event.Total;
         const auto now = std::chrono::steady_clock::now();
-        if (!changed && lastPercent == percent && event.Completed != 0) return;
+        if (!changed && !countChanged && lastPercent == percent && event.Completed != 0) return;
         if (!changed && !complete && now - lastUpdate < std::chrono::milliseconds(80)) return;
         if (changed || messages) Finish();
         std::ostringstream line;
@@ -72,6 +74,8 @@ public:
         lastStage = event.Stage;
         lastInput = event.Input;
         lastPercent = percent;
+        lastCompleted = event.Completed;
+        lastTotal = event.Total;
         lastUpdate = now;
         if (complete) Finish();
     }
@@ -114,6 +118,8 @@ private:
     Domain::ProgressStage lastStage = Domain::ProgressStage::Write;
     std::string lastInput;
     unsigned lastPercent = 101;
+    std::uint64_t lastCompleted = 0;
+    std::uint64_t lastTotal = 0;
     std::size_t lineWidth = 0;
     bool active = false;
     bool messages = false;
