@@ -277,7 +277,8 @@ static void TestSystem() {
     Require(ram >= 1024ULL * 1024ULL * 1024ULL);
 
     std::size_t page = _ZN3WTF8pageSizeEv();
-    Require(page == 4096);
+    Require(page == 16384);
+    Require(_ZN3WTF8pageSizeEv() == page);
 
     _ZN3WTF6Config17permanentlyFreezeEv();
 

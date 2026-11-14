@@ -13,6 +13,20 @@
 #include <map>
 #include <new>
 
+static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
 static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
     for (const auto& [number, leaf] : subset.leaves) {
         const auto found = superset.leaves.find(number);
@@ -91,8 +105,9 @@ FcFontSet* APS5_VABI FcFontSort(FcConfig* config, FcPattern* pattern, FcBool, Fc
 int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* changed) {
     if (!target || !source) return 0;
     if (changed) {
-        *changed = !IsSubset(*source, *target);
-        if (!*changed) return 1;
+        const int didChange = !IsSubset(*source, *target);
+        if (!CopyGuestOut(changed, &didChange, sizeof(didChange))) return 0;
+        if (!didChange) return 1;
     }
     try {
         for (const auto& [number, leaf] : source->leaves) {
@@ -144,13 +159,17 @@ int APS5_VABI FcCharSetAddChar(FcCharSet* set, uint32_t character) {
 }
 
 void APS5_VABI FcMatrixMultiply(FcMatrix* result, const FcMatrix* first, const FcMatrix* second) {
+    if (!result || !first || !second) return;
+    FcMatrix a{};
+    FcMatrix b{};
+    if (!CopyGuestIn(&a, first, sizeof(a)) || !CopyGuestIn(&b, second, sizeof(b))) return;
     const FcMatrix product = {
-        first->xx * second->xx + first->xy * second->yx,
-        first->xx * second->xy + first->xy * second->yy,
-        first->yx * second->xx + first->yy * second->yx,
-        first->yx * second->xy + first->yy * second->yy,
+        a.xx * b.xx + a.xy * b.yx,
+        a.xx * b.xy + a.xy * b.yy,
+        a.yx * b.xx + a.yy * b.yx,
+        a.yx * b.xy + a.yy * b.yy,
     };
-    *result = product;
+    CopyGuestOut(result, &product, sizeof(product));
 }
 
 int APS5_VABI FcDefaultSubstitute() {
