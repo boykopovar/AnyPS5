@@ -18,6 +18,13 @@ static constexpr int SCE_SYSTEM_GESTURE_ERROR_INDEX_OUT_OF_ARRAY = static_cast<i
 
 namespace {
 
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
 constexpr std::uint64_t RECOGNIZER_STATE_MAGIC = 0x41505335'47455354ULL;
 
 struct RecognizerState {
@@ -191,7 +198,8 @@ int APS5_VABI sceSystemGestureGetPrimitiveTouchEventByIndex(int32_t gestureHandl
     if (!event) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     if (!findGestureContext(gestureHandle)) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
     if (index >= findGestureContext(gestureHandle)->touches.size()) return SCE_SYSTEM_GESTURE_ERROR_INDEX_OUT_OF_ARRAY;
-    *event = buildPrimitiveTouchEvent(findGestureContext(gestureHandle)->touches[index]);
+    const auto ev = buildPrimitiveTouchEvent(findGestureContext(gestureHandle)->touches[index]);
+    if (!CopyGuestOut(event, &ev, sizeof(ev))) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -203,7 +211,8 @@ int APS5_VABI sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(int32_t gestur
     const auto tracked = std::find_if(findGestureContext(gestureHandle)->touches.begin(), findGestureContext(gestureHandle)->touches.end(),
         [&](const TrackedTouch& touch) { return touch.primitiveId == primitiveId; });
     if (tracked == findGestureContext(gestureHandle)->touches.end()) return static_cast<int>(0x80890005);
-    *event = buildPrimitiveTouchEvent(*tracked);
+    const auto ev = buildPrimitiveTouchEvent(*tracked);
+    if (!CopyGuestOut(event, &ev, sizeof(ev))) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -213,8 +222,10 @@ int APS5_VABI sceSystemGestureGetPrimitiveTouchEvents(int32_t gestureHandle, Sys
     if (!eventBuffer || !capacityOfBuffer || !numberOfEvent) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     if (!findGestureContext(gestureHandle)) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
     const std::uint32_t reported = static_cast<std::uint32_t>(std::min<std::size_t>(findGestureContext(gestureHandle)->touches.size(), capacityOfBuffer));
-    for (std::uint32_t i = 0; i < reported; ++i) eventBuffer[i] = buildPrimitiveTouchEvent(findGestureContext(gestureHandle)->touches[i]);
-    *numberOfEvent = reported;
+    std::vector<SystemGesturePrimitiveTouchEvent> events(reported);
+    for (std::uint32_t i = 0; i < reported; ++i) events[i] = buildPrimitiveTouchEvent(findGestureContext(gestureHandle)->touches[i]);
+    if (reported > 0 && !CopyGuestOut(eventBuffer, events.data(), sizeof(SystemGesturePrimitiveTouchEvent) * reported)) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
+    if (!CopyGuestOut(numberOfEvent, &reported, sizeof(reported))) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -253,7 +264,8 @@ int APS5_VABI sceSystemGestureGetTouchEvents(int32_t gestureHandle, const System
     (void)capacityOfBuffer;
     if (!findGestureContext(gestureHandle)) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
     if (!numberOfEvent) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
-    *numberOfEvent = 0;
+    constexpr uint32_t zero = 0;
+    if (!CopyGuestOut(numberOfEvent, &zero, sizeof(zero))) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -274,9 +286,11 @@ int APS5_VABI sceSystemGestureGetTouchRecognizerInformation(int32_t gestureHandl
         throw std::runtime_error(std::string(__func__) + ": recognizer was not created by sceSystemGestureCreateTouchRecognizer");
     if (!state.hasRectangle)
         throw std::runtime_error(std::string(__func__) + ": recognizer was created without a rectangle");
-    information->gesture_type = state.gestureType;
-    information->rectangle = state.rectangle;
-    information->updated_time = 0;
+    SystemGestureTouchRecognizerInformation localInfo{};
+    localInfo.gesture_type = state.gestureType;
+    localInfo.rectangle = state.rectangle;
+    localInfo.updated_time = 0;
+    if (!CopyGuestOut(information, &localInfo, sizeof(localInfo))) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
