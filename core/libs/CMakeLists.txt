@@ -366,6 +366,27 @@ if(BUILD_TESTING)
     endforeach()
     set_tests_properties(guest_kernel_sys_paths_symlinkat guest_kernel_sys_paths_symlinkat_patched PROPERTIES SKIP_RETURN_CODE 77)
 
+    add_test_executable(guest_kernel_mapper_export_parity_tests tests/GuestKernelMapperExportParity.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(guest_kernel_mapper_export_parity_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_link_libraries(guest_kernel_mapper_export_parity_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_custom_target(guest_kernel_mapper_export_parity_libraries DEPENDS
+        ${PATCHED_DIR}/libkernel_sys.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_mapper_export_parity_tests guest_kernel_mapper_export_parity_libraries)
+    configure_windows_unwind(guest_kernel_mapper_export_parity_tests)
+    if(MINGW)
+        target_compile_options(guest_kernel_mapper_export_parity_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_kernel_mapper_export_parity_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME guest_kernel_mapper_export_parity COMMAND guest_kernel_mapper_export_parity_tests ${UNPATCHED_DIR} unpatched)
+    add_test(NAME guest_kernel_mapper_export_parity_patched COMMAND guest_kernel_mapper_export_parity_tests ${PATCHED_DIR} patched)
+    set_tests_properties(guest_kernel_mapper_export_parity guest_kernel_mapper_export_parity_patched PROPERTIES TIMEOUT 20)
+    if(MINGW)
+        get_filename_component(kernelMapperExportParityRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set_tests_properties(guest_kernel_mapper_export_parity guest_kernel_mapper_export_parity_patched PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelMapperExportParityRuntimeDirectory}")
+    endif()
+
     add_test_executable(guest_posix_scalar_io_tests tests/GuestPosixScalarIo.cpp)
     target_include_directories(guest_posix_scalar_io_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_posix_scalar_io_tests PRIVATE libkernel libc)
