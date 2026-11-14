@@ -37,6 +37,7 @@
 #include "Optimization/include/Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/include/Optimization/HostInterpolationChecker.hpp"
 #include "Optimization/include/Optimization/MaskedSelectEliminator.hpp"
+#include "Optimization/include/Optimization/NanPayloadEliminator.hpp"
 #include "Optimization/include/Optimization/ReadLaneEliminator.hpp"
 #include "Optimization/include/Optimization/GotoPhiRefiner.hpp"
 #include "Optimization/include/Optimization/RedundantValueEliminator.hpp"
@@ -44,6 +45,7 @@
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
+#include "Optimization/include/Optimization/VectorWindowIndexNarrower.hpp"
 #include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
@@ -308,6 +310,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     constexpr DeadCodeEliminator deadCodeEliminator;
     constexpr ReadLaneEliminator readLaneEliminator;
     constexpr MaskedSelectEliminator maskedSelectEliminator;
+    constexpr VectorWindowIndexNarrower vectorWindowIndexNarrower;
     constexpr VectorWindowStoreEliminator vectorWindowStoreEliminator;
     const auto simplify = [&] {
         dumpIr("translate");
@@ -325,6 +328,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             constantFolder.Fold(program);
             ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
+            deadCodeEliminator.Eliminate(program);
+        }
+
+        if (vectorWindowIndexNarrower.Narrow(program).narrowedLoads != 0u) {
+            constantFolder.Fold(program);
             deadCodeEliminator.Eliminate(program);
         }
 
@@ -361,6 +369,12 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     constexpr DenormalFlushEliminator denormalFlushEliminator;
     if (denormalFlushEliminator.Eliminate(program).removedFlushes != 0u) {
         deadCodeEliminator.Eliminate(program);
+    }
+
+    static const bool nanPayloadElimination = std::getenv("APS5_NO_NAN_PAYLOAD_ELIMINATION") == nullptr;
+    if (nanPayloadElimination && ExactF32Arithmetic()) {
+        constexpr NanPayloadEliminator nanPayloadEliminator;
+        if (nanPayloadEliminator.Eliminate(program).removedSelects != 0u) deadCodeEliminator.Eliminate(program);
     }
 
     if (inputInfo.vertex != nullptr) {
