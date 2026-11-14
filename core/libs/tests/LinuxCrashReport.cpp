@@ -197,6 +197,14 @@ void Scenario(const std::string& name) {
     Load();
     if (name == "near-null" || name == "logged") WriteNearNull();
     if (name == "trap") Trap();
+    if (name == "hint") {
+        void* handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+        Check(handle != nullptr, "cannot reopen the library for the crash hint\n");
+        auto set = reinterpret_cast<void (*)(const char*)>(dlsym(handle, "LibcSetCrashHint_nid_no_patch"));
+        Check(set != nullptr, "crash hint setter missing\n");
+        set("fixture crash hint");
+        WriteNearNull();
+    }
     if (name == "guest-abort") asm volatile("int $0x45");
     if (name == "guest-assert") asm volatile("int $0x41");
     if (name == "other-interrupt") asm volatile("int $0x44");
@@ -398,6 +406,7 @@ int main(int argc, char** argv) {
             Expect(!Has(result, "  guest "), std::string(name) + ": unverified interrupt was named");
         }
         Expect(Has(run("divide", SIGFPE), "[libc] fatal SIGFPE"), "divide report missing");
+        Expect(Has(run("hint", SIGSEGV), "  note: fixture crash hint"), "crash hint missing from the report");
         Expect(Has(run("bus", SIGBUS), "[libc] fatal SIGBUS"), "bus report missing");
         Expect(Has(run("sent", SIGSEGV), "[libc] fatal SIGSEGV (code 0)"), "sent signal report missing");
         Expect(Has(run("overflow", SIGSEGV), "[libc] fatal SIGSEGV"), "alternate-stack overflow report missing");

@@ -1,6 +1,7 @@
 #include "prx/libSceFontFt/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -350,6 +351,8 @@ int main() {
     });
     Require(Occurrences(warnings, "[libSceFont] no file for system font set") == 1);
     Require(Occurrences(warnings, "0x180700C7 in " + empty.string()) == 1 && Occurrences(warnings, "ANYPS5_SYSTEM_FONTS") == 1);
+    const char* const crashHint = LibcCrashHint_nid_no_patch();
+    Require(crashHint != nullptr && std::string(crashHint).find("ANYPS5_SYSTEM_FONTS") != std::string::npos && std::string(crashHint).find("system font") != std::string::npos);
     SetFontDirectory(root / "missing");
     bool threw = false;
     try {
