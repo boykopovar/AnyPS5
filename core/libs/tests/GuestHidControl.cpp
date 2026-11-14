@@ -185,6 +185,9 @@ void CheckArguments() {
     Require(sceHidControlSetRevokeList2(0, 1, nullptr) == ErrorInvalidArgument, "SetRevokeList2 null list");
     Require(sceHidControlIsForceUpdateNeeded(0, 0, &flag) == ErrorInvalidArgument && flag == 0x5a, "IsForceUpdateNeeded zero value");
     Require(sceHidControlIsForceUpdateNeeded(0, 1, nullptr) == ErrorInvalidArgument, "IsForceUpdateNeeded null result");
+    errno = 71;
+    Require(sceHidControlIsForceUpdateNeeded(0, 1, reinterpret_cast<std::uint8_t*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "IsForceUpdateNeeded unwritable result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), nullptr) == ErrorInvalidArgument, "PswUpdateIsUpdateNeeded null result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, nullptr, &first) == ErrorInvalidArgument && first == 0, "PswUpdateIsUpdateNeeded clears result before the image check");
     first = 0x5a5a;
