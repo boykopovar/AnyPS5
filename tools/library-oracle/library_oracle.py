@@ -50,7 +50,7 @@ def load_known(path):
     known = {}
     if not path.is_file():
         return known
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         if not line.strip() or line.startswith("#"):
             continue
         fields = line.split("\t")
