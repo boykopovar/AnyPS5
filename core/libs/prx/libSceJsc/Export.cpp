@@ -587,10 +587,6 @@ int APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7bmalloc3api16freeLargeVirtualEPvmNS_8HeapKindE() {
     NotImplemented_nid_no_patch(__func__);
 }
