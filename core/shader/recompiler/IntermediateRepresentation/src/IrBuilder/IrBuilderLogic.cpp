@@ -14,6 +14,52 @@ namespace ShaderRecompiler {
             return Emit(IrOpcode::SelectU32, IrType::U32, {&condition, &trueValue, &falseValue});
         case IrType::F32:
             return Emit(IrOpcode::SelectF32, IrType::F32, {&condition, &trueValue, &falseValue});
+        case IrType::U16: {
+            IrValue& trueU32 = Emit(IrOpcode::ConvertU32U16, IrType::U32, {&trueValue});
+            IrValue& falseU32 = Emit(IrOpcode::ConvertU32U16, IrType::U32, {&falseValue});
+            IrValue& sel = Emit(IrOpcode::SelectU32, IrType::U32, {&condition, &trueU32, &falseU32});
+            return Emit(IrOpcode::ConvertU16U32, IrType::U16, {&sel});
+        }
+        case IrType::F16: {
+            IrValue& trueU16 = Emit(IrOpcode::BitCastU16F16, IrType::U16, {&trueValue});
+            IrValue& falseU16 = Emit(IrOpcode::BitCastU16F16, IrType::U16, {&falseValue});
+            IrValue& selU16 = Select(condition, trueU16, falseU16);
+            return Emit(IrOpcode::BitCastF16U16, IrType::F16, {&selU16});
+        }
+        case IrType::U64: {
+            IrValue& trueLo = CompositeExtract(trueValue, 0u);
+            IrValue& trueHi = CompositeExtract(trueValue, 1u);
+            IrValue& falseLo = CompositeExtract(falseValue, 0u);
+            IrValue& falseHi = CompositeExtract(falseValue, 1u);
+            return ConstructU64(Select(condition, trueLo, falseLo), Select(condition, trueHi, falseHi));
+        }
+        case IrType::U32x2: {
+            IrValue& true0 = CompositeExtract(trueValue, 0u);
+            IrValue& true1 = CompositeExtract(trueValue, 1u);
+            IrValue& false0 = CompositeExtract(falseValue, 0u);
+            IrValue& false1 = CompositeExtract(falseValue, 1u);
+            return Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {&Select(condition, true0, false0), &Select(condition, true1, false1)});
+        }
+        case IrType::U32x3: {
+            IrValue& true0 = CompositeExtract(trueValue, 0u);
+            IrValue& true1 = CompositeExtract(trueValue, 1u);
+            IrValue& true2 = CompositeExtract(trueValue, 2u);
+            IrValue& false0 = CompositeExtract(falseValue, 0u);
+            IrValue& false1 = CompositeExtract(falseValue, 1u);
+            IrValue& false2 = CompositeExtract(falseValue, 2u);
+            return Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {&Select(condition, true0, false0), &Select(condition, true1, false1), &Select(condition, true2, false2)});
+        }
+        case IrType::U32x4: {
+            IrValue& true0 = CompositeExtract(trueValue, 0u);
+            IrValue& true1 = CompositeExtract(trueValue, 1u);
+            IrValue& true2 = CompositeExtract(trueValue, 2u);
+            IrValue& true3 = CompositeExtract(trueValue, 3u);
+            IrValue& false0 = CompositeExtract(falseValue, 0u);
+            IrValue& false1 = CompositeExtract(falseValue, 1u);
+            IrValue& false2 = CompositeExtract(falseValue, 2u);
+            IrValue& false3 = CompositeExtract(falseValue, 3u);
+            return Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&Select(condition, true0, false0), &Select(condition, true1, false1), &Select(condition, true2, false2), &Select(condition, true3, false3)});
+        }
         default:
             throw std::invalid_argument("IrBuilder::Select unsupported value type");
         }

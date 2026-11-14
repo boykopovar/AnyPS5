@@ -5,6 +5,7 @@
 
 #include FT_OUTLINE_H
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -32,30 +33,26 @@ static void ReverseOracle(std::size_t count, std::vector<std::uint16_t> contours
     storage.front() = {991, 992};
     storage.back() = {-993, -994};
     std::vector<unsigned char> tags(count + 2, 0xA5);
-    std::vector<FT_Vector> nativePoints;
-    std::vector<unsigned char> nativeTags;
     for (std::size_t index = 0; index < count; ++index) {
         storage[index + 1] = {(std::int64_t{1} << 40) + static_cast<std::int64_t>(index) * 3,
                               -(std::int64_t{1} << 41) + static_cast<std::int64_t>(index) * 7};
         tags[index + 1] = static_cast<unsigned char>(index * 73);
-        nativePoints.push_back({static_cast<FT_Pos>(index), -static_cast<FT_Pos>(index)});
-        nativeTags.push_back(tags[index + 1]);
     }
     const auto original = storage;
     const auto originalTags = tags;
     const auto originalContours = contours;
     GuestOutline guest{static_cast<std::uint16_t>(contours.size()), static_cast<std::uint16_t>(count), storage.data() + 1,
                        tags.data() + 1, contours.data(), flags};
-    FT_Outline native{guest.n_contours, guest.n_points, nativePoints.data(), nativeTags.data(), contours.data(), flags};
-    FT_Outline_Reverse(&native);
     FT_Outline_Reverse_nid_postfix(&guest);
 
-    Require(guest.flags == native.flags && guest.flags == (flags ^ FT_OUTLINE_REVERSE_FILL));
+    Require(guest.flags == (flags ^ FT_OUTLINE_REVERSE_FILL));
     Require(guest.n_points == count && guest.n_contours == contours.size() && contours == originalContours);
     for (std::size_t index = 0; index < count; ++index) {
-        const auto source = static_cast<std::size_t>(nativePoints[index].x);
+        const auto contour = std::lower_bound(contours.begin(), contours.end(), index);
+        const std::size_t first = contour == contours.begin() ? 0 : *(contour - 1) + 1;
+        const auto source = index == first ? first : first + *contour + 1 - index;
         Require(source < count && Equal(storage[index + 1], original[source + 1]));
-        Require(tags[index + 1] == nativeTags[index]);
+        Require(tags[index + 1] == originalTags[source + 1]);
     }
     Require(Equal(storage.front(), original.front()) && Equal(storage.back(), original.back()));
     Require(tags.front() == 0xA5 && tags.back() == 0xA5);

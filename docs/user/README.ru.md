@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [简体中文](README.zh-CN.md) | **Русский**
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [Català](README.ca.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | **Русский** | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md)
 
 # О проекте
 
@@ -12,11 +12,11 @@
 
 Включает [relinker](../../core/relinker), который преобразует исполняемый файл в нативный формат целевой системы, и реализации [системных prx-библиотек](../../core/libs/prx), подходящие для динамической линковки. Без эмуляции и отдельного процесса среды выполнения.
 
-[**Discord**](https://discord.gg/BHFztBPUe), [Использование](USAGE.md), [Инструкции по сборке](../dev/BUILD.md), [Архитектура](../dev/ARCHITECTURE.md), [Технический долг проекта](../dev/TechnicalDebt.md), [соглашения о стиле кода](../dev/CONVENTIONS.md), [участие в разработке](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Использование](USAGE.md), [Инструкции по сборке](../dev/BUILD.md), [Архитектура](../dev/ARCHITECTURE.md), [Технический долг проекта](../dev/TechnicalDebt.md), [соглашения о стиле кода](../dev/CONVENTIONS.md), [участие в разработке](../../CONTRIBUTING.md)
 
 ## Статус
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shader forms decoded, counted from the code](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
 
 [![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
 
@@ -24,7 +24,7 @@
 
 <sub>* Системные библиотеки: процент функций, известных проекту на данный момент (объявленных в [core/libs/prx](../../core/libs/prx)), а не всех системных функций PS5. Общее число растёт по мере объявления новых функций.</sub>
 
-Неподдерживаемые или неожиданные состояния строго выбрасывают `std::runtime_error`. `what()` выводится в stderr, и процесс завершается.
+Неподдерживаемые или неожиданные состояния выбрасывают исключение C++, обычно `std::runtime_error`. Исключение, которое никто не перехватил, выводит свой `what()` в stderr и завершает процесс.
 
 [Рекомпилятор шейдеров](../../core/shader/recompiler/Recompiler.cpp) успешно генерирует SPIR-V (проверяется через [Spirv-Tools](../../3rdparty/SPIRV-Tools) при сборке с `ANYPS5_ENABLE_SPIRV_TOOLS`).
 

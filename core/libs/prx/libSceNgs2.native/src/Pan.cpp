@@ -131,7 +131,7 @@ int Ngs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32
         for (std::uint32_t channel = 0; channel < 8; channel++) mix[channel] = channel == LFE_CHANNEL ? param.lfe_level : mix[channel] * param.fbw_level;
         for (std::uint32_t dest = 0; dest < matrix_format; dest++) {
             float& level = out_volume_matrix[static_cast<std::size_t>(dest) * num_params + p];
-            for (std::uint32_t channel = 0; channel < layout->mixChannels; channel++) level += Ngs2DefaultLevel(layout->mixChannels, channel, matrix_format, dest) * mix[channel];
+            for (std::uint32_t channel = 0; channel < layout->mixChannels; channel++) level += Ngs2FixedDownmixLevel(layout->mixChannels, channel, matrix_format, dest) * mix[channel];
         }
     }
     return SCE_NGS2_OK;

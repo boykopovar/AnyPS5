@@ -509,15 +509,16 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
         parameters.push_back({input.sourceLocation, input.location, input.flat, !exported});
     }
     const auto emulatedSlots = static_cast<std::uint32_t>(emulation.barycentrics.size() + emulation.perVertex.size() * 3u);
+    const auto clipDistances = VertexClipDistanceCount(vertex.spirv.Words());
     const auto& limits = *target.tessellation;
     const std::uint32_t perVertexComponents = std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents, limits.maxEvaluationOutputComponents});
-    require(emulatedSlots == 0u || perVertexComponents / 4u > emulatedSlots, "emulated barycentrics exceed the tessellation interface limits");
-    if (const std::size_t capacity = perVertexComponents / 4u > emulatedSlots ? perVertexComponents / 4u - 1u - emulatedSlots : 0u; parameters.size() > capacity) {
+    const std::uint32_t parameterSlots = perVertexComponents > clipDistances ? (perVertexComponents - clipDistances) / 4u : 0u;
+    require(emulatedSlots == 0u || parameterSlots > emulatedSlots, "emulated barycentrics exceed the tessellation interface limits");
+    if (const std::size_t capacity = parameterSlots > emulatedSlots ? parameterSlots - 1u - emulatedSlots : 0u; parameters.size() > capacity) {
         parameters.resize(capacity);
     }
-    const auto components = static_cast<std::uint32_t>((parameters.size() + emulatedSlots + 1) * 4);
+    const auto components = static_cast<std::uint32_t>((parameters.size() + emulatedSlots + 1) * 4 + clipDistances);
     require(limits.maxPatchSize >= 4 && components <= limits.maxControlPerVertexInputComponents && components <= limits.maxControlPerVertexOutputComponents && components <= limits.maxEvaluationInputComponents && components <= limits.maxEvaluationOutputComponents && limits.maxControlPerPatchOutputComponents >= 6 && components * 4 + 6 <= limits.maxControlTotalOutputComponents, "tessellation interface exceeds device limits");
-    const auto clipDistances = VertexClipDistanceCount(vertex.spirv.Words());
     require(clipDistances == 0u || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityClipDistance) != target.supportedCapabilities.end(), "the vertex clip distances need shaderClipDistance");
     const auto faultBinding = RuntimeAbi::BindingNumber(RuntimeAbi::Stage::TessellationControl, RuntimeAbi::Binding::FaultBuffer);
     RectListEmitter control(parameters, emulation, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding, clipDistances);

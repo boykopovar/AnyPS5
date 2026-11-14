@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
+#include <algorithm>
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
@@ -50,17 +51,42 @@ namespace ShaderRecompiler
             return value;
         }
 
+        std::uint32_t SpannedBallotSlot(SpirvEmitterState& state, std::uint32_t index) {
+            if (state.spannedBallotVariable == 0u) {
+                state.spannedBallotVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, 4u), spv::StorageClassWorkgroup);
+                state.module.AddName(state.spannedBallotVariable, "wave_ballot");
+            }
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAccessChain, TypeU32ElementPointer(state, spv::StorageClassWorkgroup), pointer, state.spannedBallotVariable, index);
+            return pointer;
+        }
+
+        std::uint32_t SpannedBallotParity(SpirvEmitterState& state) {
+            if (state.spannedBallotParityVariable == 0u) {
+                state.spannedBallotParityVariable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), spv::StorageClassPrivate, ConstantU32(state, 0u));
+                state.module.AddName(state.spannedBallotParityVariable, "wave_ballot_parity");
+            }
+            return state.spannedBallotParityVariable;
+        }
+
         void SpannedBallot(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate) {
             const auto lane = SpannedLane(state);
+            const auto native = state.module.AllocateId();
+            EmitHostSubgroupBallot(state, native, predicate);
+            const auto half = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), half, native, 0u);
+            const auto parityVariable = SpannedBallotParity(state);
+            const auto parity = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), parity, parityVariable);
+            const auto base = EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitBinaryU32(state, spv::OpBitwiseAnd, parity, ConstantU32(state, 1u)), ConstantU32(state, 1u));
+            const auto own = EmitAddU32(state, base, EmitBinaryU32(state, spv::OpShiftRightLogical, lane, ConstantU32(state, 5u)));
+            state.module.AddFunction(spv::OpAtomicStore, SpannedBallotSlot(state, own), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), half);
             SpannedBarrier(state);
-            state.module.AddFunction(spv::OpAtomicStore, SpannedSlot(state, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 1u))), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 0u));
-            SpannedBarrier(state);
-            const auto bit = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), ConstantU32(state, 1u), EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u)));
-            const auto previous = state.module.AllocateId();
-            state.module.AddFunction(spv::OpAtomicOr, TypeU32(state), previous, SpannedSlot(state, EmitBinaryU32(state, spv::OpShiftRightLogical, lane, ConstantU32(state, 5u))), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), Select(state, TypeU32(state), predicate, bit, ConstantU32(state, 0u)));
-            SpannedBarrier(state);
-            const auto low = SpannedLoad(state, ConstantU32(state, 0u));
-            const auto high = SpannedLoad(state, ConstantU32(state, 1u));
+            const auto low = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), low, SpannedBallotSlot(state, base));
+            const auto high = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), high, SpannedBallotSlot(state, EmitBinaryU32(state, spv::OpBitwiseOr, base, ConstantU32(state, 1u))));
+            state.module.AddFunction(spv::OpStore, parityVariable, EmitBinaryU32(state, spv::OpBitwiseXor, parity, ConstantU32(state, 1u)));
             state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), result, low, high, ConstantU32(state, 0u), ConstantU32(state, 0u));
         }
 
@@ -282,6 +308,24 @@ namespace ShaderRecompiler
             return {target, ConstantBool(state, true)};
         }
         FailEmit("DPP control " + std::to_string(control) + " is not supported");
+    }
+
+    bool DppQuadRead(const SpirvEmitterState& state, std::uint32_t control) {
+        return control <= 0xffu && StageOf(state) == IrShaderStage::Pixel && !HostSubgroupSingleLane(state) && std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformQuad)) != state.supportedCapabilities.end();
+    }
+
+    std::uint32_t EmitDppQuadRead(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value, std::uint32_t control) {
+        state.module.EmitCapability(spv::CapabilityGroupNonUniformQuad);
+        const auto quadLane = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitSubgroupLocalInvocationId(state), ConstantU32(state, 3u));
+        const auto shift = EmitBinaryU32(state, spv::OpShiftLeftLogical, quadLane, ConstantU32(state, 1u));
+        const auto source = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, ConstantU32(state, control), shift), ConstantU32(state, 3u));
+        std::uint32_t result = 0;
+        for (std::uint32_t lane = 0; lane < 4u; ++lane) {
+            const auto broadcast = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformQuadBroadcast, type, broadcast, ConstantU32(state, spv::ScopeSubgroup), value, ConstantU32(state, lane));
+            result = lane == 0u ? broadcast : Select(state, type, Binary(state, spv::OpIEqual, TypeBool(state), source, ConstantU32(state, lane)), broadcast, result);
+        }
+        return result;
     }
 
     std::uint32_t EmitBallotLaneActiveBool(SpirvEmitterState& state, std::uint32_t ballot, std::uint32_t lane) {

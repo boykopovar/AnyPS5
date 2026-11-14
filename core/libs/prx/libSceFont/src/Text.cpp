@@ -165,12 +165,10 @@ void FillWritingMetricsFromGlyph(FontWritingData& writing, const FontGlyphMetric
     writing.rawGlyphMetrics = glyphMetrics;
     writing.hasRawGlyphMetrics = true;
     writing.step.advanceX = glyphMetrics.Horizontal.advance;
-    writing.step.advanceY = glyphMetrics.Vertical.advance;
+    writing.step.advanceY = 0.0f;
     writing.step.GlyphMetrics = glyphMetrics;
     writing.step.Positioning.x = writing.step.x;
     writing.step.Positioning.y = writing.step.y;
-    writing.step.GlyphMetrics.width = writing.step.x;
-    writing.step.GlyphMetrics.height = writing.step.y;
 }
 
 bool PopulateWritingStep(FontWritingData& writing, std::size_t index) {

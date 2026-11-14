@@ -119,7 +119,8 @@ int APS5_VABI _Iswctype_nid_postfix(std::uint32_t c, std::uint64_t type) {
         GuestRune::Graph, GuestRune::Lower, GuestRune::Print, GuestRune::Punct,
         GuestRune::Space, GuestRune::Upper, GuestRune::Hex, GuestRune::Blank,
     };
-    if (type == 0 || type > std::size(masks)) throw std::invalid_argument("_Iswctype: unknown class " + std::to_string(type));
+    if (type == 0 || type == std::size(masks) + 1) return 0;
+    if (type > std::size(masks)) throw std::invalid_argument("_Iswctype: unknown class " + std::to_string(type));
     return GuestRune::Is(c, masks[type - 1]);
 }
 
@@ -160,6 +161,14 @@ std::uint32_t APS5_VABI btowc_nid_postfix(int c) {
 int APS5_VABI wctob_nid_postfix(std::uint32_t c) {
     const auto unit = static_cast<std::uint16_t>(c);
     return unit < 0x80 ? static_cast<int>(unit) : -1;
+}
+
+std::uint32_t APS5_VABI _Btowc_nid_postfix(int c) {
+    return btowc_nid_postfix(c);
+}
+
+int APS5_VABI _Wctob_nid_postfix(std::uint32_t c) {
+    return wctob_nid_postfix(c);
 }
 
 std::uint64_t APS5_VABI wctrans_nid_postfix(const char* property) {

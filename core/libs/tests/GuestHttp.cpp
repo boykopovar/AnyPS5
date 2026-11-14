@@ -1,13 +1,16 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
+#include <cerrno>
 #include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <clocale>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -425,7 +428,36 @@ static void CheckCaList() {
     Require(sceHttpsFreeCaList(1, &list) == 0 && list.certs == nullptr && list.certsNum == 0);
 }
 
-int main() {
+static int CheckUriLocales() {
+    const std::string previousCtype = std::setlocale(LC_CTYPE, nullptr);
+    bool exercised = false;
+#ifdef _WIN32
+    const char* locales[] = {".1252"};
+#else
+    const char* locales[] = {"en_US.ISO8859-1", "en_US.iso88591", "en_US.UTF-8"};
+#endif
+    for (const char* locale : locales) {
+        if (!std::setlocale(LC_CTYPE, locale)) continue;
+        CheckUriEscapeBytes();
+        CheckUriParseCharacters();
+        const bool classifiesHighByte = std::isalpha(static_cast<unsigned char>(0xE9)) != 0;
+        exercised |= classifiesHighByte;
+        std::printf("URI locale checks: %s; classifies 0xE9 as alphabetic: %s\n", locale, classifiesHighByte ? "yes" : "no");
+    }
+    Require(std::setlocale(LC_CTYPE, previousCtype.c_str()) != nullptr);
+#ifdef _WIN32
+    Require(exercised);
+#endif
+    if (!exercised) {
+        std::fputs("SKIP: URI locale regression requires a Latin-1 locale that classifies 0xE9 as alphabetic.\n", stderr);
+        return 77;
+    }
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--uri-locale") == 0) return CheckUriLocales();
+    Require(argc == 1);
     const std::uint64_t processSize = processParameters.size();
     const std::uint32_t processMagic = 0x4942524f;
     std::uint32_t sdkVersion = 0x1000000;
@@ -565,17 +597,6 @@ int main() {
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     CheckUriEscapeBytes();
     CheckUriParseCharacters();
-#ifdef _WIN32
-    Require(std::setlocale(LC_CTYPE, ".1252") != nullptr);
-    CheckUriEscapeBytes();
-    CheckUriParseCharacters();
-#else
-    for (const char* locale : {"en_US.ISO8859-1", "en_US.iso88591", "en_US.UTF-8"}) {
-        if (!std::setlocale(LC_CTYPE, locale)) continue;
-        CheckUriEscapeBytes();
-        CheckUriParseCharacters();
-    }
-#endif
     Require(std::setlocale(LC_CTYPE, previousCtype.c_str()) != nullptr);
 
     constexpr const char* unescapeCases[][2] = {
@@ -683,7 +704,7 @@ int main() {
     constexpr int invalidId = static_cast<int>(0x80431100);
     const auto flushCaches = [](int id, int expected) {
         Require(sceHttpAuthCacheFlush(id) == expected);
-        Require(sceHttpCookieFlush(id) == expected);
+        Require(sceHttpCookieFlush(id) == (expected == beforeInit ? invalidId : expected));
     };
     flushCaches(0, beforeInit);
     flushCaches(-1, beforeInit);
@@ -697,8 +718,26 @@ int main() {
     Require(sceHttpCreateEpoll(1, &epoll) == beforeInit);
     Require(sceHttpAbortWaitRequest(nullptr) == beforeInit);
     Require(sceHttpTerm_nid_postfix(1) == beforeInit);
+    HttpConnectionStat preStat{};
+    Require(sceHttpGetConnectionStat(1, &preStat) == beforeInit);
+    Require(sceHttpGetConnectionStat(1, nullptr) == beforeInit);
     const int context = sceHttpInit_nid_postfix(0, 0, 0x10000);
     Require(context > 0);
+    static_assert(sizeof(HttpConnectionStat) == 16);
+    Require(sceHttpGetConnectionStat(1, nullptr) == invalidValue);
+    Require(sceHttpGetConnectionStat(12345, &preStat) == invalidId);
+    const int tmpl = sceHttpCreateTemplate(context, "test-agent", 1, 0);
+    Require(tmpl > 0);
+    const int conn = sceHttpCreateConnectionWithURL(tmpl, "http://127.0.0.1:8080", 0);
+    Require(conn > 0);
+    HttpConnectionStat connStat{};
+    connStat.words[0] = 0xdeadbeef;
+    Require(sceHttpGetConnectionStat(conn, &connStat) == 0);
+    Require(connStat.words[0] == 0 && connStat.words[1] == 0 && connStat.words[2] == 0 && connStat.words[3] == 0);
+    Require(sceHttpGetConnectionStat(conn, nullptr) == invalidValue);
+    Require(sceHttpDeleteConnection(conn) == 0);
+    Require(sceHttpGetConnectionStat(conn, &connStat) == invalidId);
+    Require(sceHttpDeleteTemplate(tmpl) == 0);
     flushCaches(context, 0);
     flushCaches(context, 0);
     flushCaches(0, invalidId);
@@ -715,6 +754,9 @@ int main() {
     Require(Throws([] { sceHttpGetMemoryPoolStats(INT32_MAX, nullptr); }));
     Require(sceHttpCreateEpoll(-1, &epoll) == invalidId);
     Require(sceHttpCreateEpoll(context, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpCreateEpoll(context, reinterpret_cast<HttpEpollHandle*>(0x10)) == invalidValue);
+    Require(errno == 71);
     Require(sceHttpCreateEpoll(context, &epoll) == 0 && epoll != nullptr);
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
     Require(sceHttpWaitRequest(epoll, events, 2, 1000) == 0);
@@ -818,6 +860,10 @@ int main() {
     Require(sslError == 0 && sslDetail == 0);
     Require(sceHttpsGetSslError(1, nullptr, &sslDetail) == invalidValue);
     Require(sceHttpsGetSslError(1, &sslError, nullptr) == invalidValue);
+    errno = 71;
+    Require(sceHttpsGetSslError(1, reinterpret_cast<int*>(0x10), &sslDetail) == invalidValue);
+    Require(sceHttpsGetSslError(1, &sslError, reinterpret_cast<std::uint32_t*>(0x10)) == invalidValue);
+    Require(errno == 71);
 
     constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
     constexpr int parseInvalidValue = static_cast<int>(0x804321FE);
@@ -850,6 +896,23 @@ int main() {
     Require(parse(nullptr, 17) == parseInvalidResponse);
     Require(sceHttpParseStatusLine(response, 17, nullptr, &minor, &code, &phrase, &phraseLength) == parseInvalidValue);
     Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, &phrase, nullptr) == parseInvalidValue);
+    errno = 71;
+    major = -1;
+    minor = -1;
+    Require(sceHttpParseStatusLine(reinterpret_cast<const char*>(0x10), 17, &major, &minor, &code, &phrase, &phraseLength) == parseInvalidResponse);
+    Require(major == 0 && minor == 0);
+    auto* const badInt = reinterpret_cast<std::int32_t*>(0x10);
+    Require(sceHttpParseStatusLine(response, 17, badInt, &minor, &code, &phrase, &phraseLength) == parseInvalidValue);
+    code = -1;
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, badInt, &phrase, &phraseLength) == parseInvalidValue);
+    Require(major == 1 && minor == 1);
+    phrase = nullptr;
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, reinterpret_cast<const char**>(0x10), &phraseLength) == parseInvalidValue);
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, &phrase, reinterpret_cast<std::size_t*>(0x10)) == parseInvalidValue);
+    Require(code == 200 && phrase == response + 12);
+    Require(errno == 71);
+    phrase = nullptr;
+    phraseLength = 0;
     major = -1;
     minor = -1;
     Require(parse("HTTX/1.1 200 OK\n", 16) == parseInvalidResponse);

@@ -23,7 +23,7 @@
 #include <dlfcn.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
-#else
+#elif !defined(__EMSCRIPTEN__)
 #include <string_view>
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
@@ -111,7 +111,7 @@ extern "C" void ForgetUnloadedUnwindImages_nid_no_patch() {
   std::lock_guard lock(unwindImagesMutex);
   for (const auto base : unloaded) UnwindImages().erase(base);
 }
-#elif !defined(__APPLE__)
+#elif !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
 
 namespace {
 struct ImageSearch {
@@ -174,14 +174,17 @@ int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** add
  void* found = dlsym_nid_postfix(module, symbol);
  if (handle == 0 && module) dlclose_nid_postfix(module);
  if (!found) return SCE_KERNEL_ERROR_ESRCH;
- *addr = found;
+ if (!GuestCopyOut_nid_no_patch(addr, &found, sizeof(found))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
 int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info) {
   (void)flags;
   if (!info) return SCE_KERNEL_ERROR_EFAULT;
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+  static_cast<void>(addr);
+  NotImplemented_nid_no_patch(__func__);
+#elif defined(_WIN32)
   if (FillKnownUnwindImage(addr, info)) return 0;
   MEMORY_BASIC_INFORMATION mbi{};
   if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))) return SCE_KERNEL_ERROR_ESRCH;
@@ -295,8 +298,7 @@ void __aps5_set_module_init_result_nid_no_patch(int result) {
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
- (void)flags;
- (void)opt;
+ if (flags != 0 || opt != nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
  if (res) *res = 0;
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  pendingModuleArgs = {args, argp};
@@ -314,10 +316,10 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
 int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const void* argp, uint32_t flags, const KernelUnloadModuleOpt* opt, int* res) {
  (void)args;
  (void)argp;
- (void)flags;
- (void)opt;
+ if (flags != 0 || opt != nullptr || handle == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) != 0) return SCE_KERNEL_ERROR_ESRCH;
  if (res) *res = 0;
- return dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) == 0 ? 0 : SCE_KERNEL_ERROR_ESRCH;
+ return 0;
 }
 
 }

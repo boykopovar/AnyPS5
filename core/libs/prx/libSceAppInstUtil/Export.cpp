@@ -1,17 +1,34 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAppInstUtil/include/InventoryExports.hpp"
 #include "prx/libSceAppInstUtil/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#include <mutex>
+#include <new>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+
+static std::mutex g_serviceMutex;
+static int g_serviceReferences = 0;
+static constexpr int ErrorNullArgument = static_cast<int>(0x80A30003);
+static constexpr int ErrorNotInitialized = static_cast<int>(0x80A31000);
+static constexpr int GuestEnomem = 12;
+static constexpr int GuestEfault = 14;
 
 extern "C" {
 
 int APS5_VABI sceAppInstUtilInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_serviceMutex);
+    ++g_serviceReferences;
     return 0;
 }
 int APS5_VABI sceAppInstUtilTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_serviceMutex);
+    --g_serviceReferences;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppInstallAll(void* reserved) {
@@ -27,11 +44,36 @@ int APS5_VABI sceAppInstUtilAppIsInInstalling(int32_t* installing) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppIsInUpdating(const char* titleId, bool* updating) {
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    if (titleId == nullptr || updating == nullptr) return ErrorNullArgument;
+    std::lock_guard lock(g_serviceMutex);
+    if (g_serviceReferences <= 0) return ErrorNotInitialized;
+    std::string requested;
+    const int copyError = CopyGuestString_nid_no_patch(titleId, std::strlen(GetAppTitleId_nid_postfix().value) + 1, requested);
+    errno = savedErrno;
+    if (copyError == GuestEfault) return ErrorNullArgument;
+    if (copyError == GuestEnomem) throw std::bad_alloc();
+    const bool localUpdating = false;
+    const bool copied = GuestCopyOut_nid_no_patch(updating, &localUpdating, sizeof(localUpdating));
+    errno = savedErrno;
+    if (!copied) return ErrorNullArgument;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists) {
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    if (titleId == nullptr || exists == nullptr) return ErrorNullArgument;
+    std::lock_guard lock(g_serviceMutex);
+    if (g_serviceReferences <= 0) return ErrorNotInitialized;
+    const AppTitleId running = GetAppTitleId_nid_postfix();
+    std::string requested;
+    const int copyError = CopyGuestString_nid_no_patch(titleId, std::strlen(running.value) + 1, requested);
+    errno = savedErrno;
+    if (copyError == GuestEfault) return ErrorNullArgument;
+    if (copyError == GuestEnomem) throw std::bad_alloc();
+    const int32_t localExists = copyError == 0 && requested == running.value ? 1 : 0;
+    const bool copied = GuestCopyOut_nid_no_patch(exists, &localExists, sizeof(localExists));
+    errno = savedErrno;
+    if (!copied) return ErrorNullArgument;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppGetSize(const char* titleId, std::uint64_t* size) {
@@ -42,11 +84,13 @@ int APS5_VABI sceAppInstUtilAppInstallPkg(const char* packagePath, std::uint64_t
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg() {
+int APS5_VABI sceAppInstUtilAppPrepareOverwritePkg(const char* pkgPath) {
+    (void)pkgPath;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppRecoverApp() {
+int APS5_VABI sceAppInstUtilAppRecoverApp(const char* titleId) {
+    (void)titleId;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -62,7 +106,8 @@ int APS5_VABI sceAppInstUtilAppUnInstallPat(const char* titleId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceAppInstUtilAppUnInstallTheme() {
+int APS5_VABI sceAppInstUtilAppUnInstallTheme(const char* contentId) {
+    (void)contentId;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -81,6 +126,38 @@ int APS5_VABI sceAppInstUtilGetInstallProgress(const char* titleId, void* progre
 int APS5_VABI sceAppInstUtilGetPrimaryAppSlot(const char* titleId, void* slot) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceAppInstUtilCheckLatestPatch2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilAppGetIrremovableAppList2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilGetAddons2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilInstallPatch2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilAppUnInstall3() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilGetPatchInstallStatus2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilAppRequestMoveApps2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilGetContentSize3() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceAppInstUtilAppGetAppInstallStatusByAppInfo(void) {
@@ -572,5 +649,178 @@ int APS5_VABI sceAppInstUtilInstallAddons(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI sceAppInstUtilAppConvertAppDiscToDownload(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppInstUtilAppGetCustomThemeInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppInstUtilAppGetInstallAddcontFromDiscStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppInstUtilAppInstallCloudGame(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppInstUtilAppInstallMediaPlayer(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppInstUtilAppInstallRequestAddcontFromDisc(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppInstUtilAppSetSavedataUploadStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
+
+extern "C" {
+
+
+
+
+
+int APS5_VABI libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2WQuFX8yYXg", libSceAppInstUtilUnknown_2WQuFX8yYXg_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4vqRxwpIE1M", libSceAppInstUtilUnknown_4vqRxwpIE1M_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_9QIC1kZpSG4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9QIC1kZpSG4", libSceAppInstUtilUnknown_9QIC1kZpSG4_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_K73u2VX0JFo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("K73u2VX0JFo", libSceAppInstUtilUnknown_K73u2VX0JFo_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_LsUZe38RhCs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("LsUZe38RhCs", libSceAppInstUtilUnknown_LsUZe38RhCs_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_N6H7LMfZD5Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("N6H7LMfZD5Q", libSceAppInstUtilUnknown_N6H7LMfZD5Q_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_NXqdUFpinmo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NXqdUFpinmo", libSceAppInstUtilUnknown_NXqdUFpinmo_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QMjuGVPtjUY", libSceAppInstUtilUnknown_QMjuGVPtjUY_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("R-OUApMZ1d8", libSceAppInstUtilUnknown_R_minus_OUApMZ1d8_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("T9h6l8bFKGE", libSceAppInstUtilUnknown_T9h6l8bFKGE_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_X5Q7QxodFcg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("X5Q7QxodFcg", libSceAppInstUtilUnknown_X5Q7QxodFcg_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_XWjOLtdgxa4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("XWjOLtdgxa4", libSceAppInstUtilUnknown_XWjOLtdgxa4_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_Y_plus_ln_minus_TkY_plus_hA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Y+ln-TkY+hA", libSceAppInstUtilUnknown_Y_plus_ln_minus_TkY_plus_hA_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_Zv_plus_26GDSKcQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Zv+26GDSKcQ", libSceAppInstUtilUnknown_Zv_plus_26GDSKcQ_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_ecad2GAw55Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ecad2GAw55Y", libSceAppInstUtilUnknown_ecad2GAw55Y_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_gFlBHjtrMDI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gFlBHjtrMDI", libSceAppInstUtilUnknown_gFlBHjtrMDI_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_gP27iU_plus_aZFw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gP27iU+aZFw", libSceAppInstUtilUnknown_gP27iU_plus_aZFw_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_grC16befiso_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("grC16befiso", libSceAppInstUtilUnknown_grC16befiso_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_j80u95nZ_plus_3A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("j80u95nZ+3A", libSceAppInstUtilUnknown_j80u95nZ_plus_3A_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_j9qjbjMifhQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("j9qjbjMifhQ", libSceAppInstUtilUnknown_j9qjbjMifhQ_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_pbYNtR2enrY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("pbYNtR2enrY", libSceAppInstUtilUnknown_pbYNtR2enrY_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_qn0aziKw_minus_kE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qn0aziKw-kE", libSceAppInstUtilUnknown_qn0aziKw_minus_kE_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_qxjCWxg8ki4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qxjCWxg8ki4", libSceAppInstUtilUnknown_qxjCWxg8ki4_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_vZ1SWJ0y4mo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vZ1SWJ0y4mo", libSceAppInstUtilUnknown_vZ1SWJ0y4mo_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_xV7MhF_plus_9AQk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xV7MhF+9AQk", libSceAppInstUtilUnknown_xV7MhF_plus_9AQk_nid_no_patch);
+
+int APS5_VABI libSceAppInstUtilUnknown_yYVV_minus_f0zoWY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("yYVV-f0zoWY", libSceAppInstUtilUnknown_yYVV_minus_f0zoWY_nid_no_patch);
 
 }

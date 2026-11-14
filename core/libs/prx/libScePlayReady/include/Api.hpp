@@ -1,22 +1,23 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
 int APS5_VABI sceBufferAlloc();
 int APS5_VABI sceBufferDup();
 int APS5_VABI sceBufferFree();
-int APS5_VABI sceBufferInit();
+void APS5_VABI sceBufferInit(void* buffer);
 int APS5_VABI sceBufferRealloc();
-int APS5_VABI scePlayReadyApiInitializeInitParams();
+void APS5_VABI scePlayReadyApiInitializeInitParams(void* params);
 int APS5_VABI scePlayReadyApiIsStarted();
 int APS5_VABI scePlayReadyApiStart();
 int APS5_VABI scePlayReadyApiStop();
-int APS5_VABI scePlayReadyApiVersion();
-int APS5_VABI scePlayReadyApiVersionString();
+int APS5_VABI scePlayReadyApiVersion(uint32_t index, uint64_t* version);
+const char* APS5_VABI scePlayReadyApiVersionString(uint32_t index);
 int APS5_VABI scePlayReadyBufferFree();
-int APS5_VABI scePlayReadyBufferInit();
+int APS5_VABI scePlayReadyBufferInit(void* buffer);
 int APS5_VABI scePlayReadyBufferMalloc();
 int APS5_VABI scePlayReadyBufferRealloc();
 int APS5_VABI scePlayReadyContentGetProperty();
@@ -38,7 +39,7 @@ int APS5_VABI scePlayReadyEnvelopeSeek();
 int APS5_VABI scePlayReadyFinalize();
 int APS5_VABI scePlayReadyFreeDecryptContext();
 int APS5_VABI scePlayReadyInitialize();
-int APS5_VABI scePlayReadyInitializeInitParams();
+void APS5_VABI scePlayReadyInitializeInitParams(void* params);
 int APS5_VABI scePlayReadyLicenseAcqGenerateAck();
 int APS5_VABI scePlayReadyLicenseAcqGenerateChallenge();
 int APS5_VABI scePlayReadyLicenseAcqGetAdditionalResponseData();

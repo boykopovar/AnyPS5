@@ -1,4 +1,4 @@
-add_library(libSceAudioPropagation SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceAudioPropagation SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
 target_include_directories(libSceAudioPropagation PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAudioPropagation)
 

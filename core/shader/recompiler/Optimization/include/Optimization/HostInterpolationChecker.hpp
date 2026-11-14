@@ -8,7 +8,7 @@ namespace ShaderRecompiler {
 
 class HostInterpolationChecker {
 public:
-    [[nodiscard]] bool Lower(IrProgram& program, const ShaderPixelInputInfo& pixel, bool barycentricBuiltins) const;
+    [[nodiscard]] bool Lower(IrProgram& program, const ShaderPixelInputInfo& pixel, bool barycentricBuiltins, bool firstVertexFlat) const;
 };
 
 }

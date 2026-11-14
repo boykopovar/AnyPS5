@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <array>
 #include <chrono>
 #include <csignal>
@@ -54,7 +55,7 @@ std::FILE* Pipe(int& reader) {
 }
 
 void SuccessfulBytes() {
-    auto* file = std::tmpfile();
+    auto* file = TemporaryFile::Open();
     Check(file != nullptr, "cannot create BMP test file");
     const std::array<std::byte, 16> pixels{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
     Check(!AgcDriver::WriteBmpStream_nid_no_patch(file, 2, 2, pixels), "valid BMP write failed");

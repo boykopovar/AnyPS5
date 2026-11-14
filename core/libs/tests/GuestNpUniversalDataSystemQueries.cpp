@@ -33,8 +33,19 @@ static bool Zeroed(const Stat& stat) {
 }
 
 int main() {
-    CHECK(RejectsArgument([] { sceNpUniversalDataSystemInitialize(nullptr); }));
+    constexpr int invalidArgument = static_cast<int>(0x80553102u);
+    constexpr int invalidParamSize = static_cast<int>(0x80553112u);
+    CHECK(sceNpUniversalDataSystemInitialize(nullptr) == invalidArgument);
     const NpUniversalDataSystemInitParam init{sizeof(NpUniversalDataSystemInitParam), 0x10000};
+    for (const std::size_t size : {std::size_t{0}, std::size_t{8}, std::size_t{0xf}, std::size_t{0x11}, std::size_t{0x18},
+                                   std::size_t{0x20}, std::size_t{0x100}, ~std::size_t{0}}) {
+        const NpUniversalDataSystemInitParam wrongSize{size, 0x10000};
+        CHECK(sceNpUniversalDataSystemInitialize(&wrongSize) == invalidParamSize);
+    }
+    const NpUniversalDataSystemInitParam emptyPool{sizeof(NpUniversalDataSystemInitParam), 0};
+    CHECK(sceNpUniversalDataSystemInitialize(&emptyPool) == invalidArgument);
+    const NpUniversalDataSystemInitParam wrongSizeEmptyPool{0x18, 0};
+    CHECK(sceNpUniversalDataSystemInitialize(&wrongSizeEmptyPool) == invalidParamSize);
     CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
 
     NpUniversalDataSystemMemoryStat memory;
@@ -49,21 +60,27 @@ int main() {
     NpUniversalDataSystemEvent* event = nullptr;
     CHECK(sceNpUniversalDataSystemCreateEvent("QueryEvent", nullptr, &event, nullptr) == 0 && event != nullptr);
     std::size_t size = 0;
-    CHECK(RejectsArgument([&] { sceNpUniversalDataSystemEventEstimateSize(nullptr, &size); }));
-    CHECK(RejectsArgument([&] { sceNpUniversalDataSystemEventEstimateSize(event, nullptr); }));
-    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, &size) == 0 && size == 3);
+    CHECK(sceNpUniversalDataSystemEventEstimateSize(nullptr, &size) == static_cast<int>(0x80553116u));
+    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, nullptr) == static_cast<int>(0x80553102u));
+    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, &size) == 0 && size == 34);
 
     char text[8];
     std::memset(text, 'x', sizeof(text));
     std::size_t length = 0;
-    CHECK(RejectsArgument([&] { sceNpUniversalDataSystemEventToString(nullptr, text, sizeof(text), &length); }));
+    CHECK(sceNpUniversalDataSystemEventToString(nullptr, text, sizeof(text), &length) == static_cast<int>(0x80553116u));
     CHECK(text[0] == 'x' && length == 0);
-    CHECK(sceNpUniversalDataSystemEventToString(event, text, sizeof(text), &length) == 0 && length == 3 && std::strcmp(text, "{}") == 0);
+    CHECK(sceNpUniversalDataSystemEventToString(event, text, sizeof(text), &length) == 0 && length == 61 && std::strcmp(text, "{\n    \"") == 0);
     length = 0;
-    CHECK(sceNpUniversalDataSystemEventToString(event, nullptr, 0, &length) == 0 && length == 3);
+    CHECK(sceNpUniversalDataSystemEventToString(event, nullptr, 0, &length) == 0 && length == 61);
     char tiny[2] = {'x', 'x'};
     CHECK(sceNpUniversalDataSystemEventToString(event, tiny, sizeof(tiny), nullptr) == 0 && tiny[0] == '{' && tiny[1] == '\0');
     CHECK(sceNpUniversalDataSystemDestroyEvent(event) == 0);
+
+    int udsHandle = -1;
+    CHECK(sceNpUniversalDataSystemCreateHandle(&udsHandle) == 0 && udsHandle != -1);
+    CHECK(sceNpUniversalDataSystemDestroyHandle(udsHandle) == 0);
+    CHECK(sceNpUniversalDataSystemAbortHandle(udsHandle) == 0);
+
     std::puts("UDS query tests passed");
     return 0;
 }

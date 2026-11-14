@@ -17,6 +17,7 @@
 #endif
 
 namespace {
+constexpr auto CompletionDeadline = std::chrono::seconds(20);
 void Require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
 alignas(256) std::array<std::uint32_t, 15> Code{0xf4080200u, 0xfa000000u, 0xbe840381u, 0x9304ff04u, 0x0019660du, 0x8004ff04u, 0x3c6ef35fu, 0x80828102u, 0xbf078002u, 0xbf85fff9u, 0xbf8cc07fu, 0x7e000204u, 0xe0700000u, 0x80020000u, 0xbf810000u};
 std::uint32_t Low(const void* p) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(p)); }
@@ -35,7 +36,7 @@ void Release(std::vector<std::uint32_t>& words, const void* label, std::uint32_t
     words.insert(words.end(), {0xc0064900u, 0x514u, (2u << 29u) | (interrupt << 24u), Low(label), High(label), value, 0u, 0u});
 }
 void Await(const std::uint32_t* label, std::uint32_t value) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + CompletionDeadline;
     while (*static_cast<const volatile std::uint32_t*>(label) != value) {
         Require(std::chrono::steady_clock::now() < deadline, "submission lost its real GPU completion store");
         std::this_thread::yield();

@@ -24,5 +24,6 @@ int APS5_VABI sceSharePlayStartStandby(void);
 int APS5_VABI sceSharePlayStartStreaming(void);
 int APS5_VABI sceSharePlayStopStandby(void);
 int APS5_VABI sceSharePlayStopStreaming(void);
+int APS5_VABI sceSharePlaySetShareScreenStatus();
 
 }

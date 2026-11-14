@@ -190,6 +190,17 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("PackFloat2x16Rtz", U32, F32, F32),
     makeMeta("FPAdd16x2", U32, U32, U32),
     makeMeta("FPMul16x2", U32, U32, U32),
+    makeMeta("FPFma16x2", U32, U32, U32, U32),
+    makeMeta("IAdd16x2", U32, U32, U32),
+    makeMeta("ISub16x2", U32, U32, U32),
+    makeMeta("IMul16x2", U32, U32, U32),
+    makeMeta("ShiftLeftLogical16x2", U32, U32, U32),
+    makeMeta("ShiftRightLogical16x2", U32, U32, U32),
+    makeMeta("ShiftRightArithmetic16x2", U32, U32, U32),
+    makeMeta("SMin16x2", U32, U32, U32),
+    makeMeta("SMax16x2", U32, U32, U32),
+    makeMeta("UMin16x2", U32, U32, U32),
+    makeMeta("UMax16x2", U32, U32, U32),
     makeMeta("FPAbs32", F32, F32),
     makeMeta("FPNeg32", F32, F32),
     makeMeta("FPSaturate32", F32, F32),
@@ -296,6 +307,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("FPMul64", U64, U64, U64),
     makeMeta("FPFma64", U64, U64, U64, U64),
     makeMeta("FPFmaScale64", U64, U64, U64, U64, U32),
+    makeMeta("FPFmaScale32", F32, F32, F32, F32, U32),
     makeMeta("FPMin64", U64, U64, U64),
     makeMeta("FPMax64", U64, U64, U64),
     makeMeta("FPSaturate64", U64, U64),
@@ -325,6 +337,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("Permlane16U32", U32, U32, U32, U32, U1, U32),
     makeMeta("BpermuteU32", U32, U32, U32, U1),
     makeMeta("PermuteU32", U32, U32, U32, U1),
+    makeMeta("HalfSwapU32", U32, U32),
     makeMeta("GetSrtResource", SrtResource),
     makeMeta("GetBufferResource", BufferResource, U32, U32, U32, U32),
     makeMeta("GetAddressResource", AddressResource, U32, U32),
@@ -553,7 +566,7 @@ IrType IrOpcodeArgumentType(IrOpcode opcode, std::size_t index) {
     return meta.args[index];
 }
 
-BufferAccess BufferAccessOf(IrOpcode opcode) {
+static constexpr BufferAccess computeBufferAccess(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::LoadBuffer:
         case IrOpcode::ReadConstBuffer:
@@ -643,7 +656,7 @@ std::uint32_t BufferComponentCount(IrOpcode opcode) {
     }
 }
 
-SharedAccess SharedAccessOf(IrOpcode opcode) {
+static constexpr SharedAccess computeSharedAccess(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::LoadShared:
         case IrOpcode::LoadSharedU8:
@@ -745,7 +758,7 @@ std::uint32_t SharedComponentCount(IrOpcode opcode) {
     }
 }
 
-AddressOpcodeInfo AddressOpcodeInfoOf(IrOpcode opcode) {
+static constexpr AddressOpcodeInfo computeAddressOpcodeInfo(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::LoadAddressU8:
             return {AddressAccess::Read, 8u};
@@ -811,7 +824,7 @@ AddressOpcodeInfo AddressOpcodeInfoOf(IrOpcode opcode) {
     }
 }
 
-ImageOpcodeInfo ImageOpcodeInfoOf(IrOpcode opcode) {
+static constexpr ImageOpcodeInfo computeImageOpcodeInfo(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::ImageQueryDimensions:
         case IrOpcode::ImageRead:
@@ -867,20 +880,20 @@ bool IsFloat64Opcode(IrOpcode opcode) {
     return opcode >= IrOpcode::FPAdd64 && opcode <= IrOpcode::ConvertU32F64;
 }
 
-bool IrOpcodeHasSideEffects(IrOpcode opcode) {
-    const BufferAccess bufferAccess = BufferAccessOf(opcode);
+static constexpr bool computeHasSideEffects(IrOpcode opcode) {
+    const BufferAccess bufferAccess = computeBufferAccess(opcode);
     if (bufferAccess == BufferAccess::Write || bufferAccess == BufferAccess::Atomic) {
         return true;
     }
-    const SharedAccess sharedAccess = SharedAccessOf(opcode);
+    const SharedAccess sharedAccess = computeSharedAccess(opcode);
     if (sharedAccess == SharedAccess::Write || sharedAccess == SharedAccess::Atomic || sharedAccess == SharedAccess::Append || sharedAccess == SharedAccess::Consume) {
         return true;
     }
-    const AddressAccess addressAccess = AddressOpcodeInfoOf(opcode).access;
+    const AddressAccess addressAccess = computeAddressOpcodeInfo(opcode).access;
     if (addressAccess == AddressAccess::Write || addressAccess == AddressAccess::Atomic) {
         return true;
     }
-    const ImageAccess imageAccess = ImageOpcodeInfoOf(opcode).access;
+    const ImageAccess imageAccess = computeImageOpcodeInfo(opcode).access;
     if (imageAccess == ImageAccess::Write || imageAccess == ImageAccess::Atomic) {
         return true;
     }
@@ -926,6 +939,49 @@ bool IrOpcodeHasSideEffects(IrOpcode opcode) {
         default:
             return false;
     }
+}
+
+struct OpcodeTraits {
+    BufferAccess buffer = BufferAccess::None;
+    SharedAccess shared = SharedAccess::None;
+    AddressOpcodeInfo address{};
+    ImageOpcodeInfo image{};
+    bool sideEffects = false;
+};
+
+static constexpr auto TraitTable = [] {
+    std::array<OpcodeTraits, static_cast<std::size_t>(IrOpcode::Count)> table{};
+    for (std::size_t index = 0; index < table.size(); ++index) {
+        const auto opcode = static_cast<IrOpcode>(index);
+        table[index] = {computeBufferAccess(opcode), computeSharedAccess(opcode), computeAddressOpcodeInfo(opcode), computeImageOpcodeInfo(opcode), computeHasSideEffects(opcode)};
+    }
+    return table;
+}();
+
+static const OpcodeTraits& traitsOf(IrOpcode opcode) {
+    static constexpr OpcodeTraits Unknown{};
+    const auto index = static_cast<std::size_t>(opcode);
+    return index < TraitTable.size() ? TraitTable[index] : Unknown;
+}
+
+BufferAccess BufferAccessOf(IrOpcode opcode) {
+    return traitsOf(opcode).buffer;
+}
+
+SharedAccess SharedAccessOf(IrOpcode opcode) {
+    return traitsOf(opcode).shared;
+}
+
+AddressOpcodeInfo AddressOpcodeInfoOf(IrOpcode opcode) {
+    return traitsOf(opcode).address;
+}
+
+ImageOpcodeInfo ImageOpcodeInfoOf(IrOpcode opcode) {
+    return traitsOf(opcode).image;
+}
+
+bool IrOpcodeHasSideEffects(IrOpcode opcode) {
+    return traitsOf(opcode).sideEffects;
 }
 
 std::string_view IrOpcodeName(IrOpcode opcode) {

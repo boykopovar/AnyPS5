@@ -8,5 +8,9 @@ int APS5_VABI sceRemoteplayIsRemoteViewering();
 int APS5_VABI sceRemoteplayNotifyCanWakeup();
 int APS5_VABI sceRemoteplayRegistCallback();
 int APS5_VABI sceRemoteplayUnregistCallback();
+int APS5_VABI sceRemoteplayDisableInputDevice(void);
+int APS5_VABI sceRemoteplayEnableInputDevice(void);
+int APS5_VABI sceRemoteplayGetClientInfo();
+int APS5_VABI libSceRemoteplayUnknown_HV7jZe1frbM_nid_no_patch();
 
 }

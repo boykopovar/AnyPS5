@@ -1,0 +1,111 @@
+{
+  "format": "anyps5-report",
+  "version": 1,
+  "generated": "2026-10-29T12:00:00Z",
+  "anyps5": {
+    "commit": "40f2a9c3d1b7e5864a0c9d2e7f13b5a8c6d49e01",
+    "release": "v0.1.3",
+    "modified": false
+  },
+  "game": {
+    "titleId": "PPSA12345",
+    "contentId": "UP9000-PPSA12345_00-EXAMPLE00000000A",
+    "contentVersion": "01.002.000",
+    "name": "Example Game"
+  },
+  "system": {
+    "os": "linux",
+    "osVersion": "Arch Linux (kernel 6.11)",
+    "cpu": "AMD Ryzen 7 5800X",
+    "ramGiB": 32,
+    "gpu": {
+      "vendor": "AMD",
+      "name": "Radeon RX 6800",
+      "driver": "Mesa 24.2.3 (RADV)",
+      "vulkan": "1.3.289"
+    }
+  },
+  "run": {
+    "id": "7be3d1a9c0f64825a8d4e6b19f2c0a37",
+    "seconds": 124.5,
+    "exit": "killed",
+    "exitCode": null,
+    "stage": "presents",
+    "milestones": {
+      "loaded": 1.2,
+      "started": 1.4,
+      "firstDraw": 8.9,
+      "firstPresent": 9.3
+    },
+    "framesPresented": 3010,
+    "averageFps": 40.2,
+    "fpsWindowSeconds": 74.9,
+    "recovered": true,
+    "incomplete": true
+  },
+  "coverage": {
+    "milestones": true,
+    "missing": true,
+    "shaders": true,
+    "unsupported": true,
+    "imageFormats": true,
+    "descriptors": true
+  },
+  "truncated": {
+    "functions": 0,
+    "unsupported": 0,
+    "imageFormats": 0,
+    "descriptors": 0
+  },
+  "missing": {
+    "functions": []
+  },
+  "shaders": {
+    "compiled": 1234,
+    "failed": 0,
+    "cacheHits": 5120,
+    "unsupported": [],
+    "imageFormats": [
+      {
+        "format": 37,
+        "name": "Format8_8_8_8Srgb",
+        "status": "accepted",
+        "usage": "sampled",
+        "count": 412
+      },
+      {
+        "format": 10,
+        "name": "Format8_8_8_8UNorm",
+        "status": "accepted",
+        "usage": "color-target",
+        "count": 96
+      }
+    ],
+    "descriptors": [
+      {
+        "type": "SampledImage",
+        "status": "accepted",
+        "usage": "read",
+        "count": 2210
+      },
+      {
+        "type": "UniformBuffer",
+        "status": "accepted",
+        "usage": "read",
+        "count": 1874
+      },
+      {
+        "type": "Sampler",
+        "status": "accepted",
+        "usage": "read",
+        "count": 640
+      }
+    ]
+  },
+  "stop": {
+    "kind": "other",
+    "reason": "unclean-unknown",
+    "message": "The run ended without writing a report; this one was recovered from a checkpoint.",
+    "source": null
+  }
+}

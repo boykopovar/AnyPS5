@@ -6,9 +6,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -41,6 +48,9 @@ void TestWithoutCache() {
     Require(sceHttpCacheSetCacheSharing(1) == 0);
     Require(sceHttpCacheSystemSendStatistics() == 0);
     Require(sceHttpCacheSystemTerm() == 0);
+    Require(sceHttpCacheSystemInit(nullptr) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(nullptr) == InvalidValue);
+    Require(sceHttpCacheSystemShutdown() == 0);
     Require(sceHttpCacheDebugSetUrl() == 0);
     Require(sceHttpCacheRegisterCacheInfoUrl(nullptr) == InvalidValue);
 }
@@ -191,9 +201,10 @@ struct Exchange {
     Response response{};
     std::int32_t result = -1;
     int request = 0;
+    const char* tag = nullptr;
 
     int Retrieve(const char* url) {
-        request = sceHttpCacheCreateRequest(cache, user);
+        request = tag == nullptr ? sceHttpCacheCreateRequest(cache, user) : sceHttpCacheCreateRequestWithTag(cache, user, tag);
         Require(request > 0);
         Request query{method, 0, url, requestHeaders.size(), requestHeaders.data()};
         next = Request{};
@@ -405,6 +416,43 @@ void TestRevalidation() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestSystemLifecycle() {
+    Require(sceHttpCacheSystemInit("/data/cache") == 0);
+    Require(sceHttpCacheSystemInit("/data/other") == 0);
+    Require(sceHttpCacheSystemShutdown() == 0);
+    std::string longPath(0x401, 'a');
+    Require(sceHttpCacheSystemInit(longPath.c_str()) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(longPath.c_str()) == InvalidValue);
+}
+
+void TestSystemPathMemory() {
+    Require(sceHttpCacheSystemInit(reinterpret_cast<const char*>(0x10)) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(reinterpret_cast<const char*>(0x10)) == InvalidValue);
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+    Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    std::memset(memory, 'a', page);
+    const char* unterminated = memory + page - 8;
+    Require(sceHttpCacheSystemInit(unterminated) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(unterminated) == InvalidValue);
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(memory, 2 * page) == 0);
+#endif
+}
+
 void TestPublicResponses() {
     Exchange exchange{sceHttpCacheInit(0)};
     Require(exchange.Retrieve("http://public/a") == 0 && exchange.result == 0);
@@ -429,6 +477,44 @@ void TestPublicResponses() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestTags() {
+    Exchange exchange{sceHttpCacheInit(0)};
+    exchange.tag = "alpha";
+    Cached(exchange, "http://tags/a", {{"Cache-Control", "max-age=3600"}}, "a");
+    exchange.tag = "beta";
+    Cached(exchange, "http://tags/b", {{"Cache-Control", "max-age=3600"}}, "b");
+    exchange.tag = nullptr;
+    Cached(exchange, "http://tags/plain", {{"Cache-Control", "max-age=3600"}}, "p");
+    Require(sceHttpCacheClear(exchange.cache, InitialUser, nullptr) == InvalidValue);
+    Require(sceHttpCacheClear(exchange.cache, InitialUser, "") == InvalidValue);
+    Require(sceHttpCacheClear(9, InitialUser, "alpha") == NotFound);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, InitialUser, nullptr) == InvalidValue);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, InitialUser, "") == InvalidValue);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, InitialUser, "01234567890123456789012345678901") == InvalidValue);
+    Require(sceHttpCacheCreateRequestWithTag(9, InitialUser, "alpha") == NotFound);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, 5, "alpha") == InvalidUser);
+    Require(sceHttpCacheClear(exchange.cache, InitialUser, "alpha") == 0);
+    RequireMiss(exchange, "http://tags/a");
+    Require(exchange.Retrieve("http://tags/b") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(exchange.Retrieve("http://tags/plain") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(sceHttpCacheClear(exchange.cache, -1, "beta") == 0);
+    Require(exchange.Retrieve("http://tags/b") == 0 && exchange.result == 1);
+    exchange.Done();
+    const std::int32_t users[]{InitialUser};
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, users, 1) == 0);
+    RequireMiss(exchange, "http://tags/b");
+    Require(exchange.Retrieve("http://tags/plain") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, users, 0) == 0);
+    Require(exchange.Retrieve("http://tags/plain") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, reinterpret_cast<const std::int32_t*>(0x10), 1) == InvalidValue);
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, users, 21) == InvalidValue);
+    Require(sceHttpCacheTerm(exchange.cache) == 0);
+}
+
 }
 
 int main() {
@@ -439,6 +525,9 @@ int main() {
     TestStoreAndHit();
     TestLifetimeOrder();
     TestRevalidation();
+    TestSystemLifecycle();
+    TestSystemPathMemory();
     TestPublicResponses();
+    TestTags();
     return 0;
 }

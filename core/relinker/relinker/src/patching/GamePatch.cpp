@@ -58,11 +58,19 @@ std::string_view Trim(std::string_view text) {
     return text.substr(first, text.find_last_not_of(whitespace) - first + 1);
 }
 
-std::string_view StripComment(const std::string_view line) {
+bool IsControlCharacter(const char character) {
+    return (static_cast<unsigned char>(character) < 0x20 && character != '\t') || character == 0x7f;
+}
+
+std::string_view StripComment(const std::string_view line, const std::size_t lineNumber) {
     bool inString = false;
     for (std::size_t index = 0; index < line.size(); ++index) {
         if (line[index] == '"') inString = !inString;
-        else if (line[index] == '#' && !inString) return line.substr(0, index);
+        else if (line[index] == '#' && !inString) {
+            for (const char character : line.substr(index + 1))
+                if (IsControlCharacter(character)) FailLine(lineNumber, "control characters are not supported in comments", line);
+            return line.substr(0, index);
+        }
     }
     return line;
 }
@@ -123,7 +131,7 @@ RawValue ParseValue(const std::string_view text, const std::size_t line, const s
         const auto content = text.substr(1, end - 1);
         if (content.find('\\') != std::string_view::npos) FailLine(line, "escapes are not supported in strings", whole);
         for (const char character : content)
-            if (static_cast<unsigned char>(character) < 0x20 && character != '\t') FailLine(line, "control characters are not supported in strings", whole);
+            if (IsControlCharacter(character)) FailLine(line, "control characters are not supported in strings", whole);
         value.IsString = true;
         value.Text = std::string(content);
         return value;
@@ -382,10 +390,11 @@ PatchFile ParsePatchFile(const std::string_view text) {
     while (position <= text.size()) {
         auto end = text.find('\n', position);
         if (end == std::string_view::npos) end = text.size();
-        const auto whole = text.substr(position, end - position);
+        auto whole = text.substr(position, end - position);
+        if (end < text.size() && whole.ends_with('\r')) whole.remove_suffix(1);
         position = end + 1;
         ++lineNumber;
-        const auto line = Trim(StripComment(whole));
+        const auto line = Trim(StripComment(whole, lineNumber));
         if (line.empty()) continue;
         if (line.front() == '[') {
             if (line != "[[patch]]") FailLine(lineNumber, "unsupported table header", Trim(whole));
@@ -525,7 +534,7 @@ std::vector<AppliedPatch> AggregateManifest(const std::vector<std::vector<Applie
 std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath, const std::optional<std::uint64_t> linuxBase) {
     const auto holdable = [](const std::string& text) {
         return std::none_of(text.begin(), text.end(), [](const char character) {
-            return character == '"' || character == '\\' || (static_cast<unsigned char>(character) < 0x20 && character != '\t') || character == 0x7f;
+            return character == '"' || character == '\\' || IsControlCharacter(character);
         });
     };
     const auto quoted = [&](const std::string& text, const char* field) {

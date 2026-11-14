@@ -1,11 +1,11 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
 #include <mutex>
-#include <optional>
 #include <string>
 #ifdef _WIN32
 #include "prx/libc/include/WindowsFormatting.hpp"
@@ -23,7 +23,9 @@ constexpr int logPid = 0x01;
 int logMask = 0xff;
 int logOptions = 0;
 int logFacility = userFacility;
-std::optional<std::string> logIdentity;
+const char* logIdentity = nullptr;
+const char* fallbackIdentity = nullptr;
+const char* const* programName = nullptr;
 
 std::mutex& OutputMutex() {
     static std::mutex mutex;
@@ -31,8 +33,10 @@ std::mutex& OutputMutex() {
 }
 
 void Emit(int priority, const std::string& message) {
+    if (!logIdentity && !fallbackIdentity && programName) fallbackIdentity = *programName;
+    const char* identity = logIdentity ? logIdentity : fallbackIdentity;
     std::fprintf(stderr, "[syslog:%d] ", priority);
-    if (logIdentity) std::fputs(logIdentity->c_str(), stderr);
+    if (identity) std::fputs(identity, stderr);
     if (logOptions & logPid) {
 #ifdef _WIN32
         std::fprintf(stderr, "[%d]", ::_getpid());
@@ -40,7 +44,7 @@ void Emit(int priority, const std::string& message) {
         std::fprintf(stderr, "[%d]", static_cast<int>(::getpid()));
 #endif
     }
-    if (logIdentity) std::fputs(": ", stderr);
+    if (identity) std::fputs(": ", stderr);
     std::fputs(message.c_str(), stderr);
     if (message.empty() || message.back() != '\n') std::fputc('\n', stderr);
     std::fflush(stderr);
@@ -86,6 +90,12 @@ std::string Format(const char* format, VaList* args) {
 }
 
 extern "C" {
+void LibcRegisterProgramName_nid_no_patch(const char* const* name) {
+    std::lock_guard lock(OutputMutex());
+    programName = name;
+    fallbackIdentity = nullptr;
+}
+
 void APS5_VABI openlog_nid_postfix(const char* identity, int options, int facility) {
     std::lock_guard lock(OutputMutex());
     if (identity) logIdentity = identity;
@@ -95,7 +105,8 @@ void APS5_VABI openlog_nid_postfix(const char* identity, int options, int facili
 
 void APS5_VABI closelog_nid_postfix() {
     std::lock_guard lock(OutputMutex());
-    logIdentity.reset();
+    logIdentity = nullptr;
+    fallbackIdentity = nullptr;
 }
 
 int APS5_VABI setlogmask_nid_postfix(int mask) {

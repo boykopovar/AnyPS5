@@ -75,6 +75,18 @@ def main():
         assert found[PT_GNU_STACK] == (PT_GNU_STACK, 6, 0, 0, 0, 0, 0, 16), found
         assert found[PT_GNU_RELRO][3:5] == (0x500 + DEFAULT_BASE, 0x500 + DEFAULT_BASE), found
 
+        duplicate_stack = image()
+        struct.pack_into("<IIQQQQQQ", duplicate_stack, 64 + 4 * 56, PT_GNU_STACK, 7, 0, 0, 0, 0, 0, 16)
+        source.write_bytes(duplicate_stack)
+        output = work / "duplicate-stack.out"
+        result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+        assert output.exists(), "output not written for two PT_GNU_STACK segments"
+        found_stacks = [header for header in headers(output.read_bytes()) if header[0] == PT_GNU_STACK]
+        assert len(found_stacks) == 1, found_stacks
+        assert found_stacks[0] == (PT_GNU_STACK, 7, 0, 0, 0, 0, 0, 16), found_stacks[0]
+
         if sys.platform.startswith("linux"):
             for options, mode in (([], "default"), (["--linux-fixed-base", hex(BASE)], "fixed")):
                 for relro_memory_size, keeps_relro in ((0x4000, True), (0x8000, False)):

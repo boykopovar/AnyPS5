@@ -128,8 +128,11 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> ReadStart(AgcDriver::Vulkan
 int main(int argc, char** argv) {
     try {
         const bool bufferCopy = argc > 1 && std::string(argv[1]) == "--buffer-copy";
+        const bool imageCopy = argc > 1 && std::string(argv[1]) == "--image-copy";
+        if (bufferCopy || imageCopy) AgcDriver::Graphics::SetDepthTransferPasses(false);
         if (bufferCopy) AgcDriver::Graphics::SetDirectDepthCopy(false);
         const bool forcedOff = bufferCopy || std::getenv("APS5_NO_DIRECT_DEPTH_COPY") != nullptr;
+        const bool passesOff = bufferCopy || imageCopy || std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") != nullptr;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Require(AgcDriver::Graphics::DepthSliceBytes(PlaneExtent, 4u) == PlaneBytes, "the 384x200 depth plane is not six 64 KiB tiles");
@@ -179,6 +182,71 @@ int main(int argc, char** argv) {
             RequireUnit(plane, 0, 0.5f, UnitTexels, "the untouched unit retains its GPU depth results");
             Require(std::memcmp(table, descriptor.data(), sizeof(descriptor)) == 0, "storing an untouched depth unit changed the CPU descriptors");
             std::puts(partialWatch ? "depth plane CPU descriptors with partial write watch tests passed" : "depth plane CPU descriptors after memoized collect tests passed");
+            return 0;
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--partially-unmapped-plane") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before a partial unmap did not cover the plane");
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Unmap(plane, Block, [](const void*, std::size_t, const void*, bool) {});
+                mutation.Add(plane, Block, true, true, true);
+            }
+            FillUnit(plane, 0, 0.75f);
+            auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(!AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane whose first unit was unmapped and mapped again stored none of its other units");
+            device->WaitIdle();
+            Require(Since(before).units == Units - 1u, "a read of a plane whose first unit was unmapped and mapped again did not store exactly its other units");
+            RequireUnit(plane, 0, 0.75f, UnitTexels, "after a read of a plane whose first unit was unmapped and mapped again, that unit");
+            for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a read of a plane whose first unit was unmapped and mapped again, a unit that was not unmapped");
+            std::puts("depth plane partial store tests passed (partially unmapped plane)");
+            return 0;
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--unmapped-plane-fill") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before a pending depth fill did not cover the plane");
+            AgcDriver::Graphics::NoteDepthMetadataFill(base, PlaneBytes, 0x3e800000u);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(blocks);
+                mutation.Add(blocks, Block + PlaneBytes, true, true, true);
+            }
+            FillUnit(plane, 0, 0.75f);
+            auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane unmapped and mapped again after a depth fill stored the fill recorded before the unmap");
+            device->WaitIdle();
+            Require(Since(before).stores == 0, "a read of a plane unmapped and mapped again after a depth fill counted a store");
+            RequireUnit(plane, 0, 0.75f, UnitTexels, "after a read of a plane unmapped and mapped again after a depth fill, the unit the CPU wrote");
+            for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels, "after a read of a plane unmapped and mapped again after a depth fill, a unit the CPU did not write");
+            std::puts("depth plane partial store tests passed (unmapped plane with a pending fill)");
+            return 0;
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--unmapped-plane") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before the unmap did not cover the plane");
+            Require(AgcDriver::Graphics::DepthPlanesStale(), "the draw writing depth before the unmap left the plane unregistered");
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(blocks);
+                mutation.Add(blocks, Block + PlaneBytes, true, true, true);
+            }
+            FillUnit(plane, 0, 0.75f);
+            auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane unmapped and mapped again stored the results drawn before the unmap");
+            device->WaitIdle();
+            Require(Since(before).stores == 0, "a read of a plane unmapped and mapped again counted a store");
+            RequireUnit(plane, 0, 0.75f, UnitTexels, "after a read of a plane unmapped and mapped again, the unit the CPU wrote");
+            for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels, "after a read of a plane unmapped and mapped again, a unit the CPU did not write");
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 after the unmap did not cover the plane");
+            before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(!AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of the plane drawn after the unmap stored nothing");
+            device->WaitIdle();
+            Require(Since(before).units == Units, "a read of the plane drawn after the unmap did not store every unit");
+            for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a read of the plane drawn after the unmap");
+            std::puts("depth plane partial store tests passed (unmapped plane)");
             return 0;
         }
 
@@ -330,11 +398,15 @@ int main(int argc, char** argv) {
         stored = Since(before);
         Require(stored.stores == 1 && stored.units == Units, "a lookup of every layer of an array did not store the depth plane over its second layer");
         for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(layerPlane, unit, 0.25f, Texels(unit), "a lookup of every layer of an array, the depth plane over its second layer");
+        const auto passes = AgcDriver::Graphics::DepthTransferPassCount();
+        Require(!passesOff || passes == 0, "depth plane transfers ran in shader passes with the passes forced off");
+        Require(passesOff || !device->graphicsContext().pushDescriptors || passes > 0, "the device enables VK_KHR_push_descriptor but no depth plane transfer ran in shader passes");
+        if (!passesOff && passes == 0) std::puts("depth transfer passes not exercised: the device lacks VK_KHR_push_descriptor");
         const auto direct = AgcDriver::Graphics::DirectDepthCopyCount();
         Require(!forcedOff || direct == 0, "depth plane copies went directly with the buffer path forced");
-        Require(forcedOff || !device->graphicsContext().maintenance8 || direct > 0, "the device enables VK_KHR_maintenance8 but no depth plane copy went directly");
-        if (!forcedOff && direct == 0) std::puts("direct depth copies not exercised: the device lacks VK_KHR_maintenance8 or no storage format pairs with the depth plane");
-        std::printf("depth plane partial store tests passed (%s, %llu direct depth copies)\n", forcedOff ? "buffer path" : "default path", static_cast<unsigned long long>(direct));
+        Require(forcedOff || !passesOff || !device->graphicsContext().maintenance8 || direct > 0, "the device enables VK_KHR_maintenance8 but no depth plane copy went directly");
+        if (!forcedOff && passesOff && direct == 0) std::puts("direct depth copies not exercised: the device lacks VK_KHR_maintenance8 or no storage format pairs with the depth plane");
+        std::printf("depth plane partial store tests passed (%s, %llu shader passes, %llu direct depth copies)\n", forcedOff ? "buffer path" : passesOff ? "image copies" : "default path", static_cast<unsigned long long>(passes), static_cast<unsigned long long>(direct));
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

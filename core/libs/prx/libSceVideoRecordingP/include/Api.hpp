@@ -6,12 +6,16 @@ struct VideoRecordingContext;
 
 struct VideoRecordingParam {
     std::uint64_t size;
-    std::int32_t threadPriority;
     std::uint32_t duration;
     std::uint32_t mode;
+    std::uint64_t affinityMask;
+    std::int32_t threadPriority;
     std::int32_t outputMode;
     std::uint32_t option;
     std::uint32_t format;
+    std::uint32_t reserved40;
+    std::uint32_t reserved44;
+    std::uint8_t reserved48[16];
 };
 
 struct VideoRecordingParam2 {
@@ -64,5 +68,9 @@ int APS5_VABI sceVideoRecordingStart(void);
 int APS5_VABI sceVideoRecordingStop(void);
 int APS5_VABI sceVideoRecordingTerm(void);
 int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void);
+
+int APS5_VABI sceVideoRecordingGetCopyrightImageMemory();
+int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle();
+
 
 }

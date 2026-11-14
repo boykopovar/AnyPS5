@@ -24,7 +24,7 @@ int main() {
     Require(pthread_cond_setname_np_nid_postfix(&cond, "second") == 0);
     Require(pthread_cond_signal_nid_postfix(&cond) == 0);
     Require(ThrowsInvalidArgument([&] { return pthread_cond_setname_np_nid_postfix(&cond, nullptr); }));
-    Require(ThrowsInvalidArgument([] { return pthread_cond_setname_np_nid_postfix(nullptr, "cond"); }));
+    Require(pthread_cond_setname_np_nid_postfix(nullptr, "cond") == GuestEinval);
     Require(pthread_cond_destroy_nid_postfix(&cond) == 0);
     Require(pthread_cond_setname_np_nid_postfix(&cond, "destroyed") == GuestEinval);
     Require(pthread_cond_init_nid_postfix(&cond, nullptr) == 0);

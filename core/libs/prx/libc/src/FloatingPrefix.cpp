@@ -76,12 +76,12 @@ int ParsePrefix(const TChar** cursor, TChar** end) {
 extern "C" {
 
 int APS5_VABI _Stopfx_nid_postfix(const char** cursor, char** end) {
-    if (cursor == nullptr || *cursor == nullptr) NotImplemented_nid_no_patch(__func__);
+    if (cursor == nullptr || *cursor == nullptr) APS5_INVALID_ARG_EX;
     return ParsePrefix(cursor, end);
 }
 
 int APS5_VABI _WStopfx_nid_postfix(const char16_t** cursor, char16_t** end) {
-    if (cursor == nullptr || *cursor == nullptr) NotImplemented_nid_no_patch(__func__);
+    if (cursor == nullptr || *cursor == nullptr) APS5_INVALID_ARG_EX;
     return ParsePrefix(cursor, end);
 }
 

@@ -42,6 +42,10 @@ void* AcquireRendererSelection(RendererNative* renderer) {
     }
 }
 
+std::atomic<std::uint32_t> glyphSupportLock;
+const FontGlyphSupport* glyphSupportSlots[2];
+std::uint32_t glyphSupportCount;
+
 void* CreateFontContext(FontLibNative* library, std::uint32_t entries, std::uint32_t size) {
     void* ctx = library->iface->alloc(library->alloc_ctx, size);
     if (!ctx) return nullptr;
@@ -83,6 +87,18 @@ int SupportFonts(FontLibrary library, void* FontLibNative::*slot, std::uint32_t 
 #pragma GCC visibility push(default)
 
 extern "C" {
+
+int APS5_VABI sceFontSupportSystemUpdation(FontLibrary library, std::uint32_t version) {
+    auto* lib = static_cast<FontLibNative*>(library);
+    std::uint32_t previous = 0;
+    if (!AcquireLibraryLock(lib, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    constexpr std::uint32_t SupportedVersion = 0x20230801;
+    constexpr std::uint16_t SystemUpdationFlag = 0x0200;
+    const bool supported = version == SupportedVersion;
+    if (supported) lib->reserved0 |= SystemUpdationFlag;
+    ReleaseLibraryLock(lib, previous);
+    return supported ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
+}
 
 int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::uint32_t regionSize, const FontMemoryInterface* iface, void* mspaceObject, FontMemoryDestroyFunction destroyCallback, void* destroyObject) {
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
@@ -265,11 +281,11 @@ int APS5_VABI sceFontDestroyRenderer(FontRenderer* pRenderer) {
 }
 
 int APS5_VABI sceFontRendererGetOutlineBufferSize(FontRenderer fontRenderer, std::uint32_t* size) {
-    if (!size) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *size = 0;
+    if (!size || !CopyOutGuest(size, std::uint32_t{0})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
     if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
-    *size = static_cast<std::uint32_t>(renderer->workspace_size);
+    const auto workspaceSize = static_cast<std::uint32_t>(renderer->workspace_size);
+    if (!CopyOutGuest(size, workspaceSize)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -303,17 +319,18 @@ int APS5_VABI sceFontGetPixelResolution(FontLibrary library, std::uint32_t* subP
     auto* lib = static_cast<FontLibNative*>(library);
     std::uint32_t previous = 0;
     if (!lib || !AcquireLibraryLock(lib, previous)) {
-        if (subPixelCount) *subPixelCount = 0;
+        if (subPixelCount) CopyOutGuest(subPixelCount, std::uint32_t{0});
         return SCE_FONT_ERROR_INVALID_LIBRARY;
     }
     const auto unlock = [previous](FontLibNative* locked) { ReleaseLibraryLock(locked, previous); };
     const std::unique_ptr<FontLibNative, decltype(unlock)> lock(lib, unlock);
     if (!lib->sys_driver || !lib->sys_driver->pixel_resolution) {
-        if (subPixelCount) *subPixelCount = 0;
+        if (subPixelCount) CopyOutGuest(subPixelCount, std::uint32_t{0});
         return SCE_FONT_ERROR_INVALID_LIBRARY;
     }
     if (!subPixelCount) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *subPixelCount = lib->sys_driver->pixel_resolution();
+    const std::uint32_t resolution = lib->sys_driver->pixel_resolution();
+    if (!CopyOutGuest(subPixelCount, resolution)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -413,6 +430,7 @@ int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary library, void** buffer
 }
 
 int APS5_VABI sceFontSupportExternalFonts(FontLibrary library, std::uint32_t fontMax, std::uint32_t formats) {
+    if (fontMax > (UINT32_MAX >> 6u)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SupportFonts(library, &FontLibNative::external_fonts_ctx, fontMax, (fontMax << 6) | 0x20u, formats);
 }
 
@@ -424,6 +442,31 @@ int APS5_VABI sceFontSetFontsOpenMode(FontLibrary library, std::uint32_t openMod
     auto* lib = static_cast<FontLibNative*>(library);
     if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
     if (openMode > 2) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support) {
+    const auto* tags = reinterpret_cast<const std::uint16_t*>(support);
+    if (!tags || tags[0] != 0x0F1F) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (tags[2] != 0x0F03) return SCE_FONT_ERROR_FATAL;
+    for (;;) {
+        std::uint32_t current = glyphSupportLock.load(std::memory_order_acquire);
+        if (current != 0 || !glyphSupportLock.compare_exchange_weak(current, LOCK_BIT, std::memory_order_acq_rel)) {
+            Backoff();
+            continue;
+        }
+        break;
+    }
+    for (auto& slot : glyphSupportSlots) {
+        if (slot == support) return SCE_FONT_OK;
+        if (!slot) {
+            slot = support;
+            ++glyphSupportCount;
+            glyphSupportLock.store(0, std::memory_order_release);
+            return SCE_FONT_OK;
+        }
+    }
+    glyphSupportLock.store(0, std::memory_order_release);
     return SCE_FONT_OK;
 }
 

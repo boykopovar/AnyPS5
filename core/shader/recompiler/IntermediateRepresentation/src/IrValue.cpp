@@ -5,24 +5,8 @@
 
 namespace ShaderRecompiler {
 
-IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr) {
+IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id, std::pmr::memory_resource* useArena) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr), operandUses(IrUseAllocator<IrUse>(useArena)) {
     arguments.reserve(IrOpcodeOperandCount(opcode));
-}
-
-std::uint32_t IrValue::Id() const {
-    return id;
-}
-
-const std::vector<IrValue*>& IrValue::Arguments() const {
-    return arguments;
-}
-
-IrBlock* IrValue::Parent() const {
-    return parent;
-}
-
-std::uint32_t IrValue::ImmediateU32() const {
-    return static_cast<std::uint32_t>(immediateBits);
 }
 
 void IrValue::AddArgument(IrValue* argument) {
@@ -94,20 +78,8 @@ bool IrValue::IsEmpty() const {
     return opcode == IrOpcode::Void;
 }
 
-bool IrValue::IsPhi() const {
-    return opcode == IrOpcode::Phi;
-}
-
 bool IrValue::MayHaveSideEffects() const {
     return IrOpcodeHasSideEffects(opcode);
-}
-
-bool IrValue::HasUses() const {
-    return !operandUses.empty();
-}
-
-std::size_t IrValue::UseCount() const {
-    return operandUses.size();
 }
 
 std::size_t IrValue::PhiBlockCount() const {
@@ -121,8 +93,13 @@ IrBlock* IrValue::PhiBlock(std::size_t index) const {
     return phiBlocks[index];
 }
 
-const std::vector<IrUse>& IrValue::OperandUses() const {
+const IrUseList& IrValue::OperandUses() const {
     return operandUses;
+}
+
+void IrValue::MoveUsesToHeap() {
+    if (operandUses.get_allocator().Arena() == nullptr) return;
+    operandUses = IrUseList(operandUses.begin(), operandUses.end(), IrUseAllocator<IrUse>{});
 }
 
 std::uint64_t IrValue::ImmediateU64() const {
