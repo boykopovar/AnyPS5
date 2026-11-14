@@ -1566,6 +1566,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_process_exports_patched PROPERTIES ENVIRONMENT_MODIFICATION "${processExportsPatchedPath}")
     endif()
 
+    add_test_executable(guest_kernel_flock_tests tests/GuestKernelFlock.cpp)
+    target_include_directories(guest_kernel_flock_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_flock_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_flock_tests)
+    add_test(NAME guest_kernel_flock COMMAND guest_kernel_flock_tests)
+    set_tests_properties(guest_kernel_flock PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_flock PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+
     add_test_executable(guest_posix_random_tests tests/GuestPosixRandom.cpp)
     target_include_directories(guest_posix_random_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_posix_random_tests PRIVATE libScePosixForWebKit)
