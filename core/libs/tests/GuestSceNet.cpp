@@ -893,8 +893,11 @@ static void CheckResolverEpoll() {
     NetEpollEvent registration{};
     registration.events = in;
     registration.data.u64 = 0x1234;
+    const auto* const unreadable = reinterpret_cast<const NetEpollEvent*>(0x10);
+    Require(Failed(sceNetEpollControl(epoll, 1, resolver, unreadable), 14));
     Require(sceNetEpollControl(epoll, 1, resolver, &registration) == 0);
     Require(Failed(sceNetEpollControl(epoll, 1, resolver, &registration), 48));
+    Require(Failed(sceNetEpollControl(epoll, 2, resolver, unreadable), 14));
     NetEpollEvent ready{};
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
 
