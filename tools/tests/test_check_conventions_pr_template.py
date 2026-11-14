@@ -98,6 +98,13 @@ class PullRequestTemplateTests(unittest.TestCase):
                 self.assert_findings(body(f"- [x] Depends on: none\n- [x] AI-assisted: {answer}\n"),
                                      ["answer AI-assisted with yes or no"])
 
+    def test_ai_assisted_answer_is_on_its_own_line(self):
+        self.assert_passes(body("- [x] Depends on: none\n- [x] AI-assisted:\tno\n"))
+        for following in ("\nNo Windows run was possible.\n", "yes, see above\n", "- [x] No new files\n"):
+            with self.subTest(following=following):
+                self.assert_findings(body(f"- [x] Depends on: none\n- [x] AI-assisted:\n{following}"),
+                                     ["answer AI-assisted with yes or no"])
+
     def test_depends_on_answers(self):
         for answer in ("none", "#123", "None"):
             with self.subTest(answer=answer):

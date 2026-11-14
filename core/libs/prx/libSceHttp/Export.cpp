@@ -8,6 +8,7 @@
 #endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttp/src/Cookies.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include <atomic>
@@ -757,13 +758,11 @@ int APS5_VABI sceHttpSetCookieSendCallback(std::int32_t id, HttpCookieSendCallba
 }
 
 int APS5_VABI sceHttpCookieExport(int contextId, void* buffer, std::size_t size, std::size_t* requiredSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ExportHttpCookies(contextId, buffer, size, requiredSize);
 }
 
 int APS5_VABI sceHttpCookieImport(int contextId, const void* buffer, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ImportHttpCookies(contextId, buffer, size);
 }
 
 int APS5_VABI sceHttpSetPriorityOption(int id, int priority) {

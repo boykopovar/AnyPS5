@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -86,6 +87,7 @@ void TestClosedPortHandleBounds() {
 
     errno = 71;
     Require(sceAudioOutGetPortState(handle, reinterpret_cast<AudioOutPortState*>(0x10)) == invalidPointer);
+    Require(sceAudioOutGetLastOutputTime(handle, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
     Require(errno == 71);
 
     Require(sceAudioOutClose(handle) == 0);
@@ -408,6 +410,9 @@ void TestSystemState() {
     AudioOutSystemState sysState{};
     Require(sceAudioOutGetSystemState(&sysState) == 0);
     Require(sceAudioOutGetSystemState(nullptr) == invalidPointer);
+    errno = 71;
+    Require(sceAudioOutGetSystemState(reinterpret_cast<AudioOutSystemState*>(0x10)) == invalidPointer);
+    Require(errno == 71);
 }
 
 void TestPortStateAudit() {
