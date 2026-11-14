@@ -942,7 +942,7 @@ int APS5_VABI sceUltUlthreadGetSelf(void** ulthread) {
     if (gCurrentUlthread == nullptr) {
         return ULT_ERROR_STATE;
     }
-    *ulthread = gCurrentUlthread->_object;
+    if (!GuestCopyOut_nid_no_patch(ulthread, &gCurrentUlthread->_object, sizeof(*ulthread))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
