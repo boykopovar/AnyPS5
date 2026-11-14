@@ -30,6 +30,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        shell: bash
         run: |
           out=$RUNNER_TEMP/overlap
           state=$RUNNER_TEMP/overlap-state.json
