@@ -50,9 +50,9 @@ int main(int argc, char** argv) {
  try {
   auto device = OpenVulkanTestDevice(); if (!device) return VulkanTestSkipped;
   auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
-  if (!AgcDriver::Graphics::DmaBufImportSelected(context)) return VulkanTestSkipped;
+  if (!AgcDriver::Graphics::DmaBufImportSelected(context)) { std::puts("skipped, the device imports no guest memory through dma-buf"); return VulkanTestSkipped; }
   std::uint64_t limit = 0; std::ifstream("/sys/module/udmabuf/parameters/size_limit_mb") >> limit;
-  if (limit == 0 || limit >= 128) return VulkanTestSkipped;
+  if (limit == 0 || limit >= 128) { std::printf("skipped, the device imports no dma-buf run list this test can refuse: udmabuf size_limit_mb is %llu, the test needs 1 to 127\n", static_cast<unsigned long long>(limit)); return VulkanTestSkipped; }
   Backing = memfd_create("selected-list-refusal", MFD_CLOEXEC | MFD_ALLOW_SEALING);
   Require(Backing >= 0 && ftruncate(Backing, 3 * Chunk) == 0 && fcntl(Backing, F_ADD_SEALS, F_SEAL_SHRINK) == 0, "cannot create scattered backing");
   constexpr std::size_t Align = 65536;
