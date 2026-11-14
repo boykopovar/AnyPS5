@@ -929,6 +929,9 @@ void viewEvictionTests(const Context& context) {
     const auto capacity = static_cast<std::size_t>(Budget / snapshotBytes);
     for (std::size_t surface = 1; surface <= capacity; ++surface) Sampled(context, snapshots.Surface(surface));
     Require(!view.expired(), "the sampled texture cache evicted a view of a cached storage image, which frees no memory");
+    const auto held = view.lock();
+    ClearCachedTextures(context.device);
+    Require(held != nullptr && !held->Released(), "a view that accounted for no cache bytes was marked released when its entry left the sampled cache, which frees nothing and rebuilds every descriptor set that holds it");
 }
 
 void frameTests(const Context& context) {
