@@ -1406,7 +1406,7 @@ struct WriteTracker {
         watched = size != 0 && GuestArena::GuestArenaWriteWatched_nid_postfix();
         if (!watched) return;
         leaves.resize((size / WriteBlockBytes + LeafBlocks) / LeafBlocks);
-        coverage.Initialize(base, size);
+        coverage.Initialize(base, size, std::getenv("APS5_NO_COVERAGE_SUMMARY") == nullptr);
         pages.resize(1u << 16);
         GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&watchPrivateMapping);
 #else
