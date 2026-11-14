@@ -24,6 +24,7 @@
 #include <string>
 #include <utility>
 #include <source_location>
+#include <type_traits>
 
 namespace {
 
@@ -200,6 +201,83 @@ static void TestMemoryAllocations() {
 
     void* cross2 = _ZN7bmalloc3api15mallocOutOfLineEmNS_8HeapKindE(60, 0);
     _ZN8Gigacage4freeENS_4KindEPv(0, cross2);
+}
+
+template <typename Function>
+bool ExpectBmallocOperatorStub(Function function, const char* name) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) == std::string(name) + " not implemented" &&
+            NotImplementedCalls_nid_no_patch() == before + 1) {
+            std::fprintf(stderr, "EXPECTED_BMALLOC_THROW %s\n", name);
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename ScalarNew, typename ScalarDelete, typename ArrayNew>
+bool TestBmallocOperatorClass(ScalarNew scalarNew, ScalarDelete scalarDelete, ArrayNew arrayNew,
+                              const char* scalarNewName, const char* scalarDeleteName,
+                              const char* arrayNewName) {
+    if constexpr (std::is_invocable_r_v<int, ScalarNew> &&
+                  std::is_invocable_r_v<int, ScalarDelete> &&
+                  std::is_invocable_r_v<int, ArrayNew>) {
+        ExpectBmallocOperatorStub(scalarNew, scalarNewName);
+        ExpectBmallocOperatorStub(scalarDelete, scalarDeleteName);
+        ExpectBmallocOperatorStub(arrayNew, arrayNewName);
+        return false;
+    } else {
+        static_assert(std::is_invocable_r_v<void*, ScalarNew, std::size_t>);
+        static_assert(std::is_invocable_r_v<void, ScalarDelete, void*>);
+        static_assert(std::is_invocable_r_v<void*, ArrayNew, std::size_t>);
+
+        void* scalarZero = scalarNew(0);
+        Require(scalarZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(scalarZero) % alignof(std::max_align_t)) == 0);
+        scalarDelete(scalarZero);
+        scalarDelete(nullptr);
+
+        auto* scalar = static_cast<unsigned char*>(scalarNew(128));
+        Require(scalar != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            scalar[i] = static_cast<unsigned char>(i ^ 0xA5);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(scalar[i] == static_cast<unsigned char>(i ^ 0xA5));
+        }
+        scalarDelete(scalar);
+
+        void* arrayZero = arrayNew(0);
+        Require(arrayZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(arrayZero) % alignof(std::max_align_t)) == 0);
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(arrayZero, 0);
+
+        auto* array = static_cast<unsigned char*>(arrayNew(128));
+        Require(array != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            array[i] = static_cast<unsigned char>(i ^ 0x5A);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(array[i] == static_cast<unsigned char>(i ^ 0x5A));
+        }
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(array, 0);
+        return true;
+    }
+}
+
+static bool TestBmallocHeapOperators() {
+    const bool isoTls = TestBmallocOperatorClass(
+        _ZN7bmalloc11IsoTLSEntrynwEm, _ZN7bmalloc11IsoTLSEntrydlEPv,
+        _ZN7bmalloc11IsoTLSEntrynaEm, "_ZN7bmalloc11IsoTLSEntrynwEm",
+        "_ZN7bmalloc11IsoTLSEntrydlEPv", "_ZN7bmalloc11IsoTLSEntrynaEm");
+    const bool isoHeap = TestBmallocOperatorClass(
+        _ZN7bmalloc15IsoHeapImplBasenwEm, _ZN7bmalloc15IsoHeapImplBasedlEPv,
+        _ZN7bmalloc15IsoHeapImplBasenaEm, "_ZN7bmalloc15IsoHeapImplBasenwEm",
+        "_ZN7bmalloc15IsoHeapImplBasedlEPv", "_ZN7bmalloc15IsoHeapImplBasenaEm");
+    return isoTls && isoHeap;
 }
 
 static void TestTime() {
@@ -563,6 +641,9 @@ static void TestFileHandles() {
 }
 
 int main() {
+    if (!TestBmallocHeapOperators()) {
+        return 1;
+    }
     TestAdditionalWtf();
     TestMemoryAllocations();
     TestAllocationBoundaries();

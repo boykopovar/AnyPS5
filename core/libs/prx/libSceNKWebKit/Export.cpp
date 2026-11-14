@@ -26241,19 +26241,10 @@ int APS5_VABI _ZN7bmalloc11IsoTLSEntryD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc11IsoTLSEntrydlEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
-int APS5_VABI _ZN7bmalloc11IsoTLSEntrynaEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
-int APS5_VABI _ZN7bmalloc11IsoTLSEntrynwEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7bmalloc12IsoTLSLayout3addEPNS_11IsoTLSEntryE() {
     NotImplemented_nid_no_patch(__func__);
@@ -26301,18 +26292,9 @@ int APS5_VABI _ZN7bmalloc15IsoHeapImplBaseD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBasedlEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBasenaEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBasenwEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7bmalloc17getPerProcessDataEjPKcmm() {
     NotImplemented_nid_no_patch(__func__);

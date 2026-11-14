@@ -127,6 +127,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
 - [LibWebRTCProvider allocation operators](../../../core/libs/prx/libSceNKWebKit/src/WtfMemory.cpp) (libSceNKWebKit) follow the pinned WebKit 11.x [`WTF_MAKE_FAST_ALLOCATED` contract](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastMalloc.h#L287-L309) for `fastMalloc`/`fastFree`; placement overloads return the supplied storage. Console ABI remains unverified.
+- [bmalloc class allocation operators](../../../core/libs/prx/libSceNKWebKit/src/Bmalloc.cpp) (libSceNKWebKit) - the scalar/array allocation and scalar deletion exports for `IsoTLSEntry` and `IsoHeapImplBase` follow the pinned [`MAKE_BMALLOCED` implementation](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/bmalloc/bmalloc/BMalloced.h) through the Primary heap APIs; console ABI parity remains unverified. Placement overloads and construction/destruction remain separate debt.
 - [GLContext allocation operators](../../../core/libs/prx/libSceNKWebKit/src/WtfMemory.cpp) follow the pinned WebKit 11.x [`WTF_MAKE_FAST_ALLOCATED` contract](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastMalloc.h#L287-L309) for `fastMalloc`/`fastFree`; placement overloads return the supplied storage. Console ABI remains unverified.
 - [WTF::BitVector](../../../core/libs/prx/libSceNKWebKit/src/WtfBitVector.cpp) (libSceNKWebKit) - `mergeSlow` ORs only the words both out-of-line vectors hold, where [BitVector.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/BitVector.cpp#L126-L142) reads past the other vector's words when this one is longer. `isEmptySlow`, `bitCountSlow` and `hashSlowCase` on an inline, empty or deleted vector, and a null vector anywhere, throw where WebKit reads through an invalid pointer; `equalsSlowCase` on two inline vectors compares their words. `dump` still throws, as `WTF::PrintStream` is not implemented. The one-word layout follows [BitVector.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/BitVector.h#L455-L509) for 64-bit pointers and is not measured on a console.
 - [Constant-return exports from 13.42](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 13 `WKBundleFrame`, `WKBundleNavigationAction`, `WKBundlePage`, `WKFrame`, `WKPage` and `WKProtectionSpace` exports return 0 as read from the disassembly of the PS5 13.42 `libSceNKWebKit.sprx` (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`), not measured on a console: their export addresses all point to one shared body at `0x5b90`, `xor eax,eax; ret`. As in the Constant-return exports entry, the declared prototypes stay the no-parameter `int` placeholders, so only the 32-bit return is claimed. 11.00 was not checked for these 13.
@@ -4263,9 +4264,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc11IsoPageBase18allocatePageMemoryEv` | `ahGKKIJ8ZTg` |
 | `_ZN7bmalloc11IsoTLSEntryC2Em` | `6-GmQWtFE6Y` |
 | `_ZN7bmalloc11IsoTLSEntryD0Ev` | `psjVBg5y6OM` |
-| `_ZN7bmalloc11IsoTLSEntrydlEPv` | `Dg05dR7Cut0` |
-| `_ZN7bmalloc11IsoTLSEntrynaEm` | `vMsePZhPOLY` |
-| `_ZN7bmalloc11IsoTLSEntrynwEm` | `cg5bcS+k9P8` |
 | `_ZN7bmalloc12IsoTLSLayout3addEPNS_11IsoTLSEntryE` | `tMWlx2AgEiY` |
 | `_ZN7bmalloc13IsoSharedPage9tryCreateEv` | `A4P8aG8cGz0` |
 | `_ZN7bmalloc15IsoHeapImplBase11didDecommitEPvm` | `skIfr3+tx9E` |
@@ -4277,9 +4275,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc15IsoHeapImplBase9didCommitEPvm` | `Zkl+J182WlE` |
 | `_ZN7bmalloc15IsoHeapImplBaseC2ERNS_5MutexE` | `PyFQ+tpKjuc` |
 | `_ZN7bmalloc15IsoHeapImplBaseD0Ev` | `mLfgWSYY3pY` |
-| `_ZN7bmalloc15IsoHeapImplBasedlEPv` | `3Xsf6cttiRo` |
-| `_ZN7bmalloc15IsoHeapImplBasenaEm` | `lekMQNRdlRs` |
-| `_ZN7bmalloc15IsoHeapImplBasenwEm` | `E0pHVD7uJ+E` |
 | `_ZN7bmalloc17getPerProcessDataEjPKcmm` | `FbvROv13LwA` |
 | `_ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEm` | `7oKMHilvjQA` |
 | `_ZN7bmalloc5Cache25allocateSlowCaseNullCacheENS_8HeapKindEmm` | `G33UVyzplCY` |
