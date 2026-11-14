@@ -161,12 +161,20 @@ struct IosBase {
 struct SceV2IosBase {
     const void* vtable;
     std::int64_t standardStream;
-    unsigned char reserved[0x20];
+    std::int32_t state;
+    std::int32_t exceptions;
+    std::int32_t flags;
+    std::uint32_t reserved;
+    std::int64_t precision;
+    std::int64_t width;
     void* streamNodes;
     void* callbackNodes;
     Implementation** locale;
 };
 
+static_assert(offsetof(SceV2IosBase, flags) == 0x18);
+static_assert(offsetof(SceV2IosBase, precision) == 0x20);
+static_assert(offsetof(SceV2IosBase, width) == 0x28);
 static_assert(offsetof(SceV2IosBase, streamNodes) == 0x30);
 static_assert(offsetof(SceV2IosBase, callbackNodes) == 0x38);
 static_assert(offsetof(SceV2IosBase, locale) == 0x40);
