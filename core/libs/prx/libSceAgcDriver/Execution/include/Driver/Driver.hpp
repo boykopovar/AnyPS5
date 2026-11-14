@@ -163,6 +163,8 @@ private:
     bool parkedOnTitle() const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
     void releaseFlipHold();
+    void beginFlipReady(std::uint32_t handle);
+    void endFlipReady(std::uint32_t handle);
     void finishFlipWork(const std::shared_ptr<FlipWork>& work, std::uint64_t workSerial);
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
@@ -530,6 +532,7 @@ private:
     std::atomic<std::uint64_t> idleEpoch{0};
     std::atomic<std::uint64_t> queue0Awaited{0};
     std::atomic<std::uint32_t> flipsAhead{0};
+    std::map<std::uint32_t, std::uint32_t> flipsReadying;
     std::atomic<std::uint32_t> flipHolders{0};
     std::shared_ptr<FlipWork> lastFlipWork;
     std::atomic<bool> queue0AwaitsTitle{false};
