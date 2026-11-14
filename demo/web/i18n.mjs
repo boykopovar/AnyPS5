@@ -483,6 +483,7 @@ export const messages = {
 
         "unsafeZipPath": "مسار غير آمن في ZIP: {name}",
         "unsupportedFileSize": "يحتوي ZIP على حجم ملف غير مدعوم",
+        "zipDirectDenied": "هذا المتصفح لا يسمح بحفظ ملف ZIP مباشرة. افتح المحوّل في Chrome أو Edge على الكمبيوتر، أو استخدم أداة الربط الأصلية.",
         "zipMetadataTooLarge": "تتجاوز بيانات دليل ZIP حد 16 MiB",
         "memoryLimitExceeded": "يتجاوز {name} حد ذاكرة التحويل",
         "unexpectedSize": "حجم غير متوقع بعد فك الضغط: {name}",

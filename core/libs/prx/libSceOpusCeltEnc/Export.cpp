@@ -3,6 +3,7 @@
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -175,7 +176,15 @@ int APS5_VABI sceOpusCeltEncEncodeFloatWithPriority(OpusCeltEncoder* state, cons
 int APS5_VABI sceOpusCeltEncGetAjmContext(const OpusCeltEncoder* state, std::uint32_t* context) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (context == nullptr) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    std::uint32_t value = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xD4, sizeof(value));
+    errno = savedErrno;
+    if (!readable) throw std::runtime_error("OpusCeltEnc: unreadable AJM context");
+    const bool writable = GuestCopyOut_nid_no_patch(context, &value, sizeof(value));
+    errno = savedErrno;
+    if (!writable) throw std::runtime_error("OpusCeltEnc: unwritable AJM context");
+    return 0;
 }
 
 int APS5_VABI sceOpusCeltMultistreamEncCreate(OpusCeltMultistreamEncoder* state, int sampleRate, int streams, int coupledStreams, const std::uint8_t* mapping, int application) {
