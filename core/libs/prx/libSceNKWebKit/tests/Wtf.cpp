@@ -272,6 +272,8 @@ static void TestTime() {
 static void TestSystem() {
     int cores = _ZN3WTF22numberOfProcessorCoresEv();
     Require(cores >= 1);
+    Require(cores == sysconf_nid_postfix(58));
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == cores);
 
     std::uint64_t ram = _ZN3WTF7ramSizeEv();
     Require(ram >= 1024ULL * 1024ULL * 1024ULL);
