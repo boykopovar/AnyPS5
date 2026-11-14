@@ -49,8 +49,7 @@ if(BUILD_TESTING)
         guest_font_support_unwind_system_support_throw
         guest_font_support_unwind_system_support_cleanup_throw
         guest_font_support_unwind_system_error_cleanup_throw PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>"
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
     endif()
 
     add_test_executable(guest_font_interface_contracts_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontInterfaceContracts.cpp)
