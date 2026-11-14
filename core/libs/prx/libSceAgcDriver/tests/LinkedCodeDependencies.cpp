@@ -107,12 +107,17 @@ alignas(256) constexpr std::array<std::uint32_t, 20> TableCaller{
     0x7e020280u, 0xf4080400u, 0xfa000000u, 0x8f148402u, 0xbf8cc07fu, 0xf4280208u, 0x28000000u, 0xbf8cc07fu,
     0xbe8e0308u, 0xbe8f0309u, 0xbf068103u, 0xbe8e210eu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u,
     0xbf9f0000u, 0x30306c73u, 0x00000040u, 0x00000008u};
+alignas(256) constexpr std::array<std::uint32_t, 21> NestedCaller{
+    0x34040082u, 0x7e0202ffu, 0x00000055u, 0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0xf4281204u, 0xfa000040u, 0xbf8cc07fu, 0xbe880381u, 0x8f6a8408u,
+    0xf4280224u, 0xd4000000u, 0xbf8cc07fu, 0xbe8e0308u, 0xbe8f0309u, 0xbe8e210eu, 0xe0701000u, 0x80010102u, 0xbf810000u, 0xbf9f0000u};
 struct Inputs {
     alignas(4096) std::array<std::uint32_t, 1024> first{};
     alignas(4096) std::array<std::uint32_t, 1024> second{};
     alignas(16) std::array<std::uint64_t, 4> table{};
     alignas(16) std::array<std::uint64_t, 4> otherTable{};
     alignas(16) std::array<std::uint32_t, 4> descriptor{};
+    alignas(16) std::array<std::uint32_t, 20> outer{};
+    alignas(16) std::array<std::uint32_t, 4> outerDescriptor{};
     alignas(256) std::array<std::uint32_t, 64> output{};
     std::uint32_t data = 7u;
 };
@@ -165,6 +170,8 @@ void Run(const std::string& mode, std::string_view watch) {
     auto& Table = allWatched || watch == "--watch-table" ? arena->table : ordinary->table;
     auto& OtherTable = allWatched || watch == "--watch-table" ? arena->otherTable : ordinary->otherTable;
     auto& Descriptor = allWatched || watch == "--watch-descriptor" ? arena->descriptor : ordinary->descriptor;
+    auto& Outer = allWatched || watch == "--watch-descriptor" ? arena->outer : ordinary->outer;
+    auto& OuterDescriptor = allWatched || watch == "--watch-descriptor" ? arena->outerDescriptor : ordinary->outerDescriptor;
     auto& Output = allWatched ? arena->output : ordinary->output;
     auto& Data = allWatched ? arena->data : ordinary->data;
     First[0] = 0x4a020285u;
@@ -179,12 +186,16 @@ void Run(const std::string& mode, std::string_view watch) {
     OtherTable = {second, 0u, 0u, 0u};
     const auto tableAddress = reinterpret_cast<std::uintptr_t>(Table.data());
     Descriptor = {static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u) | (16u << 16u), 2u, 0x31016facu};
-    const auto pointer = table ? reinterpret_cast<std::uintptr_t>(Descriptor.data()) : first;
+    const bool nested = mode == "nested";
+    const auto outerAddress = reinterpret_cast<std::uintptr_t>(Outer.data());
+    std::copy(Descriptor.begin(), Descriptor.end(), Outer.begin() + 16u);
+    OuterDescriptor = {static_cast<std::uint32_t>(outerAddress), static_cast<std::uint32_t>(outerAddress >> 32u) & 0xffffu, static_cast<std::uint32_t>(sizeof(Outer)), 0x31016facu};
+    const auto pointer = nested ? reinterpret_cast<std::uintptr_t>(OuterDescriptor.data()) : table ? reinterpret_cast<std::uintptr_t>(Descriptor.data()) : first;
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
     const auto data = reinterpret_cast<std::uintptr_t>(&Data);
-    const std::array<std::uint32_t, 10> users{static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u), table ? 0u : static_cast<std::uint32_t>(second), table ? 1u : static_cast<std::uint32_t>(second >> 32u),
+    const std::array<std::uint32_t, 10> users{static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u), table ? 0u : static_cast<std::uint32_t>(second), nested ? 0u : table ? 1u : static_cast<std::uint32_t>(second >> 32u),
         static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), sizeof(Output), 0x31016facu, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>(data >> 32u)};
-    auto code = table ? std::span<const std::uint32_t>(TableCaller) : std::span<const std::uint32_t>(DirectCaller);
+    auto code = nested ? std::span<const std::uint32_t>(NestedCaller) : table ? std::span<const std::uint32_t>(TableCaller) : std::span<const std::uint32_t>(DirectCaller);
     std::vector<std::uint32_t> dataCode;
     if (verify) {
         dataCode = {0xf4000204u, 0xfa000000u, 0xbf8cc07fu, 0x7e020208u};
@@ -215,6 +226,7 @@ void Run(const std::string& mode, std::string_view watch) {
     auto original = DriverTestAccess::Insert(shader, request);
     Require(original != nullptr, "the initial prepared dispatch was not cached");
     Require(DriverTestAccess::Lookup(*shader, request) == original, "unchanged linking inputs missed the dispatch cache");
+    if (nested) Require(original->linking != nullptr && original->linking->Overlaps(outerAddress + 64u, 16u), "the nested descriptor is not a linking dependency");
     if (verify) {
         Require(!original->dataPositions.empty() && original->linking != nullptr && !original->linking->dependencies.empty(), "the verifier fixture has no data words or external callees");
         Data = 11u;
@@ -319,6 +331,10 @@ void Run(const std::string& mode, std::string_view watch) {
         const auto address = reinterpret_cast<std::uintptr_t>(OtherTable.data());
         Descriptor[0] = static_cast<std::uint32_t>(address);
         Descriptor[1] = static_cast<std::uint32_t>(address >> 32u) | (16u << 16u);
+    } else if (nested) {
+        const auto address = reinterpret_cast<std::uintptr_t>(OtherTable.data());
+        Outer[16] = static_cast<std::uint32_t>(address);
+        Outer[17] = static_cast<std::uint32_t>(address >> 32u) | (16u << 16u);
     } else First[0] = 0x4a020281u;
     AgcDriver::GuestMemory::BumpCollectEpoch();
     Require(DriverTestAccess::Lookup(*shader, request) == nullptr, "changed linking input reused the stale prepared dispatch");
@@ -351,6 +367,7 @@ void Run(const std::string& mode, std::string_view watch) {
     Table[2] = 0u;
     Descriptor[0] = static_cast<std::uint32_t>(tableAddress);
     Descriptor[1] = static_cast<std::uint32_t>(tableAddress >> 32u) | (16u << 16u);
+    std::copy(Descriptor.begin(), Descriptor.end(), Outer.begin() + 16u);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto restored = DriverTestAccess::Lookup(*shader, request);
     if (std::getenv("APS5_DISPATCH_STAMP_VALIDATE") == nullptr) Require(restored == original, "restored linking inputs did not reuse the earlier variant");
