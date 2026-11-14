@@ -901,6 +901,28 @@ class ProgressTests(unittest.TestCase):
                     self.assertIn("is not a source tree", stderr.getvalue())
                     self.assertIn(str(path), stderr.getvalue())
 
+    def test_root_with_an_unreadable_tree_is_not_a_source_tree(self):
+        opcodes = progress.OPCODES.relative_to(progress.ROOT)
+        with tempfile.TemporaryDirectory() as directory:
+            no_enum = Path(directory) / "no enum"
+            (no_enum / "core" / "libs" / "prx").mkdir(parents=True)
+            (no_enum / opcodes).parent.mkdir(parents=True)
+            (no_enum / opcodes).write_text("enum class Other {};\n", encoding="utf-8")
+            opcode_directory = Path(directory) / "opcode directory"
+            (opcode_directory / "core" / "libs" / "prx").mkdir(parents=True)
+            (opcode_directory / opcodes).mkdir(parents=True)
+            prx_file = Path(directory) / "prx file"
+            (prx_file / "core" / "libs").mkdir(parents=True)
+            (prx_file / "core" / "libs" / "prx").write_text("", encoding="utf-8")
+            for name, path in (("no enum", no_enum), ("opcode directory", opcode_directory), ("prx file", prx_file)):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--json", "--root", str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("is not a source tree", stderr.getvalue())
+                    self.assertIn(str(path), stderr.getvalue())
+
     def test_compare_accepts_snapshots_with_utf8_bom(self):
         def snapshot(names):
             return {"libraries": progress.summarize([

@@ -298,7 +298,10 @@ def collect_shaders():
             name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
-    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
+    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S)
+    if not enum:
+        raise ValueError(f"{OPCODES} has no enum class RdnaOpcode")
+    enum = enum.group(1)
     opcodes = [o for o in re.findall(r"^\s*([A-Z]\w*)\s*[,=]", enum, re.M) if o not in OPCODE_SENTINELS]
     supported, extra = set(), []
     for opcode in opcodes:
@@ -1096,6 +1099,10 @@ def main(argv=None):
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
             parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
+        except OSError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename}: {error.strerror}")
+        except ValueError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error}")
         try:
             shader_source = collect_shader_source(args.root)
         except shader_scan.ScanError as error:
