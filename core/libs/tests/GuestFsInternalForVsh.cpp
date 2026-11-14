@@ -1,4 +1,5 @@
 #include "prx/libSceFsInternalForVsh/libSceFsInternalForVsh.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -47,6 +48,18 @@ int main() {
     CheckWorkspaceOptInit(sceFsInitCreateWorkspaceOpt);
     CheckWorkspaceOptInit(sceFsInitDeleteWorkspaceOpt);
     CheckWorkspaceOptInit(sceFsInitUmountWorkspaceOpt);
+    const decltype(&sceFsInitCreateWorkspaceOpt) inits[] = {
+        sceFsInitCreateWorkspaceOpt,
+        sceFsInitDeleteWorkspaceOpt,
+        sceFsInitUmountWorkspaceOpt,
+    };
+    for (auto init : inits) {
+        errno = 71;
+        Require(init(nullptr) == static_cast<int>(0x80020016u));
+        Require(errno == 71);
+        Require(init(reinterpret_cast<void*>(std::uintptr_t{0x10})) == static_cast<int>(0x80020016u));
+        Require(errno == 71);
+    }
     for (int call = 0; call < 2; ++call) {
         Require(libSceFsInternalForVshUnknown_0XlyVxRNeIw_nid_no_patch() == 0);
         Require(libSceFsInternalForVshUnknown_W8CmA_plus_wZ9_plus_w_nid_no_patch() == 0);
