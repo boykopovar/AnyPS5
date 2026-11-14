@@ -4721,6 +4721,16 @@ std::uint64_t HostImportBudgetFor(const VkPhysicalDeviceMemoryProperties& memory
     return std::min(configured, granted > held ? (granted - held) / step * step : 0u);
 }
 
+bool HostImportsInHeapUsage(VkDriverId driver) {
+    return driver == VK_DRIVER_ID_MOLTENVK;
+}
+
+VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysicalDeviceMemoryProperties& memory, VkPhysicalDeviceMemoryBudgetPropertiesEXT reported, std::uint64_t liveBytes, bool importsInUsage) {
+    if (!importsInUsage) return reported;
+    if (const auto heap = hostHeapIndex(memory)) reported.heapUsage[*heap] -= std::min<VkDeviceSize>(reported.heapUsage[*heap], liveBytes);
+    return reported;
+}
+
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling) {
     const auto budget = set || !allocationFailed ? configured : std::max<std::uint64_t>(std::min(configured, reported), 1);
     return ceiling != 0 ? std::min(budget, ceiling) : budget;
