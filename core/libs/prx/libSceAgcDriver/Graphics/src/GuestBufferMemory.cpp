@@ -5799,6 +5799,10 @@ void GuestBufferMemory::AddWritable(std::uint64_t address, std::size_t bytes, bo
     writes.emplace_back(address, address + bytes);
 }
 
+void GuestBufferMemory::AddFillTarget(std::uint64_t address, std::size_t bytes) {
+    fillTargets.emplace_back(address, address + bytes);
+}
+
 void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
     // Not in `writes`: no reference copy (copyRegion), no write-back, no pending-write note, no
     // direct-write mark, and UploadPrepare copies it without the device lock. A written descriptor
@@ -6875,7 +6879,8 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
 void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto bytes = region.end - region.begin;
-    const auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | (addressable ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
+    const bool fillable = std::any_of(fillTargets.begin(), fillTargets.end(), [&](const auto& range) { return range.first < region.end && region.begin < range.second; });
+    const auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | (fillable ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : 0u) | (addressable ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     std::uint64_t readBytes = 0;
     bool inImport = false;
     if (profile && context.hostImportAlignment != 0) {
@@ -7263,6 +7268,15 @@ VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std:
     Require(range <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? mirrorHandle(*region.mirror) : region.buffer->Handle();
     return {handle, offset - adjustment, range};
+}
+
+VkDescriptorBufferInfo GuestBufferMemory::FillTarget(std::uint64_t address, std::size_t bytes) const {
+    const auto* found = owner(address, address + bytes);
+    Require(found != nullptr && std::any_of(fillTargets.begin(), fillTargets.end(), [&](const auto& range) { return range.first <= address && address + bytes <= range.second; }), "guest fill target was not added before the upload");
+    Require(found->mirror == nullptr, "a guest fill target served by an image mirror is not implemented");
+    std::uint32_t adjustment = 0;
+    const auto info = Descriptor(address, bytes, adjustment);
+    return {info.buffer, info.offset + adjustment, bytes};
 }
 
 std::uint64_t GuestBufferMemory::ViewBytes(std::uint64_t bytes, std::uint32_t adjustment) {

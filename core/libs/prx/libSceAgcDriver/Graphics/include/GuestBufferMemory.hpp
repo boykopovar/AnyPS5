@@ -359,6 +359,7 @@ public:
     // element the shader updates atomically (DescriptorBinding::bufferAtomic), staged in device
     // memory whatever its size (see AllowDeviceStaging).
     void AddWritable(std::uint64_t address, std::size_t bytes, bool atomic = false, bool swept = false);
+    void AddFillTarget(std::uint64_t address, std::size_t bytes);
     void AddReadable(std::uint64_t address, std::size_t bytes);
     // Device-local staging of written and atomic elements inside host imports (see
     // GuestBufferMemory.cpp): allowed only for a build whose every use records its work and then
@@ -389,6 +390,7 @@ public:
     void UploadPrepare(bool addressable);
     void UploadFinish(bool addressable, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt);
     VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
+    VkDescriptorBufferInfo FillTarget(std::uint64_t address, std::size_t bytes) const;
     static std::uint64_t ViewBytes(std::uint64_t bytes, std::uint32_t adjustment);
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;
     // The BDA table of the cached address space when it serves this upload alone (an address-based
@@ -617,6 +619,7 @@ private:
     bool regionsSorted = false;
     bool regionsOverlap = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> fillTargets;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readsOverBase;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;

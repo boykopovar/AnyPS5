@@ -1969,6 +1969,8 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.gdsVariable != 0u) {
         state.gdsLength = state.module.AllocateId();
         state.module.AddFunction(spv::OpArrayLength, TypeU32(state), state.gdsLength, state.gdsVariable, 0u);
+        state.gdsGuestLength = state.module.AllocateId();
+        state.module.AddFunction(spv::OpISub, TypeU32(state), state.gdsGuestLength, state.gdsLength, ConstantU32(state, RuntimeAbi::GdsMetadataDwords));
     }
     if (state.pixelValidMaskVariable != 0u) {
         state.module.AddFunction(spv::OpStore, state.pixelValidMaskVariable, ConstantU32(state, 1u));

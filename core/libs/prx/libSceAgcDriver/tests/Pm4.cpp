@@ -2672,6 +2672,19 @@ int main(int argc, char** argv) {
             std::puts("PM4 asynchronous memory failure propagated to idle, suspend, submit and shutdown");
             return 0;
         }
+        if (argc == 2 && std::string(argv[1]) == "shared-gds-pages") {
+            AgcDriver::Pm4::RequestImportableGds(true);
+            const auto gds = AgcDriver::Pm4::GdsAddress();
+            if (!AgcDriver::Pm4::GdsShared()) {
+                std::puts("shared memory is unavailable, so the shared GDS mapping is not checked");
+                return 77;
+            }
+            constexpr std::size_t unit = 0x10000;
+            const auto covered = (AgcDriver::Pm4::GdsBindingBytes + unit - 1) & ~(unit - 1);
+            check(AgcDriver::GuestMemory::Accessible(reinterpret_cast<const void*>(gds), covered, true), "the shared GDS mapping does not cover the whole 64 KiB unit that holds its binding, so a host import of it runs past the end of its file");
+            std::puts("PM4 shared GDS pages test passed");
+            return 0;
+        }
         if (argc == 2 && std::string(argv[1]) == "priority-refused") {
             testRefusedWorkerPriority();
             std::puts("PM4 refused queue worker priority propagated to idle and shutdown");

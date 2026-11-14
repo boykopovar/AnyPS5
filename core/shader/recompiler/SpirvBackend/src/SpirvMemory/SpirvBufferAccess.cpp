@@ -196,7 +196,7 @@ MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const
             FailEmit("GDS length was not prepared at function entry");
         }
         access.objectPointer = state.gdsVariable;
-        access.length = state.gdsLength;
+        access.length = state.gdsGuestLength;
         return access;
     case ResourceKind::Scratch:
         if (ScratchPoolActive(state)) {

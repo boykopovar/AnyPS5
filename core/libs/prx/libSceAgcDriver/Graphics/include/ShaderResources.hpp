@@ -286,6 +286,7 @@ public:
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    VkDescriptorBufferInfo guestFillTarget(std::uint64_t address, std::size_t bytes) const { return guestMemory.FillTarget(address, bytes); }
     bool SpaceReuse() const { return spaceReuse; }
     static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
