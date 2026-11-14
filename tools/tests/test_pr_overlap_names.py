@@ -1,9 +1,12 @@
+import contextlib
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
@@ -84,6 +87,19 @@ class NamesLookupTests(unittest.TestCase):
         text = pr_overlap.lookup_report(names, found, status, self.prs, "https://github.com/owner/project/blob/0")
         self.assertIn("pending\n  main: core/libs/prx/libSceExample (stub)\n  open: [PR 1](https://www.github.com/owner/project/pull/1) by author1: title 1\n", text)
         self.assertIn("absent\n  main: not declared\n  open: none\n", text)
+
+    def test_names_from_a_subdirectory_matches_the_root(self):
+        outputs = {}
+        for subdirectory in (".", "core/libs/prx"):
+            os.chdir(Path(self.tmp.name, subdirectory))
+            stdout = io.StringIO()
+            with patch.object(pr_overlap, "open_prs", return_value=self.prs), patch.object(pr_overlap, "fetch"), \
+                    patch.object(pr_overlap, "progress"), contextlib.redirect_stdout(stdout):
+                self.assertEqual(pr_overlap.main(["--repo", "owner/project", "--names", "pending", "done"]), 0)
+            outputs[subdirectory] = stdout.getvalue()
+        self.assertIn("pending\n  main: core/libs/prx/libSceExample (stub)\n", outputs["."])
+        self.assertIn("done\n  main: core/libs/prx/libSceExample (implemented)\n", outputs["."])
+        self.assertEqual(outputs["core/libs/prx"], outputs["."])
 
     def test_names_excludes_the_other_modes(self):
         with self.assertRaises(SystemExit):

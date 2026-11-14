@@ -2,7 +2,6 @@ import argparse
 import codecs
 import hashlib
 import importlib
-import io
 import json
 import os
 import re
@@ -711,10 +710,11 @@ def pull_requests_with(names, prs, jobs):
 
 
 def library_status(ref, library):
-    archive = subprocess.run(["git", "archive", "--format=tar", ref, "--", library], capture_output=True, check=True).stdout
     scanner = importlib.import_module("progress")
     with tempfile.TemporaryDirectory() as root:
-        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        archive = Path(root, "library.tar")
+        git("archive", "--format=tar", "-o", str(archive), ref, "--", library)
+        with tarfile.open(archive) as tar:
             tar.extractall(root, filter="data")
         group = scanner.scan_library(Path(root, library))
     status = {canonical(name): "stub" for name in group["todo_names"]}
