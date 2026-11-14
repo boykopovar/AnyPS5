@@ -23,6 +23,38 @@ MESSAGE_NID = "wTpfglkmv34"
 MESSAGE_NAME = "sceMsgDialogProgressBarSetValue"
 
 
+def build_dual_metadata_elf(symbols, needed=(), gnu_hash=False, conflict=None):
+    image = bytearray(build_sectionless_elf(symbols, needed, gnu_hash))
+    dynamic = struct.unpack_from("<IIQQQQQQ", image, 120)
+    tags = dict(struct.unpack_from("<qQ", image, position) for position in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+    symbol_offset, string_offset, dynamic_offset = tags[6] - 0x400000, tags[5] - 0x400000, dynamic[2]
+    symbol_size = (len(symbols) + 1) * 24
+    if conflict in ("symbols", "weakness"):
+        replacement = bytearray(image[symbol_offset:symbol_offset + symbol_size])
+        if conflict == "symbols":
+            replacement[:] = bytes(symbol_size)
+        else:
+            replacement[24 + 4] = 0x22
+        symbol_offset = len(image)
+        image.extend(replacement)
+    if conflict == "strings":
+        replacement = bytes(image[string_offset:string_offset + tags[10]]).replace(b"alpha", b"other").replace(b"beta", b"else")
+        string_offset = len(image)
+        image.extend(replacement)
+    if conflict == "needed":
+        replacement = bytes(dynamic[5])
+        dynamic_offset = len(image)
+        image.extend(replacement)
+    sections = len(image)
+    image.extend(bytes(4 * 64))
+    struct.pack_into("<Q", image, 40, sections)
+    struct.pack_into("<HH", image, 58, 64, 4)
+    struct.pack_into("<IIQQQQIIQQ", image, sections + 64, 0, 11, 2, tags[6], symbol_offset, symbol_size, 2, 1, 8, 24)
+    struct.pack_into("<IIQQQQIIQQ", image, sections + 128, 0, 3, 2, tags[5], string_offset, tags[10], 0, 0, 1, 0)
+    struct.pack_into("<IIQQQQIIQQ", image, sections + 192, 0, 6, 2, dynamic[3], dynamic_offset, dynamic[5], 2, 0, 8, 16)
+    return image
+
+
 def build_elf(symbols, needed=()):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
@@ -1549,6 +1581,60 @@ class ImportAuditTests(unittest.TestCase):
                 with self.assertRaisesRegex(import_audit.AuditError, r"module\.prx: conflicting duplicate DT_SYMENT"):
                     import_audit.elf_program_dynamic_symbols(path, image)
 
+    def test_elf_sections_must_agree_with_runtime_symbol_inventory(self):
+        symbols = [("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)]
+        for gnu_hash in (False, True):
+            for conflict in ("symbols", "strings", "weakness", "needed"):
+                with self.subTest(gnu_hash=gnu_hash, conflict=conflict):
+                    image = build_dual_metadata_elf(symbols, ["libExample.prx"], gnu_hash, conflict)
+                    with self.assertRaisesRegex(import_audit.AuditError, "disagree with PT_DYNAMIC"):
+                        import_audit.elf_imports(Path("module.prx"), image)
+                    if conflict in ("symbols", "strings"):
+                        with self.assertRaisesRegex(import_audit.AuditError, "disagree with PT_DYNAMIC"):
+                            import_audit.elf_exports(Path("module.prx"), image)
+
+    def test_matching_elf_views_and_section_only_inventory_remain_supported(self):
+        symbols = [("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)]
+        for gnu_hash in (False, True):
+            with self.subTest(gnu_hash=gnu_hash):
+                image = build_dual_metadata_elf(symbols, ["libExample.prx"], gnu_hash)
+                self.assertEqual(import_audit.elf_imports(Path("module.prx"), image), ({"alpha": False}, {"libExample.prx"}))
+                self.assertEqual(import_audit.elf_exports(Path("module.prx"), image), {"beta"})
+                dynamic = struct.unpack_from("<IIQQQQQQ", image, 120)
+                for position in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+                    tag = struct.unpack_from("<q", image, position)[0]
+                    if tag in (4, 0x6ffffef5):
+                        struct.pack_into("<q", image, position, 0x70000000)
+                self.assertEqual(import_audit.elf_imports(Path("unhashed.prx"), image), ({"alpha": False}, {"libExample.prx"}))
+                self.assertEqual(import_audit.elf_exports(Path("unhashed.prx"), image), {"beta"})
+        image = build_dual_metadata_elf([], ["libExample.prx"])
+        dynamic = struct.unpack_from("<IIQQQQQQ", image, 120)
+        for position in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+            if struct.unpack_from("<q", image, position)[0] in (4, 6, 11):
+                struct.pack_into("<q", image, position, 0x70000000 + position)
+        sections = struct.unpack_from("<Q", image, 40)[0]
+        struct.pack_into("<I", image, sections + 64 + 4, 0)
+        self.assertEqual(import_audit.elf_imports(Path("dependencies-only.prx"), image), ({}, {"libExample.prx"}))
+        self.assertEqual(import_audit.elf_exports(Path("dependencies-only.prx"), image), set())
+        image = build_elf(symbols, ["libExample.prx"])
+        self.assertEqual(import_audit.elf_imports(Path("section-only.prx"), image), ({"alpha": False}, {"libExample.prx"}))
+        self.assertEqual(import_audit.elf_exports(Path("section-only.prx"), image), {"beta"})
+
+    def test_contradictory_elf_module_cannot_publish_a_clean_audit(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        registry.write_text("[]", encoding="utf-8")
+        (work.libs / "libExample.prx").write_bytes(build_pe(["BBBBBBBBBBB"]))
+        module = work.modules / "libGuest.prx"
+        module.write_bytes(build_dual_metadata_elf([("AAAAAAAAAAA", 0, GLOBAL_FUNCTION)], ["libExample.prx"], conflict="symbols"))
+        report.write_bytes(b"previous audit")
+        code, output, errors = work.run(registry, "--json", str(report))
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("disagree with PT_DYNAMIC", errors)
+        self.assertIn(str(module), errors)
+        self.assertNotIn("Traceback", errors)
+        self.assertEqual(report.read_bytes(), b"previous audit")
+
     def test_sectionless_elf_gnu_hash_reads_each_chain_entry_once(self):
         symbols = [(f"symbol{index}", int(index != 0), GLOBAL_FUNCTION) for index in range(32)]
         expected = ({"symbol0": False}, {name for name, section, _ in symbols if section}, {"libSceA.prx"})
@@ -3005,6 +3091,41 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<I", image, 0x58 + 240 + 16, 56 + len(target))
         struct.pack_into("<I", image, 0x58 + 280 + 20, 0x238 + len(target))
         self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+
+    def pe_forwarded_export(self, name, target):
+        image = bytearray(build_pe([name]))
+        size = struct.unpack_from("<I", image, 0x58 + 116)[0]
+        pointer = 0x200 + size
+        target = target.encode("ascii") + b"\0"
+        image[pointer:pointer] = target
+        struct.pack_into("<I", image, 0x200 + 40, 0x1000 + size)
+        for field in (8, 16):
+            struct.pack_into("<I", image, 0x58 + 240 + field, size + len(target))
+        struct.pack_into("<II", image, 0x58 + 112, 0x1000, size + len(target))
+        struct.pack_into("<I", image, 0x58 + 280 + 20, pointer + len(target))
+        return image
+
+    def test_pe_forwarders_require_a_module_and_named_or_ordinal_target(self):
+        for target in ("", "NoDot", ".Target", "KERNEL32.", "KERNEL32.#", "KERNEL32.#x", "KERNEL32.#1x", "KERNEL32.#-1", "KERNEL32.#+1"):
+            with self.subTest(target=target), self.assertRaisesRegex(import_audit.AuditError, "invalid export forwarder"):
+                import_audit.pe_exports(Path("lib.prx"), self.pe_forwarded_export("alpha", target))
+        for target in ("NTDLL.#27", "KERNEL32.Sleep", "module.name.with.dots", "Module.?Func@@YAHXZ", "api-ms-win-core-file-l1-1-0.CreateFileW"):
+            with self.subTest(target=target):
+                self.assertEqual(import_audit.pe_exports(Path("lib.prx"), self.pe_forwarded_export("alpha", target)), {"alpha"})
+
+    def test_malformed_forwarder_preserves_previous_audit_report(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        library = work.libs / "libExample.prx"
+        write_registry(registry, [("AAAAAAAAAAA", "libExample.prx")])
+        library.write_bytes(self.pe_forwarded_export("AAAAAAAAAAA", "NoDot"))
+        report.write_bytes(b"previous audit")
+        code, output, errors = work.run(registry, "--json", str(report))
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("invalid export forwarder", errors)
+        self.assertIn(str(library), errors)
+        self.assertNotIn("Traceback", errors)
+        self.assertEqual(report.read_bytes(), b"previous audit")
 
     def test_pe_export_name_pointer_table_must_be_sorted(self):
         image = build_pe(["beta", "alpha"])

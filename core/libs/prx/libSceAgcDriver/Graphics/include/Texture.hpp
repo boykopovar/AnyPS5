@@ -108,6 +108,8 @@ public:
     VkImageView FirstLayerView() const { return firstLayerView; }
     VkImageView BaseLevelView() const;
     bool HasSrgbView() const { return srgbInfo.has_value(); }
+    bool HasArrayView() const { return arrayInfo.has_value(); }
+    VkImageView ArrayView() const;
     VkImageView SrgbView(bool firstLayer, bool baseLevel) const;
     struct ViewRange {
         VkImageViewType type;
@@ -132,6 +134,14 @@ public:
     PerUseCopy CopyKind() const { return perUseCopy; }
     bool RefreshedPerUse() const { return perUseCopy == PerUseCopy::RemadePerUse; }
     void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
+    void SetReuseLookup(std::function<std::shared_ptr<Texture>()> lookup) { reuseLookup = std::move(lookup); }
+    bool HasReuseLookup() const { return static_cast<bool>(reuseLookup); }
+    bool ReuseLookupHolds() const;
+    struct ReuseLookupCounts {
+        std::uint64_t held;
+        std::uint64_t changed;
+    };
+    static ReuseLookupCounts TakeReuseLookupCounts();
     bool Released() const { return released.load(std::memory_order_acquire); }
     void MarkReleased() { released.store(true, std::memory_order_release); }
 
@@ -161,6 +171,10 @@ private:
     float srgbMinLod = 0.0f;
     mutable std::mutex srgbMutex;
     mutable std::array<VkImageView, 3> srgbViews{};
+    std::optional<VkImageViewCreateInfo> arrayInfo;
+    float arrayMinLod = 0.0f;
+    mutable std::mutex arrayMutex;
+    mutable VkImageView arrayView = VK_NULL_HANDLE;
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;
@@ -169,6 +183,7 @@ private:
     std::shared_ptr<StorageTexture> storageSource;
     std::unique_ptr<CommandBatch> upload;
     PerUseCopy perUseCopy = PerUseCopy::None;
+    std::function<std::shared_ptr<Texture>()> reuseLookup;
     std::atomic<bool> released{false};
     bool copiedOnce = false;
     bool srgbExpand = false;
@@ -577,7 +592,7 @@ private:
     void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
     bool cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, std::uint64_t to, bool edge) const;
-    void saveBeforeUnwatch();
+    void saveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     void forgetKeptAtUnwatch(std::uint32_t unit);
     bool keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const;
     bool keptForCpu(std::uint32_t unit) const;

@@ -1536,7 +1536,7 @@ bool DrawRecipes() {
 }
 
 const char* DrawRecipeMissName(DrawRecipeMiss miss) {
-    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof", "moved buffers refused"};
+    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof", "buffers"};
     return names[static_cast<std::size_t>(miss)];
 }
 
@@ -2535,11 +2535,27 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
 // the record's dword as the first vertex / instance, and the constant is what the fixed-function
 // fetch must start at). The scratch is kept until the batch completed. Returns whether a copy was
 // rewritten; `argumentBuffer`/`argumentOffset` receive where the draw reads the records.
-bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const IndirectRecord& indirect, std::unique_ptr<DeviceBuffer>& scratch, VkBuffer& argumentBuffer, VkDeviceSize& argumentOffset, const std::function<void(std::uint32_t)>& countBarrier) {
+bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const IndirectRecord& indirect, std::unique_ptr<DeviceBuffer>& scratch, std::shared_ptr<Buffer>& snapshot, VkBuffer& argumentBuffer, VkDeviceSize& argumentOffset, const std::function<void(std::uint32_t)>& countBarrier) {
     using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
     const auto* args = indirect.args;
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
     countBarrier(1);
+    const bool rewritten = args->vertexRule == Rule::Constant || args->instanceRule == Rule::Constant;
+    const auto bytes = static_cast<std::size_t>(args->RangeBytes());
+    const auto* source = reinterpret_cast<const std::byte*>(args->arguments);
+    if (!args->countIndirect && bytes != 0 && !Recorder::SnapshotWriteOverlaps(args->arguments, bytes) && (recorder == nullptr || recorder->PendingLeaseSerial(args->arguments, bytes) == 0) && GuestMemory::Accessible(source, bytes, false)) {
+        snapshot = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+        const auto out = snapshot->Bytes();
+        std::memcpy(out.data(), source, bytes);
+        for (std::uint32_t record = 0; record < args->count; ++record) {
+            const auto base = static_cast<std::size_t>(record) * args->stride;
+            if (args->vertexRule == Rule::Constant) std::memcpy(out.data() + base + args->VertexDwordOffset(), &args->vertexConstant, 4);
+            if (args->instanceRule == Rule::Constant) std::memcpy(out.data() + base + args->InstanceDwordOffset(), &args->instanceConstant, 4);
+        }
+        argumentBuffer = snapshot->Handle();
+        argumentOffset = 0;
+        return rewritten;
+    }
     if (recorded) {
         // Read in place from the import when the batch runs (a synchronous draw waits for its own).
         recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
@@ -2547,9 +2563,7 @@ bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, R
     }
     argumentBuffer = indirect.argumentImport->buffer;
     argumentOffset = HostImportOffset(*indirect.argumentImport, args->arguments);
-    const bool rewritten = args->vertexRule == Rule::Constant || args->instanceRule == Rule::Constant;
     if (!rewritten) return false;
-    const auto bytes = static_cast<std::size_t>(args->RangeBytes());
     scratch = std::make_unique<DeviceBuffer>(context, bytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     CopyBuffer(context, commands, argumentBuffer, argumentOffset, scratch->Handle(), 0, bytes);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -3062,6 +3076,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         recorder->NoteAccess(CommandClass::Draw, Recorder::Access{reads, resources.GpuWrites(), images, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | inputs.shaderStages, resources.HoldsLease()});
     }
     std::unique_ptr<DeviceBuffer> scratch;
+    std::shared_ptr<Buffer> argumentSnapshot;
     std::shared_ptr<Buffer> meshArguments;
     VkBuffer argumentBuffer = VK_NULL_HANDLE;
     VkDeviceSize argumentOffset = 0;
@@ -3095,7 +3110,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
-            rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+            rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
         }
         // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
         // layout, which a lean draw renders in: no transitions.
@@ -3154,6 +3169,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     recorder->EndGpuTiming(eachDrawTiming);
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
+    if (argumentSnapshot != nullptr) recorder->Keep(argumentSnapshot);
     if (state.tessellationCapture != nullptr) {
         recorder->Keep(state.tessellationCapture->header);
         recorder->Keep(state.tessellationCapture->items);
@@ -4066,6 +4082,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         recorder->NoteAccess(CommandClass::Draw, Recorder::Access{reads, resources->GpuWrites(), images, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | inputs.shaderStages, resources->HoldsLease()});
     }
     std::unique_ptr<DeviceBuffer> scratch;
+    std::shared_ptr<Buffer> argumentSnapshot;
     VkBuffer argumentBuffer = VK_NULL_HANDLE;
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
@@ -4097,7 +4114,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     } else if (!inputs.restartTable.empty()) {
         meshArguments = directMeshArguments(context, draw, inputs.restartTable);
     } else if (gpuIndirect) {
-        rewritten = recordIndirectArguments(context, commands, recorder, recorded, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+        rewritten = recordIndirectArguments(context, commands, recorder, recorded, indirect, scratch, argumentSnapshot, argumentBuffer, argumentOffset, countBarrier);
     }
     for (auto& binding : targets) {
         if (binding.proxied) {
@@ -4164,6 +4181,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     }
     if (meshArguments != nullptr && recorded) recorder->Keep(meshArguments);
+    if (argumentSnapshot != nullptr && recorded) recorder->Keep(argumentSnapshot);
     if (state.tessellationCapture != nullptr && recorded) {
         recorder->Keep(state.tessellationCapture->header);
         recorder->Keep(state.tessellationCapture->items);
@@ -4509,14 +4527,10 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         timer.phase(PhaseLookup);
         return miss(DrawRecipeMiss::Proof);
     }
-    std::vector<ShaderResources::MovedBuffer> moved;
-    if (recipe.movedBuffers || resources->HeapStage()) {
-        auto found = resources->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
-        if (!found.has_value()) {
-            timer.phase(PhaseLookup);
-            return miss(DrawRecipeMiss::Moved);
-        }
-        moved = std::move(*found);
+    const auto moved = resources->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
+    if (!moved.has_value()) {
+        timer.phase(PhaseLookup);
+        return miss(DrawRecipeMiss::Buffers);
     }
     CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
     if (resources->HeapStage()) resources->RefreshHeapStage(shaders);
@@ -4544,11 +4558,11 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.masked = recipe.masked.has_value() ? &*recipe.masked : nullptr;
     record.completion = outcome.completion;
     record.resources = std::move(resources);
+    record.moved = *moved;
     record.pipeline = std::move(pipeline);
     record.framebuffer = std::move(framebuffer);
     record.targetViews = recipe.targetViews;
     record.targets = std::move(targets);
-    record.moved = moved;
     for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
     auto pushBytes = recipe.pushBytes;
     if (recipe.pushStages != 0) {

@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvModule.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -322,6 +323,49 @@ struct SpirvEmitterState {
     std::unordered_map<const IrBlock*, std::uint32_t> labels;
 };
 
+class SpirvDefinitionTable {
+public:
+    [[nodiscard]] const std::uint32_t* Find(const IrValue* value) const {
+        const std::uint32_t id = value->Id();
+        if (id < slots.size() && slots[id].key == value) return &slots[id].id;
+        if (const auto found = overflow.find(value); found != overflow.end()) return &found->second;
+        return nullptr;
+    }
+
+    [[nodiscard]] bool Contains(const IrValue* value) const {
+        return Find(value) != nullptr;
+    }
+
+    void Emplace(const IrValue* value, std::uint32_t id) {
+        if (Find(value) != nullptr) return;
+        const std::uint32_t index = value->Id();
+        if (index >= slots.size()) slots.resize(std::max<std::size_t>(std::size_t{index} + 1u, slots.size() * 2u));
+        if (slots[index].key == nullptr) {
+            slots[index] = Slot{value, id};
+            return;
+        }
+        overflow.emplace(value, id);
+    }
+
+    void Erase(const IrValue* value) {
+        const std::uint32_t index = value->Id();
+        if (index < slots.size() && slots[index].key == value) {
+            slots[index] = Slot{};
+            return;
+        }
+        overflow.erase(value);
+    }
+
+private:
+    struct Slot {
+        const IrValue* key = nullptr;
+        std::uint32_t id = 0;
+    };
+
+    std::vector<Slot> slots;
+    std::unordered_map<const IrValue*, std::uint32_t> overflow;
+};
+
 struct SpirvValueEmitContext {
     explicit SpirvValueEmitContext(SpirvEmitterState& state);
 
@@ -343,7 +387,7 @@ struct SpirvValueEmitContext {
     [[noreturn]] void Fail(const IrValue& inst, const char* reason) const;
 
     SpirvEmitterState& state;
-    std::unordered_map<const IrValue*, std::uint32_t> definitions;
+    SpirvDefinitionTable definitions;
     std::uint32_t scratchU32Variable = 0;
     SpirvValueEmitContext* otherHalf = nullptr;
     std::uint32_t half = 0;

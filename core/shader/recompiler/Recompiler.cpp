@@ -355,7 +355,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     };
     simplify();
     if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled) program.Metadata().barycentricBuiltinsUnnormalized = request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst;
-    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst)) {
+    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst, !hostInterpolationFirst)) {
         translateOptions.fragmentShaderBarycentricEnabled = true;
         program = translator.Translate(decoded, cfg, translateOptions);
         program.Metadata().barycentricEmulation = !hostInterpolationFirst;

@@ -27,6 +27,7 @@
 #include <list>
 #include <mutex>
 #include <spirv/unified1/spirv.hpp>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -248,6 +249,10 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
     });
     if (!context.provokingVertexLast && !observed) return;
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+    for (const auto& shader : shaders) {
+        if (shader.stage != ShaderRecompiler::ShaderStage::Fragment || shader.program == nullptr) continue;
+        Require(std::none_of(shader.program->fragmentParameters.begin(), shader.program->fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) { return parameter.flat && parameter.custom; }), "last provoking vertex is unsupported for a pass-through input read only at P0, which takes the first vertex's value as a flat input");
+    }
     const bool meshPrimitives = state.stages.path == ShaderPath::Geometry && state.stages.mesh;
     Require(!state.stages.tessellation && (meshPrimitives || (state.stages.path == ShaderPath::Vertex && !state.stages.mesh)), "last provoking vertex is unsupported for generated primitive pipelines");
     Require(state.rectList || state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for this primitive topology");
@@ -1117,11 +1122,44 @@ void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages
 
 namespace {
 
+class KeyWriter {
+public:
+    KeyWriter(std::vector<std::byte>& storage, std::size_t capacity) {
+        if (storage.size() < capacity) storage.resize(capacity);
+        begin = out = storage.data();
+        end = begin + capacity;
+    }
+
+    template<typename TValue>
+    void Put(const TValue& value) {
+        static_assert(std::is_trivially_copyable_v<TValue>);
+        reserve(sizeof(TValue));
+        std::memcpy(out, &value, sizeof(TValue));
+        out += sizeof(TValue);
+    }
+
+    void PutBytes(const void* data, std::size_t bytes) {
+        if (bytes == 0) return;
+        reserve(bytes);
+        std::memcpy(out, data, bytes);
+        out += bytes;
+    }
+
+    std::size_t Length() const { return static_cast<std::size_t>(out - begin); }
+
+private:
+    void reserve(std::size_t bytes) const {
+        if (bytes > static_cast<std::size_t>(end - out)) [[unlikely]] throw std::length_error("pipeline key larger than its buffer");
+    }
+
+    std::byte* begin;
+    std::byte* out;
+    std::byte* end;
+};
+
 template<typename TValue>
-void append(std::vector<std::byte>& key, const TValue& value) {
-    static_assert(std::is_trivially_copyable_v<TValue>);
-    const auto bytes = std::as_bytes(std::span(&value, 1));
-    key.insert(key.end(), bytes.begin(), bytes.end());
+void append(KeyWriter& key, const TValue& value) {
+    key.Put(value);
 }
 
 // Everything the Pipeline objects are built from, or empty when a stage's result has no module
@@ -1130,18 +1168,16 @@ void append(std::vector<std::byte>& key, const TValue& value) {
 // replay insert an entry a later draw finds; a generated stage (rect-list pair, geometry) is keyed
 // by its identity like the others, so a replayed pipeline built from another device's generated
 // module is missed rather than used.
-void pipelineKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
-    key.clear();
+std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    const auto capacity = 512 + sizeof(State) + sizeof(Context) + shaders.size() * 64 + input.bindings.size() * sizeof(VkVertexInputBindingDescription) + input.attributes.size() * sizeof(VkVertexInputAttributeDescription) + resources.mainKey.size_bytes() + resources.fragmentKey.size_bytes() + state.blends.size() * sizeof(VkPipelineColorBlendAttachmentState) + state.colors.size() * 64;
+    KeyWriter key(storage, capacity);
     append(key, context.device);
     append(key, attachmentLayout);
     append(key, shaders.size());
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         const auto identity = shader.program->Identity();
-        if (identity.Empty()) {
-            key.clear();
-            return;
-        }
+        if (identity.Empty()) return 0;
         append(key, shader.stage);
         append(key, identity.low);
         append(key, identity.high);
@@ -1152,22 +1188,15 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.meshLayerCount);
     append(key, PushConstantStages(shaders));
     append(key, input.bindings.size());
-    for (const auto& binding : input.bindings) {
-        append(key, binding.binding);
-        append(key, binding.stride);
-        append(key, binding.inputRate);
-    }
+    static_assert(sizeof(VkVertexInputBindingDescription) == 3 * sizeof(std::uint32_t) && offsetof(VkVertexInputBindingDescription, binding) == 0 && offsetof(VkVertexInputBindingDescription, stride) == 4 && offsetof(VkVertexInputBindingDescription, inputRate) == 8 && sizeof(VkVertexInputRate) == sizeof(std::uint32_t));
+    key.PutBytes(input.bindings.data(), input.bindings.size() * sizeof(VkVertexInputBindingDescription));
     append(key, input.attributes.size());
-    for (const auto& attribute : input.attributes) {
-        append(key, attribute.location);
-        append(key, attribute.binding);
-        append(key, attribute.format);
-        append(key, attribute.offset);
-    }
+    static_assert(sizeof(VkVertexInputAttributeDescription) == 4 * sizeof(std::uint32_t) && offsetof(VkVertexInputAttributeDescription, location) == 0 && offsetof(VkVertexInputAttributeDescription, binding) == 4 && offsetof(VkVertexInputAttributeDescription, format) == 8 && offsetof(VkVertexInputAttributeDescription, offset) == 12 && sizeof(VkFormat) == sizeof(std::uint32_t));
+    key.PutBytes(input.attributes.data(), input.attributes.size() * sizeof(VkVertexInputAttributeDescription));
     append(key, resources.mainKey.size());
-    for (const auto word : resources.mainKey) append(key, word);
+    key.PutBytes(resources.mainKey.data(), resources.mainKey.size_bytes());
     append(key, resources.fragmentKey.size());
-    for (const auto word : resources.fragmentKey) append(key, word);
+    key.PutBytes(resources.fragmentKey.data(), resources.fragmentKey.size_bytes());
     append(key, state.hasColorTarget);
     append(key, state.rectList);
     append(key, state.topology);
@@ -1182,8 +1211,8 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
     for (const auto& blend : state.blends) append(key, keyedBlend(context, blend));
-    append(key, state.colorRop);
-    for (const auto value : state.blendConstants) append(key, value);
+    key.Put(state.colorRop);
+    key.PutBytes(state.blendConstants.data(), sizeof(state.blendConstants));
     append(key, state.samples);
     append(key, state.perSampleShading);
     append(key, state.mergedCoverage);
@@ -1252,9 +1281,10 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, context.sampleLocationGridSampleCounts);
     append(key, context.storageImageMultisample);
     append(key, context.shaderStencilExport);
+    return key.Length();
 }
 
-std::uint64_t hashKey(const std::vector<std::byte>& key) {
+std::uint64_t hashKey(std::span<const std::byte> key) {
     return std::hash<std::string_view>{}(std::string_view(reinterpret_cast<const char*>(key.data()), key.size()));
 }
 
@@ -1376,8 +1406,9 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
     struct PipelineKeyStorage {};
-    auto& key = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
-    pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
+    auto& storage = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
+    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    const std::span<const std::byte> key(storage.data(), length);
     if (key.empty()) {
         std::lock_guard lock(store.mutex);
         ++store.uncached;
@@ -1392,7 +1423,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         const auto found = store.index.find(hash);
         if (found == store.index.end()) return nullptr;
         const auto it = found->second;
-        if (it->key != key) {
+        if (it->key.size() != key.size() || std::memcmp(it->key.data(), key.data(), key.size()) != 0) {
             collision = true;
             return nullptr;
         }
@@ -1454,10 +1485,10 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             store.capacity = std::min(store.capacity * 2u, PipelineStore::MaximumEntries);
         }
         if (replaying) {
-            store.entries.push_front({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key), pipeline});
+            store.entries.push_front({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key.begin(), key.end()), pipeline});
             store.index[hash] = store.entries.begin();
         } else {
-            store.entries.push_back({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key), pipeline});
+            store.entries.push_back({context.device, context.bufferPool, context.bufferPool != nullptr, hash, std::vector<std::byte>(key.begin(), key.end()), pipeline});
             store.index[hash] = std::prev(store.entries.end());
         }
         while (store.entries.size() > storeBound(store)) {
@@ -1493,7 +1524,10 @@ std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint6
 }
 
 void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
-    pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
+    struct PipelineScratchStorage {};
+    auto& storage = HostThreadLocal<std::vector<std::byte>, PipelineScratchStorage>();
+    const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
+    key.assign(storage.begin(), storage.begin() + static_cast<std::ptrdiff_t>(length));
 }
 
 PipelineStoreCounters PipelineStoreTotals() {

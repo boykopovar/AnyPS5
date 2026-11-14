@@ -201,22 +201,22 @@ std::uint32_t SpirvValueEmitContext::ShuffleInHalf(const IrValue& inst, std::siz
 }
 
 std::uint32_t SpirvValueEmitContext::Result(const IrValue& inst) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        return found->second;
+    if (const auto* found = definitions.Find(&inst)) {
+        return *found;
     }
     const auto id = state.module.AllocateId();
-    definitions.emplace(&inst, id);
+    definitions.Emplace(&inst, id);
     return id;
 }
 
 std::uint32_t SpirvValueEmitContext::Define(const IrValue& inst, std::uint32_t value) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        if (found->second != value) {
-            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), found->second, value);
+    if (const auto* found = definitions.Find(&inst)) {
+        if (*found != value) {
+            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), *found, value);
         }
-        return found->second;
+        return *found;
     }
-    definitions.emplace(&inst, value);
+    definitions.Emplace(&inst, value);
     return value;
 }
 

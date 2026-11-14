@@ -5683,7 +5683,7 @@ RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, cons
             case Graphics::DrawRecipeMiss::TargetGone:
             case Graphics::DrawRecipeMiss::ObjectsGone: counters.precheckMisses[MissObjectsGone].fetch_add(1, std::memory_order_relaxed); break;
             case Graphics::DrawRecipeMiss::TemplateGone: counters.precheckMisses[MissTemplateGone].fetch_add(1, std::memory_order_relaxed); break;
-            case Graphics::DrawRecipeMiss::Moved: counters.precheckMisses[MissMoved].fetch_add(1, std::memory_order_relaxed); break;
+            case Graphics::DrawRecipeMiss::Buffers: counters.precheckMisses[MissMoved].fetch_add(1, std::memory_order_relaxed); break;
             case Graphics::DrawRecipeMiss::Proof: counters.rebuilds[static_cast<std::size_t>(outcome.proof.failure)].fetch_add(1, std::memory_order_relaxed); break;
             default: break;
         }

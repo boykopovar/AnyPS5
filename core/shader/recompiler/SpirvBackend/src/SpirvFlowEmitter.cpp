@@ -231,7 +231,7 @@ void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& progr
                 EmitReturnTerminator(ctx);
                 return;
             }
-            if (const IrValue* resolved = info.condition->Resolve(); !resolved->HasImmediate() && !ctx.definitions.contains(resolved)) {
+            if (const IrValue* resolved = info.condition->Resolve(); !resolved->HasImmediate() && !ctx.definitions.Contains(resolved)) {
                 const std::string where = resolved->Parent() == nullptr ? std::string("no block") : "block " + std::to_string(resolved->Parent()->Id());
                 const std::string message = "branch condition " + std::string(IrOpcodeName(resolved->Opcode())) + " of block " + std::to_string(info.id) + " (defined in " + where + ") was not emitted before the branch";
                 ctx.Fail(message.c_str());
@@ -797,8 +797,8 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
                 ctx.Fail(*inst, "requires a second lane context");
             }
             if (half != 0 && shared) {
-                if (const auto found = ctx.definitions.find(inst); found != ctx.definitions.end()) {
-                    ctx.otherHalf->Define(*inst, found->second);
+                if (const auto* found = ctx.definitions.Find(inst)) {
+                    ctx.otherHalf->Define(*inst, *found);
                     continue;
                 }
             }

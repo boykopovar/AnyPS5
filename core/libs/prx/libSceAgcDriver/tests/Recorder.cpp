@@ -8215,7 +8215,7 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
                 throw;
             }
             if (refused) {
-                const std::string unitCause = "(unit " + std::to_string(write == Write::PendingWithoutHook ? 0 : lastUnit) + " of " + std::to_string(units) + ": " + cause;
+                const std::string unitCause = "(unit " + std::to_string(lastUnit) + " of " + std::to_string(units) + ": " + cause;
                 Require(refusal.find(unitCause) != std::string::npos, "(p) " + what + ": the refusal does not name the cause '" + unitCause + "': " + refusal);
             }
             if (unhashed && refused) {
@@ -15916,6 +15916,98 @@ void Run(Context context) {
 }
 #endif
 
+namespace UnwatchScopeTest {
+constexpr std::size_t Unit = 65536;
+constexpr std::size_t Bytes = 4 * Unit;
+constexpr std::uint32_t Initial = 0x11111111u;
+constexpr std::uint32_t Gpu = 0xa1a1a1a1u;
+constexpr std::uint32_t Cpu = 0xc3c3c3c3u;
+std::size_t readBytes = 0;
+
+void CountReads(std::uint64_t, std::size_t bytes) {
+    readBytes += bytes;
+}
+
+class WatchedBlock {
+public:
+    WatchedBlock() : data(AllocateWatched(Bytes, Unit)) {
+        Require(data != nullptr, "cannot allocate watched surface");
+        std::fill_n(static_cast<std::uint32_t*>(data), Bytes / 4, Initial);
+        GuestAllocations::Mutation().Add(data, Bytes, true, true, true);
+        Require(AgcDriver::GuestMemory::Watched(Address(), Bytes), "surface is not watched");
+    }
+    ~WatchedBlock() {
+        GuestAllocations::Mutation().Remove(data);
+        ReleaseWatched(data, Bytes);
+    }
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(data); }
+    std::uint32_t* Words() const { return static_cast<std::uint32_t*>(data); }
+private:
+    void* data;
+};
+
+
+bool Run(Context context, Recorder& recorder, bool refresh = false, bool edge = false, bool linear = false) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) return false;
+    context.hostImportAlignment = 0;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    WatchedBlock block;
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    GuestTextureResource descriptor{};
+    descriptor.baseAddress = block.Address();
+    descriptor.width = 128;
+    descriptor.height = 128;
+    descriptor.depthOrLastArray = 3;
+    descriptor.mipCount = 1;
+    descriptor.tileMode = linear ? TextureTileMode::kLinear : TextureTileMode::kR64KBX;
+    descriptor.dimension = TextureDimension::k2DArray;
+    descriptor.format = 20;
+    descriptor.dstSelX = 0;
+    descriptor.dstSelY = 1;
+    descriptor.dstSelZ = 2;
+    descriptor.dstSelW = 3;
+    auto image = StorageTexture::Create(context, detiler, descriptor, 0);
+    recorder.Sync();
+    Require(image->BlockUnits() == !linear && image->TrackedUnits() == 4 && image->GuestBytes() == Bytes, "surface does not have four independent units");
+    {
+        CommandBatch batch(context);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        VkClearColorValue value{};
+        value.uint32[0] = Gpu;
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(batch.Handle(), image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
+        batch.SubmitAndWait();
+    }
+    image->MarkWholeWritten();
+    Require(!image->GuestSnapshotValid(), "GPU results unexpectedly retain a complete CPU baseline");
+    struct ResetGuard {
+        ~ResetGuard() { AgcDriver::GuestMemory::SetReadGuard(nullptr); }
+    } reset;
+    AgcDriver::GuestMemory::SetReadGuard(&CountReads);
+    AgcDriver::GuestMemory::Unwatch(block.Address() + (edge ? 4096 : 0), edge ? 4096 : Unit);
+    AgcDriver::GuestMemory::SetReadGuard(nullptr);
+    const auto firstUnwatchBytes = readBytes;
+    Require(!AgcDriver::GuestMemory::Watched(block.Address(), Unit), "first unit stayed watched");
+    Require(AgcDriver::GuestMemory::Watched(block.Address() + Unit, Bytes - Unit), "unwatch changed neighbouring units");
+    std::fill_n(block.Words() + Unit / 4, Unit / 4, Cpu);
+    AgcDriver::GuestMemory::Unwatch(block.Address() + Unit, Unit);
+    std::fill_n(block.Words() + 2 * Unit / 4, Unit / 4, Cpu);
+    if (refresh) image->Refresh();
+    image->WriteBack();
+    recorder.Sync();
+    for (std::size_t index = 0; index < Bytes / 4; ++index) {
+        const auto expected = index >= Unit / 4 && index < 3 * Unit / 4 ? Cpu : Gpu;
+        Require(block.Words()[index] == expected, "partial unwatch lost CPU writes or another unit's GPU results");
+    }
+    image.reset();
+    std::cout << "first unwatch copied " << firstUnwatchBytes << " bytes for " << Unit << " bytes leaving the watch; CPU/GPU preservation passed\n";
+    Require(firstUnwatchBytes == Unit, "unwatch copied pending units outside the range leaving the watch");
+    return true;
+}
+}
+
 namespace SmallElementDetileTest {
 
 std::uint32_t equationOffset(const TextureSwizzleEquation& equation, std::uint32_t x, std::uint32_t y) {
@@ -16563,6 +16655,11 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--unwatch-snapshot-scope-only") return UnwatchScopeTest::Run(device.GetContext(), recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--unwatch-snapshot-scope-refresh-only") return UnwatchScopeTest::Run(device.GetContext(), recorder, true) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--unwatch-snapshot-scope-edge-only") return UnwatchScopeTest::Run(device.GetContext(), recorder, false, true) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--unwatch-snapshot-scope-linear-only") return UnwatchScopeTest::Run(device.GetContext(), recorder, false, false, true) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--unwatch-snapshot-scope-linear-refresh-only") return UnwatchScopeTest::Run(device.GetContext(), recorder, true, false, true) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--small-tiled-shadow-label-only") {
             return smallTiledShadowLabelTests(device, recorder) ? 0 : 77;
         }

@@ -189,6 +189,7 @@ struct ImageTableReuseCounts {
     std::uint64_t variantSurfaces = 0;
     std::uint64_t variantSubstituted = 0;
     std::uint64_t variantRejected = 0;
+    std::uint64_t arrayViewsShared = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 struct HeapBufferPathCounts {
@@ -492,6 +493,8 @@ private:
         int tileMode = 0;
         std::uint64_t dccAddress = 0;
         bool imageTable = false;
+        std::optional<std::array<std::uint32_t, 8>> storedWords;
+        std::uint32_t storedMip = 0;
     };
     std::vector<DescribedRange> describedRanges;
     struct Allocation {
@@ -666,6 +669,9 @@ private:
         const StorageTexture* source = nullptr;
         bool depth = false;
         bool valid = false;
+        std::uint64_t committedGeneration = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> committed;
+        bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
     void captureValidation();
@@ -897,6 +903,7 @@ private:
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;
     std::vector<std::shared_ptr<Texture>> textures;
     std::vector<bool> textureFirstLayer;
+    std::unordered_set<std::size_t> arrayViewTextures;
     std::vector<bool> textureBaseLevel;
     std::vector<bool> textureSrgb;
     std::vector<std::shared_ptr<StorageTexture>> storageTextures;

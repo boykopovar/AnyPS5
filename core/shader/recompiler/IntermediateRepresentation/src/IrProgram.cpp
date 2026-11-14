@@ -1,5 +1,6 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <iomanip>
 #include <limits>
@@ -108,7 +109,34 @@ bool sameValue(const IrValue* left, const IrValue* right) {
     return false;
 }
 
-bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, const IrValue* right, std::vector<std::pair<const IrValue*, const IrValue*>>& visited) {
+class VisitedPairs {
+public:
+    using Pair = std::pair<const IrValue*, const IrValue*>;
+
+    [[nodiscard]] bool Contains(const Pair& entry) const {
+        const std::size_t inlined = std::min(count, Inline);
+        if (std::find(items.begin(), items.begin() + inlined, entry) != items.begin() + inlined) return true;
+        return std::find(spill.begin(), spill.end(), entry) != spill.end();
+    }
+
+    void Add(const Pair& entry) {
+        if (count < Inline) {
+            items[count++] = entry;
+            return;
+        }
+        spill.push_back(entry);
+        ++count;
+    }
+
+private:
+    static constexpr std::size_t Inline = 16;
+
+    std::array<Pair, Inline> items;
+    std::vector<Pair> spill;
+    std::size_t count = 0;
+};
+
+bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, const IrValue* right, VisitedPairs& visited) {
     if (left != nullptr) {
         left = left->Resolve();
     }
@@ -131,10 +159,10 @@ bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, con
         return false;
     }
     const auto entry = std::make_pair(left, right);
-    if (std::find(visited.begin(), visited.end(), entry) != visited.end()) {
+    if (visited.Contains(entry)) {
         return true;
     }
-    visited.push_back(entry);
+    visited.Add(entry);
     if (isRuntimeRead(left->Opcode())) {
         const auto leftIndex = left->Flags<MemoryFlags>().index;
         const auto rightIndex = right->Flags<MemoryFlags>().index;
@@ -877,7 +905,7 @@ void ResolveControlFlowIdentities(IrProgram& program) {
 }
 
 bool EquivalentValue(const IrResourcePlan& program, const IrValue* left, const IrValue* right) {
-    std::vector<std::pair<const IrValue*, const IrValue*>> visited;
+    VisitedPairs visited;
     return equivalentValueImpl(program, left, right, visited);
 }
 

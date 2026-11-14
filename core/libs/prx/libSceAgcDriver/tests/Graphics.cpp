@@ -890,12 +890,11 @@ void msaaEnableClearOneSampleTargetTests() {
     queue = drawC();
     queue.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     requireOneSample(queue, "draw C with an enabled but unaddressed ANCILLARY input");
-    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export";
-    for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
-        queue = drawC();
-        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
-        expectFailure([&] { DecodeState(queue); }, refused);
-    }
+    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index input under PS_ITER_SAMPLE, a coverage input, or a sample-mask export";
+    queue = drawC();
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
+    requireOneSample(queue, "draw C whose pixel program reads ANCILLARY without PS_ITER_SAMPLE");
+    Require(!DecodeState(queue).perSampleShading, "ANCILLARY into a one-sample color target without MSAA_ENABLE asked for sample shading");
     queue = drawC();
     queue.context[0x293] = 0x10000u;
     queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample);
@@ -12750,6 +12749,7 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "oob_select 1 past the records still spans its fetch");
         attribute.resource.fields[3] = 0x2004dfacu;
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
+        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 2, stride 32, NUM_RECORDS 3, vertex index 3");
         attribute.resource.fields[3] = 0x3004dfacu;
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
         attribute.resource.fields[3] = 77u << 12u;
@@ -12778,6 +12778,7 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 7) == 16, "OOB_SELECT 1 must read the whole element for the last index below NUM_RECORDS");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 9); }, "record count");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 8); }, "record count");
+        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 8); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 1, stride 0, NUM_RECORDS 8, instance index 8");
         zeroStride(1, 1);
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "OOB_SELECT 1 with one record must read the element at index 0");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 2); }, "record count");
@@ -12901,6 +12902,22 @@ void validationTests() {
         const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "VK_EXT_shader_viewport_index_layer");
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, true);
+    }
+    {
+        ShaderRecompiler::RecompileResult tessVertex, tessControl, tessEvaluation;
+        tessVertex.spirv = makeModule({});
+        tessControl.spirv = makeModule({.push = true, .tessellationModel = spv::ExecutionModelTessellationControl});
+        tessEvaluation.spirv = makeModule({.tessellationModel = spv::ExecutionModelTessellationEvaluation, .layerOutput = true});
+        const std::array<AgcDriver::Graphics::CompiledShader, 4> tessShaders{{{ShaderRecompiler::ShaderStage::Local, &tessVertex, 0}, {ShaderRecompiler::ShaderStage::TessellationControl, &tessControl, 0}, {ShaderRecompiler::ShaderStage::TessellationEvaluation, &tessEvaluation, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        auto tessState = state;
+        tessState.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
+        tessState.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 3, 2, 1, 4, 128, 16, false};
+        const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false); }, "VK_EXT_shader_viewport_index_layer");
+        AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false, false, false, false, false, false, false, false, true);
+        tessEvaluation.spirv = makeModule({.tessellationModel = spv::ExecutionModelTessellationEvaluation});
+        tessControl.spirv = makeModule({.push = true, .tessellationModel = spv::ExecutionModelTessellationControl, .layerOutput = true});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false, false, false, false, false, false, false, false, true); }, "unsupported tessellation built-in");
     }
     for (const auto capability : {spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle}) {
         ShaderRecompiler::RecompileResult vertex;
@@ -14213,6 +14230,17 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         BuildPipelineStoreKey(legacyKey, context, legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(legacyReplayed, context, legacyDecoded.state, legacyDecoded.vertexInput, layouts.View(), legacyShaders, legacyDecoded.attachmentLayout);
         Require(legacyFlag == original && legacyKey != original && legacyKey == legacyReplayed, "the legacy vertex selection keyed a pipeline by the state flag instead of by its vertex module");
+        {
+            auto shortState = state;
+            shortState.depth.reset();
+            shortState.colors.resize(1);
+            shortState.blends.resize(1);
+            std::vector<std::byte> shortKey, shortAgain, longAgain;
+            BuildPipelineStoreKey(shortKey, context, shortState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            BuildPipelineStoreKey(longAgain, context, state, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            BuildPipelineStoreKey(shortAgain, context, shortState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+            Require(!shortKey.empty() && shortKey.size() < original.size() && shortAgain == shortKey && longAgain == original, "a key built after a longer one kept bytes of it");
+        }
         std::vector<std::byte> unclamped, clamped, biased;
         auto clampedState = state;
         clampedState.depthBiasClamp = 1.0f;

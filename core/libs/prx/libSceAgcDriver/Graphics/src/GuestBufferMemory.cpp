@@ -1830,6 +1830,7 @@ ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, s
     if (run.ranges.empty()) return run;
     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
     if (begin == run.base) return run;
+    if (run.ranges.front()->bytes > window && run.bytes - run.ranges.front()->bytes <= window) return run;
     return {};
 }
 
