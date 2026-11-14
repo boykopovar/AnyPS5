@@ -176,8 +176,6 @@ static void CheckKeyboardResourceIds() {
     constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
     KeyboardResourceIdArray ids;
     const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
-    // A PS5 (firmware 11.60, payload process) answers 0x80bc0002 and writes nothing while no keyboard is open, for
-    // every user id it was tried with (-1, 0 and 0x12345678) and for a null array.
     for (const int32_t user : {1, -1, 0, 0x12345678}) {
         std::memset(&ids, 0xa5, sizeof(ids));
         Require(sceImeKeyboardGetResourceId(user, &ids) == NotOpened, "keyboard not opened");
