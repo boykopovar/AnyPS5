@@ -24,6 +24,7 @@
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
 #include "prx/libwebrtc/include/RtcpPli.hpp"
 #include "prx/libwebrtc/include/RtcpApp.hpp"
+#include "prx/libwebrtc/include/RtcpRemb.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
@@ -287,7 +288,7 @@ bool APS5_VABI _ZN6webrtc4rtcp3Pli5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRt
 int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void);
 void APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void*);
 int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp4Remb5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
+bool APS5_VABI _ZN6webrtc4rtcp4Remb5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpRemb* remb, const WebRtcRtcpCommonHeader* packet);
 int APS5_VABI _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(void);
 std::uint16_t APS5_VABI _ZNK6webrtc4rtcp17TransportFeedback15GetBaseSequenceEv_nid_postfix(const WebRtcRtcpTransportFeedback* feedback);
