@@ -289,6 +289,26 @@ int main() {
             Write<std::uint64_t>(bytes, 104, 0xd0);
             RejectProgramHeaders(std::move(bytes));
         }},
+        {"load address range overflow", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 80, std::numeric_limits<std::uint64_t>::max() - 31);
+            Write<std::uint64_t>(bytes, 104, 64);
+            RejectProgramHeaders(std::move(bytes), "PT_LOAD address range overflow", std::numeric_limits<std::uint64_t>::max() - 31);
+        }},
+        {"load address range ending at UINT64_MAX", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 80, std::numeric_limits<std::uint64_t>::max() - 64);
+            Write<std::uint64_t>(bytes, 104, 64);
+            const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+            Require(headers.size() == 1 && headers[0].MappedAddress == std::numeric_limits<std::uint64_t>::max() - 64);
+        }},
+        {"uncovered SCE RELRO address range overflow before PT_LOAD conversion", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 64, 0x61000010);
+            Write<std::uint64_t>(bytes, 80, std::numeric_limits<std::uint64_t>::max() - 31);
+            Write<std::uint64_t>(bytes, 104, 64);
+            RejectProgramHeaders(std::move(bytes), "PT_SCE_RELRO address range overflow", std::numeric_limits<std::uint64_t>::max() - 31);
+        }},
         {"load and uncovered SCE RELRO ending at end of file", [] {
             for (const std::uint32_t type : {1u, 0x61000010u}) {
                 auto bytes = Fixture();
@@ -518,7 +538,7 @@ int main() {
         }},
         {"translation virtual boundary", [] {
             auto bytes = Fixture();
-            const auto start = std::numeric_limits<std::uint64_t>::max() - 31;
+            const auto start = std::numeric_limits<std::uint64_t>::max() - 64;
             Write(bytes, 80, start);
             Require(Relinker::ElfReader(std::move(bytes)).TranslateVirtualAddress(start + 16) == 0x250);
         }},
@@ -587,12 +607,12 @@ int main() {
             Write<std::uint16_t>(bytes, 56, 2);
             RejectAddress(std::move(bytes), 0x1008);
         }},
-        {"translation below segment and at virtual maximum", [] {
+        {"translation below segment and near virtual maximum", [] {
             RejectAddress(Fixture(), 0x0fff);
             auto bytes = Fixture();
             const auto maximum = std::numeric_limits<std::uint64_t>::max();
-            Write(bytes, 80, maximum - 31);
-            Require(Relinker::ElfReader(std::move(bytes)).TranslateVirtualAddress(maximum) == 0x25f);
+            Write(bytes, 80, maximum - 64);
+            Require(Relinker::ElfReader(std::move(bytes)).TranslateVirtualAddress(maximum - 33) == 0x25f);
         }},
         {"ordinary translations and zero fill", [] {
             const Relinker::ElfReader reader(Fixture());

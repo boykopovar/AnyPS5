@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace Relinker {
@@ -152,6 +153,8 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
 
         if (ph.Type == PT_LOAD && ph.FileSize > ph.MemorySize)
             throw RelinkerException("PT_LOAD file size exceeds memory size", ph.Offset);
+        if (ph.Type == PT_LOAD && ph.MemorySize > std::numeric_limits<std::uint64_t>::max() - ph.MappedAddress)
+            throw RelinkerException("PT_LOAD address range overflow", ph.MappedAddress);
         if (ph.Type == PT_LOAD && !_rangeFits(ph.Offset, ph.FileSize, _fileBuffer.size()))
             throw RelinkerException("Segment offset out of bounds", ph.Offset);
 
@@ -176,6 +179,8 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             covered = true;
         }
         if (!covered) {
+            if (relro.MemorySize > std::numeric_limits<std::uint64_t>::max() - relro.MappedAddress)
+                throw RelinkerException("PT_SCE_RELRO address range overflow", relro.MappedAddress);
             auto protection = relro;
             protection.Type = PT_GNU_RELRO;
             protection.Flags = PF_R;
