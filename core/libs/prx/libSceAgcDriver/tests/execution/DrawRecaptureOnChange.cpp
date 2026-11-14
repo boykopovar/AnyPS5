@@ -42,6 +42,7 @@ constexpr std::size_t TableOffset = 0x300;
 constexpr std::size_t MovedOffset = 0x800;
 constexpr std::size_t ShiftOffset = 0x900;
 constexpr std::size_t StillOffset = 0xa00;
+constexpr std::size_t LabelOffset = 0xc00;
 constexpr std::size_t ColorBytes = 65536;
 constexpr std::uint32_t RenderTargetTileMode = 0x1b;
 constexpr std::size_t FetchBufferTableOffset = 0x000;
@@ -195,9 +196,22 @@ void WriteDescriptor(const GuestBlock& block, std::size_t slot, std::array<std::
 
 const GuestBlock* TableBlock = nullptr;
 std::atomic<bool> TableChangeArmed{false};
+std::atomic<bool> WaitArmed{false};
 std::atomic<int> TableChanges{0};
+std::array<std::uint32_t, 7> WaitPacket{};
+
+void ArmWait(const GuestBlock& block, std::size_t offset, std::uint32_t reference) {
+    const auto label = block.At(offset);
+    WaitPacket = {0xc0053c00u, 0x13u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), reference, 0xffffffffu, 10u};
+    WaitArmed.store(true);
+}
+
+void SetLabel(const GuestBlock& block, std::size_t offset, std::uint32_t value) {
+    std::memcpy(block.Bytes(offset), &value, sizeof(value));
+}
 
 void ChangeTableBeforeCheck() {
+    if (WaitArmed.exchange(false)) AgcDriver::DriverDetail::Driver::NotePendingWaitForTest(WaitPacket);
     if (!TableChangeArmed.exchange(false)) return;
     WriteDescriptor(*TableBlock, 0, VertexDescriptor(TableBlock->At(MovedOffset)));
     TableChanges.fetch_add(1);
@@ -337,24 +351,47 @@ void ChangedTableIsBound(const GuestBlock& vertices, const GuestBlock& data, con
     std::memset(target.Bytes(0), 0, ColorBytes);
     WriteDescriptor(vertices, 0, {});
     const auto retries = AgcDriver::DriverDetail::captureChangeRetries.load();
+    ArmWait(vertices, LabelOffset, 1);
     TableChangeArmed.store(true);
     SubmitDraw(vertices, data, target);
     const auto brightest = Brightest(target);
     const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
-    std::printf("a draw whose descriptor table changed from a zero V# to a valid one after its capture: the table changed %d time(s), brightest color byte %u (%s), %llu packet(s) prepared again\n", TableChanges.load(), brightest, brightest == 255u ? "the valid V# was bound" : "the zero V# captured before the change was bound", static_cast<unsigned long long>(redone));
+    std::printf("a draw behind an unsatisfied wait whose descriptor table changed from a zero V# to a valid one after its capture: the table changed %d time(s), brightest color byte %u (%s), %llu packet(s) prepared again\n", TableChanges.load(), brightest, brightest == 255u ? "the valid V# was bound" : "the zero V# captured before the change was bound", static_cast<unsigned long long>(redone));
     Expect(TableChanges.load() == 1, "the check seam did not run before the draw was recorded");
     Expect(brightest == 255u, "the draw bound the zero V# captured before the table changed, not the valid V# in memory when it was recorded");
     Expect(redone == 1, "the draw was prepared again " + std::to_string(redone) + " times, not once");
 }
 
-void UnchangedTableIsNotRedone(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
+void WaitedUnchangedTableIsCompared(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
     std::memset(target.Bytes(0), 0, ColorBytes);
     const auto retries = AgcDriver::DriverDetail::captureChangeRetries.load();
+    const auto checks = AgcDriver::DriverDetail::captureChecks.load();
+    ArmWait(vertices, LabelOffset, 1);
     SubmitDraw(vertices, data, target);
     const auto brightest = Brightest(target);
     const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
-    std::printf("the same draw with its table unchanged: brightest color byte %u, %llu packet(s) prepared again\n", brightest, static_cast<unsigned long long>(redone));
+    const auto compared = AgcDriver::DriverDetail::captureChecks.load() - checks;
+    std::printf("the same draw behind the unsatisfied wait with its table unchanged: brightest color byte %u, %llu capture check(s) run, %llu packet(s) prepared again\n", brightest, static_cast<unsigned long long>(compared), static_cast<unsigned long long>(redone));
+    Expect(brightest == 255u, "the draw behind an unsatisfied wait with an unchanged valid table did not draw");
+    Expect(compared == 1, "a draw behind an unsatisfied wait ran " + std::to_string(compared) + " capture checks, not one");
+    Expect(redone == 0, "a draw whose captured memory did not change was prepared again");
+}
+
+void UnchangedTableIsNotRedone(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
+    std::memset(target.Bytes(0), 0, ColorBytes);
+    SetLabel(vertices, LabelOffset, 1);
+    const auto retries = AgcDriver::DriverDetail::captureChangeRetries.load();
+    const auto checks = AgcDriver::DriverDetail::captureChecks.load();
+    const auto skipped = AgcDriver::DriverDetail::captureChecksSkipped.load();
+    SubmitDraw(vertices, data, target);
+    const auto brightest = Brightest(target);
+    const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
+    const auto compared = AgcDriver::DriverDetail::captureChecks.load() - checks;
+    const auto passed = AgcDriver::DriverDetail::captureChecksSkipped.load() - skipped;
+    std::printf("the same draw after memory satisfied the wait, table unchanged: brightest color byte %u, %llu capture check(s) run, %llu skipped, %llu packet(s) prepared again\n", brightest, static_cast<unsigned long long>(compared), static_cast<unsigned long long>(passed), static_cast<unsigned long long>(redone));
     Expect(brightest == 255u, "the draw with an unchanged valid table did not draw");
+    Expect(compared == 0, "a draw with no unsatisfied wait compared its captured memory");
+    Expect(passed >= 1, "a draw with no unsatisfied wait did not skip its capture check");
     Expect(redone == 0, "a draw whose captured memory did not change was prepared again");
 }
 
@@ -471,6 +508,7 @@ int main() {
         CodeBlock = &code;
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeTableBeforeCheck);
         ChangedTableIsBound(vertices, data, target);
+        WaitedUnchangedTableIsCompared(vertices, data, target);
         UnchangedTableIsNotRedone(vertices, data, target);
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeCodeBeforeCheck);
         ChangedRawCodeIsRecompiled(vertices, data, target, code);
