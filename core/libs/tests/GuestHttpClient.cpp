@@ -138,6 +138,55 @@ void CheckBodies(const std::string& base) {
     }
 }
 
+void CheckTransferCodings(const std::string& base) {
+    int accepted = 0;
+    int refused = 0;
+    for (const std::string mode : {"full", "range", "empty"}) {
+        for (const char* name : {"single", "case", "ows"}) {
+            auto client = Create();
+            const auto url = base + "/transfer-fields/" + mode + "/" + name + "/payload.bin";
+            Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "single chunked field refused");
+            const bool empty = mode == "empty";
+            Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == (empty ? 0 : 100000), "chunked source size differs");
+            if (!empty) {
+                Read(client.get(), 0, 64);
+                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "chunked source seek failed");
+                Read(client.get(), 90000, 64);
+                Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 0, 2) == 100000, "chunked source end differs");
+            }
+            End(client.get());
+            ++accepted;
+        }
+        for (const char* name : {"repeat", "repeat-ows", "repeat-field-case", "triple", "joined", "mixed-case", "before", "after", "empty"}) {
+            auto client = Create();
+            const auto url = base + "/transfer-fields/" + mode + "/" + name + "/payload.bin";
+            bool failed = false;
+            try { failed = Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 0; }
+            catch (const std::exception&) { failed = true; }
+            if (failed) {
+                Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == -1, "invalid transfer fields retained a source");
+                ++refused;
+            } else std::fprintf(stderr, "Repeated transfer coding accepted: %s/%s\n", mode.c_str(), name);
+        }
+    }
+    auto late = Create();
+    Check(Aps5HttpClient_Open_nid_postfix(late.get(), (base + "/transfer-fields/range/late-repeat/payload.bin").c_str()) == 1, "late transfer control refused");
+    Read(late.get(), 0, 31);
+    Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 90000, 0) == 90000, "late transfer seek failed");
+    std::uint8_t byte = 0xa5;
+    bool lateRefused = false;
+    try { Aps5HttpClient_Read_nid_postfix(late.get(), &byte, 1); }
+    catch (const std::exception&) { lateRefused = true; }
+    if (lateRefused) {
+        Check(byte == 0xa5 && Aps5HttpClient_GetSize_nid_postfix(late.get()) == 100000 &&
+              Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 1) == 90000, "late transfer refusal changed source state");
+        Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 0) == 0, "late transfer cache rewind failed");
+        Read(late.get(), 0, 31);
+    }
+    std::printf("Transfer-Encoding controls: %d/9; invalid fields refused: %d/27; late duplicate refused: %d/1\n", accepted, refused, lateRefused);
+    Check(accepted == 9 && refused == 27 && lateRefused, "repeated Transfer-Encoding was silently collapsed");
+}
+
 void CheckEmpty(const std::string& base) {
     auto client = Create();
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/empty.bin").c_str()) == 1, "empty source open failed");
@@ -391,7 +440,9 @@ void CheckContentLengths(const std::string& base) {
     int accepted = 0;
     int refused = 0;
     for (const std::string mode : {"full", "range", "empty"}) {
-        for (const char* name : {"single", "pair", "compact", "whitespace", "many", "zeros"}) {
+        for (const char* name : {"single", "pair", "compact", "whitespace", "many", "zeros", "repeat-exact", "repeat-ows",
+                                 "repeat-zeros", "repeat-zeros-first", "repeat-list-second", "repeat-list-first",
+                                 "repeat-two-lists", "repeat-many", "repeat-whitespace-lists"}) {
             auto client = Create();
             const auto url = base + "/length-list/" + mode + "/" + name + "/payload.bin";
             if (Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) != 1) {
@@ -410,7 +461,10 @@ void CheckContentLengths(const std::string& base) {
             ++accepted;
         }
         for (const char* name : {"different", "suffix", "empty", "leading-empty", "trailing-empty", "middle-empty",
-                                 "plus", "negative", "overflow", "hex", "fraction", "embedded-space", "embedded-tab"}) {
+                                 "plus", "negative", "overflow", "hex", "fraction", "embedded-space", "embedded-tab",
+                                 "repeat-different", "repeat-mismatch-list", "repeat-mismatch-first", "repeat-mismatch-identical",
+                                 "repeat-empty-first", "repeat-empty-second", "repeat-signed", "repeat-overflow", "repeat-suffix",
+                                 "repeat-last", "etag-duplicate"}) {
             auto client = Create();
             const auto url = base + "/length-list/" + mode + "/" + name + "/payload.bin";
             const bool failed = Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 0;
@@ -418,8 +472,22 @@ void CheckContentLengths(const std::string& base) {
             ++refused;
         }
     }
-    std::printf("Content-Length equivalent cases: %d/18; invalid cases refused: %d/39\n", accepted, refused);
-    Check(accepted == 18 && refused == 39, "Content-Length list interoperability failed");
+    auto late = Create();
+    const bool opened = Aps5HttpClient_Open_nid_postfix(late.get(), (base + "/length-list/range/repeat-late-mismatch/payload.bin").c_str()) == 1;
+    bool lateRefused = false;
+    if (opened) {
+        Read(late.get(), 0, 31);
+        Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 90000, 0) == 90000, "repeated length late seek failed");
+        std::uint8_t byte = 0xa5;
+        try { Aps5HttpClient_Read_nid_postfix(late.get(), &byte, 1); }
+        catch (const std::exception&) { lateRefused = true; }
+        Check(lateRefused && byte == 0xa5 && Aps5HttpClient_GetSize_nid_postfix(late.get()) == 100000 &&
+              Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 1) == 90000, "conflicting late length changed source state");
+        Check(Aps5HttpClient_Seek_nid_postfix(late.get(), 0, 0) == 0, "repeated length cache rewind failed");
+        Read(late.get(), 0, 31);
+    }
+    std::printf("Content-Length equivalent cases: %d/45; invalid cases refused: %d/72; late conflict refused: %d/1\n", accepted, refused, lateRefused);
+    Check(accepted == 45 && refused == 72 && lateRefused, "Content-Length field interoperability failed");
 }
 
 void CheckCancellation(const std::string& base) {
@@ -466,6 +534,7 @@ int main(int argc, char** argv) {
         }
         CheckInputValidation(base);
         CheckBodies(base);
+        CheckTransferCodings(base);
         CheckEmpty(base);
         CheckRedirects(base);
         CheckCacheAndReopen(base);

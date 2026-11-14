@@ -3,6 +3,7 @@ import bisect
 import collections
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -318,7 +319,9 @@ def load(path, thread=None):
                 samples.total["threads"] += int(parts[3])
             continue
         fields = line.strip().rsplit(None, 3)
-        if len(fields) == 4 and fields[1].startswith("0x") and fields[2].isdigit() and fields[3].isdigit():
+        if len(fields) == 4 and fields[2].isdigit() and fields[3].isdigit():
+            if re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is None:
+                raise ValueError(f"{path}:{number}: expected a hexadecimal offset after the module name")
             if thread is not None and current is None:
                 raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
             if thread is None or current == thread:
