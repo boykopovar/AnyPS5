@@ -1,8 +1,11 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -118,6 +121,33 @@ static void CheckIsModuleLoaded() {
     Require(sceKernelIsModuleLoaded(reinterpret_cast<const char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
 }
 
+static void CheckGetcwd() {
+    char buffer[4096] = {};
+    Require(__getcwd_nid_postfix(buffer, sizeof(buffer)) == 0);
+    Require(buffer[0] == '/');
+    Require(std::strlen(buffer) < sizeof(buffer));
+    const std::size_t required = std::strlen(buffer) + 1;
+    std::vector<char> exact(required);
+    Require(__getcwd_nid_postfix(exact.data(), exact.size()) == 0);
+    Require(std::strcmp(exact.data(), buffer) == 0);
+    std::vector<char> shortBuffer(required - 1);
+    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1);
+    Require(*__error_nid_postfix() == ERANGE);
+    (void)remove_nid_postfix("/cwd-test");
+    Require(mkdir_nid_postfix("/cwd-test", 0700) == 0);
+    Require(chdir_nid_postfix("/cwd-test") == 0);
+    char changed[4096] = {};
+    Require(__getcwd_nid_postfix(changed, sizeof(changed)) == 0);
+    Require(std::strcmp(changed, "/cwd-test") == 0);
+    Require(chdir_nid_postfix("/") == 0);
+    Require(remove_nid_postfix("/cwd-test") == 0);
+    Require(__getcwd_nid_postfix(nullptr, sizeof(buffer)) == -1);
+    Require(*__error_nid_postfix() == EFAULT);
+    char small[1] = {};
+    Require(__getcwd_nid_postfix(small, sizeof(small)) == -1);
+    Require(*__error_nid_postfix() == ERANGE);
+}
+
 int main() {
     CheckList();
     CheckEachModule();
@@ -125,5 +155,6 @@ int main() {
     CheckRefusals();
     CheckLoadStartSysmodule();
     CheckIsModuleLoaded();
+    CheckGetcwd();
     return 0;
 }
