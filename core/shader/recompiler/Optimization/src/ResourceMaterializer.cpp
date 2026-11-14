@@ -2926,13 +2926,12 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
                 const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
-                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
-                    continue;
-                }
                 for (const auto& table : nextSnapshot.tables.tables) {
                     for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
                 }
-                if (afterImageGeneration != beforeImageGeneration && (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages))) {
+                const bool allocationsMoved = afterImageGeneration != beforeImageGeneration &&
+                                              (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages));
+                if ((runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) || allocationsMoved) {
                     continue;
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
@@ -2948,6 +2947,9 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
             } catch (const std::runtime_error&) {
                 if (attempt == 2u) throw;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
+                if (afterImageGeneration != beforeImageGeneration && runtime.snapshotCurrent != nullptr) {
+                    static_cast<void>(runtime.snapshotCurrent(runtime.userContext, {}));
+                }
                 if (runtime.descriptorScope == nullptr) {
                     if (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration) throw;
                 } else if (runtime.descriptorScope(runtime.userContext, 0u) == beforeSnapshot && (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration)) {

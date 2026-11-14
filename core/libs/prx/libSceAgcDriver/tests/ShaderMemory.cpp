@@ -2336,34 +2336,56 @@ void verifyTypeZeroImageMaterialization() {
             std::uint32_t settledFill = 0u;
             std::uint64_t epoch = 0u;
             std::uint32_t fillReads = 0u;
+            std::uint64_t generation = 0u;
+            std::uint32_t snapshotChecks = 0u;
+            bool backingMoved = false;
+            bool cached = false;
+            bool throwOnMove = false;
         };
-        FillMemory fillState;
-        fillState.words = outputV;
-        fillState.fill = 0x11111111u;
-        fillState.settledFill = 0x3f800000u;
-        SrtRuntime fillRuntime{retryUserData};
-        fillRuntime.userContext = &fillState;
-        fillRuntime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
-            auto& self = *static_cast<FillMemory*>(ctx);
-            if (address == RetryBase + sizeof(self.words)) {
-                ++self.fillReads;
-                *value = self.fill;
-                if (self.fill != self.settledFill) {
-                    self.fill = self.settledFill;
-                    ++self.epoch;
+        for (const std::uint32_t mode : {0u, 2u, 1u}) {
+            FillMemory fillState;
+            fillState.backingMoved = mode != 0u;
+            fillState.throwOnMove = mode == 2u;
+            fillState.words = outputV;
+            fillState.fill = 0x11111111u;
+            fillState.settledFill = 0x3f800000u;
+            SrtRuntime fillRuntime{retryUserData};
+            fillRuntime.userContext = &fillState;
+            fillRuntime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
+                auto& self = *static_cast<FillMemory*>(ctx);
+                if (address == RetryBase + sizeof(self.words)) {
+                    ++self.fillReads;
+                    *value = self.fill;
+                    if (self.fill != self.settledFill && !self.cached) {
+                        if (!self.backingMoved) self.fill = self.settledFill;
+                        ++self.epoch;
+                        if (self.backingMoved) ++self.generation;
+                        self.cached = true;
+                        if (self.throwOnMove) throw std::runtime_error("uniform fill page remapped during a read");
+                    }
+                    return true;
                 }
+                if (address < RetryBase || address >= RetryBase + sizeof(self.words)) return false;
+                *value = self.words[(address - RetryBase) / sizeof(std::uint32_t)];
                 return true;
-            }
-            if (address < RetryBase || address >= RetryBase + sizeof(self.words)) return false;
-            *value = self.words[(address - RetryBase) / sizeof(std::uint32_t)];
-            return true;
-        };
-        fillRuntime.readSpecializationMemory = fillRuntime.readMemory;
-        fillRuntime.descriptorScope = +[](void* ctx, std::size_t) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->epoch; };
-        ResourceSnapshot fillSnapshot;
-        ResourceMaterializer{}.Materialize(fillPlan, fillRuntime, fillSnapshot);
-        require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
-                "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
+            };
+            fillRuntime.readSpecializationMemory = fillRuntime.readMemory;
+            fillRuntime.descriptorScope = +[](void* ctx, std::size_t) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->epoch; };
+            fillRuntime.imageViewGeneration = +[](void* ctx) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->generation; };
+            fillRuntime.snapshotCurrent = +[](void* ctx, std::span<const RegisteredImageView>) {
+                auto& self = *static_cast<FillMemory*>(ctx);
+                ++self.snapshotChecks;
+                self.fill = self.settledFill;
+                return false;
+            };
+            ResourceSnapshot fillSnapshot;
+            ResourceMaterializer{}.Materialize(fillPlan, fillRuntime, fillSnapshot);
+            require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
+                    fillState.throwOnMove ? "uniform fill remap after read failure: a retry kept the cached value from before the remap"
+                                               : "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
+            require(!fillState.backingMoved || fillState.snapshotChecks == 1u,
+                    "uniform fill remap: descriptor scope retry skipped the snapshot backing check and retained cached words");
+        }
     }
 }
 
