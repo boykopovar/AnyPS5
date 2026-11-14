@@ -1,12 +1,15 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -67,6 +70,8 @@ void CheckErrors() {
     Require(sceHttpGetCookie(1, "http://a.test/", nullptr, &required, 0) == InvalidId, "reading before init");
     Require(sceHttpSetCookieMaxNum(1, 1) == InvalidId, "a limit before init");
     Require(sceHttpGetCookieStats(1, &stats) == InvalidId, "stats before init");
+    Require(sceHttpCookieExport(1, nullptr, 0, &required) == InvalidId, "export before init");
+    Require(sceHttpCookieImport(1, nullptr, 0) == InvalidId, "import before init");
     Require(sceHttpCookieFlush(1) == InvalidId && sceHttpCookieFlush(0) == InvalidId, "flushing before init");
     const int context = Init();
     Require(AddResult(context + 1000, "http://a.test/", "a=1") == InvalidId, "an unknown context");
@@ -226,6 +231,108 @@ void CheckLimits(int context) {
     Require(sceHttpCookieFlush(context) == 0 && Stats(context).peakCookieCount == 3000, "flush keeps the peaks");
 }
 
+void AppendU32(std::vector<std::uint8_t>& blob, std::uint32_t value) {
+    for (int shift = 0; shift < 32; shift += 8) blob.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+
+void AppendU64(std::vector<std::uint8_t>& blob, std::uint64_t value) {
+    for (int shift = 0; shift < 64; shift += 8) blob.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+
+void AppendString(std::vector<std::uint8_t>& blob, const char* text) {
+    AppendU32(blob, static_cast<std::uint32_t>(std::strlen(text)));
+    blob.insert(blob.end(), text, text + std::strlen(text));
+}
+
+std::vector<std::uint8_t> BlobWithExpiry(std::uint64_t expiry) {
+    std::vector<std::uint8_t> blob{'A', 'P', 'S', '5', 'C', 'K', '1', 0};
+    blob.reserve(64);
+    AppendU32(blob, 1);
+    AppendString(blob, "x");
+    AppendString(blob, "1");
+    AppendString(blob, "a.test");
+    AppendString(blob, "a.test");
+    AppendString(blob, "/");
+    blob.push_back(0);
+    blob.push_back(1);
+    AppendU64(blob, expiry);
+    AppendU64(blob, 1);
+    return blob;
+}
+
+void CheckExportImport() {
+    const int source = Init();
+    Add(source, "http://export.example.com/", "a=1; Domain=export.example.com; Path=/");
+    Add(source, "https://secure.example.com/x", "b=2; Secure; Max-Age=3600; Path=/x");
+    std::size_t required = 0;
+    Require(sceHttpCookieExport(source, nullptr, 0, &required) == 0 && required > 12, "the export size");
+    std::vector<std::uint8_t> blob(required, 0xAB);
+    std::size_t written = 0;
+    Require(sceHttpCookieExport(source, blob.data(), blob.size(), &written) == 0 && written == required, "the export");
+    const int target = Init();
+    Require(sceHttpCookieImport(target, blob.data(), blob.size()) == 0, "the import");
+    Require(Get(target, "http://export.example.com/") == Get(source, "http://export.example.com/"), "an imported cookie");
+    Require(Get(target, "https://secure.example.com/x") == Get(source, "https://secure.example.com/x"), "an imported secure cookie");
+    Require(Stats(target).cookieCount == Stats(source).cookieCount, "the imported count");
+
+    std::vector<std::uint8_t> small(required - 1);
+    std::size_t needed = 0;
+    Require(sceHttpCookieExport(source, small.data(), small.size(), &needed) == OutOfSize && needed == required, "a short export buffer");
+    Require(sceHttpCookieExport(source, blob.data(), blob.size(), nullptr) == InvalidValue, "an export without its required size");
+    errno = 71;
+    Require(sceHttpCookieExport(source, blob.data(), blob.size(), reinterpret_cast<std::size_t*>(0x10)) == InvalidValue, "an unwritable required size");
+    Require(errno == 71, "the export required size preserves errno");
+    errno = 71;
+    Require(sceHttpCookieExport(source, reinterpret_cast<void*>(0x10), blob.size(), &needed) == InvalidValue, "an unwritable export buffer");
+    Require(errno == 71, "the export buffer preserves errno");
+
+    Require(sceHttpCookieImport(target, nullptr, blob.size()) == InvalidValue, "an import without a buffer");
+    Require(sceHttpCookieImport(target, blob.data(), blob.size() - 1) == InvalidValue, "a truncated import");
+    Require(sceHttpCookieImport(target, blob.data(), std::numeric_limits<std::size_t>::max()) == OutOfSize, "an oversized import length");
+    const auto hugeExpiry = BlobWithExpiry(std::numeric_limits<std::uint64_t>::max());
+    const int expiryContext = Init();
+    Require(sceHttpCookieImport(expiryContext, hugeExpiry.data(), hugeExpiry.size()) == 0, "an import with a huge expiry");
+    Require(Get(expiryContext, "http://a.test/") == "x=1", "a huge expiry is clamped instead of overflowing");
+    Require(sceHttpTerm_nid_postfix(expiryContext) == 0, "term the expiry context");
+    auto corrupted = blob;
+    corrupted[0] ^= 0xff;
+    const std::string before = Get(target, "http://export.example.com/");
+    Require(sceHttpCookieImport(target, corrupted.data(), corrupted.size()) == InvalidValue, "an import with a bad magic");
+    Require(Get(target, "http://export.example.com/") == before, "a rejected import leaves the store alone");
+    errno = 71;
+    Require(sceHttpCookieImport(target, reinterpret_cast<const void*>(0x10), blob.size()) == InvalidValue, "an unreadable import buffer");
+    Require(errno == 71, "the import buffer preserves errno");
+
+    const int empty = Init();
+    std::size_t emptySize = 0;
+    Require(sceHttpCookieExport(empty, nullptr, 0, &emptySize) == 0 && emptySize == 12, "an empty export");
+    std::vector<std::uint8_t> emptyBlob(emptySize);
+    std::size_t emptyWritten = 0;
+    Require(sceHttpCookieExport(empty, emptyBlob.data(), emptyBlob.size(), &emptyWritten) == 0 && emptyWritten == emptySize, "an empty export buffer");
+    Require(sceHttpCookieImport(target, emptyBlob.data(), emptyBlob.size()) == 0, "an empty import");
+    Require(Missing(target, "http://export.example.com/"), "an empty import clears the store");
+
+    const int limited = Init();
+    Require(sceHttpSetCookieMaxSize(limited, 0) == 0, "a zero cookie size limit");
+    Require(sceHttpCookieImport(limited, blob.data(), blob.size()) == OutOfSize, "an import above the per-cookie size limit");
+    Require(Stats(limited).cookieCount == 0, "a rejected size import leaves the store alone");
+
+    const int same = Init();
+    Add(same, "http://same.example.com/", "a=1");
+    Add(same, "http://same.example.com/", "b=2");
+    std::size_t sameSize = 0;
+    Require(sceHttpCookieExport(same, nullptr, 0, &sameSize) == 0, "the same-domain export size");
+    std::vector<std::uint8_t> sameBlob(sameSize);
+    std::size_t sameWritten = 0;
+    Require(sceHttpCookieExport(same, sameBlob.data(), sameBlob.size(), &sameWritten) == 0, "the same-domain export");
+    const int perDomain = Init();
+    Require(sceHttpSetCookieMaxNumPerDomain(perDomain, 1) == 0, "a one-cookie domain limit");
+    Require(sceHttpCookieImport(perDomain, sameBlob.data(), sameBlob.size()) == OutOfSize, "an import above the per-domain limit");
+    Require(Stats(perDomain).cookieCount == 0, "a rejected domain import leaves the store alone");
+
+    for (const int id : {source, target, empty, limited, same, perDomain}) Require(sceHttpTerm_nid_postfix(id) == 0, "term export/import context");
+}
+
 }
 
 int main() {
@@ -239,6 +346,7 @@ int main() {
     CheckDomains(domains);
     const int limited = Init();
     CheckLimits(limited);
+    CheckExportImport();
     Require(Get(other, "http://a.test/") == "only=other", "the other store is untouched");
     for (const int id : {limited, domains, other, context}) Require(sceHttpTerm_nid_postfix(id) == 0, "term");
     return 0;
