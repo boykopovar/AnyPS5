@@ -37,6 +37,7 @@ struct HTTPHeaderMap {
 };
 
 void UpdateCommonHeader_nid_no_patch(HTTPHeaderMap& map, HTTPHeaderName name, const String& value, bool add);
+void UpdateUncommonHeader_nid_no_patch(HTTPHeaderMap& map, const String& name, const String& value, bool add);
 
 struct ASCIILiteral {
     const char* characters;
