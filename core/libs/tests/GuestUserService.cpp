@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -84,6 +85,9 @@ void VerifyLoggedInUser(int userId) {
 
     std::uint64_t accountId = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetNpAccountId(userId, reinterpret_cast<uint64_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetNpAccountId(userId, &accountId) == USER_SERVICE_OK);
     Require(accountId == 0);
 
@@ -120,6 +124,17 @@ int main() {
     Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     for (int i = 1; i < 16; ++i) {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
+    }
+
+    std::int32_t homeIds[16]{};
+    int homeCount = -1;
+    Require(sceUserServiceGetRegisteredHomeUserIdList(nullptr, &homeCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    std::memset(homeIds, 0x7B, sizeof(homeIds));
+    Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, &homeCount) == USER_SERVICE_OK);
+    Require(homeCount == 1 && homeIds[0] == USER_SERVICE_INITIAL_USER_ID);
+    for (int i = 1; i < 16; ++i) {
+        Require(homeIds[i] == USER_SERVICE_USER_ID_INVALID);
     }
 
     char nameBuffer[32]{};
@@ -232,6 +247,9 @@ int main() {
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 38) == USER_SERVICE_OK);
     Require(std::strlen(homePath) == 36);
     Require(sceUserServiceGetCurrentUserGroupIndex(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetCurrentUserGroupIndex(reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceSetUserGroupIndex(-2) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceSetUserGroupIndex(129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserGroupName(0, nullptr, 129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -405,6 +423,14 @@ int main() {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
     }
     VerifyLoggedInUser(USER_SERVICE_INITIAL_USER_ID);
+
+    bool spartacus = false;
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, &spartacus) == USER_SERVICE_OK);
+    Require(spartacus);
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<bool*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 
     return 0;
 }

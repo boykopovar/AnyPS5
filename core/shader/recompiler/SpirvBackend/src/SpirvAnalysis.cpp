@@ -35,6 +35,14 @@ bool ReadsNeighbourLanes(const IrProgram& program, const IrValue& inst) {
     }
 }
 
+bool ReadsOffsetBarycentric(const IrValue& inst) {
+    if (inst.Opcode() != IrOpcode::GetBuiltin) return false;
+    const auto* kind = inst.Argument(0)->Resolve();
+    if (kind == nullptr || !kind->HasImmediate()) return false;
+    const auto input = static_cast<StageInputKind>(kind->ImmediateU32());
+    return BarycentricInputOf(input) != input;
+}
+
 bool UniformSource(const IrValue& value) {
     switch (value.Opcode()) {
     case IrOpcode::Ballot:
@@ -443,6 +451,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 }
             }
             requirements.neighbourLaneReads = requirements.neighbourLaneReads || ReadsNeighbourLanes(program, *inst);
+            requirements.offsetBarycentricReads = requirements.offsetBarycentricReads || ReadsOffsetBarycentric(*inst);
             switch (inst->Opcode()) {
             case IrOpcode::Ballot:
                 requirements.subgroupBallot = true;

@@ -1,3 +1,4 @@
+#include "../PortabilitySubset.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -188,8 +189,9 @@ public:
             device.queueCreateInfoCount = 1u;
             device.pQueueCreateInfos = &queue;
             device.pEnabledFeatures = &enabled;
-            device.enabledExtensionCount = static_cast<std::uint32_t>(enabledExtensions.size());
-            device.ppEnabledExtensionNames = enabledExtensions.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), enabledExtensions, device);
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             if (externalHost) {
                 VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
@@ -536,7 +538,7 @@ public:
     }
     ~Fetch() { release(); }
     void Run(VkCommandBuffer commands, std::uint32_t groups) const {
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(commands, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0u, 1u, &set, 0u, nullptr);
         const auto push = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         const auto dispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
@@ -828,9 +830,11 @@ public:
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        CommandState state;
+        state.Begin(commands, false);
         for (std::uint32_t sample = 0u; sample < samples; ++sample) {
             const auto value = offset + static_cast<float>(sample + 1u) / 16.0f;
-            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[sample]);
+            state.BindPipeline(context, pipelines[sample], 0);
             context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
         }
@@ -845,16 +849,18 @@ public:
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        CommandState state;
+        state.Begin(commands, false);
         for (std::uint32_t sample = 0u; sample < samples; ++sample) {
             const auto value = offset + static_cast<float>(sample + 1u) / 16.0f;
-            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[sample]);
+            state.BindPipeline(context, pipelines[sample], 0);
             context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             for (std::uint32_t row = extent.height; row-- > 0u;) {
                 for (std::uint32_t column = extent.width; column-- > 0u;) {
                     const auto x = column, y = row;
                     const VkRect2D scissor{{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)}, {1u, 1u}};
-                    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0u, 1u, &scissor);
-                    context.Function<PFN_vkCmdSetStencilReference>("vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference(x, y, sample));
+                    state.SetScissor(context, scissor);
+                    state.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference(x, y, sample));
                     context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
                 }
             }

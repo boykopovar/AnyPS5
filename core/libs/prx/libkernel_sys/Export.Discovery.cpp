@@ -61,7 +61,6 @@ int WriteCommand(void* dst, const TCommand& command, std::uint64_t* outSize) {
 constexpr std::uint32_t AmmPriorities = 3;
 constexpr std::uint64_t MapperGranuleMask = 0x1FFFFF;
 constexpr std::uint64_t MapperParamBytes = 0x38;
-constexpr std::uint64_t MapperKnownBytes = 0x28;
 
 std::uint32_t CallIndirectBuffer(const char* function, std::uint32_t priority, void* base, std::uint64_t bytes) {
     if (priority >= AmmPriorities || !base) NotImplemented_nid_no_patch(function);
@@ -123,9 +122,8 @@ int APS5_VABI get_sdk_compiled_version_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI get_self_auth_info_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI get_self_auth_info_nid_postfix(KernelAuthInfo* info) {
+    return get_authinfo_nid_postfix(0, info);
 }
 
 int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
@@ -182,8 +180,18 @@ int APS5_VABI openintr_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(const PthreadAttr* attr, std::size_t cpusetSize, void* cpuset) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr int GuestEfault = 14;
+    if (!attr || !*attr) return GuestEinval;
+    if (cpusetSize < sizeof(KernelCpumask)) return GuestErange;
+    if (!cpuset) return GuestEfault;
+    const KernelCpumask mask = (*attr)->_affinity;
+    std::memcpy(cpuset, &mask, sizeof(mask));
+    if (cpusetSize > sizeof(mask)) {
+        std::memset(static_cast<char*>(cpuset) + sizeof(mask), 0, cpusetSize - sizeof(mask));
+    }
     return 0;
 }
 
@@ -194,8 +202,22 @@ int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(const PthreadAttr* attr, 
     return 0;
 }
 
-int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(PthreadAttr* attr, std::size_t cpusetSize, const void* cpuset) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr int GuestEfault = 14;
+    if (!attr || !*attr) return GuestEinval;
+    if (cpusetSize == 0) return 0;
+    if (cpusetSize < sizeof(KernelCpumask)) return GuestErange;
+    if (!cpuset) return GuestEfault;
+    const auto* bytes = static_cast<const unsigned char*>(cpuset);
+    for (std::size_t i = sizeof(KernelCpumask); i < cpusetSize; ++i) {
+        if (bytes[i] != 0) return GuestEinval;
+    }
+    KernelCpumask mask = 0;
+    std::memcpy(&mask, bytes, sizeof(mask));
+    (*attr)->_affinity = mask;
+    (*attr)->_affinityExplicit = true;
     return 0;
 }
 
@@ -312,9 +334,9 @@ int APS5_VABI ptrace_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI reboot_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI reboot_nid_postfix(int) {
+    *__error_nid_postfix() = 1;
+    return -1;
 }
 
 int APS5_VABI revoke_nid_postfix(const char* path) {
@@ -579,7 +601,6 @@ int APS5_VABI sceKernelDirectMemoryQueryForId(void) {
 }
 
 int APS5_VABI sceKernelEnableDmemAliasing2(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -634,7 +655,11 @@ int APS5_VABI sceKernelGetACInfoAllForCoredump(void) {
 
 int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) {
     if (categoryType == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    if (pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
+    if (pid < 0) {
+        *__error_nid_postfix() = 3;
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
+    if (pid != 0 && pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
     std::uint32_t value = 0;
     if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
     if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
@@ -1380,8 +1405,7 @@ int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param) {
     std::uint64_t bytes = 0;
     if (!GuestCopyIn_nid_no_patch(&bytes, param, sizeof(bytes))) return SCE_KERNEL_ERROR_EFAULT;
     if (bytes > MapperParamBytes) return SCE_KERNEL_ERROR_EINVAL;
-    if (bytes > MapperKnownBytes) NotImplemented_nid_no_patch(__func__);
-    std::uint64_t values[5]{MapperParamBytes};
+    std::uint64_t values[7]{MapperParamBytes};
     AmmVirtualAddressRanges_nid_no_patch(&values[1], &values[2], &values[3], &values[4]);
     if (!GuestCopyOut_nid_no_patch(param, values, static_cast<std::size_t>(bytes))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
@@ -1938,7 +1962,7 @@ int APS5_VABI scePthreadBarrierDestroy(PthreadBarrierPrivate** barrier) {
 }
 
 int APS5_VABI scePthreadBarrierInit(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
-    (void)name;
+    if (name && std::strlen(name) >= 32) return SCE_KERNEL_ERROR_ENAMETOOLONG;
     return SceResult(pthread_barrier_init_nid_postfix(barrier, attr, count));
 }
 
@@ -1964,7 +1988,8 @@ int APS5_VABI scePthreadBarrierattrSetpshared(PthreadBarrierattrPrivate** attr, 
 }
 
 int APS5_VABI scePthreadGetconcurrency(void) {
-    return pthread_getconcurrency_nid_postfix();
+    const int level = pthread_getconcurrency_nid_postfix();
+    return level == 0 ? 0 : static_cast<int>(0x80020000u | static_cast<unsigned>(level));
 }
 
 int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId) {
@@ -2091,16 +2116,6 @@ int APS5_VABI unmount_nid_postfix(void) {
 }
 
 int APS5_VABI vfork_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI wait3_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI wait4_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
