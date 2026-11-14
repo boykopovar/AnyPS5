@@ -5191,6 +5191,33 @@ void GuestBufferMemory::RecordEvicted(std::uint64_t address) {
     if (!WasEvicted(address)) evictedRanges.push_back(address);
 }
 
+namespace {
+
+void stampSpaceUse(HostImports& state, const GuestBufferMemory::AddressSpace& space) {
+    const auto stamp = ++state.useCounter;
+    static const bool stampOnce = std::getenv("APS5_NO_SPACE_STAMP_ONCE") == nullptr;
+    auto& spaceUse = state.spaceUses[space.serial];
+    if (!stampOnce || spaceUse == 0) {
+        for (const auto& region : space.base) {
+            if (region.direct == nullptr) continue;
+            region.direct->lastUse = stamp;
+            if (stampOnce) region.direct->spaceSerial = space.serial;
+        }
+    }
+    spaceUse = stamp;
+    if (state.spaceUses.size() > 64) {
+        const auto oldest = std::min_element(state.spaceUses.begin(), state.spaceUses.end(), [](const auto& left, const auto& right) { return left.second < right.second; });
+        for (auto& [base, entry] : state.imports) {
+            if (entry.spaceSerial != oldest->first) continue;
+            entry.lastUse = std::max(entry.lastUse, oldest->second);
+            entry.spaceSerial = 0;
+        }
+        state.spaceUses.erase(oldest);
+    }
+}
+
+}
+
 void GuestBufferMemory::AcquireRegistered() {
     struct BuildingScope {
         explicit BuildingScope(GuestBufferMemory* self) { buildingBufferMemory = self; }
@@ -5272,26 +5299,7 @@ void GuestBufferMemory::AcquireRegistered() {
             }
             importFloor = state.useCounter + 1;
             if (hit) {
-                const auto stamp = ++state.useCounter;
-                static const bool stampOnce = std::getenv("APS5_NO_SPACE_STAMP_ONCE") == nullptr;
-                auto& spaceUse = state.spaceUses[current->serial];
-                if (!stampOnce || spaceUse == 0) {
-                    for (const auto& region : current->base) {
-                        if (region.direct == nullptr) continue;
-                        region.direct->lastUse = stamp;
-                        if (stampOnce) region.direct->spaceSerial = current->serial;
-                    }
-                }
-                spaceUse = stamp;
-                if (state.spaceUses.size() > 64) {
-                    const auto oldest = std::min_element(state.spaceUses.begin(), state.spaceUses.end(), [](const auto& left, const auto& right) { return left.second < right.second; });
-                    for (auto& [base, entry] : state.imports) {
-                        if (entry.spaceSerial != oldest->first) continue;
-                        entry.lastUse = std::max(entry.lastUse, oldest->second);
-                        entry.spaceSerial = 0;
-                    }
-                    state.spaceUses.erase(oldest);
-                }
+                stampSpaceUse(state, *current);
             }
         }
         if (hit) {
@@ -5920,10 +5928,7 @@ bool GuestBufferMemory::RetakeSpace() {
         std::lock_guard lock(state.mutex);
         if (current->device != context.device || current->generation != generation || current->importsEpoch != state.epoch) return false;
         importFloor = state.useCounter + 1;
-        const auto stamp = ++state.useCounter;
-        for (const auto& region : current->base) {
-            if (region.direct != nullptr) region.direct->lastUse = stamp;
-        }
+        stampSpaceUse(state, *current);
     }
     spaces.hits.fetch_add(1, std::memory_order_relaxed);
     space = std::move(current);
