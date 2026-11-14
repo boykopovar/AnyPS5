@@ -179,6 +179,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
+#include "prx/libc/include/general/RemPio2Table.hpp"
 
 namespace {
 
@@ -2129,15 +2130,6 @@ double APS5_VABI lgamma_nid_postfix(double x) {
     return std::lgamma(x);
 }
 
-static const std::int32_t RemPio2Ipio2[] = {
-    0xA2F983, 0x6E4E44, 0x1529FC, 0x2757D1, 0xF534DD, 0xC0DB62, 0x95993C, 0x439041, 0xFE5163, 0xABDEBB, 0xC561B7, 0x246E3A,
-    0x424DD2, 0xE00649, 0x2EEA09, 0xD1921C, 0xFE1DEB, 0x1CB129, 0xA73EE8, 0x8235F5, 0x2EBB44, 0x84E99C, 0x7026B4, 0x5F7E41,
-    0x3991D6, 0x398353, 0x39F49C, 0x845F8B, 0xBDF928, 0x3B1FF8, 0x97FFDE, 0x05980F, 0xEF2F11, 0x8B5A0A, 0x6D1F6D, 0x367ECF,
-    0x27CB09, 0xB74F46, 0x3F669E, 0x5FEA2D, 0x7527BA, 0xC7EBE5, 0xF17B3D, 0x0739F7, 0x8A5292, 0xEA6BFB, 0x5FB11F, 0x8D5D08,
-    0x560330, 0x46FC7B, 0x6BABF0, 0xCFBC20, 0x9AF436, 0x1DA9E3, 0x91615E, 0xE61B08, 0x659985, 0x5F14A0, 0x68408D, 0xFFD880,
-    0x4D7327, 0x310606, 0x1556CA, 0x73A8C9, 0x60E27B, 0xC08C6B,
-};
-
 static const double RemPio2Parts[] = {
     1.57079625129699707031e+00, 7.54978941586159635335e-08, 5.39030252995776476554e-15, 3.28200341580791294123e-22,
     1.27065575308067607349e-29, 1.22933308981111328932e-36, 2.73370053816464559624e-44, 2.16741683877804819444e-51,
@@ -2155,7 +2147,7 @@ static int KernelRemPio2(const double* x, double* y, int e0, int nx, int prec) {
     q0 = e0 - 24 * (jv + 1);
     j = jv - jx;
     m = jx + jk;
-    for (i = 0; i <= m; i++, j++) f[i] = j < 0 ? 0.0 : static_cast<double>(RemPio2Ipio2[j]);
+    for (i = 0; i <= m; i++, j++) f[i] = j < 0 ? 0.0 : static_cast<double>(RemPio2Table::Ipio2[j]);
     for (i = 0; i <= jk; i++) {
         for (j = 0, fw = 0.0; j <= jx; j++) fw += x[j] * f[jx + i - j];
         q[i] = fw;
@@ -2214,7 +2206,7 @@ recompute:
             for (k = 1; iq[jk - k] == 0; k++) {
             }
             for (i = jz + 1; i <= jz + k; i++) {
-                f[jx + i] = static_cast<double>(RemPio2Ipio2[jv + i]);
+                f[jx + i] = static_cast<double>(RemPio2Table::Ipio2[jv + i]);
                 for (j = 0, fw = 0.0; j <= jx; j++) fw += x[j] * f[jx + i - j];
                 q[i] = fw;
             }
@@ -2654,6 +2646,278 @@ static int RemPio2(double x, double* y) {
     y[0] = ty[0];
     y[1] = ty[1];
     return n;
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/e_rem_pio2l.h, k_sinl.c, k_cosl.c and k_tanl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/e_rem_pio2l.h */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ * Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
+ * Copyright (c) 2008 Steven G. Kargl, David Schultz, Bruce D. Evans.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ *
+ * Optimized by Bruce D. Evans.
+ */
+static constexpr double TrigLongTwo24 = 1.67772160000000000000e+07;
+static constexpr double TrigLongPio21 = 1.57079632679597125389e+00;
+static constexpr double TrigLongPio22 = -1.07463465549783099519e-12;
+static constexpr double TrigLongPio23 = 6.36831716351370313614e-25;
+static const volatile double TrigLongInvpio2Hi = 6.3661977236758138e-01;
+static const volatile double TrigLongInvpio2Lo = -3.9356538861223811e-17;
+static const volatile double TrigLongPio21tHi = -1.0746346554971943e-12;
+static const volatile double TrigLongPio21tLo = 8.8451028997905949e-29;
+static const volatile double TrigLongPio22tHi = 6.3683171635109499e-25;
+static const volatile double TrigLongPio22tLo = 2.3183081793789774e-41;
+static const volatile double TrigLongPio23tHi = -2.7529965190440717e-37;
+static const volatile double TrigLongPio23tLo = -4.2006647512740502e-54;
+
+static int ExtendedExponent(long double value) {
+    return SplitExtended(value).signExponent & 0x7fff;
+}
+
+static int RemPio2lMedium(long double x, long double* y) {
+    const long double invpio2 = static_cast<long double>(TrigLongInvpio2Hi) + TrigLongInvpio2Lo;
+    const long double pio21t = static_cast<long double>(TrigLongPio21tHi) + TrigLongPio21tLo;
+    const long double pio22t = static_cast<long double>(TrigLongPio22tHi) + TrigLongPio22tLo;
+    const long double pio23t = static_cast<long double>(TrigLongPio23tHi) + TrigLongPio23tLo;
+    const int exponent = ExtendedExponent(x);
+    long double fn = x * invpio2 + 0x1.8p63L;
+    fn = fn - 0x1.8p63L;
+    const int n = static_cast<int>(fn);
+    long double r = x - fn * TrigLongPio21;
+    long double w = fn * pio21t;
+    y[0] = r - w;
+    if (exponent - ExtendedExponent(y[0]) > 22) {
+        long double t = r;
+        w = fn * TrigLongPio22;
+        r = t - w;
+        w = fn * pio22t - ((t - r) - w);
+        y[0] = r - w;
+        if (exponent - ExtendedExponent(y[0]) > 61) {
+            t = r;
+            w = fn * TrigLongPio23;
+            r = t - w;
+            w = fn * pio23t - ((t - r) - w);
+            y[0] = r - w;
+        }
+    }
+    y[1] = (r - y[0]) - w;
+    return n;
+}
+
+static int RemPio2lLarge(long double x, long double* y) {
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    const int e0 = exponent - 0x3fff - 23;
+    long double z = JoinExtended(parts.mantissa, static_cast<std::uint16_t>(exponent - e0));
+    double tx[3];
+    double ty[2];
+    for (int i = 0; i < 2; i++) {
+        tx[i] = static_cast<double>(static_cast<std::int32_t>(z));
+        z = (z - tx[i]) * TrigLongTwo24;
+    }
+    tx[2] = static_cast<double>(z);
+    int nx = 3;
+    while (tx[nx - 1] == 0.0) nx--;
+    const int n = KernelRemPio2(tx, ty, e0, nx, 2);
+    const long double r = static_cast<long double>(ty[0]) + ty[1];
+    const long double w = ty[1] - (r - ty[0]);
+    if ((parts.signExponent & 0x8000) != 0) {
+        y[0] = -r;
+        y[1] = -w;
+        return -n;
+    }
+    y[0] = r;
+    y[1] = w;
+    return n;
+}
+
+static int RemPio2l(long double x, long double* y) {
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    if (exponent < 0x3fff + 25 || (exponent == 0x3fff + 25 && (parts.mantissa >> 32) < 0xc90fdaa2u)) return RemPio2lMedium(x, y);
+    return RemPio2lLarge(x, y);
+}
+
+static const volatile double TrigLongS1Hi = -0.16666666666666666;
+static const volatile double TrigLongS1Lo = -9.2563760475949941e-18;
+static constexpr double TrigLongS2 = 0.0083333333333333332;
+static constexpr double TrigLongS3 = -0.00019841269841269427;
+static constexpr double TrigLongS4 = 0.0000027557319223597490;
+static constexpr double TrigLongS5 = -0.000000025052108218074604;
+static constexpr double TrigLongS6 = 1.6059006598854211e-10;
+static constexpr double TrigLongS7 = -7.6429779983024564e-13;
+static constexpr double TrigLongS8 = 2.6174587166648325e-15;
+
+static long double KernelSinl(long double x, long double y, int iy) {
+    const long double s1 = static_cast<long double>(TrigLongS1Hi) + TrigLongS1Lo;
+    const long double z = x * x;
+    const long double v = z * x;
+    const long double r = TrigLongS2 + z * (TrigLongS3 + z * (TrigLongS4 + z * (TrigLongS5 + z * (TrigLongS6 + z * (TrigLongS7 + z * TrigLongS8)))));
+    if (iy == 0) return x + v * (s1 + z * r);
+    return x - ((z * (0.5 * y - v * r) - y) - v * s1);
+}
+
+static const volatile double TrigLongC1Hi = 0.041666666666666664;
+static const volatile double TrigLongC1Lo = 2.2598839032744733e-18;
+static constexpr double TrigLongC2 = -0.0013888888888888874;
+static constexpr double TrigLongC3 = 0.000024801587301571716;
+static constexpr double TrigLongC4 = -0.00000027557319215507120;
+static constexpr double TrigLongC5 = 0.0000000020876754400407278;
+static constexpr double TrigLongC6 = -1.1470297442401303e-11;
+static constexpr double TrigLongC7 = 4.7383039476436467e-14;
+
+static long double KernelCosl(long double x, long double y) {
+    const long double c1 = static_cast<long double>(TrigLongC1Hi) + TrigLongC1Lo;
+    const long double z = x * x;
+    const long double r = z * (c1 + z * (TrigLongC2 + z * (TrigLongC3 + z * (TrigLongC4 + z * (TrigLongC5 + z * (TrigLongC6 + z * TrigLongC7))))));
+    const long double hz = 0.5 * z;
+    const long double w = 1.0 - hz;
+    return w + (((1.0 - w) - hz) + (z * r - x * y));
+}
+
+static const volatile double TrigLongT3Hi = 0.33333333333333331;
+static const volatile double TrigLongT3Lo = 1.8350121769317163e-17;
+static const volatile double TrigLongT5Hi = 0.13333333333333336;
+static const volatile double TrigLongT5Lo = 1.3051083651294260e-17;
+static const volatile double TrigLongT7Hi = 0.053968253968250494;
+static const volatile double TrigLongT7Lo = 3.1509625637859973e-18;
+static const volatile double TrigLongPio4Hi = 0.78539816339744828;
+static const volatile double TrigLongPio4Lo = 3.0628711372715500e-17;
+static const volatile double TrigLongPio4LoHi = -1.2541394031670831e-20;
+static const volatile double TrigLongPio4LoLo = 6.1493048227390915e-37;
+static constexpr double TrigLongT9 = 0.021869488536312216;
+static constexpr double TrigLongT11 = 0.0088632355256619590;
+static constexpr double TrigLongT13 = 0.0035921281113786528;
+static constexpr double TrigLongT15 = 0.0014558334756312418;
+static constexpr double TrigLongT17 = 0.00059003538700862256;
+static constexpr double TrigLongT19 = 0.00023907843576635544;
+static constexpr double TrigLongT21 = 0.000097154625656538905;
+static constexpr double TrigLongT23 = 0.000038440165747303162;
+static constexpr double TrigLongT25 = 0.000018082171885432524;
+static constexpr double TrigLongT27 = 0.0000024196006108814377;
+static constexpr double TrigLongT29 = 0.0000078293456938132840;
+static constexpr double TrigLongT31 = -0.0000032609076735050182;
+static constexpr double TrigLongT33 = 0.0000023261313142559411;
+
+static long double KernelTanl(long double x, long double y, int iy) {
+    const long double t3 = static_cast<long double>(TrigLongT3Hi) + TrigLongT3Lo;
+    const long double t5 = static_cast<long double>(TrigLongT5Hi) + TrigLongT5Lo;
+    const long double t7 = static_cast<long double>(TrigLongT7Hi) + TrigLongT7Lo;
+    const long double pio4 = static_cast<long double>(TrigLongPio4Hi) + TrigLongPio4Lo;
+    const long double pio4lo = static_cast<long double>(TrigLongPio4LoHi) + TrigLongPio4LoLo;
+    iy = iy == 1 ? -1 : 1;
+    const long double osign = x >= 0 ? 1.0 : -1.0;
+    const bool folded = std::fabs(x) >= 0.67434;
+    if (folded) {
+        if (x < 0) {
+            x = -x;
+            y = -y;
+        }
+        const long double high = pio4 - x;
+        const long double low = pio4lo - y;
+        x = high + low;
+        y = 0.0;
+    }
+    long double z = x * x;
+    long double w = z * z;
+    long double r = t5 + w * (TrigLongT9 + w * (TrigLongT13 + w * (TrigLongT17 + w * (TrigLongT21 + w * (TrigLongT25 + w * (TrigLongT29 + w * TrigLongT33))))));
+    long double v = z * (t7 + w * (TrigLongT11 + w * (TrigLongT15 + w * (TrigLongT19 + w * (TrigLongT23 + w * (TrigLongT27 + w * TrigLongT31))))));
+    long double s = z * x;
+    r = y + z * (s * (r + v) + y);
+    r += t3 * s;
+    w = x + r;
+    if (folded) {
+        v = static_cast<long double>(iy);
+        return osign * (v - 2.0 * (x - (w * w / (w + v) - r)));
+    }
+    if (iy == 1) return w;
+    z = w;
+    z = z + 0x1p32 - 0x1p32;
+    v = r - (z - x);
+    long double t = -1.0 / w;
+    const long double a = t;
+    t = t + 0x1p32 - 0x1p32;
+    s = 1.0 + t * z;
+    return t + a * (s + t * v);
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_sinl.c, s_cosl.c and s_tanl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_sinl.c */
+/*-
+ * Copyright (c) 2007 Steven G. Kargl
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice unmodified, this list of conditions, and the following
+ *    disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+static constexpr double TrigLongPio4 = 0.78539816339744830962;
+
+static long double SinlMsun(long double x) {
+    const int exponent = ExtendedExponent(x);
+    if (exponent == 0) return x;
+    if (exponent == 0x7fff) return (x - x) / (x - x);
+    const long double magnitude = std::fabs(x);
+    if (magnitude < TrigLongPio4) {
+        const long double result = KernelSinl(magnitude, 0, 0);
+        return std::signbit(x) ? -result : result;
+    }
+    long double y[2];
+    const int quadrant = RemPio2l(x, y) & 3;
+    if (quadrant == 0) return KernelSinl(y[0], y[1], 1);
+    if (quadrant == 1) return KernelCosl(y[0], y[1]);
+    if (quadrant == 2) return -KernelSinl(y[0], y[1], 1);
+    return -KernelCosl(y[0], y[1]);
+}
+
+static long double CoslMsun(long double x) {
+    const int exponent = ExtendedExponent(x);
+    if (exponent == 0) return 1.0;
+    if (exponent == 0x7fff) return (x - x) / (x - x);
+    const long double magnitude = std::fabs(x);
+    if (magnitude < TrigLongPio4) return KernelCosl(magnitude, 0);
+    long double y[2];
+    const int quadrant = RemPio2l(x, y) & 3;
+    if (quadrant == 0) return KernelCosl(y[0], y[1]);
+    if (quadrant == 1) return -KernelSinl(y[0], y[1], 1);
+    if (quadrant == 2) return -KernelCosl(y[0], y[1]);
+    return KernelSinl(y[0], y[1], 1);
+}
+
+static long double TanlMsun(long double x) {
+    const int exponent = ExtendedExponent(x);
+    if (exponent == 0) return x;
+    if (exponent == 0x7fff) return (x - x) / (x - x);
+    const long double magnitude = std::fabs(x);
+    if (magnitude < TrigLongPio4) {
+        const long double result = KernelTanl(magnitude, 0, 0);
+        return std::signbit(x) ? -result : result;
+    }
+    long double y[2];
+    const int quadrant = RemPio2l(x, y);
+    return KernelTanl(y[0], y[1], quadrant & 1);
 }
 
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/k_sin.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/k_sin.c */
@@ -4756,9 +5020,9 @@ long double APS5_VABI atan2l_nid_postfix(long double y, long double x) {
     if (quadrant == 2) return Pi - (z - PiLow);
     return (z - PiLow) - Pi;
 }
-long double APS5_VABI sinl_nid_postfix(long double x) { return std::sin(x); }
-long double APS5_VABI cosl_nid_postfix(long double x) { return std::cos(x); }
-long double APS5_VABI tanl_nid_postfix(long double x) { return std::tan(x); }
+long double APS5_VABI sinl_nid_postfix(long double x) { return SinlMsun(x); }
+long double APS5_VABI cosl_nid_postfix(long double x) { return CoslMsun(x); }
+long double APS5_VABI tanl_nid_postfix(long double x) { return TanlMsun(x); }
 long double APS5_VABI sinhl_nid_postfix(long double x) { return SinhlMsun(x); }
 long double APS5_VABI coshl_nid_postfix(long double x) { return CoshlMsun(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return TanhlMsun(x); }
