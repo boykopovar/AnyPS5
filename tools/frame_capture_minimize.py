@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -229,8 +230,8 @@ def parse_args(argv=None):
         parser.error("--confirm-runs must be at least 2")
     if args.max_trials < 1:
         parser.error("--max-trials must be positive")
-    if args.replay_timeout <= 0:
-        parser.error("--replay-timeout must be positive")
+    if not math.isfinite(args.replay_timeout) or args.replay_timeout <= 0:
+        parser.error("--replay-timeout must be a positive, finite number of seconds")
     if args.temp_dir is not None and not args.temp_dir.is_dir():
         parser.error("--temp-dir must name an existing directory")
     return args
