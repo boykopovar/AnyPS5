@@ -228,7 +228,7 @@ void Driver::run(std::uint32_t id) noexcept {
                             const auto quietUntil = std::chrono::steady_clock::now() + IdleResultsQuietPeriod;
                             const auto idleEpochAtWait = idleEpoch.load(std::memory_order_acquire);
                             changed.wait_until(lock, quietUntil, [&] {
-                                return ready() || idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait;
+                                return ready() || idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending();
                             });
                             queue0Dormant.store(false, std::memory_order_relaxed);
                             if (ready()) break;
