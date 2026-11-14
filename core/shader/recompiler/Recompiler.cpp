@@ -2660,20 +2660,14 @@ void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words)
     if (!words.bindings.empty() && words.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ in number from its template");
     for (std::size_t index = 0; index < count; ++index) {
         const auto& binding = shared.bindings[index];
-        if (binding.role != DescriptorRole::ShaderData && binding.role != DescriptorRole::FlattenedSrt) continue;
+        if (binding.role != DescriptorRole::ShaderData) continue;
         if (!words.bindings.empty() && !words.bindings[index].empty()) continue;
-        if (binding.role == DescriptorRole::FlattenedSrt) {
-            if (words.flattenedSrt.empty() || words.flattenedSrt == binding.guestDescriptor) continue;
-            if (words.bindings.empty()) words.bindings.resize(count);
-            words.bindings[index].assign(words.flattenedSrt.begin(), words.flattenedSrt.end());
-        } else {
-            const auto patched = std::min(words.userData.size(), binding.guestDescriptor.size());
-            if (std::equal(words.userData.begin(), words.userData.begin() + static_cast<std::ptrdiff_t>(patched), binding.guestDescriptor.begin())) continue;
-            if (words.bindings.empty()) words.bindings.resize(count);
-            auto& descriptor = words.bindings[index];
-            descriptor.assign(binding.guestDescriptor.begin(), binding.guestDescriptor.end());
-            std::copy_n(words.userData.begin(), patched, descriptor.begin());
-        }
+        const auto patched = std::min(words.userData.size(), binding.guestDescriptor.size());
+        if (std::equal(words.userData.begin(), words.userData.begin() + static_cast<std::ptrdiff_t>(patched), binding.guestDescriptor.begin())) continue;
+        if (words.bindings.empty()) words.bindings.resize(count);
+        auto& descriptor = words.bindings[index];
+        descriptor.assign(binding.guestDescriptor.begin(), binding.guestDescriptor.end());
+        std::copy_n(words.userData.begin(), patched, descriptor.begin());
     }
 }
 

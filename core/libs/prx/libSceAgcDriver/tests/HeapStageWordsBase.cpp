@@ -37,6 +37,9 @@ void TestTemplateWords() {
     Check(AgcDriver::Graphics::DrawGuestWords(program, &words, b[3]) == b[3].guestDescriptor, "a binding the template does not hold does not read the program's words");
     Check(AgcDriver::Graphics::DrawGuestWords(program, &words, b[0]) == b[0].guestDescriptor, "shader data fell back to the template");
     Check(AgcDriver::Graphics::DrawGuestWords(program, &words, b[2]) == b[2].guestDescriptor, "the flattened SRT fell back to the template");
+    words.flattenedSrt = {70, 71};
+    Check(AgcDriver::Graphics::DrawGuestWords(program, &words, b[2]) == words.flattenedSrt, "the flattened SRT does not read the stage's own words");
+    words.flattenedSrt.clear();
     words.bindings[1] = {60, 61, 62, 63, 64, 65, 66, 67};
     Check(AgcDriver::Graphics::DrawGuestWords(program, &words, b[1]) == words.bindings[1], "per-draw words do not override the template's");
     words.bindings[1].clear();

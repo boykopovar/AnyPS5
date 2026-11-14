@@ -97,6 +97,7 @@ inline const std::vector<std::uint32_t>& DrawGuestWords(const ShaderRecompiler::
     if (heap == nullptr) return binding.guestDescriptor;
     const auto index = static_cast<std::size_t>(&binding - program.bindings.data());
     if (index < heap->bindings.size() && !heap->bindings[index].empty()) return heap->bindings[index];
+    if (binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt && !heap->flattenedSrt.empty()) return heap->flattenedSrt;
     const auto* base = heap->base.get();
     const bool shared = binding.role != ShaderRecompiler::DescriptorRole::ShaderData && binding.role != ShaderRecompiler::DescriptorRole::FlattenedSrt;
     return shared && base != nullptr && index < base->bindings.size() && !base->bindings[index].empty() ? base->bindings[index] : binding.guestDescriptor;
