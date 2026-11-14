@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -2817,6 +2818,12 @@ int main(int argc, char** argv) {
     const std::uint8_t badHeader[4] = {0xFD, 0x72, 0x1F, 0xF0};
     Require(sceAjmDecAt9ParseConfigData(badHeader, &info) == invalidParameter);
     Require(sceAjmDecAt9ParseConfigData(nullptr, &info) == invalidParameter);
+    errno = 71;
+    Require(sceAjmDecAt9ParseConfigData(reinterpret_cast<const void*>(0x10), &info) == invalidParameter);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceAjmDecAt9ParseConfigData(stereo48k, reinterpret_cast<AjmDecAt9ConfigDataInfo*>(0x10)) == invalidParameter);
+    Require(errno == 71);
     std::vector<std::uint8_t> batch(4096);
     AjmBatchInfo batchInfo{};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &batchInfo) == 0);
