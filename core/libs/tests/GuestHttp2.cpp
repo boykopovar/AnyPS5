@@ -50,6 +50,10 @@ static void RequireNullMessageRejected(int id) {
     Require(sceHttp2WebSocketSendTextMessageAsync(id, nullptr, 0xff, &asyncOption, nullptr) == InvalidValue);
     Require(sceHttp2WebSocketSendDataMessageAsync(id, nullptr, 2, 0, nullptr, nullptr) == InvalidValue);
     Require(sceHttp2WebSocketSendDataMessageAsync(id, nullptr, 0, 0xff, &asyncOption, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendTextMessage(id, nullptr, 0, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendTextMessage(id, nullptr, 0xff, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessage(id, nullptr, 2, 0, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessage(id, nullptr, 0, 0xff, nullptr) == InvalidValue);
 }
 
 static void RequireNotWebSocket(int id) {
@@ -57,9 +61,13 @@ static void RequireNotWebSocket(int id) {
     RequireNullMessageRejected(id);
     Require(sceHttp2WebSocketSetPingInterval(id, 1000000) == InvalidId);
     Require(sceHttp2WebSocketSetPingTimeout(id, 1000000) == InvalidId);
+    Require(sceHttp2WebSocketSetCloseTimeout(id, 1000000) == InvalidId);
     Require(sceHttp2WebSocketSendTextMessageAsync(id, "hi", 0, nullptr, nullptr) == InvalidId);
     Require(sceHttp2WebSocketSendDataMessageAsync(id, "hi", 2, 0, nullptr, nullptr) == InvalidId);
     Require(sceHttp2WebSocketCloseAsync(id, &status, "bye", 0, nullptr, nullptr) == InvalidId);
+    Require(sceHttp2WebSocketSendTextMessage(id, "hi", 0, nullptr) == InvalidId);
+    Require(sceHttp2WebSocketSendDataMessage(id, "hi", 2, 0, nullptr) == InvalidId);
+    Require(sceHttp2WebSocketClose(id, &status, "bye", 0, nullptr) == InvalidId);
 }
 
 static void TestWebSockets() {
@@ -103,8 +111,13 @@ static void TestWebSockets() {
     Require(sceHttp2WebSocketSetPingTimeout(socket, 999999) == InvalidValue);
     Require(sceHttp2WebSocketSetPingTimeout(socket, 1000000) == 0);
     Require(sceHttp2WebSocketSetPingTimeout(socket, 0xffffffffu) == 0);
+    Require(sceHttp2WebSocketSetCloseTimeout(socket, 0) == InvalidValue);
+    Require(sceHttp2WebSocketSetCloseTimeout(socket, 999999) == InvalidValue);
+    Require(sceHttp2WebSocketSetCloseTimeout(socket, 1000000) == 0);
+    Require(sceHttp2WebSocketSetCloseTimeout(socket, 0xffffffffu) == 0);
     Require(sceHttp2WebSocketSetPingInterval(0x7777, 5) == InvalidValue);
     Require(sceHttp2WebSocketSetPingTimeout(0x7777, 0) == InvalidValue);
+    Require(sceHttp2WebSocketSetCloseTimeout(0x7777, 0) == InvalidValue);
     for (const int invalid : {0, -1, 0x7777, plain, tmpl, context}) RequireNotWebSocket(invalid);
 
     const std::uint16_t status = 1000;
@@ -118,6 +131,15 @@ static void TestWebSockets() {
     Require(sceHttp2WebSocketCloseAsync(socket, nullptr, "bye", 0, nullptr, nullptr) == InvalidValue);
     Require(sceHttp2WebSocketCloseAsync(socket, &status, nullptr, 0, nullptr, &marker) == InvalidValue);
     Require(sceHttp2WebSocketCloseAsync(0x7777, nullptr, "bye", 0, nullptr, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendTextMessage(socket, "hi", 0, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketSendTextMessage(socket, "hi", 0, &marker) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessage(socket, "hi", 2, 0, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketSendDataMessage(socket, "hi", 2, 0, &marker) == InvalidValue);
+    Require(sceHttp2WebSocketClose(socket, &status, "bye", 0, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketClose(socket, nullptr, nullptr, 0, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketClose(socket, nullptr, "bye", 0, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketClose(socket, &status, nullptr, 0, &marker) == InvalidValue);
+    Require(sceHttp2WebSocketClose(0x7777, nullptr, "bye", 0, nullptr) == InvalidValue);
 
     Require(sceHttp2DeleteRequest(socket) == 0);
     RequireNotWebSocket(socket);

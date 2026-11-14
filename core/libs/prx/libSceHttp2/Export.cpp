@@ -550,6 +550,30 @@ int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint3
     return IsWebSocket(requestId) ? 0 : ERROR_INVALID_ID;
 }
 
+int APS5_VABI sceHttp2WebSocketClose(std::int32_t requestId, const std::uint16_t* status, const char* reason, std::uint8_t flags, const void* option) {
+    (void)flags;
+    if (option != nullptr || (reason != nullptr && status == nullptr)) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttp2WebSocketSendTextMessage(std::int32_t requestId, const char* text, std::uint8_t flags, const void* option) {
+    (void)flags;
+    if (option != nullptr || text == nullptr) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttp2WebSocketSendDataMessage(std::int32_t requestId, const void* data, std::size_t dataSize, std::uint8_t flags, const void* option) {
+    (void)dataSize;
+    (void)flags;
+    if (option != nullptr || data == nullptr) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttp2WebSocketSetCloseTimeout(std::int32_t requestId, std::uint32_t timeoutMicroseconds) {
+    if (timeoutMicroseconds < WEBSOCKET_MIN_PERIOD) return ERROR_INVALID_VALUE;
+    return IsWebSocket(requestId) ? 0 : ERROR_INVALID_ID;
+}
+
 int APS5_VABI sceHttp2AuthCacheFlush(int lib_http2_ctx_id) {
     std::lock_guard lock(g_handlesMutex);
     return FindHandle(lib_http2_ctx_id, Http2Kind::Context) ? 0 : ERROR_INVALID_ID;
