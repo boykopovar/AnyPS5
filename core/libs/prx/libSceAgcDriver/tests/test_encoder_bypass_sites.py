@@ -9,8 +9,8 @@ LOOKUP = re.compile(r'Function<PFN_vkCmd\w+>\(\s*"vkCmd\w+"\s*\)(\s*\()?')
 DEVICE_PROC = re.compile(r'deviceProc\([^;]*"vkCmd\w+"')
 
 AUDITED = {
-    "Graphics/src/Resources.cpp": (38, "fills the device table, whose vkCmd entries the command encoder then replaces"),
-    "Graphics/src/Recorder.cpp": (11, "the recorder's members, replaced by the encoder's table entries where it has them; every other use takes the batch through BatchCommands::Use::Quiesced, plus the two checkpoint markers written into live()"),
+    "Graphics/src/Resources.cpp": (23, "fills the device table, whose vkCmd entries the command encoder then replaces"),
+    "Graphics/src/Recorder.cpp": (10, "the recorder's members, replaced by the encoder's table entries where it has them; every other use takes the batch through BatchCommands::Use::Quiesced, plus the two checkpoint markers written into live()"),
     "Execution/src/PresentationScaler.cpp": (4, "the presentation's own command buffers, which the encoder never records"),
     "Execution/src/PresentationPass.cpp": (1, "the presentation's own command buffers, which the encoder never records"),
     "Execution/src/VulkanDevice.cpp": (3, "the presentation's own command buffers and their checkpoint markers"),
