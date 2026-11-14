@@ -1,10 +1,18 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAudioSystem/include/InventoryExports.hpp"
 #include "prx/libSceAudioSystem/include/Api.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+std::atomic<std::int32_t> storedValue{-1};
+std::atomic<std::int32_t> pendingValue{0};
+
+}
 
 extern "C" {
 
@@ -104,8 +112,11 @@ int APS5_VABI libSceAudioSystemUnknown_Fd9u7_minus_OKW_plus_Q_nid_no_patch() {
 }
 APS5_EXPORT("Fd9u7-OKW+Q", libSceAudioSystemUnknown_Fd9u7_minus_OKW_plus_Q_nid_no_patch);
 
-int APS5_VABI libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(std::int32_t* value) {
+    const std::int32_t current = pendingValue.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(value, &current, sizeof(current))) NotImplemented_nid_no_patch(__func__);
+    pendingValue.store(0, std::memory_order_relaxed);
+    return 0;
 }
 APS5_EXPORT("FkFcs7NTFDo", libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch);
 
@@ -144,8 +155,9 @@ int APS5_VABI libSceAudioSystemUnknown_c4m3OSO0lj8_nid_no_patch() {
 }
 APS5_EXPORT("c4m3OSO0lj8", libSceAudioSystemUnknown_c4m3OSO0lj8_nid_no_patch);
 
-int APS5_VABI libSceAudioSystemUnknown_ds20PmJfSSk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAudioSystemUnknown_ds20PmJfSSk_nid_no_patch(std::int32_t value) {
+    if (pendingValue.load(std::memory_order_relaxed) == 0) pendingValue.store(value, std::memory_order_relaxed);
+    return 0;
 }
 APS5_EXPORT("ds20PmJfSSk", libSceAudioSystemUnknown_ds20PmJfSSk_nid_no_patch);
 
@@ -174,8 +186,10 @@ int APS5_VABI libSceAudioSystemUnknown_ltR0PMUM270_nid_no_patch() {
 }
 APS5_EXPORT("ltR0PMUM270", libSceAudioSystemUnknown_ltR0PMUM270_nid_no_patch);
 
-int APS5_VABI libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch(std::int32_t* value) {
+    const std::int32_t current = storedValue.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(value, &current, sizeof(current))) NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("mS9gpe47Eio", libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch);
 
@@ -184,8 +198,9 @@ int APS5_VABI libSceAudioSystemUnknown_tHodLaUv04w_nid_no_patch() {
 }
 APS5_EXPORT("tHodLaUv04w", libSceAudioSystemUnknown_tHodLaUv04w_nid_no_patch);
 
-int APS5_VABI libSceAudioSystemUnknown_uoPBJTVWhrg_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAudioSystemUnknown_uoPBJTVWhrg_nid_no_patch(std::int32_t value) {
+    storedValue.store(value, std::memory_order_relaxed);
+    return 0;
 }
 APS5_EXPORT("uoPBJTVWhrg", libSceAudioSystemUnknown_uoPBJTVWhrg_nid_no_patch);
 

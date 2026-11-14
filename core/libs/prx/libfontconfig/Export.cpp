@@ -2,12 +2,30 @@
 #include "prx/libfontconfig/include/InventoryExports.hpp"
 #include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libfontconfig/include/Config.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
+#include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <ft2build.h>
+#include FT_FREETYPE_H
 #include <array>
 #include <bit>
 #include <map>
 #include <new>
+
+static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
 
 static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
     for (const auto& [number, leaf] : subset.leaves) {
@@ -26,16 +44,23 @@ FcConfig* APS5_VABI FcConfigGetCurrent() {
     return nullptr;
 }
 
-int APS5_VABI FcFontList() {
-    NotImplemented_nid_no_patch(__func__);
+FcFontSet* APS5_VABI FcFontList(FcConfig* config, FcPattern*, FcObjectSet*) {
+    if (!config && !FcInitBringUptoDate()) return nullptr;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
 }
 
-int APS5_VABI FcFontSetMatch() {
-    NotImplemented_nid_no_patch(__func__);
+FcPattern* APS5_VABI FcFontSetMatch(FcConfig* config, FcFontSet** sets, int, FcPattern* pattern, FcResult* result) {
+    if (!sets || !pattern || !result) NotImplemented_nid_no_patch(__func__);
+    *result = FcResultNoMatch;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
 }
 
-int APS5_VABI FcConfigSubstitute() {
-    NotImplemented_nid_no_patch(__func__);
+FcBool APS5_VABI FcConfigSubstitute(FcConfig* config, FcPattern*, int kind) {
+    if (kind < FcMatchKindBegin || kind >= FcMatchKindEnd) return 0;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI FcInit() {
@@ -50,16 +75,11 @@ int APS5_VABI FcFontRenderPrepare() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcFontMatch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternFilter() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternGetFTFace() {
-    NotImplemented_nid_no_patch(__func__);
+FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result) {
+    if (!pattern || !result) NotImplemented_nid_no_patch(__func__);
+    *result = FcResultNoMatch;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
 }
 
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second) {
@@ -75,15 +95,19 @@ uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSe
     return count;
 }
 
-int APS5_VABI FcFontSort() {
-    NotImplemented_nid_no_patch(__func__);
+FcFontSet* APS5_VABI FcFontSort(FcConfig* config, FcPattern* pattern, FcBool, FcCharSet**, FcResult* result) {
+    if (!pattern || !result) NotImplemented_nid_no_patch(__func__);
+    *result = FcResultNoMatch;
+    if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
+    return nullptr;
 }
 
 int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* changed) {
     if (!target || !source) return 0;
     if (changed) {
-        *changed = !IsSubset(*source, *target);
-        if (!*changed) return 1;
+        const int didChange = !IsSubset(*source, *target);
+        if (!CopyGuestOut(changed, &didChange, sizeof(didChange))) return 0;
+        if (!didChange) return 1;
     }
     try {
         for (const auto& [number, leaf] : source->leaves) {
@@ -96,20 +120,29 @@ int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* ch
     return 1;
 }
 
-int APS5_VABI FcPatternGetCharSet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 void APS5_VABI FcCharSetDestroy(FcCharSet* set) {
-    delete set;
+    if (set && set->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete set;
 }
 
 FcCharSet* APS5_VABI FcCharSetCreate() {
     return new (std::nothrow) FcCharSet;
 }
 
-int APS5_VABI FcFreeTypeCharIndex() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI FcFreeTypeCharIndex(FreeType::GuestFaceRec* face, std::uint32_t character) {
+    if (!face) return 0;
+    constexpr std::array encodings{FT_ENCODING_UNICODE, FT_ENCODING_MS_SYMBOL};
+    const auto current = face->charmap ? face->charmap->encoding : 0;
+    const std::size_t initial = current == encodings[1] ? 1 : 0;
+    for (std::size_t offset = 0; offset < encodings.size(); ++offset) {
+        const auto encoding = encodings[(initial + offset) % encodings.size()];
+        if ((!face->charmap || face->charmap->encoding != encoding) &&
+            FT_Select_Charmap_nid_postfix(face, encoding) != 0) continue;
+        if (const auto glyph = FT_Get_Char_Index_nid_postfix(face, character)) return glyph;
+        if (character < 0x100 && encoding == FT_ENCODING_MS_SYMBOL) {
+            if (const auto glyph = FT_Get_Char_Index_nid_postfix(face, character + 0xf000)) return glyph;
+        }
+    }
+    return 0;
 }
 
 int APS5_VABI FcCharSetAddChar(FcCharSet* set, uint32_t character) {
@@ -126,28 +159,20 @@ int APS5_VABI FcCharSetAddChar(FcCharSet* set, uint32_t character) {
 }
 
 void APS5_VABI FcMatrixMultiply(FcMatrix* result, const FcMatrix* first, const FcMatrix* second) {
+    if (!result || !first || !second) return;
+    FcMatrix a{};
+    FcMatrix b{};
+    if (!CopyGuestIn(&a, first, sizeof(a)) || !CopyGuestIn(&b, second, sizeof(b))) return;
     const FcMatrix product = {
-        first->xx * second->xx + first->xy * second->yx,
-        first->xx * second->xy + first->xy * second->yy,
-        first->yx * second->xx + first->yy * second->yx,
-        first->yx * second->xy + first->yy * second->yy,
+        a.xx * b.xx + a.xy * b.yx,
+        a.xx * b.xy + a.xy * b.yy,
+        a.yx * b.xx + a.yy * b.yx,
+        a.yx * b.xy + a.yy * b.yy,
     };
-    *result = product;
-}
-
-int APS5_VABI FcPatternAddCharSet() {
-    NotImplemented_nid_no_patch(__func__);
+    CopyGuestOut(result, &product, sizeof(product));
 }
 
 int APS5_VABI FcDefaultSubstitute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternAddLangSet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternGetLangSet() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -580,11 +580,17 @@ int ClassifyCharacter(int value, short mask) {
 int ConvertCharacter(int value, bool upper) {
     ValidateCharacter(value);
     if (value < 0) return value;
-    const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
-    const auto character = static_cast<char>(value);
-    return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
+    return (upper ? g_upperTable : g_lowerTable)[static_cast<std::size_t>(value) + 1];
 }
 
+}
+
+extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source) {
+    return AssignCString(result, source);
+}
+
+extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source) {
+    return AssignWideCString(result, source);
 }
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
@@ -688,10 +694,12 @@ std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots] {};
+std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots] {};
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
 std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots] {};
+std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots] {};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};
@@ -867,6 +875,35 @@ std::uint64_t _ZNSt8__sce_v25ctypeIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v28numpunctIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v25ctypeItE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtItc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28numpunctIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27collateIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27collateIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28messagesIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28messagesIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIcLb1EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIwLb1EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDsDu9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDiDu9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDsc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDic9_MbstatetE2idE_nid_postfix = 0;
+bool _ZNSt8__sce_v28ios_base5_SyncE_nid_postfix = true;
+std::int32_t _ZNSt8__sce_v28ios_base6_IndexE_nid_postfix = 0;
 std::int32_t _ZNSt8__sce_v26locale2id7_Id_cntE_nid_postfix = 0;
 GuestLocale::Implementation* _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix = &g_classicLocale;
 alignas(16) unsigned char _ZNSt8__sce_v24coutE_nid_postfix[0x400] {};
@@ -1101,6 +1138,10 @@ GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 
 GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix() {
     return &g_classicLocaleFacade;
+}
+
+const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
+    return &g_wideCollateVtable;
 }
 
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
@@ -1383,7 +1424,7 @@ void APS5_VABI init_env_nid_postfix(const InitEnvParams* params) {
 }
 
 SonyLconv* APS5_VABI localeconv_nid_postfix(void) {
-    return SonyLocaleconv();
+    return SonyLocaleconv_nid_no_patch();
 }
 
 }
