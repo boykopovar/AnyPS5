@@ -3,6 +3,7 @@
 #include "prx/libSceIcu/Version.hpp"
 
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libc/include/General.hpp"
@@ -269,6 +270,71 @@ static void TestTime() {
     Require(threadCpu.m_value >= 0.0);
 }
 
+extern "C" void CurrentTimeClockForTest_nid_no_patch(int (*query)(int, KernelTimespec*));
+
+static int g_clockQueries = 0;
+static int g_lastClockId = -1;
+
+static int ClockWithTimes(int clockId, KernelTimespec* time) {
+    ++g_clockQueries;
+    g_lastClockId = clockId;
+    if (clockId == 0) {
+        *time = KernelTimespec{1700000000, 250000000};
+        return 0;
+    }
+    if (clockId == 4) {
+        *time = KernelTimespec{12345, 500000000};
+        return 0;
+    }
+    *time = KernelTimespec{99, 0};
+    return 0;
+}
+
+static int ClockFailing(int, KernelTimespec*) {
+    ++g_clockQueries;
+    return -1;
+}
+
+static double GuestClockSeconds(int clockId) {
+    KernelTimespec time{};
+    Require(clock_gettime_nid_postfix(clockId, &time) == 0);
+    return static_cast<double>(time.tv_sec) + time.tv_nsec / 1'000'000'000.0;
+}
+
+static void TestGuestClocks() {
+    CurrentTimeClockForTest_nid_no_patch(ClockWithTimes);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 1700000000.25);
+    Require(g_lastClockId == 0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 12345.5);
+    Require(g_lastClockId == 4);
+    Require(g_clockQueries == 2);
+
+    TimeWithDynamicClockType dynamicWall = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Wall);
+    Require(dynamicWall.m_type == ClockType::Wall && dynamicWall.m_value == 1700000000.25);
+    TimeWithDynamicClockType dynamicMonotonic = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+    Require(dynamicMonotonic.m_type == ClockType::Monotonic && dynamicMonotonic.m_value == 12345.5);
+
+    MonotonicTime monotonic{12346.5};
+    Require(_ZNK3WTF13MonotonicTime19approximateWallTimeEv(&monotonic).m_value == 1700000001.25);
+    WallTime wall{1700000002.25};
+    Require(_ZNK3WTF8WallTime24approximateMonotonicTimeEv(&wall).m_value == 12347.5);
+
+    CurrentTimeClockForTest_nid_no_patch(ClockFailing);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 0.0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 0.0);
+    Require(g_clockQueries == 2);
+
+    CurrentTimeClockForTest_nid_no_patch(nullptr);
+    const double monotonicBefore = GuestClockSeconds(4);
+    const double monotonicNow = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    Require(monotonicBefore <= monotonicNow && monotonicNow <= GuestClockSeconds(4));
+    const double wallBefore = GuestClockSeconds(0);
+    const double wallNow = _ZN3WTF8WallTime3nowEv().m_value;
+    Require(wallBefore <= wallNow && wallNow <= GuestClockSeconds(0));
+}
+
 extern "C" void NumberOfProcessorCoresSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
 
 static int g_sysconfQueries = 0;
@@ -353,6 +419,7 @@ static void TestRamSize() {
 static void TestSystem() {
     TestNumberOfProcessorCores();
     TestRamSize();
+    TestGuestClocks();
 
     std::size_t page = _ZN3WTF8pageSizeEv();
     Require(page == 16384);
