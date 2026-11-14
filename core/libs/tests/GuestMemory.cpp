@@ -1094,8 +1094,15 @@ static void CheckDirectMemoryQuery() {
     Require(sceKernelDirectMemoryQuery(first, 0, nullptr, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelDirectMemoryQuery(first, 0, reinterpret_cast<void*>(0x10), sizeof(info)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelDirectMemoryQuery(-1, 1, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info) - 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(first, 2, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(first, 4, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
     Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, 8) == 0);
+    Require(info.end == -1 && info.memoryType == -1);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, 16) == 0);
+    Require(info.memoryType == -1);
+    for (const std::size_t size : {1u, 2u, 4u, 12u, 20u}) Require(sceKernelDirectMemoryQuery(first, 0, &info, size) == 0);
     Require(sceKernelReleaseDirectMemory(first, page * 2) == 0);
     Require(sceKernelReleaseDirectMemory(second, page) == 0);
     Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
