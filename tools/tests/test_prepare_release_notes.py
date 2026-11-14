@@ -60,6 +60,37 @@ class PrepareInputTests(ReleaseNotesCase):
         self.assertEqual(self.full.read_bytes(), b"hi")
 
 
+class PrepareBodyLimitTests(ReleaseNotesCase):
+    def test_body_still_over_limit_after_stripping_is_rejected_and_outputs_kept(self):
+        self.write_source(json.dumps({"body": "## New Contributors\n" + "x" * LIMIT}))
+        self.body.write_bytes(b"previous body")
+        self.full.write_bytes(b"previous full")
+        with self.assertRaisesRegex(ValueError, "exceeds 125000 characters after removing What's Changed"):
+            prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertEqual(self.body.read_bytes(), b"previous body")
+        self.assertEqual(self.full.read_bytes(), b"previous full")
+
+    def test_removing_what_changed_brings_an_oversized_body_under_the_limit(self):
+        notes = "## What's Changed\n* " + "x" * LIMIT + "\n## New Contributors\n* newcomer\n"
+        self.write_source(json.dumps({"body": notes}))
+        prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertEqual(self.body.read_bytes(), b"## New Contributors\n* newcomer\n")
+        self.assertEqual(self.full.read_bytes(), notes.encode("utf-8"))
+
+    def test_limit_counts_characters_not_utf8_bytes(self):
+        prefix = "## New Contributors\n"
+        at_limit = prefix + "é" * (LIMIT - len(prefix))
+        self.write_source(json.dumps({"body": at_limit}))
+        prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+        self.assertEqual(self.body.read_bytes(), at_limit.encode("utf-8"))
+        self.assertGreater(len(self.body.read_bytes()), LIMIT)
+
+        over = at_limit + "é"
+        self.write_source(json.dumps({"body": over}))
+        with self.assertRaisesRegex(ValueError, "exceeds 125000 characters"):
+            prepare_release_notes.prepare_notes(self.source, self.body, self.full)
+
+
 class ReleaseBodyTests(unittest.TestCase):
     def test_notes_at_or_below_limit_are_returned_unchanged(self):
         short = "## What's Changed\n- entry\n"
