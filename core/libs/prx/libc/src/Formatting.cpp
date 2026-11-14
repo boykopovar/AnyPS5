@@ -244,6 +244,26 @@ bool DecimalOutOfRange(const std::string& field) {
     return errno == ERANGE && (std::isinf(value) || value == 0.0L);
 }
 
+std::size_t DanglingExponentMantissa(const char* field, unsigned long width, std::size_t& span) {
+    const unsigned long limit = width == 0 ? ULONG_MAX : width;
+    const auto at = [&](unsigned long index) { return index < limit ? static_cast<unsigned char>(field[index]) : 0; };
+    unsigned long index = at(0) == '+' || at(0) == '-' ? 1 : 0;
+    const bool hex = at(index) == '0' && (at(index + 1) == 'x' || at(index + 1) == 'X');
+    if (hex) index += 2;
+    const auto digit = [&](unsigned long position) { return (hex ? std::isxdigit(at(position)) : std::isdigit(at(position))) != 0; };
+    bool digits = false;
+    for (; digit(index); ++index) digits = true;
+    if (at(index) == '.') for (++index; digit(index); ++index) digits = true;
+    const std::size_t mantissa = index;
+    const unsigned char marker = at(index);
+    if (!digits || (hex ? marker != 'p' && marker != 'P' : marker != 'e' && marker != 'E')) return 0;
+    ++index;
+    if (at(index) == '+' || at(index) == '-') ++index;
+    if (std::isdigit(at(index))) return 0;
+    span = index;
+    return mantissa;
+}
+
 template <typename T>
 void StoreDefaultNaN(void* target, std::size_t bytes) {
     T value{};
@@ -507,7 +527,18 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         }
         const int savedError = errno;
         int consumed = -1;
-        const int matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : target, &consumed);
+        int matched = 0;
+        bool scanned = false;
+        if constexpr (TSource::Contiguous) if (floating) {
+            std::size_t span = 0;
+            if (const std::size_t mantissa = DanglingExponentMantissa(source.Remaining(), width, span); mantissa != 0) {
+                const std::string field(source.Remaining(), mantissa);
+                matched = suppress ? HostSscanf(field.c_str(), directive.c_str(), &consumed) : HostSscanf(field.c_str(), directive.c_str(), target, &consumed);
+                if (consumed >= 0) consumed = static_cast<int>(span);
+                scanned = true;
+            }
+        }
+        if (!scanned) matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : target, &consumed);
         if constexpr (TSource::Contiguous) if (floating) {
             const bool outOfRange = consumed > 0 && DecimalOutOfRange(std::string(source.Remaining(), static_cast<std::size_t>(consumed)));
             errno = outOfRange ? ERANGE : savedError;

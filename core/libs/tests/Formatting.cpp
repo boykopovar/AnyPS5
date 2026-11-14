@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <utility>
+#include <tuple>
 #include <iterator>
 #include <climits>
 #include <cmath>
@@ -103,6 +104,46 @@ static void CheckCharacterScanLengths() {
             check(result == 1 && consumed == 4);
             check(std::strcmp(output.data(), example.first[1] == ' ' ? "ab" : "%lls") == 0, "Character scan normalization changed a literal or scanset");
         }
+    }
+}
+
+static void CheckDanglingExponentScan() {
+    struct Case {
+        const char* input;
+        const char* format;
+        int consumed;
+        double value;
+    };
+    const Case cases[]{{"1e", "%lf%n", 2, 1.0}, {"1ee", "%lf%n", 2, 1.0}, {"1e+", "%lf%n", 3, 1.0}, {"1e-x", "%lf%n", 3, 1.0}, {"1.e", "%lf%n", 3, 1.0},
+        {"0e", "%lf%n", 2, 0.0}, {"-2.5E", "%lf%n", 5, -2.5}, {"0x1p", "%lf%n", 4, 1.0}, {"0x1.8p+", "%lf%n", 7, 1.5}, {"1E5", "%2lf%n", 2, 1.0},
+        {"1e-400", "%3lf%n", 3, 1.0}, {"1.e3", "%3lf%n", 3, 1.0}, {"1e5", "%lf%n", 3, 100000.0}, {"1e+2", "%3lf%n", 3, 1.0}, {" 1e", "%lf%n", 3, 1.0}, {"\t-1E+", "%lf%n", 5, -1.0}};
+    for (const Case& test : cases) {
+        double value = -9.0;
+        int consumed = -1;
+        const int result = sscanf_s_nid_postfix(test.input, test.format, &value, &consumed);
+        if (result != 1 || consumed != test.consumed || value != test.value) {
+            std::fprintf(stderr, "sscanf_s(\"%s\", \"%s\"): result %d, count %d, value %g; expected 1, %d, %g\n", test.input, test.format, result, consumed, value, test.consumed, test.value);
+            Require(false);
+        }
+        float single = -9.0f;
+        consumed = -1;
+        const std::string format = std::string(test.format).replace(std::string(test.format).find('l'), 1, "");
+        Require(ScanListS(test.input, format.c_str(), &single, &consumed) == 1 && consumed == test.consumed && single == static_cast<float>(test.value));
+    }
+    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    for (const Scanner scan : {Scanner{sscanf_nid_postfix}, Scanner{ScanList}}) {
+        for (const auto& [input, format, value, character, consumed] : {std::tuple{"1ez", "%lf%c%n", 1.0, 'z', 3}, std::tuple{"1e+ x", "%lf %c%n", 1.0, 'x', 5},
+                 std::tuple{"0x1pq", "%lf%c%n", 1.0, 'q', 5}, std::tuple{"1E5", "%2lf%c%n", 1.0, '5', 3}}) {
+            double scanned = -9.0;
+            char next = '?';
+            int count = -7;
+            Require(scan(input, format, &scanned, &next, &count) == 2 && scanned == value && next == character && count == consumed);
+        }
+    }
+    for (const char* input : {"e5", ".e1", "."}) {
+        double value = -9.0;
+        int consumed = -1;
+        Require(sscanf_s_nid_postfix(input, "%lf%n", &value, &consumed) == 0 && consumed == -1 && value == -9.0);
     }
 }
 
@@ -893,4 +934,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckDanglingExponentScan(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
