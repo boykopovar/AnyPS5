@@ -704,6 +704,9 @@ static void CheckRemoteController(int handle) {
     Require(scePadIsRemoteController(handle + 1, &remote) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadIsRemoteController(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(remote);
+    errno = 71;
+    Require(scePadIsRemoteController(handle, reinterpret_cast<bool*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadIsRemoteController(handle, &remote) == PAD_OK);
     Require(!remote);
 }
