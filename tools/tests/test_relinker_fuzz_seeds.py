@@ -1,5 +1,6 @@
 import contextlib
 import io
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -84,6 +85,15 @@ class RelinkerFuzzSeedsTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("is an existing file, not a directory", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
+
+    def test_cli_names_a_non_ascii_output_on_a_cp1252_console(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "日本"
+            env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+            result = subprocess.run([sys.executable, "-X", "utf8=0", relinker_fuzz_seeds.__file__, str(output)],
+                                    env=env, capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+            self.assertIn(f"seeds written to {output}", result.stdout.decode("utf-8"))
 
 
 if __name__ == "__main__":
