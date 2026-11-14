@@ -513,6 +513,10 @@ static void CheckPointAndDpiScale(FontHandle font, FontLibrary library, const Fo
     Require(sceFontSetScalePoint(font, 20.0f, 30.0f) == SCE_FONT_OK);
     CheckGlyphScale(font, memory, 40.0f, 60.0f);
     Require(sceFontGetKerning(font, 'A', 'V', &kerning) == SCE_FONT_OK && KerningIs(kerning, -8.0f));
+    Require(sceFontGetKerning(font, 'A', 'V', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetKerning(font, 'A', 'V', reinterpret_cast<FontKerning*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontSetResolutionDpi(font, 216, 288) == SCE_FONT_OK);
     CheckGlyphScale(font, memory, 60.0f, 120.0f);
     Require(sceFontGetKerning(font, 'A', 'V', &kerning) == SCE_FONT_OK && KerningIs(kerning, -12.0f));
