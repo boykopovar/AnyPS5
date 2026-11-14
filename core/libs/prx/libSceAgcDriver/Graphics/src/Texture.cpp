@@ -1622,6 +1622,26 @@ VkFormat StorageFormatFor(const Context& context, VkFormat format) {
     return storage;
 }
 
+VkImageCreateFlags StorageImageFlags(const GuestTextureResource& descriptor) {
+    return (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT : 0u) | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+}
+
+VkImageUsageFlags StorageImageUsage(const Context& context, VkFormat format) {
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    return usage;
+}
+
+bool StorageImageFits(const Context& context, VkFormat format, const GuestTextureResource& descriptor) {
+    if (context.imageFormatProperties == nullptr) return false;
+    const auto geometry = DescribeSurface(descriptor);
+    VkImageFormatProperties properties{};
+    const auto result = context.imageFormatProperties(context.physical, format, ImageTypeFor(descriptor.dimension), VK_IMAGE_TILING_OPTIMAL, StorageImageUsage(context, format), StorageImageFlags(descriptor), &properties);
+    return result == VK_SUCCESS && properties.maxExtent.width >= descriptor.width && properties.maxExtent.height >= descriptor.height && properties.maxExtent.depth >= geometry.imageDepth && properties.maxMipLevels >= descriptor.mipCount && properties.maxArrayLayers >= geometry.imageLayers;
+}
+
 }
 
 bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat) {
@@ -1718,6 +1738,21 @@ VkFormat AttachmentProxyFormat(const Context& context, VkFormat format) {
 }
 
 std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel) {
+    return CreateWithStorageFormat(context, detiler, descriptor, mipLevel, VK_FORMAT_UNDEFINED);
+}
+
+std::shared_ptr<StorageTexture> StorageTexture::CreateRaw16Depth(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel) {
+    const auto typed = ResolveTextureFormat(descriptor.format);
+    Require(typed == VK_FORMAT_R16_SNORM || typed == VK_FORMAT_R16_SINT || typed == VK_FORMAT_R16_SFLOAT, "raw depth alias storage needs a signed or float R16 format");
+    const bool typedStorage = typed != VK_FORMAT_R16_SINT && StorageFormatOrUndefined(context, typed) == typed && StorageImageFits(context, typed, descriptor);
+    const auto backing = typedStorage ? typed : VK_FORMAT_R16_UINT;
+    Require(StorageFormatOrUndefined(context, VK_FORMAT_R16_UINT) == VK_FORMAT_R16_UINT, "raw depth storage needs R16_UINT storage support");
+    Require(StorageImageFits(context, backing, descriptor), "raw depth storage backing is not usable for this image");
+    Require(StorageImageFits(context, VK_FORMAT_R16_UINT, descriptor), "raw depth storage has no usable R16_UINT view");
+    return CreateWithStorageFormat(context, detiler, descriptor, mipLevel, backing, typedStorage ? typed : VK_FORMAT_UNDEFINED, VK_FORMAT_R16_UINT);
+}
+
+std::shared_ptr<StorageTexture> StorageTexture::CreateWithStorageFormat(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel, VkFormat storageFormat, VkFormat guestTypedViewFormat, VkFormat rawUINTViewFormat) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
     static const bool unwatchHooked = [] {
@@ -1726,7 +1761,7 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
     }();
     static_cast<void>(unwatchHooked);
     const MapImportGate::PublishHold publication(descriptor.baseAddress, DescribeSurface(descriptor).guestBytes);
-    auto texture = std::shared_ptr<StorageTexture>(new StorageTexture(context, detiler, descriptor, mipLevel));
+    auto texture = std::shared_ptr<StorageTexture>(new StorageTexture(context, detiler, descriptor, mipLevel, storageFormat, guestTypedViewFormat, rawUINTViewFormat));
     uploadReason = "first";
     texture->upload();
     texture->defaultMip = mipLevel;
@@ -1754,12 +1789,16 @@ void StorageTexture::clearImage(VkCommandBuffer commands, VkClearColorValue valu
     context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
 }
 
-StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel) : context(context), detiler(detiler), descriptor(descriptor) {
+StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel, VkFormat rawStorageFormat, VkFormat typedViewFormat, VkFormat rawViewFormat) : context(context), detiler(detiler), descriptor(descriptor) {
     try {
         Require(!IsBlockCompressed(descriptor.format), "block-compressed textures cannot be storage images");
         Require(mipLevel < descriptor.mipCount, "storage texture mip level is outside the texture");
-        const auto vkFormat = StorageFormatFor(context, ResolveTextureFormat(descriptor.format));
+        Require(rawStorageFormat == VK_FORMAT_UNDEFINED || rawStorageFormat == VK_FORMAT_R16_SNORM || rawStorageFormat == VK_FORMAT_R16_SINT || rawStorageFormat == VK_FORMAT_R16_SFLOAT || rawStorageFormat == VK_FORMAT_R16_UINT, "a scoped storage format is not an R16 depth backing");
+        Require(rawViewFormat == VK_FORMAT_UNDEFINED || rawViewFormat == VK_FORMAT_R16_UINT, "a raw depth view is not R16_UINT");
+        const auto vkFormat = rawStorageFormat == VK_FORMAT_UNDEFINED ? StorageFormatFor(context, ResolveTextureFormat(descriptor.format)) : rawStorageFormat;
         storageFormat = vkFormat;
+        rawUINTViewFormat = rawViewFormat;
+        guestTypedStorageViewFormat = rawViewFormat != VK_FORMAT_UNDEFINED || typedViewFormat != VK_FORMAT_UNDEFINED ? typedViewFormat : storageFormat;
         imageFormat = descriptor.format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float) && storageFormat == VK_FORMAT_R32_UINT ? VK_FORMAT_R8G8B8A8_UINT : storageFormat;
 #ifdef APS5_DEBUG_LOG
         AGC_LOG_DEFERRED(stdout, "StorageTexture address=0x%llx %ux%u mips=%u mip=%u layers=%u base=%u dim=%d tile=%d format=%u vk=%d", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, mipLevel,
@@ -1810,6 +1849,24 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         }
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        std::array<VkFormat, 3> storageViewFormats{};
+        std::uint32_t storageViewFormatCount = 0;
+        const auto addStorageViewFormat = [&](VkFormat format) {
+            if (format == VK_FORMAT_UNDEFINED) return;
+            for (std::uint32_t index = 0; index < storageViewFormatCount; ++index) {
+                if (storageViewFormats[index] == format) return;
+            }
+            storageViewFormats[storageViewFormatCount++] = format;
+        };
+        addStorageViewFormat(storageFormat);
+        addStorageViewFormat(guestTypedStorageViewFormat);
+        addStorageViewFormat(rawUINTViewFormat);
+        VkImageFormatListCreateInfo formatList{VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
+        if (rawUINTViewFormat != VK_FORMAT_UNDEFINED && storageViewFormatCount > 1 && context.imageFormatList) {
+            formatList.viewFormatCount = storageViewFormatCount;
+            formatList.pViewFormats = storageViewFormats.data();
+            imageInfo.pNext = &formatList;
+        }
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage storage");
         imageAllocation = AllocateImageMemory(context, image, imageInfo, "vkAllocateMemory storage texture", true, true);
         memoryBytes = imageAllocation.Size();
@@ -2371,6 +2428,24 @@ VkImageView StorageTexture::FirstLayerView(std::uint32_t mip) {
 }
 
 VkImageView StorageTexture::StorageView(std::uint32_t mip, bool firstLayer, bool uintStorage) {
+    if (rawUINTViewFormat != VK_FORMAT_UNDEFINED) {
+        if (!uintStorage) {
+            Require(guestTypedStorageViewFormat != VK_FORMAT_UNDEFINED, "raw depth storage has no typed shader view");
+            if (guestTypedStorageViewFormat == storageFormat) return firstLayer ? FirstLayerView(mip) : View(mip);
+            const auto found = typedViews.find({mip, firstLayer});
+            if (found != typedViews.end()) return found->second;
+            Require(StorageFormatOrUndefined(context, guestTypedStorageViewFormat) == guestTypedStorageViewFormat, "raw depth storage has no typed storage view of format " + std::to_string(guestTypedStorageViewFormat));
+            const auto created = createView(mip, firstLayer, guestTypedStorageViewFormat);
+            typedViews.emplace(std::pair{mip, firstLayer}, created);
+            return created;
+        }
+        if (rawUINTViewFormat == storageFormat) return firstLayer ? FirstLayerView(mip) : View(mip);
+        const auto found = uintViews.find({mip, firstLayer});
+        if (found != uintViews.end()) return found->second;
+        const auto created = createView(mip, firstLayer, rawUINTViewFormat);
+        uintViews.emplace(std::pair{mip, firstLayer}, created);
+        return created;
+    }
     const auto packed = PackedStorageViewFormat(storageFormat);
     const auto format = packed != VK_FORMAT_UNDEFINED ? packed : uintStorage ? UintStorageViewFormat(storageFormat) : VK_FORMAT_UNDEFINED;
     if (format == VK_FORMAT_UNDEFINED) return firstLayer ? FirstLayerView(mip) : View(mip);
@@ -7676,6 +7751,8 @@ void StorageTexture::release() noexcept {
     atomicViews.clear();
     for (const auto& [key, uint] : uintViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uint, nullptr);
     uintViews.clear();
+    for (const auto& [key, typed] : typedViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, typed, nullptr);
+    typedViews.clear();
     if (elementView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, elementView, nullptr);
     elementView = VK_NULL_HANDLE;
     for (const auto& [key, element] : elementLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, element, nullptr);

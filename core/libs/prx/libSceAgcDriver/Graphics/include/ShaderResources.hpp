@@ -471,6 +471,7 @@ private:
         VkDescriptorSetLayoutBinding layout;
         std::vector<std::size_t> allocations;
         std::vector<std::size_t> imageAllocations;
+        std::vector<bool> imageUintStorage;
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
     };

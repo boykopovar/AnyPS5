@@ -784,6 +784,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
+                physical.imageUintStorage.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage && RuntimeAbi::UintStorageImageBinding(static_cast<std::uint32_t>(element.kind)));
                 physical.imageAtomic.push_back(element.atomic);
                 physical.imageAtomic64.push_back(element.atomic64);
                 std::uint64_t samplers = 0;

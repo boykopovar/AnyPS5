@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -6,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/shaders/CmaskClear_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImage_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureRepack_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/DepthConvert_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImageWords_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileWords_spv.h"
 #include <algorithm>
@@ -93,6 +95,19 @@ TextureDetiler::TextureDetiler(const Context& context) : context(context) {
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
         module = CreateShaderModule(context, TEXTURE_DETILE_SPV, sizeof(TEXTURE_DETILE_SPV), "vkCreateShaderModule");
+        std::array<VkDescriptorSetLayoutBinding, 3> depthBindings{};
+        for (std::uint32_t index = 0; index < depthBindings.size(); ++index) {
+            depthBindings[index].binding = index;
+            depthBindings[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            depthBindings[index].descriptorCount = 1;
+            depthBindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo depthLayoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        depthLayoutInfo.bindingCount = static_cast<std::uint32_t>(depthBindings.size());
+        depthLayoutInfo.pBindings = depthBindings.data();
+        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &depthLayoutInfo, nullptr, &depthConvertDescriptorLayout), "vkCreateDescriptorSetLayout depth convert");
+        pipelineLayoutInfo.pSetLayouts = &depthConvertDescriptorLayout;
+        Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &depthConvertPipelineLayout), "vkCreatePipelineLayout depth convert");
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &imageDescriptorLayout), "vkCreateDescriptorSetLayout");
         pipelineLayoutInfo.pSetLayouts = &imageDescriptorLayout;
@@ -112,6 +127,11 @@ void TextureDetiler::release() noexcept {
     for (const auto& entry : readbackPipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
     for (const auto shader : readbackModules) if (shader) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, shader, nullptr);
     if (multisampleUploadModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, multisampleUploadModule, nullptr);
+    for (const auto pool : depthConvertDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    if (depthConvertPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, depthConvertPipeline, nullptr);
+    if (depthConvertModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, depthConvertModule, nullptr);
+    if (depthConvertPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, depthConvertPipelineLayout, nullptr);
+    if (depthConvertDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, depthConvertDescriptorLayout, nullptr);
     if (readbackPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, readbackPipelineLayout, nullptr);
     if (readbackDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, readbackDescriptorLayout, nullptr);
     for (const auto pool : cmaskDescriptorSets.pools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
@@ -336,6 +356,77 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
     const std::array<std::uint32_t, 5> push{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords)), static_cast<std::uint32_t>(depthToFloat)};
     context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
+}
+
+void TextureDetiler::DispatchDepthConvert(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint32_t width, std::uint32_t rows, std::uint32_t sourceRowPitchBytes, std::uint32_t destinationRowPitchBytes, VkFormat depthFormat, bool toDepth, const std::function<void(std::function<void()>)>& registerValidation) {
+    Require(static_cast<bool>(registerValidation), "a depth conversion needs a validation owner");
+    Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a depth conversion needs a command buffer and its buffers");
+    Require(depthFormat == VK_FORMAT_D24_UNORM_S8_UINT || depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT, "a depth conversion needs D24_UNORM_S8_UINT or D32_SFLOAT_S8_UINT");
+    Require(width != 0 && rows != 0, "a depth conversion needs a non-empty rectangle");
+    Require(sourceOffset % 4u == 0 && destinationOffset % 4u == 0, "a depth conversion needs word-aligned buffers");
+    const std::uint32_t pairCount = (width + 1u) / 2u;
+    const std::uint32_t sourceWordsInRow = toDepth ? pairCount : width;
+    const std::uint32_t destinationWordsInRow = toDepth ? width : pairCount;
+    Require(sourceRowPitchBytes % 4u == 0 && destinationRowPitchBytes % 4u == 0, "a depth conversion needs word-aligned rows");
+    Require(sourceRowPitchBytes / 4u >= sourceWordsInRow && destinationRowPitchBytes / 4u >= destinationWordsInRow, "a depth conversion needs rows that hold their words");
+    const std::uint32_t sourceWordsPerRow = sourceRowPitchBytes / 4u;
+    const std::uint32_t destinationWordsPerRow = destinationRowPitchBytes / 4u;
+    const std::uint32_t mode = (toDepth ? 0u : 2u) + (depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ? 1u : 0u);
+    if (depthConvertPipeline == VK_NULL_HANDLE) {
+        depthConvertModule = CreateShaderModule(context, DEPTH_CONVERT_SPV, sizeof(DEPTH_CONVERT_SPV), "vkCreateShaderModule depth convert");
+        VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        stage.module = depthConvertModule;
+        stage.pName = "main";
+        VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        createInfo.stage = stage;
+        createInfo.layout = depthConvertPipelineLayout;
+        auto pipelineCacheLock = context.LockPipelineCacheForUse();
+        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &depthConvertPipeline), "vkCreateComputePipelines depth convert");
+    }
+    auto fault = std::make_shared<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    std::memset(fault->Bytes().data(), 0, 4);
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
+    const auto destinationDescriptorOffset = destinationOffset - destinationOffset % alignment;
+    const auto sourceBase = (sourceOffset - sourceDescriptorOffset) / 4u;
+    const auto destinationBase = (destinationOffset - destinationDescriptorOffset) / 4u;
+    Require(sourceBase <= UINT32_MAX && destinationBase <= UINT32_MAX, "a depth conversion buffer offset exceeds the addressable range");
+    const auto sourceRange = sourceBase * 4u + static_cast<std::uint64_t>(rows) * sourceRowPitchBytes;
+    const auto destinationRange = destinationBase * 4u + static_cast<std::uint64_t>(rows) * destinationRowPitchBytes;
+    Require(sourceRange <= context.limits.maxStorageBufferRange && destinationRange <= context.limits.maxStorageBufferRange, "a depth conversion exceeds the device's storage buffer range");
+    const std::uint32_t groupsX = (pairCount + 7u) / 8u;
+    const std::uint32_t groupsY = (rows + 7u) / 8u;
+    Require(64u <= context.limits.maxComputeWorkGroupInvocations && groupsX <= context.limits.maxComputeWorkGroupCount[0] && groupsY <= context.limits.maxComputeWorkGroupCount[1], "a depth conversion exceeds the device's dispatch limits");
+    const auto set = allocateFrom(depthConvertDescriptorSets, depthConvertDescriptorLayout, {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 3}}, "vkCreateDescriptorPool depth convert", "vkAllocateDescriptorSets depth convert", "vkResetDescriptorPool depth convert");
+    const VkDescriptorBufferInfo sourceInfo{source, sourceDescriptorOffset, sourceRange};
+    const VkDescriptorBufferInfo destinationInfo{destination, destinationDescriptorOffset, destinationRange};
+    const VkDescriptorBufferInfo faultInfo{fault->Handle(), 0, 4};
+    std::array<VkWriteDescriptorSet, 3> writes{};
+    for (std::uint32_t index = 0; index < writes.size(); ++index) {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = set;
+        writes[index].dstBinding = index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[index].pBufferInfo = index == 0 ? &sourceInfo : index == 1 ? &destinationInfo : &faultInfo;
+    }
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, depthConvertPipeline);
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, depthConvertPipelineLayout, 0, 1, &set, 0, nullptr);
+    const std::array<std::uint32_t, 8> push{static_cast<std::uint32_t>(sourceBase), static_cast<std::uint32_t>(destinationBase), pairCount, rows, sourceWordsPerRow, destinationWordsPerRow, width, mode};
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, depthConvertPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    if (registerValidation) {
+        registerValidation([fault] {
+            fault->Invalidate();
+            std::uint32_t failed = 0;
+            std::memcpy(&failed, fault->Bytes().data(), sizeof(failed));
+            if (failed != 0) throw std::runtime_error("AGC graphics: a nonfinite D32 depth value cannot be converted to D16");
+        });
+    }
 }
 
 std::uint32_t TextureDetiler::CmaskErrors() {

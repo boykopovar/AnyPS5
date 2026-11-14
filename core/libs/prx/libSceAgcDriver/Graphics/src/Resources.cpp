@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -407,6 +408,10 @@ CommandBatch::CommandBatch(const Context& context) : context(context) {
         WriteCheckpointSentinel(context, commands);
         // Work recorded so far goes first in queue order, so this batch sees its results.
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) recorder->Submit();
+        if (context.detiler != nullptr) {
+            detiler = context.detiler;
+            detiler->BeginStandaloneBatch();
+        }
     } catch (...) {
         release();
         throw;
@@ -426,6 +431,7 @@ void CommandBatch::release() noexcept {
     }
     if (commands) context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &commands);
     if (fence) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
+    ReleaseStandalone();
 }
 
 VkCommandBuffer CommandBatch::Handle() const {
@@ -435,6 +441,21 @@ VkCommandBuffer CommandBatch::Handle() const {
 void CommandBatch::SubmitAndWait() {
     Submit();
     Wait();
+}
+
+void CommandBatch::OnValidated(Validation validation) {
+    validations.push_back(std::move(validation));
+}
+
+void CommandBatch::Keep(std::shared_ptr<void> object) {
+    kept.push_back(std::move(object));
+}
+
+void CommandBatch::ReleaseStandalone() noexcept {
+    if (detiler != nullptr) {
+        detiler->EndStandaloneBatch();
+        detiler = nullptr;
+    }
 }
 
 void CommandBatch::Submit() {
@@ -455,14 +476,31 @@ void CommandBatch::Submit() {
 
 void CommandBatch::Wait() {
     Require(submitted, "command batch has not been submitted");
-    if (!pending) return;
+    if (!pending) {
+        if (validationFailure) std::rethrow_exception(validationFailure);
+        return;
+    }
     PerformanceTimer timing("Graphics.Wait");
     const auto result = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
     timing.Mark("fence_wait");
     if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) pending = false;
     Check(result, "vkWaitForFences graphics");
+    ReleaseStandalone();
+    if (!validationChecked) {
+        validationChecked = true;
+        for (auto& validation : validations) {
+            try {
+                validation();
+            } catch (...) {
+                validationFailure = std::current_exception();
+                break;
+            }
+        }
+        validations.clear();
+    }
     // Recorded batches preceded this one, so their completions (write-backs) can run now.
     if (auto* recorder = Recorder::Active()) recorder->Reap();
+    if (validationFailure) std::rethrow_exception(validationFailure);
 }
 
 }

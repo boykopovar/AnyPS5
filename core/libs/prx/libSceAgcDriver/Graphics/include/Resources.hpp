@@ -2,10 +2,15 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RESOURCES_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include <exception>
+#include <functional>
+#include <memory>
 #include <span>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
+class TextureDetiler;
 class Buffer {
 public:
     Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -109,6 +114,10 @@ public:
     void SubmitAndWait();
     void Submit();
     void Wait();
+    using Validation = std::function<void()>;
+    void OnValidated(Validation validation);
+    void Keep(std::shared_ptr<void> object);
+    void ReleaseStandalone() noexcept;
 
 private:
     void release() noexcept;
@@ -117,6 +126,11 @@ private:
     VkFence fence = VK_NULL_HANDLE;
     bool pending = false;
     bool submitted = false;
+    std::vector<Validation> validations;
+    std::exception_ptr validationFailure;
+    bool validationChecked = false;
+    std::vector<std::shared_ptr<void>> kept;
+    TextureDetiler* detiler = nullptr;
 };
 
 }

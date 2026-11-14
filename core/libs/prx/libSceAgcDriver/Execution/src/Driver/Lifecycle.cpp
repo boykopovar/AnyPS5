@@ -271,8 +271,21 @@ void Driver::WaitIdle() {
         rethrowFailure();
         checkStopping();
     }
-    std::lock_guard gpuLock(GuestMemory::GpuMutex());
-    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+    std::exception_ptr waitFailure;
+    {
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        if (const auto localDevice = device.Load()) {
+            try {
+                localDevice->WaitIdle();
+            } catch (...) {
+                waitFailure = std::current_exception();
+            }
+        }
+    }
+    if (waitFailure != nullptr) {
+        ReportFailure(waitFailure);
+        std::rethrow_exception(waitFailure);
+    }
 }
 
 bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {

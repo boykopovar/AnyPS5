@@ -1,6 +1,7 @@
 #include "DepthFastClearHarness.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #ifdef _WIN32
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +36,11 @@ using DepthFastClearHarness::Width;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Format8Uint = 5;
+constexpr std::uint32_t Format16Unorm = 7;
+constexpr std::uint32_t Format16Snorm = 8;
+constexpr std::uint32_t Format16Uint = 11;
+constexpr std::uint32_t Format16Sint = 12;
+constexpr std::uint32_t Format16Sfloat = 13;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type2DArray = 13;
@@ -50,7 +57,36 @@ constexpr std::size_t LaterDepthOffset = 10u << 16u;
 constexpr std::size_t ArrayDepthOffset = 12u << 16u;
 constexpr std::size_t ArrayStencilOffset = 13u << 16u;
 constexpr std::size_t ArrayOffset = 16u << 16u;
+constexpr std::size_t AliasOffset = 18u << 16u;
+constexpr std::size_t AliasControlOffset = 19u << 16u;
+constexpr std::size_t AliasWriteOffset = 20u << 16u;
+constexpr std::size_t ForcedD24Offset = 21u << 16u;
+constexpr std::size_t ForcedD32Offset = 22u << 16u;
+constexpr std::size_t ForcedListOffset = 23u << 16u;
+constexpr std::size_t ForcedRefusalOffset = 24u << 16u;
+constexpr std::size_t ForcedFallbackOffset = 25u << 16u;
 constexpr std::uint32_t ArrayLayers = 3;
+
+struct FormatFilter {
+    VkPhysicalDevice real = VK_NULL_HANDLE;
+    PFN_vkGetPhysicalDeviceFormatProperties format = nullptr;
+    PFN_vkGetPhysicalDeviceImageFormatProperties image = nullptr;
+    VkFormat hiddenA = VK_FORMAT_UNDEFINED;
+    VkFormat hiddenB = VK_FORMAT_UNDEFINED;
+    bool refuseAliasImages = false;
+};
+
+FormatFilter formatFilter;
+
+VKAPI_ATTR void VKAPI_CALL FilteredFormat(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+    formatFilter.format(formatFilter.real, format, properties);
+    if (format == formatFilter.hiddenA || format == formatFilter.hiddenB) *properties = {};
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL ForwardImageFormat(VkPhysicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
+    if (formatFilter.refuseAliasImages && (format == VK_FORMAT_R16_SNORM || format == VK_FORMAT_R16_SINT || format == VK_FORMAT_R16_SFLOAT)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    return formatFilter.image(formatFilter.real, format, type, tiling, usage, flags, properties);
+}
 
 alignas(256) constexpr std::array<std::uint32_t, 14> ScaleDepthCode{
     0x7e3c0300u, 0x7e3e0280u, 0x7e140280u, 0xf0001108u, 0x00010a1eu, 0xbf8c3f70u, 0x34060082u,
@@ -382,6 +418,235 @@ void SampledCopyCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, st
     RunPlane(device, load, LoadLayerCode, output, std::bit_cast<std::uint32_t>(0.75f), "first layer of the depth plane copy after the dispatch stored to the plane");
 }
 
+void AliasStorageColorControl(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto* texels = block + AliasControlOffset;
+    const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block + OutputOffset), Threads);
+    const auto context = device.graphicsContext();
+    for (const std::uint32_t format : {8u, 11u, 13u}) {
+        const std::uint16_t raw = format == 8u ? 0x7fffu : format == 11u ? 0xffffu : 0x3c00u;
+        const auto expected = format == 11u ? 0xffffu : std::bit_cast<std::uint32_t>(1.0f);
+        std::vector<std::uint16_t> values(static_cast<std::size_t>(Width) * Height, raw);
+        std::memcpy(texels, values.data(), values.size() * sizeof(std::uint16_t));
+        const auto program = PlaneProgram(device, ScaleDepthCode, output, texels, format, 1.0f);
+        if (!AgcDriver::Graphics::StorageFormatAvailable(context, format)) continue;
+        RunPlane(device, program, ScaleDepthCode, output, expected, "ordinary colour R16 storage read");
+    }
+}
+
+void AliasStorageSampledControl(AgcDriver::VulkanDevice& device, const Shaders& shaders, std::uint8_t* block) {
+    auto* texels = block + AliasOffset;
+    const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block + OutputOffset), Threads);
+    const auto context = device.graphicsContext();
+    const auto address = reinterpret_cast<std::uintptr_t>(texels);
+    std::vector<std::uint16_t> sentinel(static_cast<std::size_t>(Width) * Height, 0x3c00u);
+    std::memcpy(texels, sentinel.data(), sentinel.size() * sizeof(std::uint16_t));
+    const Surface surface{address, 0, 0, false, VK_FORMAT_D16_UNORM_S8_UINT};
+    Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, "the resident depth alias producer did not cover the surface");
+    Require(AgcDriver::Graphics::DepthSurfaceAt(address), "the alias address has no resident depth surface");
+    if (context.hostImportAlignment != 0u) {
+        Require(AgcDriver::Graphics::HostImportFor(context, address, static_cast<std::size_t>(Width) * Height * sizeof(std::uint16_t)) != nullptr, "the sampled alias was not host-imported");
+        Require(AgcDriver::Graphics::HostImportCovers(context, address, static_cast<std::size_t>(Width) * Height * sizeof(std::uint16_t)), "the sampled alias host import does not cover its surface");
+    }
+    for (const std::uint32_t format : {7u, 8u, 11u, 13u}) {
+        const auto words = TextureDescriptor(texels, format);
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+        const auto depthStorage = AgcDriver::Graphics::DepthSurfaceStorage(context, words, resource, 0);
+        Require(depthStorage != nullptr, "the resident depth alias storage was not selected");
+        std::vector<std::uint32_t> userData(16, 0u);
+        const auto buffer = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size_bytes()));
+        const auto texture = TextureDescriptor(texels, format, Type2DArray);
+        std::copy(buffer.begin(), buffer.end(), userData.begin());
+        std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+        userData[12] = 0u;
+        userData[14] = std::bit_cast<std::uint32_t>(1.0f / 128.0f);
+        const auto program = Compile(device, LoadLayerCode, userData);
+        bool storage = false;
+        for (const auto& binding : program.bindings) storage = storage || binding.kind == ShaderRecompiler::DescriptorKind::StorageImage;
+        Require(!storage, "the sampled alias control compiled a storage binding");
+        std::fill(output.begin(), output.end(), 0xdeadbeefu);
+        device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadLayerCode.data()));
+        device.WaitIdle();
+        for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+            if (format == 11u) {
+                Require(output[lane] == 0x8000u, "the sampled R16_UINT control differs at texel " + std::to_string(lane));
+                continue;
+            }
+            const auto value = std::bit_cast<float>(output[lane]);
+            if (format == 7u) {
+                Require(std::abs(value - 0.5f) <= 1e-5f, "the sampled UNORM control differs at texel " + std::to_string(lane));
+            } else if (format == 8u) {
+                Require(std::abs(value - (0x3c00u / 32767.0f)) <= 1e-4f, "the sampled SNORM control read the resident depth instead of guest RAM at texel " + std::to_string(lane));
+            } else {
+                Require(value == 1.0f, "the sampled SFLOAT control read the resident depth instead of guest RAM at texel " + std::to_string(lane));
+            }
+        }
+        Require(texels[0] == 0x00u && texels[1] == 0x3cu, "the sampled control changed guest RAM");
+    }
+}
+
+void AliasStorageWriteCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, std::uint8_t* block) {
+    auto* texels = block + AliasWriteOffset;
+    const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block + OutputOffset), Threads);
+    std::vector<std::uint16_t> sentinel(static_cast<std::size_t>(Width) * Height, 0x1111u);
+    std::memcpy(texels, sentinel.data(), sentinel.size() * sizeof(std::uint16_t));
+    const Surface surface{reinterpret_cast<std::uintptr_t>(texels), 0, 0, false, VK_FORMAT_D16_UNORM_S8_UINT};
+    Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, "the resident alias write producer did not cover the surface");
+    Require(AgcDriver::Graphics::DepthSurfaceAt(reinterpret_cast<std::uintptr_t>(texels)), "the alias write address has no resident depth surface");
+    Require(texels[0] == 0x11u && texels[1] == 0x11u, "the resident alias write read the guest sentinel before its dispatch");
+    const auto rawRead = [&] {
+        std::vector<std::uint32_t> loadData(16, 0u);
+        const auto rawTexture = TextureDescriptor(texels, Format16Uint, Type2DArray);
+        const auto buffer = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size_bytes()));
+        std::copy(buffer.begin(), buffer.end(), loadData.begin());
+        std::copy(rawTexture.begin(), rawTexture.end(), loadData.begin() + 4);
+        loadData[12] = 0u;
+        loadData[14] = std::bit_cast<std::uint32_t>(1.0f / 128.0f);
+        const auto load = Compile(device, LoadLayerCode, loadData);
+        std::fill(output.begin(), output.end(), 0xdeadbeefu);
+        device.Dispatch(load, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadLayerCode.data()));
+        device.WaitIdle();
+    };
+    for (const std::uint32_t format : {7u, 8u, 11u, 12u, 13u}) {
+        Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, "the resident alias write producer did not cover the surface again");
+        rawRead();
+        for (std::uint32_t lane = 0; lane < Threads; ++lane) Require(output[lane] == 0x8000u, "the resident alias write started from raw depth " + std::to_string(output[lane]) + " instead of the resident 0x8000 at texel " + std::to_string(lane));
+        std::vector<std::uint32_t> userData(16, 0u);
+        const auto texture = TextureDescriptor(texels, format, Type2D, TileZ64KBX);
+        std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+        const auto store = Compile(device, StoreCode, userData);
+        bool storage = false;
+        bool uintStorage = false;
+        for (const auto& binding : store.bindings) {
+            if (binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
+            storage = true;
+            uintStorage = binding.binding == ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding ? (binding.imageUintStorage.size() > 0u && binding.imageUintStorage[0]) : ShaderRecompiler::RuntimeAbi::UintStorageImageBinding(binding.binding);
+        }
+        Require(storage, "the resident alias store compiled no storage binding");
+        Require(uintStorage == (format == 11u || format == 12u || format == 13u), "the resident alias store selected the wrong storage kind");
+        device.Dispatch(store, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+        device.WaitIdle();
+        rawRead();
+        Require(output[0] == 0u, "the resident alias store did not write depth format " + std::to_string(format) + " at texel 0");
+        AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), Width * Height * sizeof(std::uint16_t), nullptr, "test");
+        device.WaitIdle();
+        Require(texels[0] == 0u && texels[1] == 0u, "the resident alias store did not save depth format " + std::to_string(format) + " to guest memory");
+    }
+}
+
+AgcDriver::Graphics::Context ForcedContext(AgcDriver::VulkanDevice& device, VkFormat hiddenA, VkFormat hiddenB, bool refuseAliasImages, bool imageFormatList) {
+    static std::uintptr_t serial = 0x1000u;
+    const auto base = device.graphicsContext();
+    auto context = base;
+    context.physical = reinterpret_cast<VkPhysicalDevice>(serial);
+    serial += 0x1000u;
+    context.formatProperties = FilteredFormat;
+    context.imageFormatProperties = ForwardImageFormat;
+    context.memoryProperties2 = nullptr;
+    context.imageFormatList = imageFormatList;
+    formatFilter.real = base.physical;
+    formatFilter.format = base.formatProperties;
+    formatFilter.image = base.imageFormatProperties;
+    formatFilter.hiddenA = hiddenA;
+    formatFilter.hiddenB = hiddenB;
+    formatFilter.refuseAliasImages = refuseAliasImages;
+    return context;
+}
+
+void ForcedHostDepthCase(AgcDriver::VulkanDevice& device, std::uint8_t* block, std::size_t offset, VkFormat expectedHost) {
+    VkFormatProperties properties{};
+    device.graphicsContext().formatProperties(device.graphicsContext().physical, expectedHost, &properties);
+    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0u) return;
+    const auto context = ForcedContext(device, VK_FORMAT_D16_UNORM_S8_UINT, expectedHost == VK_FORMAT_D24_UNORM_S8_UINT ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D24_UNORM_S8_UINT, false, true);
+    Require(AgcDriver::Graphics::HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == expectedHost, "the forced depth host format was not selected");
+    auto* texels = block + offset;
+    const auto address = reinterpret_cast<std::uintptr_t>(texels);
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, {address, 0, {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u}) != VK_NULL_HANDLE, "the forced host depth surface was not created");
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto texture = TextureDescriptor(texels, Format32Float, Type2D, TileZ64KBX);
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    const auto store = Compile(device, StoreCode, userData);
+    bool storage = false;
+    bool uintStorage = true;
+    for (const auto& binding : store.bindings) {
+        if (binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
+        storage = true;
+        uintStorage = ShaderRecompiler::RuntimeAbi::UintStorageImageBinding(binding.binding);
+    }
+    Require(storage && !uintStorage, "the forced host depth store did not compile a typed storage binding");
+    device.Dispatch(store, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(address, Width * Height * sizeof(std::uint32_t), nullptr, "test");
+    device.WaitIdle();
+    std::uint32_t bits = 0xdeadbeefu;
+    std::memcpy(&bits, texels, sizeof(bits));
+    Require(bits == 0u, "the forced host depth store did not save zero depth");
+}
+
+void ForcedFormatListCase(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto context = ForcedContext(device, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false, false);
+    auto* texels = block + ForcedListOffset;
+    const auto address = reinterpret_cast<std::uintptr_t>(texels);
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, {address, 0, {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u}) != VK_NULL_HANDLE, "the no-list depth surface was not created");
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto texture = TextureDescriptor(texels, Format16Sfloat, Type2D, TileZ64KBX);
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    const auto store = Compile(device, StoreCode, userData);
+    bool storage = false;
+    bool uintStorage = false;
+    for (const auto& binding : store.bindings) {
+        if (binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
+        storage = true;
+        uintStorage = ShaderRecompiler::RuntimeAbi::UintStorageImageBinding(binding.binding);
+    }
+    Require(storage && uintStorage, "the no-list SFLOAT write did not compile the raw UINT storage binding");
+    device.Dispatch(store, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(address, Width * Height * sizeof(std::uint16_t), nullptr, "test");
+    device.WaitIdle();
+    Require(texels[0] == 0u && texels[1] == 0u, "the no-list SFLOAT write did not save zero depth");
+    const auto words = TextureDescriptor(texels, Format16Sfloat, Type2D, TileZ64KBX);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    const auto exported = AgcDriver::Graphics::DepthSurfaceStorage(context, words, resource, 0);
+    Require(exported != nullptr, "the no-list SFLOAT storage was not exported");
+    Require(exported->StorageView(0, false, false) != VK_NULL_HANDLE, "the no-list SFLOAT storage has no typed view");
+    Require(exported->StorageView(0, false, true) != VK_NULL_HANDLE, "the no-list SFLOAT storage has no raw UINT view");
+}
+
+void ForcedRefusalCase(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto context = ForcedContext(device, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, true, true);
+    auto* refused = block + ForcedRefusalOffset;
+    const auto refusedAddress = reinterpret_cast<std::uintptr_t>(refused);
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, {refusedAddress, 0, {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u}) != VK_NULL_HANDLE, "the refused depth surface was not created");
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto refusedTexture = TextureDescriptor(refused, Format16Snorm, Type2D, TileZ64KBX);
+    std::copy(refusedTexture.begin(), refusedTexture.end(), userData.begin() + 4);
+    const auto refusedStore = Compile(device, StoreCode, userData);
+    const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block + OutputOffset), Threads);
+    std::fill(output.begin(), output.end(), 0xdeadbeefu);
+    ExpectRefusal([&] { device.Dispatch(refusedStore, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data())); }, "raw depth storage has no typed shader view", "a storage write to SNORM depth without a typed storage view");
+    for (const auto value : output) Require(value == 0xdeadbeefu, "a refused SNORM depth storage write reached its output before refusing");
+    auto* fallback = block + ForcedFallbackOffset;
+    const auto fallbackAddress = reinterpret_cast<std::uintptr_t>(fallback);
+    Require(AgcDriver::Graphics::DepthSurfaceView(context, {fallbackAddress, 0, {Width, Height}, VK_FORMAT_D16_UNORM_S8_UINT, 1.0f, 0u}) != VK_NULL_HANDLE, "the raw fallback depth surface was not created");
+    std::vector<std::uint32_t> fallbackData(16, 0u);
+    const auto fallbackTexture = TextureDescriptor(fallback, Format16Sfloat, Type2D, TileZ64KBX);
+    std::copy(fallbackTexture.begin(), fallbackTexture.end(), fallbackData.begin() + 4);
+    const auto fallbackStore = Compile(device, StoreCode, fallbackData);
+    bool storage = false;
+    bool uintStorage = false;
+    for (const auto& binding : fallbackStore.bindings) {
+        if (binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
+        storage = true;
+        uintStorage = ShaderRecompiler::RuntimeAbi::UintStorageImageBinding(binding.binding);
+    }
+    Require(storage && uintStorage, "the image-query-refused SFLOAT write did not compile the raw UINT storage binding");
+    device.Dispatch(fallbackStore, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(fallbackAddress, Width * Height * sizeof(std::uint16_t), nullptr, "test");
+    device.WaitIdle();
+    Require(fallback[0] == 0u && fallback[1] == 0u, "the image-query-refused SFLOAT write did not save zero depth");
+}
+
 void TwoViewsCase(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::vector<std::uint32_t> userData(20, 0u);
     const auto first = TextureDescriptor(block, Format32Float, Type2D, TileLinear);
@@ -404,8 +669,15 @@ int main() {
         ArrayViewCase(*device, shaders, block.Data());
         LayeredArrayViewCase(*device, shaders, block.Data());
         MultisampledCase(*device, shaders, block.Data());
+        AliasStorageColorControl(*device, block.Data());
+        AliasStorageSampledControl(*device, shaders, block.Data());
+        AliasStorageWriteCase(*device, shaders, block.Data());
         TwoViewsCase(*device, block.Data());
         SampledCopyCase(*device, shaders, block.Data());
+        ForcedHostDepthCase(*device, block.Data(), ForcedD24Offset, VK_FORMAT_D24_UNORM_S8_UINT);
+        ForcedHostDepthCase(*device, block.Data(), ForcedD32Offset, VK_FORMAT_D32_SFLOAT_S8_UINT);
+        ForcedFormatListCase(*device, block.Data());
+        ForcedRefusalCase(*device, block.Data());
         std::puts("depth storage dispatch tests passed");
         return 0;
     } catch (const std::exception& error) {

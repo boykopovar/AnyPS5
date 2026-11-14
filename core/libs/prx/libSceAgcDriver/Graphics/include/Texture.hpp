@@ -287,6 +287,7 @@ public:
         ~CreationHandOver();
     };
     static std::shared_ptr<StorageTexture> Create(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel);
+    static std::shared_ptr<StorageTexture> CreateRaw16Depth(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel);
     static CreationHandOver PrepareCreation(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes, std::shared_ptr<StorageTexture> detached, bool& flushed);
     void AdoptHandOver(CreationHandOver handOver);
     ~StorageTexture();
@@ -543,7 +544,8 @@ private:
     std::atomic<std::uint64_t> provedEpoch{0};
     std::atomic<std::uint64_t> provedProof{0};
     std::atomic<std::uint64_t> provedPending{0};
-    StorageTexture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel);
+    static std::shared_ptr<StorageTexture> CreateWithStorageFormat(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel, VkFormat storageFormat, VkFormat guestTypedViewFormat = VK_FORMAT_UNDEFINED, VkFormat rawUINTViewFormat = VK_FORMAT_UNDEFINED);
+    StorageTexture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel, VkFormat storageFormat = VK_FORMAT_UNDEFINED, VkFormat guestTypedViewFormat = VK_FORMAT_UNDEFINED, VkFormat rawUINTViewFormat = VK_FORMAT_UNDEFINED);
     // The regions of every array layer, or of the tracked layers `layers` selects.
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     void upload(const std::vector<bool>* layers = nullptr);
@@ -847,6 +849,7 @@ private:
     std::map<std::uint32_t, VkImageView> firstLayerViews;
     std::map<std::pair<std::uint32_t, bool>, VkImageView> atomicViews;
     std::map<std::pair<std::uint32_t, bool>, VkImageView> uintViews;
+    std::map<std::pair<std::uint32_t, bool>, VkImageView> typedViews;
     VkImageView elementView = VK_NULL_HANDLE;
     std::map<std::uint32_t, VkImageView> elementLayerViews;
     std::int8_t singlePassState = -1;
@@ -857,6 +860,8 @@ private:
     VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     VkFormat imageFormat = VK_FORMAT_UNDEFINED;
+    VkFormat guestTypedStorageViewFormat = VK_FORMAT_UNDEFINED;
+    VkFormat rawUINTViewFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;

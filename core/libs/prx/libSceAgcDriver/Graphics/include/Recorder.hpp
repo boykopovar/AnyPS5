@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
 #include <unordered_map>
+#include <exception>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -255,6 +256,8 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
     void OnComplete(std::function<void()> action);
+    using Validation = std::function<void()>;
+    void OnValidated(Validation validation);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
@@ -728,6 +731,8 @@ private:
         std::unordered_set<const void*> keptOwners;
         std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
+        std::vector<Validation> validations;
+        std::uint32_t validationCount = 0;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
         std::vector<std::int16_t> writeValues;
@@ -969,7 +974,8 @@ private:
     // Returns false when the locked path must run instead (no timeline, nested acquisition, off).
     bool syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int source, const void* site);
     // `source` is the CountSync source the wait is attributed to.
-    void finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow = false);
+    void finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow = false, bool publishActions = true);
+    void DrainValidationFailure();
     void discard(std::unique_ptr<Batch> batch) noexcept;
     void removeLabels(Batch& batch);
     void release(Batch& batch) noexcept;
@@ -1034,6 +1040,7 @@ private:
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
     std::deque<std::unique_ptr<Batch>> inFlight;
+    std::exception_ptr validationFailure;
     // Batches popped from inFlight whose completions have not run yet: their writes stay in the
     // snapshot (a rebuild from inside a completion must not drop them) until finish returns.
     std::vector<const Batch*> finishing;
