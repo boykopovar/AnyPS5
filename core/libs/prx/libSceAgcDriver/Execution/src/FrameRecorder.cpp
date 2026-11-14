@@ -568,9 +568,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         if (const auto found = hostPageHashes.find(page); found != hostPageHashes.end() && found->second == hash) continue;
         forget(page, page + HostPageBytes);
         hostPageHashes[page] = hash;
-        writer->WriteDelta(group, completed, page, bytes);
-        deltaBytes += bytes.size();
-        any = true;
+        writeTitleWords(page);
     }
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));

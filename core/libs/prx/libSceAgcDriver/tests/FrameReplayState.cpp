@@ -1003,6 +1003,77 @@ void testDeltaPaths(const std::filesystem::path& directory, std::string_view mod
         "after the second flip the replay keeps the code a shader delta wrote into an unaligned unwatched range, not the code the title restored");
 }
 
+void testHostShaderPageGpuStore(const std::filesystem::path& directory) {
+    constexpr std::size_t Page = AgcDriver::FrameRecorder::HostPageBytes;
+    constexpr std::size_t CodeBytes = 256;
+    constexpr std::uint32_t Stored = 0x600dcafeu;
+    auto* block = allocate(1u << 20);
+    auto* shader = reinterpret_cast<Shader*>(block);
+    auto* commands = reinterpret_cast<std::uint32_t*>(block + Page);
+#ifdef _WIN32
+    auto* host = static_cast<std::byte*>(VirtualAlloc(nullptr, Page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    void* mapped = mmap(nullptr, Page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto* host = mapped != MAP_FAILED ? static_cast<std::byte*>(mapped) : nullptr;
+#endif
+    check(host != nullptr, "host shader allocation failed");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(host, Page, true, true, true);
+    }
+    auto* code = host + 256;
+    auto* label = reinterpret_cast<std::uint32_t*>(host + 2048);
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    shader->shader_size = CodeBytes;
+    shader->code = code;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    const auto store = [&](unsigned seed) {
+        std::vector<std::byte> bytes(CodeBytes);
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>(i * 31 + seed);
+        std::memcpy(code, bytes.data(), bytes.size());
+        return bytes;
+    };
+    store(17);
+    recorder->RegisterShader(shader);
+    const std::array<std::uint32_t, 5> write{0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(address(label)), static_cast<std::uint32_t>(address(label) >> 32u), Stored};
+    std::memcpy(commands, write.data(), sizeof(write));
+    Packet packet{commands, static_cast<std::uint32_t>(write.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the label write was not submitted");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*label).load(std::memory_order_acquire) == Stored, "the queue did not write the label");
+    const auto expected = store(29);
+    recorder->RegisterShader(shader);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    CapturedMemory memory(reader);
+    std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) groups[chunk.group].push_back(&chunk);
+    }
+    std::size_t registrations = 0;
+    std::optional<std::vector<std::byte>> replayedCode;
+    std::optional<std::vector<std::byte>> replayedLabel;
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::RegisterShader && ++registrations == 2) {
+            replayedCode = memory.Read(address(code), CodeBytes);
+            replayedLabel = memory.Read(address(label), sizeof(std::uint32_t));
+            break;
+        }
+        if (call.kind != FrameCallKind::Memory) continue;
+        if (const auto found = groups.find(call.values.at(0)); found != groups.end()) memory.Apply(found->second);
+    }
+    check(registrations == 2, "the capture lost a registration of the test");
+    check(replayedCode && *replayedCode == expected, "the shader delta of a host page did not hold the code the title stored before the second registration");
+    std::uint32_t value = 0;
+    std::memcpy(&value, replayedLabel->data(), sizeof(value));
+    check(value != Stored, "the shader delta of a host page carried a label the GPU stored there, so a replay would see it before the work that writes it");
+}
+
 bool insideRanges(const FrameCaptureReader& reader, const FrameMemoryChunk& chunk) {
     std::map<std::uint64_t, std::uint64_t> ranges;
     for (const auto& range : reader.Chunks()) {
@@ -1302,6 +1373,7 @@ int main(int argc, char** argv) {
         else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
         else if (mode == "shader_host_rewritten" || mode == "shader_host_restored" || mode == "shader_unaligned_restored") testDeltaPaths(directory, mode);
+        else if (mode == "shader_host_gpu_store") testHostShaderPageGpuStore(directory);
         else if (mode == "shader_hole") testShaderBlockHole(directory);
         else if (mode == "delta_hole") testDeltaOutsideRanges(directory);
         else throw std::runtime_error("unknown test");
