@@ -227,6 +227,9 @@ int main() {
                         const std::uint32_t* row = &Input[tid * Inputs];
                         const bool bothNan = (actual >> 16u) == (expected >> 16u) && isNan16(actual) && isNan16(expected);
                         if (actual != expected && bothNan) ++nanPayloads;
+                        if (mode.floatMode.has_value() && mode.floatMode->ieeeMode && (index < 4u || index > 10u)) {
+                            for (const std::uint32_t value : {actual, expected}) Require(!isNan16(value) || (value & 0x0200u) != 0u, std::string("f16 native: ") + mode.name + ", " + Names[index] + " with v4=" + Hex(row[0]) + " v5=" + Hex(row[1]) + " v6=" + Hex(row[2]) + " is the signaling NaN " + Hex(value) + ", which IEEE_MODE quiets");
+                        }
                         Require(actual == expected || bothNan, std::string("f16 native: ") + mode.name + ", " + Names[index] + " with v4=" + Hex(row[0]) + " v5=" + Hex(row[1]) + " v6=" + Hex(row[2]) + " v7=" + Hex(row[3]) + " is " + Hex(actual) + ", f32 path gives " + Hex(expected));
                     }
                 }
