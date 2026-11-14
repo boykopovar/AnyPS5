@@ -686,7 +686,7 @@ if(BUILD_TESTING)
     set_tests_properties(guest_webrtc_pending_task_safety_flag PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_webrtc_pending_task_safety_flag PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_webrtc_field_trial_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/FieldTrial.cpp)
     target_include_directories(guest_webrtc_field_trial_tests PRIVATE ${LIBS_INCLUDE_DIR})

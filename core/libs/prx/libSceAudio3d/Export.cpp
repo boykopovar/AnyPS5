@@ -705,8 +705,12 @@ int APS5_VABI sceAudio3dAudioOutOutput(std::int32_t handle, const void* ptr) {
         const auto port = g_port.audio_out_ports.find(handle);
         if (port == g_port.audio_out_ports.end()) return AUDIO3D_ERROR_INVALID_PORT;
         if (port->second.pending.size() >= g_port.queue_depth) return AUDIO3D_ERROR_NOT_READY;
-        const auto* first = static_cast<const std::uint8_t*>(ptr);
-        port->second.pending.emplace_back(first, first + port->second.buffer_bytes);
+        std::vector<std::uint8_t> block(port->second.buffer_bytes);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(block.data(), ptr, block.size());
+        errno = savedErrno;
+        if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        port->second.pending.push_back(std::move(block));
         return 0;
     }();
     Report(AUDIO3D_PORT_INVALID, AUDIO3D_OBJECT_INVALID, result, __func__, "IP", handle, ptr);
@@ -718,7 +722,12 @@ int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, uint32_t num
     const int result = [&] {
         if (param == nullptr || num == 0) return AUDIO3D_ERROR_INVALID_PARAMETER;
         for (; i < num; ++i) {
-            const int output = sceAudio3dAudioOutOutput(param[i].handle, param[i].ptr);
+            AudioOutOutputParam entry{};
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(&entry, param + i, sizeof(entry));
+            errno = savedErrno;
+            if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
+            const int output = sceAudio3dAudioOutOutput(entry.handle, entry.ptr);
             if (output < 0) return output;
         }
         return 0;
