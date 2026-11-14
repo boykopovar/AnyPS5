@@ -1951,6 +1951,28 @@ void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& acti
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
+void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::unique_lock lock(guardedMutex());
+    bool changed = false;
+    std::vector<std::shared_ptr<std::atomic<bool>>> retired;
+    for (const auto& range : guarded()) {
+        if (!range.fmask && range.plane != fmaskPlane) continue;
+        if (!range.use->hostOnly.load(std::memory_order_acquire) || range.use->claimed.load(std::memory_order_acquire)) continue;
+        if (address > range.address || range.address + range.bytes > address + bytes) continue;
+        if (std::find(retired.begin(), retired.end(), range.active) == retired.end()) retired.push_back(range.active);
+    }
+    if (retired.empty()) return;
+    for (const auto& active : retired) active->store(false, std::memory_order_release);
+    std::erase_if(guarded(), [&](const auto& range) {
+        if (std::find(retired.begin(), retired.end(), range.active) == retired.end()) return false;
+        if (range.metadataValid) range.metadataValid->store(false, std::memory_order_release);
+        return true;
+    });
+    guardedGeneration().fetch_add(1, std::memory_order_release);
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
+}
+
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     AppendHostWrittenDepthRanges(address, bytes, ranges);

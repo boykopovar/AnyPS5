@@ -292,7 +292,11 @@ int APS5_VABI scePadGetControllerBusType(int handle, int* busType) {
  if (busType == nullptr) return PAD_ERROR_INVALID_ARG;
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
- *busType = PAD_CONNECT_TYPE_BLUETOOTH;
+ const int type = PAD_CONNECT_TYPE_BLUETOOTH;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(busType, &type, sizeof(type));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -301,7 +305,11 @@ int APS5_VABI scePadGetJackState(int handle, int* state) {
  if (state == nullptr) return PAD_ERROR_INVALID_ARG;
  const int device = DeviceOf(handle);
  if (device != PAD_OK) return device;
- *state = 0;
+ const int jackState = 0;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(state, &jackState, sizeof(jackState));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -579,7 +587,11 @@ int APS5_VABI scePadGetAccessibilityControllerState(int handle, std::uint32_t* s
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (state == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    *state = 0;
+    const std::uint32_t controllerState = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &controllerState, sizeof(controllerState));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
 
@@ -761,7 +773,11 @@ int APS5_VABI scePadGetControllerType(std::int32_t handle, std::int32_t* type) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (type == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    *type = SpecialHandle(handle) ? PAD_CONTROLLER_TYPE_UNKNOWN : PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    const std::int32_t controllerType = SpecialHandle(handle) ? PAD_CONTROLLER_TYPE_UNKNOWN : PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(type, &controllerType, sizeof(controllerType));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
 
@@ -1088,8 +1104,7 @@ int APS5_VABI scePadResetLightBarAllByPortType(std::uint32_t portType) {
 }
 
 int APS5_VABI scePadSetLightBarForTracker(std::int32_t handle, const PadLightBarParam* color) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return scePadSetLightBar(handle, color);
 }
 
 int APS5_VABI scePadReadForTracker(std::int32_t handle, PadTrackerData* data, std::int32_t count) {
