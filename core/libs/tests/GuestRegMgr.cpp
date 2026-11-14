@@ -36,8 +36,9 @@ static void CheckBoundedBinaryInput() {
 
     Require(sceRegMgrSetBin(0x2011, tiny, sizeof(tiny)) == 0);
     Require(sceRegMgrIsChange(0x2011, 0x0d010001u) == 1);
+    std::vector<std::uint8_t> oversized(limit + 1, 0x33);
     errno = 71;
-    Require(sceRegMgrSetBin(0x2011, tiny, limit + 1) == bad);
+    Require(sceRegMgrSetBin(0x2011, oversized.data(), oversized.size()) == bad);
     Require(errno == 71);
     Require(sceRegMgrGetBin(0x2011, output, sizeof(output)) == 0);
     Require(std::memcmp(tiny, output, sizeof(tiny)) == 0);
