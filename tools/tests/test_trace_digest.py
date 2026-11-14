@@ -47,14 +47,18 @@ SUMMARY = {"commit": "abc", "dirty": False, "env": {"APS5_TRACE_FRAMES": "600:3"
 STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll+0x1;a.prx+0x10;a.prx+0x20 3\nntdll.dll+0x1;a.prx+0x10;a.prx+0x30 1\n[truncated];a.prx+0x40;a.prx+0x30 1\n"
 
 
+def child_decoder_rejects(text):
+    probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
+    return subprocess.run([sys.executable, "-c", probe], input=text, text=True, encoding="utf-8",
+                          capture_output=True).returncode == 3
+
+
 @lru_cache(maxsize=2)
 def excessive_trace_json(opening, closing):
     depth = sys.getrecursionlimit() + 64
     for _ in range(8):
         value = opening * depth + "0" + closing * depth
-        try:
-            json.loads(value)
-        except RecursionError:
+        if child_decoder_rejects(value):
             return opening * (depth + 128) + "0" + closing * (depth + 128)
         depth *= 2
     raise AssertionError("JSON decoder accepted every bounded nesting probe")

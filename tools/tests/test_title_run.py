@@ -34,6 +34,8 @@ class TitlesTests(unittest.TestCase):
     def test_repository_file_is_valid(self):
         titles = title_run.load_titles(title_run.ROOT / "tools/titles.json")
         self.assertEqual(titles["PPSA85300"]["relink"], ["--registry"])
+        self.assertEqual(sorted(title_id for title_id, entry in titles.items() if entry.get("smoke")),
+                         ["PPSA17641", "PPSA85300", "PPSA98766", "PPSA99203", "PPSA99505", "PPSA99666"])
 
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
@@ -42,6 +44,8 @@ class TitlesTests(unittest.TestCase):
     def test_wrong_type_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be a positive integer"):
             title_run.load_titles(self.write({"PPSA00001": {"seconds": "60"}}))
+        with self.assertRaisesRegex(ValueError, "PPSA00001: smoke must be bool"):
+            title_run.load_titles(self.write({"PPSA00001": {"smoke": 1}}))
 
     def test_catalog_seconds_must_be_a_positive_integer(self):
         for value in (True, False, 0, -1):
@@ -333,6 +337,30 @@ class PreparationTests(unittest.TestCase):
         self.assertIsNotNone(again)
         again.close()
 
+    def test_smoke_runs_the_marked_titles(self):
+        for title_id in ("PPSA00001", "PPSA00002", "PPSA00003"):
+            package(self.root / "games" / title_id, title_id)
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"smoke": True}, "PPSA00002": {}, "PPSA00003": {"smoke": True}}), encoding="utf-8")
+        out = self.root / "out"
+        held = [title_run.lock_work(out / f"work/{title_id}.lock") for title_id in ("PPSA00001", "PPSA00002", "PPSA00003")]
+        for handle in held:
+            self.addCleanup(handle.close)
+        with self.assertRaisesRegex(SystemExit, r"already running in .*: PPSA00001, PPSA00003$"):
+            title_run.main(["--games", str(self.root / "games"), "--out", str(out), "--titles", str(titles), "--smoke"])
+
+    def test_smoke_refuses_title_ids_and_an_empty_set(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {}}), encoding="utf-8")
+        common = ["--games", str(self.root / "games"), "--out", str(self.root / "out"), "--titles", str(titles), "--smoke"]
+        with unittest.mock.patch("sys.stderr"), self.assertRaises(SystemExit) as raised:
+            title_run.main(common + ["PPSA00001"])
+        self.assertEqual(raised.exception.code, 2)
+        with self.assertRaisesRegex(SystemExit, "no title in .* is marked smoke"):
+            title_run.main(common)
+        self.assertFalse((self.root / "out").exists())
+
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
         package(self.root / "b/PPSA00002", "PPSA00002")
@@ -403,6 +431,18 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
         self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
 
+    def test_standard_module_dirs_are_staged_without_a_module_dir(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "sce_modules/libfoo.prx", "prx/akcompressor.prx", "prx/readme.txt"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf if name.endswith((".bin", ".prx")) else b"text")
+        expected = ["eboot.elf", "prx/akcompressor.prx", "sce_module/libc.prx", "sce_modules/libfoo.prx"]
+        for index, entry in enumerate(({}, {"relink": ["--module-dir", "prx"]})):
+            target = self.root / f"input{index}"
+            title_run.stage_inputs(source, entry, target)
+            self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
@@ -454,6 +494,19 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
         self.assertFalse((work / "data/media/clip.mp4").exists())
         self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
+
+    def test_a_non_ascii_title_name_is_reported_as_utf8(self):
+        package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
+        out = self.root / "out"
+        build = self.root / "build"
+        build.mkdir()
+        done = subprocess.run([sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"), "--out", str(out),
+                               "--build", str(build), "--runs", "1", "PPSA00001"],
+                              capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        stdout = done.stdout.decode("utf-8")
+        self.assertIn("| テスト | PPSA00001 |", stdout)
+        self.assertIn(f"written to {out.resolve()}", stdout)
 
 
 def wait_until(condition, seconds=10):
