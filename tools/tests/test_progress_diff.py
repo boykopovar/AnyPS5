@@ -23,6 +23,12 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual([(row["name"], row["presence"]) for row in rows],
                          [("gone", "removed"), ("kept", "both"), ("new", "added")])
 
+    def test_group_rows_are_sorted_by_name_across_both_snapshots(self):
+        base = snapshot(libraries=[{"name": "c"}, {"name": "a"}])
+        head = snapshot(libraries=[{"name": "b"}, {"name": "a"}])
+        rows = progress_diff.compare(base, head)["libraries"]["groups"]
+        self.assertEqual([row["name"] for row in rows], ["a", "b", "c"])
+
 
 if __name__ == "__main__":
     unittest.main()
