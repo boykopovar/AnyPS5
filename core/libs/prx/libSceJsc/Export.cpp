@@ -425,10 +425,6 @@ int APS5_VABI _ZN9Inspector31NetworkBackendDispatcherHandler20LoadResourceCallba
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl12readFromFileEiPci() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3JSC14ProtoCallFrame9codeBlockEv() {
     NotImplemented_nid_no_patch(__func__);
 }
