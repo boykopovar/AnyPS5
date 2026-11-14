@@ -808,6 +808,8 @@ def main(argv=None):
             raise SystemExit(f"no title in {args.titles} is marked smoke")
     found = discover(args.games, args.ids)
     ids = args.ids or sorted(found)
+    if not ids:
+        raise SystemExit(f"no title package under --games: {', '.join(str(directory) for directory in args.games)}")
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
