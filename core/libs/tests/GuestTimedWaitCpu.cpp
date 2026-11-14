@@ -182,11 +182,66 @@ static bool TestKsemTimedwait500us() {
     return LatencyWithinBounds(samples, 500000ULL, "ksem_timedwait(500 us)");
 }
 
+#ifdef _WIN32
+constexpr std::uint64_t LATE_TIMER_NANOS = 200000ULL;
+constexpr std::uint64_t DEADLINE_WAIT_NANOS = 5000000ULL;
+constexpr std::size_t DEADLINE_WAITS = 100;
+
+template<class TWait>
+static std::uint64_t OvershootNanos(TWait wait, bool guest) {
+    const auto start = std::chrono::steady_clock::now();
+    wait();
+    const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    if (guest) Require(elapsed >= DEADLINE_WAIT_NANOS);
+    return elapsed > DEADLINE_WAIT_NANOS ? elapsed - DEADLINE_WAIT_NANOS : 0;
+}
+
+static std::uint64_t Median(std::array<std::uint64_t, DEADLINE_WAITS> samples) {
+    std::sort(samples.begin(), samples.end());
+    return samples[DEADLINE_WAITS / 2];
+}
+
+static bool TestDeadlinesWithLateHostTimer() {
+    const HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    Require(timer != nullptr);
+    PthreadMutex mutex = nullptr;
+    PthreadCond cond = nullptr;
+    Require(scePthreadMutexInit(&mutex, nullptr, nullptr) == 0);
+    Require(scePthreadCondInit(&cond, nullptr, nullptr) == 0);
+    Require(scePthreadMutexLock(&mutex) == 0);
+    std::array<std::uint64_t, DEADLINE_WAITS> host{}, condition{}, slept{};
+    for (std::size_t i = 0; i < DEADLINE_WAITS; ++i) {
+        host[i] = OvershootNanos([&] {
+            LARGE_INTEGER due{};
+            due.QuadPart = -static_cast<LONGLONG>(DEADLINE_WAIT_NANOS / 100ULL);
+            Require(SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE) != 0);
+            Require(WaitForSingleObject(timer, INFINITE) == WAIT_OBJECT_0);
+        }, false);
+        condition[i] = OvershootNanos([&] { Require(scePthreadCondTimedwait(&cond, &mutex, DEADLINE_WAIT_NANOS / 1000) == SCE_KERNEL_ERROR_ETIMEDOUT); }, true);
+        slept[i] = OvershootNanos([] { Require(sceKernelUsleep_nid_postfix(DEADLINE_WAIT_NANOS / 1000) == 0); }, true);
+    }
+    Require(scePthreadMutexUnlock(&mutex) == 0);
+    Require(scePthreadCondDestroy(&cond) == 0);
+    Require(scePthreadMutexDestroy(&mutex) == 0);
+    CloseHandle(timer);
+    const std::uint64_t hostLate = Median(host), conditionLate = Median(condition), sleepLate = Median(slept);
+    std::cout << "5000 us median overshoot: high-resolution timer " << hostLate / 1000 << " us, scePthreadCondTimedwait "
+              << conditionLate / 1000 << " us, sceKernelUsleep " << sleepLate / 1000 << " us" << std::endl;
+    if (hostLate < LATE_TIMER_NANOS) return true;
+    const bool within = conditionLate < hostLate / 4 && sleepLate < hostLate / 4;
+    std::cout << "limit < " << hostLate / 4000 << " us" << (within ? "" : " EXCEEDED") << std::endl;
+    return within;
+}
+#endif
+
 int main() {
     constexpr int ATTEMPTS = 3;
     RequireWithinBoundsInOneOfAttempts(TestUsleep100us, ATTEMPTS);
     RequireWithinBoundsInOneOfAttempts(TestUsleep500us, ATTEMPTS);
     RequireWithinBoundsInOneOfAttempts(TestCondTimedwait500us, ATTEMPTS);
     RequireWithinBoundsInOneOfAttempts(TestKsemTimedwait500us, ATTEMPTS);
+#ifdef _WIN32
+    RequireWithinBoundsInOneOfAttempts(TestDeadlinesWithLateHostTimer, ATTEMPTS);
+#endif
     return 0;
 }
