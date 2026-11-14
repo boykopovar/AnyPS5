@@ -93,6 +93,12 @@ endif()
 
 if(BUILD_TESTING)
     agc_add_default_test(agc_driver_pm4_tests)
+    add_test(NAME agc_driver_pm4_context_reg_rmw COMMAND agc_driver_pm4_tests context-reg-rmw)
+    set_tests_properties(agc_driver_pm4_context_reg_rmw PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_pm4_context_reg_rmw PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     agc_add_default_test(agc_driver_graphics_tests)
     add_test(NAME agc_sparse_buffer_holes COMMAND agc_driver_graphics_tests --sparse-buffer-holes)
     add_test(NAME agc_command_state COMMAND agc_driver_graphics_tests --command-state)
