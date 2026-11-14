@@ -1,5 +1,6 @@
 add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/SysExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Apr/src/Apr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/EdgeWatch.cpp
@@ -134,6 +135,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_direct_memory_for_app COMMAND guest_direct_memory_for_app_tests)
     if(WIN32)
         set_tests_properties(guest_direct_memory_for_app PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_tool_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestToolMemory.cpp)
+    target_include_directories(guest_tool_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_tool_memory_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_tool_memory_tests)
+    add_test(NAME guest_tool_memory COMMAND guest_tool_memory_tests)
+    if(WIN32)
+        set_tests_properties(guest_tool_memory PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_kernel_resident_fmem_export_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestKernelResidentFmemExport.cpp)
