@@ -1007,11 +1007,23 @@ public:
         if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) stencilFill.reset();
     }
 
-    void MarkStencilStale() {
+    void TakeStencilBaseline() {
+        const auto [begin, end] = staleStencilRange(*this);
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (GuestMemory::Watched(begin, bytes) || !GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) {
+            stencilBaseline.clear();
+            return;
+        }
+        stencilBaseline.resize(bytes);
+        GuestMemory::Read(begin, stencilBaseline);
+    }
+
+    void MarkStencilStale(bool written = false) {
         if (!StencilMirrorable()) return;
+        const auto [begin, end] = staleStencilRange(*this);
+        if (stencilBaseline.size() != static_cast<std::size_t>(end - begin) || (written && !GuestMemory::EqualsCommittedUnsynced(begin, stencilBaseline))) TakeStencilBaseline();
         stencilStale = true;
         stencilMark = nextPlaneSerial();
-        const auto [begin, end] = staleStencilRange(*this);
         noteStalePlane(begin, end);
     }
 
@@ -1029,7 +1041,7 @@ public:
             NoteDepthWork();
         } else {
             stencilFill = stencil;
-            MarkStencilStale();
+            MarkStencilStale(true);
         }
     }
 
@@ -1648,10 +1660,12 @@ public:
 
     void NoteStencilStored(std::uint64_t generation) {
         stencilGeneration = generation;
+        if (StencilMirrorable()) TakeStencilBaseline();
     }
 
     bool stencilStale = false;
     std::uint64_t stencilGeneration = 0;
+    std::vector<std::byte> stencilBaseline;
 
     std::vector<bool> staleUnits;
     std::size_t staleCount = 0;
@@ -3180,12 +3194,20 @@ void retireStencil(DepthSurface& surface) {
     forgetStaleStencil(surface);
 }
 
+bool stencilWrittenSinceBaseline(const DepthSurface& surface, std::uint64_t begin, std::size_t bytes) {
+    if (GuestMemory::Watched(begin, bytes)) {
+        GuestMemory::CollectWritesUncached(begin, bytes);
+        return surface.stencilGeneration != 0u && GuestMemory::WrittenSince(begin, bytes, surface.stencilGeneration);
+    }
+    return surface.stencilBaseline.size() == bytes && !GuestMemory::EqualsCommittedUnsynced(begin, surface.stencilBaseline);
+}
+
 void storeStaleStencil(DepthSurface& surface) {
     if (!surface.stencilStale || surface.syncing || !surface.StencilMirrorable()) return;
     const auto [begin, end] = staleStencilRange(surface);
     const auto bytes = static_cast<std::size_t>(end - begin);
     if (GuestMemory::CommittedRanges(begin, bytes).empty()) return;
-    if (unmappedSince(begin, end, surface.stencilMark)) {
+    if (unmappedSince(begin, end, surface.stencilMark) || stencilWrittenSinceBaseline(surface, begin, bytes)) {
         retireStencil(surface);
         return;
     }
@@ -3536,7 +3558,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         surface->MarkAllStale(planeBytes);
         noteStalePlane(plane, plane + planeBytes);
     }
-    if (stencilWritten || created || stencilRebound) surface->MarkStencilStale();
+    if (stencilWritten || created || stencilRebound) surface->MarkStencilStale(stencilWritten);
     drawnDepth = surface;
     return surface->view;
 }
@@ -3620,7 +3642,10 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
             if (surface->stencilStale && !surface->syncing) {
                 const auto [stencilBegin, stencilEnd] = staleStencilRange(*surface);
                 if (stencilBegin < end && address < stencilEnd) {
-                    if (GuestMemory::CommittedRanges(stencilBegin, static_cast<std::size_t>(stencilEnd - stencilBegin)).empty() || unmappedSince(stencilBegin, stencilEnd, surface->stencilMark)) {
+                    const auto stencilBytes = static_cast<std::size_t>(stencilEnd - stencilBegin);
+                    if (GuestMemory::CommittedRanges(stencilBegin, stencilBytes).empty() ||
+                        unmappedSince(stencilBegin, stencilEnd, surface->stencilMark) ||
+                        stencilWrittenSinceBaseline(*surface, stencilBegin, stencilBytes)) {
                         surface->stencilStale = false;
                     } else {
                         auto mirror = surface->StoreStencilPlane(stencilResource(surface->target));

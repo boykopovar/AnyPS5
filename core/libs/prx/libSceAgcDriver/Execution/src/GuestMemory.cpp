@@ -1134,24 +1134,37 @@ bool readableWithoutQuery(std::uintptr_t address, std::size_t bytes) {
 
 // Checks that [address, address + bytes) is mapped with read (and, if asked, write) access. Returns
 // an empty string when it is, otherwise why it is not.
-std::string verify(std::uintptr_t address, std::size_t bytes, bool writable) {
+bool checkAccess(std::uintptr_t address, std::size_t bytes, bool writable, std::string* reason) {
     const TimedAccess timed(CounterVerify, bytes);
-    if (onOwnLiveStack(address, bytes)) return {};
+    if (onOwnLiveStack(address, bytes)) return true;
 #ifdef __linux__
-    if (!writable && readableWithoutQuery(address, bytes)) return {};
+    if (!writable && readableWithoutQuery(address, bytes)) return true;
 #endif
-    std::string reason;
+    bool accessible = true;
     const bool queried = describePages(address, bytes, [&](const PageRun& run) {
         if (!run.readable) {
-            char text[128];
-            std::snprintf(text, sizeof(text), "guest memory is not readable at 0x%llx (range 0x%llx+0x%zx)", static_cast<unsigned long long>(run.begin), static_cast<unsigned long long>(address), bytes);
-            reason = text;
+            accessible = false;
+            if (reason != nullptr) {
+                char text[128];
+                std::snprintf(text, sizeof(text), "guest memory is not readable at 0x%llx (range 0x%llx+0x%zx)", static_cast<unsigned long long>(run.begin), static_cast<unsigned long long>(address), bytes);
+                *reason = text;
+            }
         } else if (writable && !run.writable) {
-            reason = "guest memory has no write permission";
+            accessible = false;
+            if (reason != nullptr) *reason = "guest memory has no write permission";
         }
-        return reason.empty();
+        return accessible;
     });
-    if (!queried && reason.empty()) reason = "cannot query guest memory";
+    if (!queried && accessible) {
+        accessible = false;
+        if (reason != nullptr) *reason = "cannot query guest memory";
+    }
+    return accessible;
+}
+
+std::string verify(std::uintptr_t address, std::size_t bytes, bool writable) {
+    std::string reason;
+    checkAccess(address, bytes, writable, &reason);
     return reason;
 }
 
@@ -1173,7 +1186,7 @@ void CheckRange(const void* pointer, std::size_t bytes, std::size_t alignment, b
 
 bool Accessible(const void* pointer, std::size_t bytes, bool writable) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
-    return address != 0 && bytes <= std::numeric_limits<std::uintptr_t>::max() - address && verify(address, bytes, writable).empty();
+    return address != 0 && bytes <= std::numeric_limits<std::uintptr_t>::max() - address && checkAccess(address, bytes, writable, nullptr);
 }
 
 std::uint64_t ForgetSerial() {
