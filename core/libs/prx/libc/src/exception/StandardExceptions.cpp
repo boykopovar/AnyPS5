@@ -89,12 +89,12 @@ void ReleaseMessage(const char* message) {
     }
 }
 void DestroyPlain(ExceptionObject*) {}
-void DeletePlain(ExceptionObject* object) { std::free(object); }
+void DeletePlain(ExceptionObject* object) { _ZdlPv_nid_postfix(object); }
 void DestroyMessage(ExceptionObject* object) { ReleaseMessage(object->message); object->message = nullptr; }
 static void APS5_VABI DestroyGuestMessage_nid_no_patch(void* object) {
     DestroyMessage(static_cast<ExceptionObject*>(object));
 }
-void DeleteMessage(ExceptionObject* object) { DestroyMessage(object); std::free(object); }
+void DeleteMessage(ExceptionObject* object) { DestroyMessage(object); _ZdlPv_nid_postfix(object); }
 const char* PlainWhat(const ExceptionObject* object) {
     auto* table = static_cast<const ExceptionVtable*>(object->vtable);
     auto* complete = reinterpret_cast<const ExceptionVtable*>(reinterpret_cast<const unsigned char*>(table) - offsetof(ExceptionVtable, destroy));
@@ -830,7 +830,7 @@ static void APS5_VABI DestroyFutureError_nid_no_patch(LibcException::FutureError
 }
 static void APS5_VABI DeleteFutureError_nid_no_patch(LibcException::FutureErrorObject* self) {
     DestroyFutureErrorString(&self->message);
-    std::free(self);
+    _ZdlPv_nid_postfix(self);
 }
 static const char* APS5_VABI FutureErrorWhat_nid_no_patch(const LibcException::FutureErrorObject* self) {
     return LibcException::FutureErrorMessage(self->code.value);
@@ -921,7 +921,7 @@ void DestroyFilesystemError(ExceptionObject* object) {
     DestroyMessage(object);
 }
 static void APS5_VABI GuestDestroyFilesystemError_nid_no_patch(ExceptionObject* object) { DestroyFilesystemError(object); }
-static void APS5_VABI GuestDeleteFilesystemError_nid_no_patch(ExceptionObject* object) { DestroyFilesystemError(object); std::free(object); }
+static void APS5_VABI GuestDeleteFilesystemError_nid_no_patch(ExceptionObject* object) { DestroyFilesystemError(object); _ZdlPv_nid_postfix(object); }
 static void APS5_VABI DestroyThrownFilesystemError_nid_no_patch(void* object) { DestroyFilesystemError(static_cast<ExceptionObject*>(object)); }
 const TypeRecord FilesystemErrorType {SingleTypeVtable + 2, "NSt10filesystem16filesystem_errorE", &_ZTISt12system_error_nid_postfix};
 const ExceptionVtable FilesystemError {0, &FilesystemErrorType, GuestDestroyFilesystemError_nid_no_patch, GuestDeleteFilesystemError_nid_no_patch, GuestMessageWhat_nid_no_patch};
