@@ -732,7 +732,8 @@ class NestedContainmentTests(FixtureTests):
             f"    Path({str(direct_status)!r}).write_text('spawned', encoding='utf-8')\n"
             f"except OSError as error:\n"
             f"    Path({str(direct_status)!r}).write_text(str(error.winerror), encoding='utf-8')\n")
-        self.assertEqual(gate.run([sys.executable, "-c", direct_parent], self.root / "breakaway-direct.log", os.environ, 10), 0)
+        interpreter = getattr(sys, "_base_executable", sys.executable)
+        self.assertEqual(gate.run([interpreter, "-c", direct_parent], self.root / "breakaway-direct.log", os.environ, 10), 0)
         self.assertEqual(direct_status.read_text(encoding="utf-8"), "5")
         self.assertFalse(direct_marker.exists())
 
