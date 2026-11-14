@@ -1741,7 +1741,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     const auto indexBytes = inputs.indexBytes;
     if (draw.indexed) GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
     APS5_LOG_CHARS_OUT_DEBUG("Index buffer range OK");
-    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read");
+    if (draw.indexed) RequireNoMultisampleTarget(draw.indexAddress, static_cast<std::size_t>(indexBytes), "an index buffer read", DepthReadCause::Reuse);
     if (state.pixelKill && !state.pixelEarlyZ && std::ranges::any_of(state.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0; })) {
         const auto* recorder = Recorder::Active();
         Require(recorder == nullptr || !recorder->CountingSamples(), "a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests cannot use while occlusion queries count samples: the early tests would count the pixels it kills");
@@ -1976,7 +1976,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
         GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
-        RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read");
+        RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read", DepthReadCause::Reuse);
         if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite)) {
             rangeHandles.push_back(import->buffer);
             rangeOffsets.push_back(HostImportOffset(*import, begin));

@@ -1848,8 +1848,8 @@ std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTa
     return changed ? std::optional(std::move(filtered)) : std::nullopt;
 }
 
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
-    RequireNoResidentDepthRead_nid_no_patch(address, bytes);
+void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access, DepthReadCause cause) {
+    RequireNoResidentDepthRead_nid_no_patch(address, bytes, std::nullopt, true, cause);
     RequireNoMultisampleColorTarget(address, bytes, access);
 }
 
