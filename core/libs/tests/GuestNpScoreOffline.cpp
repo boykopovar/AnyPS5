@@ -133,6 +133,7 @@ void CheckRequests() {
     Require(sceNpScoreAbortRequest(req + 100) == InvalidId, "sceNpScoreAbortRequest", "an unknown request was taken");
     Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting failed");
     Require(sceNpScorePollAsync(req, nullptr) == PollFinished, "sceNpScorePollAsync", "a null result was not accepted");
+    Require(sceNpScorePollAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScorePollAsync", "an unwritable result pointer was accepted");
     Require(sceNpScorePollAsync(req, &result) == PollFinished && result == Aborted, "sceNpScoreAbortRequest", "an aborted request did not finish with ABORTED");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == Aborted, "sceNpScoreRecordScore", "an aborted request did not return ABORTED");
     sceNpScoreDeleteRequest(req);
@@ -353,6 +354,7 @@ void CheckContextsAndWaiting() {
     Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
     Require(waitAsync(req, &result) == 0 && result == SignedOut, "sceNpScoreWaitAsync", "a finished request did not report SIGNED_OUT");
     Require(waitAsync(req, nullptr) == 0, "sceNpScoreWaitAsync", "a null result was not accepted");
+    Require(waitAsync(req, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpScoreWaitAsync", "an unwritable result pointer was accepted");
     sceNpScoreDeleteRequest(req);
     const int aborted = NewRequest();
     Require(sceNpScoreAbortRequest(aborted) == 0, "sceNpScoreAbortRequest", "aborting a request before waiting failed");
