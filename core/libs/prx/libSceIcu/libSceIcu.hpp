@@ -3,6 +3,7 @@
 #include "ConstrainedFieldPosition.hpp"
 #include "TerminateBuffer.hpp"
 #include "Enumeration.hpp"
+#include "List.hpp"
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
 #include "Iterator.hpp"
@@ -37,4 +38,6 @@
 #include "Configuration.hpp"
 
 #include "ConverterHelpers.hpp"
+#include "Utf16Search.hpp"
 #include "RecoveredSignatures.hpp"
+#include "Copy.hpp"

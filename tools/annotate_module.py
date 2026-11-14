@@ -40,6 +40,12 @@ DT_GNU_HASH = 0x6ffffef5
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
+DYNAMIC_VALUE_TAGS = {
+    DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
+    DT_RELA: "DT_RELA", DT_RELASZ: "DT_RELASZ", DT_RELAENT: "DT_RELAENT",
+    DT_STRSZ: "DT_STRSZ", DT_SYMENT: "DT_SYMENT", DT_JMPREL: "DT_JMPREL",
+    DT_PLTRELSZ: "DT_PLTRELSZ", DT_PLTREL: "DT_PLTREL", DT_GNU_HASH: "DT_GNU_HASH",
+}
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
@@ -112,6 +118,8 @@ class Module:
             tag, value = self.unpack("<qQ", position)
             if tag == DT_NULL:
                 return tags
+            if tag in DYNAMIC_VALUE_TAGS and tag in tags and tags[tag] != value:
+                raise ModuleError("conflicting duplicate %s at %#x" % (DYNAMIC_VALUE_TAGS[tag], position))
             tags.setdefault(tag, value)
         raise ModuleError("PT_DYNAMIC has no complete DT_NULL terminator")
 

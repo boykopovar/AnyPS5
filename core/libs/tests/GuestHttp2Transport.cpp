@@ -1625,6 +1625,14 @@ void FirstNetworkRequest(int ssl) {
 }
 #endif
 
+void HostNotFound(int ssl) {
+    Client client(ssl);
+    client.Create("https://nonexistent.invalid/");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101E6),
+            "lookup failure maps to console DNS error");
+    AfterFailedSend(client, static_cast<int>(0x804101E6));
+}
+
 void Refused(int ssl) {
     mbedtls_net_context listener;
     mbedtls_net_init(&listener);
@@ -1675,7 +1683,7 @@ void Retries(int ssl) {
         client.Create("https://127.0.0.1:1/");
         lookups = 0;
         failedLookups = 100;
-        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "every lookup failing fails the request");
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101e6), "every lookup failing returns the DNS error");
         Require(lookups == retry + 1, "a request makes its retry count plus one lookups before failing");
     }
     Http2SetLookupHook_nid_no_patch(nullptr);
@@ -2040,6 +2048,7 @@ int main(int argc, char** argv) {
             Deadline(ssl, mode, true);
             for (int teardown = 0; teardown < 4; ++teardown) Cancellation(ssl, mode, teardown);
         }
+        HostNotFound(ssl);
         Refused(ssl);
         Capacity(ssl);
         Retries(ssl);
