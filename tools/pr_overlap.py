@@ -408,8 +408,9 @@ def blob_texts(root, blobs):
 
 
 def base_exports(ref):
-    root = git("rev-parse", "--show-toplevel").strip()
-    cache_path = Path(root, git("rev-parse", "--git-common-dir").strip()) / "pr_overlap-exports.json"
+    root = _repository_root()
+    common_dir = git("rev-parse", "--path-format=relative", "--git-common-dir").strip()
+    cache_path = root / common_dir / "pr_overlap-exports.json"
     version = export_cache_version()
     cached = load_export_cache(cache_path, version)
     sources = base_sources(root, ref)
