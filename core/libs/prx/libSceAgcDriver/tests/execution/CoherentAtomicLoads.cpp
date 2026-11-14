@@ -87,15 +87,22 @@ void Dispatch() {
 int main() {
     try {
         const bool atomic = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
+        std::uint32_t subgroupSize = 0;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
             CheckLoads(*device, atomic);
+            subgroupSize = device->Target().subgroupSize;
         }
         if (!atomic) {
             AgcDriverShutdown_nid_postfix();
             std::puts("coherent atomic loads tests passed (volatile loads; the waiting dispatch runs only with APS5_COHERENT_ATOMIC_LOADS)");
             return 0;
+        }
+        if (subgroupSize < 32u) {
+            AgcDriverShutdown_nid_postfix();
+            std::printf("skipped, subgroup size %u cannot hold a wave64 in two lanes\n", subgroupSize);
+            return VulkanTestSkipped;
         }
         Flags.fill(0u);
         Dispatch();

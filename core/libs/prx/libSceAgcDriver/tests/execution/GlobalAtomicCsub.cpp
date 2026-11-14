@@ -286,10 +286,14 @@ int main() {
         GuestBlock guest;
         Run(*device, guest, 32);
         Run(*device, guest, 64);
-        RunNoReturn(*device, guest, 32);
-        RunNoReturn(*device, guest, 64);
         CheckNoReturnAccepted(*device, guest);
         CheckRejected(*device, guest, FlatSegmentCode, "global_atomic_csub is available only in the global segment");
+        if (device->Target().subgroupSize < 32u) {
+            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
+        RunNoReturn(*device, guest, 32);
+        RunNoReturn(*device, guest, 64);
         std::puts("global atomic csub tests passed");
         return 0;
     } catch (const std::exception& error) {
