@@ -284,15 +284,16 @@ int APS5_VABI sceFontGetKerning(FontHandle fontHandle, std::uint32_t preCode, st
     auto* font = GetNativeFont(fontHandle);
     std::uint32_t fontLock = 0;
     if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
-    *kerning = {};
+    FontKerning localKerning{};
     const FontState* state = TryGetState(fontHandle);
     if (state) {
         float scaleW = 0.0f;
         float scaleH = 0.0f;
         StyleStateGetScalePixel(&font->style, &scaleW, &scaleH);
-        LoadKerning(*state, scaleW, scaleH, preCode, code, kerning);
+        LoadKerning(*state, scaleW, scaleH, preCode, code, &localKerning);
     }
     ReleaseFontLock(font, fontLock);
+    if (!CopyOutGuest(kerning, localKerning)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
