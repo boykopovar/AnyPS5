@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -1848,6 +1849,17 @@ public:
     bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
         const auto current = published.load(std::memory_order_acquire);
         return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
+    }
+    bool ClearOnThread(std::uint64_t address, std::size_t bytes) const {
+        struct CopyTag {};
+        auto& copy = ThreadScratch<std::shared_ptr<const Snapshot>, CopyTag>();
+        const auto version = changes.load(std::memory_order_acquire);
+        if (copy == nullptr || copy->version != version) {
+            auto current = published.load(std::memory_order_acquire);
+            if (current == nullptr || current->version != version) return false;
+            copy = std::move(current);
+        }
+        return !Overlaps(copy->ranges, address, bytes);
     }
 
 private:
@@ -5861,6 +5873,11 @@ bool StorageTexture::AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, st
 
 std::uint64_t StorageTexture::PendingSerial() {
     return pendingSerial.load(std::memory_order_acquire);
+}
+
+bool StorageTexture::PendingClearOnThread(std::uint64_t address, std::size_t bytes) {
+    auto& pending = Pending();
+    return pending.textures.ClearOnThread(address, bytes) && pending.flushingCount.load(std::memory_order_acquire) == 0;
 }
 
 void StorageTexture::NoteProved() const {

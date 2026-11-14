@@ -8,6 +8,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/general/AtomicSharedPtr.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -127,6 +129,18 @@ Shadows& Registry() {
     return shadows;
 }
 
+struct LiveRanges {
+    std::uint64_t serial = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+};
+struct LiveRangesTag {};
+alignas(64) std::atomic<std::uint64_t> liveSerial{0};
+AtomicSharedPtr<const LiveRanges> publishedLive;
+
+void liveChanged() {
+    liveSerial.fetch_add(1, std::memory_order_release);
+}
+
 VkDeviceSize SlabBytes(const ShadowSlab& slab) {
     return static_cast<VkDeviceSize>(slab.units) * UnitBytes;
 }
@@ -171,6 +185,7 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
             --registry.liveSlabs;
         }
         registry.byBase.erase(found);
+        liveChanged();
     }
     auto shadow = std::make_shared<UnitShadow>();
     shadow->context = context;
@@ -427,6 +442,7 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
             ++units;
         }
         shadow->liveUnits -= ended;
+        if (ended != 0) liveChanged();
     }
     if (units == 0) return 0;
     Stats().published[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
@@ -493,6 +509,7 @@ bool evictOne(Shadows& registry) {
         victim->published[unit] = 0;
     }
     victim->Recount();
+    liveChanged();
     registry.liveBytes -= SlabBytes(*slab);
     --registry.liveSlabs;
     slab.reset();
@@ -602,6 +619,42 @@ bool anyShadowedLocked(const Shadows& registry, std::uint64_t address, std::size
     });
 }
 
+std::shared_ptr<const LiveRanges> currentLiveRanges() {
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    const auto serial = liveSerial.load(std::memory_order_relaxed);
+    if (auto published = publishedLive.load(std::memory_order_acquire); published != nullptr && published->serial == serial) return published;
+    auto built = std::make_shared<LiveRanges>();
+    built->serial = serial;
+    auto& ranges = built->ranges;
+    for (const auto& [base, shadow] : registry.byBase) {
+        if (shadow->liveUnits == 0) continue;
+        for (std::uint64_t unit = 0; unit < shadow->Units(); ++unit) {
+            if (!shadow->Live(unit)) continue;
+            const auto [begin, end] = shadow->UnitRange(unit);
+            if (end <= begin) continue;
+            if (!ranges.empty() && ranges.back().second >= begin) ranges.back().second = std::max(ranges.back().second, end);
+            else ranges.emplace_back(begin, end);
+        }
+    }
+    std::shared_ptr<const LiveRanges> result = std::move(built);
+    publishedLive.store(result, std::memory_order_release);
+    return result;
+}
+
+}
+
+bool LiveUnitsClear(std::uint64_t address, std::size_t bytes) {
+    if (!UnitShadowEnabled() || bytes == 0) return true;
+    auto& copy = ThreadScratch<std::shared_ptr<const LiveRanges>, LiveRangesTag>();
+    const auto serial = liveSerial.load(std::memory_order_acquire);
+    if (copy == nullptr || copy->serial != serial) {
+        auto published = publishedLive.load(std::memory_order_acquire);
+        copy = published != nullptr && published->serial == serial ? std::move(published) : currentLiveRanges();
+    }
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    const auto it = std::upper_bound(copy->ranges.begin(), copy->ranges.end(), address, [](std::uint64_t value, const std::pair<std::uint64_t, std::uint64_t>& range) { return value < range.second; });
+    return it == copy->ranges.end() || it->first >= end;
 }
 
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
@@ -837,6 +890,7 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
         const auto shadow = find(registry, import);
         if (shadow == nullptr) return;
         const auto present = Recorder::Presents();
+        bool turnedLive = false;
         for (const auto& [begin, end, slab] : ranges) {
             if (end <= begin) continue;
             bytes += end - begin;
@@ -848,12 +902,16 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
                     ++lost;
                     continue;
                 }
-                if (!shadow->Live(unit)) ++shadow->liveUnits;
+                if (!shadow->Live(unit)) {
+                    ++shadow->liveUnits;
+                    turnedLive = true;
+                }
                 shadow->generation[unit] = generation;
                 shadow->published[unit] = 0;
                 current->lastUse = present;
             }
         }
+        if (turnedLive) liveChanged();
     }
     if (lost != 0) {
         Stats().slabLost.fetch_add(lost, std::memory_order_relaxed);
@@ -893,6 +951,7 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
             }
         }
         shadow->Recount();
+        if (dropped != 0) liveChanged();
     }
     if (dropped != 0) Stats().droppedOnRetire.fetch_add(dropped, std::memory_order_relaxed);
     std::size_t published = 0;
@@ -916,6 +975,7 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
     ++registry.retired;
     if (TraceEnabled()) std::fprintf(stderr, "[shadow] retire import 0x%llx+0x%llx: %zu units published, %llu dropped (memory no longer registered)\n", static_cast<unsigned long long>(import.base), static_cast<unsigned long long>(import.bytes), published, static_cast<unsigned long long>(dropped));
     registry.byBase.erase(found);
+    liveChanged();
 }
 
 void PublishAllShadows(const Context& context, PublishReason reason) {
@@ -945,6 +1005,7 @@ void DestroyShadows(VkDevice device) {
             --registry.liveSlabs;
         }
         it = registry.byBase.erase(it);
+        liveChanged();
     }
 }
 

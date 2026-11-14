@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
@@ -578,7 +579,9 @@ Recorder* labelTableOwner = nullptr;
 // ForgetQueuedLabels): the flush hook, on the same thread, has them recorded before an access that
 // overlaps one, through the function the driver installed.
 struct QueuedLabelRangesTag {};
-auto& QueuedLabelRanges() { return HostThreadLocal<std::vector<std::pair<std::uint64_t, std::uint64_t>>, QueuedLabelRangesTag>(); }
+auto& QueuedLabelRanges() { return ThreadScratch<std::vector<std::pair<std::uint64_t, std::uint64_t>>, QueuedLabelRangesTag>(); }
+struct QueuedLabelsOnThreadTag {};
+using QueuedLabelsOnThread = HostThreadSlot<bool, QueuedLabelsOnThreadTag>;
 std::atomic<void (*)()> queuedLabelRecorder{nullptr};
 // The dwords (with their stamps) this thread noted since its last CloseLabelGroup (see Recorder::CloseLabelGroup).
 struct LabelGroupDwordsTag {};
@@ -691,6 +694,34 @@ bool SnapshotOverlaps(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0) return false;
     const auto snapshot = pendingWrites.load(std::memory_order_acquire);
     return SnapshotOverlaps(snapshot.get(), address, bytes);
+}
+
+bool HookClearAccess() {
+    static const bool enabled = std::getenv("APS5_NO_HOOK_CLEAR_ACCESS") == nullptr;
+    return enabled;
+}
+
+struct ThreadWriteRanges {
+    std::uint64_t generation = ~std::uint64_t{0};
+    std::shared_ptr<const WriteRanges> ranges;
+};
+struct ThreadWriteRangesTag {};
+
+bool ThreadSnapshotOverlaps(std::uint64_t address, std::size_t bytes) {
+    auto& copy = ThreadScratch<ThreadWriteRanges, ThreadWriteRangesTag>();
+    const auto generation = publishGeneration.load(std::memory_order_acquire);
+    if (copy.generation != generation) {
+        copy.ranges = pendingWrites.load(std::memory_order_acquire);
+        copy.generation = generation;
+    }
+    return SnapshotOverlaps(copy.ranges.get(), address, bytes);
+}
+
+struct ClearAccessesTag {};
+using ClearAccesses = HostThreadSlot<std::uint64_t, ClearAccessesTag>;
+
+bool ClearAccess(std::uint64_t address, std::size_t bytes) {
+    return StorageTexture::PendingClearOnThread(address, bytes) && LiveUnitsClear(address, bytes) && !ThreadSnapshotOverlaps(address, bytes);
 }
 
 // Whether one merged range of the snapshot contains [address, end) entirely.
@@ -1043,7 +1074,7 @@ private:
 // work first; then storage image results pending for the range are stored. The recorder is only
 // dereferenced under the GpuMutex (it is destroyed with its device under that lock).
 void FlushForAccess(std::uint64_t address, std::size_t bytes) {
-    hookCalls.fetch_add(1, std::memory_order_relaxed);
+    if (DrawProfiled()) hookCalls.fetch_add(1, std::memory_order_relaxed);
     // A label this worker queued but has not recorded writes the range: in queue order the label
     // precedes this access, so the group is recorded first (it then notes the range as a pending
     // write of the open batch, and the check below syncs on it like any recorded store). Not from
@@ -1051,13 +1082,17 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     // would reap nested in the reap in progress, landing later batches' write-backs before the
     // rest of this one's, and this queue's queued label follows every batch of its own in flight
     // anyway, so the write-back landing first is the order the hardware gives.
-    if (!QueuedLabelRanges().empty() && QueuedLabelOverlaps(address, bytes)) {
+    if (QueuedLabelsOnThread::Get() && QueuedLabelOverlaps(address, bytes)) {
         if (completionDepth() != 0 && HookCompletionGuard()) {
             queuedLabelHookInCompletion.fetch_add(1, std::memory_order_relaxed);
         } else if (auto* record = queuedLabelRecorder.load(std::memory_order_acquire); record != nullptr) {
             queuedLabelHookRecords.fetch_add(1, std::memory_order_relaxed);
             record();
         }
+    }
+    if (HookClearAccess() && HookSnapshotEnabled() && !HookFlushCpuBlocks() && ClearAccess(address, bytes)) {
+        ClearAccesses::Set(ClearAccesses::Get() + 1);
+        return;
     }
     if (!HookSnapshotEnabled() || SnapshotOverlaps(address, bytes)) {
         hookLocks.fetch_add(1, std::memory_order_relaxed);
@@ -1801,6 +1836,7 @@ void Recorder::NoteQueuedLabel(std::uint64_t address, std::span<const std::byte>
     // The range before the table: the hook covers the group whether or not a table exists to
     // enter it in (no owner: the callback records it outright, by a CPU store when need be).
     QueuedLabelRanges().emplace_back(address, address + bytes.size());
+    QueuedLabelsOnThread::Set(true);
     queuedLabelsNoted.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard tableLock(labelTableMutex);
     if (labelTableOwner == nullptr) return;
@@ -1816,9 +1852,10 @@ void Recorder::NoteQueuedLabel(std::uint64_t address, std::span<const std::byte>
 }
 
 void Recorder::ForgetQueuedLabels() {
-    if (QueuedLabelRanges().empty()) return;
+    if (!QueuedLabelsOnThread::Get()) return;
     auto ranges = std::move(QueuedLabelRanges());
     QueuedLabelRanges().clear();
+    QueuedLabelsOnThread::Set(false);
     std::lock_guard tableLock(labelTableMutex);
     if (labelTableOwner == nullptr) return;
     auto& recorded = labelTableOwner->labels;
@@ -1832,6 +1869,10 @@ void Recorder::ForgetQueuedLabels() {
         }
     }
     labelTableOwner->recordedLabels.store(recorded.size(), std::memory_order_relaxed);
+}
+
+std::uint64_t Recorder::ThreadClearAccesses() {
+    return ClearAccesses::Get();
 }
 
 bool Recorder::QueuedLabelsPending() {
