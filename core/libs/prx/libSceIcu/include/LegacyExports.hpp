@@ -1970,7 +1970,6 @@ int APS5_VABI _ZN6icu_6811ICU_Utility12parsePatternERKNS_13UnicodeStringERKNS_11
 int APS5_VABI _ZNK6icu_6813SimpleFactory17getDynamicClassIDEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_qPVPvgCLdLw_nid_no_patch();
 int APS5_VABI _ZN6icu_689BytesTrie18getNextBranchBytesEPKhiRNS_8ByteSinkE_nid_postfix();
-int APS5_VABI uprv_timezone_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet6addAllERKNS_13UnicodeStringE_nid_postfix();
 int APS5_VABI _ZN6icu_6810UnicodeSet9removeAllERKS0__nid_postfix();
 int APS5_VABI _ZN6icu_6813UnicodeString12releaseArrayEv_nid_postfix();
