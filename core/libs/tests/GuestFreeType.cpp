@@ -1836,6 +1836,9 @@ int main() {
     Require(kerning.x == 123 && kerning.y == 456);
     Require(FT_Get_Kerning_nid_postfix(nullptr, 1, 1, FT_KERNING_DEFAULT, nullptr) == FT_Err_Invalid_Face_Handle);
     Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, nullptr) == FT_Err_Invalid_Argument);
+    errno = 71;
+    Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, reinterpret_cast<GuestVector*>(0x10)) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
     Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, &kerning) == 0);
     Require(kerning.x == 0 && kerning.y == 0);
 

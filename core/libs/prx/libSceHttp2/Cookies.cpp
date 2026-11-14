@@ -10,6 +10,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include "GuestAccess.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
 #include "Cookies.hpp"
@@ -423,14 +424,17 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
 int APS5_VABI sceHttp2GetCookieStats(int cookieBoxId, Http2CookieStats* stats) {
     std::lock_guard lock(g_cookiesMutex);
     if (!stats) return ERROR_INVALID_VALUE;
+    Http2CookieStats out{};
+    if (!Http2Guest::CopyIn(&out, stats, sizeof(out))) return ERROR_INVALID_VALUE;
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     RemoveExpired(*box, Now());
-    stats->currentInuseSize = InuseSize(*box);
-    stats->currentInuseNum = static_cast<std::uint32_t>(box->cookies.size());
-    stats->maxInuseSize = box->maxInuseSize;
-    stats->maxInuseNum = box->maxInuseNum;
-    stats->removedNum = box->removedNum;
+    out.currentInuseSize = InuseSize(*box);
+    out.currentInuseNum = static_cast<std::uint32_t>(box->cookies.size());
+    out.maxInuseSize = box->maxInuseSize;
+    out.maxInuseNum = box->maxInuseNum;
+    out.removedNum = box->removedNum;
+    if (!Http2Guest::CopyOut(stats, &out, sizeof(out))) return ERROR_INVALID_VALUE;
     return 0;
 }
 

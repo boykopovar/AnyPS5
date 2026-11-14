@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -58,6 +59,12 @@ void TestBigAppList(TList list) {
     Require(list(nullptr, 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(appIds, 2, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(nullptr, 0, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(list(reinterpret_cast<std::int32_t*>(0x10), 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    errno = 71;
+    Require(list(appIds, 2, reinterpret_cast<std::uint32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(appIds[0] == Sentinel && appIds[1] == Sentinel && count == 0xdeadbeefu);
 }
 
@@ -281,6 +288,9 @@ int main() {
     Require(safeArea.ratio == 1.0f);
     for (unsigned char byte : safeArea.reserved) Require(byte == 0);
     Require(sceSystemServiceGetNoticeScreenSkipFlag(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetNoticeScreenSkipFlag(reinterpret_cast<bool*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     bool skip = true;
     Require(sceSystemServiceGetNoticeScreenSkipFlag(&skip) == SYSTEM_SERVICE_OK && !skip);
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);

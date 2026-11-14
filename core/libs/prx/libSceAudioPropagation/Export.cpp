@@ -433,7 +433,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagati
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
     require(count != nullptr, __func__);
-    *count = MaxPaths;
+    if (!copyGuestOut(count, static_cast<std::uint32_t>(MaxPaths))) return ErrorNullPointer;
     return 0;
 }
 
