@@ -387,6 +387,39 @@ static void CheckUngetcEndOfFile() {
     stream.Close();
 }
 
+static void CheckRepeatedPushback() {
+    FileStream unbuffered(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("abcdefgh", 1, 8, &unbuffered) == 8);
+    rewind_nid_postfix(&unbuffered);
+    Require(setvbuf_nid_postfix(&unbuffered, nullptr, 2, 0) == 0);
+    Require(fgetc_nid_postfix(&unbuffered) == 'a' && fgetc_nid_postfix(&unbuffered) == 'b' && fgetc_nid_postfix(&unbuffered) == 'c');
+    for (const char pushed : std::string_view("zyxwvutsrq")) Require(ungetc_nid_postfix(pushed, &unbuffered) == pushed);
+    for (const char expected : std::string_view("qrstuvwxyzdefgh")) Require(fgetc_nid_postfix(&unbuffered) == expected);
+    Require(fgetc_nid_postfix(&unbuffered) == EOF && feof_nid_postfix(&unbuffered) != 0);
+    Require(ungetc_nid_postfix('1', &unbuffered) == '1' && ungetc_nid_postfix('2', &unbuffered) == '2' && ungetc_nid_postfix('3', &unbuffered) == '3');
+    Require(feof_nid_postfix(&unbuffered) == 0 && fgetc_nid_postfix(&unbuffered) == '3');
+    rewind_nid_postfix(&unbuffered);
+    Require(fgetc_nid_postfix(&unbuffered) == 'a');
+    for (const char pushed : std::string_view("klmnop")) Require(ungetc_nid_postfix(pushed, &unbuffered) == pushed);
+    unbuffered.Close();
+
+    std::string data(5000, '\0');
+    for (std::size_t index = 0; index < data.size(); ++index) data[index] = static_cast<char>('A' + index % 26);
+    FileStream buffered(TemporaryFile::Open());
+    Require(fwrite_nid_postfix(data.data(), 1, data.size(), &buffered) == data.size());
+    rewind_nid_postfix(&buffered);
+    Require(fgetc_nid_postfix(&buffered) == 'A');
+    for (int index = 0; index < 40; ++index) Require(ungetc_nid_postfix('0' + index, &buffered) == '0' + index);
+    for (int index = 39; index >= 0; --index) Require(fgetc_nid_postfix(&buffered) == '0' + index);
+    Require(ftello_nid_postfix(&buffered) == 1);
+    std::string rest(data.size(), '\0');
+    Require(fread_nid_postfix(rest.data(), 1, rest.size(), &buffered) == data.size() - 1);
+    Require(rest.compare(0, data.size() - 1, data, 1) == 0);
+    Require(ungetc_nid_postfix('#', &buffered) == '#' && ungetc_nid_postfix('$', &buffered) == '$');
+    Require(fgetc_nid_postfix(&buffered) == '$' && fgetc_nid_postfix(&buffered) == '#' && fgetc_nid_postfix(&buffered) == EOF);
+    buffered.Close();
+}
+
 static void CheckRewind() {
     FileStream stream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("ab", 1, 2, &stream) == 2);
@@ -1161,6 +1194,7 @@ int main(int argc, char** argv) {
     locked.Close();
     CheckRewind();
     CheckUngetcEndOfFile();
+    CheckRepeatedPushback();
     CheckFgetsSize();
     CheckFgetsSizeOne();
     CheckSupplementaryWideCharacters();
