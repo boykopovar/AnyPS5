@@ -55,6 +55,14 @@ void RequireAttachesRefused(const std::array<unsigned char, 64>& region) {
     Require(fromThread == NotInCoredumpHandler);
 }
 
+void RequireSecondRegistrationRefused() {
+    constexpr std::size_t stackSize = 0x10000;
+    Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<std::uint64_t>(&Handler), stackSize, 0) == 0);
+    Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<std::uint64_t>(&Handler), stackSize, 0) == static_cast<int>(0x81180002u));
+    Require(sceCoredumpUnregisterCoredumpHandler() == 0);
+    Require(sceCoredumpUnregisterCoredumpHandler() == static_cast<int>(0x81180001u));
+}
+
 void RequireEarlyTerminatorSkipsUnreadableMiddle() {
     std::size_t page = 0;
     char* memory = nullptr;
@@ -162,6 +170,7 @@ int main() {
         }
         Require(sceCoredumpUnregisterCoredumpHandler() == 0);
     }
+    RequireSecondRegistrationRefused();
     Require(!handlerRan);
     return 0;
 }

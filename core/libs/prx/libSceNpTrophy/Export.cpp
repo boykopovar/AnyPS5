@@ -121,6 +121,7 @@ std::set<int> LoadState(const Context& context) {
     const bool exists = std::filesystem::exists(context.state, error);
     if (error) throw std::filesystem::filesystem_error("sceNpTrophy: cannot check the unlock state", context.state, error);
     if (!exists) return {};
+    if (!std::filesystem::is_regular_file(context.state, error)) throw std::runtime_error("sceNpTrophy: cannot read the unlock state " + context.state.string());
     std::ifstream file(context.state);
     if (!file) throw std::runtime_error("sceNpTrophy: cannot read the unlock state " + context.state.string());
     std::set<int> unlocked;
