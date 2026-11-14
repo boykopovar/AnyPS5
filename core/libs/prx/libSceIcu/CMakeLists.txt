@@ -456,6 +456,20 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceIcu PRIVATE ConverterHelpers.cpp)
+target_sources(libSceIcu PRIVATE LocaleSyntax.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_locale_syntax_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuLocaleSyntax.cpp)
+    target_include_directories(guest_icu_locale_syntax_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_locale_syntax_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_locale_syntax_tests)
+    add_test(NAME guest_icu_locale_syntax COMMAND guest_icu_locale_syntax_tests)
+    set_tests_properties(guest_icu_locale_syntax PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_locale_syntax PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_converter_helpers_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuConverterHelpers.cpp)

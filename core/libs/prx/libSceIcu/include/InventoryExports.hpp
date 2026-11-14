@@ -52,7 +52,6 @@ std::int32_t APS5_VABI uloc_getLanguage(const char* locale, char* result, std::i
 std::int32_t APS5_VABI uloc_getScript(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale);
 int APS5_VABI uloc_minimizeSubtags();
-int APS5_VABI uloc_setKeywordValue();
 int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();
 int APS5_VABI unorm2_getNFKCInstance();

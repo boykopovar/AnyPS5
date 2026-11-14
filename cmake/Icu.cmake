@@ -91,24 +91,24 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/uvector.cpp
     ${ICU_SOURCE_DIR}/common/uvectr32.cpp
     ${ICU_SOURCE_DIR}/stubdata/stubdata.cpp)
+target_sources(icu_common PRIVATE
+    ${ICU_SOURCE_DIR}/common/fixedstring.cpp
+    ${ICU_SOURCE_DIR}/common/localebuilder.cpp
+    ${ICU_SOURCE_DIR}/common/locid.cpp
+    ${ICU_SOURCE_DIR}/common/loclikely.cpp
+    ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
+    ${ICU_SOURCE_DIR}/common/lsr.cpp
+    ${ICU_SOURCE_DIR}/common/resource.cpp
+    ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
+    ${ICU_SOURCE_DIR}/common/uloc.cpp
+    ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
+    ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
+    ${ICU_SOURCE_DIR}/common/uresbund.cpp
+    ${ICU_SOURCE_DIR}/common/uresdata.cpp
+    ${ICU_SOURCE_DIR}/common/ustrenum.cpp
+    ${ICU_SOURCE_DIR}/common/utypes.cpp)
 if(WIN32)
-    target_sources(icu_common PRIVATE
-        ${ICU_SOURCE_DIR}/common/fixedstring.cpp
-        ${ICU_SOURCE_DIR}/common/localebuilder.cpp
-        ${ICU_SOURCE_DIR}/common/locid.cpp
-        ${ICU_SOURCE_DIR}/common/loclikely.cpp
-        ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
-        ${ICU_SOURCE_DIR}/common/lsr.cpp
-        ${ICU_SOURCE_DIR}/common/resource.cpp
-        ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
-        ${ICU_SOURCE_DIR}/common/uloc.cpp
-        ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
-        ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
-        ${ICU_SOURCE_DIR}/common/uresbund.cpp
-        ${ICU_SOURCE_DIR}/common/uresdata.cpp
-        ${ICU_SOURCE_DIR}/common/ustrenum.cpp
-        ${ICU_SOURCE_DIR}/common/utypes.cpp
-        ${ICU_SOURCE_DIR}/common/wintz.cpp)
+    target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/wintz.cpp)
 endif()
 target_include_directories(icu_common SYSTEM PUBLIC ${ICU_SOURCE_DIR}/common)
 target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1 UCONFIG_USE_WINDOWS_LCID_MAPPING_API=0)

@@ -6,6 +6,7 @@
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
 #include "Iterator.hpp"
+#include "LocaleSyntax.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
 #include "Numeric.hpp"
