@@ -92,6 +92,36 @@ if(BUILD_TESTING)
         set_tests_properties(guest_safe_errors PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_debug_nid_breakpoints_tests ${LIBS_INCLUDE_DIR}/tests/GuestDebugNidBreakpoints.cpp)
+    target_include_directories(guest_debug_nid_breakpoints_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_debug_nid_breakpoints_tests PRIVATE libc)
+    configure_windows_unwind(guest_debug_nid_breakpoints_tests)
+    add_test(NAME guest_debug_nid_breakpoints COMMAND guest_debug_nid_breakpoints_tests)
+    set_tests_properties(guest_debug_nid_breakpoints PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_debug_nid_commands_tests ${LIBS_INCLUDE_DIR}/tests/GuestDebugNidCommands.cpp)
+    target_include_directories(guest_debug_nid_commands_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_debug_nid_commands_tests PRIVATE libc)
+    configure_windows_unwind(guest_debug_nid_commands_tests)
+    add_test(NAME guest_debug_nid_commands COMMAND guest_debug_nid_commands_tests)
+    set_tests_properties(guest_debug_nid_commands PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_debug_nid_commands PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    if(WIN32)
+        set_tests_properties(guest_debug_nid_breakpoints PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_debug_nid_stops_tests ${LIBS_INCLUDE_DIR}/tests/GuestDebugNidStops.cpp)
+    target_include_directories(guest_debug_nid_stops_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_debug_nid_stops_tests PRIVATE libc)
+    configure_windows_unwind(guest_debug_nid_stops_tests)
+    add_test(NAME guest_debug_nid_stops COMMAND guest_debug_nid_stops_tests)
+    set_tests_properties(guest_debug_nid_stops PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_debug_nid_stops PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_radix64_tests ${LIBS_INCLUDE_DIR}/tests/GuestRadix64.cpp)
     target_include_directories(guest_radix64_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_radix64_tests PRIVATE libc)
@@ -216,6 +246,9 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/DebugNidBreakpoints.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/DebugNidStops.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/DebugNidCommands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
 )
 
