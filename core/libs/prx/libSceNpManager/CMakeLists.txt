@@ -33,4 +33,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_np_manager PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpManager>")
     endif()
+    add_test_executable(guest_np_asm_client_ext_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpAsmClientExt.cpp)
+    target_include_directories(guest_np_asm_client_ext_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_asm_client_ext_tests PRIVATE libSceNpManager libc)
+    configure_windows_unwind(guest_np_asm_client_ext_tests)
+    add_test(NAME guest_np_asm_client_ext COMMAND guest_np_asm_client_ext_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_asm_client_ext PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
