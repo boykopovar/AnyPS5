@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <atomic>
 #include <thread>
@@ -89,6 +90,17 @@ void require(bool condition, const char* reason) {
 
 std::uint64_t address(std::uint32_t low, std::uint32_t high) {
     return low | (static_cast<std::uint64_t>(high) << 32u);
+}
+
+using GcnSystemCounterTicks = std::chrono::duration<std::uint64_t, std::ratio<1, 800000000>>;
+
+const auto GcnSystemCounterStart = std::chrono::steady_clock::now();
+
+std::uint64_t ReleaseMemValue(std::span<const std::uint32_t> packet) {
+    const auto dataSelect = packet[2] >> 29u;
+    if (dataSelect == 3) return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
+    if (dataSelect == 4) return std::chrono::duration_cast<GcnSystemCounterTicks>(std::chrono::steady_clock::now() - GcnSystemCounterStart).count();
+    return address(packet[5], packet[6]);
 }
 
 std::uint32_t registerOffset(std::uint32_t value) {
@@ -529,9 +541,9 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x49: {
             size(8);
             const auto dataSelect = packet[2] >> 29u;
-            require(dataSelect != 4, "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
+            require(dataSelect != 4 || ShaderRecompiler::GcnGuestShaders(), "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
             require(dataSelect <= 5, "reserved RELEASE_MEM DATA_SEL");
-            require(dataSelect <= 3, "GDS RELEASE_MEM data is not implemented");
+            require(dataSelect != 5, "GDS RELEASE_MEM data is not implemented");
             require(dataSelect == 0 || address(packet[3], packet[4]) == 0 || (packet[3] & (dataSelect == 1 ? 3u : 7u)) == 0, "misaligned RELEASE_MEM destination");
             break;
         }
@@ -597,13 +609,9 @@ bool IsTagMarker(std::span<const std::uint32_t> packet) {
     return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && packet[1] == 0x342u;
 }
 
-namespace {
-
-bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
-    const std::uint64_t reference = wide ? address(packet[4], packet[5]) : packet[4];
-    const std::uint64_t mask = wide ? address(packet[6], packet[7]) : packet[5];
+bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value) {
     const auto masked = value & mask;
-    switch (packet[1] & 7u) {
+    switch (function) {
         case 0: return true;
         case 1: return masked < reference;
         case 2: return masked <= reference;
@@ -613,6 +621,12 @@ bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_
         case 6: return masked > reference;
         default: return false;
     }
+}
+
+namespace {
+
+bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
+    return WaitCompares(packet[1] & 7u, wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], value);
 }
 
 }
@@ -674,10 +688,9 @@ std::optional<LabelWrite> DecodeLabelWrite(std::span<const std::uint32_t> packet
     if (opcode == 0x49 && packet.size() >= 7) {
         const auto dataSelect = packet[2] >> 29u;
         const auto destination = address(packet[3], packet[4]);
-        if (dataSelect == 0 || dataSelect > 3) return std::nullopt;
+        if (dataSelect == 0 || dataSelect > 4) return std::nullopt;
         if (destination == 0) return std::nullopt;
-        std::uint64_t value = address(packet[5], packet[6]);
-        if (dataSelect == 3) value = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
+        const auto value = ReleaseMemValue(packet);
         LabelWrite label{destination, {}};
         label.inlineSize = dataSelect == 1 ? 4 : 8;
         std::memcpy(label.inlineBytes.data(), &value, label.inlineSize);
@@ -774,7 +787,7 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
         case 0x49: {
             const auto label = DecodeLabelWrite(packet);
             if (!label.has_value()) return {};
-            if ((packet[2] >> 29u) == 3) return {runTime(label->address, label->Bytes().size())};
+            if ((packet[2] >> 29u) >= 3) return {runTime(label->address, label->Bytes().size())};
             return {known(label->address, label->Bytes())};
         }
         case 0x37: {
@@ -1201,10 +1214,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             const auto dataSelect = packet[2] >> 29u;
             const auto destination = address(packet[3], packet[4]);
             if (dataSelect == 0 || destination == 0) return;
-            std::uint64_t value = address(packet[5], packet[6]);
-            if (dataSelect == 3) {
-                value = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
-            }
+            const auto value = ReleaseMemValue(packet);
             GuestMemory::Write(destination, std::as_bytes(std::span(&value, 1)).first(dataSelect == 1 ? 4 : 8), dataSelect == 1 ? 4 : 8);
             return;
         }

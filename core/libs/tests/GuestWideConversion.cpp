@@ -1,9 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <bit>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -98,6 +101,26 @@ static void CheckDinkumwareConversions() {
     CheckConversion<long double>(_WStold_nid_postfix, u"-2.5e1", 3, -25000.0L, 6, 0, "_WStold scales by a power of ten");
 }
 
+template<typename TFloat>
+static void CheckDinkumwareNoConversion(TFloat (APS5_VABI *parse)(const char16_t*, char16_t**, std::int64_t)) {
+    const struct { const char16_t* text; bool negative; } cases[]{
+        {u"", false}, {u" ", false}, {u"z", false}, {u"+", false}, {u"+z", false},
+        {u"-", true}, {u"-z", true}, {u" \t-.", true}, {u"-i", false}, {u"-n", false},
+        {u"-+1", true}, {u"--1", true}, {u"- 5", true}, {u"\t-.", true}, {u"-\u3000", true}
+    };
+    for (const auto& test : cases) {
+        for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{-10}, std::int64_t{10}, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()}) {
+            for (const int saved : {0, ERANGE, 97}) for (const bool nullEnd : {false, true}) {
+                char16_t* end = nullptr;
+                *__error_nid_postfix() = saved;
+                const TFloat value = parse(test.text, nullEnd ? nullptr : &end, scale);
+                Require(value == 0 && std::signbit(value) == test.negative, "Dinkumware no-conversion zero sign");
+                Require((nullEnd || end == test.text) && *__error_nid_postfix() == saved, "Dinkumware no-conversion end and errno");
+            }
+        }
+    }
+}
+
 static void CheckClassification() {
     int (APS5_VABI* const classes[])(std::uint32_t) = {
         iswalnum_nid_postfix, iswalpha_nid_postfix, iswcntrl_nid_postfix, iswdigit_nid_postfix,
@@ -140,6 +163,15 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"0xg", u"%x", &value) == 0, "%x prefix without digits is a matching failure");
     void* pointer = nullptr;
     Require(swscanf_s_nid_postfix(u"0x7ffe12345678 5", u"%p%d", &pointer, &first) == 2 && reinterpret_cast<std::uintptr_t>(pointer) == 0x7ffe12345678u && first == 5, "%p takes no size");
+    int counted = -7;
+    Require(swscanf_s_nid_postfix(u"12 34", u"%d%*n%d", &first, &second) == 2 && first == 12 && second == 34, "%*n stores nothing and takes no argument");
+    Require(swscanf_s_nid_postfix(u"12 34", u"%d%5n%d", &first, &counted, &second) == 2 && counted == 2 && second == 34, "%n ignores a width");
+    Require(swscanf_s_nid_postfix(u"12345", u"%0d%n", &first, &counted) == 1 && first == 12345 && counted == 5, "a zero width is no width");
+    counted = -7;
+    first = -7;
+    Require(swscanf_s_nid_postfix(u"", u"%n%d", &counted, &first) == 0 && counted == 0 && first == -7, "%n before an input failure returns 0");
+    Require(swscanf_s_nid_postfix(u"  ", u"%*n%d", &first) == 0 && first == -7, "%*n before an input failure returns 0");
+    Require(swscanf_nid_postfix(u"", u"%n%d", &counted, &first) == 0, "swscanf %n before an input failure returns 0");
 
     char16_t text[6] = {u'?'};
     Require(swscanf_s_nid_postfix(u"hello world", u"%ls", text, std::size_t{6}) == 1 && std::u16string(text) == u"hello", "%ls fits");
@@ -203,6 +235,25 @@ static void CheckUnsizedScan() {
     Require(swscanf_nid_postfix(u"1e-5000", u"%Lf", &scannedLongDouble) == 1 && scannedLongDouble == 0 && errno == ERANGE, "swscanf sets ERANGE for an out-of-range long double");
     errno = 0;
     Require(swscanf_nid_postfix(u"1e-50", u"%e", &scannedFloat) == 1 && scannedFloat == 0 && errno == 0, "swscanf leaves errno alone for an underflowing float");
+    for (const char16_t* input : {u"1.2e4932", u"-1e5000", u"1e-4952"}) {
+        errno = 0;
+        Require(swscanf_nid_postfix(input, u"%f", &scannedFloat) == 1 && errno == ERANGE, "swscanf sets ERANGE for a float out of long double range");
+        errno = 0;
+        Require(swscanf_nid_postfix(input, u"%lf", &scannedDouble) == 1 && errno == ERANGE, "swscanf sets ERANGE for a double out of long double range");
+    }
+    errno = 0;
+    Require(swscanf_nid_postfix(u"1e4932", u"%lf", &scannedDouble) == 1 && std::isinf(scannedDouble) && errno == 0, "swscanf leaves errno alone inside long double range");
+    errno = 0;
+    Require(swscanf_nid_postfix(u"3e-4951", u"%Lf", &scannedLongDouble) == 1 && scannedLongDouble > 0 && errno == 0, "swscanf leaves errno alone for a subnormal long double");
+    errno = 0;
+    Require(swscanf_nid_postfix(u"0x1p16384", u"%Lf", &scannedLongDouble) == 1 && std::isinf(scannedLongDouble) && errno == 0, "swscanf leaves errno alone for a hexadecimal overflow");
+    for (const char16_t* input : {u"-nan", u"-NaN(123)"}) {
+        Require(swscanf_nid_postfix(input, u"%f", &scannedFloat) == 1 && std::bit_cast<std::uint32_t>(scannedFloat) == 0x7fc00000u, "swscanf stores the default float NaN");
+        Require(swscanf_nid_postfix(input, u"%lf", &scannedDouble) == 1 && std::bit_cast<std::uint64_t>(scannedDouble) == 0x7ff8000000000000ull, "swscanf stores the default double NaN");
+    }
+    unsigned char tenBytes[16];
+    std::memset(tenBytes, 0x55, sizeof(tenBytes));
+    Require(swscanf_nid_postfix(u"inf", u"%Lf", tenBytes) == 1 && tenBytes[9] == 0x7f && tenBytes[10] == 0x55 && tenBytes[15] == 0x55, "swscanf stores ten bytes for %Lf");
     Require(swscanf_nid_postfix(u"12345", u"%3d%d", &first, &second) == 2 && first == 123 && second == 45, "swscanf %d width");
     std::int64_t wide = 0;
     Require(swscanf_nid_postfix(u"5000000000", u"%ld", &wide) == 1 && wide == 5000000000LL, "swscanf %ld is 64-bit");
@@ -398,6 +449,9 @@ int main() {
     CheckShortCharacterFields();
     CheckStoul();
     CheckDinkumwareConversions();
+    CheckDinkumwareNoConversion(_WStod_nid_postfix);
+    CheckDinkumwareNoConversion(_WStof_nid_postfix);
+    CheckDinkumwareNoConversion(_WStold_nid_postfix);
     CheckClassification();
     CheckScan();
     CheckUnsizedScan();

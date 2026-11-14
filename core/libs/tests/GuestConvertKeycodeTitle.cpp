@@ -26,6 +26,15 @@ int main(int argc, char** argv) {
     if (sceConvertKeycodeGetCharacter(0, 0, 0, nullptr) != static_cast<int>(0x80BC0031u)) return 1;
     if (sceConvertKeycodeGetCharacter(0, 0, 0, &character) != static_cast<int>(0x80BC001Du)) return 1;
     if (sceConvertKeycodeGetCharacter(0, 0, 40, &character) != static_cast<int>(0x80BC001Du)) return 1;
+    KeyboardData validKeyData{};
+    validKeyData.length = 1;
+    validKeyData.key_code[0] = 4;
+    if (sceConvertKeycodeGetCharacterFromKeyboardData(nullptr, 0, 0, 1, &character) != static_cast<int>(0x80BC0031u)) return 1;
+    if (sceConvertKeycodeGetCharacterFromKeyboardData(&validKeyData, 0, 0, 1, nullptr) != static_cast<int>(0x80BC0031u)) return 1;
+    if (sceConvertKeycodeGetCharacterFromKeyboardData(&validKeyData, -1, 0, 1, &character) != static_cast<int>(0x80BC0030u)) return 1;
+    if (sceConvertKeycodeGetCharacterFromKeyboardData(&validKeyData, 1, 0, 1, &character) != static_cast<int>(0x80BC0030u)) return 1;
+    if (sceConvertKeycodeGetCharacterFromKeyboardData(&validKeyData, 0, 0, 0, &character) != static_cast<int>(0x80BC001Du)) return 1;
+    if (sceConvertKeycodeGetCharacterFromKeyboardData(&validKeyData, 0, 0, 40, &character) != static_cast<int>(0x80BC001Du)) return 1;
     if (sceConvertKeycodeGetImeKeyboardType(0x10000000, nullptr) != static_cast<int>(0x80BC0031u)) return 1;
     if (argc > 1 && std::strcmp(argv[1], "ps4") == 0) {
         constexpr int rejected = static_cast<int>(0x80BC001Du);

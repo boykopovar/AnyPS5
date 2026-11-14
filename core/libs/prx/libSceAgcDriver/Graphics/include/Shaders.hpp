@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <span>
 
 namespace AgcDriver::Graphics {
@@ -52,6 +54,10 @@ struct CompiledShader {
     const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews = nullptr;
 };
 
+inline std::uint32_t KeyedPushOffset(const CompiledShader& shader) {
+    return shader.program->pushConstants.empty() ? 0u : shader.pushConstantOffset;
+}
+
 inline VkShaderStageFlagBits VulkanStage(ShaderRecompiler::ShaderStage stage) {
     switch (stage) {
         case ShaderRecompiler::ShaderStage::Vertex:
@@ -92,8 +98,9 @@ inline VkShaderStageFlags PushConstantStages(std::span<const CompiledShader> sha
 }
 
 inline std::array<std::byte, PipelinePushConstantBytes> AssemblePushConstants(std::span<const CompiledShader> shaders) {
+    static_assert(PipelinePushConstantBytes % 4 == 0 && PipelinePushConstantBytes / 4 <= 64 && PipelinePushSlotBytes / 4 < 64, "the occupied mask holds one bit per DWORD of the block");
     std::array<std::byte, PipelinePushConstantBytes> result{};
-    std::array<bool, PipelinePushConstantBytes> occupied{};
+    std::uint64_t occupied = 0;
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         const auto& bytes = shader.program->pushConstants;
@@ -101,12 +108,10 @@ inline std::array<std::byte, PipelinePushConstantBytes> AssemblePushConstants(st
         Require(bytes.size() % 4 == 0 && shader.pushConstantOffset % 4 == 0, "shader push constant range is not DWORD aligned");
         Require(shader.pushConstantOffset < PipelinePushConstantBytes && bytes.size() <= PipelinePushConstantBytes - shader.pushConstantOffset, "shader push constant range lies outside the pipeline push constant block");
         Require(bytes.size() <= PipelinePushSlotBytes - shader.pushConstantOffset % PipelinePushSlotBytes, "shader push constant range crosses a push constant slot");
-        for (std::size_t i = 0; i < bytes.size(); ++i) {
-            const auto position = shader.pushConstantOffset + i;
-            Require(!occupied[position], "shader push constant ranges of different stages overlap");
-            occupied[position] = true;
-            result[position] = bytes[i];
-        }
+        const auto range = ((std::uint64_t{1} << (bytes.size() / 4)) - 1) << (shader.pushConstantOffset / 4);
+        Require((occupied & range) == 0, "shader push constant ranges of different stages overlap");
+        occupied |= range;
+        std::memcpy(result.data() + shader.pushConstantOffset, bytes.data(), bytes.size());
     }
     return result;
 }

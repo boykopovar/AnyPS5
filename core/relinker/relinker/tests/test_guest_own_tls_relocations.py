@@ -16,12 +16,12 @@ TPOFF64 = 18
 TEMPLATE = 0x2780
 
 
-def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, section=0, symbol=3, tls_memory=16):
+def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, section=0, symbol=3, tls_memory=16, name=0):
     image = module([(TARGET, (symbol << 32) | kind, addend)], sce=sce)
     struct.pack_into("<I", image, 0x2244, 4)
     if sce:
         change_tag(image, 4, 4 * 24, 0x6100003f)
-    struct.pack_into("<IBBHQQ", image, 0x2280 + 3 * 24, 0, info, 0, section, value, 0)
+    struct.pack_into("<IBBHQQ", image, 0x2280 + 3 * 24, name, info, 0, section, value, 0)
     if tls:
         count, = struct.unpack_from("<H", image, 56)
         struct.pack_into("<H", image, 56, count + 1)
@@ -88,7 +88,15 @@ def main():
                                 ("notype", fixture(sce, info=0)),
                                 ("dtpmod-addend", fixture(sce, addend=4)),
                                 ("tpoff", fixture(sce, kind=TPOFF64)),
-                                ("absolute-section", fixture(sce, section=0xfff1))):
+                                ("absolute-section", fixture(sce, section=0xfff1)),
+                                ("unnamed-global", fixture(sce, info=0x16)),
+                                ("unnamed-weak", fixture(sce, info=0x26)),
+                                ("unnamed-global-dtpoff", fixture(sce, info=0x16, kind=DTPOFF64, addend=4)),
+                                ("unnamed-weak-dtpoff", fixture(sce, info=0x26, kind=DTPOFF64, addend=4)),
+                                ("unnamed-global-tpoff", fixture(sce, info=0x16, kind=TPOFF64, addend=4)),
+                                ("unnamed-weak-tpoff", fixture(sce, info=0x26, kind=TPOFF64, addend=4)),
+                                ("suffix-only-global", fixture(sce, info=0x16, name=9)),
+                                ("suffix-only-weak-dtpoff", fixture(sce, info=0x26, kind=DTPOFF64, addend=4, name=9))):
                 result, artifact, output = convert(f"{sce}-{name}", "linux", image)
                 assert result.returncode == 2 and "Invalid guest TLS relocation" in result.stderr, (sce, name, result.stderr)
                 assert not artifact.exists() and not output.exists(), name

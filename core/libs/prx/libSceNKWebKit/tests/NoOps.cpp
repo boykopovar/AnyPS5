@@ -18,6 +18,7 @@ static void Check(bool value, int line) {
 
 int main() {
     const auto before = NotImplementedCalls_nid_no_patch();
+    JSRemoteInspectorSetParentProcessInformation();
     WKAddMockMediaDevice();
     WKBundleExtendClassesForParameterCoder();
     WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled();
@@ -117,6 +118,7 @@ int main() {
     _ZN7WebCore30InvertLightnessFilterOperationD2Ev();
     _ZN7WebCore31BasicColorMatrixFilterOperationD1Ev();
     _ZN7WebCore31BasicColorMatrixFilterOperationD2Ev();
+    _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv();
     _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev();
     _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev();
     _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev();

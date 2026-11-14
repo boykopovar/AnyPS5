@@ -407,6 +407,18 @@ static void CheckEndedThreads() {
         CheckPosixQuery(detached, GUEST_ESRCH);
     }
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
+
+    Pthread adopted = nullptr;
+    std::int64_t adoptedId = 0;
+    std::thread([&adopted, &adoptedId] {
+        adopted = scePthreadSelf();
+        adoptedId = pthread_getthreadid_np_nid_postfix();
+    }).join();
+    Require(adopted != nullptr && ReportedEnded(adopted));
+    CheckPosixQuery(adopted, GUEST_ESRCH);
+    KernelCpumask adoptedMask = 0;
+    *__error_nid_postfix() = 0;
+    Require(cpuset_getaffinity_nid_postfix(3, 1, adoptedId, sizeof(adoptedMask), &adoptedMask) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
 }
 
 static void CheckGetprioOfTheCallingThread() {
@@ -513,8 +525,31 @@ static void CheckBadPointers() {
     }
 }
 
+static void CheckGetNpPointers() {
+    constexpr int GUEST_EFAULT = 14;
+    const Pthread self = scePthreadSelf();
+    const Pthread unknown = reinterpret_cast<Pthread>(0x10);
+    GuardPage page;
+    PthreadAttr* const bad[] = {reinterpret_cast<PthreadAttr*>(0x10), static_cast<PthreadAttr*>(page.Unreadable())};
+    PthreadAttr valid = nullptr;
+    Require(scePthreadAttrInit(&valid) == SCE_OK);
+    PthreadAttr unset = nullptr;
+    for (PthreadAttr* pointer : bad) {
+        Require(pthread_attr_get_np_nid_postfix(self, pointer) == GUEST_EFAULT);
+        Require(pthread_attr_get_np_nid_postfix(unknown, pointer) == GUEST_EFAULT);
+        Require(pthread_attr_get_np_nid_postfix(nullptr, pointer) == GUEST_EINVAL);
+    }
+    Require(pthread_attr_get_np_nid_postfix(self, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(self, &unset) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(nullptr, &valid) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(unknown, &valid) == GUEST_ESRCH);
+    Require(pthread_attr_get_np_nid_postfix(self, &valid) == 0);
+    Require(scePthreadAttrDestroy(&valid) == SCE_OK);
+}
+
 int main() {
     CheckBadPointers();
+    CheckGetNpPointers();
     CheckGetprioOfTheCallingThread();
     CheckStackSizeLimit();
     CheckGuardSize();

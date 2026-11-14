@@ -60,16 +60,19 @@ struct DrawInputCopy {
     std::shared_ptr<Buffer> buffer;
     bool reused = false;
     std::uint32_t derived = 0;
+    std::uint32_t lowest = 0;
+    std::size_t from = 0;
     std::uint64_t generation = 0;
     std::uint64_t registryGeneration = 0;
     Recorder::OwnedDrawInputProof owned;
 };
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use);
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from = 0);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
-void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived);
+void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest = 0);
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr);
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
+    std::uint32_t lowest = 0;
     bool reused = false;
 };
 InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool skipRestart);
@@ -176,6 +179,12 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
 std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
 bool DrawPipelineEnabled();
 bool CommitTrims();
+struct FragmentOutputLookups {
+    std::uint64_t last = 0;
+    std::uint64_t memo = 0;
+    std::uint64_t validated = 0;
+};
+FragmentOutputLookups ThreadFragmentOutputLookups();
 enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, PatchedData, SpaceChanged, InUse, Revalidation, Count };
 using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
 AddressDrawReuseCounts AddressDrawReuseCounters();
