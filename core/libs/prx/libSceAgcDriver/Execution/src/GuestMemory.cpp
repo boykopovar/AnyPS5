@@ -3571,12 +3571,12 @@ void visitReadablePages(std::byte* destination, std::uint64_t source, std::size_
 
 void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_t bytes) {
 #ifdef _WIN32
-    if (GuestArena::GuestArenaCopyOwned_nid_no_patch(source, destination, bytes)) return;
     splitKnownZero(static_cast<std::uintptr_t>(source), bytes, [&](std::size_t at, std::size_t length, bool zero) {
         if (zero) {
             std::memset(destination + at, 0, length);
             return;
         }
+        if (GuestArena::GuestArenaCopyOwned_nid_no_patch(source + at, destination + at, length)) return;
         visitReadablePages(destination + at, source + at, length, [&](std::size_t offset, std::size_t count, bool read) {
             if (!read) std::memset(destination + at + offset, 0, count);
         });
@@ -3588,8 +3588,6 @@ void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_
 
 bool equalsCommittedBytes(std::uint64_t address, const std::byte* expected, std::size_t bytes) {
 #ifdef _WIN32
-    bool same = false;
-    if (GuestArena::GuestArenaCompareOwned_nid_no_patch(address, expected, bytes, &same)) return same;
     constexpr std::size_t ChunkBytes = 64 * PageBytes;
     struct CompareChunkStorage {};
     auto& current = HostThreadLocal<std::vector<std::byte>, CompareChunkStorage>();
@@ -3599,6 +3597,11 @@ bool equalsCommittedBytes(std::uint64_t address, const std::byte* expected, std:
         if (!equal) return;
         if (zero) {
             equal = zeroBytes(expected + at, span);
+            return;
+        }
+        bool same = false;
+        if (GuestArena::GuestArenaCompareOwned_nid_no_patch(address + at, expected + at, span, &same)) {
+            equal = same;
             return;
         }
         for (std::size_t done = at; equal && done < at + span; done += ChunkBytes) {
