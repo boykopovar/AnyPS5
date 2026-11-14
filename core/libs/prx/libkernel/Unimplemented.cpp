@@ -3,6 +3,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 
 extern "C" {
 
@@ -141,6 +142,34 @@ int APS5_VABI sceKernelProtectDirectMemoryForPID(int64_t offset, size_t len, int
 int APS5_VABI sceKernelGetResidentFmemCount(int pid, uint64_t* resident, uint64_t* mapped) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceKernelStreamWriteActivate(void) {
+    return SCE_KERNEL_ERROR_EBADF;
+}
+
+int APS5_VABI sceKernelStreamWriteCreate(void) {
+    return SCE_KERNEL_ERROR_ENOSYS;
+}
+
+int APS5_VABI sceKernelStreamWriteDeactivate(void) {
+    return SCE_KERNEL_ERROR_EBADF;
+}
+
+int APS5_VABI sceKernelStreamWriteDelete(void) {
+    return SCE_KERNEL_ERROR_EBADF;
+}
+
+int APS5_VABI sceKernelStreamWriteRead(void) {
+    return SCE_KERNEL_ERROR_EBADF;
+}
+
+int APS5_VABI sceKernelStreamWriteStat(void) {
+    return SCE_KERNEL_ERROR_EBADF;
+}
+
+int APS5_VABI sceKernelStreamWriteWrite(void) {
+    return SCE_KERNEL_ERROR_EBADF;
 }
 
 }
