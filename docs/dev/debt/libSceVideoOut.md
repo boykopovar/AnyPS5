@@ -315,3 +315,6 @@
 
 - [PadInput](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) - a `PAD:` chord fires its emulator action and its buttons still reach the title's pad state. Masking the chord buttons while the chord is held is not done, so a chord that uses a button the title needs also reaches the title.
 - [PadInput](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) - `PAD:` chords are evaluated on controller button events only and are not dispatched while the IME or a modal dialog captures input.
+### Host input mapping gaps
+
+- [InputMapping](../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp) - the file watch compares modification time and size, so a rewrite that keeps both is not seen; the stamp is taken when the watch thread starts, so a change made between the initial load and that start is not reloaded until the next change.

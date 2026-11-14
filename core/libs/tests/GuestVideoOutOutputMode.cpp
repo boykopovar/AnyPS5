@@ -46,6 +46,8 @@ int main() {
         for (int unopened : {-1, 0, 1, 0x7FFFFFFF}) {
             Require(sceVideoOutIsOutputSupported(unopened, 1, &options, nullptr, 0) == INVALID_HANDLE);
             Require(sceVideoOutIsOutputSupported(unopened, 2, nullptr, &options, 1) == INVALID_HANDLE);
+            Require(sceVideoOutConfigureOutput(unopened, 1, &options, nullptr, 0) == INVALID_HANDLE);
+            Require(sceVideoOutConfigureOutput(unopened, 2, nullptr, &options, 1) == INVALID_HANDLE);
         }
         handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
     } catch (const std::runtime_error& error) {
@@ -66,6 +68,7 @@ int main() {
     }
     for (std::uint64_t mode : {0x0ull, 0x2ull, 0x3ull, 0x5ull, 0x6ull, 0x9ull, 0xAull, 0xBull, 0x14ull, 0x20ull, 0x3Full, 0x100ull, 0xD000000Aull, 0x8000000000000001ull, ~0ull}) {
         Require(sceVideoOutIsOutputSupported(handle, mode, &options, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
+        Require(sceVideoOutConfigureOutput(handle, mode, &options, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
     }
     for (std::uint64_t mode : {0x20001ull, 0x2000Cull, 0x2000Dull, 0x2000Eull, 0x2000Full, 0x20010ull}) {
         Require(sceVideoOutIsOutputSupported(handle, mode, nullptr, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
@@ -82,21 +85,40 @@ int main() {
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, &options, 0) == INVALID_VALUE);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 1) == INVALID_VALUE);
     Require(sceVideoOutIsOutputSupported(handle, 2, &options, nullptr, 1) == INVALID_VALUE);
+    Require(sceVideoOutConfigureOutput(handle, 1, &options, &options, 0) == INVALID_VALUE);
+    Require(sceVideoOutConfigureOutput(handle, 1, &options, nullptr, 1) == INVALID_VALUE);
+    Require(sceVideoOutConfigureOutput(handle, 2, &options, nullptr, 1) == INVALID_VALUE);
     VideoOutOutputOptions zeroed{};
     Require(sceVideoOutIsOutputSupported(handle, 1, &zeroed, nullptr, 0) == INVALID_VALUE);
     Require(sceVideoOutIsOutputSupported(handle, 2, &zeroed, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
     Require(sceVideoOutIsOutputSupported(handle, 4, &zeroed, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
+    Require(sceVideoOutConfigureOutput(handle, 1, &zeroed, nullptr, 0) == INVALID_VALUE);
+    Require(sceVideoOutConfigureOutput(handle, 2, &zeroed, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
+    Require(sceVideoOutConfigureOutput(handle, 4, &zeroed, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
     for (std::size_t word = 0; word < 16; ++word) {
         VideoOutOutputOptions changed = options;
         changed.internalData[word] ^= 1;
         Require(sceVideoOutIsOutputSupported(handle, 1, &changed, nullptr, 0) == (word == 3 ? 1 : INVALID_VALUE));
+        Require(sceVideoOutConfigureOutput(handle, 1, &changed, nullptr, 0) == (word == 3 ? 0 : INVALID_VALUE));
     }
     VideoOutOutputOptions freeWord = options;
     freeWord.internalData[3] = 0xFFFFFFFF;
     Require(sceVideoOutIsOutputSupported(handle, 1, &freeWord, nullptr, 0) == 1);
+    Require(sceVideoOutConfigureOutput(handle, 1, &freeWord, nullptr, 0) == 0);
     Require(sceVideoOutConfigureOutput(handle, 1, &options, nullptr, 0) == 0);
+
+    VideoOutOutputStatus modeStatus{};
+    VideoOutResolutionStatus modeResolution{};
+    Require(sceVideoOutGetOutputStatus(handle, &modeStatus) == 0);
+    Require(sceVideoOutGetResolutionStatus(handle, &modeResolution) == 0);
+    Require(modeStatus.refreshRate == 3);
+    Require(modeResolution.refreshRate == 3);
+    Require(modeResolution.fullWidth == 1920 && modeResolution.fullHeight == 1080);
+    Require(modeStatus.resolution == 1 || modeStatus.resolution == 2);
+    Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 0) == 0);
 
     Require(sceVideoOutClose(handle) == 0);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == INVALID_HANDLE);
+    Require(sceVideoOutConfigureOutput(handle, 1, &options, nullptr, 0) == INVALID_HANDLE);
     LibcRunShutdown_nid_postfix();
 }

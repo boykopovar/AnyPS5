@@ -6199,6 +6199,15 @@ CopyStats& Copies() {
 // region takes the path it would take without staging (Region::unstaged).
 std::atomic<bool> deviceLocalFullForTests{false};
 
+std::atomic<std::uint64_t> liveShadowBytes{0};
+std::atomic<std::uint64_t> liveShadowLimit{std::numeric_limits<std::uint64_t>::max()};
+
+std::uint64_t shadowBytesLimit(std::uint64_t heapBytes) {
+    static const char* const setting = std::getenv("APS5_STAGING_SHADOW_MAX_MIB");
+    if (setting != nullptr) return std::strtoull(setting, nullptr, 10) << 20u;
+    return std::max<std::uint64_t>(std::uint64_t{256} << 20u, heapBytes / 16u);
+}
+
 bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
     if (deviceLocalFullForTests.load(std::memory_order_relaxed)) return false;
     static std::atomic<std::int64_t> checkedMs{std::numeric_limits<std::int64_t>::min()};
@@ -6214,18 +6223,26 @@ bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
         const auto budget = reported.heapBudget[heap];
         const auto usage = reported.heapUsage[heap];
         room.store(budget == 0 ? std::numeric_limits<std::uint64_t>::max() : usage + budget / 8u < budget ? budget - budget / 8u - usage : 0u, std::memory_order_relaxed);
+        liveShadowLimit.store(shadowBytesLimit(budget != 0 ? budget : context.memory.memoryHeaps[heap].size), std::memory_order_relaxed);
         checkedMs.store(nowMs, std::memory_order_relaxed);
     }
     return bytes <= room.load(std::memory_order_relaxed);
 }
 
 std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes, VkBufferUsageFlags usage) {
-    if (!deviceLocalHasRoom(context, bytes)) {
+    if (!deviceLocalHasRoom(context, bytes) || liveShadowBytes.load(std::memory_order_relaxed) + bytes > liveShadowLimit.load(std::memory_order_relaxed)) {
         Copies().stagingRefused.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
     try {
-        if (auto buffer = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage)) return buffer;
+        if (auto buffer = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage)) {
+            liveShadowBytes.fetch_add(bytes, std::memory_order_relaxed);
+            auto* shadow = buffer.get();
+            return std::shared_ptr<Buffer>(shadow, [owner = std::move(buffer), bytes](Buffer*) mutable {
+                owner.reset();
+                liveShadowBytes.fetch_sub(bytes, std::memory_order_relaxed);
+            });
+        }
         static std::atomic<int> reported{0};
         if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[buffers] staging shadow of %zu bytes refused: its device-local heap is within an eighth of its budget\n", bytes);
         Copies().stagingRefused.fetch_add(1, std::memory_order_relaxed);
@@ -6291,7 +6308,7 @@ void reportStaging() {
     const auto staged = stats.staged.load();
     const auto in = stats.stagedInBytes.load();
     const auto out = stats.stagedOutBytes.load();
-    AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging: %llu regions staged device-local (%llu with atomics, %llu of reused builds), %.0f KiB copied in, %.0f KiB copied back, %llu without copy-back, %llu shadows refused; last 10 s: %llu regions, %.0f KiB in, %.0f KiB back\n", static_cast<unsigned long long>(staged), static_cast<unsigned long long>(stats.stagedAtomic.load()), static_cast<unsigned long long>(stats.stagedReused.load()), in / 1024.0, out / 1024.0, static_cast<unsigned long long>(stats.stagedLost.load()), static_cast<unsigned long long>(stats.stagingRefused.load()), static_cast<unsigned long long>(staged - lastStaged), (in - lastIn) / 1024.0, (out - lastOut) / 1024.0);
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging: %llu regions staged device-local (%llu with atomics, %llu of reused builds), %.0f KiB copied in, %.0f KiB copied back, %llu without copy-back, %llu shadows refused, %llu MiB in live shadows (limit %llu MiB); last 10 s: %llu regions, %.0f KiB in, %.0f KiB back\n", static_cast<unsigned long long>(staged), static_cast<unsigned long long>(stats.stagedAtomic.load()), static_cast<unsigned long long>(stats.stagedReused.load()), in / 1024.0, out / 1024.0, static_cast<unsigned long long>(stats.stagedLost.load()), static_cast<unsigned long long>(stats.stagingRefused.load()), static_cast<unsigned long long>(liveShadowBytes.load() >> 20u), static_cast<unsigned long long>(liveShadowLimit.load() >> 20u), static_cast<unsigned long long>(staged - lastStaged), (in - lastIn) / 1024.0, (out - lastOut) / 1024.0);
     lastStaged = staged;
     lastIn = in;
     lastOut = out;

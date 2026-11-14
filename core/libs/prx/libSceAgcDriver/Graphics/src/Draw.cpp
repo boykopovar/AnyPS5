@@ -21,6 +21,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -739,7 +740,7 @@ constexpr std::array<const char*, PhaseCount> DrawPhaseNames{"validate", "vertex
 enum SyncReason : std::size_t { SyncNone, SyncNotResident, SyncNoRecorder, SyncDisabled, SyncCopiedWrites, SyncLease, SyncCount };
 constexpr std::array<const char*, SyncCount> SyncReasonNames{"none", "non-resident target", "no recorder", "disabled", "copied writes", "lease"};
 constexpr std::size_t IndirectPathCount = static_cast<std::size_t>(IndirectDrawPath::Count);
-constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown"};
+constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown", "records settled"};
 
 // What became of one draw, for the totals.
 struct DrawOutcome {
@@ -1163,35 +1164,55 @@ std::vector<std::uint64_t>& validationKeyScratch() {
     return key;
 }
 
+struct LastFragmentOutputs {
+    std::vector<std::uint64_t> key;
+    std::uint32_t outputs = 0;
+    bool valid = false;
+    FragmentOutputLookups lookups;
+};
+
+struct LastFragmentOutputsTag {};
+
+bool LastFragmentOutputsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_LAST_FRAGMENT_OUTPUTS") == nullptr;
+    return enabled;
+}
+
 std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const CompiledShader> shaders, const State& state, bool& memoized, bool& hit) {
     memoized = false;
     hit = false;
     auto& key = validationKeyScratch();
     const bool keyed = ValidationKey(context, shaders, state, key);
     static std::map<std::vector<std::uint64_t>, std::uint32_t> memo;
-    struct LastKeyStorage {};
-    auto& lastKey = HostThreadLocal<std::vector<std::uint64_t>, LastKeyStorage>();
-    thread_local std::uint32_t lastOutputs = 0;
-    thread_local bool lastValid = false;
-    const bool trims = keyed && CommitTrims();
-    if (trims && lastValid && key == lastKey) {
+    auto& last = ThreadScratch<LastFragmentOutputs, LastFragmentOutputsTag>();
+    const bool remembers = keyed && LastFragmentOutputsEnabled();
+    if (remembers && last.valid && key == last.key) {
         memoized = true;
         hit = true;
-        return lastOutputs;
+        ++last.lookups.last;
+        return last.outputs;
     }
+    const auto remember = [&](std::uint32_t outputs) {
+        if (!remembers) return;
+        last.key = key;
+        last.outputs = outputs;
+        last.valid = true;
+    };
     if (keyed) {
         memoized = true;
-        std::lock_guard lock(validationMutex());
-        if (const auto found = memo.find(key); found != memo.end()) {
+        std::optional<std::uint32_t> found;
+        {
+            std::lock_guard lock(validationMutex());
+            if (const auto entry = memo.find(key); entry != memo.end()) found = entry->second;
+        }
+        if (found) {
             hit = true;
-            if (trims) {
-                lastKey = key;
-                lastOutputs = found->second;
-                lastValid = true;
-            }
-            return found->second;
+            ++last.lookups.memo;
+            remember(*found);
+            return *found;
         }
     }
+    ++last.lookups.validated;
     std::uint32_t outputs = 0;
     try {
         for (const auto location : ValidateShaders(shaders, state, context.subgroup, context.fragmentShaderBarycentric, context.descriptorIndexing, context.imageInt64Atomics, context.geometryShader, context.sampleRateShading, context.bufferInt64Atomics, context.shaderClipDistance, context.shaderCullDistance, context.viewportIndexLayer, context.runtimeDescriptorArray, context.demoteToHelperInvocation, context.shaderTerminateInvocation, context.meshShader, context.shaderResourceMinLod, context.fmaFloat16)) {
@@ -1213,6 +1234,7 @@ std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const Comp
         if (memo.size() >= 1024) memo.clear();
         memo.emplace(key, outputs);
     }
+    remember(outputs);
     return outputs;
 }
 
@@ -3566,6 +3588,8 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) return IndirectDrawPath::PendingLabelOrCopy;
             if (std::any_of(DrawCopiedWriters()->begin(), DrawCopiedWriters()->end(), overlaps)) return IndirectDrawPath::PendingLabelOrCopy;
             if ((import = HostImportFor(context, address, bytes)) == nullptr) return IndirectDrawPath::NotImported;
+            static const bool settledReads = std::getenv("APS5_NO_SETTLED_INDIRECT_READ") == nullptr;
+            if (settledReads && recorder != nullptr && recorder->PendingWriteSettled(address, bytes)) return IndirectDrawPath::Settled;
             return IndirectDrawPath::Gpu;
         };
         const auto rangeBytes = args->RangeBytes();
@@ -3579,7 +3603,8 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         else indirect.path = decide(args->arguments, static_cast<std::size_t>(rangeBytes), indirect.argumentImport);
         if (indirect.path == IndirectDrawPath::Gpu && args->countIndirect) {
             Require(context.drawIndirectCount, "indirect draw count without VK_KHR_draw_indirect_count must be resolved by the driver");
-            indirect.path = decide(args->countAddress, 4, indirect.countImport);
+            const auto countPath = decide(args->countAddress, 4, indirect.countImport);
+            if (countPath != IndirectDrawPath::Settled) indirect.path = countPath;
         }
         if (indirect.path != IndirectDrawPath::Gpu) {
             // The reads wait for the producing batch through the flush hook, as the driver's
@@ -4489,6 +4514,10 @@ bool DrawPipelineEnabled() {
 
 bool CommitTrims() {
     return DrawPipelineEnabled();
+}
+
+FragmentOutputLookups ThreadFragmentOutputLookups() {
+    return ThreadScratch<LastFragmentOutputs, LastFragmentOutputsTag>().lookups;
 }
 
 

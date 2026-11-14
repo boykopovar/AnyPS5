@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -422,6 +423,14 @@ int main() {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
     }
     VerifyLoggedInUser(USER_SERVICE_INITIAL_USER_ID);
+
+    bool spartacus = false;
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, &spartacus) == USER_SERVICE_OK);
+    Require(spartacus);
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<bool*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 
     return 0;
 }
