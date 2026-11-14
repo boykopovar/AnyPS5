@@ -426,6 +426,25 @@ void gcnTilingTests() {
         Require(ColorTargetLayout(100u, 4u, ColorTileMode::GcnLinear, 16u).Bytes() == 104u * 4u * 16u, "a PS4 linear-aligned 128-bit target row is not padded to 8 elements");
         Require(ColorTargetLayout(100u, 4u, ColorTileMode::Linear, 4u).Bytes() == 128u * 4u * 4u, "a PS5 linear target row is not padded to 256 bytes");
     }
+    for (const auto mode : {ColorTileMode::GcnDisplay2D, ColorTileMode::GcnThin2D}) {
+        for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+            const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytes);
+            const auto width = geometry.blockWidth * 2u;
+            const auto height = geometry.blockHeight;
+            for (std::uint32_t slice = 0; slice < 6u; ++slice) {
+                const ColorTargetLayout layout(width, height, mode, bytes, GcnLayerBankXor(geometry, slice));
+                for (std::uint32_t y = 0; y < height; ++y) {
+                    for (std::uint32_t x = 0; x < width; ++x) {
+                        const auto expected = referenceGcnAddress(ColorTextureTileMode(mode), bytes, width, height, x, y, slice);
+                        if (layout.Offset(x, y) != expected) Require(false, "PS4 color tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes places element " + std::to_string(x) + "," + std::to_string(y) + " of array slice " + std::to_string(slice) + " at " + std::to_string(layout.Offset(x, y)) + ", addrlib places it at " + std::to_string(expected));
+                    }
+                }
+            }
+        }
+    }
+    reject([] { ColorTargetLayout(64u, 64u, ColorTileMode::GcnThin1D, 4u, 1u << 11u); }, "bank bits of a 2D-tiled mode");
+    reject([] { ColorTargetLayout(128u, 64u, ColorTileMode::GcnThin2D, 4u, 1u << 8u); }, "bank bits of a 2D-tiled mode");
+    reject([] { ColorTargetLayout(64u, 4u, ColorTileMode::GcnLinear, 4u, 1u << 11u); }, "whole 256-byte units of XOR swizzle blocks");
 }
 
 bool sameMip(const TileMipLayout& a, const TileMipLayout& b) {
