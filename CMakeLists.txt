@@ -745,6 +745,10 @@ if(BUILD_TESTING)
         add_test(NAME trace_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_timeline.py)
         set_tests_properties(trace_timeline PROPERTIES TIMEOUT 60)
+
+        add_test(NAME trace_diff COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_diff.py)
+        set_tests_properties(trace_diff PROPERTIES TIMEOUT 60)
         set(trace_digest_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${trace_digest_test_source}")
         file(STRINGS "${trace_digest_test_source}" trace_digest_cases REGEX "^class |^    def test_")
