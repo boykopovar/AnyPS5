@@ -16,6 +16,8 @@ on:
       - tools/progress_prs.py
       - tools/pr_overlap.py
       - tools/shader_scan.py
+      - tools/isa_profiles.py
+      - tools/gfx1013_isa_forms.txt
       - tools/rdna2_isa_forms.txt
       - tools/progress_history.py
       - tools/rdna_isa.txt
