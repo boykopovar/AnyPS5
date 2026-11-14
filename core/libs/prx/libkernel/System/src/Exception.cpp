@@ -1479,13 +1479,17 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
 int APS5_VABI sceKernelDebugRaiseException(int c1, int c2) {
     APS5_LOG_OUT("sceKernelDebugRaiseException c1=0x%08x c2=0x%08x caller=%p", static_cast<unsigned>(c1), static_cast<unsigned>(c2), __builtin_return_address(0));
     if (c2 != 0) return SCE_KERNEL_ERROR_EINVAL;
-    throw std::runtime_error("sceKernelDebugRaiseException: an unconsumed debug exception terminates the process");
+    char code[9];
+    *AppendHex(code, static_cast<std::uint32_t>(c1), 8) = '\0';
+    throw std::runtime_error(std::string("sceKernelDebugRaiseException c1=0x") + code + ": an unconsumed debug exception terminates the process");
 }
 
 int APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2) {
     APS5_LOG_OUT("sceKernelDebugRaiseExceptionOnReleaseMode c1=0x%08x c2=0x%08x caller=%p", static_cast<unsigned>(c1), static_cast<unsigned>(c2), __builtin_return_address(0));
     if (c2 != 0) return SCE_KERNEL_ERROR_EINVAL;
-    throw std::runtime_error("sceKernelDebugRaiseExceptionOnReleaseMode: an unconsumed debug exception terminates the process");
+    char code[9];
+    *AppendHex(code, static_cast<std::uint32_t>(c1), 8) = '\0';
+    throw std::runtime_error(std::string("sceKernelDebugRaiseExceptionOnReleaseMode c1=0x") + code + ": an unconsumed debug exception terminates the process");
 }
 
 }

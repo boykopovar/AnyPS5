@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <exception>
 #include <initializer_list>
+#include <string>
 
 static void APS5_VABI Handler(int, void*) {}
 static void APS5_VABI Other(int, void*) {}
@@ -30,15 +31,15 @@ int main() {
     bool threw = false;
     try {
         sceKernelDebugRaiseException(0xa0020001, 0);
-    } catch (const std::exception&) {
-        threw = true;
+    } catch (const std::exception& error) {
+        threw = std::string(error.what()).find("c1=0xa0020001") != std::string::npos;
     }
     Require(threw);
     threw = false;
     try {
         sceKernelDebugRaiseExceptionOnReleaseMode(0xa0020001, 0);
-    } catch (const std::exception&) {
-        threw = true;
+    } catch (const std::exception& error) {
+        threw = std::string(error.what()).find("c1=0xa0020001") != std::string::npos;
     }
     Require(threw);
 }
