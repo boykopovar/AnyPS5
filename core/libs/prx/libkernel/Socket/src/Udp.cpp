@@ -2103,7 +2103,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
         if (length > INT_MAX) return Fail(40);
-        if ((!buffer && length) || (address && !addressLength)) return Fail(14);
+        if (!buffer && length) return Fail(14);
         unsigned char name[28]{};
         std::uint32_t reported = std::min<std::uint32_t>(capacity, sizeof(name));
         int error = 0;
@@ -2116,7 +2116,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
-    if ((!buffer && length) || (address && !addressLength)) return Fail(14);
+    if (!buffer && length) return Fail(14);
     const GuestArena::HostWrite destination(length == 0 ? nullptr : buffer, static_cast<std::size_t>(length));
     if (!destination.Open()) return Fail(14);
     if (const int answered = ReceiveAnsweredHere(*socket, length); answered >= 0) {
