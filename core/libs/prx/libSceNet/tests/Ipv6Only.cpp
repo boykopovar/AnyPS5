@@ -44,11 +44,11 @@ static void Exercise(int descriptor) {
         Require(sceNetSetsockopt(descriptor, 41, 27, &enabled, length) == static_cast<int>(0x80410116u) && *sceNetErrnoLoc() == 22);
         RequireOption(descriptor, 1);
     }
-    Require(sceNetSetsockopt(descriptor, 41, 27, nullptr, sizeof(enabled)) == static_cast<int>(0x80410116u) && *sceNetErrnoLoc() == 22);
+    Require(sceNetSetsockopt(descriptor, 41, 27, nullptr, sizeof(enabled)) == static_cast<int>(0x8041010eu) && *sceNetErrnoLoc() == 14);
     RequireOption(descriptor, 1);
     std::uint32_t length = sizeof(enabled);
     int output = 0;
-    Require(sceNetGetsockopt(descriptor, 41, 27, &output, nullptr) == static_cast<int>(0x80410116u) && *sceNetErrnoLoc() == 22);
+    Require(sceNetGetsockopt(descriptor, 41, 27, &output, nullptr) == static_cast<int>(0x8041010eu) && *sceNetErrnoLoc() == 14);
     Require(sceNetGetsockopt(-1, 41, 27, &output, &length) == static_cast<int>(0x80410109u) && *sceNetErrnoLoc() == 9);
     Require(sceNetSetsockopt(-1, 41, 27, &enabled, sizeof(enabled)) == static_cast<int>(0x80410109u) && *sceNetErrnoLoc() == 9);
     Require(sceNetGetsockopt(descriptor, 41, 28, &output, &length) == static_cast<int>(0x8041012au) && *sceNetErrnoLoc() == 42);
@@ -134,6 +134,10 @@ static void ExerciseGuestOutputs() {
         };
         for (const std::uint32_t capacity : {0u, 1u, 2u, 3u, 4u, 5u, 8u, UINT32_MAX}) {
             reset(capacity);
+            if (net && capacity == UINT32_MAX) {
+                Require(get(output, length) == static_cast<int>(0x80410116u) && *error == 22 && *length == capacity);
+                continue;
+            }
 #ifdef _WIN32
             std::array<void*, 32> written{};
             std::size_t count = written.size();
@@ -158,10 +162,10 @@ static void ExerciseGuestOutputs() {
         reset(0);
         Require(get(data + page, length) == 0 && *length == 0 && data[page] == 0xa5);
         const int failure = net ? static_cast<int>(0x8041010eu) : -1;
-        reset(4);
+        reset(8);
         Require(sceKernelMprotect(data, page, 1) == 0);
         Require(get(output, length) == failure && *error == 14);
-        Require(*length == 4 && std::all_of(output, output + sizeof(int), [](unsigned char value) { return value == 0xa5; }));
+        Require(*length == 8 && std::all_of(output, output + sizeof(int), [](unsigned char value) { return value == 0xa5; }));
         Require(sceKernelMprotect(data, page, 3) == 0);
         reset(8);
         Require(sceKernelMprotect(data + page * 2, page, 1) == 0);

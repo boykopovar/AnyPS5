@@ -15,6 +15,7 @@
 #include "prx/libkernel/Socket/include/SocketError.hpp"
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -166,9 +167,15 @@ int ReadValue(void* destination, const void* source, std::size_t bytes) {
 }
 
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
-    const std::uint32_t count = output ? std::min(*length, size) : 0;
-    if (count != 0 && !GuestCopyOut_nid_no_patch(output, value, count)) return ErrorFault;
+    std::uint32_t capacity = 0;
+    if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return ErrorFault;
+    const std::uint32_t count = output ? std::min(capacity, size) : 0;
+    const GuestArena::HostWrite lengthWrite(length, sizeof(count));
+    const GuestArena::HostWrite valueWrite(output, count);
+    if (!lengthWrite.Open() || !valueWrite.Open() || !GuestWritable_nid_no_patch(length, sizeof(count)) ||
+        !GuestWritable_nid_no_patch(output, count)) return ErrorFault;
     if (!GuestCopyOut_nid_no_patch(length, &count, sizeof(count))) return ErrorFault;
+    if (count != 0 && !GuestCopyOut_nid_no_patch(output, value, count)) return ErrorFault;
     return 0;
 }
 

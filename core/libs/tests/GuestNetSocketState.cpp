@@ -97,10 +97,9 @@ int main() {
         int value = 0;
         size = sizeof(value);
         for (const int option : {2, 0x1008}) {
-            Require(sceNetGetsockopt(listener, 0xffff, option, nullptr, &size) == static_cast<int>(0x80410116u));
-            Require(*sceNetErrnoLoc() == 22);
-            Require(sceNetGetsockopt(listener, 0xffff, option, &value, nullptr) == static_cast<int>(0x80410116u));
-            Require(*sceNetErrnoLoc() == 22);
+            Require(sceNetGetsockopt(listener, 0xffff, option, nullptr, &size) == 0 && size == 0);
+            Require(sceNetGetsockopt(listener, 0xffff, option, &value, nullptr) == static_cast<int>(0x8041010eu));
+            Require(*sceNetErrnoLoc() == 14);
         }
         for (const int socket : {accepted, client, listener, datagram}) Require(sceNetSocketClose(socket) == 0);
         for (const int option : {2, 0x1008}) {

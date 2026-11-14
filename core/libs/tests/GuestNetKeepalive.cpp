@@ -50,15 +50,15 @@ static void CheckKeepalive() {
             }
             const int enabled = 1;
             Require(Failed(sceNetSetsockopt(socket, 0xffff, 8, &enabled, sizeof(enabled) - 1), 22));
-            Require(Failed(sceNetSetsockopt(socket, 0xffff, 8, nullptr, sizeof(enabled)), 22));
+            Require(Failed(sceNetSetsockopt(socket, 0xffff, 8, nullptr, sizeof(enabled)), 14));
             Require(setsockopt_nid_postfix(socket, 0xffff, 8, &enabled, sizeof(enabled)) == 0);
             const int other = sceNetSocket("keepalive-other", family, type, type == 1 ? 6 : 17);
             Require(other >= 0);
             size = sizeof(value);
             Require(sceNetGetsockopt(other, 0xffff, 8, &value, &size) == 0 && value == 0);
             Require(sceNetSocketClose(other) == 0);
-            Require(Failed(sceNetGetsockopt(socket, 0xffff, 8, nullptr, &size), 22));
-            Require(Failed(sceNetGetsockopt(socket, 0xffff, 8, &value, nullptr), 22));
+            Require(sceNetGetsockopt(socket, 0xffff, 8, nullptr, &size) == 0 && size == 0);
+            Require(Failed(sceNetGetsockopt(socket, 0xffff, 8, &value, nullptr), 14));
             for (const std::uint32_t length : {0u, 1u, 3u, 4u, 8u}) {
                 std::array<std::uint8_t, 8> bytes;
                 bytes.fill(0xa5);

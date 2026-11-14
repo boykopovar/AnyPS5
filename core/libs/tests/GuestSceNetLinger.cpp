@@ -109,13 +109,13 @@ void Stream(int family) {
     const Linger large{1, 65536};
     Require(Failed(sceNetSetsockopt(socket, SolSocket, SoLinger, &large, sizeof(large)), Edom));
     Require(Failed(sceNetSetsockopt(socket, SolSocket, SoLinger, &on, sizeof(std::int32_t)), Einval));
-    Require(Failed(sceNetSetsockopt(socket, SolSocket, SoLinger, nullptr, sizeof(on)), Einval));
+    Require(Failed(sceNetSetsockopt(socket, SolSocket, SoLinger, nullptr, sizeof(on)), 14));
     Require(NetLinger(socket).enabled == 0);
     Require(NativeLinger(socket).enabled == 0);
     Linger read{};
     std::uint32_t size = sizeof(read);
-    Require(Failed(sceNetGetsockopt(socket, SolSocket, SoLinger, nullptr, &size), Einval));
-    Require(Failed(sceNetGetsockopt(socket, SolSocket, SoLinger, &read, nullptr), Einval));
+    Require(sceNetGetsockopt(socket, SolSocket, SoLinger, nullptr, &size) == 0 && size == 0);
+    Require(Failed(sceNetGetsockopt(socket, SolSocket, SoLinger, &read, nullptr), 14));
     Require(sceNetSocketClose(socket) == 0);
     Require(Failed(sceNetSetsockopt(socket, SolSocket, SoLinger, &on, sizeof(on)), Ebadf));
     size = sizeof(read);

@@ -56,7 +56,7 @@ int main() {
                     Require(sceNetGetsockopt(socket, 0xffff, option, &value, &size) == 0 && value == initial);
                     Require(nativeBuffer() == originalNative);
                 }
-                Require(sceNetSetsockopt(socket, 0xffff, option, nullptr, sizeof(initial)) == static_cast<int>(0x80410116u));
+                Require(sceNetSetsockopt(socket, 0xffff, option, nullptr, sizeof(initial)) == static_cast<int>(0x8041010eu));
                 Require(sceNetSetsockopt(socket, 0xffff, option, &initial, 3) == static_cast<int>(0x80410116u));
                 const int valid = 8192;
                 Require(sceNetSetsockopt(socket, 0xffff, option, &valid, sizeof(valid)) == 0);
