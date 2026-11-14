@@ -391,6 +391,19 @@ void CheckUnsupportedInfo(TQuery query, void* object, std::uint32_t capacity = 4
 }
 
 template<typename TInfo, typename TQuery>
+void CheckRecordedWaiter(TQuery query, void* object, std::int32_t waitValue) {
+    TInfo info;
+    std::memset(&info, 0xEE, sizeof(info));
+    UltWaitingThreadInfo waiter;
+    std::memset(&waiter, 0xAA, sizeof(waiter));
+    waiter.size = sizeof(UltWaitingThreadInfo);
+    CHECK(query(object, &info, &waiter, 1) == Ok);
+    CHECK(info.size == sizeof(TInfo));
+    CHECK(waiter.size == sizeof(UltWaitingThreadInfo));
+    CHECK(waiter.thread != nullptr && waiter.threadType == 1 && waiter.waitValue == waitValue);
+}
+
+template<typename TInfo, typename TQuery>
 void CheckWaitingRecordSizes(TQuery query, void* object) {
     TInfo info;
     UltWaitingThreadInfo waiters[4];
@@ -778,10 +791,19 @@ void InfoWaiters() {
         CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
     });
     WaitForInfoWaiters<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
-    CheckUnsupportedInfo<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 1);
-    CheckUnsupportedInfo<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
+    CheckRecordedWaiter<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 1);
     CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
     reader.join();
+
+    CHECK(sceUltReaderWriterLockLockRead(&rwlock) == Ok);
+    std::thread writer([&] {
+        CHECK(sceUltReaderWriterLockLockWrite(&rwlock) == Ok);
+        CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
+    });
+    WaitForInfoWaiters<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
+    CheckRecordedWaiter<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 2);
+    CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
+    writer.join();
 
     CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
     CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
