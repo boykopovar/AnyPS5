@@ -1059,15 +1059,21 @@ struct ToTag {
 std::string SourceLocale(const char* localeID, std::int32_t& status) {
     const std::string_view id(localeID);
     if (id.find('@') != std::string_view::npos || ShortestSubtag(id) != 1) return std::string(id);
-    char buffer[kFullNameCapacity];
+    std::string buffer(kFullNameCapacity, '\0');
     std::int32_t local = 0;
-    const std::int32_t length = uloc_forLanguageTag(localeID, buffer, kFullNameCapacity, nullptr, &local);
-    if (local > 0 || local == Icu::NotTerminated) {
+    std::int32_t length = uloc_forLanguageTag(localeID, buffer.data(), static_cast<std::int32_t>(buffer.size()), nullptr, &local);
+    if (local == Icu::BufferOverflow || local == Icu::NotTerminated) {
+        buffer.assign(static_cast<std::size_t>(length) + 1, '\0');
+        local = 0;
+        length = uloc_forLanguageTag(localeID, buffer.data(), static_cast<std::int32_t>(buffer.size()), nullptr, &local);
+    }
+    if (local > 0) {
         status = Icu::IllegalArgument;
         return std::string(id);
     }
     if (length <= 0) return std::string(id);
-    return std::string(buffer, static_cast<std::size_t>(length));
+    buffer.resize(static_cast<std::size_t>(length));
+    return buffer;
 }
 
 std::string Canonical(const std::string& source, std::int32_t& status) {

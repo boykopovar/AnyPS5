@@ -389,6 +389,41 @@ void CheckTagCapacity() {
     if (uloc_toLanguageTag("en", negative, -1, 0, &status) != 2 || status != kBufferOverflow) TagFail("en", "negative capacity");
 }
 
+void CheckLongTag() {
+    std::string tag = "en";
+    std::string locale = "en@x=";
+    tag += "-x";
+    for (int index = 0; index < 80; ++index) {
+        tag += "-ab";
+        locale += index ? "-ab" : "ab";
+    }
+    const std::int32_t full = static_cast<std::int32_t>(tag.size());
+    if (full < 200 || locale.size() < 200) TagFail("long", "long input too short");
+
+    for (const std::string& input : {tag, locale}) {
+        for (const std::int8_t strict : {std::int8_t{0}, std::int8_t{1}}) {
+            std::string buffer(512, 'Z');
+            std::int32_t status = 0;
+            const std::int32_t length = uloc_toLanguageTag(input.c_str(), buffer.data(), 512, strict, &status);
+            if (status != 0) TagFail("long", "unexpected status");
+            if (length != full || std::strcmp(buffer.c_str(), tag.c_str()) != 0) TagFail("long", "wrong tag");
+        }
+    }
+
+    std::int32_t status = 0;
+    if (uloc_toLanguageTag(tag.c_str(), nullptr, 0, 0, &status) != full || status != kBufferOverflow) TagFail("long", "preflight");
+
+    std::string exact(static_cast<std::size_t>(full), 'Z');
+    status = 0;
+    if (uloc_toLanguageTag(tag.c_str(), exact.data(), full, 0, &status) != full) TagFail("long", "exact length");
+    if (status != kNotTerminated || exact != tag) TagFail("long", "exact capacity");
+
+    std::string shortBuffer(156, 'Z');
+    status = 0;
+    if (uloc_toLanguageTag(tag.c_str(), shortBuffer.data(), 156, 0, &status) != full) TagFail("long", "short length");
+    if (status != kBufferOverflow || shortBuffer != tag.substr(0, 156)) TagFail("long", "short capacity");
+}
+
 void CheckTagStatus() {
     char buffer[16];
     std::memset(buffer, 'Z', sizeof(buffer));
@@ -434,5 +469,6 @@ int main() {
     CheckTagRoundTrip();
     CheckTagCapacity();
     CheckTagStatus();
+    CheckLongTag();
     std::puts("ICU language tag tests passed");
 }
