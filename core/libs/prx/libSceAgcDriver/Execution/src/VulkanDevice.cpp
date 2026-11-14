@@ -29,6 +29,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ChangedCopyBacks.hpp"
+#include "prx/libSceAgcDriver/Execution/include/InputTwins.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DrawInputsInPlace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TessellationPipelineCache.hpp"
@@ -648,6 +649,7 @@ struct VulkanDevice::State {
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
     bool changedCopyBacks = true;
+    bool inputTwins = false;
     bool dmaBufImport = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
@@ -1206,6 +1208,7 @@ struct VulkanDevice::State {
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
             Graphics::ClearUploadCopies(device);
+            Graphics::ClearInputTwins(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
@@ -1927,6 +1930,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
 #endif
         state->drawInputsInPlace = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") == nullptr && (std::getenv("APS5_DRAW_INPUTS_IN_PLACE") != nullptr || DrawInputsInPlaceUsable(driverProperties.driverID, windows));
         state->changedCopyBacks = std::getenv("APS5_NO_CHANGED_COPY_BACK") == nullptr && (std::getenv("APS5_CHANGED_COPY_BACK") != nullptr || ChangedCopyBacksUsable(driverProperties.driverID, windows));
+        state->inputTwins = std::getenv("APS5_NO_INPUT_TWINS") == nullptr && (std::getenv("APS5_INPUT_TWINS") != nullptr || InputTwinsUsable(driverProperties.driverID, windows));
         if (!compileOnly) Graphics::SetHostImportWindow(8ull << 20u);
         if (!compileOnly) Graphics::SetHostImportMaxBytes(maintenance3.maxMemoryAllocationSize);
         if (!compileOnly) Pm4::RequestImportableGds(state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
@@ -4848,6 +4852,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.dynamicColorWriteMask = state->dynamicColorWriteMask;
     context.drawInputsInPlace = state->drawInputsInPlace;
     context.changedCopyBacks = state->changedCopyBacks;
+    context.inputTwins = state->inputTwins;
     context.discreteGpu = state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
     context.integratedGpu = state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
     context.provokingVertexModePerPipeline = state->provokingVertexModePerPipeline;

@@ -366,6 +366,7 @@ A class range covers a command together with its own barriers. In `VulkanDevice:
 - `present-blit`: the presentation command buffer from its first to its last command, timed in its own two-query pool (`VulkanDevice::present`) and added when its slot retires (`Recorder::AddGpuTiming`). Width x height x 4 bytes of the swapchain extent.
 - `shadow-publish`: copies of unit shadow slabs into the import, with their barriers (`recordCopies` in `UnitShadow.cpp`, reached from `PublishShadow`). Copied bytes.
 - `template-refresh`: the `vkCmdUpdateBuffer` updates of a cached dispatch's changed data words, as one range from the first update to the last (`ShaderResources::refreshData`, called from `recordDispatch`). Refreshed bytes.
+- `input-twin-copy`: the copies of read-only dispatch regions out of their host imports into their input twins, between two barriers (`GuestBufferMemory::recordTwinCopies`). Copied bytes.
 
 ## Guest clock scale
 

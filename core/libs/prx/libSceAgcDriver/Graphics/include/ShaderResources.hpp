@@ -358,6 +358,7 @@ public:
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }
     std::uint64_t StagedBytes() const { return stagedBytes; }
     const std::vector<std::pair<const void*, std::uint64_t>>& StagedShadows() const { return stagedShadows; }
+    const std::vector<std::pair<const void*, std::uint64_t>>& InputTwins() const { return inputTwins; }
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
@@ -554,6 +555,7 @@ private:
     std::array<std::uint32_t, 2> tableElements{};
     std::uint64_t stagedBytes = 0;
     std::vector<std::pair<const void*, std::uint64_t>> stagedShadows;
+    std::vector<std::pair<const void*, std::uint64_t>> inputTwins;
     std::array<std::size_t, 2> storageTableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
@@ -907,6 +909,7 @@ public:
     void Remove(const Key& key, const ShaderResources* object = nullptr);
     void RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     bool TryRemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
+    std::uint64_t TryReleaseInputTwins(std::uint64_t bytes, std::vector<std::shared_ptr<ShaderResources>>* evicted);
     // Moves the entry to the front of the LRU (a recipe hit uses its template without Find, and a
     // hot template must not age out under the recipes that depend on it); false when no entry.
     bool Touch(const Key& key);
@@ -920,6 +923,7 @@ public:
     std::uint64_t TableElements() const;
     static std::uint64_t TableElementBudget();
     static std::uint64_t StagedByteBudget();
+    static std::uint64_t InputTwinByteBudget();
     static constexpr std::size_t InitialEntries = 1024;
     static constexpr std::size_t MaximumEntries = 16384;
 

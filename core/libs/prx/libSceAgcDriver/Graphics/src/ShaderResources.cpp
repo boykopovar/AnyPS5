@@ -1777,6 +1777,11 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         ~Done() { flag = false; }
     } done{releasing};
     const auto releasedBefore = ImageMemoryReleasedBytes();
+    const auto twinsBefore = InputTwinCounters().residentBytes;
+    ReleaseInputTwins(bytes);
+    const auto twinsAfter = InputTwinCounters().residentBytes;
+    const auto twinsReleased = twinsBefore > twinsAfter ? twinsBefore - twinsAfter : 0;
+    if (twinsReleased >= bytes) return twinsReleased;
     std::uint64_t freed = 0;
     std::size_t sampledEntries = 0;
     std::size_t storageEntries = 0;
@@ -1850,8 +1855,18 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         }
     }
     freed = ImageMemoryReleasedBytes() - releasedBefore;
-    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept);
-    return freed;
+    std::size_t twinBuilds = 0;
+    std::uint64_t twinBytesEvicted = 0;
+    if (std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock); freed + twinsReleased < bytes && gpu.try_lock()) {
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
+            std::vector<std::shared_ptr<ShaderResources>> resources;
+            twinBytesEvicted = SharedResourceCache().TryReleaseInputTwins(bytes - freed - twinsReleased, &resources);
+            twinBuilds = resources.size();
+            for (auto& resource : resources) recorder->Keep(std::move(resource));
+        }
+    }
+    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept; input twins: %llu MiB released, %zu cached builds holding %llu MiB evicted\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept, static_cast<unsigned long long>(twinsReleased >> 20u), twinBuilds, static_cast<unsigned long long>(twinBytesEvicted >> 20u));
+    return freed + twinsReleased;
 }
 
 bool StorageImageCached(const Context& context, const StorageTexture* image) {
@@ -2016,6 +2031,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     guestMemory.AllowDeviceStaging();
     guestMemory.AllowCopyBackDeferral();
     if (BindsGuestRangesOnly(compute) && !htileClear.has_value()) guestMemory.AllowKeptCopyBacks();
+    guestMemory.AllowInputTwins();
     static const std::uint64_t addressStagingMinThreads = [] {
         const char* value = std::getenv("APS5_BDA_STAGING_MIN_THREADS");
         return value != nullptr ? std::strtoull(value, nullptr, 10) : 512ull;
@@ -3069,6 +3085,7 @@ void ShaderResources::noteReusable() {
     captureValidation();
     stagedBytes = guestMemory.StagedBytes();
     guestMemory.StagedShadows(stagedShadows);
+    guestMemory.InputTwinBuffers(inputTwins);
     reusable = false;
     importsReconcilable = false;
     spaceReuse = false;
@@ -4562,7 +4579,7 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
 }
 
 bool ShaderResources::proofEligible() const {
-    if (!reusable || usesBda || bda != nullptr || spaceReuse || guestMemory.HoldsLease() || guestMemory.HasStagedCopies() || !comparedTextures.empty() || !comparedTableSpans.empty() || validatedTextures.size() != textures.size()) return false;
+    if (!reusable || usesBda || bda != nullptr || spaceReuse || guestMemory.HoldsLease() || guestMemory.HasStagedCopies() || !inputTwins.empty() || !comparedTextures.empty() || !comparedTableSpans.empty() || validatedTextures.size() != textures.size()) return false;
     for (std::size_t i = 0; i < textures.size(); ++i) {
         if (textures[i] == nullptr) continue;
         const auto& surface = validatedTextures[i];
@@ -5307,6 +5324,25 @@ void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> reso
             ++it;
         }
     }
+    if (!entries.front().second->InputTwins().empty()) {
+        std::unordered_set<const void*> counted;
+        std::uint64_t resident = 0;
+        for (auto it = entries.begin(); it != entries.end();) {
+            std::uint64_t added = 0;
+            for (const auto& [twin, bytes] : it->second->InputTwins()) {
+                if (!counted.contains(twin)) added += bytes;
+            }
+            if (it != entries.begin() && added != 0 && resident + added > InputTwinByteBudget()) {
+                if (evicted != nullptr) evicted->push_back(std::move(it->second));
+                index.erase(it->first);
+                it = entries.erase(it);
+                continue;
+            }
+            for (const auto& [twin, bytes] : it->second->InputTwins()) counted.insert(twin);
+            resident += added;
+            ++it;
+        }
+    }
     if (entries.front().second->TableElements() == 0) return;
     std::uint64_t tables = 0;
     for (const auto& entry : entries) tables += entry.second->TableElements();
@@ -5342,6 +5378,24 @@ bool ResourceCache::TryRemoveImage(const StorageTexture* image, std::vector<std:
     if (!lock.owns_lock()) return false;
     removeImage(image, evicted);
     return true;
+}
+
+std::uint64_t ResourceCache::TryReleaseInputTwins(std::uint64_t bytes, std::vector<std::shared_ptr<ShaderResources>>* evicted) {
+    std::unique_lock lock(mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return 0;
+    std::unordered_set<const void*> counted;
+    std::uint64_t held = 0;
+    for (auto it = entries.end(); it != entries.begin() && held < bytes;) {
+        --it;
+        if (it->second->InputTwins().empty()) continue;
+        for (const auto& [twin, twinBytes] : it->second->InputTwins()) {
+            if (counted.insert(twin).second) held += twinBytes;
+        }
+        if (evicted != nullptr) evicted->push_back(std::move(it->second));
+        index.erase(it->first);
+        it = entries.erase(it);
+    }
+    return held;
 }
 
 void ResourceCache::removeImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted) {
@@ -5429,6 +5483,10 @@ std::uint64_t ResourceCache::TableElementBudget() {
 
 std::uint64_t ResourceCache::StagedByteBudget() {
     return StagingShadowLimit() / 2u;
+}
+
+std::uint64_t ResourceCache::InputTwinByteBudget() {
+    return InputTwinLimit() / 4u * 3u;
 }
 
 std::uint64_t ResourceCache::TableElements() const {

@@ -228,6 +228,7 @@ struct Context {
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
     bool changedCopyBacks = true;
+    bool inputTwins = false;
     bool discreteGpu = false;
     bool integratedGpu = false;
     bool dmaBufImport = false;
