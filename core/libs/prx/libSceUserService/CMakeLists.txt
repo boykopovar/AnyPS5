@@ -76,6 +76,17 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_user_service_kratos_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceKratos.cpp)
+    target_include_directories(guest_user_service_kratos_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_kratos_tests PRIVATE libSceUserService libSceSystemService libc)
+    configure_windows_unwind(guest_user_service_kratos_tests)
+    add_test(NAME guest_user_service_kratos COMMAND guest_user_service_kratos_tests)
+    set_tests_properties(guest_user_service_kratos PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_kratos PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+
     add_test_executable(guest_user_service_profiles_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceProfilesBounds.cpp)
     target_include_directories(guest_user_service_profiles_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_user_service_profiles_bounds_tests PRIVATE libSceUserService libSceSystemService libc)
