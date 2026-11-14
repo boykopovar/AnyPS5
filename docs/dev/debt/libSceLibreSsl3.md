@@ -108,15 +108,12 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 61 still-unimplemented callable exports: 57 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp` and four client transport exports (`tls_connect_socket`, `tls_handshake`, `tls_read`, `tls_write`) in `LibTlsTransport.cpp`; title compatibility beyond tested client transport remains unverified.
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 63 still-unimplemented callable exports: 59 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 59 still-unimplemented callable exports: 55 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp` and four client transport exports (`tls_connect_socket`, `tls_handshake`, `tls_read`, `tls_write`) in `LibTlsTransport.cpp`; title compatibility beyond tested client transport remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
-| `AUTHORITY_KEYID_free` | `2bIZM-OfE8Y` |
-| `tls_handshake` | `27Fuliv3Om8` |
 | `X509V3_EXT_d2i` | `2l+JidqxyZQ` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
