@@ -244,6 +244,9 @@ int main() {
     Require(Throws([] { return sceSystemServiceAddLocalProcessForPsmKit(nullptr, nullptr, nullptr); }));
     Require(Throws([] { return sceSystemServiceKillLocalProcessForPsmKit(1); }));
     Require(sceSystemServiceGetHdrToneMapLuminance(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetHdrToneMapLuminance(reinterpret_cast<SystemServiceHdrToneMapLuminance*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     SystemServiceHdrToneMapLuminance luminance{-1.0f, -1.0f, -1.0f};
     Require(sceSystemServiceGetHdrToneMapLuminance(&luminance) == SYSTEM_SERVICE_OK);
     Require(luminance.max_full_frame_tone_map_luminance == 100.0f);
@@ -275,6 +278,9 @@ int main() {
     Require(sceSystemServiceGetStatus(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceStatus status;
     std::memset(&status, 0x5a, sizeof(status));
+    errno = 71;
+    Require(sceSystemServiceGetStatus(reinterpret_cast<SystemServiceStatus*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     Require(sceSystemServiceGetStatus(&status) == SYSTEM_SERVICE_OK);
     Require(status.event_num == 0 && !status.is_system_ui_overlaid && !status.is_in_background_execution && !status.is_vr_play_area_overlaid);
     for (unsigned char byte : status.reserved) Require(byte == 0);

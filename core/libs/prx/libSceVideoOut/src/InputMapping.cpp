@@ -353,6 +353,7 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
     auto& bindings = configuration.bindings;
     std::unordered_set<std::string> overriddenActions;
     std::array<bool, settingNames.size()> configuredSettings{};
+    std::array<bool, SDL_CONTROLLER_BUTTON_MAX> configuredControllerButtons{};
     std::string line;
     std::size_t lineNumber = 0;
     while (std::getline(file, line)) {
@@ -362,10 +363,25 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
         const std::string_view content = trim(std::string_view(line).substr(0, comment));
         if (content.empty()) continue;
         const auto separator = content.find('=');
-        if (separator == std::string_view::npos) invalidLine(source, lineNumber, "expected Action = TYPE:VALUE");
+        if (separator == std::string_view::npos) invalidLine(source, lineNumber, "expected a name and value separated by '='");
 
         const auto actionName = trim(content.substr(0, separator));
         const auto value = trim(content.substr(separator + 1));
+        const auto colon = actionName.find(':');
+        if (colon != std::string_view::npos && upper(trim(actionName.substr(0, colon))) == "SDLBUTTON") {
+            const std::string name(trim(actionName.substr(colon + 1)));
+            const auto button = SDL_GameControllerGetButtonFromString(name.c_str());
+            if (button == SDL_CONTROLLER_BUTTON_INVALID) invalidLine(source, lineNumber, "unknown SDL controller button '" + name + "'");
+            const auto index = static_cast<std::size_t>(button);
+            if (configuredControllerButtons[index]) invalidLine(source, lineNumber, "SDL controller button '" + name + "' is set more than once");
+            try {
+                configuration.controllerButtons[index] = upper(value) == "NONE" ? Pad::PadButton::None : parsePadButton(value);
+            } catch (const std::runtime_error& error) {
+                invalidLine(source, lineNumber, error.what());
+            }
+            configuredControllerButtons[index] = true;
+            continue;
+        }
         if (const auto* setting = findSetting(actionName)) {
             auto& configured = configuredSettings[static_cast<std::size_t>(setting->setting)];
             if (configured) invalidLine(source, lineNumber, std::string(setting->name) + " is set more than once");

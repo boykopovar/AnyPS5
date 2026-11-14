@@ -299,6 +299,20 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn(missing.name, errors.getvalue())
         self.assertEqual(module.read_bytes(), original)
 
+    def test_top_must_be_positive(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text("main;libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+        for value in ("0", "-1"):
+            for flags in ((), ("--json",)):
+                with self.subTest(top=value, flags=flags):
+                    errors = io.StringIO()
+                    output = io.StringIO()
+                    with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+                        symbolize_samples.main([str(samples), "--libs", str(self.libs), "--top", value, *flags])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("--top must be positive", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+
     def test_distinct_output_preserves_sample_captures(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
         later, earlier, output = (self.root / name for name in ("later.txt", "earlier.txt", "named.txt"))
@@ -1183,7 +1197,7 @@ class ThreadFilterInputTests(unittest.TestCase):
                         options = [] if target == "samples" else ["--since", str(plain)]
                         result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
                                                  "--libs", str(root), "--thread", "7", *options],
-                                                capture_output=True, text=True, timeout=5)
+                                                capture_output=True, text=True, encoding="utf-8", timeout=5)
                         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                         self.assertEqual(result.stdout, "")
                         self.assertIn(f"{plain}:{2 if header else 1}:", result.stderr)
@@ -1191,6 +1205,25 @@ class ThreadFilterInputTests(unittest.TestCase):
                         self.assertNotIn("Traceback", result.stderr)
                         for path, content in original.items():
                             self.assertEqual(path.read_bytes(), content)
+
+    def test_thread_filter_rejects_a_thread_the_capture_does_not_have(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = root / "threads.txt"
+            capture.write_text("thread 12 samples 4\n  example.prx 0x1010 4 4\nthread 7 samples 10\n  example.prx 0x1010 10 10\n", encoding="utf-8")
+            for thread, extra in (("8", []), ("07", []), ("abc", ["--json"])):
+                with self.subTest(thread=thread):
+                    result = subprocess.run([sys.executable, symbolize_samples.__file__, str(capture),
+                                             "--libs", str(root), "--thread", thread, *extra],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(f"{capture}: thread {thread} is not in the capture (threads: 7, 12)", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+            result = subprocess.run([sys.executable, symbolize_samples.__file__, str(capture), "--libs", str(root), "--thread", "7"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("10 samples", result.stdout)
 
     def test_collapsed_stacks_reject_thread_filter_without_writing_output(self):
         with tempfile.TemporaryDirectory() as directory:

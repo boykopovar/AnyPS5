@@ -382,10 +382,17 @@ int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLumi
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  const auto hdr = AgcDriver::CurrentHostHdr();
- luminance->max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
- luminance->max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
- luminance->min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
- AgcDriverNoteReportedToneMapPeak_nid_postfix(luminance->max_tone_map_luminance);
+ SystemServiceHdrToneMapLuminance localLuminance{};
+ localLuminance.max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
+ localLuminance.max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
+ localLuminance.min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(luminance, &localLuminance, sizeof(localLuminance));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ AgcDriverNoteReportedToneMapPeak_nid_postfix(localLuminance.max_tone_map_luminance);
  return SYSTEM_SERVICE_OK;
 }
 
@@ -407,7 +414,13 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *status = SystemServiceStatus{};
+ SystemServiceStatus localStatus{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 

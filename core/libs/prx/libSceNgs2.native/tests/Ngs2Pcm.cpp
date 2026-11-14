@@ -235,6 +235,33 @@ static void TestSkipWindowContract() {
     Require(callbacks.size() == 1 && callbacks.front().flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END && callbacks.front().user_data == 101);
 }
 
+static void TestLoopPastData(const PcmFixture& fixture) {
+    constexpr std::uint32_t channels = 2;
+    constexpr std::uint32_t frames = 4;
+    const auto canonical = Canonical(fixture);
+    const auto framesOf = [&](const PcmFixture& input, const std::vector<std::uint32_t>& order) {
+        std::vector<std::uint8_t> data;
+        for (const auto frame : order) for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            const auto first = input.data.begin() + (frame + channel) % input.samples.size() * input.bytes;
+            data.insert(data.end(), first, first + input.bytes);
+        }
+        return data;
+    };
+    const auto data = framesOf(fixture, {0, 1, 2, 3, 4, 5, 6, 7});
+    const auto frameBytes = fixture.bytes * channels;
+    for (const std::uint32_t samples : {frames * 2, frames + frames / 2}) {
+        std::vector<std::uint32_t> order;
+        while (order.size() < PcmGrain * 4) for (std::uint32_t sample = 0; sample < samples; ++sample) order.push_back(sample % frames);
+        const auto expected = framesOf(canonical, order);
+        Playback playback(fixture.type, channels), reference(canonical.type, channels);
+        const Ngs2WaveformBlock blocks[] = {{0, frameBytes * frames, UINT32_MAX, 0, samples, 0, 0}, {frameBytes * frames, frameBytes * frames, UINT32_MAX, 0, samples, 0, 0}};
+        const Ngs2WaveformBlock expectedBlock{0, expected.size(), 0, 0, static_cast<std::uint32_t>(order.size()), 0, 0};
+        playback.Add(data.data(), blocks, 2);
+        reference.Add(expected.data(), &expectedBlock, 1);
+        for (unsigned pass = 0; pass < 3; ++pass) Require(playback.Render() == reference.Render());
+    }
+}
+
 static void TestResampling(const PcmFixture& fixture) {
     const auto canonical = Canonical(fixture);
     Playback playback(fixture.type, 1, 24000), reference(canonical.type, 1, 24000);
@@ -355,6 +382,7 @@ int main(int argc, char** argv) {
         TestConstantConversions(fixture);
         for (const auto channels : {1u, 2u, 6u, 8u}) TestFramesAndPositions(fixture, channels);
         TestRepeatAndTransition(fixture);
+        TestLoopPastData(fixture);
         TestResampling(fixture);
         TestPitch(fixture);
         TestBounds(fixture);
