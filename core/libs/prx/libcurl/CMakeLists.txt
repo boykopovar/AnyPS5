@@ -52,6 +52,9 @@ endforeach()
 if(CMAKE_TOOLCHAIN_FILE)
     list(APPEND curlBackendOptions -DCMAKE_TOOLCHAIN_FILE:FILEPATH=${CMAKE_TOOLCHAIN_FILE})
 endif()
+if(APPLE)
+    list(APPEND curlBackendOptions -DCMAKE_OSX_ARCHITECTURES:STRING=${CMAKE_OSX_ARCHITECTURES})
+endif()
 
 ExternalProject_Add(anyps5_curl_build
     SOURCE_DIR ${curlSourceDir}
@@ -76,6 +79,8 @@ if(WIN32)
     set_property(TARGET anyps5_curl_backend APPEND PROPERTY INTERFACE_LINK_LIBRARIES ws2_32 winmm crypt32 bcrypt)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_property(TARGET anyps5_curl_backend APPEND PROPERTY INTERFACE_LINK_LIBRARIES pthread)
+elseif(APPLE)
+    set_property(TARGET anyps5_curl_backend APPEND PROPERTY INTERFACE_LINK_LIBRARIES "-framework CoreFoundation" "-framework SystemConfiguration")
 endif()
 
 add_library(libcurl SHARED EXCLUDE_FROM_ALL
