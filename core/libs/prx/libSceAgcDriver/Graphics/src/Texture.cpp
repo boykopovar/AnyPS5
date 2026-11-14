@@ -5341,7 +5341,7 @@ std::vector<std::uint32_t> StorageTexture::prepareStoredSave(const std::vector<b
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
         if (layers[unit] && !skippedLayer[unit]) units.push_back(unit);
     }
-    if (!units.empty() && !savedBytes) savedBytes = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    if (!units.empty() && (!savedBytes || writeBackObserver)) savedBytes = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     return units;
 }
 
@@ -5350,18 +5350,41 @@ void StorageTexture::commitStoredSave(const std::vector<std::uint32_t>& units) {
     const auto ticket = ++lastSaveTicket;
     for (const auto unit : units) savedTicket[unit] = ticket;
     auto* recorder = recorderFor(context);
+    if (writeBackObserver) {
+        ++pendingWriteBackObservers;
+        auto complete = [texture = shared_from_this(), bytes = savedBytes, observer = writeBackObserver, ticket, units] {
+            struct Pending {
+                std::size_t& count;
+                ~Pending() { --count; }
+            } pending{texture->pendingWriteBackObservers};
+            try {
+                const auto stored = bytes->Bytes();
+                for (const auto unit : units) {
+                    const auto begin = texture->layerBegin(unit);
+                    observer(begin, stored.subspan(static_cast<std::size_t>(begin - texture->descriptor.baseAddress), static_cast<std::size_t>(texture->layerBytes(unit))));
+                }
+            } catch (...) {
+                texture->writeBackObserverFailed = true;
+                throw;
+            }
+            texture->applyStoredSave(ticket, units, bytes);
+        };
+        if (recorder != nullptr) recorder->OnComplete(std::move(complete));
+        else complete();
+        return;
+    }
     if (recorder == nullptr) {
-        applyStoredSave(ticket, units);
+        applyStoredSave(ticket, units, savedBytes);
         return;
     }
     recorder->OnComplete([texture = weak_from_this(), bytes = savedBytes, ticket, units] {
-        if (auto alive = texture.lock()) alive->applyStoredSave(ticket, units);
+        if (auto alive = texture.lock()) alive->applyStoredSave(ticket, units, bytes);
     });
 }
 
-void StorageTexture::applyStoredSave(std::uint64_t ticket, const std::vector<std::uint32_t>& units) {
-    if (!savedBytes) return;
-    const auto stored = savedBytes->Bytes();
+void StorageTexture::applyStoredSave(std::uint64_t ticket, const std::vector<std::uint32_t>& units, const std::shared_ptr<Buffer>& bytes) {
+    if (!bytes) return;
+    const auto stored = bytes->Bytes();
     for (const auto unit : units) {
         if (savedTicket[unit] != ticket) continue;
         if (original.size() != guestBytes) original.resize(static_cast<std::size_t>(guestBytes));
@@ -5371,6 +5394,17 @@ void StorageTexture::applyStoredSave(std::uint64_t ticket, const std::vector<std
         layerOriginal[unit] = true;
         savedTicket[unit] = 0;
     }
+}
+
+bool StorageTexture::AwaitWriteBackSnapshot() {
+    if (pendingWriteBackObservers != 0) {
+        if (Recorder::InCompletion()) return false;
+        auto* recorder = recorderFor(context);
+        Require(recorder != nullptr, "a depth write-back snapshot is pending without a recorder");
+        recorder->Sync();
+    }
+    Require(pendingWriteBackObservers == 0 && !writeBackObserverFailed, "a depth write-back snapshot did not complete");
+    return true;
 }
 
 void StorageTexture::cancelStoredSave(std::uint32_t unit) {
@@ -7339,7 +7373,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     if (!segments.empty()) {
         Require(!unsavedOutsideWatch, unsavedCause);
         // Outside the write watch the stored bytes are what the next store compares with.
-        const auto saveUnits = GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored)) ? std::vector<std::uint32_t>{} : prepareStoredSave(layers, skippedLayer);
+        const auto saveUnits = !writeBackObserver && GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored)) ? std::vector<std::uint32_t>{} : prepareStoredSave(layers, skippedLayer);
         if (blockUnits) {
             if (guestBytes <= SmallStoreBytes) PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), PublishScope::PartialUnits, PublishReason::Upload);
             // The kept blocks alone pass through the retiler (windows of their slices).
@@ -7654,6 +7688,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);
         const auto length = static_cast<std::size_t>(to - from);
         GuestMemory::WriteChangedCommitted(from, current.subspan(offset, length), std::span<const std::byte>(original).subspan(offset, length));
+        if (writeBackObserver) writeBackObserver(from, current.subspan(offset, length));
         std::memcpy(original.data() + offset, current.data() + offset, length);
     }
     // The texels now hold the whole image, so later reads must see them rather than a fast clear

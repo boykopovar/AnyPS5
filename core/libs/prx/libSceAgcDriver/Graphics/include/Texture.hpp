@@ -517,6 +517,8 @@ public:
     DccKeys UploadedKeys() const { return uploadedKeys; }
     DccKeys FilledKeys() const { return filledKeys; }
     bool GuestSnapshotValid() const { return originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); }
+    void SetWriteBackObserver(std::function<void(std::uint64_t, std::span<const std::byte>)> observer) { writeBackObserver = std::move(observer); }
+    bool AwaitWriteBackSnapshot();
     DccKeyProof& KeyProof() const { return keyProof; }
     DccRangeProof& TargetKeyProof() const { return targetKeyProof; }
     DccKeys ProvedKeys() const;
@@ -602,7 +604,7 @@ private:
     // drops a unit's saved bytes first clears it).
     std::vector<std::uint32_t> prepareStoredSave(const std::vector<bool>& layers, const std::vector<bool>& skippedLayer);
     void commitStoredSave(const std::vector<std::uint32_t>& units);
-    void applyStoredSave(std::uint64_t ticket, const std::vector<std::uint32_t>& units);
+    void applyStoredSave(std::uint64_t ticket, const std::vector<std::uint32_t>& units, const std::shared_ptr<Buffer>& bytes);
     void cancelStoredSave(std::uint32_t unit);
     void cancelStoredSaves();
     void releaseUnheldOriginal();
@@ -882,6 +884,9 @@ private:
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;
     std::uint64_t lastSaveTicket = 0;
+    std::function<void(std::uint64_t, std::span<const std::byte>)> writeBackObserver;
+    std::size_t pendingWriteBackObservers = 0;
+    bool writeBackObserverFailed = false;
     // The storage cache let the image go (Flush): a lookup makes a new image of the surface, so
     // no fill may put results into this one (guarded by the live-image registry lock).
     bool released = false;
