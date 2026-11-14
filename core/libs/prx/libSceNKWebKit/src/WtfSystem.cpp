@@ -19,6 +19,7 @@
 namespace NKWebKit {
 void FillRandomBytes(void* buffer, std::size_t bytes);
 std::size_t PageSize();
+int NumberOfProcessorCores();
 }  // namespace NKWebKit
 
 namespace {
@@ -27,9 +28,7 @@ bool g_configPermanentlyFrozen = false;
 
 extern "C" {
 int APS5_VABI _ZN3WTF22numberOfProcessorCoresEv() {
-    unsigned int count = std::thread::hardware_concurrency();
-    if (count == 0) throw std::runtime_error("numberOfProcessorCores: the host reports no processor count");
-    return static_cast<int>(count);
+    return NKWebKit::NumberOfProcessorCores();
 }
 
 std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv() {

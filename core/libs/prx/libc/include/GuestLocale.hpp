@@ -35,6 +35,19 @@ struct Facet {
     std::uint32_t reserved;
 };
 
+struct CtypeFacet {
+    Facet base;
+    const std::int16_t* classification;
+    const std::int16_t* lower;
+    const std::int16_t* upper;
+    std::int32_t deleteTable;
+    std::uint32_t reserved;
+};
+
+static_assert(offsetof(CtypeFacet, lower) == 0x18);
+static_assert(offsetof(CtypeFacet, upper) == 0x20);
+static_assert(sizeof(CtypeFacet) == 0x30);
+
 struct TimeInfo {
     const char* amPm;
     const char* days;
