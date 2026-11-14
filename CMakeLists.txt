@@ -456,6 +456,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_doc_links.py)
         set_tests_properties(conventions_doc_links PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_doc_anchors COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_doc_anchors.py)
+        set_tests_properties(conventions_doc_anchors PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_unknown_nids COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_unknown_nids.py)
         set_tests_properties(conventions_unknown_nids PROPERTIES TIMEOUT 20)
