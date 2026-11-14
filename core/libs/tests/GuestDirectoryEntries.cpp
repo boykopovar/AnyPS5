@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -89,7 +91,46 @@ static int Collect(const char* buffer, int bytes, std::map<std::string, Entry>& 
     return records;
 }
 
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+static void CheckLargeDirectoryPaging() {
+    const auto root = std::filesystem::temp_directory_path() /
+        ("anyps5-large-directory-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    constexpr int FileCount = 2500;
+    for (int i = 0; i < FileCount; ++i) {
+        std::ofstream file(root / ("large-directory-entry-" + std::to_string(i)));
+        Require(static_cast<bool>(file));
+    }
+    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    std::vector<char> buffer(128 * 1024);
+    std::map<std::string, Entry> entries;
+    int calls = 0;
+    std::int64_t previousBase = -1;
+    for (;;) {
+        std::fill(buffer.begin(), buffer.end(), 'x');
+        std::int64_t base = -1;
+        const int read = sceKernelGetdirentries(directory, buffer.data(), static_cast<int>(buffer.size()), &base);
+        Require(read >= 0 && read <= 64 * 1024);
+        Require(std::all_of(buffer.begin() + read, buffer.end(), [](char byte) { return byte == 'x'; }));
+        Require(base > previousBase);
+        previousBase = base;
+        if (read == 0) break;
+        Require(Collect(buffer.data(), read, entries) > 0);
+        ++calls;
+    }
+    Require(calls >= 2 && entries.size() == FileCount + 2);
+    Require(entries.contains(".") && entries.contains(".."));
+    for (int i = 0; i < FileCount; ++i) Require(entries.contains("large-directory-entry-" + std::to_string(i)));
+    Require(sceKernelClose(directory) == 0);
+    std::filesystem::remove_all(root);
+}
+#endif
+
 int main() {
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+    CheckLargeDirectoryPaging();
+#endif
     const auto root = std::filesystem::path("anyps5-directory-entries-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
