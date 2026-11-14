@@ -1,14 +1,32 @@
 #include <cstdint>
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "IcuScriptNames.hpp"
 
-#include <hb.h>
+#include <hb-ft.h>
+
+namespace {
+
+void APS5_VABI FinalizeCachedFace(void* object) {
+    auto* face = static_cast<FreeType::GuestFaceRec*>(object);
+    hb_face_destroy(static_cast<hb_face_t*>(face->generic.data));
+}
+
+}
 
 extern "C" {
 
-int APS5_VABI hb_ft_face_create_cached_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+hb_face_t* APS5_VABI hb_ft_face_create_cached_nid_postfix(FreeType::GuestFaceRec* face) {
+    const auto* owner = face ? static_cast<const FreeType::GuestFace*>(face->internal) : nullptr;
+    if (!owner || &owner->rec != face || !owner->host || owner->finalized) NotImplemented_nid_no_patch(__func__);
+
+    auto& generic = face->generic;
+    if (!generic.data || generic.finalizer != FinalizeCachedFace) {
+        if (generic.finalizer) generic.finalizer(face);
+        generic = {hb_ft_face_create(owner->host, nullptr), FinalizeCachedFace};
+    }
+    return hb_face_reference(static_cast<hb_face_t*>(generic.data));
 }
 
 std::uint32_t APS5_VABI hb_icu_script_to_script_nid_postfix(std::int32_t scriptCode) {
@@ -61,10 +79,6 @@ std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag) {
     }
 
     return tag & ~0x20000000u;
-}
-
-int APS5_VABI hb_shape_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 }

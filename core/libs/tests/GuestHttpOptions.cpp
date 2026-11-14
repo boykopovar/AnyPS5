@@ -1,9 +1,13 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "ProcessParametersFixture.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <stdexcept>
 
@@ -92,6 +96,51 @@ void CheckNonblock(int context) {
     Require(sceHttpGetNonblock(UnknownId, &value) == InvalidId && sceHttpTryGetNonblock(UnknownId, &value) == InvalidId, "an unknown id was not refused by the getters");
     Require(sceHttpSetNonblock(UnknownId, 1) == InvalidId && sceHttpTrySetNonblock(UnknownId, 1) == InvalidId, "an unknown id was not refused by the setters");
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+}
+
+std::array<std::byte, 64> g_process{};
+
+void SetSdkVersion(std::uint32_t version) {
+    std::memcpy(g_process.data() + 16, &version, sizeof(version));
+}
+
+void APS5_VABI SocketCreated(std::int32_t, std::int32_t, void*) {
+}
+
+void CheckOfflineSetters(int context) {
+    Require(ProcessParametersFixture::Install(g_process.data(), g_process.size()), "the process parameters were not installed");
+    const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
+    const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
+    const int request = sceHttpCreateRequestWithURL(connection, 0, "http://example.com/a", 0);
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpSetHttp09Enabled(id, 1) == 0 && sceHttpSetHttp09Enabled(id, 0) == 0 && sceHttpSetHttp09Enabled(id, 2) == 0, "sceHttpSetHttp09Enabled refused a live object");
+        Require(sceHttpSetPriorityOption(id, 3) == 0 && sceHttpSetPriorityOption(id, -1) == 0, "sceHttpSetPriorityOption refused a live object");
+        Require(sceHttpSetPolicyOption(id, 1) == 0 && sceHttpSetPolicyOption(id, -1) == 0, "sceHttpSetPolicyOption refused a live object");
+    }
+    Require(sceHttpSetHttp09Enabled(UnknownId, 1) == InvalidId, "sceHttpSetHttp09Enabled took an unknown id");
+    Require(sceHttpSetPriorityOption(UnknownId, 1) == InvalidId, "sceHttpSetPriorityOption took an unknown id");
+    Require(sceHttpSetPolicyOption(UnknownId, 1) == InvalidId, "sceHttpSetPolicyOption took an unknown id");
+    int marker = 0;
+    SetSdkVersion(0x014FFFFFu);
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpSetSocketCreationCallback(id, SocketCreated, &marker) == InvalidValue, "a title built before SDK 1.50 set a socket creation callback");
+    }
+    Require(sceHttpSetSocketCreationCallback(UnknownId, SocketCreated, &marker) == InvalidId, "the id is not checked before the SDK version");
+    SetSdkVersion(0x01500000u);
+    for (const int id : {pattern, connection, request}) {
+        Require(sceHttpSetSocketCreationCallback(id, SocketCreated, &marker) == 0, "sceHttpSetSocketCreationCallback refused a live object");
+        Require(sceHttpSetSocketCreationCallback(id, nullptr, nullptr) == 0, "a null socket creation callback was refused");
+    }
+    Require(sceHttpSetSocketCreationCallback(UnknownId, SocketCreated, &marker) == InvalidId, "sceHttpSetSocketCreationCallback took an unknown id");
+    Require(sceHttpDeleteRequest(request) == 0 && sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
+    Require(sceHttpSetHttp09Enabled(request, 1) == InvalidId && sceHttpSetSocketCreationCallback(pattern, SocketCreated, &marker) == InvalidId, "a deleted object still took an option");
+}
+
+void CheckOfflineSettersBeforeInit() {
+    Require(sceHttpSetHttp09Enabled(UnknownId, 1) == BeforeInit, "sceHttpSetHttp09Enabled answered before sceHttpInit");
+    Require(sceHttpSetPriorityOption(UnknownId, 1) == BeforeInit, "sceHttpSetPriorityOption answered before sceHttpInit");
+    Require(sceHttpSetPolicyOption(UnknownId, 1) == BeforeInit, "sceHttpSetPolicyOption answered before sceHttpInit");
+    Require(sceHttpSetSocketCreationCallback(UnknownId, nullptr, nullptr) == BeforeInit, "sceHttpSetSocketCreationCallback answered before sceHttpInit");
 }
 
 void CheckAcceptEncodingGzip(int context) {
@@ -237,10 +286,12 @@ int main() {
     CheckAcceptEncodingGzip(context);
     CheckEpoll(context);
     CheckUnobservedOptions(context);
+    CheckOfflineSetters(context);
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");
     CheckTermEndsOptions();
     CheckRegisteredCtxIds();
+    CheckOfflineSettersBeforeInit();
     std::puts("HTTP option tests passed");
     return 0;
 }

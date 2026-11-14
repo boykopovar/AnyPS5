@@ -381,6 +381,7 @@ struct SpirvTarget {
     bool shaderImageMinLod = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool meshInlineFunctions = false;
 };
 
 struct BindingLayout {
@@ -596,11 +597,15 @@ public:
     };
 
     ElementFlags() = default;
+    explicit ElementFlags(std::size_t size) : count(size), spill(size > InlineFlags ? size : 0u, false) {}
     ElementFlags(std::initializer_list<bool> flags) {
         for (const bool flag : flags) push_back(flag);
     }
     std::size_t size() const { return count; }
     bool empty() const { return count == 0; }
+    void reserve(std::size_t size) {
+        if (size > InlineFlags) spill.reserve(size);
+    }
     bool operator[](std::size_t index) const { return count <= InlineFlags ? ((bits >> index) & 1u) != 0 : spill[index]; }
     reference operator[](std::size_t index) { return {*this, index}; }
     bool back() const { return (*this)[count - 1]; }
@@ -643,10 +648,7 @@ public:
     const_iterator end() const { return {this, count}; }
     bool operator==(const ElementFlags& other) const {
         if (count != other.count) return false;
-        for (std::size_t index = 0; index < count; ++index) {
-            if ((*this)[index] != other[index]) return false;
-        }
-        return true;
+        return count <= InlineFlags ? bits == other.bits : spill == other.spill;
     }
     bool operator==(const std::vector<bool>& other) const {
         if (count != other.size()) return false;
@@ -1025,6 +1027,20 @@ struct ResourceCapture;
 void SetResultMemoBudget(std::uint64_t bytes);
 [[nodiscard]] std::uint64_t ResultMemoBytes();
 void SetResultMemoTrimHook(std::function<void()> hook);
+struct ResourcePlanCounters {
+    std::uint64_t heldBytes = 0;
+    std::uint64_t heldPlans = 0;
+    std::uint64_t evictions = 0;
+    std::uint64_t reloads = 0;
+};
+void SetResourcePlanBudget(std::uint64_t bytes);
+[[nodiscard]] ResourcePlanCounters ResourcePlanTotals();
+struct ResourcePlanInterval {
+    std::uint64_t reloads = 0;
+    std::uint64_t evictions = 0;
+};
+[[nodiscard]] ResourcePlanInterval TakeResourcePlanInterval();
+void SetResourcePlanReportHook(std::function<void()> hook);
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile

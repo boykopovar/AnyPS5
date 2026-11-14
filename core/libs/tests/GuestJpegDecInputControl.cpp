@@ -6,13 +6,19 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <source_location>
 #include <utility>
 #include <vector>
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: JPEG input-control assertion failed\n", location.file_name(), location.line());
+    std::abort();
+}
 
 struct Source {
     std::vector<std::uint8_t> bytes;
@@ -21,6 +27,7 @@ struct Source {
     std::size_t calls = 0;
     std::int32_t failure = 0;
     void* deleteHandle = nullptr;
+    std::size_t failureAt = 0;
 };
 
 std::int32_t APS5_VABI ReadChunk(JpegDecInputChunk* chunk, void* argument) {
@@ -28,7 +35,7 @@ std::int32_t APS5_VABI ReadChunk(JpegDecInputChunk* chunk, void* argument) {
     ++source->calls;
     Require(chunk->data == nullptr && chunk->size == 0);
     if (void* handle = std::exchange(source->deleteHandle, nullptr)) Require(sceJpegDecDelete(handle) == 0);
-    if (source->failure != 0) return source->failure;
+    if (source->failure != 0 && source->offset >= source->failureAt) return source->failure;
     if (source->offset == source->bytes.size()) return 0;
     const std::size_t count = std::min(source->chunkSize, source->bytes.size() - source->offset);
     chunk->data = source->bytes.data() + source->offset;
@@ -44,10 +51,10 @@ std::int32_t APS5_VABI UnmappedChunk(JpegDecInputChunk* chunk, void* argument) {
     return 7;
 }
 
-std::vector<std::uint8_t> TestJpeg(std::uint32_t width, std::uint32_t height, std::uint32_t channels) {
+std::vector<std::uint8_t> TestJpeg(std::uint32_t width, std::uint32_t height, std::uint32_t channels, std::uint32_t restartBlocks = 0) {
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * channels);
     for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<std::uint8_t>((i * 7) ^ (i >> 5));
-    return Decoder::Jpeg::Encode(pixels, width, height, channels, 90);
+    return Decoder::Jpeg::Encode(pixels, width, height, channels, 90, Decoder::Jpeg::Sampling::Yuv444, restartBlocks);
 }
 
 JpegDecInputControlParam StreamParam(std::uint16_t operation, Source& source) {
@@ -113,6 +120,50 @@ void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t w
     Require(sceJpegDecDelete(decoder.handle) == 0);
 }
 
+void RequireImageBoundary(const std::vector<std::uint8_t>& jpeg, std::uint32_t width, std::uint32_t height,
+                          std::size_t chunkSize, bool trailingBytes = false) {
+    std::int32_t expected = 0;
+    const std::vector<std::uint8_t> reference = Reference(jpeg, width, height, 1, &expected);
+    Require(expected == static_cast<std::int32_t>(width << 16 | height));
+    JpegHandle decoder(width);
+    Source source{jpeg, chunkSize};
+    if (trailingBytes) source.bytes.insert(source.bytes.end(), 29, 0xA5);
+    source.failure = -123;
+    source.failureAt = jpeg.size();
+    JpegDecInputControlParam param = StreamParam(0x10, source);
+    JpegDecImageInfo info{};
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &param, &info) == 0);
+    Require(info.image_width == width && info.image_height == height);
+    std::vector<std::uint8_t> image(reference.size(), 0xCD);
+    param.operation = 0x20;
+    param.image_mem_addr = image.data();
+    param.image_mem_size = static_cast<std::uint32_t>(image.size());
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &param, nullptr) == expected);
+    Require(image == reference);
+    Require(source.calls == (jpeg.size() + chunkSize - 1) / chunkSize);
+    const std::size_t calls = source.calls;
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &param, nullptr) == expected);
+    Require(source.calls == calls && image == reference);
+    Require(sceJpegDecDelete(decoder.handle) == 0);
+}
+
+void RequirePreEndError(const std::vector<std::uint8_t>& jpeg) {
+    JpegHandle decoder(96);
+    Source source{jpeg, 1};
+    source.failure = -123;
+    source.failureAt = jpeg.size() - 1;
+    JpegDecInputControlParam param = StreamParam(0x10, source);
+    JpegDecImageInfo info{};
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &param, &info) == 0);
+    std::vector<std::uint8_t> image(96 * 64 * 4, 0xCD);
+    param.operation = 0x20;
+    param.image_mem_addr = image.data();
+    param.image_mem_size = static_cast<std::uint32_t>(image.size());
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &param, nullptr) == -123);
+    Require(std::all_of(image.begin(), image.end(), [](auto value) { return value == 0xCD; }));
+    Require(sceJpegDecDelete(decoder.handle) == 0);
+}
+
 void RequireStreamOutlivesHandle(const std::vector<std::uint8_t>& jpeg, std::uint32_t width, std::uint32_t height) {
     constexpr std::int32_t invalidHandle = static_cast<std::int32_t>(0x80650004);
     std::int32_t expected = 0;
@@ -164,6 +215,18 @@ int main() {
 
     const std::vector<std::uint8_t> jpeg = TestJpeg(96, 64, 3);
     Require(jpeg.size() > 2 * 0x800);
+    const std::vector<std::uint8_t> smallJpeg = TestJpeg(8, 8, 1);
+    Require(smallJpeg.size() < 0x800);
+    for (const std::size_t chunkSize : {std::size_t{1}, std::size_t{7}, std::size_t{0x10000}}) {
+        RequireImageBoundary(smallJpeg, 8, 8, chunkSize);
+        RequireImageBoundary(jpeg, 96, 64, chunkSize);
+    }
+    RequireImageBoundary(smallJpeg, 8, 8, smallJpeg.size() + 29, true);
+    const std::vector<std::uint8_t> restarted = TestJpeg(96, 64, 3, 1);
+    const std::uint8_t restartMarker[] = {0xFF, 0xD0};
+    Require(std::search(restarted.begin(), restarted.end(), std::begin(restartMarker), std::end(restartMarker)) != restarted.end());
+    RequireImageBoundary(restarted, 96, 64, 1);
+    RequirePreEndError(jpeg);
     JpegHandle decoder(96);
     Source source{jpeg, 100};
     JpegDecImageInfo info{};
@@ -249,7 +312,7 @@ int main() {
     Source ended{imageEnd, 1000};
     JpegDecInputControlParam endedParse = StreamParam(0x10, ended);
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &endedParse, &info) == decodeError);
-    Require(ended.calls == 3);
+    Require(ended.calls == 1);
     std::vector<std::uint8_t> broken{0xFF, 0xD8, 0x12, 0x34};
     broken.resize(10000, 0xFF);
     Source brokenSource{broken, 1000};
@@ -279,6 +342,9 @@ int main() {
     withApp.insert(withApp.end(), app.begin(), app.end());
     withApp.insert(withApp.end(), jpeg.begin() + 2, jpeg.end());
     const std::size_t realEnd = withApp.size();
+    RequireImageBoundary(withApp, 96, 64, 1);
+    RequireImageBoundary(withApp, 96, 64, 7);
+    RequireImageBoundary(withApp, 96, 64, withApp.size() + 29, true);
     withApp.resize(realEnd + 0x10000, 0x5A);
     Source appSource{withApp, 300};
     JpegDecInputControlParam appParse = StreamParam(0x10, appSource);
