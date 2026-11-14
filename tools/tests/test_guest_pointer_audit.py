@@ -48,6 +48,27 @@ class AccessTests(unittest.TestCase):
         )
         self.assertEqual(findings(source), [])
 
+    def test_evaluated_guest_copy_pointer_argument_is_reported(self):
+        source = (
+            "int APS5_VABI sceExampleNested(int** guest) { int out = 0; "
+            "GuestCopyIn_nid_no_patch(&out, *guest, sizeof(out)); return out; }\n"
+            "int APS5_VABI sceExampleWrapped(int** guest) { int out = 0; "
+            "GuestCopyIn_nid_no_patch(&out, Wrap(*guest), sizeof(out)); return out; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleNested", "guest", ["dereference"]),
+            ("sceExampleWrapped", "guest", ["dereference"]),
+        ])
+
+    def test_unevaluated_guest_copy_pointer_argument_is_not_reported(self):
+        source = (
+            "int APS5_VABI sceExampleSize(int** guest) { int out = 0; "
+            "GuestCopyIn_nid_no_patch(&out, sizeof(*guest) ? guest : guest, sizeof(out)); return out; }\n"
+            "int APS5_VABI sceExampleCallSize(int** guest) { int out = 0; "
+            "return sizeof(GuestCopyIn_nid_no_patch(&out, *guest, sizeof(out))); }\n"
+        )
+        self.assertEqual(findings(source), [])
+
     def test_a_safe_copy_does_not_hide_other_direct_accesses(self):
         source = (
             "int APS5_VABI sceExampleMixed(Info* p) { Info local{};\n"
@@ -153,6 +174,18 @@ class CommandLineTests(unittest.TestCase):
             self.run_main(["libSceMissing"], {"libSceExample/Export.cpp": ""})
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("not a library under core/libs/prx: libSceMissing", errors.getvalue())
+
+    def test_library_selection_cannot_escape_prx(self):
+        files = {
+            "libSceExample/Export.cpp": "int APS5_VABI sceExample(int* out) { *out = 1; return 0; }\n",
+            "../stray/Export.cpp": "int APS5_VABI sceOutside(int* out) { *out = 2; return 0; }\n",
+        }
+        for name in ("..", "../stray", "libSceExample/.."):
+            with self.subTest(name=name):
+                with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:
+                    self.run_main(["--json", name], files)
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("not a library under core/libs/prx:", errors.getvalue())
 
 
 if __name__ == "__main__":

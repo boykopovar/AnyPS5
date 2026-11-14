@@ -104,18 +104,14 @@ bool MatchesURL(const NKWebKit::UserContentURLPattern* pattern, const NKWebKit::
         const auto portStart = hostAndPort.find(u':');
         urlHost = (portStart == std::u16string_view::npos) ? hostAndPort : hostAndPort.substr(0, portStart);
     }
-    if (!fileScheme) {
-        if (pattern->host.empty()) {
-            if (!pattern->matchSubdomains) return false;
-        } else if (pattern->matchSubdomains) {
-            if (!EqualLettersIgnoringASCIICase(urlHost, pattern->host)) {
-                if (urlHost.size() <= pattern->host.size() + 1) return false;
-                if (urlHost[urlHost.size() - pattern->host.size() - 1] != u'.') return false;
-                if (!EqualLettersIgnoringASCIICase(urlHost.substr(urlHost.size() - pattern->host.size()), pattern->host))
-                    return false;
-            }
-        } else if (!EqualLettersIgnoringASCIICase(urlHost, pattern->host)) {
-            return false;
+    if (fileScheme && EqualLettersIgnoringASCIICase(urlHost, u"localhost")) urlHost = {};
+    if (!EqualLettersIgnoringASCIICase(urlHost, pattern->host)) {
+        if (!pattern->matchSubdomains) return false;
+        if (!pattern->host.empty()) {
+            if (urlHost.size() <= pattern->host.size()) return false;
+            if (urlHost[urlHost.size() - pattern->host.size() - 1] != u'.') return false;
+            if (!EqualLettersIgnoringASCIICase(urlHost.substr(urlHost.size() - pattern->host.size()), pattern->host))
+                return false;
         }
     }
     return WildcardMatchesPath(pattern->path, urlPath);

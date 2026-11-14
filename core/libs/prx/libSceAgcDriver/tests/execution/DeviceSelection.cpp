@@ -25,6 +25,13 @@ void Require(const bool condition, const std::string& message) {
 
 int main() {
     try {
+        const auto surfaceWarning = AgcDriver::SoftwareFallbackWarning(VK_PHYSICAL_DEVICE_TYPE_CPU, "llvmpipe", "Hardware GPU", AgcDriver::PresentationRejection::NoSurfaceQueue, false);
+        Require(surfaceWarning.find("llvmpipe") != std::string::npos && surfaceWarning.find("Hardware GPU") != std::string::npos && surfaceWarning.find("cannot present to this window") != std::string::npos, "the software fallback warning omitted the selected device, rejected GPU or surface reason");
+        const auto extensionWarning = AgcDriver::SoftwareFallbackWarning(VK_PHYSICAL_DEVICE_TYPE_CPU, "llvmpipe", "Hardware GPU", AgcDriver::PresentationRejection::MissingSwapchain, false);
+        Require(extensionWarning.find("VK_KHR_swapchain") != std::string::npos, "the software fallback warning omitted the swapchain reason");
+        Require(AgcDriver::SoftwareFallbackWarning(VK_PHYSICAL_DEVICE_TYPE_CPU, "llvmpipe", "Hardware GPU", AgcDriver::PresentationRejection::NoSurfaceQueue, true).empty(), "an explicit CPU request warned about an automatic fallback");
+        Require(AgcDriver::SoftwareFallbackWarning(VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, "Hardware GPU", "Other GPU", AgcDriver::PresentationRejection::NoSurfaceQueue, false).empty(), "a hardware selection warned about a software fallback");
+        Require(AgcDriver::SoftwareFallbackWarning(VK_PHYSICAL_DEVICE_TYPE_CPU, "llvmpipe", "", AgcDriver::PresentationRejection::None, false).empty(), "a CPU-only host warned about an absent hardware GPU");
         SetRequest("");
         const auto defaultDevice = OpenVulkanTestDevice();
         if (!defaultDevice) return VulkanTestSkipped;

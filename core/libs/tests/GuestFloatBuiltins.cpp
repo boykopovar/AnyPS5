@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 #include <xmmintrin.h>
 
@@ -13,6 +14,27 @@ static void Require(bool value, std::source_location location = std::source_loca
     if (value) return;
     std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
     std::abort();
+}
+
+static __complex__ float TestComplex(float real, float imaginary) {
+    __complex__ float value{};
+    __real__ value = real;
+    __imag__ value = imaginary;
+    return value;
+}
+
+static __complex__ double TestComplex(double real, double imaginary) {
+    __complex__ double value{};
+    __real__ value = real;
+    __imag__ value = imaginary;
+    return value;
+}
+
+static __complex__ long double TestComplex(long double real, long double imaginary) {
+    __complex__ long double value{};
+    __real__ value = real;
+    __imag__ value = imaginary;
+    return value;
 }
 
 static std::uint64_t Bits(double value) { return std::bit_cast<std::uint64_t>(value); }
@@ -157,6 +179,61 @@ static void CheckComplex() {
     Require(__real__ large == 1.L && __imag__ large == 0.L);
     const __complex__ double byInfinity = __divdc3_nid_postfix(1., 1., INFINITY, INFINITY);
     Require(__real__ byInfinity == 0. && __imag__ byInfinity == 0.);
+
+    static_assert(sizeof(__complex__ float) == 8);
+    static_assert(sizeof(__complex__ double) == 16);
+    static_assert(sizeof(__complex__ long double) == 2 * sizeof(long double));
+
+    const __complex__ double z = TestComplex(3., 4.);
+    Require(creal_nid_postfix(z) == 3. && cimag_nid_postfix(z) == 4.);
+    Require(cabs_nid_postfix(z) == 5.);
+    Require(Bits(carg_nid_postfix(TestComplex(1., 1.))) == 0x3FE921FB54442D18ull);
+    Require(Bits(carg_nid_postfix(TestComplex(-1., 0.))) == 0x400921FB54442D18ull);
+    Require(Bits(carg_nid_postfix(TestComplex(-1., -0.))) == 0xC00921FB54442D18ull);
+    const __complex__ double cj = conj_nid_postfix(z);
+    Require(__real__ cj == 3. && __imag__ cj == -4.);
+    const __complex__ double cjZero = conj_nid_postfix(TestComplex(0.0, 0.0));
+    Require(__real__ cjZero == 0.0 && !std::signbit(__real__ cjZero) && __imag__ cjZero == 0.0 && std::signbit(__imag__ cjZero));
+    const __complex__ double pj = cproj_nid_postfix(TestComplex(std::numeric_limits<double>::infinity(), 2.));
+    Require(std::isinf(__real__ pj) && __imag__ pj == 0.);
+    const __complex__ double pjn = cproj_nid_postfix(TestComplex(1., -std::numeric_limits<double>::infinity()));
+    Require(std::isinf(__real__ pjn) && std::signbit(__imag__ pjn));
+    const __complex__ double pjNeg = cproj_nid_postfix(TestComplex(-std::numeric_limits<double>::infinity(), -0.0));
+    Require(std::isinf(__real__ pjNeg) && __real__ pjNeg > 0.0 && __imag__ pjNeg == 0.0 && std::signbit(__imag__ pjNeg));
+    const __complex__ double pjNanInf = cproj_nid_postfix(TestComplex(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()));
+    Require(std::isinf(__real__ pjNanInf) && __real__ pjNanInf > 0.0 && __imag__ pjNanInf == 0.0 && !std::signbit(__imag__ pjNanInf));
+    const __complex__ double pnorm = cproj_nid_postfix(z);
+    Require(__real__ pnorm == 3. && __imag__ pnorm == 4.);
+    Require(std::isinf(cabs_nid_postfix(TestComplex(std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()))));
+    Require(std::isinf(cabs_nid_postfix(TestComplex(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()))));
+
+    const __complex__ float zf = TestComplex(3.f, -4.f);
+    Require(crealf_nid_postfix(zf) == 3.f && cimagf_nid_postfix(zf) == -4.f);
+    Require(cabsf_nid_postfix(zf) == 5.f);
+    Require(Bits(cargf_nid_postfix(TestComplex(0.f, 1.f))) == 0x3FC90FDBu);
+    Require(cargf_nid_postfix(TestComplex(0x1.e3465ap-1f, 0x1.319e92p-3f)) == 0x1.412088p-3f);
+    Require(cargf_nid_postfix(TestComplex(-0x1.00924ap+6f, -0x1.5eaaaap+6f)) == -0x1.19ea4p+1f);
+    const __complex__ float cjf = conjf_nid_postfix(zf);
+    Require(__real__ cjf == 3.f && __imag__ cjf == 4.f);
+    const __complex__ float pjf = cprojf_nid_postfix(TestComplex(std::numeric_limits<float>::infinity(), -1.f));
+    Require(std::isinf(__real__ pjf) && std::signbit(__imag__ pjf));
+    Require(__imag__ pjf == 0.f);
+    const __complex__ float pfnorm = cprojf_nid_postfix(zf);
+    Require(__real__ pfnorm == 3.f && __imag__ pfnorm == -4.f);
+
+    const __complex__ long double zl = TestComplex(5.L, 12.L);
+    Require(creall_nid_postfix(zl) == 5.L && cimagl_nid_postfix(zl) == 12.L);
+    Require(cabsl_nid_postfix(zl) == 13.L);
+    Require(cabsl_nid_postfix(TestComplex(3e3000L, 4e3000L)) == 5e3000L);
+    Require(cargl_nid_postfix(TestComplex(-1.L, 0.L)) == 3.14159265358979323846264338327950288L);
+    const __complex__ long double cjl = conjl_nid_postfix(zl);
+    Require(__real__ cjl == 5.L && __imag__ cjl == -12.L);
+    const __complex__ long double pjl = cprojl_nid_postfix(TestComplex(-std::numeric_limits<long double>::infinity(), 1.L));
+    Require(std::isinf(__real__ pjl) && __real__ pjl > 0.L && __imag__ pjl == 0.L);
+    const __complex__ long double pjl2 = cprojl_nid_postfix(TestComplex(1.L, -std::numeric_limits<long double>::infinity()));
+    Require(std::isinf(__real__ pjl2) && __real__ pjl2 > 0.L && __imag__ pjl2 == 0.L && std::signbit(__imag__ pjl2));
+    const __complex__ long double plnorm = cprojl_nid_postfix(zl);
+    Require(__real__ plnorm == 5.L && __imag__ plnorm == 12.L);
 }
 
 int main() {
