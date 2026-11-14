@@ -2935,10 +2935,31 @@ bool storeHtileOnGpu(const Context& context, Recorder& recorder, std::uint64_t a
     return true;
 }
 
+std::mutex& copyDestinationsMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>>& copyDestinations() {
+    static auto* ranges = new std::vector<std::pair<std::uint64_t, std::uint64_t>>();
+    return *ranges;
+}
+
+bool copiedOver(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard lock(copyDestinationsMutex());
+    return std::any_of(copyDestinations().begin(), copyDestinations().end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });
+}
+
+void forgetCopiesInside(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard lock(copyDestinationsMutex());
+    std::erase_if(copyDestinations(), [&](const auto& range) { return address <= range.first && range.second <= address + bytes; });
+}
+
 VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarget& target) {
     if (target.htileAddress == 0) return 0;
     const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(target.extent));
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(target.htileAddress), bytes, true)) return 0;
+    if (copiedOver(target.htileAddress, bytes)) return 0;
     const auto collected = GuestMemory::CollectWrites(target.htileAddress, bytes);
     auto* recorder = RecorderFor(context);
     const bool pending = recorder != nullptr && recorder->PendingWriteOverlaps(target.htileAddress, bytes);
@@ -3827,7 +3848,17 @@ void ForgetHtileMasks_nid_no_patch(std::uint64_t recorderId) {
     std::erase_if(htileMasks(), [&](const HtileMaskWrite& write) { return write.recorderId == recorderId; });
 }
 
+void NoteCopyDestination(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0) return;
+    std::lock_guard lock(copyDestinationsMutex());
+    auto& ranges = copyDestinations();
+    std::erase_if(ranges, [&](const auto& range) { return address <= range.first && range.second <= address + bytes; });
+    ranges.emplace_back(address, address + bytes);
+    if (ranges.size() > 256u) ranges.erase(ranges.begin());
+}
+
 bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::size_t nativeBytes) {
+    forgetCopiesInside(htileAddress, bytes);
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(htileAddress, bytes);
     bool existing = false;
@@ -4112,6 +4143,7 @@ std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t add
 }
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    forgetCopiesInside(address, bytes);
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
