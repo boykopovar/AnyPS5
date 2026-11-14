@@ -67,6 +67,8 @@ python3 tools/select_tests.py ctest build --output-on-failure
   @"C:\Program Files\Git\bin\bash.exe" "%~dpn5.sh" %6 %7
   ```
 
+With `BUILD_TESTING=ON` and Python available, the daily-tag workflow tests require Node.js. The self-hosted Linux Build job installs Node.js 24, matching `actions/github-script`; a missing Node executable fails these tests instead of silently skipping their JavaScript checks.
+
 ## Web converter releases
 
 The Release workflow builds the web converter and the Linux and Windows libraries from the same commit. It tests the converter and publishes its frontend and WASM files as `web-<tag>.zip`, with the tag and commit recorded in `web-release.json`.

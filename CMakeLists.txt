@@ -662,6 +662,9 @@ if(BUILD_TESTING)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
         add_test(NAME stale_conflicts_workflow COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stale_conflicts_workflow.py)
+        add_test(NAME daily_tag_workflow COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_daily_tag.py)
+        set_tests_properties(daily_tag_workflow PROPERTIES TIMEOUT 20)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_timeline.py)
         set_tests_properties(pad_timeline PROPERTIES TIMEOUT 20)
