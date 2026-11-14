@@ -7,6 +7,7 @@
 - [`X509_set_version`](../../../core/libs/prx/libSceLibreSsl3/src/X509.cpp) follows LibreSSL 4.0.0 `crypto/x509/x509_set.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_set.c) and the `X509_CINF` layout in its `x509_local.h`. Versions outside 0 to 2 return 0 without mutation; a missing version integer is allocated from the guest heap, the encoding is marked modified, and the value is set through `ASN1_INTEGER_set`. A null certificate returns 0 and null certificate info, undefined upstream, throws. The 104-byte `X509_CINF` layout and the `enc.modified` offset 96 are not measured on the console.
 ### Functional
 
+- [EC_POINT_dup](../../../core/libs/prx/libSceLibreSsl3/src/EcPointDup.cpp) - follows LibreSSL 4.0.0 `ec_lib.c` `EC_POINT_dup`: a null source returns null, a null group throws, a source point of another curve returns null, and the copy is a new mbedtls point on the group curve. The point wrapper is not the native PS5 layout, allocation failure throws instead of returning null, and the console behaviour is unverified. Closes when: compared with the console.
 - [X509_get0_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509PublicKeyAccessors.cpp) - reads the cached public key from the certificate-info key structure; a null certificate, info or key returns null, and a null cached key with encoded SPKI data throws `NotImplemented_nid_no_patch` until SPKI decoding exists. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [AUTHORITY_KEYID_free and X509_CRL_free](../../../core/libs/prx/libSceLibreSsl3/src/X509ItemFree.cpp#L6) - not measured on a PS5; non-null object disposal remains unsupported and throws before dereference. The null no-op follows LibreSSL 4.0.0 [`AUTHORITY_KEYID_free`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_akeya.c#L124-L128), [`X509_CRL_free`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_crl.c#L507-L511) and their [`ASN1_item_free` dispatcher](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/tasn_fre.c#L72-L99).
 - [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1 as LibreSSL does (OpenSSL 1.1 returns 0); null key, input or output throws where LibreSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
@@ -108,7 +109,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 56 still-unimplemented callable exports: 52 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 55 still-unimplemented callable exports: 51 named and 4 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -162,7 +163,6 @@
 | `X509_add1_ext_i2d` | `s8WMaKNjwvE` |
 | `EC_GROUP_cmp` | `sENJFZ7WbLU` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
-| `EC_POINT_dup` | `uITUdhDDAg8` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `OBJ_obj2txt` | `xZ1BME5qDv0` |

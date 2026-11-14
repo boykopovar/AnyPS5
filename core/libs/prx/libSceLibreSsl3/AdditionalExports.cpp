@@ -233,10 +233,6 @@ int APS5_VABI EC_GROUP_cmp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EC_POINT_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI d2i_ASN1_SEQUENCE_ANY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

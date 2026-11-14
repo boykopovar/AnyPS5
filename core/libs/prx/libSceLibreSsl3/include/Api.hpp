@@ -439,7 +439,7 @@ const char* APS5_VABI ERR_reason_error_string_nid_postfix(std::uint64_t error);
 int APS5_VABI X509_add1_ext_i2d_nid_postfix();
 int APS5_VABI EC_GROUP_cmp_nid_postfix();
 int APS5_VABI EVP_PKEY_sign_init_nid_postfix(LibreSsl3PkeyContext* context);
-int APS5_VABI EC_POINT_dup_nid_postfix();
+EcPoint* APS5_VABI EC_POINT_dup_nid_postfix(const EcPoint* point, const EcGroup* group);
 int APS5_VABI RSA_set0_key_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* n, LibreSsl3Bignum* e, LibreSsl3Bignum* d);
 int APS5_VABI EVP_PKEY_cmp_nid_postfix(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second);
 int APS5_VABI d2i_ASN1_SEQUENCE_ANY_nid_postfix();
