@@ -126,6 +126,27 @@ void TestDefault() {
     Require(live.empty());
 }
 
+void TestCopyDefault() {
+    WebRtcIceServer source;
+    _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(&source);
+    WebRtcIceServer copy;
+    std::memset(&copy, 0xcd, sizeof(copy));
+    const int before = allocations;
+    _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(&copy, &source);
+    Require(allocations == before);
+    RequireEmptyString(copy.uri);
+    RequireEmptyVector(copy.urls);
+    RequireEmptyString(copy.username);
+    RequireEmptyString(copy.password);
+    Require(copy.tlsCertPolicy == 0);
+    RequireEmptyString(copy.hostname);
+    RequireEmptyVector(copy.tlsAlpnProtocols);
+    RequireEmptyVector(copy.tlsEllipticCurves);
+    _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&copy);
+    _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(&source);
+    Require(live.empty());
+}
+
 void TestCopy() {
     WebRtcIceServer source;
     Fill(source);
@@ -244,6 +265,7 @@ int main() {
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
     TestDefault();
+    TestCopyDefault();
     TestCopy();
     TestLargeString();
     TestAllocationFailure();

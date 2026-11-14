@@ -118,6 +118,8 @@ void ReleaseVector(WebRtcGuestStringVector& vector) {
 
 void CopyVector(WebRtcGuestStringVector& vector, const WebRtcGuestStringVector& other) {
     InitVector(vector);
+    if (!other.begin)
+        return;
     const auto count = static_cast<std::size_t>(other.end - other.begin);
     if (count == 0)
         return;
