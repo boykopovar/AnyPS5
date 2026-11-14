@@ -1182,9 +1182,46 @@ void validRefreshBaselines(AgcDriver::VulkanDevice& device) {
 #endif
     Require(AgcDriver::GuestMemory::Watched(color.address, color.bytes) && HostImportFor(context, color.address, color.bytes) != nullptr, "the baseline fixture cannot directly upload watched bytes");
     resident->Refresh();
-    Require(resident->OriginalSnapshotBytes() != 0, "the direct upload dropped the baseline buffer");
-    Require(resident->RefreshObligation() == nullptr, "an invalid saved baseline rejected current image bytes");
+    Require(resident->GuestCopyCapacity() == 0, "a direct upload of watched bytes kept a guest-byte copy no unit vouches for");
+    Require(resident->RefreshObligation() == nullptr, "a released saved baseline rejected current image bytes");
     arm(device, color);
+}
+
+void heldBaselineUnits(AgcDriver::VulkanDevice& device) {
+    auto color = colorTarget();
+    auto* memory = allocateWatched(2 * PlaneBytes);
+    color.address = color.surfaceAddress = color.arrayAddress = address(memory);
+    color.arrayLastSlice = 1;
+    color.layers = 1;
+    AgcDriver::GuestMemory::Unwatch(color.address, 2 * PlaneBytes);
+    reset(device, color);
+    arm(device, color);
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    StorageTexture::FlushPending(color.address, 2 * PlaneBytes, nullptr, "test");
+    device.WaitIdle();
+    const auto resident = StorageTexture::FindLive(color.address, 2 * PlaneBytes);
+    Require(resident != nullptr && resident->GuestCopyCapacity() != 0, "the two-layer baseline fixture has no saved bytes");
+#ifdef _WIN32
+    const std::pair<std::uint64_t, std::uint64_t> range{color.address, color.address + 2 * PlaneBytes};
+    AgcDriver::GuestMemory::Rewatch(std::span(&range, 1));
+#else
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, 2 * PlaneBytes);
+#endif
+    resident->MarkUnitsWritten({true, false});
+    StorageTexture::FlushPending(color.address, PlaneBytes, nullptr, "test");
+    device.WaitIdle();
+    Require(resident->GuestCopyCapacity() != 0, "a layer that still vouches for its saved bytes lost the guest-byte copy");
+    const auto byteOf = [&](std::uint32_t layer) { return memory + layer * PlaneBytes + 16; };
+    const auto written = *byteOf(0);
+    *byteOf(0) = ~written;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(resident->RefreshObligation(0, 1) == nullptr, "a layer that no longer vouches for its saved bytes was compared with them");
+    const auto held = *byteOf(1);
+    *byteOf(1) = ~held;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(resident->RefreshObligation(1, 1) != nullptr, "a held layer's saved bytes missed its changed guest bytes");
+    *byteOf(0) = written;
+    *byteOf(1) = held;
 }
 
 void depthProofAfterMetadataWrite(AgcDriver::VulkanDevice& device) {
@@ -1314,13 +1351,14 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     }
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 13> R3Scenarios{{
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 14> R3Scenarios{{
     {"untracked-dcc", untrackedDccClear},
     {"untracked-cmask", untrackedCmaskClear},
     {"resident-dcc", residentDccClear},
     {"claim", claimAfterAbsorbedFill},
     {"depth-proof", depthProofAfterMetadataWrite},
     {"baseline", validRefreshBaselines},
+    {"held-baseline", heldBaselineUnits},
     {"unchanged", unchangedMemo},
     {"fallback", depthFallbackInvalidatesColor},
     {"descriptor", colorMemoDepthDescriptorChange},
