@@ -322,6 +322,14 @@ alignas(256) constexpr std::array<std::uint32_t, 37> NestedRecordCode{
     0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 44> NestedSiblingRecordCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148514u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf4080c16u, 0xfa0000b0u, 0xf42c090cu, 0x28000000u, 0xf42c0d18u, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0xf09c0f08u, 0x010d0a01u, 0x7e0a030au, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
@@ -1357,7 +1365,7 @@ void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
     RequireRed(changed, 1, Lanes, texels[0], "float texels after the T# behind record 1's pointer changed");
 }
 
-enum class NestedCase { Basic, Large, Budget };
+enum class NestedCase { Basic, Large, Budget, SharedScan };
 constexpr std::uint32_t NestedParentLimit = 524288u;
 constexpr std::uint32_t NestedKeyLimit = 1048576u;
 
@@ -1460,6 +1468,32 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
             Require(!Faulted(merged) && merged.words == direct.words, "nested image table: pointer Phi changed the large-domain readback");
             Require(merged.tableMap.size() < Children + 1024u, "nested image table: a Cartesian product was allocated");
             std::puts("nested image table: 348156 parents, 131072 inner keys and pointer Phi checked");
+            return;
+        }
+        if (selected == NestedCase::SharedScan) {
+            constexpr std::uint32_t Parents = NestedParentLimit / 2u + 1u;
+            wideRoots.resize(Parents * 4u, 0u);
+            putRoot(0u, records[0].data());
+            putRoot(Parents - 1u, records[1].data());
+            auto second = Buffer(palettes[0].data(), 1u);
+            second[1] |= 64u << 16u;
+            std::copy(second.begin(), second.end(), records[1].begin() + 44u);
+            Keys = {};
+            for (std::uint32_t group = 0; group < 4u; ++group) {
+                Keys[group * 2u] = Parents - 1u;
+                Keys[group * 2u + 1u] = group % 2u;
+            }
+            const auto siblings = run(NestedSiblingRecordCode);
+            Require(!Faulted(siblings), "nested image table: a second V# behind the same parent records was charged for them again:\n" + siblings.log);
+            for (std::uint32_t group = 0; group < 4u; ++group) {
+                RequireRed(siblings, group, Lanes, texels[1u + group % 2u], "nested image table: first V# behind the last shared parent record");
+                for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+                    const auto actual = siblings.words[(group * Lanes + lane) * 4u + 1u];
+                    const auto expected = texels[group % 2u](lane % Width);
+                    Require(actual == expected, "nested image table: second V# behind the last shared parent record: group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual) + ", expected " + Hex(expected));
+                }
+            }
+            std::puts("nested image table: two V#s behind the same parent records share one scan budget");
             return;
         }
         wideRoots.resize((NestedParentLimit + 1u) * 4u, 0u);
@@ -1905,6 +1939,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--nested-budget") == 0) {
             RunNestedRecordTests(*device, NestedCase::Budget);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--nested-shared-scan") == 0) {
+            RunNestedRecordTests(*device, NestedCase::SharedScan);
             return 0;
         }
         RunTests(*device);
