@@ -207,6 +207,17 @@ std::string vulkanVersion(std::uint32_t version) {
     return std::to_string((version >> 22) & 0x7Fu) + "." + std::to_string((version >> 12) & 0x3FFu) + "." + std::to_string(version & 0xFFFu);
 }
 
+std::string driverVersion(HostDriverVersionScheme scheme, std::uint32_t version) {
+    const auto field = [&](unsigned shift, std::uint32_t mask) { return std::to_string((version >> shift) & mask); };
+    switch (scheme) {
+        case HostDriverVersionScheme::Vulkan: return field(22, 0x3FFu) + "." + field(12, 0x3FFu) + "." + field(0, 0xFFFu);
+        case HostDriverVersionScheme::Nvidia: return field(22, 0x3FFu) + "." + field(14, 0xFFu) + "." + field(6, 0xFFu) + "." + field(0, 0x3Fu);
+        case HostDriverVersionScheme::IntelWindows: return field(14, 0x3FFFFu) + "." + field(0, 0x3FFFu);
+        case HostDriverVersionScheme::Unknown: break;
+    }
+    return "unknown";
+}
+
 std::string join(const std::vector<std::string>& values) {
     std::string text;
     for (const auto& value : values) {
@@ -393,6 +404,7 @@ std::string FormatHostReport(const HostFacts& original) {
         line(output, "vulkan_api", vulkanVersion(gpu.apiVersion));
         line(output, "driver", gpu.driverName.empty() ? "unknown" : gpu.driverName);
         line(output, "driver_info", gpu.driverInfo.empty() ? "unknown" : gpu.driverInfo);
+        line(output, "driver_version", driverVersion(gpu.driverVersionScheme, gpu.driverVersion));
         line(output, "driver_version_raw", hex(gpu.driverVersion));
         line(output, "subgroup_size", std::to_string(gpu.subgroupSize));
         line(output, "device_local_mib", std::to_string(gpu.deviceLocalMiB));

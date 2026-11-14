@@ -19,6 +19,7 @@ FORCED = {"ANYPS5_REQUIRE_VULKAN": "1", "ANYPS5_NO_SHADER_CACHE": "1",
           "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation", "VK_LOADER_DEBUG": "layer"}
 PUBLIC_ENV = ("ANYPS5_GPU", "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "VK_LAYER_PATH")
 DIAGNOSTIC = re.compile(r"\b(VUID-[A-Za-z0-9_-]+|SYNC-HAZARD-[A-Za-z0-9_-]+)")
+UNASSIGNED = re.compile(r"\[\s*(UNASSIGNED-[^]\r\n]+?)\s*\]")
 MESSAGE = re.compile(r"Validation (?:Error|Warning):|(?:VUID-|SYNC-HAZARD-)[\w-]+\s*\((?:ERROR|WARNING)\s*/")
 MISSING_LAYER = "was not found but was requested by env var VK_INSTANCE_LAYERS"
 INSERTED_LAYER = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
@@ -298,6 +299,7 @@ def parse_report(path, expected):
             for line in (case.findtext(channel) or "").splitlines():
                 if MESSAGE.search(line):
                     messages.update(DIAGNOSTIC.findall(line))
+                    messages.update(UNASSIGNED.findall(line))
                 if MISSING_LAYER in line:
                     missing.append(line)
                 inserted = inserted or INSERTED_LAYER in line
@@ -335,6 +337,9 @@ def save(output, report):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Build and repeatedly compare focused Vulkan CTests on two pinned clean worktrees")
     parser.add_argument("--baseline", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))
     parser.add_argument("--candidate", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))

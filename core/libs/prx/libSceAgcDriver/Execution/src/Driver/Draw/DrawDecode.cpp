@@ -5,6 +5,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <string_view>
 #include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
@@ -193,11 +195,16 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     auto product = std::make_shared<DrawDecode>();
     product->state = Graphics::DecodeState(queue, VertexWorkgroupRequired(queue, *submission.shaders));
     DecodeGraphicsPrograms(*product, queue, *submission.shaders, false, true);
-    product->state.depthCopySource = std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.codeAddress == DepthCopyPixelProgramAddress(true); });
+    product->state.depthCopySource = std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.codeAddress == DepthCopyPixelProgramAddress(true) || program.binary.codeAddress == StencilCopyPixelProgramAddress(true); });
     product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue));
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
     Graphics::ApplyDepthRemap(context, product->state);
     Graphics::ApplyDepthBoundsEmulation(context, product->state, product->pixel);
+    static const bool readOnlyDepthBoundsCompare = [] {
+        const auto* value = std::getenv("APS5_READONLY_DEPTH_BOUNDS_COMPARE");
+        return value != nullptr && std::string_view(value) == "1";
+    }();
+    Graphics::ApplyReadOnlyDepthBoundsComparison(product->state, product->pixel, readOnlyDepthBoundsCompare);
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);
     product->pixel.dualSourceBlend = product->state.dualSourceBlend;
     product->pixel.reversedBlend = product->state.reversedBlend;

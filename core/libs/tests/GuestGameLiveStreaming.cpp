@@ -151,6 +151,10 @@ void CheckArrays() {
     Require(sceGameLiveStreamingSetSpoilerTag(1, tags) == 0);
     Require(sceGameLiveStreamingClearSpoilerTag() == 0);
     Require(sceGameLiveStreamingClearSpoilerTag() == 0);
+    errno = 71;
+    Require(sceGameLiveStreamingSetSpoilerTag(0, reinterpret_cast<const GameLiveStreamingSpoilerTag*>(0x10)) == 0);
+    Require(sceGameLiveStreamingSetSpoilerTag(1, reinterpret_cast<const GameLiveStreamingSpoilerTag*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     GameLiveStreamingPresetCommand presets[6]{};
     Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, nullptr) == kInvalidArgument);
@@ -172,6 +176,10 @@ void CheckArrays() {
     Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(5, presets) == 0);
     Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
     Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
+    errno = 71;
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, reinterpret_cast<const GameLiveStreamingPresetCommand*>(0x10)) == 0);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(1, reinterpret_cast<const GameLiveStreamingPresetCommand*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     GameLiveStreamingCameraFrameSetting camera{};
     Require(sceGameLiveStreamingSetCameraFrameSetting(nullptr) == kInvalidArgument);
@@ -184,6 +192,9 @@ void CheckArrays() {
         Require(sceGameLiveStreamingSetCameraFrameSetting(&camera) == kInvalidArgument);
         camera.reserved[byte] = 0;
     }
+    errno = 71;
+    Require(sceGameLiveStreamingSetCameraFrameSetting(reinterpret_cast<const GameLiveStreamingCameraFrameSetting*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 }
 
 void CheckScalars() {

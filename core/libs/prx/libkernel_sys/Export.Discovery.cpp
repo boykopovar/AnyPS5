@@ -601,7 +601,6 @@ int APS5_VABI sceKernelDirectMemoryQueryForId(void) {
 }
 
 int APS5_VABI sceKernelEnableDmemAliasing2(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -656,7 +655,11 @@ int APS5_VABI sceKernelGetACInfoAllForCoredump(void) {
 
 int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* categoryType) {
     if (categoryType == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    if (pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
+    if (pid < 0) {
+        *__error_nid_postfix() = 3;
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
+    if (pid != 0 && pid != getpid_nid_postfix()) NotImplemented_nid_no_patch(__func__);
     std::uint32_t value = 0;
     if (!GetAppCategoryType_nid_no_patch(&value)) NotImplemented_nid_no_patch(__func__);
     if (!GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;

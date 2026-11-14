@@ -52,6 +52,8 @@ bool stateTests() {
     return unmappedOk
         && check(sceNpPartyGetStateAsUserA(-1, &states[1]) == kInvalidArgument && states[1] == 0xa5a5, "user -1 was not refused with INVALID_ARGUMENT")
         && check(sceNpPartyGetState(nullptr) == kInvalidArgument, "a null state was not refused with INVALID_ARGUMENT")
+        && check(sceNpPartyGetState(reinterpret_cast<std::uint16_t*>(0x10)) == kInvalidArgument, "an unmapped state was not refused")
+        && check(errno == 71, "errno mutated on unmapped state refusal")
         && check(sceNpPartyGetState(&states[1]) == 0 && states[1] == 2, "the state is not NOT_IN_PARTY")
         && check(states[0] == 0xa5a5 && states[2] == 0xa5a5, "sceNpPartyGetState wrote past its 16-bit state")
         && check(sceNpPartyGetStateAsUserA(1, nullptr) == kInvalidArgument, "a null user state was not refused with INVALID_ARGUMENT")
@@ -73,6 +75,8 @@ bool lifecycleTests() {
         && check(sceNpPartyRegisterHandlerA(handlers, nullptr) == kNotInitialized, "register handler before initialize did not fail")
         && check(sceNpPartyRegisterHandler(handlers, nullptr) == kNotInitialized, "the plain register handler before initialize did not fail")
         && check(sceNpPartyInitialize(nullptr) == kInvalidArgument, "a null initialize param was not refused")
+        && check((errno = 71, sceNpPartyInitialize(reinterpret_cast<const void*>(0x10)) == kInvalidArgument), "an unmapped initialize param was not refused")
+        && check(errno == 71, "errno was not preserved on unmapped initialize param")
         && check(sceNpPartyInitialize(zeroParam) == kInvalidArgument, "a zero-version initialize param was not refused")
         && check(sceNpPartyInitialize(param) == 0, "initialize failed")
         && check(sceNpPartyInitialize(param) == kAlreadyInitialized, "a second initialize did not fail")

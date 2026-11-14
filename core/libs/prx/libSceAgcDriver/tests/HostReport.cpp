@@ -69,6 +69,7 @@ constexpr const char* Golden =
     "vulkan_api: 1.3.280\n"
     "driver: test-driver\n"
     "driver_info: Test 1.2.3\n"
+    "driver_version: unknown\n"
     "driver_version_raw: 0x12345678\n"
     "subgroup_size: 32\n"
     "device_local_mib: 12288\n"
@@ -115,6 +116,28 @@ void MissingFactsAreNamed() {
     Check(failed.find("state: disabled\n") != std::string::npos, "a disabled shader cache is not reported");
     facts.shaderCache = AgcDriver::HostShaderCacheFacts{true, false, 0};
     Check(AgcDriver::FormatHostReport(facts).find("state: absent\n") != std::string::npos, "an absent shader cache directory is not reported");
+}
+
+std::string DecodedDriverVersion(AgcDriver::HostDriverVersionScheme scheme, std::uint32_t version) {
+    auto facts = SampleFacts();
+    facts.gpu->driverVersionScheme = scheme;
+    facts.gpu->driverVersion = version;
+    const auto text = AgcDriver::FormatHostReport(facts);
+    const auto start = text.find("driver_version: ");
+    if (start == std::string::npos) return {};
+    const auto value = start + std::char_traits<char>::length("driver_version: ");
+    return text.substr(value, text.find('\n', value) - value);
+}
+
+void DriverVersionsAreDecoded() {
+    using Scheme = AgcDriver::HostDriverVersionScheme;
+    Check(DecodedDriverVersion(Scheme::Nvidia, 0x9b438000u) == "621.14.0.0", "NVIDIA 621.14 was not decoded");
+    Check(DecodedDriverVersion(Scheme::Nvidia, (580u << 22) | (95u << 14) | (5u << 6) | 1u) == "580.95.5.1", "the lower NVIDIA fields were not decoded");
+    Check(DecodedDriverVersion(Scheme::IntelWindows, 0x0019485cu) == "101.2140", "Intel 101.2140 on Windows was not decoded");
+    Check(DecodedDriverVersion(Scheme::Vulkan, (25u << 22) | (2u << 12) | 8u) == "25.2.8", "a Vulkan-encoded version was not decoded");
+    Check(DecodedDriverVersion(Scheme::Unknown, 0x9b438000u) == "unknown", "a version without a known encoding was decoded");
+    const auto text = AgcDriver::FormatHostReport(SampleFacts());
+    Check(text.find("driver_version: ") < text.find("driver_version_raw: "), "the decoded version does not precede the raw value");
 }
 
 void PathsAndAddressesAreRedacted() {
@@ -332,6 +355,7 @@ int main() {
     GoldenOutput();
     OrderIsStable();
     MissingFactsAreNamed();
+    DriverVersionsAreDecoded();
     PathsAndAddressesAreRedacted();
     NamedValuesAreRedacted();
     SettingIsParsed();

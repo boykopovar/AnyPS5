@@ -174,7 +174,7 @@ int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** add
  void* found = dlsym_nid_postfix(module, symbol);
  if (handle == 0 && module) dlclose_nid_postfix(module);
  if (!found) return SCE_KERNEL_ERROR_ESRCH;
- *addr = found;
+ if (!GuestCopyOut_nid_no_patch(addr, &found, sizeof(found))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 

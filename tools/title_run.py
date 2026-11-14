@@ -21,7 +21,7 @@ import unwrap_self
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
-TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict}
+TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
 FILE_ROOTS = ("app0", "data", "download0")
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
@@ -472,6 +472,7 @@ def module_dirs(entry):
     return [relink[index + 1] for index in range(len(relink) - 1) if relink[index] == "--module-dir"]
 
 
+STANDARD_MODULE_DIRS = ("sce_module", "sce_modules", "prx")
 MODULE_MAGICS = (b"\x7fELF", b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")
 
 
@@ -484,7 +485,7 @@ def stage_inputs(package, entry, source):
     (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
-    for directory in ["sce_module", *module_dirs(entry)]:
+    for directory in dict.fromkeys([*STANDARD_MODULE_DIRS, *module_dirs(entry)]):
         if not (package / directory).is_dir():
             continue
         (source / directory).mkdir(parents=True, exist_ok=True)
@@ -697,9 +698,10 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     run_dir.mkdir(parents=True)
     (work / REPORT_FILE).unlink(missing_ok=True)
     inherited = {key: value for key, value in os.environ.items() if key not in ("ANYPS5_SHADER_CACHE_DIR", "ANYPS5_NO_SHADER_CACHE", "APS5_PAD_INPUT_FILE")}
-    env = {**inherited, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
+    env = {**inherited, "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
            "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
            "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
+    env.setdefault("SDL_AUDIODRIVER", "dummy")
     pad_file, queued = work / "pad-input.txt", None
     if pad:
         pad_file.unlink(missing_ok=True)
@@ -776,6 +778,9 @@ def write_summary(output, summary):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
@@ -788,13 +793,20 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="with --compare, print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
+    parser.add_argument("--smoke", action="store_true", help="run the titles marked \"smoke\" in titles.json")
     args = parser.parse_args(argv)
+    if args.smoke and args.ids:
+        parser.error("--smoke takes no title IDs")
     args.out = args.out or args.build / "title-runs"
     if args.json and not args.compare:
         parser.error("--json needs --compare")
     previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     titles = load_titles(args.titles)
+    if args.smoke:
+        args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
+        if not args.ids:
+            raise SystemExit(f"no title in {args.titles} is marked smoke")
     found = discover(args.games, args.ids)
     ids = args.ids or sorted(found)
     missing = [title_id for title_id in ids if title_id not in found]

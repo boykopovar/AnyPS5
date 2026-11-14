@@ -5,11 +5,10 @@
 #include <array>
 #include <charconv>
 #include <cstdint>
-#include <fstream>
+#include <cstdio>
+#include <filesystem>
 #include <iterator>
 #include <limits>
-#include <sstream>
-#include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -91,29 +90,75 @@ private:
     };
 
     Command read() const {
-        std::ifstream file(path);
-        char line[128]{};
-        if (!file.getline(line, sizeof(line))) return {};
-        const std::string text(line);
-        if (text.find('-') != std::string::npos) return {};
-        std::istringstream fields(text);
-        std::string first;
-        if (!(fields >> first)) return {};
-        if (first == "APS5_PAD_TIMELINE") {
+#ifdef _WIN32
+        std::FILE* file = _wfopen(path.c_str(), L"rb");
+#else
+        std::FILE* file = std::fopen(path.c_str(), "rb");
+#endif
+        if (file == nullptr) return {};
+        std::string contents;
+        char chunk[2048];
+        std::size_t got = 0;
+        while ((got = std::fread(chunk, 1, sizeof(chunk), file)) != 0) {
+            if (contents.size() + got > 64 * 1024) {
+                std::fclose(file);
+                return {};
+            }
+            contents.append(chunk, got);
+        }
+        const bool failed = std::ferror(file) != 0;
+        std::fclose(file);
+#ifdef _WIN32
+        const auto endOfText = contents.find('\x1a');
+        if (endOfText != std::string::npos) contents.resize(endOfText);
+#endif
+        if (failed || contents.empty()) return {};
+        std::size_t position = 0;
+        bool overlong = false;
+        const auto nextLine = [&]() {
+            const std::size_t begin = position;
+            while (position < contents.size() && contents[position] != '\n') ++position;
+            std::size_t end = position;
+            if (end > begin && contents[end - 1] == '\r') --end;
+            if (end - begin >= 127) overlong = true;
+            if (position < contents.size()) ++position;
+            const std::string_view line(contents.data() + begin, end - begin);
+            return line.substr(0, line.find('\0'));
+        };
+        const auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; };
+        const std::string_view text = nextLine();
+        if (overlong) return {};
+        if (text.find('-') != std::string_view::npos) return {};
+        std::string_view tokens[9];
+        int count = 0;
+        for (std::size_t at = 0; at < text.size();) {
+            while (at < text.size() && space(text[at])) ++at;
+            if (at == text.size()) break;
+            std::size_t end = at;
+            while (end < text.size() && !space(text[end])) ++end;
+            if (count < 9) tokens[count] = text.substr(at, end - at);
+            ++count;
+            at = end;
+        }
+        if (count == 0 || count > 9) return {};
+        if (tokens[0] == "APS5_PAD_TIMELINE") {
             Command command;
-            std::string extra;
-            std::uint64_t version = 0, count = 0;
-            if (!(fields >> version >> command.sequence >> count) || fields >> extra) return {};
-            if (version != 1 || command.sequence == 0 || count == 0 || count > 4096) return {};
+            if (count != 4) return {};
+            std::uint64_t header[3]{};
+            for (int i = 0; i < 3; ++i)
+                if (!parseUnsigned(tokens[1 + i], header[i])) return {};
+            const std::uint64_t version = header[0];
+            command.sequence = header[1];
+            const std::uint64_t eventCount = header[2];
+            if (version != 1 || command.sequence == 0 || eventCount == 0 || eventCount > 4096) return {};
             if (command.sequence <= lastSequence) return command;
-            command.events.reserve(static_cast<std::size_t>(count));
+            command.events.reserve(static_cast<std::size_t>(eventCount));
             std::uint64_t previousEnd = 0;
-            for (std::uint64_t index = 0; index < count; ++index) {
-                if (!file.getline(line, sizeof(line))) return {};
-                const std::string eventText(line);
-                if (eventText.find('-') != std::string::npos) return {};
-                fields.clear();
-                fields.str(eventText);
+            for (std::uint64_t index = 0; index < eventCount; ++index) {
+                if (position >= contents.size()) return {};
+                const std::string_view eventText = nextLine();
+                if (overlong) return {};
+                if (eventText.find('-') != std::string_view::npos) return {};
                 std::uint64_t row[7]{};
                 const int columns = parseRow(eventText, row);
                 if (columns != 3 && columns != 7) return {};
@@ -132,15 +177,12 @@ private:
                 input.hasSticks = columns == 7;
                 command.events.push_back({start * 1000, previousEnd * 1000, input});
             }
-            file >> std::ws;
-            if (file.peek() != std::char_traits<char>::eof()) return {};
+            while (position < contents.size()) {
+                if (!space(contents[position])) return {};
+                ++position;
+            }
             return command;
         }
-        fields.clear();
-        fields.str(text);
-        std::string tokens[9];
-        int count = 0;
-        while (count < 9 && fields >> tokens[count]) ++count;
         Input input;
         if (count == 4 || count == 8) {
             std::string_view touch(tokens[--count]);

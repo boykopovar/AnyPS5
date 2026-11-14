@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <exception>
@@ -534,6 +535,57 @@ static void CheckBatchMapPlacesAtTheGivenStart() {
     unmaps[1].operation = unmap;
     processed = -1;
     Require(sceKernelBatchMap(unmaps, 2, &processed) == 0 && processed == 2);
+}
+
+static void CheckBatchMapPointerValidation() {
+    constexpr std::size_t page = 0x4000;
+    constexpr int mapFlexible = 3;
+    constexpr int unmap = 1;
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page, 0, page) == 0 && reserved != nullptr);
+    auto* base = static_cast<unsigned char*>(reserved);
+    KernelBatchMapEntry validFixed{base, 0, page, 3, 0, 0, mapFlexible};
+    KernelBatchMapEntry validDynamic{nullptr, 0, page, 3, 0, 0, mapFlexible};
+    int processed = -1;
+    Require(sceKernelBatchMap(nullptr, 1, &processed) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap(nullptr, 0, &processed) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap2(nullptr, 1, &processed, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap2(nullptr, 0, &processed, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap(&validFixed, -1, &processed) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap2(&validDynamic, -1, &processed, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap(&validFixed, 0, nullptr) == 0);
+    Require(sceKernelBatchMap2(&validDynamic, 0, nullptr, 0) == 0);
+    for (const std::uintptr_t address : {std::uintptr_t{0x10}, ~std::uintptr_t{0xfff}}) {
+        auto* badOut = reinterpret_cast<int*>(address);
+        errno = 71;
+        Require(sceKernelBatchMap(&validFixed, 0, badOut) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceKernelBatchMap2(&validDynamic, 0, badOut, 0) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 71);
+    }
+    KernelBatchMapEntry mapItem = validFixed;
+    Require(sceKernelBatchMap(&mapItem, 1, &processed) == 0 && processed == 1);
+    KernelBatchMapEntry unmapItem{mapItem.start, 0, page, 0, 0, 0, unmap};
+    for (const std::uintptr_t address : {std::uintptr_t{0x10}, ~std::uintptr_t{0xfff}}) {
+        auto* badOut = reinterpret_cast<int*>(address);
+        errno = 71;
+        Require(sceKernelBatchMap(&unmapItem, 1, badOut) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 71);
+    }
+    void* roPage = nullptr;
+    Require(sceKernelReserveVirtualRange(&roPage, page, 0, page) == 0 && roPage != nullptr);
+    KernelBatchMapEntry roMapItem{roPage, 0, page, 1, 0, 0, mapFlexible};
+    Require(sceKernelBatchMap(&roMapItem, 1, nullptr) == 0);
+    auto* roOut = static_cast<int*>(roPage);
+    errno = 71;
+    Require(sceKernelBatchMap(&unmapItem, 1, roOut) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    KernelBatchMapEntry roUnmapItem{roPage, 0, page, 0, 0, 0, unmap};
+    Require(sceKernelBatchMap(&roUnmapItem, 1, nullptr) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(roPage), page) == 0);
+    Require(sceKernelBatchMap(&unmapItem, 1, nullptr) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page) == 0);
 }
 
 static void CheckVirtualQueryFindsNeighbours() {
@@ -1417,20 +1469,31 @@ static void CheckFixedVirtualReservation() {
     VirtualQueryInfo revived{};
     Require(sceKernelVirtualQuery(remapped, 0, &revived, sizeof(revived)) == 0);
     Require(revived.is_direct);
-    bool refused = false;
-    try {
-        sceKernelReserveVirtualRange(&reserved, page * 2, 0x90, 0);
-
-    } catch (const std::exception&) {
-        refused = true;
-    }
-    Require(refused);
+    void* conflictTarget = reserved;
+    const int conflict = sceKernelReserveVirtualRange(&conflictTarget, page * 2, 0x90, 0);
+    Require(conflict == SCE_KERNEL_ERROR_ENOMEM);
+    Require(conflictTarget == reserved);
+    VirtualQueryInfo conflictState{};
+    Require(sceKernelVirtualQuery(reserved, 0, &conflictState, sizeof(conflictState)) == 0);
+    Require(conflictState.is_direct);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page * 2) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
     void* pooled = nullptr;
     Require(sceKernelMemoryPoolReserve(requested, page * 2, 0, 0x10, &pooled) == 0);
     Require(pooled == requested);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(pooled), page * 2) == 0);
+    void* unplaceable = reinterpret_cast<void*>(0x4000);
+    const int unplaceableError = sceKernelReserveVirtualRange(&unplaceable, page * 2, 0x10, 0);
+    Require(unplaceableError == SCE_KERNEL_ERROR_EINVAL);
+    Require(unplaceable == reinterpret_cast<void*>(0x4000));
+    VirtualQueryInfo unplaceableInfo{};
+    Require(sceKernelVirtualQuery(unplaceable, 0, &unplaceableInfo, sizeof(unplaceableInfo)) != 0);
+    void* hostOccupied = reinterpret_cast<void*>(0x7ffffc000ull + GuestArena::GuestAddressOffset);
+    const int hostError = sceKernelReserveVirtualRange(&hostOccupied, page, 0x10, 0);
+    Require(hostError == SCE_KERNEL_ERROR_ENOMEM);
+    Require(hostOccupied == reinterpret_cast<void*>(0x7ffffc000ull + GuestArena::GuestAddressOffset));
+    VirtualQueryInfo hostInfo{};
+    Require(sceKernelVirtualQuery(hostOccupied, 0, &hostInfo, sizeof(hostInfo)) != 0);
 }
 
 static void CheckHintInsideReservation() {
@@ -4376,6 +4439,7 @@ int main(int argc, char** argv) {
 #endif
     CheckBatchMapStopsAtInvalidEntry();
     CheckBatchMapPlacesAtTheGivenStart();
+    CheckBatchMapPointerValidation();
     CheckCheckedReleaseDirectMemory();
     CheckReleaseSkipsFreePages();
     CheckAudioCoprocessorProtection();
