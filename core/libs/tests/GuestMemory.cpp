@@ -1159,16 +1159,28 @@ static void CheckMtypeprotect() {
     void* alias = nullptr;
     Require(sceKernelMapDirectMemory(&alias, page * 3, 3, 0, phys, 0) == 0);
     Require(sceKernelMtypeprotect(bytes + page, page, 5, 3) == 0);
-    const auto typeAt = [&](void* base, std::size_t index) {
+    const auto expectQuery = [&](void* base, std::size_t at, std::size_t first, std::size_t last, int expectedType, std::int64_t offset) {
+        auto* start = static_cast<unsigned char*>(base);
         VirtualQueryInfo info{};
-        Require(sceKernelVirtualQuery(static_cast<unsigned char*>(base) + page * index, 0, &info, sizeof(info)) == 0 && info.is_direct);
-        return info.memory_type;
+        Require(sceKernelVirtualQuery(start + at, 0, &info, sizeof(info)) == 0 && info.is_direct && info.memory_type == expectedType);
+        Require(info.start == reinterpret_cast<std::uintptr_t>(start + first) && info.end == reinterpret_cast<std::uintptr_t>(start + last));
+        Require(info.offset == static_cast<std::uint64_t>(offset));
     };
-    Require(typeAt(alias, 0) == 2 && typeAt(alias, 1) == 5 && typeAt(alias, 2) == 2);
+    const auto expectRetypedMiddle = [&](void* base) {
+        expectQuery(base, 0, 0, page, 2, phys);
+        expectQuery(base, page, page, page * 2, 5, phys + static_cast<std::int64_t>(page));
+        expectQuery(base, page * 2 + 0x10, page * 2, page * 3, 2, phys + static_cast<std::int64_t>(page * 2));
+    };
+    expectRetypedMiddle(alias);
+    void* shifted = nullptr;
+    Require(sceKernelMapDirectMemory(&shifted, page * 2, 3, 0, phys + static_cast<std::int64_t>(page), 0) == 0);
+    expectQuery(shifted, 0x10, 0, page, 5, phys + static_cast<std::int64_t>(page));
+    expectQuery(shifted, page + 0x10, page, page * 2, 2, phys + static_cast<std::int64_t>(page * 2));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(shifted), page * 2) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page * 3) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 3) == 0);
     Require(sceKernelMapDirectMemory(&mapped, page * 3, 3, 0, phys, 0) == 0);
-    Require(typeAt(mapped, 0) == 2 && typeAt(mapped, 1) == 5 && typeAt(mapped, 2) == 2);
+    expectRetypedMiddle(mapped);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }
