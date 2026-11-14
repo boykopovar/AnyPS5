@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -110,7 +111,7 @@ public:
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory sample order copy");
+            Check(MemoryAccounting::Allocate(context, allocation, "sample order copy", &memory), "vkAllocateMemory sample order copy");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory sample order copy");
             depthView = createView(VK_IMAGE_ASPECT_DEPTH_BIT);
             if (stencil) stencilView = createView(VK_IMAGE_ASPECT_STENCIL_BIT);
@@ -149,9 +150,11 @@ private:
         if (stencilView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, stencilView, nullptr);
         if (depthView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, depthView, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-        if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+        if (memory) MemoryAccounting::Free(context, memory);
     }
 };
+
+constexpr std::array<VkDynamicState, 4> depthOrderDynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
 
 class SampleOrders {
 public:
@@ -174,13 +177,14 @@ public:
         write.pImageInfo = &imageInfo;
         context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
         const StoragePush push{map, {region.width, region.height}, target.samples};
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(commands, pipeline);
         context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, storagePipelineLayout, 0, 1, &set, 0, nullptr);
         context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, storagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
         context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, ((region.width + 1u) / 2u + 7u) / 8u, ((region.height + 1u) / 2u + 7u) / 8u, 1);
     }
 
-    void Depth(VkCommandBuffer commands, const SampleOrderTarget& target, const std::array<std::uint32_t, 4>& map, VkExtent2D region, const SampleOrderPass& order, std::vector<std::shared_ptr<void>>& kept) {
+    void Depth(CommandState& recording, const SampleOrderTarget& target, const std::array<std::uint32_t, 4>& map, VkExtent2D region, const SampleOrderPass& order, std::vector<std::shared_ptr<void>>& kept) {
+        const auto commands = recording.Commands();
         const bool stencil = target.method != SampleOrderMethod::Depth;
         auto copy = copyFor(target.format, target.samples, target.extent, stencil);
         kept.push_back(copy);
@@ -242,13 +246,14 @@ public:
         context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
         const VkViewport viewport{0.0f, 0.0f, static_cast<float>(region.width), static_cast<float>(region.height), 0.0f, 1.0f};
         const VkRect2D scissor{{0, 0}, region};
-        context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport);
-        context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &scissor);
+        recording.SetViewport(context, viewport);
+        recording.SetScissor(context, scissor);
+        const auto slots = CommandState::DynamicSlots(depthOrderDynamicStates);
         const auto draw = [&](VkPipeline pipeline, std::uint32_t bit, std::uint32_t writeMask, std::uint32_t reference) {
-            context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            recording.BindPipeline(context, pipeline, slots);
             context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, 0, nullptr);
-            context.Resolved(&DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, writeMask);
-            context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
+            recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_AND_BACK, writeMask);
+            recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
             const DepthPush push{map, bit};
             context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, sampledPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
             context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, 3, 1, 0, 0);
@@ -418,10 +423,9 @@ private:
                 depthStencil.stencilTestEnable = stencil ? VK_TRUE : VK_FALSE;
                 depthStencil.front = replace;
                 depthStencil.back = replace;
-                const std::array<VkDynamicState, 4> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
                 VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-                dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
-                dynamic.pDynamicStates = dynamicStates.data();
+                dynamic.dynamicStateCount = static_cast<std::uint32_t>(depthOrderDynamicStates.size());
+                dynamic.pDynamicStates = depthOrderDynamicStates.data();
                 VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
                 info.stageCount = static_cast<std::uint32_t>(stages.size());
                 info.pStages = stages.data();
@@ -637,8 +641,9 @@ SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, c
     return {order, state.renderExtent, SampleLocations(state), ReordersSamples(order) && ValidateSampleLocations(context, state)};
 }
 
-void RecordSampleOrder(const Context& context, VkCommandBuffer commands, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept) {
+void RecordSampleOrder(const Context& context, CommandState& recording, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept) {
     if (targets.empty() || !ReordersSamples(pass.order)) return;
+    const auto commands = recording.Commands();
     auto& reorder = ordersFor(context);
     const auto map = mapFor(pass.order, toHost);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, reorderStages, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
@@ -647,7 +652,7 @@ void RecordSampleOrder(const Context& context, VkCommandBuffer commands, const S
         const auto region = regionOf(pass, target.extent);
         if (region.width == 0 || region.height == 0) continue;
         if (target.method == SampleOrderMethod::Storage) reorder.Storage(commands, target, map, region);
-        else reorder.Depth(commands, target, map, region, pass, kept);
+        else reorder.Depth(recording, target, map, region, pass, kept);
         if (target.keep != nullptr) kept.push_back(target.keep);
     }
     RecordMemoryBarrier(context, commands, reorderStages, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, anyAccess);

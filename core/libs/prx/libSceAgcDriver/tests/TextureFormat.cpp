@@ -173,7 +173,7 @@ void convertedDccClearTests() {
         resource.format = format;
         return TextureClearKeys(resource, keys.size() * 256u);
     };
-    for (const std::uint32_t format : {30u, 34u}) {
+    for (const std::uint32_t format : {30u, 34u, 37u, 41u, 44u, 48u}) {
         reject([&] { read(format, 0x40); }, "DCC clear code 0001 of converted texture format " + std::to_string(format));
         reject([&] { read(format, 0x80); }, "DCC clear code 1110 of converted texture format " + std::to_string(format));
         Require(read(format, 0x00) == DccKeys::Clear0000 && read(format, 0xc0) == DccKeys::Clear1111, "converted texture format " + std::to_string(format) + " must keep its 0000 and 1111 DCC clear codes");
@@ -250,6 +250,10 @@ void fillContractTests() {
     Require(FillDccClear(VK_FORMAT_B10G11R11_UFLOAT_PACK32, DccKeys::Clear1111, false, partial), "packed float fast clear was not encoded");
     const std::array<std::byte, 4> white{std::byte{0xc0}, std::byte{0x03}, std::byte{0x1e}, std::byte{0x78}};
     for (std::size_t index = 0; index < partial.size(); ++index) Require(partial[index] == (index < 8u ? white[index % 4u] : std::byte{0}), "a clear fill over a partial trailing element did not zero the tail");
+    std::vector<std::byte> large(1003, std::byte{0x5a});
+    Require(FillDccClear(VK_FORMAT_R16G16B16A16_SFLOAT, DccKeys::Clear1111, false, large), "half float fast clear was not encoded");
+    const std::array<std::byte, 8> halfOne{std::byte{0x00}, std::byte{0x3c}, std::byte{0x00}, std::byte{0x3c}, std::byte{0x00}, std::byte{0x3c}, std::byte{0x00}, std::byte{0x3c}};
+    for (std::size_t index = 0; index < large.size(); ++index) Require(large[index] == (index < 1000u ? halfOne[index % 8u] : std::byte{0}), "a clear fill over many elements did not repeat the element up to the last whole one");
 }
 
 void guestFormatLookupTests() {
@@ -300,6 +304,11 @@ void RunTextureFormatTests() {
 
     Require(ResolveTextureFormat(22) == VK_FORMAT_R32_SFLOAT, "format 22 must resolve to R32_SFLOAT");
     Require(BytesPerElement(22) == 4u, "format 22 must be four bytes wide");
+
+    Require(ResolveTextureFormat(141) == VK_FORMAT_D24_UNORM_S8_UINT, "format 141 must resolve to D24_UNORM_S8_UINT");
+    Require(BytesPerElement(141) == 4u, "format 141 must be four bytes wide");
+    Require(FindGuestTextureFormat(VK_FORMAT_D24_UNORM_S8_UINT, 4) == 141u, "format 141 must look up from D24_UNORM_S8_UINT");
+    Require(ShaderRecompiler::SampledTextureNumericClass(ShaderRecompiler::IrBufferFormat::Format8_24UNorm) == ShaderRecompiler::IrTextureNumericClass::Float, "format 141 must sample as float");
 
     Require(ResolveTextureFormat(77) == VK_FORMAT_R32G32B32A32_SFLOAT, "format 77 must resolve to R32G32B32A32_SFLOAT");
     Require(BytesPerElement(77) == 16u, "format 77 must be sixteen bytes wide");

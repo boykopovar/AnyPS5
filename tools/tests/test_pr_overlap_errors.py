@@ -1,8 +1,10 @@
+import os
 import runpy
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,6 +21,12 @@ def fake_run(command, **kwargs):
 
 
 class ErrorReportTests(unittest.TestCase):
+    def test_missing_github_cli_reports_a_setup_error_without_traceback(self):
+        with patch.object(subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "gh")):
+            with self.assertRaises(SystemExit) as raised:
+                pr_overlap.main(["--repo", "owner/project", "--branch", "HEAD"])
+        self.assertEqual(str(raised.exception.code), "pr_overlap: GitHub CLI 'gh' is required on PATH")
+
     def test_failure_names_the_command_the_exit_code_and_the_git_message(self):
         error = subprocess.CalledProcessError(128, ["git", "fetch", "-q"], output="", stderr=MISSING_REF + "\n")
         message = pr_overlap.describe_failure(error)
@@ -56,6 +64,27 @@ class ErrorReportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, r"failed: error: unknown option$"):
                 pr_overlap.merge("refs/pr/base", "a")
 
+    def test_parent_pathspec_symlink_loop_exits_without_traceback(self):
+        with TemporaryDirectory() as directory:
+            repo = Path(directory)
+            nested = repo / "nested"
+            nested.mkdir()
+            loop = repo / "loop"
+            try:
+                loop.symlink_to(loop)
+            except OSError as error:
+                self.skipTest(f"symlinks unavailable: {error}")
+            old = os.getcwd()
+            os.chdir(nested)
+            try:
+                with patch.dict(pr_overlap._REPO_ROOTS, {Path.cwd(): str(repo)}, clear=False):
+                    with self.assertRaises(ValueError) as raised:
+                        pr_overlap.git("diff", "--", "../loop")
+            finally:
+                os.chdir(old)
+            self.assertIn("cannot resolve path '../loop'", str(raised.exception))
+            self.assertRegex(str(raised.exception), r"Too many levels of symbolic links|Symlink loop|WinError 1921")
+
     def test_main_reconfigures_streams(self):
         class Stream:
             def __init__(self):
@@ -82,6 +111,50 @@ class ErrorReportTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+    def test_gh_retries_on_transient_error_and_succeeds(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 502: Bad Gateway")
+            return subprocess.CompletedProcess(cmd, 0, stdout="success\n", stderr="")
+
+        with patch.object(pr_overlap.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            result = pr_overlap.gh("test", delay=0.01)
+        self.assertEqual(result, "success\n")
+        self.assertEqual(len(calls), 2)
+        sleep_mock.assert_called_once_with(0.01)
+
+    def test_gh_fails_immediately_on_non_transient_error(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 404: Not Found")
+
+        with patch.object(pr_overlap.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_overlap.gh("test", delay=0.01)
+        self.assertEqual(len(calls), 1)
+        sleep_mock.assert_not_called()
+
+    def test_gh_raises_called_process_error_on_retry_exhaustion(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 503: Service Unavailable")
+
+        with patch.object(pr_overlap.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_overlap.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_overlap.gh("test", attempts=3, delay=0.01)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleep_mock.call_count, 2)
 
 
 if __name__ == "__main__":

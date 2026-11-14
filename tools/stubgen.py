@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 import argparse
+import errno
 import os
 import re
+import shutil
 import stat
 import sys
 import tempfile
 from pathlib import Path
 
 try:
-    from tools.nid_names import CHARSET, SUFFIX, compute_nid
+    from tools.nid_names import SUFFIX, compute_nid
 except ImportError:
-    from nid_names import CHARSET, SUFFIX, compute_nid
+    from nid_names import SUFFIX, compute_nid
 
 
 def strip_nid_token(raw):
@@ -195,14 +197,22 @@ def case_insensitive_directory(directory):
         os.unlink(name)
 
 
+LOOP_MESSAGE = "Too many levels of symbolic links"
+
+
 def resolved_path(path):
-    path = Path(path)
+    original = path = Path(path)
     for _ in range(40):
         if not path.is_symlink():
             break
         target = Path(link_target(os.readlink(path)))
         path = target if target.is_absolute() else path.parent / target
-    return path.resolve()
+    if path.is_symlink():
+        raise OSError(errno.ELOOP, LOOP_MESSAGE, str(original))
+    try:
+        return path.resolve()
+    except RuntimeError as error:
+        raise OSError(errno.ELOOP, LOOP_MESSAGE, str(original)) from error
 
 
 def link_target(text):
@@ -228,6 +238,9 @@ def same_file(left, right):
 
 def write_outputs(outputs):
     staged = []
+    backups = []
+    committed = []
+    preserve = set()
     umask = os.umask(0)
     os.umask(umask)
     try:
@@ -247,8 +260,36 @@ def write_outputs(outputs):
             for _, path in staged:
                 if path.exists() and path.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
                     raise PermissionError(f"Output is read-only: {path}")
-        for temporary, path in staged:
-            temporary.replace(path)
+        if len(staged) > 1:
+            for _, path in staged:
+                backup = None
+                if path.exists():
+                    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".stubgen-backup-", suffix=".tmp", delete=False) as handle:
+                        backup = Path(handle.name)
+                    backups.append((backup, path))
+                    shutil.copy2(path, backup)
+                else:
+                    backups.append((None, path))
+        try:
+            for index, (temporary, path) in enumerate(staged):
+                os.replace(temporary, path)
+                committed.append(index)
+        except OSError as error:
+            failures = []
+            for index in reversed(committed):
+                backup, path = backups[index]
+                try:
+                    if backup is None:
+                        path.unlink()
+                    else:
+                        os.replace(backup, path)
+                except OSError as restore_error:
+                    if backup is not None:
+                        preserve.add(backup)
+                    failures.append(f"{path}: {restore_error}" + (f" (backup: {backup})" if backup is not None else ""))
+            if failures:
+                raise OSError(f"{error}; could not restore outputs: {'; '.join(failures)}") from error
+            raise
     finally:
         for temporary, path in staged:
             try:
@@ -256,6 +297,13 @@ def write_outputs(outputs):
             except PermissionError:
                 temporary.chmod(0o600)
                 temporary.unlink(missing_ok=True)
+        for backup, _ in backups:
+            if backup is not None and backup not in preserve:
+                try:
+                    backup.unlink(missing_ok=True)
+                except PermissionError:
+                    backup.chmod(0o600)
+                    backup.unlink(missing_ok=True)
 
 
 def main(argv=None):

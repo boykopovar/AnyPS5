@@ -6,6 +6,7 @@
 #include <bit>
 #include <cstdio>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -1388,6 +1389,46 @@ std::uint32_t branchWord(std::uint32_t opcode, std::size_t from, std::size_t to,
     return opcode | (static_cast<std::uint32_t>(offset) & 0xffffu);
 }
 
+std::vector<std::uint32_t> expandProgramCounterReads(std::span<const std::uint32_t> code, std::uint64_t address) {
+    constexpr auto Inside = std::numeric_limits<std::size_t>::max();
+    std::vector<RdnaInstruction> instructions;
+    std::vector<std::size_t> moved(code.size() + 1u, Inside);
+    std::size_t size = 0;
+    bool reads = false;
+    for (std::uint32_t word = 0; word < code.size();) {
+        auto instruction = DecodeRdnaInstruction(word * 4u, code, word);
+        moved[word] = size;
+        if (instruction.op == RdnaOpcode::SGetpcB64) {
+            if (instruction.destination.kind != RdnaOperandKind::ScalarRegister || instruction.destination.reg % 2u != 0u || instruction.destination.reg + 1u >= 106u) throw std::invalid_argument("a table callee reads its program counter into another operand than an SGPR pair at callee offset " + toHexString(instruction.programCounter));
+            reads = true;
+        }
+        size += instruction.op == RdnaOpcode::SGetpcB64 ? 4u : instruction.wordCount;
+        word += instruction.wordCount;
+        instructions.push_back(std::move(instruction));
+    }
+    if (!reads) return {code.begin(), code.end()};
+    moved[code.size()] = size;
+    std::vector<std::uint32_t> expanded;
+    expanded.reserve(size);
+    for (const auto& instruction : instructions) {
+        const auto word = instruction.programCounter / 4u;
+        if (instruction.op == RdnaOpcode::SGetpcB64) {
+            const auto value = address + instruction.programCounter + 4u;
+            const auto reg = instruction.destination.reg;
+            expanded.insert(expanded.end(), {0xbe8003ffu | (reg << 16u), static_cast<std::uint32_t>(value), 0xbe8003ffu | ((reg + 1u) << 16u), static_cast<std::uint32_t>(value >> 32u)});
+            continue;
+        }
+        if (IsDirectBranchOpcode(instruction.op)) {
+            const auto target = instruction.branchTarget / 4u;
+            if (instruction.branchTarget % 4u != 0u || target > code.size() || moved[target] == Inside) throw std::invalid_argument("a table callee that reads its program counter branches outside its instructions at callee offset " + toHexString(instruction.programCounter));
+            expanded.push_back(branchWord(code[word] & 0xffff0000u, moved[word], moved[target], "a table callee's branch"));
+            continue;
+        }
+        expanded.insert(expanded.end(), code.begin() + word, code.begin() + word + instruction.wordCount);
+    }
+    return expanded;
+}
+
 }
 
 
@@ -1468,7 +1509,7 @@ std::vector<std::uint32_t> LinkUserDataTail(const RdnaProgram& program, const Us
     return linked;
 }
 
-std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t> callee, std::uint32_t linkRegister) {
+std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t> callee, std::uint32_t linkRegister, bool allowGetpc) {
     std::uint32_t furthest = 0;
     for (std::uint32_t word = 0; word < callee.size();) {
         const auto programCounter = word * 4u;
@@ -1481,7 +1522,7 @@ std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t>
         }
         word += instruction.wordCount;
         const auto at = " at callee offset " + toHexString(programCounter);
-        if (instruction.op == RdnaOpcode::SGetpcB64) throw std::invalid_argument("user-data callee reads its program counter" + at + ", which a linked copy does not keep");
+        if (instruction.op == RdnaOpcode::SGetpcB64 && !allowGetpc) throw std::invalid_argument("user-data callee reads its program counter" + at + ", which a linked copy does not keep");
         if (instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SCallB64) throw std::invalid_argument("user-data callee makes a call" + at);
         if (instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) throw std::invalid_argument("user-data callee ends the program" + at + " before it returns");
         if (IsDirectBranchOpcode(instruction.op)) {
@@ -1519,19 +1560,73 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
         if (link == NoScalarRegister || link % 2u != 0u || link > 104u || target == NoScalarRegister || target % 2u != 0u || target > 104u) continue;
         std::uint32_t lowLoad = 0, lowDword = 0, highLoad = 0, highDword = 0;
         const auto reader = instruction.programCounter;
-        if (!loadedDword(program, target, index, swappc.waveSize, reader, lowLoad, lowDword) || !loadedDword(program, target + 1u, index, swappc.waveSize, reader, highLoad, highDword)) continue;
-        if (lowLoad != highLoad || highDword != lowDword + 1u || !sameBlock(lowLoad, index)) continue;
+        const bool lowOk = loadedDword(program, target, index, swappc.waveSize, reader, lowLoad, lowDword);
+        const bool highOk = loadedDword(program, target + 1u, index, swappc.waveSize, reader, highLoad, highDword);
+        if (!lowOk || !highOk || lowLoad != highLoad || highDword != lowDword + 1u) continue;
+        const auto loadReaches = [&](std::uint32_t targetRegister) {
+            auto at = index;
+            auto reg = targetRegister;
+            for (std::uint32_t copies = 0u; copies < 4u; ++copies) {
+                std::uint32_t writer = 0;
+                if (!reachingWriter(program, at, {reg}, writer, swappc.waveSize)) return false;
+                if (writer == lowLoad) return true;
+                const auto& copy = program.instructions[writer];
+                const auto destination = scalarIndex(copy.destination);
+                const auto source = scalarIndex(copy.source0);
+                if (copy.op == RdnaOpcode::SMovB32 && source != NoScalarRegister) {
+                    reg = source;
+                } else if (copy.op == RdnaOpcode::SMovB64 && destination != NoScalarRegister && reg - destination < 2u && source != NoScalarRegister) {
+                    reg = source + (reg - destination);
+                } else {
+                    return false;
+                }
+                at = writer;
+            }
+            return false;
+        };
+        if (!sameBlock(lowLoad, index) && !(loadReaches(target) && loadReaches(target + 1u))) continue;
         const auto& load = program.instructions[lowLoad];
         const auto descriptor = scalarIndex(load.source0);
         if (load.source0.kind != RdnaOperandKind::ScalarRegister || descriptor % 4u != 0u || load.memoryOffset >= 0x100000u || (load.memoryOffset & 3u) != 0u) continue;
+        const bool descriptorInUserData = userData(descriptor) && userData(descriptor + 1u) && userData(descriptor + 2u) && userData(descriptor + 3u) &&
+            unchangedUntil(program, descriptor, lowLoad, swappc.waveSize) && unchangedUntil(program, descriptor + 1u, lowLoad, swappc.waveSize) &&
+            unchangedUntil(program, descriptor + 2u, lowLoad, swappc.waveSize) && unchangedUntil(program, descriptor + 3u, lowLoad, swappc.waveSize);
+        if (descriptorInUserData) {
+            std::uint32_t userDataStride = 0;
+            if (load.source1.kind != RdnaOperandKind::Null) {
+                const auto offset = scalarIndex(load.source1);
+                std::uint32_t shift = 0, shiftIndex = 0;
+                if (offset == NoScalarRegister || !findLastWriter(program, lowLoad, {offset}, shiftIndex, swappc.waveSize, reader) || !sameBlock(shiftIndex, index)) continue;
+                const auto& shifted = program.instructions[shiftIndex];
+                if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
+                userDataStride = 1u << shift;
+            }
+            calls.push_back({instruction.programCounter, link, target, descriptor, 0u, load.memoryOffset + lowDword * 4u, userDataStride, std::nullopt, true});
+            continue;
+        }
         std::uint32_t descriptorLoad = 0;
         const bool sameBlockWriter = findLastWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize, reader) && sameBlock(descriptorLoad, index);
         if (!sameBlockWriter && !reachingWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize)) continue;
+        std::optional<std::uint32_t> nestedDescriptorOffset;
+        auto tableDescriptor = descriptor;
+        if (const auto& inner = program.instructions[descriptorLoad]; isScalarBufferLoad(inner.op)) {
+            const auto innerLoaded = scalarIndex(inner.destination);
+            const auto outer = scalarIndex(inner.source0);
+            if (inner.source0.kind != RdnaOperandKind::ScalarRegister || inner.source1.kind != RdnaOperandKind::Null || innerLoaded == NoScalarRegister || outer == NoScalarRegister || outer % 4u != 0u || descriptor < innerLoaded ||
+                descriptor - innerLoaded + 4u > inner.dataDwordCount || inner.memoryOffset >= 0x100000u || (inner.memoryOffset & 3u) != 0u) continue;
+            std::uint32_t outerLoad = 0;
+            const auto innerIndex = descriptorLoad;
+            const bool outerInBlock = findLastWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize, reader) && sameBlock(outerLoad, innerIndex);
+            if (!outerInBlock && !reachingWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize)) continue;
+            nestedDescriptorOffset = inner.memoryOffset + (descriptor - innerLoaded) * 4u;
+            tableDescriptor = outer;
+            descriptorLoad = outerLoad;
+        }
         const auto& table = program.instructions[descriptorLoad];
         const auto pointer = scalarIndex(table.source0);
         const auto loaded = scalarIndex(table.destination);
-        if ((table.op != RdnaOpcode::SLoadDwordx4 && table.op != RdnaOpcode::SLoadDwordx8 && table.op != RdnaOpcode::SLoadDwordx16) || loaded == NoScalarRegister || descriptor < loaded ||
-            (descriptor - loaded) % 4u != 0u || descriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
+        if ((table.op != RdnaOpcode::SLoadDwordx4 && table.op != RdnaOpcode::SLoadDwordx8 && table.op != RdnaOpcode::SLoadDwordx16) || loaded == NoScalarRegister || tableDescriptor < loaded ||
+            (tableDescriptor - loaded) % 4u != 0u || tableDescriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
             table.memoryOffset >= 0x100000u || (table.memoryOffset & 3u) != 0u) continue;
         std::optional<std::uint64_t> constantPointer;
         if (!(userData(pointer) && userData(pointer + 1u) && unchangedUntil(program, pointer, descriptorLoad, swappc.waveSize) && unchangedUntil(program, pointer + 1u, descriptorLoad, swappc.waveSize))) {
@@ -1553,7 +1648,7 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
             stride = 1u << shift;
         }
-        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (descriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer});
+        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (tableDescriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer, false, nestedDescriptorOffset});
     }
     return calls;
 }
@@ -1593,6 +1688,8 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
         const auto at = "the table callees of the call at program counter " + toHexString(table.programCounter);
         const auto original = linked[word];
         const auto count = callees.size();
+        std::vector<std::vector<std::uint32_t>> codes;
+        for (const auto& callee : callees) codes.push_back(expandProgramCounterReads(callee.code, callee.target));
         const auto relays = 2u * (tableCalls.size() - call - 1u);
         std::vector<std::size_t> path;
         for (const auto& [position, block] : stations) path.push_back(position + 2u * (call - block - 1u));
@@ -1605,7 +1702,7 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
         const auto start = linked.size();
         std::vector<std::size_t> segments(count + 1u);
         segments[0] = start + 1u;
-        for (std::size_t callee = 0; callee < count; ++callee) segments[callee + 1u] = segments[callee] + 16u + callees[callee].code.size() + relays;
+        for (std::size_t callee = 0; callee < count; ++callee) segments[callee + 1u] = segments[callee] + 16u + codes[callee].size() + relays;
         const auto one = [&](std::size_t callee) { return segments[callee] + (callee < count ? 7u : 2u); };
         const auto back = [&](std::size_t callee) { return callee != 0u ? segments[callee - 1u] + 15u : path.empty() ? word + 1u : path.back() + 1u; };
         const auto fault = segments[count] + 3u;
@@ -1628,7 +1725,7 @@ LinkedCalls LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> 
             }
             linked.push_back(0xbb000001u | (table.linkRegister << 16u));
             branch(0xbf820000u, back(callee));
-            linked.insert(linked.end(), callees[callee].code.begin(), callees[callee].code.end());
+            linked.insert(linked.end(), codes[callee].begin(), codes[callee].end());
             station();
         }
         linked.push_back(0xbf078080u);

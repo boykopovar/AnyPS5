@@ -22,6 +22,11 @@ def excessive_nesting():
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+SHADER_SOURCE = {"isa": "AMD RDNA 2", "instructions": {"total": 5, "decoded": 3, "translated": 1},
+                 "dpp": {"total": 2, "decoded": 1}, "unsupported_throws": 3, "forms": [], "untranslated": [],
+                 "throw_areas": [], "throw_sites": [], "formats": {"total": 0, "sampled": 0, "buffer": 0, "host": 0}}
+
+
 class ProgressSnapshotTests(unittest.TestCase):
     def test_library_counters_reject_invalid_types_and_negative_values(self):
         for field in ("done", "todo"):
@@ -352,6 +357,18 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(sum(line.startswith("| libSce") for line in table.splitlines()), progress.REPORT_ROWS)
         self.assertIn("3 more libraries", table)
 
+    def test_opcodes_counted_through_variants_are_not_listed_as_uncounted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            opcodes = Path(directory) / "RdnaOpcode.hpp"
+            opcodes.write_text("enum class RdnaOpcode : int {\n    VAddI32,\n    VMulLoI32,\n    Count,\n};\n",
+                               encoding="utf-8")
+            isa = Path(directory) / "rdna_isa.txt"
+            isa.write_text("V_ADD_CO_U32 VOP3\n", encoding="utf-8")
+            with patch.multiple(progress, OPCODES=opcodes, ISA=isa):
+                shaders = progress.collect_shaders()
+        self.assertEqual(shaders["done"], 1)
+        self.assertEqual(shaders["extra"], ["VMulLoI32"])
+
     def test_raw_string_example_does_not_declare_an_export(self):
         source = 'const char* example = R"help(\nint APS5_VABI Fake() { return 0; }\n)help";\n'
         source += 'int APS5_VABI Real() { return 7; }\n'
@@ -362,6 +379,33 @@ class ProgressTests(unittest.TestCase):
             group = progress.scan_library(library)
         self.assertEqual(group["done_names"], ["Real"])
         self.assertEqual(group["todo_names"], [])
+
+    def test_assembly_definitions_are_implementations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "#ifdef __EMSCRIPTEN__\n"
+                "int APS5_VABI capture_nid_postfix(void* context) { NotImplemented_nid_no_patch(__func__); }\n"
+                "#else\n"
+                "asm(\".text\\n\"\n"
+                "    APS5_ASM_FUNCTION(\"capture_nid_postfix\")\n"
+                "    \"    call \" APS5_ASM_SYMBOL(\"Finish_nid_no_patch\") \"\\n\"\n"
+                "    APS5_ASM_FUNCTION( \"restore_nid_postfix\" )\n"
+                "    APS5_ASM_FUNCTION(\"Helper_nid_no_patch\")\n"
+                "    APS5_SIGNAL_ASM_FUNCTION(\"signal_nid_postfix\")\n"
+                "    APS5_ASM_FUNCTION(\"Forward_nid_no_patch\")\n"
+                "    \"    ret\\n\");\n"
+                "#endif\n"
+                "APS5_EXPORT(\"AAAAAAAAAAA\", Forward_nid_no_patch);\n"
+                "// APS5_ASM_FUNCTION(\"Comment_nid_postfix\")\n"
+                "/* APS5_ASM_FUNCTION(\"BlockComment_nid_postfix\") */\n"
+                "const char* note = R\"(APS5_ASM_FUNCTION(\"Literal_nid_postfix\"))\";\n",
+                encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Forward_nid_no_patch", "capture_nid_postfix", "restore_nid_postfix", "signal_nid_postfix"])
+        self.assertEqual(group["todo_names"], [])
+        self.assertEqual(group["inert_names"], [])
 
     def test_stub_marker_inside_raw_literals_does_not_mark_implementation_as_stub(self):
         for prefix in ("", "u8", "u", "U", "L"):
@@ -670,6 +714,7 @@ class ProgressTests(unittest.TestCase):
         stdout = io.StringIO()
         with patch.object(progress, "collect_libraries", return_value=libraries), \
              patch.object(progress, "collect_shaders", return_value=shaders), \
+             patch.object(progress, "collect_shader_source", return_value=SHADER_SOURCE), \
              patch("sys.stdout", stdout):
             code = progress.main(argv)
         return code, stdout.getvalue()
@@ -696,7 +741,8 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(payload["shaders"], shaders)
         self.assertNotIn("libraries 1/2", output)
         code, output = self.run_main(["--module", "libScePad"], libraries, shaders)
-        self.assertEqual(output, "libraries 1/2 (50.0%)\nshaders 2/4 (50.0%)\n")
+        self.assertEqual(output, "libraries 1/2 (50.0%)\nshader opcode names declared 2/4 (50.0%)\n"
+                                 "shader forms decoded 3/5 (60.0%), translated 1, unsupported throws 3\n")
         stderr = io.StringIO()
         with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
             progress.main([])
@@ -797,6 +843,42 @@ class ProgressTests(unittest.TestCase):
             for name, path in others.items():
                 self.assertEqual(path.read_text(encoding="utf-8"), name)
 
+    def test_adjacent_aliased_reports_are_refused_when_others_are_missing(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            first, second = output / "badge-libraries.svg", output / "badge-shaders.svg"
+            first.write_text("badge", encoding="utf-8")
+            try:
+                os.link(first, second)
+            except OSError:
+                self.skipTest("hard links are not available")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("badge-libraries.svg and badge-shaders.svg", stderr.getvalue())
+            self.assertEqual(first.read_text(encoding="utf-8"), "badge")
+            self.assertFalse((output / "progress.json").exists())
+
+    def test_reports_linked_to_one_missing_target_are_refused(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            try:
+                os.symlink("shared", output / "progress.json")
+                os.symlink("shared", output / "progress.html")
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("progress.json and progress.html", stderr.getvalue())
+            self.assertFalse((output / "shared").exists())
+
     def test_root_must_be_a_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             empty = Path(directory) / "empty tree"
@@ -855,6 +937,86 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class ProgressConstantReturnTests(unittest.TestCase):
+    def scan(self, source):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            return progress.scan_library(library)
+
+    def test_parameter_returns_are_not_behaviourally_empty(self):
+        for name in ("value", "size", "resultCode", "_value", "VALUE", "Failure"):
+            with self.subTest(name=name):
+                group = self.scan(f"int APS5_VABI Echo(int {name}) {{ return {name}; }}\n")
+                self.assertEqual(group["done_names"], ["Echo"])
+                self.assertEqual(group["todo_names"], [])
+                self.assertEqual(group["inert_names"], [])
+
+    def test_constant_returns_remain_behaviourally_empty(self):
+        for value in ("0", "-1", "+2", "0x8A810001u", "true", "false", "nullptr",
+                      "SCE_KERNEL_ERROR_EOPNOTSUPP", "Failure", "CryptoNumLocks", "kErrUnexpectedFatal",
+                      '"constant text"'):
+            with self.subTest(value=value):
+                group = self.scan(
+                    "constexpr int Failure = -1;\n"
+                    "constexpr int CryptoNumLocks = 41;\n"
+                    "constexpr int kErrUnexpectedFatal = -2;\n"
+                    f"auto APS5_VABI Constant() {{ return {value}; }}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_constants_in_parameter_types_and_defaults_still_return_constants(self):
+        for declaration in ("int value = Failure", "int = Failure", "Array<Failure, 2> value",
+                            "int value[Failure]", "int (*callback)(int)"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(
+                    "constexpr int Failure = -1;\n"
+                    f"int APS5_VABI Constant({declaration}) {{ return Failure; }}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_template_defaults_do_not_add_parameters(self):
+        for declaration in ("std::array<int, Failure> value = std::array<int, Failure>()",
+                            "Array<Array<int, Failure>, 2> value = Array<Array<int, Failure>, 2>()",
+                            "int value = Pick<int, Failure>()"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(
+                    "#include <array>\n"
+                    "constexpr int Failure = 2;\n"
+                    f"int APS5_VABI Constant({declaration}) {{\n"
+                    "    return Failure;\n"
+                    "}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_parameters_after_operator_defaults_are_parameters(self):
+        for default in ("1 << 2", "Shift << 2", "1 < 2", "Limit <= 2"):
+            with self.subTest(default=default):
+                group = self.scan(f"int APS5_VABI Echo(int flags = {default}, int value) {{ return value; }}\n")
+                self.assertEqual(group["inert_names"], [])
+
+    def test_pointer_and_function_pointer_parameters_are_not_constants(self):
+        for declaration in ("const void* value", "int (*value)(int)", "Array<int, 2>& value"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(f"auto APS5_VABI Echo({declaration}) {{ return value; }}\n")
+                self.assertEqual(group["inert_names"], [])
+
+    def test_empty_wrappers_remain_behaviourally_empty(self):
+        group = self.scan(
+            "static int Empty(int value) { (void)value; return 0; }\n"
+            "int APS5_VABI Wrapped(int value) { return Empty(value); }\n")
+        self.assertEqual(group["inert_names"], ["Wrapped"])
+        group = self.scan(
+            "static int Identity(int value) { return value; }\n"
+            "int APS5_VABI Wrapped(int value) { return Identity(value); }\n")
+        self.assertEqual(group["inert_names"], [])
+
+    def test_multiple_statements_do_not_hide_work(self):
+        group = self.scan(
+            "int APS5_VABI Discarded(int value) { (void)value; return 0; }\n"
+            "int APS5_VABI Updated(int value) { ++value; return 0; }\n")
+        self.assertEqual(group["done_names"], ["Discarded", "Updated"])
+        self.assertEqual(group["inert_names"], ["Discarded"])
 
 
 if __name__ == "__main__":

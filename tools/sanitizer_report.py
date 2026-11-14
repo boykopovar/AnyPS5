@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -11,7 +12,7 @@ SANITIZERS = ("address", "undefined", "thread")
 REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
     re.compile(r"(?:ERROR|WARNING): \w+Sanitizer: .*"),
-    re.compile(r"(?:\S+ )?runtime error: .*"),
+    re.compile(r"^.*runtime error: .*", re.MULTILINE),
 )
 REPORT_LENGTH = 200
 
@@ -29,9 +30,11 @@ def results(path):
             raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
-        if status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
+        if case.find("failure") is not None or case.find("error") is not None:
+            outcome = "failed"
+        elif status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
             outcome = "skipped"
-        elif status in FAILED_STATUSES or case.find("failure") is not None or case.find("error") is not None:
+        elif status in FAILED_STATUSES:
             outcome = "failed"
         else:
             outcome = "passed"
@@ -60,7 +63,7 @@ def reports(path):
 
 def load_known(path, sanitizers):
     known, seen = {}, set()
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         if not line.strip():
             continue
         location = f"{path}:{number}"
@@ -83,6 +86,14 @@ def cell(text):
     return " ".join(text.split()).replace("|", "\\|")
 
 
+def test_name(text):
+    if not any(character in text for character in "|`\r\n"):
+        return f"`{text}`"
+    text = text.replace("\r", r"\r").replace("\n", r"\n")
+    return "<code>" + "".join(character if character.isalnum() or character == " " else f"&#{ord(character)};"
+                            for character in text) + "</code>"
+
+
 def summarize(title, found, known=None, details=None):
     known, details = known or {}, details or {}
     counts = {outcome: sum(1 for value in found.values() if value == outcome) for outcome in ("passed", "skipped", "failed")}
@@ -93,17 +104,17 @@ def summarize(title, found, known=None, details=None):
              f"{len(found)} tests: {counts['passed']} passed, {counts['skipped']} skipped, {tally}.", ""]
     if failed and any(name in details for name in failed):
         lines += ["| Failed test | First sanitizer report |", "| - | - |"]
-        lines += [f"| `{name}` | {cell(details.get(name, ''))} |" for name in failed] + [""]
+        lines += [f"| {test_name(name)} | {cell(details.get(name, ''))} |" for name in failed] + [""]
     elif failed:
-        lines += ["| Failed test |", "| - |"] + [f"| `{name}` |" for name in failed] + [""]
+        lines += ["| Failed test |", "| - |"] + [f"| {test_name(name)} |" for name in failed] + [""]
     if expected:
-        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| `{name}` | {cell(known[name])} |" for name in expected] + [""]
+        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in expected] + [""]
     recovered = sorted(name for name in known if found.get(name) == "passed")
     if recovered:
-        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| `{name}` | {cell(known[name])} |" for name in recovered] + [""]
+        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in recovered] + [""]
     absent = sorted(name for name in known if name not in found)
     if absent:
-        lines += ["| Listed as known but not in this run |", "| - |"] + [f"| `{name}` |" for name in absent] + [""]
+        lines += ["| Listed as known but not in this run |", "| - |"] + [f"| {test_name(name)} |" for name in absent] + [""]
     return "\n".join(lines) + "\n", bool(failed)
 
 
@@ -119,6 +130,7 @@ def main(argv=None):
                         help="known failures, one per line: test name, comma-separated sanitizers and the reason")
     parser.add_argument("--sanitizer", action="append", choices=SANITIZERS, default=[],
                         help="sanitizer the build used; repeat for several. Selects the --known entries that apply")
+    parser.add_argument("--json", action="store_true", help="write structured triage to stdout; --summary still appends Markdown")
     args = parser.parse_args(argv)
     if args.known and not args.sanitizer:
         parser.error("--known needs at least one --sanitizer")
@@ -129,14 +141,22 @@ def main(argv=None):
                                            (source.exists() and args.summary.exists() and source.samefile(args.summary))):
                     raise ValueError(f"summary output must differ from input: {source}")
         known = load_known(args.known, args.sanitizer) if args.known else {}
-        text, failing = summarize(args.title, results(args.junit), known, reports(args.junit))
+        found, details = results(args.junit), reports(args.junit)
+        text, failing = summarize(args.title, found, known, details)
+        output = text
+        if args.json:
+            output = json.dumps({"title": args.title, "unexpected_failure": failing,
+                                 "tests": [{"name": name, "outcome": found[name], "known_reason": known.get(name),
+                                            "report": details.get(name), "unexpected": found[name] == "failed" and name not in known}
+                                           for name in sorted(found)],
+                                 "known_not_run": sorted(set(known) - set(found))}, ensure_ascii=False, indent=2) + "\n"
         if args.summary:
             with args.summary.open("a", encoding="utf-8") as summary:
                 summary.write(text)
-    except (OSError, ET.ParseError, ValueError) as error:
+    except (OSError, ET.ParseError, ValueError, RuntimeError) as error:
         print(f"sanitizer_report: {error}", file=sys.stderr)
         return 2
-    sys.stdout.write(text)
+    sys.stdout.write(output)
     return 1 if failing else 0
 
 

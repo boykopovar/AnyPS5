@@ -2,10 +2,13 @@ import os
 import subprocess
 from pathlib import Path
 import contextlib
+import html
 import io
+import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sanitizer_report
@@ -134,6 +137,27 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertTrue(stderr.startswith("sanitizer_report: "))
         self.assertNotIn("Traceback", stderr)
 
+    def test_summary_symlink_loop_resolution_failure_exits_with_2(self):
+        junit = self.write(suite(case("passes")), "report.xml")
+        summary = Path(self.directory.name) / "summary_mock.md"
+        with unittest.mock.patch.object(Path, "resolve", side_effect=RuntimeError("Symlink loop from 'summary_mock.md'")):
+            code, stdout, stderr = self.run_main(junit, "--summary", summary)
+            self.assertEqual(code, 2)
+            self.assertEqual(stdout, "")
+            self.assertTrue(stderr.startswith("sanitizer_report: "))
+
+        loop_a = Path(self.directory.name) / "loop_a.md"
+        loop_b = Path(self.directory.name) / "loop_b.md"
+        try:
+            loop_a.symlink_to(loop_b)
+            loop_b.symlink_to(loop_a)
+        except OSError:
+            return
+        code, stdout, stderr = self.run_main(junit, "--summary", loop_a)
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertTrue(stderr.startswith("sanitizer_report: "))
+
     def write_known(self, *lines):
         return self.write("\n".join(lines) + "\n", "known.txt")
 
@@ -147,6 +171,14 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(sanitizer_report.load_known(known, ["address", "undefined"]),
                          {"fiber": "stack switch", "both": "shared   reason"})
         self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {"racy": "interceptor gap"})
+
+    def test_utf8_bom_does_not_change_the_first_known_test_name(self):
+        known = self.write("\ufefffiber address stack switch\n", "known.txt")
+        self.assertEqual(sanitizer_report.load_known(known, ["address"]), {"fiber": "stack switch"})
+        self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {})
+        junit = self.write(suite(case("fiber", "fail", '<failure message=""/>')))
+        self.assertEqual(self.run_main(junit, "--known", known, "--sanitizer", "address")[0], 0)
+        self.assertEqual(self.run_main(junit, "--known", known, "--sanitizer", "thread")[0], 1)
 
     def test_known_failures_move_to_their_own_table_and_keep_the_run_passing(self):
         found = {"fiber": "failed", "new_bug": "failed", "ok": "passed"}
@@ -217,6 +249,26 @@ class SanitizerReportTests(unittest.TestCase):
                          "/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2")
         self.assertEqual(sanitizer_report.first_report("FAIL: plain assertion\n"), "")
 
+    def test_first_report_keeps_source_paths_with_spaces(self):
+        locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
+                     "/build \u03a9 folder/src/value.cpp:12:3")
+        for location in locations:
+            report = location + ": runtime error: signed integer overflow"
+            with self.subTest(location=location):
+                self.assertEqual(sanitizer_report.first_report("startup log\n" + report + "\nstack frame\n"), report)
+
+    def test_cli_keeps_source_paths_in_json_and_markdown(self):
+        report = r"D:\build folder\src\value.cpp:12:3: runtime error: shift exponent 64"
+        junit = self.write(suite(case("overflow", "fail", '<failure/><system-err>' + html.escape(report) + '</system-err>')))
+        original = junit.read_bytes()
+        summary = self.write("existing summary\n", "summary.md")
+        code, stdout, stderr = self.run_main(junit, "--json", "--summary", summary)
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout)["tests"][0]["report"], report)
+        self.assertIn("| `overflow` | " + report + " |", summary.read_text(encoding="utf-8"))
+        self.assertEqual(junit.read_bytes(), original)
+
     def test_first_report_is_shortened(self):
         report = sanitizer_report.first_report("SUMMARY: AddressSanitizer: " + "x" * 400)
         self.assertEqual(len(report), sanitizer_report.REPORT_LENGTH)
@@ -243,6 +295,65 @@ class SanitizerReportTests(unittest.TestCase):
         code, stdout, _ = self.run_main(self.write(suite(case("plain", "fail", '<failure message=""/><system-out>FAIL</system-out>'))))
         self.assertEqual(code, 1)
         self.assertIn("| Failed test |\n| - |\n| `plain` |\n", stdout)
+
+
+    def test_names_remain_literal_in_every_summary_table(self):
+        names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
+        for name in names:
+            for details, known, outcome in (({}, {}, "failed"), ({name: "report"}, {}, "failed"),
+                                            ({}, {name: "reason"}, "failed"), ({}, {name: "reason"}, "passed"),
+                                            ({}, {name: "reason"}, None)):
+                with self.subTest(name=name, outcome=outcome, details=bool(details)):
+                    found = {name: outcome} if outcome else {"ordinary": "passed"}
+                    text, failing = sanitizer_report.summarize("ASan", found, known, details)
+                    rows = [line for line in text.splitlines() if line.startswith("| <code>")]
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0].count("|"), 3 if known and outcome or details else 2)
+                    encoded = rows[0].split("<code>", 1)[1].split("</code>", 1)[0]
+                    self.assertEqual(html.unescape(encoded), name.replace("\r", r"\r").replace("\n", r"\n"))
+                    self.assertRegex(encoded, r"\A(?:[^\W_]| |&#\d+;)*\Z")
+                    self.assertEqual(failing, outcome == "failed" and not known)
+
+    def test_cli_json_keeps_original_names_and_appends_literal_markdown(self):
+        names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
+        path = self.write(suite(*(case(html.escape(name, quote=True).replace("\r", "&#13;").replace("\n", "&#10;"),
+                                      "disabled", '<skipped/><failure/><system-out>ERROR: AddressSanitizer: bad access</system-out>')
+                                  for name in names)))
+        before = path.read_bytes()
+        summary = self.write("existing\n", "summary.md")
+        completed = subprocess.run([sys.executable, str(Path(sanitizer_report.__file__)), str(path),
+                                    "--json", "--summary", str(summary)],
+                                   capture_output=True, encoding="utf-8", timeout=15)
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["unexpected_failure"])
+        self.assertEqual([test["name"] for test in data["tests"]], sorted(names))
+        self.assertEqual([(test["outcome"], test["unexpected"], test["report"]) for test in data["tests"]],
+                         [("failed", True, "ERROR: AddressSanitizer: bad access")] * len(names))
+        markdown = summary.read_text(encoding="utf-8")
+        self.assertTrue(markdown.startswith("existing\n"))
+        self.assertIn("5 tests: 0 passed, 0 skipped, 5 failed.", markdown)
+        rows = [line for line in markdown.splitlines() if line.startswith("| <code>")]
+        self.assertEqual(len(rows), len(names))
+        for row, name in zip(rows, sorted(names)):
+            self.assertEqual(row.count("|"), 3)
+            encoded = row.split("<code>", 1)[1].split("</code>", 1)[0]
+            self.assertEqual(html.unescape(encoded), name.replace("\r", r"\r").replace("\n", r"\n"))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_explicit_failures_override_skipped_and_disabled_statuses(self):
+        for status in ("run", "notrun", "disabled", None):
+            for failure in ("failure", "error"):
+                for skip in ("", '<skipped/>', '<skipped message="SKIP_RETURN_CODE=77"/>'):
+                    with self.subTest(status=status, failure=failure, skip=skip):
+                        path = self.write(suite(case("contradiction", status, skip + f"<{failure}/>")))
+                        self.assertEqual(sanitizer_report.results(path), {"contradiction": "failed"})
+                        self.assertEqual(self.run_main(path)[0], 1)
+                        known = self.write_known("contradiction address tracked issue")
+                        code, stdout, _ = self.run_main(path, "--known", known, "--sanitizer", "address")
+                        self.assertEqual(code, 0)
+                        self.assertIn("1 failed (1 known)", stdout)
 
 
 
@@ -311,6 +422,7 @@ class SummaryInputAliasTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(output.read_bytes(), b"existing\n" + completed.stdout)
             self.assertEqual(source.read_text(), suite(case("unit")))
+
 
 
 if __name__ == "__main__":

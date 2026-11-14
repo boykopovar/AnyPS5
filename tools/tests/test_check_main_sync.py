@@ -349,6 +349,24 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("merge: clean", result.stdout)
 
+    def test_fetch_refreshes_base_excluded_from_remote_fetch_mapping(self):
+        with tempfile.TemporaryDirectory() as other:
+            subprocess.run(["git", "clone", "-q", self.directory.name, other], check=True, capture_output=True)
+            (Path(other) / "upstream.txt").write_text("new upstream commit\n", encoding="utf-8")
+            subprocess.run(["git", "-C", other, "add", "upstream.txt"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", other, "commit", "-qm", "upstream change"], check=True, capture_output=True,
+                           env={**os.environ, **IDENTITY})
+            self.repo.git("remote", "add", "-t", "other", "upstream", other)
+            for options in ((), ("--base", "upstream/main")):
+                with self.subTest(options=options):
+                    self.repo.git("update-ref", "refs/remotes/upstream/main", "HEAD")
+                    result = subprocess.run(
+                        [sys.executable, str(TOOL), "--repo", self.directory.name, "--fetch", "--strict", *options],
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("0 ahead and 1 behind upstream/main", result.stdout)
+
 
     def test_missing_git_executable_reports_usage_error_without_traceback(self):
         def missing_run(*args, **kwargs):
@@ -362,6 +380,28 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
         self.assertIn("No such file or directory: 'git'", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
 
+
+class CheckMainSyncJsonTests(CheckMainSyncFixture):
+    def test_json_reports_real_git_state_and_preserves_exit_status(self):
+        import json
+        self.branch("feature")
+        self.repo.write("shared.txt", "feature\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        clean = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        data = json.loads(clean.stdout)
+        self.assertEqual((data["ahead"], data["behind"], data["conflicts"], data["shared"], data["pulls"]), (1, 0, [], [], {}))
+        self.repo.write("shared.txt", "main\n")
+        self.repo.commit("main edit (#70003)")
+        conflict = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(conflict.returncode, 1, conflict.stderr)
+        data = json.loads(conflict.stdout)
+        self.assertEqual((data["ahead"], data["behind"], data["conflicts"], data["shared"]), (1, 1, ["shared.txt"], ["shared.txt"]))
+        self.assertEqual(set(data["pulls"]), {"70003"})
+        strict = run_tool(self.repo.path, "--head", data["mergebase"], "--json", "--strict")
+        self.assertEqual(strict.returncode, 1, strict.stderr)
+        self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
 
 
 

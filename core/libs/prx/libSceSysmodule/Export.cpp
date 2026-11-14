@@ -1,6 +1,8 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSysmodule/include/Api.hpp"
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <algorithm>
@@ -17,7 +19,7 @@
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
-#else
+#elif !defined(__EMSCRIPTEN__)
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
 
@@ -30,10 +32,15 @@ namespace {
 constexpr int SCE_SYSMODULE_ERROR_INVALID_VALUE = static_cast<int>(0x805A1000);
 constexpr int SCE_SYSMODULE_ERROR_UNLOADED = static_cast<int>(0x805A1001);
 constexpr int kRtldNow = 2;
+constexpr std::uint32_t kMeasuredInternalUnloadedModuleId = 0x800000c4u;
 
 const char* findModuleName(const std::uint32_t id) {
     const auto it = kModuleTable.find(id);
     return it != kModuleTable.end() ? it->second : nullptr;
+}
+
+bool isMeasuredRejectedInternalId(const std::uint32_t id) {
+    return id == 0x8000ffffu || id == 0x80ffff00u;
 }
 
 bool isPublicModuleId(const std::uint16_t id) {
@@ -149,6 +156,8 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
     info->seg0_addr = region;
     info->seg0_size = size;
     return true;
+#elif defined(__EMSCRIPTEN__)
+    return sceKernelGetModuleInfoForUnwind(addr, 0, info) == 0;
 #else
     const auto mapping = HostMapping::Find(addr, "sceSysmoduleGetModuleInfoForUnwind");
     if (!mapping) {
@@ -172,6 +181,9 @@ extern "C" {
 
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
     (void)flags;
+    if (!info) {
+        throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: null info");
+    }
     if (!fillModuleInfoForUnwind(addr, info)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
     }
@@ -278,6 +290,9 @@ int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -290,6 +305,9 @@ int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleUnloadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -328,6 +346,12 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (id == kMeasuredInternalUnloadedModuleId) {
+            return SCE_SYSMODULE_ERROR_UNLOADED;
+        }
+        if (isMeasuredRejectedInternalId(id) || id == 0x00ffffffu) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleIsLoadedInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -348,9 +372,24 @@ int APS5_VABI sceSysmoduleIsCameraPreloaded() {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleLoadModuleByNameInternal(std::uint8_t* fname, std::uint64_t a1, std::uint64_t a2, std::uint64_t a3, std::uint64_t a4, std::uint64_t a5) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+KernelModule APS5_VABI sceSysmoduleLoadModuleByNameInternal(const char* fname, std::size_t args, const void* argp, std::uint32_t flags, int* res) {
+    if (fname == nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
+    const char* sandbox = sceKernelGetFsSandboxRandomWord();
+    char path[0x100];
+    KernelModule result = static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
+    const auto attempt = [&](const char* root, const char* tier, const char* ext) {
+        std::snprintf(path, sizeof(path), "/%s/%s/lib/%s.%s", root, tier, fname, ext);
+        result = sceKernelLoadStartModule(path, args, argp, flags, nullptr, res);
+        return result > 0;
+    };
+    if (sandbox != nullptr &&
+        (attempt(sandbox, "priv_ex", "sprx") || attempt(sandbox, "common_ex", "sprx") ||
+         attempt(sandbox, "priv", "sprx") || attempt(sandbox, "common", "sprx"))) return result;
+    if (attempt("system_ex", "priv_ex", "sprx") || attempt("system_ex", "common_ex", "sprx") ||
+        attempt("system", "priv", "sprx") || attempt("system", "common", "sprx")) return result;
+    if (sandbox != nullptr && (attempt(sandbox, "priv", "prx") || attempt(sandbox, "common", "prx"))) return result;
+    if (attempt("system", "priv", "prx") || attempt("system", "common", "prx")) return result;
+    return result;
 }
 
 int APS5_VABI sceSysmoduleMapLibcForLibkernel() {

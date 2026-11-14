@@ -11,7 +11,6 @@
 #include <cstdio>
 #include <limits>
 #include <optional>
-#include <set>
 #include <span>
 #include <utility>
 #include <vector>
@@ -128,14 +127,39 @@ inline std::array<char, 160> VertexDescriptorFlagsMessage(const ShaderRecompiler
     return message;
 }
 
+inline bool QueryVertexBufferFormat(const Context& context, VkFormat format) {
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    return (properties.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0;
+}
+
+class VertexBufferFormats {
+public:
+    bool Supported(const Context& context, VkFormat format) {
+        const auto index = static_cast<std::size_t>(format);
+        if (index >= known.size()) return QueryVertexBufferFormat(context, format);
+        auto state = known[index].load(std::memory_order_relaxed);
+        if (state == 0) {
+            state = QueryVertexBufferFormat(context, format) ? 2 : 1;
+            known[index].store(state, std::memory_order_relaxed);
+        }
+        return state == 2;
+    }
+
+private:
+    std::array<std::atomic<std::uint8_t>, VK_FORMAT_ASTC_12x12_SRGB_BLOCK + 1> known{};
+};
+
 inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::span<const ShaderRecompiler::VertexAttribute> attributes) {
     Require(attributes.size() <= context.limits.maxVertexInputBindings && attributes.size() <= context.limits.maxVertexInputAttributes, "vertex input count exceeds device limits");
     VertexInputLayout result;
-    std::set<std::uint32_t> locations;
+    result.bindings.reserve(attributes.size());
+    result.attributes.reserve(attributes.size());
     for (const auto& attribute : attributes) {
         const auto& fields = attribute.resource.fields;
         const auto format = DecodeVertexFormat(attribute);
-        Require(attribute.location < context.limits.maxVertexInputAttributes && locations.insert(attribute.location).second, "invalid or duplicate vertex attribute location");
+        const auto duplicate = std::any_of(result.attributes.begin(), result.attributes.end(), [&](const auto& described) { return described.location == attribute.location; });
+        Require(attribute.location < context.limits.maxVertexInputAttributes && !duplicate, "invalid or duplicate vertex attribute location");
         Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
         if ((fields[1] & 0x80000000u) != 0 || (fields[3] & 0x00800000u) != 0 || (fields[3] >> 30u) != 0) {
             Require(false, VertexDescriptorFlagsMessage(attribute).data());
@@ -146,9 +170,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
         Require(stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
         Require(context.formatProperties != nullptr, "missing vertex format property query");
         const auto supported = [&](VkFormat candidate) {
-            VkFormatProperties properties{};
-            context.formatProperties(context.physical, candidate, &properties);
-            return (properties.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0;
+            return context.vertexFormats != nullptr ? context.vertexFormats->Supported(context, candidate) : QueryVertexBufferFormat(context, candidate);
         };
         auto host = format.format;
         auto hostSupported = supported(host);
@@ -156,7 +178,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
             host = DecodeVertexFormat(attribute, components).format;
             hostSupported = supported(host);
         }
-        Require(hostSupported, "device does not support vertex format " + std::to_string(format.format));
+        if (!hostSupported) Require(false, "device does not support vertex format " + std::to_string(format.format));
         const auto binding = static_cast<std::uint32_t>(result.bindings.size());
         result.bindings.push_back({binding, stride, attribute.fetchIndex == 0 ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE});
         result.attributes.push_back({attribute.location, binding, host, 0});
@@ -324,6 +346,18 @@ struct VertexCopyPlan {
     std::vector<std::uint32_t> alignments;
 };
 
+inline std::vector<std::size_t> VertexCopyStarts(const VertexCopyPlan& plan, std::span<const VertexFetch> fetches, std::uint32_t minIndex, std::uint32_t firstInstance) {
+    Require(plan.copyOf.size() == fetches.size(), "vertex copy plan does not match its fetches");
+    std::vector<std::size_t> starts(plan.copies.size(), 0);
+    for (std::size_t i = 0; i < fetches.size(); ++i) {
+        const auto& fetch = fetches[i];
+        Require(fetch.fetchIndex <= 1, "unsupported vertex fetch index");
+        starts[plan.copyOf[i]] = static_cast<std::size_t>(static_cast<std::uint64_t>(fetch.stride) * (fetch.fetchIndex == 0 ? minIndex : firstInstance));
+    }
+    for (std::size_t range = 0; range < starts.size(); ++range) Require(starts[range] < plan.copies[range].second - plan.copies[range].first, "vertex copy starts past its range");
+    return starts;
+}
+
 inline VertexCopyPlan PlanVertexCopies(std::span<const VertexFetch> fetches) {
     VertexCopyPlan plan;
     plan.copyOf.assign(fetches.size(), 0);
@@ -367,10 +401,15 @@ inline std::optional<std::uint32_t> ZeroFetchVertex(std::span<const ShaderRecomp
     return zeroFrom;
 }
 
-inline std::optional<std::uint32_t> ClampDrawIndices(std::span<std::byte> indices, std::uint32_t indexSize, bool skipRestart, std::uint32_t limit) {
+struct DrawIndexBounds {
+    std::uint32_t lowest;
+    std::uint32_t highest;
+};
+
+inline std::optional<DrawIndexBounds> ClampDrawIndices(std::span<std::byte> indices, std::uint32_t indexSize, bool skipRestart, std::uint32_t limit) {
     Require(indexSize == 2 || indexSize == 4, "unsupported index size");
     const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
-    std::optional<std::uint32_t> highest;
+    std::optional<DrawIndexBounds> bounds;
     for (std::size_t offset = 0; offset + indexSize <= indices.size(); offset += indexSize) {
         std::uint32_t index = 0;
         if (indexSize == 2) {
@@ -390,41 +429,44 @@ inline std::optional<std::uint32_t> ClampDrawIndices(std::span<std::byte> indice
                 std::memcpy(indices.data() + offset, &index, sizeof(index));
             }
         }
-        highest = std::max(highest.value_or(0u), index);
+        bounds = bounds ? DrawIndexBounds{std::min(bounds->lowest, index), std::max(bounds->highest, index)} : DrawIndexBounds{index, index};
     }
-    return highest;
+    return bounds;
 }
 
 template <typename TIndex>
-std::optional<std::uint32_t> HighestDrawIndexOf(std::span<const std::byte> indices, bool skipRestart) {
+std::optional<DrawIndexBounds> DrawIndexBoundsOf(std::span<const std::byte> indices, bool skipRestart) {
     constexpr auto restartIndex = std::numeric_limits<TIndex>::max();
     const auto count = indices.size() / sizeof(TIndex);
     const auto* data = indices.data();
+    TIndex lowest = restartIndex;
     TIndex highest = 0;
     if (!skipRestart) {
         for (std::size_t i = 0; i < count; ++i) {
             TIndex index;
             std::memcpy(&index, data + i * sizeof(TIndex), sizeof(TIndex));
+            lowest = std::min(lowest, index);
             highest = std::max(highest, index);
         }
         if (count == 0) return std::nullopt;
-        return highest;
+        return DrawIndexBounds{lowest, highest};
     }
     TIndex kept = 0;
     for (std::size_t i = 0; i < count; ++i) {
         TIndex index;
         std::memcpy(&index, data + i * sizeof(TIndex), sizeof(TIndex));
         const TIndex valid = index == restartIndex ? TIndex{0} : TIndex(~TIndex{0});
+        lowest = std::min(lowest, index);
         highest = std::max(highest, static_cast<TIndex>(index & valid));
         kept |= valid;
     }
     if (kept == 0) return std::nullopt;
-    return highest;
+    return DrawIndexBounds{lowest, highest};
 }
 
-inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
+inline std::optional<DrawIndexBounds> DrawIndexRange(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
     Require(indexSize == 2 || indexSize == 4, "unsupported index size");
-    return indexSize == 2 ? HighestDrawIndexOf<std::uint16_t>(indices, skipRestart) : HighestDrawIndexOf<std::uint32_t>(indices, skipRestart);
+    return indexSize == 2 ? DrawIndexBoundsOf<std::uint16_t>(indices, skipRestart) : DrawIndexBoundsOf<std::uint32_t>(indices, skipRestart);
 }
 
 inline std::uint32_t CompactListRestart(std::span<std::byte> indices, std::uint32_t indexSize, std::uint32_t primitiveSize) {

@@ -76,6 +76,10 @@ void Lookup() {
     unsigned char none = 0;
     LibreSslAsn1Object empty{nullptr, nullptr, 0, 0, &none, 0};
     Require(LibreSslObjectNid_nid_no_patch(&empty) == 404, "an empty encoding lands on NID_ccitt");
+    Require(OBJ_obj2nid_nid_postfix(nullptr) == 0, "a null object has no NID");
+    Require(OBJ_obj2nid_nid_postfix(&commonName.object) == 13, "the export finds a built-in encoding");
+    Require(OBJ_obj2nid_nid_postfix(&preset.object) == 6, "the export returns a set NID without a search");
+    Require(OBJ_obj2nid_nid_postfix(&unknown.object) == 0, "the export leaves an unknown encoding undefined");
 }
 
 void Names() {
@@ -123,6 +127,91 @@ void Errors() {
     char buffer[8];
     RequireThrows([&] { i2t_ASN1_OBJECT_nid_postfix(buffer, -1, &gap.object); }, "a negative length");
     RequireThrows([&] { i2t_ASN1_OBJECT_nid_postfix(nullptr, 8, &gap.object); }, "a null buffer with a length");
+    Require(i2t_ASN1_OBJECT_nid_postfix(buffer, -1, nullptr) == 0, "a negative length with a null object");
+}
+
+constexpr std::uint64_t Asn1Error(int reason) {
+    return (13ull << 24) | (0xfffull << 12) | static_cast<std::uint64_t>(reason);
+}
+
+void Rejects(const char* oid, std::uint64_t error, const char* message) {
+    ERR_clear_error_nid_postfix();
+    Require(OBJ_create_nid_postfix(oid, "x", "y") == 0, message);
+    Require(ERR_get_error_nid_postfix() == error && ERR_get_error_nid_postfix() == 0, message);
+}
+
+void Created() {
+    Encoded added{0x2a, 0x03, 0x04}, commonName{0x55, 0x04, 0x03};
+    Encoded big{0x2a, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x05};
+    Rejects("3.1", Asn1Error(122), "a first arc above 2");
+    Rejects("1", Asn1Error(138), "a missing second arc");
+    Rejects("12.3", Asn1Error(131), "a missing separator");
+    Rejects("1.2x", Asn1Error(130), "a non-digit");
+    Rejects("1.40", Asn1Error(147), "a second arc of 40 under 0 or 1");
+    Rejects("", Asn1Error(122), "an empty text reads its terminator as the first arc");
+    Rejects("1.", 0, "a text without a second arc value adds nothing and queues nothing");
+    RequireThrows([] { OBJ_create_nid_postfix(nullptr, "x", "y"); }, "a null OID text");
+    Require(OBJ_create_nid_postfix("1.2.3.4", "addedShort", "addedLong") == LibreSslObjectCount, "the first added object takes NID 956");
+    RequireText(added.object, 64, 9, "addedLong", "an added object prints its long name");
+    Require(LibreSslObjectNid_nid_no_patch(&added.object) == LibreSslObjectCount, "an added encoding resolves to its NID");
+    Require(OBJ_create_nid_postfix("1 2 3 4", "secondShort", nullptr) == LibreSslObjectCount + 1, "spaces separate arcs and each object takes the next NID");
+    RequireText(added.object, 64, 11, "secondShort", "the latest object with an encoding wins, and a missing long name falls back to the short name");
+    Require(OBJ_create_nid_postfix("2.5.4.3", nullptr, nullptr) == LibreSslObjectCount + 2, "an added object may repeat a built-in OID");
+    Require(OBJ_obj2nid_nid_postfix(&commonName.object) == LibreSslObjectCount + 2, "the export finds an added encoding before the built-in table");
+    RequireText(commonName.object, 64, 7, "2.5.4.3", "added encodings are searched before the table, and a nameless one prints in dotted form");
+    Require(OBJ_create_nid_postfix("1.2.18446744073709551616.5", "big", "bigLong") == LibreSslObjectCount + 3, "an arc past 64 bits");
+    RequireText(big.object, 64, 7, "bigLong", "an arc past 64 bits is encoded exactly");
+    Require(OBJ_create_nid_postfix("2.999..", "trailing", nullptr) == LibreSslObjectCount + 4, "empty arcs count as zero");
+    Encoded trailing{0x88, 0x37, 0x00};
+    RequireText(trailing.object, 64, 8, "trailing", "empty arcs count as zero");
+    Encoded unknown{0x2a, 0x05};
+    unknown.object.nid = 5000;
+    ERR_clear_error_nid_postfix();
+    RequireText(unknown.object, 64, 5, "1.2.5", "a NID past the table that was not added prints the encoding");
+    Require(ERR_get_error_nid_postfix() == UnknownNidError && ERR_get_error_nid_postfix() == UnknownNidError && ERR_get_error_nid_postfix() == 0,
+        "once objects were added, an unknown NID past the table reports OBJ_R_UNKNOWN_NID for each name");
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
+    RequireText(added.object, 64, 11, "secondShort", "OPENSSL_add_all_algorithms_noconf keeps added objects");
+    OBJ_cleanup_nid_postfix();
+    RequireText(added.object, 64, 7, "1.2.3.4", "OBJ_cleanup removes added objects");
+    RequireText(commonName.object, 64, 10, "commonName", "OBJ_cleanup restores the built-in names");
+    Require(OBJ_obj2nid_nid_postfix(&commonName.object) == 13, "after OBJ_cleanup the export finds the built-in encoding again");
+    RequireText(unknown.object, 64, 5, "1.2.5", "after OBJ_cleanup an unknown NID past the table reports no error");
+    Require(ERR_get_error_nid_postfix() == 0, "after OBJ_cleanup an unknown NID past the table reports no error");
+    OBJ_cleanup_nid_postfix();
+    Require(OBJ_create_nid_postfix("1.2.3.4", "again", nullptr) == LibreSslObjectCount + 5, "NIDs keep counting after OBJ_cleanup");
+    RequireText(added.object, 64, 5, "again", "objects can be added again after OBJ_cleanup");
+    OBJ_cleanup_nid_postfix();
+}
+
+std::string Written(const LibreSslAsn1Object* object, int expected) {
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(i2a_ASN1_OBJECT_nid_postfix(bio, object) == expected, "i2a_ASN1_OBJECT returns the written length");
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string text(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    Require(ERR_get_error_nid_postfix() == 0, "i2a_ASN1_OBJECT queues no error");
+    return text;
+}
+
+void Printed() {
+    Require(Written(nullptr, 4) == "NULL", "a null object prints NULL");
+    Require(Written(&LibreSslObjects_nid_no_patch[13], 10) == "commonName", "a known object prints its long name");
+    LibreSslAsn1Object empty{};
+    Require(Written(&empty, 4) == "NULL", "an object without an encoding prints NULL");
+    Encoded unknown({0x2a, 0x03, 0x04});
+    Require(Written(&unknown.object, 7) == "1.2.3.4", "an unknown object prints its OID");
+    Encoded truncated({0x2a, 0x83});
+    Require(Written(&truncated.object, 9) == "<INVALID>", "an undecodable object prints <INVALID>");
+    std::vector<unsigned char> arcs(300, 0x7f);
+    arcs[0] = 0x2a;
+    LibreSslAsn1Object longer{nullptr, nullptr, 0, static_cast<int>(arcs.size()), arcs.data(), 0};
+    std::string expected = "1.2";
+    for (std::size_t index = 1; index < arcs.size(); ++index) expected += ".127";
+    Require(Written(&longer, static_cast<int>(expected.size())) == expected, "text longer than 255 bytes is printed whole");
+    Require(i2a_ASN1_OBJECT_nid_postfix(nullptr, &unknown.object) == 0, "a null BIO writes nothing");
 }
 
 } // namespace
@@ -135,4 +224,6 @@ int main() {
     Names();
     Numbers();
     Errors();
+    Created();
+    Printed();
 }

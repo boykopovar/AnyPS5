@@ -128,12 +128,82 @@ void CheckVectorTransformScaled() {
         "FT_Vector_Transform_Scaled checks 0x10000 * scaling before the null test");
 }
 
+void CheckSqrtFixed() {
+    Require(FT_SqrtFixed_nid_postfix(0) == 0, "FT_SqrtFixed of 0 is 0");
+    Require(FT_SqrtFixed_nid_postfix(-1) == 0 && FT_SqrtFixed_nid_postfix(-0x10000) == 0 && FT_SqrtFixed_nid_postfix(INT32_MIN) == 0,
+        "FT_SqrtFixed returns 0 for negative inputs");
+    Require(FT_SqrtFixed_nid_postfix(1) == 256, "FT_SqrtFixed scales the least positive fixed unit by 256");
+    Require(FT_SqrtFixed_nid_postfix(0x10000) == 0x10000 && FT_SqrtFixed_nid_postfix(0x40000) == 0x20000 && FT_SqrtFixed_nid_postfix(0x90000) == 0x30000 &&
+            FT_SqrtFixed_nid_postfix(0x24000) == 0x18000,
+        "FT_SqrtFixed computes exact 16.16 roots");
+    Require(FT_SqrtFixed_nid_postfix(2) == 362 && FT_SqrtFixed_nid_postfix(3) == 443 && FT_SqrtFixed_nid_postfix(12) == 886 &&
+            FT_SqrtFixed_nid_postfix(0xFFFE) == 0xFFFE && FT_SqrtFixed_nid_postfix(0xFFFF) == 0xFFFF && FT_SqrtFixed_nid_postfix(0x10001) == 0x10000,
+        "FT_SqrtFixed truncates non-square roots");
+    Require(FT_SqrtFixed_nid_postfix(INT32_MAX) == 0xB504F3, "FT_SqrtFixed handles INT32_MAX");
+}
+
+void CheckSqrt32() {
+    Require(FT_Sqrt32_nid_postfix(0) == 0 && FT_Sqrt32_nid_postfix(1) == 1, "FT_Sqrt32 handles 0 and 1");
+    Require(FT_Sqrt32_nid_postfix(4) == 2 && FT_Sqrt32_nid_postfix(9) == 3 && FT_Sqrt32_nid_postfix(0x10000) == 256 &&
+            FT_Sqrt32_nid_postfix(46340 * 46340) == 46340,
+        "FT_Sqrt32 computes exact integer roots");
+    Require(FT_Sqrt32_nid_postfix(3) == 1 && FT_Sqrt32_nid_postfix(8) == 2 && FT_Sqrt32_nid_postfix(15) == 3 &&
+            FT_Sqrt32_nid_postfix(46340 * 46340 - 1) == 46339 && FT_Sqrt32_nid_postfix(INT32_MAX) == 46340,
+        "FT_Sqrt32 truncates non-square positive inputs");
+    Require(FT_Sqrt32_nid_postfix(INT32_MIN) == 46340 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(46341u * 46341u - 1u)) == 46340 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(46341u * 46341u)) == 46341 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(65535u * 65535u - 1u)) == 65534 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(65535u * 65535u)) == 65535 && FT_Sqrt32_nid_postfix(-1) == 65535,
+        "FT_Sqrt32 treats negative inputs as unsigned 32-bit values");
+}
+
 void CheckHighPow2() {
     Require(ft_highpow2_nid_postfix(0) == 0, "ft_highpow2 of 0 is 0");
     Require(ft_highpow2_nid_postfix(1) == 1 && ft_highpow2_nid_postfix(2) == 2 && ft_highpow2_nid_postfix(0x10) == 0x10, "ft_highpow2 keeps a power of two");
     Require(ft_highpow2_nid_postfix(3) == 2 && ft_highpow2_nid_postfix(6) == 4, "ft_highpow2 clears the lower bits");
     Require(ft_highpow2_nid_postfix(0x12345678) == 0x10000000, "ft_highpow2 keeps the highest set bit");
     Require(ft_highpow2_nid_postfix(0x80000001u) == 0x80000000u && ft_highpow2_nid_postfix(0xFFFFFFFFu) == 0x80000000u, "ft_highpow2 keeps bit 31");
+}
+
+void CheckSynthesizeVerticalMetrics() {
+    FreeType::GuestGlyphMetrics metrics{100, 200, 10, 50, 80, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&metrics, 0);
+    Require(metrics.width == 100 && metrics.height == 200 && metrics.horiBearingX == 10 && metrics.horiBearingY == 50 && metrics.horiAdvance == 80,
+        "ft_synthesize_vertical_metrics keeps the horizontal metrics");
+    Require(metrics.vertBearingX == -30 && metrics.vertBearingY == 15 && metrics.vertAdvance == 180,
+        "ft_synthesize_vertical_metrics synthesizes vertical metrics from a zero advance");
+    FreeType::GuestGlyphMetrics negative{0, 200, 0, -30, 0, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&negative, 0);
+    Require(negative.vertBearingX == 0 && negative.vertBearingY == 20 && negative.vertAdvance == 240,
+        "ft_synthesize_vertical_metrics keeps the height for a negative horiBearingY");
+    FreeType::GuestGlyphMetrics clamped{0, -100, 0, -30, 0, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&clamped, 0);
+    Require(clamped.vertBearingX == 0 && clamped.vertBearingY == -3 && clamped.vertAdvance == -36,
+        "ft_synthesize_vertical_metrics clamps the height to a negative horiBearingY");
+    FreeType::GuestGlyphMetrics sized{0, 200, 4, 0, 81, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&sized, 0);
+    Require(sized.vertBearingX == -36 && sized.vertBearingY == 20 && sized.vertAdvance == 240,
+        "ft_synthesize_vertical_metrics halves an odd horiAdvance toward zero with a zero horiBearingY");
+    FreeType::GuestGlyphMetrics explicitAdvance{100, 200, 10, 50, 80, 0, 0, 0};
+    ft_synthesize_vertical_metrics_nid_postfix(&explicitAdvance, 300);
+    Require(explicitAdvance.vertBearingX == -30 && explicitAdvance.vertBearingY == 75 && explicitAdvance.vertAdvance == 300,
+        "ft_synthesize_vertical_metrics keeps a non-zero advance");
+    ft_synthesize_vertical_metrics_nid_postfix(nullptr, 0);
+    ft_synthesize_vertical_metrics_nid_postfix(nullptr, 300);
+}
+
+void CheckServiceListLookup() {
+    int dataA = 1;
+    int dataB = 2;
+    const GuestServiceDesc descriptors[]{{"a", &dataA}, {"b", &dataB}, {nullptr, nullptr}};
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "a") == &dataA, "ft_service_list_lookup returns the first descriptor data");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "b") == &dataB, "ft_service_list_lookup returns the matching descriptor data");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "c") == nullptr, "ft_service_list_lookup returns null for a missing id");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, "") == nullptr, "ft_service_list_lookup returns null for an empty id");
+    Require(ft_service_list_lookup_nid_postfix(nullptr, "b") == nullptr, "ft_service_list_lookup returns null for a null array");
+    Require(ft_service_list_lookup_nid_postfix(descriptors, nullptr) == nullptr, "ft_service_list_lookup returns null for a null id");
+    Require(ft_service_list_lookup_nid_postfix(nullptr, nullptr) == nullptr, "ft_service_list_lookup returns null for null inputs");
 }
 
 }  // namespace
@@ -166,7 +236,11 @@ int main() {
     CheckMulDivNoRound();
     CheckMatrixMultiplyScaled();
     CheckVectorTransformScaled();
+    CheckSqrtFixed();
+    CheckSqrt32();
     CheckHighPow2();
+    CheckSynthesizeVerticalMetrics();
+    CheckServiceListLookup();
 
     std::puts("Guest FreeType corner tests passed");
     return 0;

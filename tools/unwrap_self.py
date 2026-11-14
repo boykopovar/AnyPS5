@@ -12,6 +12,8 @@ differ inside a container:
     0x800 holds the data of the program header whose index is in flags bits 20
     and up. Segments the table does not cover are placed by the vaddr to file
     mapping of the PT_LOAD that contains them, including a PT_PHDR at vaddr zero.
+    A PT_TLS image that runs past the file bytes of its PT_LOAD gets the zeros
+    the load maps there, the bytes a loader reads from p_vaddr.
     Other segments without a vaddr that follow the last recorded one in the ELF
     are stored right after it, back to back in ELF order, except a PT_NOTE, which
     the container leaves out and which is emitted without file bytes. Some dumps
@@ -51,7 +53,10 @@ FIRST_REGION = 0x400
 MAX_ALIGNMENT_PADDING = 64 * 1024 * 1024
 MAX_OUTPUT_FACTOR = 4
 MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
+PT_NULL = 0
 PT_LOAD = 1
+PT_DYNAMIC = 2
+PT_INTERP = 3
 PT_NOTE = 4
 PT_PHDR = 6
 ENTROPY_LIMIT = 7.5
@@ -60,7 +65,7 @@ ENTROPY_SAMPLE = 0x10000
 PHDR_NAMES = {
     PT_LOAD: "PT_LOAD",
     2: "PT_DYNAMIC",
-    3: "PT_INTERP",
+    PT_INTERP: "PT_INTERP",
     4: "PT_NOTE",
     PT_PHDR: "PT_PHDR",
     7: "PT_TLS",
@@ -137,11 +142,11 @@ def parse_elf(data):
         offset = inner + program_offset + index * 56
         kind, flags, file_offset, vaddr, _, file_size, memory_size, alignment = struct.unpack_from(
             "<IIQQQQQQ", data, offset)
+        if kind != PT_NULL and alignment and alignment & (alignment - 1):
+            raise Refused("segment %d alignment is not a power of two" % index)
         if kind in (PT_LOAD, PT_TLS):
             if file_size > memory_size:
                 raise Refused("segment %d file size exceeds memory size" % index)
-            if alignment and alignment & (alignment - 1):
-                raise Refused("segment %d alignment is not a power of two" % index)
         if kind == PT_TLS:
             if alignment > 8192:
                 raise Refused("segment %d TLS alignment exceeds 8192" % index)
@@ -158,16 +163,28 @@ def parse_elf(data):
 
 
 def place_segments(data, headers, records):
+    for header in headers:
+        if header["type"] == PT_NULL:
+            header.update(flags=0, offset=0, vaddr=0, size=0, memory=0, align=0, source=0)
     loads = [header for header in headers if header["type"] == PT_LOAD]
+    zero_filled = b""
     used = set()
     placed = set()
-    for index, (flags, segment, size) in enumerate(records):
+    for flags, segment, size in records:
         target = flags >> RECORD_SEGMENT_SHIFT
         if flags & RECORD_HAS_SEGMENT and target < len(headers) and target not in placed and headers[target]["size"] == size:
             headers[target]["source"] = segment
             placed.add(target)
-            used.add(index)
     recorded = [header for header in headers if header["index"] in placed and header["vaddr"] == 0 and header["type"] != PT_LOAD]
+    for header in headers:
+        if header["type"] != PT_INTERP or header["vaddr"] != 0 or not header["size"] or header["index"] in placed:
+            continue
+        containers = [load for load in loads if load["offset"] <= header["offset"]
+                      and header["offset"] + header["size"] <= load["offset"] + load["size"]]
+        if containers:
+            host = min(containers, key=lambda load: load["size"])
+            header["host"] = host
+            placed.add(header["index"])
     if recorded:
         last = max(recorded, key=lambda header: header["offset"])
         cursor = last["source"] + last["size"]
@@ -187,13 +204,18 @@ def place_segments(data, headers, records):
     for header in loads:
         if header["size"] == 0 or header["index"] in placed:
             continue
-        for index, (_, segment, size) in enumerate(records):
-            if index in used:
+        for index, (flags, segment, size) in enumerate(records):
+            if flags & RECORD_HAS_SEGMENT or index in used:
                 continue
             if size == header["size"]:
                 used.add(index)
                 header["source"] = segment
                 break
+
+    for header in loads:
+        if header["size"] and (header["source"] < 0 or header["source"] > len(data)
+                               or header["size"] > len(data) - header["source"]):
+            raise Refused("segment %d does not fit the file" % header["index"])
 
     def load_for(vaddr, size):
         found = None
@@ -207,6 +229,9 @@ def place_segments(data, headers, records):
     for header in headers:
         if header["type"] == PT_LOAD:
             continue
+        if header["host"] is not None:
+            host = header["host"]
+            header["source"] = host["source"] + header["offset"] - host["offset"]
         if header["index"] in placed:
             host = load_for(header["vaddr"], header["size"])
             if host is not None:
@@ -217,7 +242,7 @@ def place_segments(data, headers, records):
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue
-        if header["vaddr"] != 0 or header["type"] == PT_PHDR:
+        if header["vaddr"] != 0 or header["type"] in (PT_PHDR, PT_DYNAMIC, PT_TLS):
             host = load_for(header["vaddr"], header["size"])
             if host is None:
                 if header["size"] == 0:
@@ -226,8 +251,17 @@ def place_segments(data, headers, records):
                 raise Refused("segment %d vaddr %#x is in no PT_LOAD" % (header["index"], header["vaddr"]))
             offset = header["vaddr"] - host["vaddr"]
             if header["size"] and (offset > host["size"] or header["size"] > host["size"] - offset):
-                raise Refused("segment %d does not fit the file-backed range of PT_LOAD %d"
-                              % (header["index"], host["index"]))
+                if header["type"] != PT_TLS or header["size"] > host["memory"] - offset:
+                    raise Refused("segment %d does not fit the file-backed range of PT_LOAD %d"
+                                  % (header["index"], host["index"]))
+                if len(zero_filled) + header["size"] > max(MAX_OUTPUT_FACTOR * len(data), MIN_OUTPUT_LIMIT):
+                    raise Refused("segment %d needs %d bytes of output, more than the %d allowed for a %d byte container"
+                                  % (header["index"], header["size"], max(MAX_OUTPUT_FACTOR * len(data), MIN_OUTPUT_LIMIT),
+                                     len(data)))
+                backed = data[host["source"] + offset:host["source"] + host["size"]] if offset < host["size"] else b""
+                header["source"] = len(data) + len(zero_filled)
+                zero_filled += backed + bytes(header["size"] - len(backed))
+                continue
             if host["size"] == 0 or offset > host["size"]:
                 header["source"] = 0
                 continue
@@ -243,11 +277,13 @@ def place_segments(data, headers, records):
             header["size"] = min(header["size"], keep)
             header["memory"] = min(header["memory"], keep)
 
+    end = len(data) + len(zero_filled)
     for header in headers:
         if header["type"] == PT_LOAD and header["size"] == 0:
             continue
-        if header["source"] < 0 or header["source"] > len(data) or header["size"] > len(data) - header["source"]:
+        if header["source"] < 0 or header["source"] > end or header["size"] > end - header["source"]:
             raise Refused("segment %d does not fit the file" % header["index"])
+    return zero_filled
 
 
 def check_decrypted(data, headers):
@@ -290,7 +326,7 @@ def unwrap(path, output, verbose=False):
             raise Refused("PT_PHDR does not cover the program header table")
         if any(header["type"] == PT_LOAD and header["index"] < phdr["index"] for header in headers):
             raise Refused("PT_PHDR must precede the load segments")
-    place_segments(data, headers, records)
+    zero_filled = place_segments(data, headers, records)
     if phdr is not None:
         if phdr["host"] is None:
             raise Refused("PT_PHDR is not in a file-backed load segment")
@@ -369,8 +405,9 @@ def unwrap(path, output, verbose=False):
                       % (cursor, output_limit, len(data)))
 
     result = bytearray(cursor)
+    image = data + zero_filled
     for region in regions:
-        result[region["new"]:region["new"] + region["size"]] = data[region["old"]:region["old"] + region["size"]]
+        result[region["new"]:region["new"] + region["size"]] = image[region["old"]:region["old"] + region["size"]]
 
     for header in headers:
         if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):

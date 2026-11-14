@@ -5,6 +5,7 @@
 #include <cstddef>
 
 constexpr int SAVE_DATA_DIALOG_OK = 0;
+constexpr int SAVE_DATA_DIALOG_ERROR_PARAM = static_cast<int>(0x80B80001);
 constexpr int SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003);
 constexpr int SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004);
 constexpr int SAVE_DATA_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005);

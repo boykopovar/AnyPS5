@@ -1,6 +1,7 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #include <span>
 
 static_assert(sizeof(GameLiveStreamingStatus2) == 72);
+static_assert(sizeof(GameLiveStreamingStatus) == 72);
 
 namespace {
 
@@ -71,6 +73,9 @@ void CheckLifecycleFirst() {
 
 void CheckString(int (APS5_VABI *call)(const char*), std::size_t limit) {
     Require(call(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(call(reinterpret_cast<const char*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
     Require(call("") == 0);
     Require(call(std::string(limit, 'a').c_str()) == 0);
     Require(call(std::string(limit + 1, 'a').c_str()) == kInvalidArgument);
@@ -115,6 +120,12 @@ void CheckFeedbackTypes() {
     Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), nullptr) == kInvalidArgument);
     Require(acquired == 0xdeadbeef);
     Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessagesCount(1, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetSocialFeedbackMessages(1, 1, AsMessages(messages), reinterpret_cast<std::size_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 }
 
 void CheckArrays() {
@@ -140,6 +151,10 @@ void CheckArrays() {
     Require(sceGameLiveStreamingSetSpoilerTag(1, tags) == 0);
     Require(sceGameLiveStreamingClearSpoilerTag() == 0);
     Require(sceGameLiveStreamingClearSpoilerTag() == 0);
+    errno = 71;
+    Require(sceGameLiveStreamingSetSpoilerTag(0, reinterpret_cast<const GameLiveStreamingSpoilerTag*>(0x10)) == 0);
+    Require(sceGameLiveStreamingSetSpoilerTag(1, reinterpret_cast<const GameLiveStreamingSpoilerTag*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     GameLiveStreamingPresetCommand presets[6]{};
     Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, nullptr) == kInvalidArgument);
@@ -161,6 +176,10 @@ void CheckArrays() {
     Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(5, presets) == 0);
     Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
     Require(sceGameLiveStreamingClearPresetSocialFeedbackCommands() == 0);
+    errno = 71;
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(0, reinterpret_cast<const GameLiveStreamingPresetCommand*>(0x10)) == 0);
+    Require(sceGameLiveStreamingSetPresetSocialFeedbackCommands(1, reinterpret_cast<const GameLiveStreamingPresetCommand*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     GameLiveStreamingCameraFrameSetting camera{};
     Require(sceGameLiveStreamingSetCameraFrameSetting(nullptr) == kInvalidArgument);
@@ -173,6 +192,9 @@ void CheckArrays() {
         Require(sceGameLiveStreamingSetCameraFrameSetting(&camera) == kInvalidArgument);
         camera.reserved[byte] = 0;
     }
+    errno = 71;
+    Require(sceGameLiveStreamingSetCameraFrameSetting(reinterpret_cast<const GameLiveStreamingCameraFrameSetting*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 }
 
 void CheckScalars() {
@@ -184,6 +206,29 @@ void CheckScalars() {
     for (const std::uint32_t bitrate : {0u, 6000u, 0xffffffffu}) Require(sceGameLiveStreamingSetMaxBitrate(bitrate) == 0);
 }
 
+void CheckSeparateModeParameter() {
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(reinterpret_cast<void*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    std::array<std::uint8_t, 0x60> parameter{};
+    parameter.fill(0xaa);
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(parameter.data()) == 0);
+    for (std::size_t i = 0; i < parameter.size(); ++i) Require(parameter[i] == (i < 0x44 ? 0 : 0xaa));
+}
+
+void CheckInvalidOutputPointers() {
+    errno = 71;
+    Require(sceGameLiveStreamingGetCurrentStatus2(reinterpret_cast<GameLiveStreamingStatus2*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceGameLiveStreamingGetCurrentStatus(reinterpret_cast<GameLiveStreamingStatus*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+}
+
 }
 
 int main() {
@@ -192,14 +237,32 @@ int main() {
     constexpr int notInitialized = static_cast<int>(0x80A00004);
     Require(sceGameLiveStreamingTerminate() == notInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
+    GameLiveStreamingStatus liveStatus{};
+    std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == notInitialized);
+    for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0x5a});
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingUnregisterCallback() == notInitialized);
     Require(EnableThrowsNotInitialized(true));
     CheckLifecycleFirst();
+    CheckSeparateModeParameter();
     for (const std::size_t size : {0u, 1u, 0x3fffu, 0x4001u, 0x100000u}) Require(sceGameLiveStreamingInitialize(size) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == 0);
+    CheckInvalidOutputPointers();
     Require(sceGameLiveStreamingEnableLiveStreaming(true) == 0);
     Require(sceGameLiveStreamingInitialize(0) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == alreadyInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == invalidArgument);
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == invalidArgument);
+
+    std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == 0);
+    for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0});
+    Require(sceGameLiveStreamingRegisterCallback(reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000)) == 0);
+    Require(sceGameLiveStreamingUnregisterCallback() == 0);
+    Require(sceGameLiveStreamingUnregisterCallback() == 0);
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == 0);
 
     GameLiveStreamingStatus2 status{};
     std::memset(&status, 0x7f, sizeof(status));
@@ -237,8 +300,14 @@ int main() {
     std::memset(&status, 0x7f, sizeof(status));
     Require(sceGameLiveStreamingGetCurrentStatus2(&status) == notInitialized);
     for (const auto value : std::as_bytes(std::span(&status, 1))) Require(value == std::byte{0x7f});
+    std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == notInitialized);
+    for (const auto value : std::as_bytes(std::span(&liveStatus, 1))) Require(value == std::byte{0x5a});
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
     programInfo.fill(0x7f);
     Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(programInfo.data())) == notInitialized);
     for (const std::uint8_t byte : programInfo) Require(byte == 0x7f);
+    Require(sceGameLiveStreamingRegisterCallback(nullptr, nullptr) == notInitialized);
+    Require(sceGameLiveStreamingUnregisterCallback() == notInitialized);
     Require(sceGameLiveStreamingTerminate() == notInitialized);
 }

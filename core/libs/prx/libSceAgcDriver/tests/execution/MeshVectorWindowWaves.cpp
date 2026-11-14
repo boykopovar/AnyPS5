@@ -11,6 +11,7 @@
 #include <exception>
 #include <initializer_list>
 #include <iostream>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,8 +39,9 @@ constexpr std::uint32_t Branch(std::uint32_t opcode, std::size_t from, std::size
     return opcode | (static_cast<std::uint32_t>(static_cast<std::int32_t>(to) - static_cast<std::int32_t>(from) - 1) & 0xffffu);
 }
 
-alignas(256) constexpr auto GeometryCode = [] {
-    std::array<std::uint32_t, 184> code{};
+template<bool relativeWrites>
+constexpr auto MakeGeometryCode() {
+    std::array<std::uint32_t, 184 + (relativeWrites ? 3 : 0)> code{};
     std::size_t at = 0;
     const auto put = [&](std::initializer_list<std::uint32_t> words) {
         for (const auto word : words) code[at++] = word;
@@ -52,16 +54,24 @@ alignas(256) constexpr auto GeometryCode = [] {
     const auto loop = at;
     put({0x807c0605u, 0x877cff7cu, WindowSize - 1u, 0x7d840c80u, 0xbe8c246au});
     const auto skip = at;
-    put({0u, 0x7e08870au, 0x7e148504u, 0x4a0a067cu, 0x4a0a0a81u, 0x7d8a0b04u, 0x500c0c80u});
+    put({0u, 0x7e08870au});
+    if constexpr (relativeWrites) put({0x4a080881u});
+    put({0x7e148504u});
+    if constexpr (relativeWrites) put({0x7e08870au});
+    put({0x4a0a067cu, relativeWrites ? 0x4a0a0a82u : 0x4a0a0a81u, 0x7d8a0b04u, 0x500c0c80u});
     code[skip] = Branch(0xbf880000u, skip, at);
     put({0x88fe0c7eu, 0x80058105u, 0xbf0aff05u, WindowSize});
     put({Branch(0xbf850000u, at, loop)});
+    if constexpr (relativeWrites) put({0x4a060681u});
     put({0x4a0a0681u, 0x7d8a0b0au, 0x500c0c80u, 0x4a0a06c0u, 0x7d8a0b49u, 0x500c0c80u, 0x4a0a06ffu, WindowSize, 0x7d8a0b89u, 0x500c0c80u});
     put({0xbf8cc07fu, 0xe0701000u, 0x80020608u, 0xbf8c0000u});
     put({0xbefc0380u, 0xbf900009u, 0xbefe0480u, 0xf8000941u, 0x00000000u, 0xf80008cfu, 0x00000000u, 0xbf810000u});
     if (at != code.size()) throw "geometry program size";
     return code;
-}();
+}
+
+alignas(256) constexpr auto GeometryCode = MakeGeometryCode<false>();
+alignas(256) constexpr auto RelativeWriteCode = MakeGeometryCode<true>();
 
 alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
 
@@ -88,10 +98,10 @@ void Write(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::uint
     commands.insert(commands.end(), {0xc0010000u | (opcode << 8u), offset, value});
 }
 
-void Draw() {
+void Draw(std::span<const std::uint32_t> geometryCode) {
     Mismatches.fill(0xdeadbeefu);
     const auto color = reinterpret_cast<std::uintptr_t>(Pixels.data());
-    const auto geometry = reinterpret_cast<std::uintptr_t>(GeometryCode.data());
+    const auto geometry = reinterpret_cast<std::uintptr_t>(geometryCode.data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
     const auto table = reinterpret_cast<std::uintptr_t>(Descriptor.data());
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -149,11 +159,17 @@ void Check() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool relativeWrites = argc == 2 && std::string(argv[1]) == "--relative-writes-only";
+        Require(argc == 1 || relativeWrites, "mesh vector window: expected --relative-writes-only or no arguments");
         {
             const auto device = OpenVulkanTestDevice();
-            if (!device || !TargetHasCapability(device->Target(), spv::CapabilityMeshShadingEXT)) return VulkanTestSkipped;
+            if (!device) return VulkanTestSkipped;
+            if (!TargetHasCapability(device->Target(), spv::CapabilityMeshShadingEXT)) {
+                std::puts("skipped, the device has no VK_EXT_mesh_shader");
+                return VulkanTestSkipped;
+            }
             if (device->DeviceName().starts_with("llvmpipe")) {
                 std::puts("skipped, the device has no mesh shader compiler that handles these programs (llvmpipe)");
                 return VulkanTestSkipped;
@@ -161,14 +177,15 @@ int main() {
         }
         const auto address = reinterpret_cast<std::uintptr_t>(Mismatches.data());
         Descriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Mismatches)), 0x31016facu};
-        Register(GeometryHeader, GeometryCode.data(), sizeof(GeometryCode), 2);
+        const auto geometryCode = relativeWrites ? std::span<const std::uint32_t>(RelativeWriteCode) : std::span<const std::uint32_t>(GeometryCode);
+        Register(GeometryHeader, geometryCode.data(), geometryCode.size_bytes(), 2);
         Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         for (std::uint32_t pass = 0; pass < 2; ++pass) {
-            Draw();
+            Draw(geometryCode);
             Check();
         }
         AgcDriverShutdown_nid_postfix();
-        std::cout << "mesh vector window tests passed\n";
+        std::cout << (relativeWrites ? "mesh vector window relative write tests passed\n" : "mesh vector window tests passed\n");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

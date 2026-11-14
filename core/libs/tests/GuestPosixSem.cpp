@@ -73,6 +73,33 @@ static void CheckFutureDeadline() {
     Require(sem_destroy_nid_postfix(&sem) == 0, "deadline semaphore destroy must succeed");
 }
 
+static void CheckRelativeTimeout() {
+    std::uintptr_t sem = 0;
+    int value = -1;
+    Require(sem_init_nid_postfix(&sem, 0, 2) == 0, "relative-timeout semaphore must initialize");
+    Require(sem_reltimedwait_np_nid_postfix(&sem, 50000) == 0, "relative wait on an available semaphore must succeed");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "relative wait must decrement");
+    Require(sem_wait_nid_postfix(&sem) == 0, "wait on an available semaphore must succeed");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "wait must decrement");
+
+    const auto start = std::chrono::steady_clock::now();
+    *__error_nid_postfix() = 0;
+    Require(sem_reltimedwait_np_nid_postfix(&sem, 50000) == -1 && *__error_nid_postfix() == 60, "relative timeout must expire with ETIMEDOUT");
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40), "relative timeout expired early");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "expired relative timeout must preserve the count");
+
+    int waitResult = -2;
+    std::thread waiter([&] { waitResult = sem_reltimedwait_np_nid_postfix(&sem, 5000000); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto posted = std::chrono::steady_clock::now();
+    Require(sem_post_nid_postfix(&sem) == 0, "post must release a relative-timeout waiter");
+    waiter.join();
+    Require(waitResult == 0, "relative-timeout waiter must succeed after a post before its timeout");
+    Require(std::chrono::steady_clock::now() - posted < std::chrono::seconds(4), "relative-timeout waiter waited for its timeout");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "relative-timeout waiter must consume the posted count");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "relative-timeout semaphore destroy must succeed");
+}
+
 int main(int argc, char** argv) {
     constexpr unsigned int maximum = 0x7fffffffu;
     std::uintptr_t sem = 0;
@@ -88,6 +115,8 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    *__error_nid_postfix() = 0;
+    Require(sem_post_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "null semaphore pointer in sem_post must fail with EINVAL");
     Require(sem_init_nid_postfix(&sem, 0, maximum) == 0, "maximum count must initialize");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "maximum count must be readable");
     *__error_nid_postfix() = 0;
@@ -103,6 +132,14 @@ int main(int argc, char** argv) {
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "repeated overflow changed count");
     Require(sem_destroy_nid_postfix(&sem) == 0, "destroy must succeed");
     Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "zero count must initialize");
+    *__error_nid_postfix() = 0;
+    Require(sem_trywait_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "null semaphore pointer must report EINVAL");
+    std::uintptr_t invalidSem = 0;
+    *__error_nid_postfix() = 0;
+    Require(sem_trywait_nid_postfix(&invalidSem) == -1 && *__error_nid_postfix() == 22, "uninitialized semaphore descriptor must report EINVAL");
+    Require(sem_wait_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "null semaphore pointer must report EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_wait_nid_postfix(&invalidSem) == -1 && *__error_nid_postfix() == 22, "uninitialized semaphore descriptor must report EINVAL");
     Require(sem_trywait_nid_postfix(&sem) == -1 && *__error_nid_postfix() == 35, "empty semaphore must report EAGAIN");
     Require(sem_post_nid_postfix(&sem) == 0, "normal post must succeed");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "normal post must increment");
@@ -147,6 +184,7 @@ int main(int argc, char** argv) {
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "failed timed waits must preserve the count");
     Require(sem_destroy_nid_postfix(&sem) == 0, "blocked semaphore destroy must succeed");
     CheckFutureDeadline();
+    CheckRelativeTimeout();
     CheckRetire();
 
     Require(sem_init_nid_postfix(&sem, 0, 1) == 0, "renamed semaphore must initialize");
@@ -157,10 +195,6 @@ int main(int argc, char** argv) {
     Require(sem_setname_nid_postfix(&sem, "") == -1 && *__error_nid_postfix() == 35, "second setname with an empty name must report EAGAIN");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "setname must preserve the count");
     bool rejected = false;
-    try { sem_setname_nid_postfix(&sem, nullptr); }
-    catch (const std::invalid_argument&) { rejected = true; }
-    Require(rejected, "null name must throw");
-    rejected = false;
     try { sem_setname_nid_postfix(nullptr, "semaphore"); }
     catch (const std::invalid_argument&) { rejected = true; }
     Require(rejected, "null semaphore must throw");
@@ -171,4 +205,11 @@ int main(int argc, char** argv) {
     Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "reinitialized semaphore must initialize");
     Require(sem_setname_nid_postfix(&sem, "again") == 0, "a reinitialized semaphore can be named again");
     Require(sem_destroy_nid_postfix(&sem) == 0, "reinitialized semaphore destroy must succeed");
+    Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "fresh semaphore must initialize");
+    *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, nullptr) == -1 && *__error_nid_postfix() == 22, "null name must report EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, "01234567890123456789012345678901") == -1 && *__error_nid_postfix() == 63, "name of 32 characters must report ENAMETOOLONG");
+    Require(sem_setname_nid_postfix(&sem, "0123456789012345678901234567890") == 0, "name of 31 characters must be accepted");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "named semaphore destroy must succeed");
 }

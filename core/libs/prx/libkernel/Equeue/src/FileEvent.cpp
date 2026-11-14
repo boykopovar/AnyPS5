@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
@@ -7,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -22,6 +24,8 @@
 #include <fcntl.h>
 #include <sys/event.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#elif defined(__EMSCRIPTEN__)
 #include <unistd.h>
 #else
 #include <dirent.h>
@@ -68,6 +72,7 @@ public:
         stopSignal = ends[1];
         ::fcntl(stopEvent, F_SETFD, FD_CLOEXEC);
         ::fcntl(stopSignal, F_SETFD, FD_CLOEXEC);
+#elif defined(__EMSCRIPTEN__)
 #else
         stopEvent = ::eventfd(0, EFD_CLOEXEC);
         if (stopEvent < 0) {
@@ -465,6 +470,19 @@ int OpenHostWatch(int descriptor, std::uint32_t, HostWatch& host) {
     return 0;
 }
 
+#elif defined(__EMSCRIPTEN__)
+
+struct HostWatch {};
+
+void CloseHostWatch(HostWatch&) {}
+
+void RunHostWatch(std::shared_ptr<VnodeWatch>, HostWatch) {}
+
+int OpenHostWatch(int, std::uint32_t, HostWatch&) {
+    NotImplemented_nid_no_patch("EVFILT_VNODE in WebAssembly");
+    return GUEST_EINVAL;
+}
+
 #else
 
 struct HostWatch {
@@ -754,7 +772,14 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
         CloseHostWatch(host);
         return result == EQUEUE_OK ? 0 : result & 0xffff;
     }
-    std::thread(RunHostWatch, watch, std::move(host)).detach();
+    Libc::StartHostThread([watch, host = std::move(host)]() mutable {
+        try {
+            RunHostWatch(watch, std::move(host));
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "%s\n", error.what());
+            std::fflush(stderr);
+        }
+    }).detach();
     return 0;
 }
 

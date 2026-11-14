@@ -10,6 +10,8 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <windows.h>
 
@@ -22,6 +24,8 @@ constexpr int LockExclusive = 2;
 constexpr int LockNonblocking = 4;
 constexpr int LockUnlock = 8;
 constexpr DWORD LockByteLow = 0xFFFFFFFE;
+constexpr DWORD GateByteLow = 0xFFFFFFFD;
+constexpr DWORD WaiterByteLow = 0xFFFFFFFC;
 constexpr DWORD LockByteHigh = 0x7FFFFFFF;
 
 using DirectoryKey = std::pair<DWORD, std::uint64_t>;
@@ -80,6 +84,87 @@ std::optional<DirectoryKey> DirectoryOf(HANDLE handle) {
     return DirectoryKey{information.dwVolumeSerialNumber, (static_cast<std::uint64_t>(information.nFileIndexHigh) << 32) | information.nFileIndexLow};
 }
 
+bool LockByte(HANDLE handle, DWORD low, DWORD flags) {
+    OVERLAPPED overlapped{};
+    overlapped.Offset = low;
+    overlapped.OffsetHigh = LockByteHigh;
+    return ::LockFileEx(handle, flags, 0, 1, 0, &overlapped) != 0;
+}
+
+bool UnlockByte(HANDLE handle, DWORD low) {
+    OVERLAPPED overlapped{};
+    overlapped.Offset = low;
+    overlapped.OffsetHigh = LockByteHigh;
+    return ::UnlockFileEx(handle, 0, 1, 0, &overlapped) != 0;
+}
+
+bool Failure(DWORD error) {
+    ::SetLastError(error);
+    return false;
+}
+
+bool AcquireShared(HANDLE handle, int& held, bool nonblocking) {
+    if (held == LockExclusive) {
+        if (!LockByte(handle, LockByteLow, LOCKFILE_FAIL_IMMEDIATELY) || !UnlockByte(handle, LockByteLow)) {
+            throw std::runtime_error("flock: downgrade failed, error=" + std::to_string(::GetLastError()));
+        }
+    } else if (!LockByte(handle, LockByteLow, nonblocking ? LOCKFILE_FAIL_IMMEDIATELY : 0)) {
+        return false;
+    }
+    held = LockShared;
+    return true;
+}
+
+bool AcquireExclusive(HANDLE handle, int& held, bool nonblocking) {
+    if (!LockByte(handle, GateByteLow, LOCKFILE_EXCLUSIVE_LOCK)) return false;
+    bool lost = false;
+    bool wait = false;
+    const DWORD error = [&]() -> DWORD {
+        if (held == LockShared) {
+            if (!LockByte(handle, WaiterByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
+                const DWORD waiting = ::GetLastError();
+                if (waiting != ERROR_LOCK_VIOLATION || nonblocking) return waiting;
+            } else if (!UnlockByte(handle, WaiterByteLow)) {
+                return ::GetLastError();
+            }
+            if (!UnlockByte(handle, LockByteLow)) return ::GetLastError();
+            held = 0;
+            if (LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
+                held = LockExclusive;
+                return ERROR_SUCCESS;
+            }
+            const DWORD conflict = ::GetLastError();
+            if (conflict == ERROR_LOCK_VIOLATION && nonblocking) {
+                lost = !LockByte(handle, LockByteLow, LOCKFILE_FAIL_IMMEDIATELY);
+                if (!lost) held = LockShared;
+            }
+            if (conflict != ERROR_LOCK_VIOLATION || nonblocking) return conflict;
+        } else if (LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)) {
+            held = LockExclusive;
+            return ERROR_SUCCESS;
+        } else if (::GetLastError() != ERROR_LOCK_VIOLATION || nonblocking) {
+            return ::GetLastError();
+        }
+        if (!LockByte(handle, WaiterByteLow, LOCKFILE_FAIL_IMMEDIATELY)) return ::GetLastError();
+        wait = true;
+        return ERROR_SUCCESS;
+    }();
+    if (!UnlockByte(handle, GateByteLow)) {
+        const DWORD gate = ::GetLastError();
+        if (wait) UnlockByte(handle, WaiterByteLow);
+        throw std::runtime_error("flock: gate unlock failed, error=" + std::to_string(gate));
+    }
+    if (lost) throw std::runtime_error("flock: lost the shared lock of a failed upgrade");
+    if (error != ERROR_SUCCESS) return Failure(error);
+    if (!wait) return true;
+    const bool acquired = LockByte(handle, LockByteLow, LOCKFILE_EXCLUSIVE_LOCK);
+    const DWORD waited = ::GetLastError();
+    if (acquired) held = LockExclusive;
+    if (!UnlockByte(handle, WaiterByteLow)) throw std::runtime_error("flock: waiter unlock failed, error=" + std::to_string(::GetLastError()));
+    if (!acquired) return Failure(waited);
+    return true;
+}
+
 struct LockState {
     std::mutex mutex;
     int mode = 0;
@@ -133,27 +218,20 @@ int GuestFileLock_nid_no_patch(int fd, int operation) {
         state->classified = true;
     }
     if (state->directory) return SetDirectoryLock(*state->directory, state->mode, mode, (operation & LockNonblocking) != 0) ? 0 : -1;
-    if (state->mode != 0) {
-        OVERLAPPED overlapped{};
-        overlapped.Offset = LockByteLow;
-        overlapped.OffsetHigh = LockByteHigh;
-        if (!::UnlockFileEx(state->locker != nullptr ? state->locker : handle, 0, 1, 0, &overlapped)) return -1;
+    if (mode == LockUnlock) {
+        if (state->mode != 0 && !UnlockByte(state->locker != nullptr ? state->locker : handle, LockByteLow)) return -1;
         state->mode = 0;
+        return 0;
     }
-    if (mode == LockUnlock) return 0;
-    if (state->locker == nullptr && (WindowsHandleAccess_nid_no_patch(handle, fd, "flock") & (FILE_READ_DATA | FILE_WRITE_DATA)) == 0) {
+    if (state->mode == 0 && state->locker == nullptr && (WindowsHandleAccess_nid_no_patch(handle, fd, "flock") & (FILE_READ_DATA | FILE_WRITE_DATA)) == 0) {
         const auto locker = ::ReOpenFile(handle, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
         if (locker == INVALID_HANDLE_VALUE) return -1;
         state->locker = locker;
     }
-    DWORD flags = mode == LockExclusive ? LOCKFILE_EXCLUSIVE_LOCK : 0;
-    if (operation & LockNonblocking) flags |= LOCKFILE_FAIL_IMMEDIATELY;
-    OVERLAPPED overlapped{};
-    overlapped.Offset = LockByteLow;
-    overlapped.OffsetHigh = LockByteHigh;
-    if (!::LockFileEx(state->locker != nullptr ? state->locker : handle, flags, 0, 1, 0, &overlapped)) return -1;
-    state->mode = mode;
-    return 0;
+    const auto target = state->locker != nullptr ? state->locker : handle;
+    const bool nonblocking = (operation & LockNonblocking) != 0;
+    const bool acquired = mode == LockShared ? AcquireShared(target, state->mode, nonblocking) : AcquireExclusive(target, state->mode, nonblocking);
+    return acquired ? 0 : -1;
 }
 
 void GuestFileLockShare_nid_no_patch(int from, int to) {

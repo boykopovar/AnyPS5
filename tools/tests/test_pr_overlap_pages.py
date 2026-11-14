@@ -56,7 +56,7 @@ class ParallelPageTests(unittest.TestCase):
         found = self.open_prs(served)
         self.assertEqual(set(found), set(range(1, 251)))
         self.assertCountEqual(served.requested, [1, 2, 3])
-        self.assertEqual(found[250], {"ref": "refs/pr/250", "sha": "sha250", "author": "author250", "depends": set()})
+        self.assertEqual(found[250], {"ref": "refs/pr/250", "sha": "sha250", "author": "author250", "title": "", "depends": set()})
 
     def test_a_single_page_needs_one_request(self):
         served = ServedPages({1: range(1, 43)}, last=None)
@@ -129,6 +129,19 @@ class ParallelPageTests(unittest.TestCase):
     def test_a_non_array_page_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "non-array page"):
             pr_overlap.json_pages('{"message": "Not Found"}')
+
+    def test_a_malformed_unicode_escape_in_a_pull_request_body_is_read(self):
+        page = r'[{"number": 14172, "body": "lowercase `\\\u00XX`, unpaired"}]'
+        try:
+            pages = pr_overlap.json_pages(page)
+        except ValueError as error:
+            self.fail(f"a page with a malformed escape was rejected: {error}")
+        self.assertEqual([[pull["number"] for pull in found] for found in pages], [[14172]])
+
+    def test_valid_escapes_are_decoded_unchanged(self):
+        page = r'[{"title": "café \\ \"quoted\" \\u0041", "number": 1}]'
+        pages = pr_overlap.json_pages(page)
+        self.assertEqual(pages[0][0]["title"], 'café \\ "quoted" \\u0041')
 
 
 if __name__ == "__main__":

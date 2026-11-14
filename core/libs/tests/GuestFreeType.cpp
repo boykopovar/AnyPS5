@@ -11,6 +11,8 @@
 #include FT_CID_H
 #include FT_SIZES_H
 #include FT_SYSTEM_H
+#include FT_MODULE_H
+#include FT_DRIVER_H
 
 #include <algorithm>
 #include <array>
@@ -198,6 +200,19 @@ static void CheckOutlineOrientation() {
     CheckOrientationCase({{0, 0}, {0x1000001, 100}, {100, 0}}, {2}, FT_ORIENTATION_NONE);
     CheckOrientationCase({{0, 0}, {100, 0x1000001}, {0, 100}}, {2}, FT_ORIENTATION_NONE);
     CheckOrientationCase({{INT64_MIN, INT64_MIN}, {INT64_MAX, INT64_MAX}, {0, 1}}, {2}, FT_ORIENTATION_NONE, false);
+    {
+        GuestVector square[]{{0, 0}, {40, 0}, {40, 40}, {0, 40}};
+        std::uint16_t contour[]{3};
+        unsigned char tags[]{FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_ON, FT_CURVE_TAG_ON};
+        const auto throwsOrientation = [](GuestOutline outline) {
+            return ThrowsWith([&] { FT_Outline_Get_Orientation_nid_postfix(&outline); }, "FT_Outline_Get_Orientation_nid_postfix");
+        };
+        Require(throwsOrientation({1, 4, nullptr, tags, contour, 0}));
+        Require(throwsOrientation({0, 4, nullptr, tags, nullptr, 0}));
+        Require(throwsOrientation({1, 4, square, tags, nullptr, 0}));
+        std::uint16_t contourPastEnd[]{4};
+        Require(throwsOrientation({1, 4, square, tags, contourPastEnd, 0}));
+    }
     std::vector<GuestVector> repeated{{0, 0}, {32767, 0}, {32767, 32767}, {0, 32767},
                                       {0, 0}, {32767, 0}, {32767, 32767}, {0, 32767}};
     CheckOrientationCase(repeated, {3, 7}, FT_ORIENTATION_POSTSCRIPT, sizeof(FT_Pos) == 8);
@@ -1571,7 +1586,41 @@ static void SizeObjects(const std::vector<unsigned char>& font) {
     std::printf("FreeType size objects: %d lifecycles, %d rendered glyphs, %d allocation failures compared with native\n", scenarios, rendered, failures);
 }
 
+static void CheckGlyphToScriptMap() {
+    const auto font = SquareGlyphFont('A', 700);
+    GuestLibrary* library = nullptr;
+    GuestFaceRec* face = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&nativeLibrary) == 0);
+    Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0);
+    struct GuestMap { GuestFaceRec* face; std::uint16_t* map; };
+    GuestMap guest{face, nullptr};
+    FT_Prop_GlyphToScriptMap expected{nativeFace, nullptr};
+    const int nativeResult = FT_Property_Get(nativeLibrary, "autofitter", "glyph-to-script-map", &expected);
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", &guest) == nativeResult);
+    Require(nativeResult == 0 && guest.face == face && guest.map && expected.map);
+    Require(std::equal(guest.map, guest.map + face->num_glyphs, expected.map));
+    std::array<unsigned char, sizeof(GuestMap) + 1> storage{};
+    GuestMap unaligned{face, nullptr};
+    std::memcpy(storage.data() + 1, &unaligned, sizeof(unaligned));
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", storage.data() + 1) == 0);
+    std::memcpy(&unaligned, storage.data() + 1, sizeof(unaligned));
+    Require(unaligned.face == face && unaligned.map == guest.map);
+    Require(FT_Property_Set_nid_postfix(library, "autofitter", "glyph-to-script-map", &guest) ==
+        FT_Property_Set(nativeLibrary, "autofitter", "glyph-to-script-map", &expected));
+    GuestMap invalid{nullptr, reinterpret_cast<std::uint16_t*>(1)};
+    FT_Prop_GlyphToScriptMap nativeInvalid{nullptr, reinterpret_cast<FT_UShort*>(1)};
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", &invalid) ==
+        FT_Property_Get(nativeLibrary, "autofitter", "glyph-to-script-map", &nativeInvalid));
+    Require(invalid.map == reinterpret_cast<std::uint16_t*>(1));
+    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(nativeFace) == 0);
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
+}
+
 int main() {
+    CheckGlyphToScriptMap();
     SizeObjects(SquareGlyphFont('A', 700));
     {
         const auto referenceFont = SquareGlyphFont('A', 700);

@@ -285,6 +285,8 @@ int APS5_VABI sceVideodec2AllocateComputeQueue_nid_postfix(const SceVideodec2::C
 int APS5_VABI sceVideodec2ReleaseComputeQueue_nid_postfix(std::uint64_t queue);
 int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const SceVideodec2::DecoderConfigInfo* config, SceVideodec2::DecoderMemoryInfo* memory);
 int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const SceVideodec2::DecoderConfigInfo* config, const SceVideodec2::DecoderMemoryInfo* memory, std::uint64_t* handle);
+int APS5_VABI sceVideodec2CreateHevcDecoder(const SceVideodec2::DecoderConfigInfo* config, const SceVideodec2::DecoderMemoryInfo* memory, std::uint64_t* handle);
+int APS5_VABI sceVideodec2QueryHevcDecoderMemoryInfo(const SceVideodec2::DecoderConfigInfo* config, SceVideodec2::DecoderMemoryInfo* memory);
 int APS5_VABI sceVideodec2DeleteDecoder_nid_postfix(std::uint64_t handle);
 int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const SceVideodec2::InputData* input, SceVideodec2::FrameBuffer* frame, SceVideodec2::OutputInfo* output);
 int APS5_VABI sceVideodec2Flush_nid_postfix(std::uint64_t handle, SceVideodec2::FrameBuffer* frame, SceVideodec2::OutputInfo* output);
@@ -302,8 +304,6 @@ int APS5_VABI sceVideodec2PresetDecoderConfigInfoAvc();
 int APS5_VABI sceVideodec2PresetDecoderConfigInfoHevc();
 int APS5_VABI sceVideodec2PresetDecoderConfigInfoVp9();
 int APS5_VABI sceVideodec2CreateDecoderBid();
-int APS5_VABI sceVideodec2CreateHevcDecoder();
-int APS5_VABI sceVideodec2QueryHevcDecoderMemoryInfo();
 int APS5_VABI sceVideodec2GetHevcPictureInfo_nid_postfix(const SceVideodec2::OutputInfo* output, SceVideodec2::HevcPictureInfo* info);
 int APS5_VABI sceVideodec2InitLibrary();
 

@@ -7,10 +7,20 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 namespace AgcDriver::Graphics {
+
+struct VkDrawCounts {
+    std::uint64_t direct = 0;
+    std::uint64_t indexed = 0;
+    std::uint64_t indirect = 0;
+    std::uint64_t mesh = 0;
+};
+VkDrawCounts TakeVkDrawCounts();
 
 struct HostImport;
 
@@ -38,6 +48,7 @@ void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPi
 void CheckPixelFunctionLds(const Context& context);
 void ReleasePixelFunctionLds(VkDevice device);
 bool UsesMeshWindow(std::span<const CompiledShader> shaders);
+bool ValidationKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, std::vector<std::uint64_t>& key);
 VkDescriptorSetLayout MeshWindowSetLayout(const Context& context);
 void PrepareMeshWindow(const Context& context);
 void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
@@ -49,15 +60,19 @@ struct DrawInputCopy {
     std::shared_ptr<Buffer> buffer;
     bool reused = false;
     std::uint32_t derived = 0;
+    std::uint32_t lowest = 0;
+    std::size_t from = 0;
     std::uint64_t generation = 0;
     std::uint64_t registryGeneration = 0;
+    Recorder::OwnedDrawInputProof owned;
 };
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use);
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from = 0);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
-void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived);
+void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest = 0);
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr);
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
+    std::uint32_t lowest = 0;
     bool reused = false;
 };
 InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool skipRestart);
@@ -82,6 +97,13 @@ struct MeshArgumentRules {
     std::uint32_t maxTotal;
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+struct MeshGrid {
+    std::uint32_t groups;
+    std::uint32_t instances;
+    std::uint32_t layers;
+    std::uint32_t layerStride;
+};
+std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances);
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
 
 // Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not
@@ -115,7 +137,7 @@ bool DrawRecipes();
 // draw index, the vertex ranges, the device features, APS5_NO_GPU_INDIRECT_DRAW) or under the device
 // lock in Draw (the memory state of the records). `readMs` is the CPU read's time (its sync);
 // `rewritten` counts a GPU-side draw whose records were copied and patched with a constant.
-enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, IndexRange, IndexLimitUnknown, Count };
+enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, IndexRange, IndexLimitUnknown, Settled, Count };
 void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten = false);
 std::array<std::uint64_t, static_cast<std::size_t>(IndirectDrawPath::Count)> IndirectDrawCounts();
 void CountEmptyIndirectDraw(double readMs);
@@ -157,6 +179,20 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
 std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
 bool DrawPipelineEnabled();
 bool CommitTrims();
+struct FragmentOutputLookups {
+    std::uint64_t last = 0;
+    std::uint64_t memo = 0;
+    std::uint64_t validated = 0;
+};
+FragmentOutputLookups ThreadFragmentOutputLookups();
+enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, PatchedData, SpaceChanged, InUse, Revalidation, Count };
+using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
+AddressDrawReuseCounts AddressDrawReuseCounters();
+const char* AddressDrawReuseName(AddressDrawReuse outcome);
+std::uint64_t AddressDrawReuseVerifications();
+enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
+void SetSpaceKeepFailuresForTest(std::uint32_t count);
+void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
 
 }
 

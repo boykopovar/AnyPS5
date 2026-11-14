@@ -8,8 +8,27 @@
 
 using namespace ShaderRecompiler;
 
+static void CheckDeadPhiInputFromLaterBlock() {
+    IrProgram program;
+    auto& header = program.CreateBlock();
+    auto& body = program.CreateBlock();
+    program.SetEntryBlock(header);
+    program.BlockOrder().push_back(&header);
+    program.BlockOrder().push_back(&body);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(header);
+    auto& phi = builder.Emit(IrOpcode::Phi, IrType::U32, {});
+    builder.SetInsertionPoint(body);
+    auto& step = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&builder.Constant(1u), &builder.Constant(2u)});
+    phi.AddPhiOperand(&body, &step);
+    DeadCodeEliminator{}.Eliminate(program);
+    if (phi.Parent() != nullptr || !header.Instructions().empty()) throw std::runtime_error("an unused phi was not eliminated");
+    if (step.Parent() != nullptr || !body.Instructions().empty()) throw std::runtime_error("the input of an eliminated phi from a later block was not eliminated");
+}
+
 int main() {
     try {
+        CheckDeadPhiInputFromLaterBlock();
         IrProgram program;
         auto& block = program.CreateBlock();
         program.SetEntryBlock(block);
@@ -76,6 +95,43 @@ int main() {
         program.Metadata().dynamicReads.clear();
         if (program.ReclaimUnusedValues() != 2u) throw std::runtime_error("reclamation did not recover after an external-owner rejection");
         if (builder.Constant(999u).Id() <= pinned.back()->Id()) throw std::runtime_error("reclamation reused a value ID");
+        IrProgram replaced;
+        auto& shared = replaced.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        std::vector<IrValue*> readers;
+        for (std::uint32_t number = 0; number < 40u; ++number) {
+            auto& reader = replaced.CreateValue(IrOpcode::IAdd32, IrType::U32);
+            reader.AddArgument(&shared);
+            readers.push_back(&reader);
+        }
+        for (std::size_t index = 0; index < readers.size(); ++index) {
+            if (shared.OperandUses()[index].user != readers[index]) throw std::runtime_error("a use list lost an entry while growing");
+        }
+        auto& target = replaced.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        shared.ReplaceAllUsesWith(&target);
+        if (shared.HasUses() || target.UseCount() != readers.size() || readers.front()->Argument(0) != &target || readers.back()->Argument(0) != &target) throw std::runtime_error("moving a grown use list to another value lost a use");
+        IrProgram replacement;
+        auto& kept = replacement.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        auto& keptReader = replacement.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        keptReader.AddArgument(&kept);
+        replaced = std::move(replacement);
+        if (kept.UseCount() != 1u || kept.OperandUses().front().user != &keptReader) throw std::runtime_error("move assignment invalidated the assigned program's use lists");
+        IrProgram cached;
+        auto& source = cached.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        std::vector<IrValue*> users;
+        for (std::uint32_t number = 0; number < 40u; ++number) {
+            auto& user = cached.CreateValue(IrOpcode::IAdd32, IrType::U32);
+            user.AddArgument(&source);
+            users.push_back(&user);
+        }
+        cached.ReleaseUseArena();
+        if (source.OperandUses().get_allocator().Arena() != nullptr || users.front()->OperandUses().get_allocator().Arena() != nullptr) throw std::runtime_error("releasing the use arena left a use list in it");
+        if (source.UseCount() != users.size()) throw std::runtime_error("releasing the use arena lost a use");
+        for (std::size_t index = 0; index < users.size(); ++index) {
+            if (source.OperandUses()[index].user != users[index] || users[index]->Argument(0) != &source) throw std::runtime_error("releasing the use arena reordered a use list");
+        }
+        auto& late = cached.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        late.AddArgument(&source);
+        if (late.OperandUses().get_allocator().Arena() == nullptr || source.UseCount() != users.size() + 1u || source.OperandUses().back().user != &late) throw std::runtime_error("a value created after releasing the use arena did not get a new one");
         IrProgram moved = std::move(program);
         if (value.Id() != id || value.ImmediateU32() != 42u || moved.ReclaimUnusedValues() != 1u) throw std::runtime_error("moving a program invalidated its allocation owner");
         IrProgram assigned;

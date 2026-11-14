@@ -33,6 +33,7 @@ void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
 namespace {
 
 alignas(64) std::array<std::byte, 256> storage{};
+std::array<std::byte, 256> lastFreedBytes{};
 alignas(16) std::array<std::byte, 0x40> process{};
 alignas(16) std::array<std::byte, 0x38> libc{};
 alignas(16) std::array<std::byte, 0x78> replacement{};
@@ -128,6 +129,7 @@ void* APS5_VABI allocate(std::size_t bytes) {
 
 void APS5_VABI release(void* pointer) {
     require(pointer == storage.data());
+    std::memcpy(lastFreedBytes.data(), storage.data(), storage.size());
     ++frees;
 }
 
@@ -276,6 +278,11 @@ int main(int argc, char** argv) {
         _ZdlPv_nid_postfix(storage.data());
 
         require(frees == 1);
+        require(malloc_nid_postfix(16) == storage.data() && lastSize == 16);
+        __std_free_crt_nid_postfix(storage.data());
+        require(frees == 2);
+        __std_free_crt_nid_postfix(nullptr);
+        require(frees == 2);
         return 0;
     }
     if (argc > 1 && std::strcmp(argv[1], "exit-order") == 0) {
@@ -320,6 +327,12 @@ int main(int argc, char** argv) {
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(nullptr, 32));
         require(pointer != nullptr);
         ApplicationHeapFree_nid_no_patch(pointer);
+        freezero_nid_postfix(nullptr, 32);
+        pointer = static_cast<unsigned char*>(malloc_nid_postfix(32));
+        require(pointer != nullptr);
+        std::memset(pointer, 0x5a, 32);
+        freezero_nid_postfix(pointer, 32);
+        reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
         pointer = static_cast<unsigned char*>(reallocf_nid_postfix(nullptr, 24));
         require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 24);
         std::memset(pointer, 0x3c, 24);
@@ -359,6 +372,36 @@ int main(int argc, char** argv) {
         *__error_nid_postfix() = 0;
         require(reallocarray_nid_postfix(pointer, 2, SIZE_MAX) == nullptr && *__error_nid_postfix() == 12);
         ApplicationHeapFree_nid_no_patch(pointer);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(nullptr, 0, 4, 10));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 40);
+        for (unsigned i = 0; i < 40; ++i) require(pointer[i] == 0);
+        std::memset(pointer, 0x5a, 40);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(pointer, 4, 6, 10));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 60);
+        for (unsigned i = 0; i < 40; ++i) require(pointer[i] == 0x5a);
+        for (unsigned i = 40; i < 60; ++i) require(pointer[i] == 0);
+        auto* shrunken = static_cast<unsigned char*>(recallocarray_nid_postfix(pointer, 6, 5, 10));
+        require(shrunken == pointer);
+        for (unsigned i = 0; i < 40; ++i) require(shrunken[i] == 0x5a);
+        for (unsigned i = 40; i < 60; ++i) require(shrunken[i] == 0);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(shrunken, 5, 2, 10));
+        require(pointer != nullptr);
+        for (unsigned i = 0; i < 20; ++i) require(pointer[i] == 0x5a);
+        *__error_nid_postfix() = 0;
+        require(recallocarray_nid_postfix(pointer, 2, 2, SIZE_MAX) == nullptr && *__error_nid_postfix() == 12);
+        *__error_nid_postfix() = 0;
+        require(recallocarray_nid_postfix(pointer, SIZE_MAX, 2, 2) == nullptr && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        require(recallocarray_nid_postfix(nullptr, 0, SIZE_MAX, 2) == nullptr && *__error_nid_postfix() == 12);
+        ApplicationHeapFree_nid_no_patch(pointer);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(nullptr, 0, 20, 1000));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 20000);
+        std::memset(pointer, 0x33, 20000);
+        shrunken = static_cast<unsigned char*>(recallocarray_nid_postfix(pointer, 20, 14, 1000));
+        require(shrunken == pointer);
+        for (unsigned i = 0; i < 14000; ++i) require(shrunken[i] == 0x33);
+        for (unsigned i = 14000; i < 20000; ++i) require(shrunken[i] == 0);
+        ApplicationHeapFree_nid_no_patch(shrunken);
         for (std::size_t alignment : {16, 64, 4096}) {
             auto* aligned = ApplicationHeapAlign_nid_no_patch(alignment, 37);
             require(reinterpret_cast<std::uintptr_t>(aligned) % alignment == 0);
@@ -504,6 +547,14 @@ int main(int argc, char** argv) {
     require(strndup_nid_postfix(text, 5) == nullptr && *__error_nid_postfix() == 12);
     *__error_nid_postfix() = 0;
     require(getcwd_nid_postfix(nullptr, 0) == nullptr && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 0;
+    require(recallocarray_nid_postfix(nullptr, 0, 4, 10) == nullptr && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 0;
+    require(recallocarray_nid_postfix(nullptr, 0, SIZE_MAX, 2) == nullptr && *__error_nid_postfix() == 12);
+    std::memset(storage.data(), 0x7b, 32);
+    *__error_nid_postfix() = 0;
+    require(recallocarray_nid_postfix(storage.data(), 4, 8, 10) == nullptr && *__error_nid_postfix() == 12);
+    for (unsigned i = 0; i < 32; ++i) require(reinterpret_cast<unsigned char*>(storage.data())[i] == 0x7b);
     fail = false;
     const auto beforeScripting = frees;
     const auto sizeBeforeScripting = lastSize;
@@ -528,4 +579,22 @@ int main(int argc, char** argv) {
 
     fail = false;
     require(frees == beforeScripting && lastSize == sizeBeforeScripting);
+
+    std::memset(storage.data(), 0x7a, storage.size());
+    const auto freesBeforePartial = frees;
+    freezero_nid_postfix(storage.data(), 40);
+    require(frees == freesBeforePartial + 1);
+    for (std::size_t i = 0; i < 40; ++i) require(lastFreedBytes[i] == std::byte{0});
+    for (std::size_t i = 40; i < storage.size(); ++i) require(lastFreedBytes[i] == std::byte{0x7a});
+
+    std::memset(storage.data(), 0x33, storage.size());
+    const auto freesBeforeZero = frees;
+    freezero_nid_postfix(storage.data(), 0);
+    require(frees == freesBeforeZero + 1);
+    for (std::size_t i = 0; i < storage.size(); ++i) require(lastFreedBytes[i] == std::byte{0x33});
+
+    const auto freesBeforeNull = frees;
+    freezero_nid_postfix(nullptr, 128);
+    freezero_nid_postfix(nullptr, 0);
+    require(frees == freesBeforeNull);
 }

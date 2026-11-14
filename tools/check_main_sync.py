@@ -1,11 +1,15 @@
 import argparse
+import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import base_ref
+
 PULL_REQUEST = re.compile(r"Merge pull request #(\d+)|\(#(\d+)\)$")
-BASES = ("upstream/main", "origin/main", "main")
+BASES = base_ref.CANDIDATES
 
 
 def git(repo, *args, check=True):
@@ -52,7 +56,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
     found = {}
     if not paths:
         return found
-    for line in lines(repo, "--literal-pathspecs", "-c", "core.quotepath=off", "log", "--first-parent", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
+    for line in lines(repo, "--literal-pathspecs", "-c", "core.quotepath=off", "log", "--first-parent", "--no-renames", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
         match = PULL_REQUEST.search(line)
         if match:
             found[int(match.group(1) or match.group(2))] = line.split(" ", 1)[0]
@@ -69,8 +73,8 @@ def report(repo, base, head):
     mergebase = found.stdout.strip()
     behind = int(git(repo, "rev-list", "--count", f"{head}..{base}", "--").stdout)
     ahead = int(git(repo, "rev-list", "--count", f"{base}..{head}", "--").stdout)
-    mine = set(names(repo, "diff", "-z", "--name-only", mergebase, head, "--"))
-    theirs = set(names(repo, "diff", "-z", "--name-only", mergebase, base, "--"))
+    mine = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, head, "--"))
+    theirs = set(names(repo, "diff", "-z", "--name-only", "--no-renames", mergebase, base, "--"))
     shared = sorted(mine & theirs)
     return {
         "base": base,
@@ -109,13 +113,14 @@ def main(argv=None):
     parser.add_argument("--repo", type=Path, default=Path("."), help="the repository to check (default: the current directory)")
     parser.add_argument("--fetch", action="store_true", help="fetch the base's remote first")
     parser.add_argument("--strict", action="store_true", help="also fail when the branch is behind the base")
+    parser.add_argument("--json", action="store_true", help="write the report as JSON instead of text")
     args = parser.parse_args(argv)
     try:
         def fetch(ref):
             remote, _, branch = ref.partition("/")
             if not branch:
                 parser.error("--fetch needs a remote-tracking base such as upstream/main")
-            git(args.repo, "fetch", "--quiet", remote, branch)
+            git(args.repo, "fetch", "--quiet", "--refmap=", "--", remote, f"+refs/heads/{branch}:refs/remotes/{ref}")
 
         if args.fetch:
             if args.base:
@@ -131,7 +136,7 @@ def main(argv=None):
         data = report(args.repo, base, args.head)
     except (RuntimeError, OSError) as error:
         parser.error(str(error))
-    print(render(data))
+    print(json.dumps(data, ensure_ascii=True) if args.json else render(data))
     if data["conflicts"] or (args.strict and data["behind"]):
         return 1
     return 0

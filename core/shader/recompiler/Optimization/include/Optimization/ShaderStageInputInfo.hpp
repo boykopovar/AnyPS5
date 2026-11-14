@@ -60,15 +60,6 @@ struct ShaderVertexDestination {
     std::uint32_t fetchIndex = 0;
 };
 
-struct ShaderStageRuntime {
-    const CompiledShaderInfo* program = nullptr;
-    ResourceSnapshot resources;
-
-    [[nodiscard]] explicit operator bool() const {
-        throw std::runtime_error("shader input helper not implemented");
-    }
-};
-
 struct ShaderDepthRemap {
     std::uint32_t mode = 0;
 };
@@ -134,7 +125,6 @@ struct ShaderVertexInputInfo {
     ShaderBufferResource resources[MaxResources];
     ShaderVertexDestination resourcesDst[MaxResources];
     ShaderVertexInputBuffer buffers[MaxResources];
-    ShaderStageRuntime stage;
     IrShaderStage logicalStage = IrShaderStage::Vertex;
     int resourcesNum = 0;
     int fetchAttribReg = 0;
@@ -161,7 +151,6 @@ struct ShaderComputeInputInfo: ShaderWorkgroupInputInfo {
     int threadIdsNum = 0;
     int workgroupRegister = 0;
     bool tgSizeEn = false;
-    ShaderStageRuntime stage;
 };
 
 struct ShaderPixelInputInfo {
@@ -204,14 +193,11 @@ struct ShaderPixelInputInfo {
     bool psIteratesSamples = false;
     PixelPositionLocation psPositionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
-    std::uint8_t mergeTarget = 0;
-    std::uint16_t mergeMask = 0;
+    std::vector<TargetMerge> merges;
     std::uint8_t mergeSamples = 1;
     bool mergeDepthStencilWrites = false;
     bool mergeDepthStencilTests = false;
-    TargetBlend mergeBlend{};
     std::array<std::uint32_t, 4> sampleOrder{};
-    ShaderStageRuntime stage;
 
     bool HasPositionInput() const {
         return psPosX || psPosY || psPosZ || psPosW;

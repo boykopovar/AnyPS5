@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -83,6 +84,9 @@ std::int32_t InitializeFresh(std::vector<std::uint8_t>& memory, const VrTracker2
 void CheckInitializeValidation(std::vector<std::uint8_t>& memory) {
     const auto valid = TrackerParameter(memory);
     Require(sceVrTracker2Initialize(nullptr) == InvalidArgument, "initialize null");
+    errno = 70;
+    Require(sceVrTracker2Initialize(reinterpret_cast<const VrTracker2InitializeParameter*>(0x10)) == InvalidArgument, "initialize unmapped");
+    Require(errno == 70, "initialize unmapped errno");
     for (const std::uint32_t size : {0u, 71u, 73u}) {
         auto parameter = valid;
         parameter.size = size;
@@ -173,34 +177,53 @@ int main() {
     Require(VrTracker2NotInitialized() == NotInitialized, "plain export");
     Require(sceVrTracker2Finalize() == NotInitialized, "named export");
 
+    auto coordinate = Filled();
+    Require(sceVrTracker2GetCoordinateSystem(nullptr) == NotInitialized, "get coordinate system null");
+    Require(sceVrTracker2GetCoordinateSystem(reinterpret_cast<std::uint32_t*>(coordinate.data())) == NotInitialized, "get coordinate system return");
+    Require(AllEqual(coordinate.data(), coordinate.data() + coordinate.size(), 0xAA), "get coordinate system untouched");
+
+    auto location = Filled();
+    Require(sceVrTracker2LocateCoordinateSystem(0, nullptr) == NotInitialized, "locate coordinate system null");
+    Require(sceVrTracker2LocateCoordinateSystem(0, reinterpret_cast<VrTracker2CoordinateLocation*>(location.data())) == NotInitialized, "locate coordinate system return");
+    Require(AllEqual(location.data(), location.data() + location.size(), 0xAA), "locate coordinate system untouched");
+
     auto wide = Filled();
     Require(VrTracker2ClearWideResult(wide.data()) == NotInitialized, "wide result return");
     Require(AllEqual(wide.data(), wide.data() + 24, 0) && AllEqual(wide.data() + 24, wide.data() + 32, 0xAA), "wide result clears 24 bytes");
     Require(VrTracker2ClearWideResult(nullptr) == InvalidArgument, "wide result null");
+    errno = 73;
+    Require(VrTracker2ClearWideResult(reinterpret_cast<void*>(0x10)) == InvalidArgument, "wide result unwritable");
+    Require(errno == 73, "wide result unwritable errno");
 
     auto narrow = Filled();
-    Require(VrTracker2ClearNarrowResult(narrow.data()) == NotInitialized, "narrow result return");
+    Require(sceVrTracker2GetRelocalizerResult(narrow.data()) == NotInitialized, "narrow result return");
     Require(AllEqual(narrow.data(), narrow.data() + 16, 0) && AllEqual(narrow.data() + 16, narrow.data() + 32, 0xAA), "narrow result clears 16 bytes");
-    Require(VrTracker2ClearNarrowResult(nullptr) == InvalidArgument, "narrow result null");
+    Require(sceVrTracker2GetRelocalizerResult(nullptr) == InvalidArgument, "narrow result null");
+    errno = 74;
+    Require(sceVrTracker2GetRelocalizerResult(reinterpret_cast<void*>(0x10)) == InvalidArgument, "narrow result unwritable");
+    Require(errno == 74, "narrow result unwritable errno");
 
     auto second = Filled();
-    Require(VrTracker2CheckSecondThenReportNotInitialized(nullptr, second.data()) == NotInitialized, "second checked, first null");
-    Require(VrTracker2CheckSecondThenReportNotInitialized(second.data(), nullptr) == InvalidArgument, "second null");
+    Require(sceVrTracker2GetMapQuality(nullptr, second.data()) == NotInitialized, "second checked, first null");
+    Require(sceVrTracker2GetMapQuality(second.data(), nullptr) == InvalidArgument, "second null");
     Require(AllEqual(second.data(), second.data() + 32, 0xAA), "second untouched");
 
     Require(VrTracker2Accept() == 0, "accepting export");
 
     auto defaults = Filled();
-    Require(VrTracker2FillDefaults(defaults.data()) == 0, "defaults return");
+    Require(SceVrTracker2DepthCubeMapInit(defaults.data()) == 0, "defaults return");
     const std::array<std::uint8_t, 16> expected{0xAA, 0xAA, 0xAA, 0xAA, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x40, 0x00};
     Require(std::memcmp(defaults.data(), expected.data(), expected.size()) == 0, "defaults layout");
     Require(AllEqual(defaults.data() + 16, defaults.data() + 32, 0xAA), "defaults stop at 16 bytes");
-    Require(Throws([] { VrTracker2FillDefaults(nullptr); }), "defaults null");
+    Require(Throws([] { SceVrTracker2DepthCubeMapInit(nullptr); }), "defaults null");
 
     auto word = Filled();
     Require(VrTracker2ClearWord(word.data()) == 0, "clear word return");
     Require(AllEqual(word.data(), word.data() + 4, 0) && AllEqual(word.data() + 4, word.data() + 32, 0xAA), "clear word clears 4 bytes");
     Require(Throws([] { VrTracker2ClearWord(nullptr); }), "clear word null");
+    errno = 75;
+    Require(Throws([] { VrTracker2ClearWord(reinterpret_cast<void*>(0x10)); }), "clear word unwritable");
+    Require(errno == 75, "clear word unwritable errno");
 
     std::array<std::uint8_t, 40> parameter{};
     parameter[0] = 0x20;
@@ -213,6 +236,12 @@ int main() {
     Require(AllEqual(requirement.data() + 12, requirement.data() + 32, 0) && AllEqual(requirement.data() + 32, requirement.data() + 40, 0xAA), "query writes 32 bytes");
     Require(sceVrTracker2QueryMemory(nullptr, reinterpret_cast<VrTracker2MemoryRequirement*>(requirement.data())) == InvalidArgument, "query null parameter");
     Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), nullptr) == InvalidArgument, "query null requirement");
+    errno = 71;
+    Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), reinterpret_cast<VrTracker2MemoryRequirement*>(0x10)) == InvalidArgument, "query unwritable requirement");
+    Require(errno == 71, "errno modified by unwritable requirement check");
+    errno = 72;
+    Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(0x10), reinterpret_cast<VrTracker2MemoryRequirement*>(requirement.data())) == InvalidArgument, "query unmapped parameter");
+    Require(errno == 72, "errno modified by unmapped parameter check");
     for (std::size_t offset = 4; offset < 32; ++offset) {
         auto rejected = parameter;
         rejected[offset] = 1;
@@ -246,6 +275,13 @@ int main() {
     }
     parameter[0] = 0x21;
     Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), reinterpret_cast<VrTracker2MemoryRequirement*>(requirement.data())) == InvalidArgument, "query size");
+
+    auto rawMeshReq = Filled();
+    Require(sceVrTracker2GetRawCameraMeshSize(nullptr, 0) == NotInitialized, "raw camera mesh size null");
+    Require(sceVrTracker2GetRawCameraMeshSize(reinterpret_cast<VrTracker2MeshRequirement*>(rawMeshReq.data()), 0) == NotInitialized, "raw camera mesh size return");
+    Require(AllEqual(rawMeshReq.data(), rawMeshReq.data() + rawMeshReq.size(), 0xAA), "raw camera mesh size untouched");
+    Require(sceVrTracker2GetRawCameraMeshSize(reinterpret_cast<VrTracker2MeshRequirement*>(rawMeshReq.data()), 1) == NotInitialized, "raw camera mesh size format");
+    Require(AllEqual(rawMeshReq.data(), rawMeshReq.data() + sizeof(VrTracker2MeshRequirement), 0xAA), "raw camera mesh size preserves struct");
 
     std::vector<std::uint8_t> memory(TrackerMemory + WorkMemoryTail);
     CheckInitializeValidation(memory);
