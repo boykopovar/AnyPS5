@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/JavaScriptCore/runtime/PropertyDescriptor.h
+// Derived from Source/JavaScriptCore/runtime/PropertyDescriptor.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2009 Apple Inc. All rights reserved.
  *
@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/JavaScriptCore/runtime/PropertySlot.h
+// Derived from Source/JavaScriptCore/runtime/PropertySlot.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  *  Copyright (C) 2005-2022 Apple Inc. All rights reserved.
  *
