@@ -1425,8 +1425,104 @@ void descriptorIdentity() {
     Require(depth == depthOther, "depth descriptor identity compares NaNs numerically");
 }
 
+template <class Target>
+using FieldChange = std::pair<const char*, void (*)(Target&)>;
+
+template <class Target, std::size_t Count>
+void requireEveryFieldCounts(const Target& base, const std::array<FieldChange<Target>, Count>& changes, const char* kind) {
+    for (const auto& [field, change] : changes) {
+        auto other = base;
+        change(other);
+        Require(!(base == other), std::string(kind) + " descriptor identity ignores " + field);
+    }
+}
+
+void descriptorFields() {
+    {
+        using Target = ColorTarget;
+        const std::array<FieldChange<Target>, 47> changes{{
+            {"address", [](Target& target) { ++target.address; }},
+            {"extent.width", [](Target& target) { ++target.extent.width; }},
+            {"extent.height", [](Target& target) { ++target.extent.height; }},
+            {"format", [](Target& target) { target.format = VK_FORMAT_B8G8R8A8_UNORM; }},
+            {"bytes", [](Target& target) { ++target.bytes; }},
+            {"componentMapping", [](Target& target) { ++target.componentMapping; }},
+            {"tileMode", [](Target& target) { target.tileMode = ColorTileMode::Linear; }},
+            {"elementBytes", [](Target& target) { ++target.elementBytes; }},
+            {"packing", [](Target& target) { target.packing = ShaderRecompiler::ColorExportPacking::Float11_11_10; }},
+            {"dccAddress", [](Target& target) { ++target.dccAddress; }},
+            {"chainDccAddress", [](Target& target) { ++target.chainDccAddress; }},
+            {"dccAlphaOnMsb", [](Target& target) { target.dccAlphaOnMsb = !target.dccAlphaOnMsb; }},
+            {"dccPipeAligned", [](Target& target) { target.dccPipeAligned = !target.dccPipeAligned; }},
+            {"cmaskAddress", [](Target& target) { ++target.cmaskAddress; }},
+            {"cmaskBytes", [](Target& target) { ++target.cmaskBytes; }},
+            {"cmaskFastClear", [](Target& target) { target.cmaskFastClear = !target.cmaskFastClear; }},
+            {"eqaaFragments", [](Target& target) { ++target.eqaaFragments; }},
+            {"surfaceAddress", [](Target& target) { ++target.surfaceAddress; }},
+            {"surfaceExtent.width", [](Target& target) { ++target.surfaceExtent.width; }},
+            {"surfaceExtent.height", [](Target& target) { ++target.surfaceExtent.height; }},
+            {"mipCount", [](Target& target) { ++target.mipCount; }},
+            {"mip", [](Target& target) { ++target.mip; }},
+            {"mipTail", [](Target& target) { target.mipTail = !target.mipTail; }},
+            {"clearWords[0]", [](Target& target) { ++target.clearWords[0]; }},
+            {"clearWords[1]", [](Target& target) { ++target.clearWords[1]; }},
+            {"slot", [](Target& target) { ++target.slot; }},
+            {"depth", [](Target& target) { ++target.depth; }},
+            {"depthSlice", [](Target& target) { ++target.depthSlice; }},
+            {"arrayAddress", [](Target& target) { ++target.arrayAddress; }},
+            {"arrayLastSlice", [](Target& target) { ++target.arrayLastSlice; }},
+            {"arraySlice", [](Target& target) { ++target.arraySlice; }},
+            {"layers", [](Target& target) { ++target.layers; }},
+            {"exportIndex", [](Target& target) { ++target.exportIndex; }},
+            {"uintExport", [](Target& target) { target.uintExport = !target.uintExport; }},
+            {"volume", [](Target& target) { target.volume = !target.volume; }},
+            {"pipeBankXor", [](Target& target) { ++target.pipeBankXor; }},
+            {"samples", [](Target& target) { ++target.samples; }},
+            {"coverageSamples", [](Target& target) { ++target.coverageSamples; }},
+            {"dccControl", [](Target& target) { ++target.dccControl; }},
+            {"fmaskAddress", [](Target& target) { ++target.fmaskAddress; }},
+            {"fmaskPipeBankXor", [](Target& target) { ++target.fmaskPipeBankXor; }},
+            {"gcnFmaskBytes", [](Target& target) { ++target.gcnFmaskBytes; }},
+            {"partialWriteMask", [](Target& target) { ++target.partialWriteMask; }},
+            {"mergeBlend", [](Target& target) { ++target.mergeBlend; }},
+            {"staged", [](Target& target) { target.staged = !target.staged; }},
+            {"stagedMask", [](Target& target) { ++target.stagedMask; }},
+            {"stagedFormat", [](Target& target) { target.stagedFormat = VK_FORMAT_R8_UNORM; }}
+        }};
+        requireEveryFieldCounts(colorTarget(), changes, "color");
+    }
+    {
+        using Target = DepthTarget;
+        const std::array<FieldChange<Target>, 21> changes{{
+            {"address", [](Target& target) { ++target.address; }},
+            {"stencilAddress", [](Target& target) { ++target.stencilAddress; }},
+            {"extent.width", [](Target& target) { ++target.extent.width; }},
+            {"extent.height", [](Target& target) { ++target.extent.height; }},
+            {"format", [](Target& target) { target.format = VK_FORMAT_D16_UNORM; }},
+            {"clearDepth", [](Target& target) { target.clearDepth = 0.25f; }},
+            {"clearStencil", [](Target& target) { ++target.clearStencil; }},
+            {"htileAddress", [](Target& target) { ++target.htileAddress; }},
+            {"htileStencil", [](Target& target) { target.htileStencil = !target.htileStencil; }},
+            {"samples", [](Target& target) { ++target.samples; }},
+            {"depthSwizzle", [](Target& target) { ++target.depthSwizzle; }},
+            {"pipeBankXor", [](Target& target) { ++target.pipeBankXor; }},
+            {"firstSlice", [](Target& target) { ++target.firstSlice; }},
+            {"lastSlice", [](Target& target) { ++target.lastSlice; }},
+            {"iterate256", [](Target& target) { target.iterate256 = !target.iterate256; }},
+            {"htilePipeAligned", [](Target& target) { target.htilePipeAligned = !target.htilePipeAligned; }},
+            {"htileVrsEncoding", [](Target& target) { ++target.htileVrsEncoding; }},
+            {"htileDepthOnly", [](Target& target) { target.htileDepthOnly = !target.htileDepthOnly; }},
+            {"gcn", [](Target& target) { target.gcn = !target.gcn; }},
+            {"depthPartiallyResident", [](Target& target) { target.depthPartiallyResident = !target.depthPartiallyResident; }},
+            {"stencilPartiallyResident", [](Target& target) { target.stencilPartiallyResident = !target.stencilPartiallyResident; }}
+        }};
+        requireEveryFieldCounts(depthTarget(false), changes, "depth");
+    }
+}
+
 void unchangedMemo(AgcDriver::VulkanDevice& device) {
     descriptorIdentity();
+    descriptorFields();
     const auto color = colorTarget();
     reset(device, color);
     for (const auto samples : {0u, 1u, 4u}) {

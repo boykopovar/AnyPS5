@@ -107,8 +107,8 @@ struct ColorTarget {
             arrayAddress == other.arrayAddress && arrayLastSlice == other.arrayLastSlice && arraySlice == other.arraySlice && layers == other.layers &&
             exportIndex == other.exportIndex && uintExport == other.uintExport && volume == other.volume && pipeBankXor == other.pipeBankXor &&
             samples == other.samples && coverageSamples == other.coverageSamples && dccControl == other.dccControl &&
-            fmaskAddress == other.fmaskAddress && fmaskPipeBankXor == other.fmaskPipeBankXor && partialWriteMask == other.partialWriteMask &&
-            staged == other.staged && stagedMask == other.stagedMask && stagedFormat == other.stagedFormat;
+            fmaskAddress == other.fmaskAddress && fmaskPipeBankXor == other.fmaskPipeBankXor && gcnFmaskBytes == other.gcnFmaskBytes &&
+            partialWriteMask == other.partialWriteMask && mergeBlend == other.mergeBlend && staged == other.staged && stagedMask == other.stagedMask && stagedFormat == other.stagedFormat;
     }
 
     std::uint64_t MemoryAddress() const {
