@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
@@ -45,14 +46,17 @@ void RequireWritesRefused(const std::array<unsigned char, 64>& region) {
     Require(fromThread == NotInCoredumpHandler);
 }
 
-void RequireAttachesRefused(const std::array<unsigned char, 64>& region) {
-    Require(sceCoredumpAttachUserFile(1, "/app0/eboot.bin") == NotInCoredumpHandler);
-    Require(sceCoredumpAttachUserFile(0xFFFFFFFFu, "") == NotInCoredumpHandler);
-    Require(sceCoredumpAttachMemoryRegionAsUserFile(999, region.data(), region.size(), "region.txt") == NotInCoredumpHandler);
-    Require(sceCoredumpAttachMemoryRegionAsUserFile(0, region.data(), 1, "") == NotInCoredumpHandler);
+void RequireAttaches(const std::array<unsigned char, 64>& region, int expected) {
+    Require(sceCoredumpAttachUserFile(1, "/app0/eboot.bin") == expected);
+    Require(sceCoredumpAttachUserFile(0xFFFFFFFFu, "") == expected);
+    Require(sceCoredumpAttachMemoryRegionAsUserFile(999, region.data(), region.size(), "region.txt") == expected);
+    Require(sceCoredumpAttachMemoryRegionAsUserFile(0, region.data(), 1, "") == expected);
+    const std::string longName(4096, 'n');
+    Require(sceCoredumpAttachUserFile(0, longName.c_str()) == expected);
+    Require(sceCoredumpAttachMemoryRegionAsUserFile(0, region.data(), region.size(), longName.c_str()) == expected);
     int fromThread = 0;
     std::thread([&] { fromThread = sceCoredumpAttachMemoryRegionAsUserFile(2, region.data(), region.size(), "thread.txt"); }).join();
-    Require(fromThread == NotInCoredumpHandler);
+    Require(fromThread == expected);
 }
 
 void RequireEarlyTerminatorSkipsUnreadableMiddle() {
@@ -104,12 +108,12 @@ int main() {
     for (const std::size_t stackSize : {std::size_t{0}, std::size_t{0x3fff}, std::size_t{0x20000000}, SIZE_MAX}) {
         Require(sceCoredumpRegisterCoredumpHandler(reinterpret_cast<std::uint64_t>(&Handler), stackSize, 0) == InvalidArgument);
     }
-    Require(sceCoredumpAttachUserFile(0x40000000u, "") == NotInCoredumpHandler);
+    Require(sceCoredumpAttachUserFile(0x40000000u, "") == 0);
 
     Require(NotInCoredumpHandler < 0);
     Require(sceCoredumpSetUserDataType(0) == 0);
     RequireWritesRefused(region);
-    RequireAttachesRefused(region);
+    RequireAttaches(region, 0);
     sceCoredumpDebugTextOut(text, static_cast<int>(sizeof(text) - 1));
     sceCoredumpDebugTextOut(text, 8);
     sceCoredumpDebugTextOut(text, 0);
@@ -120,7 +124,7 @@ int main() {
     Require(sceCoredumpAttachUserFile(0x40000000u, "") == InvalidArgument);
     Require(sceCoredumpAttachMemoryRegionAsUserFile(0x40000000u, nullptr, -1, "") == InvalidArgument);
     RequireWritesRefused(region);
-    RequireAttachesRefused(region);
+    RequireAttaches(region, NotInCoredumpHandler);
     sceCoredumpDebugTextOut(text, static_cast<int>(sizeof(text) - 1));
 
     Require(!handlerRan);
@@ -146,7 +150,7 @@ int main() {
 
     Require(sceCoredumpUnregisterCoredumpHandler() == 0);
     RequireWritesRefused(region);
-    RequireAttachesRefused(region);
+    RequireAttaches(region, 0);
     Require(region == original);
     Require(sceCoredumpUnregisterCoredumpHandler() == static_cast<int>(0x81180001u));
     Require(sceCoredumpAttachUserFile(0x40000000u, "") == InvalidArgument);
