@@ -83,15 +83,10 @@ void APS5_VABI glDeleteBuffers_nid_postfix(GLsizei count, const GLuint* names) {
     std::lock_guard lock(mutex);
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
     if (count == 0) return;
-    std::vector<GLuint> local(static_cast<std::size_t>(count));
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(local.data(), names, local.size() * sizeof(GLuint));
-    errno = savedErrno;
-    if (!copied) { Error_nid_no_patch(0x0501); return; }
     auto& c = Current_nid_no_patch();
-    for (GLuint name : local) {
+    if (!ForEachGuestName(count, names, [&](GLuint name) {
         auto it = c.share->buffers.find(name);
-        if (it == c.share->buffers.end()) continue;
+        if (it == c.share->buffers.end()) return;
         auto object = it->second;
         if (object) {
             if (c.arrayBuffer == object) c.arrayBuffer.reset();
@@ -99,7 +94,7 @@ void APS5_VABI glDeleteBuffers_nid_postfix(GLsizei count, const GLuint* names) {
             for (auto& a : c.attributes) if (a.buffer == object) a.buffer.reset();
         }
         c.share->buffers.erase(it);
-    }
+    })) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glBufferData_nid_postfix(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
@@ -222,6 +217,7 @@ void APS5_VABI glShaderSource_nid_postfix(GLuint shader, GLsizei count, const GL
     auto* object = FindShader(shader);
     if (!object) return;
     if (count < 0) { Error_nid_no_patch(0x0501); return; }
+    if (count > MaxBatchNames) { Error_nid_no_patch(0x0505); return; }
     if (count > 0 && !strings) { Error_nid_no_patch(0x0501); return; }
     try {
         std::vector<const GLchar*> localStrings(static_cast<std::size_t>(count));
@@ -242,14 +238,18 @@ void APS5_VABI glShaderSource_nid_postfix(GLuint shader, GLsizei count, const GL
         std::string source;
         for (GLsizei i = 0; i < count; ++i) {
             if (lengths && localLengths[i] >= 0) {
-                const auto length = static_cast<std::size_t>(localLengths[i]);
-                if (length) {
-                    std::vector<char> chunk(length);
+                std::array<char, 4096> piece{};
+                auto remaining = static_cast<std::size_t>(localLengths[i]);
+                const GLchar* from = localStrings[i];
+                while (remaining) {
+                    const auto n = std::min(remaining, piece.size());
                     const int savedErrno = errno;
-                    const bool copied = GuestCopyIn_nid_no_patch(chunk.data(), localStrings[i], length);
+                    const bool copied = GuestCopyIn_nid_no_patch(piece.data(), from, n);
                     errno = savedErrno;
                     if (!copied) { Error_nid_no_patch(0x0501); return; }
-                    source.append(chunk.data(), chunk.size());
+                    source.append(piece.data(), n);
+                    from += n;
+                    remaining -= n;
                 }
             } else {
                 std::string piece;

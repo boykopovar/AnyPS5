@@ -1128,6 +1128,15 @@ static void GuestPointerFaults(EGLDisplay display, EGLConfig config, EGLContext 
     Error(0x0501);
     Require(errno == 71);
     glDeleteFramebuffers_nid_postfix(1, &framebuffer);
+
+    errno = 71;
+    glDeleteTextures_nid_postfix(0x7fffffff, static_cast<const GLuint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    GLuint oversized = 0;
+    glGenBuffers_nid_postfix(0x7fffffff, &oversized);
+    Error(0x0505);
+    Require(oversized == 0);
 }
 
 int main() {
