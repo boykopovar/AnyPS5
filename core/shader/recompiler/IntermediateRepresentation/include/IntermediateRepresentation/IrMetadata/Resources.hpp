@@ -26,6 +26,8 @@ struct BufferResource {
     std::uint32_t formattedReadMask = 0;
     bool scalar = false;
     std::uint8_t typedAlignment = 1;
+    std::uint32_t vertexExtent = 0;
+    bool vertexExtentByInstance = false;
 
     bool operator==(const BufferResource& other) const = default;
 };

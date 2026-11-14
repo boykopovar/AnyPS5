@@ -750,18 +750,26 @@ void RingRefusals(Scene& scene) {
         Require(color == 170, "address draw space reuse: the draw after its read-only vertex buffer moved read " + std::to_string(color) + " instead of 170");
         Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose read-only vertex buffer moved inside the space counted " + outcomes.Text() + ", expected one reuse with the buffer bound anew");
     }
-    {
-        std::memcpy(scene.spare.Data(), Triangle.data(), sizeof(Triangle));
-        constexpr std::size_t Filled = 64;
-        const std::array<std::uint32_t, 4> pattern{};
-        const Outcomes outcomes;
+    std::memcpy(scene.spare.Data(), Triangle.data(), sizeof(Triangle));
+    const auto fillThenDraw = [&](std::size_t filled, const std::array<std::uint32_t, 4>& pattern) {
         scene.Fetch(scene.spare, 0);
-        {
-            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            Require(scene.device.FillBuffer(scene.spare.Address(Filled), 16, pattern), "address draw space reuse: the fill inside the moved vertex buffer was not recorded on the GPU");
-            const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
-            scene.device.Draw(scene.state, draw, scene.shaders, scene.snapshots);
-        }
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(scene.device.FillBuffer(scene.spare.Address(filled), 16, pattern), "address draw space reuse: the fill at byte " + std::to_string(filled) + " of the moved vertex buffer was not recorded on the GPU");
+        const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+        scene.device.Draw(scene.state, draw, scene.shaders, scene.snapshots);
+    };
+    {
+        const Outcomes outcomes;
+        fillThenDraw(sizeof(Triangle) + 16, {});
+        const auto color = scene.Color();
+        Require(color == 170, "address draw space reuse: the draw whose moved vertex buffer has a pending fill past its last vertex read " + std::to_string(color) + " instead of 170");
+        Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer has a pending GPU write only past the draw's last vertex counted " + outcomes.Text() + ", expected one reuse with the buffer bound up to that vertex");
+    }
+    {
+        std::array<std::uint32_t, 4> firstVertex{};
+        std::memcpy(firstVertex.data(), Triangle.data(), sizeof(firstVertex));
+        const Outcomes outcomes;
+        fillThenDraw(0, firstVertex);
         const auto color = scene.Color();
         Require(color == 170, "address draw space reuse: the draw whose moved vertex buffer a pending fill overlaps read " + std::to_string(color) + " instead of 170");
         Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
