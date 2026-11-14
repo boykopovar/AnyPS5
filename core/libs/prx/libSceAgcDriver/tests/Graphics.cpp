@@ -13835,6 +13835,9 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
             return result;
         };
         for (std::size_t flag = 0; flag < 4u; ++flag) Require(!(flagged(flag).Identity() == flagged(4u).Identity()), "an embedded sampler flag did not enter the identity");
+        Require(DescribedPipelineIdentity(embedded(0u, 5u)) == embedded(0u, 5u).Identity(), "the described identity of a result with an embedded sampler differs from its identity");
+        Require(!(DescribedPipelineIdentity(embedded(0u, 5u)) == DescribedPipelineIdentity(embedded(0u, 6u))), "the embedded sampler words did not enter the described identity");
+        for (std::size_t flag = 0; flag < 4u; ++flag) Require(!(DescribedPipelineIdentity(flagged(flag)) == DescribedPipelineIdentity(flagged(4u))), "an embedded sampler flag did not enter the described identity");
         Require(DescribedPipelineIdentity(ShaderRecompiler::RecompileResult{}).Empty(), "a result without a module has a described identity");
         const auto withTable = [&](Role role, std::uint32_t elements, std::uint32_t buffers) {
             auto result = module(1);

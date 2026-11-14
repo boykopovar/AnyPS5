@@ -2887,6 +2887,14 @@ ShaderRecompiler::PipelineIdentity DescribedPipelineIdentity(const ShaderRecompi
         const bool fixedCapacity = binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable;
         const std::uint64_t count = fixedCapacity ? 0u : binding.count;
         mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (count << 48u));
+        mix(binding.samplerEmbedded.size());
+        for (const auto value : binding.samplerEmbedded) mix(value);
+        mix(binding.samplerEmbeddedWords.size());
+        for (const auto value : binding.samplerEmbeddedWords) mix(value);
+        for (const auto* flags : {&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}) {
+            mix(flags->size());
+            for (std::size_t element = 0; element < flags->size(); ++element) mix((*flags)[element] ? 1u : 0u);
+        }
     }
     if (identity.Empty()) identity.low = 1;
     return identity;
