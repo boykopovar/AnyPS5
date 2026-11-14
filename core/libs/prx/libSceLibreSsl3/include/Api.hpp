@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include "SceTypes.hpp"
 #include "EvpDigest.hpp"
 #include "OcspCertId.hpp"
@@ -199,7 +200,7 @@ void APS5_VABI DSA_get0_pqg_nid_postfix(const LibreSsl3Dsa* dsa, const void** p,
 int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key);
 void APS5_VABI ERR_load_crypto_strings_nid_postfix();
 std::uint64_t APS5_VABI ERR_peek_last_error_nid_postfix();
-int APS5_VABI ERR_print_errors_cb_nid_postfix(void);
+void APS5_VABI ERR_print_errors_cb_nid_postfix(int (APS5_VABI *callback)(const char*, std::size_t, void*), void* userData);
 int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void);
 int APS5_VABI EVP_DigestInit_nid_postfix(LibreSsl3::DigestContext* context, const LibreSsl3::DigestMethod* digest);
 int APS5_VABI EVP_DigestSignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned char* sigret,
@@ -357,7 +358,7 @@ int APS5_VABI RSA_set0_factors_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* p
 int APS5_VABI X509_set_pubkey_nid_postfix();
 int APS5_VABI BIO_get_shutdown_nid_postfix(LibreSsl::Bio* bio);
 int APS5_VABI tls_accept_socket_nid_postfix();
-int APS5_VABI ERR_print_errors_fp_nid_postfix();
+void APS5_VABI ERR_print_errors_fp_nid_postfix(std::FILE* file);
 int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::write) write);
 int APS5_VABI BIO_meth_set_create_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::create) create);
 void APS5_VABI X509_CRL_free_nid_postfix(void* crl);
