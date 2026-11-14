@@ -275,6 +275,10 @@ void Driver::WaitIdle() {
     if (const auto localDevice = device.Load()) localDevice->WaitIdle();
 }
 
+void Driver::WaitDeviceIdle() {
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
 bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
     require(!onWorkerThread(), "worker cannot wait for itself");
     std::unique_lock lock(mutex);

@@ -4,10 +4,15 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
+#include <exception>
 #include <mutex>
+#include <stdexcept>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver {
@@ -271,4 +276,74 @@ extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Sh
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes) {
     if (AgcDriver::Graphics::Recorder::SnapshotWriteOverlaps(address, bytes))
         AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+}
+
+namespace {
+
+std::atomic<void (*)()> transactionHookForTest{nullptr};
+
+template<class Work>
+void captureFailure(std::exception_ptr* failure, Work&& work) noexcept {
+    try {
+        work();
+        *failure = nullptr;
+    } catch (...) {
+        *failure = std::current_exception();
+    }
+}
+
+}
+
+extern "C" void AgcDriverFlushGuestMemory_nid_no_patch(std::uint64_t address, std::size_t bytes, std::exception_ptr* failure) {
+    captureFailure(failure, [&] {
+        AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+        static_cast<void>(AgcDriver::Graphics::StorageTexture::FlushPending(address, bytes));
+        AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+    });
+}
+
+extern "C" void AgcDriverGpuOwnedRanges_nid_no_patch(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, std::exception_ptr* failure) {
+    captureFailure(failure, [&] { ranges = AgcDriver::Graphics::GpuOwnedRanges(address, bytes); });
+}
+
+extern "C" void AgcDriverResidentOwnersOver_nid_no_patch(std::uint64_t address, std::size_t bytes, bool gpuOnly, std::size_t* owners, std::exception_ptr* failure) {
+    captureFailure(failure, [&] { *owners = AgcDriver::Graphics::ResidentOwnersOver(address, bytes, gpuOnly); });
+}
+
+extern "C" void AgcDriverGuestMemoryChangedSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t since, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed, std::uint64_t* generation, std::exception_ptr* failure) {
+    captureFailure(failure, [&] { *generation = AgcDriver::GuestMemory::ChangedSince(address, bytes, since, changed); });
+}
+
+extern "C" void AgcDriverSetGuestMemoryTransactionHookForTest_nid_no_patch(void (*hook)()) {
+    transactionHookForTest.store(hook, std::memory_order_release);
+}
+
+extern "C" void AgcDriverGuestMemoryTransaction_nid_no_patch(void (*body)(void* context), void* context, std::exception_ptr* failure) {
+    captureFailure(failure, [&] {
+        if (AgcDriver::GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("a guest memory transaction was entered with the GPU lock held; it waits for flushes that need that lock");
+        auto& driver = AgcDriver::DriverDetail::Driver::Get();
+        driver.WaitIdle();
+        const auto idle = driver.SerialProgress().second;
+        if (const auto hook = transactionHookForTest.load(std::memory_order_acquire)) hook();
+        {
+            const AgcDriver::Graphics::FlushExclusion exclusion;
+            driver.WaitDeviceIdle();
+            body(context);
+        }
+        if (driver.SerialProgress().first != idle) throw std::runtime_error("a submission was accepted during a guest memory transaction; the caller must stop submitting first");
+    });
+}
+
+extern "C" void AgcDriverRetireGpuOwners_nid_no_patch(std::uint64_t address, std::size_t bytes, AgcDriver::RetiredOwners* retired, std::exception_ptr* failure) {
+    captureFailure(failure, [&] {
+        const auto owners = AgcDriver::Graphics::RetireGpuOwnersOver(address, bytes);
+        retired->color += owners.color;
+        retired->depthOwners += owners.depthOwners;
+        retired->depthSurfaces += owners.depthSurfaces;
+        retired->depthPlanes += owners.depthPlanes;
+    });
+}
+
+extern "C" void AgcDriverOmitGpuOwnersForTest_nid_no_patch(bool omit) {
+    AgcDriver::Graphics::OmitGpuOwnersForTest(omit);
 }

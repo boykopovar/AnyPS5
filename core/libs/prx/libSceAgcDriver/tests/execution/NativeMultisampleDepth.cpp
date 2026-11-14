@@ -3179,12 +3179,18 @@ void CheckRetirement(Context context, VkFormat format, std::uint32_t samples, st
         unmap(depthBytes, metadataBytes / 2u);
         guarded();
         unmap(depthBytes + metadataBytes / 2u, metadataBytes / 2u);
-    } else {
+    } else if (mode == 3u) {
         unmap(depthBytes / 2u, depthBytes / 2u + metadataBytes / 2u);
         guarded();
         unmap(0u, depthBytes / 2u);
         guarded();
         unmap(depthBytes + metadataBytes / 2u, metadataBytes / 2u);
+    } else if (mode == 4u) {
+        RetireResidentImagesOver_nid_no_patch(memory.Address(), 4096u);
+    } else if (mode == 5u) {
+        RetireResidentImagesOver_nid_no_patch(memory.Address() + depthBytes, metadataBytes);
+    } else {
+        RetireResidentImagesOver_nid_no_patch(memory.Address() + depthBytes / 2u, depthBytes / 2u + metadataBytes / 2u);
     }
     RequireNoResidentDepthRead_nid_no_patch(target.address, 1u);
     RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes);
@@ -3223,6 +3229,13 @@ void CheckRetirement(Context context, VkFormat format, std::uint32_t samples, st
         }
         Require(std::all_of(output.Bytes().begin(), output.Bytes().begin() + 16u, [](std::byte value) { return value == std::byte{0xa5}; }) && std::all_of(output.Bytes().end() - 16u, output.Bytes().end(), [](std::byte value) { return value == std::byte{0xa5}; }), "retirement fetch wrote beyond its output");
     }
+    if ((mode & 1u) != 0u) return;
+    firstTexture.reset();
+    recorder.Sync();
+    ClearCachedTextures(context.device);
+    const auto released = DepthSurfacesReleased();
+    Require(DepthSurfaceView(context, DepthTarget{colorMemory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u}) != VK_NULL_HANDLE, "retirement fixture has no later depth attachment");
+    Require(DepthSurfacesReleased() == released + 1u, "a written native depth owner whose memory was released stayed cached after its views were released");
 }
 
 constexpr std::size_t DriverMetadataSpan = 131072u;
@@ -4811,8 +4824,8 @@ int main(int argc, char** argv) {
             std::uint32_t checked = 0u, unavailable = 0u;
             for (const auto format : {VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT}) {
                 for (const auto samples : {2u, 4u, 8u}) {
-                    if (!DepthSupported(context, format, samples)) { unavailable += 4u; continue; }
-                    for (std::uint32_t mode = 0u; mode < 4u; ++mode) { CheckRetirement(context, format, samples, mode); ++checked; }
+                    if (!DepthSupported(context, format, samples)) { unavailable += 7u; continue; }
+                    for (std::uint32_t mode = 0u; mode < 7u; ++mode) { CheckRetirement(context, format, samples, mode); ++checked; }
                 }
             }
             std::printf("Native depth retirement cases checked=%u unavailable=%u\n", checked, unavailable);

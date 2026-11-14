@@ -49,6 +49,9 @@ namespace {
 #if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
 constexpr std::uintptr_t PageBytes = 4096;
 
+char g_unavailableReason[192];
+thread_local char t_registrationFailure[192];
+
 class Watch {
 public:
     static Watch& Get() {
@@ -62,6 +65,7 @@ public:
 
     void Register(std::uintptr_t begin, std::uintptr_t end) {
         if (!Available() || end <= begin) return;
+        t_registrationFailure[0] = '\0';
         std::unique_lock lock(_lock);
         remove(_ranges, begin, end);
         remove(_fresh, begin, end);
@@ -71,15 +75,21 @@ public:
         registration.range.len = end - begin;
         registration.mode = UFFDIO_REGISTER_MODE_WP;
         if (ioctl(_uffd, UFFDIO_REGISTER, &registration) != 0) {
+            const int error = errno;
+            std::snprintf(t_registrationFailure, sizeof(t_registrationFailure), "UFFDIO_REGISTER of 0x%llx+0x%llx failed (%s, errno %d)", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), std::strerror(error), error);
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                std::fprintf(stderr, "[memory] write watch: cannot register 0x%llx+0x%llx (%s); the range stays unwatched\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), std::strerror(errno));
+                std::fprintf(stderr, "[memory] write watch: cannot register 0x%llx+0x%llx (%s); the range stays unwatched\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), std::strerror(error));
             }
             return;
         }
         insert(_ranges, begin, end);
         insert(_fresh, begin, end);
+    }
+
+    static const char* RegistrationFailure() {
+        return t_registrationFailure;
     }
 
     bool Unregister(std::uintptr_t begin, std::uintptr_t end) {
@@ -348,30 +358,38 @@ private:
 private:
     Watch() {
         if (std::getenv("APS5_NO_WRITE_WATCH") == nullptr) open();
+        else std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "disabled by APS5_NO_WRITE_WATCH");
     }
 
     void open() {
         _uffd = static_cast<int>(syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK));
         if (_uffd < 0 && errno == EPERM) _uffd = static_cast<int>(syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY));
-        if (_uffd < 0) return unavailable("userfaultfd");
+        if (_uffd < 0) return unavailable("userfaultfd", errno);
         uffdio_api api{};
         api.api = UFFD_API;
         api.features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED;
-        if (ioctl(_uffd, UFFDIO_API, &api) != 0 || (api.features & UFFD_FEATURE_WP_ASYNC) == 0 || (api.features & UFFD_FEATURE_WP_UNPOPULATED) == 0) return unavailable("asynchronous userfaultfd write protection");
+        if (ioctl(_uffd, UFFDIO_API, &api) != 0) return unavailable("asynchronous userfaultfd write protection", errno);
+        if ((api.features & UFFD_FEATURE_WP_ASYNC) == 0 || (api.features & UFFD_FEATURE_WP_UNPOPULATED) == 0) return unavailable("asynchronous userfaultfd write protection (UFFD_FEATURE_WP_ASYNC and UFFD_FEATURE_WP_UNPOPULATED)", 0);
         const int pagemap = ::open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
-        if (pagemap < 0) return unavailable("/proc/self/pagemap");
+        if (pagemap < 0) return unavailable("/proc/self/pagemap", errno);
         if (!probe(pagemap)) {
+            const int error = errno;
             close(pagemap);
-            return unavailable("PAGEMAP_SCAN");
+            return unavailable("PAGEMAP_SCAN", error);
         }
         _pagemap = pagemap;
     }
 
-    void unavailable(const char* what) {
-        const int error = errno;
+    void unavailable(const char* what, int error) {
         if (_uffd >= 0) close(_uffd);
         _uffd = -1;
-        std::fprintf(stderr, "[memory] write watch unavailable: %s failed (%s); guest memory is compared instead\n", what, std::strerror(error));
+        if (error != 0) {
+            std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "%s failed (%s, errno %d); the running kernel needs PAGEMAP_SCAN and asynchronous userfaultfd write protection (Linux 6.7 or newer)", what, std::strerror(error), error);
+            std::fprintf(stderr, "[memory] write watch unavailable: %s failed (%s); guest memory is compared instead\n", what, std::strerror(error));
+        } else {
+            std::snprintf(g_unavailableReason, sizeof(g_unavailableReason), "%s is not offered by the running kernel; it needs PAGEMAP_SCAN and asynchronous userfaultfd write protection (Linux 6.7 or newer)", what);
+            std::fprintf(stderr, "[memory] write watch unavailable: %s is not offered by the kernel; guest memory is compared instead\n", what);
+        }
     }
 
     bool protect(std::uintptr_t begin, std::uintptr_t end) const {
@@ -1186,6 +1204,16 @@ bool GuestWriteWatchAvailable_nid_postfix() {
     return Watch::Get().Available();
 #else
     return false;
+#endif
+}
+
+const char* GuestWriteWatchUnavailableReason_nid_postfix() {
+#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+    return Watch::Get().Available() ? Watch::Get().RegistrationFailure() : g_unavailableReason;
+#elif defined(__linux__)
+    return "this build has no PAGEMAP_SCAN or UFFD_FEATURE_WP_ASYNC: its kernel headers are older than Linux 6.7";
+#else
+    return "";
 #endif
 }
 
