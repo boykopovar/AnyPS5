@@ -15570,6 +15570,38 @@ int pipelineCacheFileTests(const Device& device) {
         Require(saveReturned, "a periodic pipeline cache save waited for a pipeline creation to finish");
         Require(otherCreationProceeded, "a pipeline creation waited behind a periodic pipeline cache save");
     }
+    {
+        std::filesystem::remove_all(directory);
+        {
+            PipelineCache writer(context, properties);
+            build(writer.Handle(), 0);
+        }
+        constexpr std::size_t fileHeaderBytes = 24;
+        constexpr std::size_t deviceIdOffset = fileHeaderBytes + 12;
+        constexpr std::size_t hashOffset = 16;
+        std::vector<std::byte> file;
+        Require(ShaderRecompiler::ReadWholeFile(path, file) && file.size() >= fileHeaderBytes + 32, "the pipeline cache file is too short to name its device");
+        std::uint32_t deviceId = 0;
+        std::memcpy(&deviceId, file.data() + deviceIdOffset, sizeof(deviceId));
+        Require(deviceId == properties.deviceID, "the pipeline cache file does not name the device at the Vulkan header's place");
+        deviceId ^= 0xffffu;
+        std::memcpy(file.data() + deviceIdOffset, &deviceId, sizeof(deviceId));
+        const auto hash = ShaderRecompiler::HashBytes(std::span<const std::byte>(file).subspan(fileHeaderBytes));
+        std::memcpy(file.data() + hashOffset, &hash, sizeof(hash));
+        Require(ShaderRecompiler::WriteFileAtomically(path, file), "cannot write the pipeline cache file of another device");
+        std::string output;
+        {
+            StderrCapture capture;
+            {
+                PipelineCache foreign(context, properties);
+                Require(!holds(foreign.Handle(), 0), "a cache file made for another device gave the driver its pipelines");
+            }
+            output = capture.Finish();
+        }
+        Require(output.find("made for another device or driver") != std::string::npos, "a cache file made for another device was not reported as ignored");
+        PipelineCache reloaded(context, properties);
+        Require(holds(reloaded.Handle(), 0), "a cache file made for another device was not replaced by the run's pipelines");
+    }
     std::cout << "Pipeline cache file merge tests passed\n";
     return 0;
 }
