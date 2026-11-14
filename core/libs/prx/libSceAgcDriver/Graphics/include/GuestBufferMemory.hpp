@@ -202,6 +202,9 @@ void OverlappedRanges(std::span<const TRange> sorted, std::size_t first, std::sp
 // work using the import is recorded) the imports are left as they are.
 std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, std::size_t bytes, bool reconcile);
 
+bool HostImportView(const Context& context, std::uint64_t address, std::size_t bytes, VkDescriptorBufferInfo& view, std::uint64_t& serial);
+
+
 // The import table's identity (the fast Revalidate): serials proved under one identity stand
 // while the table still has it, i.e. the same device, the same epoch (bumped by every retire)
 // and the registry generation it was reconciled with, which must still be the live one.
