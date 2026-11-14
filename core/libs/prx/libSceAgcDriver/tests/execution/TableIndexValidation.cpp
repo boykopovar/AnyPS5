@@ -474,6 +474,10 @@ void SetSnapshotLimit(const char* mib) {
 #endif
 }
 
+void ClearTarget() {
+    std::memset(Target->base, 0, TargetBytes);
+}
+
 void ReboundWithoutSnapshot(AgcDriver::VulkanDevice& device) {
     SetSnapshotLimit("0");
     auto& scene = NewScene();
@@ -484,8 +488,10 @@ void ReboundWithoutSnapshot(AgcDriver::VulkanDevice& device) {
         std::lock_guard lock(GuestMemory::GpuMutex());
         AgcDriver::Graphics::ClearCachedTextures(device.Device());
     }
+    ClearTarget();
     auto outcome = Draw(device, scene);
     Require(outcome.rebound >= 1.0 && outcome.brightest == 255u, "rebound without snapshot: the draw after its textures left the cache did not re-bind them and sample the key texel (" + outcome.Describe() + ")");
+    ClearTarget();
     outcome = Draw(device, scene);
     Require(outcome.brightest == 255u, "rebound without snapshot: the draw after the re-bind lost the key texel (" + outcome.Describe() + ")");
     Settle(device, scene, "rebound without snapshot (after)");
