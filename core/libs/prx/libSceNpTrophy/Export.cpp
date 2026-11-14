@@ -532,7 +532,12 @@ int APS5_VABI sceNpTrophyConfigHasGroupFeature(const std::uint8_t* config) {
 }
 
 int APS5_VABI sceNpTrophyGroupArrayGetNum(const std::uint32_t* groupArray) {
-    return std::popcount(groupArray[0]);
+    std::uint32_t groups = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&groups, groupArray, sizeof(groups));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(__func__);
+    return std::popcount(groups);
 }
 
 int APS5_VABI sceNpTrophyIntAbortHandle(void) {
@@ -591,7 +596,12 @@ int APS5_VABI sceNpTrophyIntNetSyncTitles(void) {
 }
 
 int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
-    return static_cast<int>(numInfo[0] + numInfo[1] + numInfo[2] + numInfo[3]);
+    std::array<std::uint32_t, 4> counts{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(counts.data(), numInfo, sizeof(counts));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(counts[0] + counts[1] + counts[2] + counts[3]);
 }
 
 int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
@@ -604,8 +614,13 @@ int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, 
 }
 
 int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
+    std::array<std::uint8_t, 64> flags{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(flags.data(), setInfo, sizeof(flags));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(__func__);
     int count = 0;
-    for (std::size_t index = 0; index < 64; ++index) count += std::popcount(setInfo[index]);
+    for (std::size_t index = 0; index < 64; ++index) count += std::popcount(flags[index]);
     return count;
 }
 
