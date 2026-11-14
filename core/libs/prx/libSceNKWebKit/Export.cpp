@@ -2981,10 +2981,6 @@ int APS5_VABI _ZN7WebCore16comparePositionsERKNS_15VisiblePositionES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore33stripLeadingAndTrailingHTMLSpacesERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3PAL5Clock6createEv() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -724,7 +724,6 @@ int APS5_VABI _ZN3JSC8Bindings13RuntimeObject6createERNS_2VMEPNS_9StructureEON3W
 int APS5_VABI libSceNKWebKitLegacyUnknown_IRLQrLWkA_minus_M_nid_no_patch();
 int APS5_VABI libSceNKWebKitLegacyUnknown_IRYhi2PKG9M_nid_no_patch();
 int APS5_VABI _ZN7WebCore16comparePositionsERKNS_15VisiblePositionES2_();
-int APS5_VABI _ZN7WebCore33stripLeadingAndTrailingHTMLSpacesERKN3WTF6StringE();
 int APS5_VABI _ZN3PAL5Clock6createEv();
 int APS5_VABI _ZN7WebCore9CookieJar6createEON3WTF3RefINS_22StorageSessionProviderENS1_13DumbPtrTraitsIS3_EEEE();
 int APS5_VABI _ZN7WebCore13HitTestResultC2ERKNS_11LayoutPointEjjjj();
