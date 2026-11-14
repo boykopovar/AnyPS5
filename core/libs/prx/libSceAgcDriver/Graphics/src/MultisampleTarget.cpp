@@ -837,7 +837,7 @@ private:
         if (nativeFmaskSamples(use.samples) && use.fmaskAddress != 0u && use.cmaskAddress != 0u) {
             const auto resource = fmaskResource(use);
             static_cast<void>(fmaskSnapshotResource(resource));
-            fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(DescribeSurface(resource).guestBytes), 0};
+            fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(SurfaceGuestBytes(resource)), 0};
             auto& range = *fmaskRange;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 65536u);
             fmaskCopy.compared = !WatchedAfterSettle(context, range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes);
@@ -1075,7 +1075,7 @@ void guard(const Context& context, const ColorTarget& target, const std::shared_
     if (target.dccAddress != 0) {
         guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid, use});
         if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid, use});
-        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid, use});
+        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, SurfaceGuestBytes(fmaskResource(target)), target.samples, active, metadataValid, use});
     }
     guardedGeneration().fetch_add(1, std::memory_order_release);
     moveGuardSpans();
@@ -1763,6 +1763,22 @@ void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
     std::shared_lock lock(guardedMutex());
     claimOverlapping(address, bytes, nullptr);
+}
+
+bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return false;
+    std::shared_lock lock(guardedMutex());
+    return std::ranges::any_of(guarded(), [&](const auto& range) { return !range.fmask && address < range.address + range.bytes && range.address < address + bytes; });
+}
+
+void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::shared_lock lock(guardedMutex());
+    for (const auto& range : guarded()) {
+        if (range.fmask || address >= range.address + range.bytes || range.address >= address + bytes || range.use->claimed.exchange(true, std::memory_order_acq_rel)) continue;
+        static std::atomic<int> reports{0};
+        if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] a single-sample storage image store to 0x%llx+0x%llx claims the memory of multisampled color target 0x%llx+0x%llx (%u samples)\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
+    }
 }
 
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {

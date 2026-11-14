@@ -298,6 +298,89 @@ class Main(unittest.TestCase):
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 1)
 
+    def test_a_nid_change_runs_the_nid_script_tests(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "nid_gnu_hash", "command": ["C:/python.exe", "test_gnu_hash.py"]},
+            {"name": "nid_patcher_native_paths", "command": ["C:/python.exe", "test_native_paths.py"]},
+            {"name": "nidx_not_a_nid_test", "command": ["C:/python.exe", "x.py"]},
+        ]})
+        selections = []
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/nid/src/main.cpp"]), 0)
+            self.assertEqual(self.main(build, ["core/libs/nid/tests/test_native_paths.py"]), 0)
+        self.assertEqual(selections, ["0,0,0,2,3\n", "0,0,0,2,3\n"])
+
+    def test_a_nid_change_builds_the_executable_behind_a_nid_test(self):
+        build = self.fixture([
+            self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx"),
+            self.target("nid_buffer_validation_tests", source="core/libs/nid/tests/BufferValidation.cpp"),
+        ])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "nid_buffer_validation", "command": []},
+            {"name": "nid_gnu_hash", "command": ["C:/python.exe", "test_gnu_hash.py"]},
+        ]})
+        testfile = build / "core" / "libs" / "CTestTestfile.cmake"
+        testfile.parent.mkdir(parents=True)
+        testfile.write_text('add_test("guest_pad" "C:/b/tests/guest_pad_tests.exe")\n'
+                            'add_test("nid_buffer_validation" "C:/b/tests/nid_buffer_validation_tests.exe")\n'
+                            'set_tests_properties("nid_buffer_validation" PROPERTIES TIMEOUT "10")\n'
+                            'add_test("nid_gnu_hash" "C:/python.exe" "test_gnu_hash.py")\n', encoding="utf-8")
+        commands = []
+        def execute(cmd, **_):
+            commands.append(list(cmd))
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/nid/src/main.cpp"]), 0)
+        built = [target for cmd in commands if "--target" in cmd for target in cmd[cmd.index("--target") + 1:]]
+        self.assertIn("nid_buffer_validation_tests", built)
+        ran = [index for index, cmd in enumerate(commands) if "-I" in cmd]
+        builds = [index for index, cmd in enumerate(commands) if "--target" in cmd and "nid_buffer_validation_tests" in cmd]
+        self.assertTrue(ran and builds and max(builds) < min(ran))
+
+    def test_registered_commands_come_from_every_testfile_without_a_built_executable(self):
+        build = Path(self.temporary.name) / "tree"
+        (build / "sub").mkdir(parents=True)
+        (build / "CTestTestfile.cmake").write_text('add_test("a b" "/x/a_tests" "arg \\"q\\"")\n', encoding="utf-8")
+        (build / "sub" / "CTestTestfile.cmake").write_text(
+            '  add_test([=[nid_one]=] "/x/nid_one_tests")\nset_tests_properties("nid_one" PROPERTIES TIMEOUT "5")\n', encoding="utf-8")
+        self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
+            "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
+
+    def test_a_change_outside_nid_does_not_run_the_nid_script_tests(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [{"name": "nid_gnu_hash", "command": ["C:/python.exe", "x.py"]}]})
+        selections = []
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/src/Xml.cpp"]), 0)
+        self.assertEqual(selections, [])
+
+    def test_a_missing_nid_registration_is_an_error(self):
+        build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
+        listing = json.dumps({"tests": [{"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]}]})
+        def execute(cmd, **_):
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.main(build, ["core/libs/nid/src/main.cpp"]), 1)
+
+    def test_nid_inputs(self):
+        for path in ("core/libs/nid/src/main.cpp", "core/libs/nid/tests/test_gnu_hash.py", "core/libs/CMakeLists.txt", "3rdparty/ZArchive"):
+            with self.subTest(path=path):
+                self.assertTrue(build_changed_guest_tests.checks_nid([path]))
+        for path in ("core/libs/prx/libSceXml/src/Xml.cpp", "core/libs/tests/Guest.cpp", "core/relinker/R.cpp", "README.md"):
+            with self.subTest(path=path):
+                self.assertFalse(build_changed_guest_tests.checks_nid([path]))
+
     def test_public_header_inputs(self):
         for path in ("core/libs/prx/libSceXml/include/Xml.hpp", "core/libs/include/X.h", "core/libs/tests/test_public_headers.py",
                      "tools/nid_names.py", "core/libs/CMakeLists.txt", "3rdparty/ZArchive"):

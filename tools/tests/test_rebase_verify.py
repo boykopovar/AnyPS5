@@ -17,6 +17,7 @@ class RebaseVerifyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.git("init", "-q", "-b", "main")
+        self.git("config", "core.filemode", "false")
         self.write("f.txt", "a\nb\nc\n")
         self.git("add", "f.txt")
         self.git("commit", "-q", "-m", "fix(tools): base")
@@ -46,8 +47,53 @@ class RebaseVerifyTests(unittest.TestCase):
     def verify(self):
         return rebase_verify.verify(self.root, "old", "new", "main")[3]
 
+    def amend_mode(self, path, executable):
+        self.git("update-index", "--chmod=+x" if executable else "--chmod=-x", "--", path)
+        self.git("commit", "-q", "--amend", "--no-edit")
+
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
+
+    def test_an_executable_mode_change_must_survive_rebase(self):
+        self.git("checkout", "-q", "old")
+        self.amend_mode("f.txt", True)
+        self.git("checkout", "-q", "new")
+        self.assertEqual(self.verify(), ["f.txt: file mode 100644, expected 100755"])
+        self.amend_mode("f.txt", True)
+        self.assertEqual(self.verify(), [])
+
+    def test_an_unexpected_executable_mode_change_is_reported(self):
+        self.amend_mode("f.txt", True)
+        self.assertEqual(self.verify(), ["f.txt: file mode 100755, expected 100644"])
+
+    def test_an_executable_mode_already_applied_upstream_is_kept(self):
+        self.git("checkout", "-q", "old")
+        self.amend_mode("f.txt", True)
+        self.git("checkout", "-q", "main")
+        self.amend_mode("f.txt", True)
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.git("cherry-pick", f"{self.base}..old")
+        self.assertEqual(self.verify(), [])
+
+    def test_an_upstream_executable_mode_must_not_be_reverted(self):
+        self.git("checkout", "-q", "main")
+        self.amend_mode("f.txt", True)
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.git("cherry-pick", f"{self.base}..old")
+        self.assertEqual(self.verify(), [])
+        self.amend_mode("f.txt", False)
+        self.assertEqual(self.verify(), ["f.txt: file mode 100644, expected 100755"])
+
+    def test_a_new_executable_file_keeps_its_mode(self):
+        path = "new script.sh"
+        for branch, executable in (("old", True), ("new", False)):
+            self.git("checkout", "-q", branch)
+            self.write(path, "exit 0\n")
+            self.git("add", "--", path)
+            self.amend_mode(path, executable)
+        self.assertEqual(self.verify(), ["new script.sh: file mode 100644, expected 100755"])
 
     def test_a_line_the_branch_added_that_is_missing_is_reported(self):
         self.write("f.txt", "a\nb\nc\ntail\n")

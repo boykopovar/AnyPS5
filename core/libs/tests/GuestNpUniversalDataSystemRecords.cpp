@@ -76,6 +76,9 @@ int main() {
     std::size_t size = 0;
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(nullptr, &size) == kNullRecord, "null estimate record");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(data, nullptr) == kInvalidArgument, "null estimate output");
+    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(data, &size) == 0 && size > 0, "estimate record data");
+    std::size_t emptyArraySize = 0;
+    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(array, &emptyArraySize) == 0 && emptyArraySize > 0, "estimate empty array");
 
     Require(sceNpUniversalDataSystemIntRecordArraySetBool(array, true) == 0, "array bool");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(array, -1) == 0, "array int32");
@@ -111,6 +114,9 @@ int main() {
     Require((*storedNestedArray)->values.size() >= 1, "array child array mutation stored");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(nullptr, 0) == kNullArray, "null array target");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(reinterpret_cast<void*>(1), 0) == kNullArray, "unknown array target");
+    std::size_t fullArraySize = 0;
+    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(array, &fullArraySize) == 0 && fullArraySize > emptyArraySize,
+            "estimate grows with array values");
 
     Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, nullptr, true) == kInvalidKey, "null object key");
     Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, "", true) == kInvalidKey, "empty object key");

@@ -269,15 +269,51 @@ static void TestTime() {
     Require(threadCpu.m_value >= 0.0);
 }
 
-static void TestSystem() {
-    int cores = _ZN3WTF22numberOfProcessorCoresEv();
+extern "C" void NumberOfProcessorCoresSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static int g_sysconfQueries = 0;
+
+static std::int64_t SysconfWithProcessors(int name) {
+    ++g_sysconfQueries;
+    if (name == 58) return 37;
+    if (name == 57) return 41;
+    return -1;
+}
+
+static std::int64_t SysconfFailing(int) {
+    ++g_sysconfQueries;
+    return -1;
+}
+
+static void TestNumberOfProcessorCores() {
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfWithProcessors);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfFailing);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(nullptr);
+    const int cores = _ZN3WTF22numberOfProcessorCoresEv();
     Require(cores >= 1);
+    Require(cores == sysconf_nid_postfix(58));
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == cores);
+}
+
+static void TestSystem() {
+    TestNumberOfProcessorCores();
 
     std::uint64_t ram = _ZN3WTF7ramSizeEv();
     Require(ram >= 1024ULL * 1024ULL * 1024ULL);
 
     std::size_t page = _ZN3WTF8pageSizeEv();
-    Require(page == 4096);
+    Require(page == 16384);
+    Require(_ZN3WTF8pageSizeEv() == page);
 
     _ZN3WTF6Config17permanentlyFreezeEv();
 
