@@ -14,7 +14,7 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 87> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 93> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
@@ -37,11 +37,17 @@ constexpr std::array<FormatInfo, 87> kFormatInfoTable {{
     {IrBufferFormat::Format16_16SInt, true, false, true},
     {IrBufferFormat::Format16_16Float, true, false, false},
     {IrBufferFormat::Format11_11_10UNorm, true, true, false},
+    {IrBufferFormat::Format11_11_10SNorm, true, false, false},
+    {IrBufferFormat::Format11_11_10SInt, true, false, true},
     {IrBufferFormat::Format11_11_10UInt, true, true, false},
     {IrBufferFormat::Format11_11_10Float, true, true, false},
     {IrBufferFormat::Format10_11_11UNorm, true, true, false},
     {IrBufferFormat::Format10_11_11UInt, true, true, false},
     {IrBufferFormat::Format10_11_11Float, true, true, false},
+    {IrBufferFormat::Format10_11_11SNorm, true, false, false},
+    {IrBufferFormat::Format10_11_11SInt, true, false, true},
+    {IrBufferFormat::Format2_10_10_10SNorm, true, false, false},
+    {IrBufferFormat::Format2_10_10_10SInt, true, false, true},
     {IrBufferFormat::Format2_10_10_10UNorm, true, true, false},
     {IrBufferFormat::Format2_10_10_10UInt, true, true, false},
     {IrBufferFormat::Format10_10_10_2UNorm, true, false, false},
@@ -152,7 +158,12 @@ bool IsConvertedUnormTextureFormat(IrBufferFormat format) {
     return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format10_11_11UNorm || format == IrBufferFormat::Format2_10_10_10UNorm;
 }
 
+bool IsConvertedSignedTextureFormat(IrBufferFormat format) {
+    return format == IrBufferFormat::Format11_11_10SNorm || format == IrBufferFormat::Format11_11_10SInt || format == IrBufferFormat::Format10_11_11SNorm || format == IrBufferFormat::Format10_11_11SInt || format == IrBufferFormat::Format2_10_10_10SNorm || format == IrBufferFormat::Format2_10_10_10SInt;
+}
+
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
+    if (IsConvertedSignedTextureFormat(format)) return IrBufferFormat::Format32UInt;
     return IsConvertedUnormTextureFormat(format) || format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
 }
 

@@ -605,8 +605,8 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
     }
     const auto info = GetFormatInfo(format);
     const auto remapped = image.resourceClass == ImageResourceClass::Storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
-    if (SampledTextureNumericClass(remapped) != IrTextureNumericClass::Uint || remapped == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || (info.byteSize != 2u && info.byteSize != 4u) || info.componentCount == 0u || info.componentCount > 4u) {
-        throw std::runtime_error("image conversion format is not a packed 16-bit or 32-bit unsigned integer, unorm or float format");
+    if (SampledTextureNumericClass(remapped) != IrTextureNumericClass::Uint || remapped == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Sint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Snorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || (info.byteSize != 2u && info.byteSize != 4u) || info.componentCount == 0u || info.componentCount > 4u) {
+        throw std::runtime_error("image conversion format is not a packed 16-bit or 32-bit integer, normalized or float format");
     }
     return info;
 }
@@ -665,7 +665,7 @@ std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
     if (info.format == IrBufferFormat::Invalid) {
         return texel;
     }
-    const bool unorm = info.type == SpirvFormatComponentType::Unorm || info.type == SpirvFormatComponentType::Float;
+    const bool unorm = info.type == SpirvFormatComponentType::Unorm || info.type == SpirvFormatComponentType::Snorm || info.type == SpirvFormatComponentType::Float;
     if (unorm) {
         RequireConvertedUnormAccess(ctx, access, info);
     }
@@ -674,7 +674,8 @@ std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
     std::array<std::uint32_t, 4> components{ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0)};
     for (std::uint32_t component = 0; component < info.componentCount; component++) {
         components[component] = state.module.AllocateId();
-        state.module.AddFunction(spv::OpBitFieldUExtract, TypeU32(state), components[component], packed, ConstantU32(state, info.componentBitOffset[component]), ConstantU32(state, info.componentBits[component]));
+        const auto extract = info.type == SpirvFormatComponentType::Sint || info.type == SpirvFormatComponentType::Snorm ? spv::OpBitFieldSExtract : spv::OpBitFieldUExtract;
+        state.module.AddFunction(extract, TypeU32(state), components[component], packed, ConstantU32(state, info.componentBitOffset[component]), ConstantU32(state, info.componentBits[component]));
         if (unorm) {
             components[component] = NormalizeFormatComponent(state, info, component, components[component]);
         }
@@ -700,7 +701,7 @@ std::uint32_t LoadedTexelResult(SpirvValueEmitContext& ctx, const ImageEmitAcces
         return ResultVector(ctx, access, unpacked, numericClass, false, false);
     }
     const auto info = ImageConversionFormat(access.image);
-    if (info.format == IrBufferFormat::Invalid || (info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float)) {
+    if (info.format == IrBufferFormat::Invalid || (info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Snorm && info.type != SpirvFormatComponentType::Float)) {
         return ResultVector(ctx, access, unpacked, numericClass, false, false);
     }
     return ResultVector(ctx, access, Unary(state, spv::OpBitcast, TypeF32Vector(state, 4), unpacked), IrTextureNumericClass::Float, false, false);
@@ -1007,7 +1008,7 @@ std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
     if (info.format == IrBufferFormat::Invalid) {
         return texel;
     }
-    const bool unorm = info.type == SpirvFormatComponentType::Unorm || info.type == SpirvFormatComponentType::Float;
+    const bool unorm = info.type == SpirvFormatComponentType::Unorm || info.type == SpirvFormatComponentType::Snorm || info.type == SpirvFormatComponentType::Float;
     if (unorm) {
         RequireConvertedUnormAccess(ctx, access, info);
     }
@@ -1019,6 +1020,8 @@ std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
         if (unorm) {
             if (access.mem.dataBits == 16u) clamped = Unary(state, spv::OpBitcast, TypeU32(state), EmitF16BitsToF32(state, value));
             clamped = EmitFormatStoreComponent(state, info, component, clamped);
+        } else if (info.type == SpirvFormatComponentType::Sint) {
+            clamped = access.mem.dataBits == 16u ? EmitD16StoreComponent(state, info, component, value) : EmitFormatStoreComponent(state, info, component, value);
         } else {
             const auto maximum = ConstantU32(state, info.componentBits[component] == 32u ? UINT32_MAX : (1u << info.componentBits[component]) - 1u);
             const auto within = Binary(state, spv::OpULessThan, TypeBool(state), value, maximum);
@@ -1039,6 +1042,7 @@ SpirvBufferFormatInfo SintStorageFormat(const ImageResource& image) {
         return {};
     }
     const auto info = GetFormatInfo(format);
+    if (info.packedBitfield) return {};
     if (image.numericClass != IrTextureNumericClass::Uint || info.type != SpirvFormatComponentType::Sint || info.packedBitfield || info.componentCount == 0u || info.byteSize == 12u) {
         throw std::runtime_error("storage image conversion format is not a SINT format written through a UINT view");
     }
