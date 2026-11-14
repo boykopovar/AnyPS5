@@ -17322,10 +17322,6 @@ int APS5_VABI _ZN7WebCore12TextIteratorD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore12WebAnimation9instancesEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12WorkerThread17workerThreadCountEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -18133,10 +18129,6 @@ int APS5_VABI _ZN7WebCore14ResourceHandle16setDefersLoadingEb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14ResourceHandle20forceContentSniffingEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore14ResourceHandle6cancelEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -18310,10 +18302,6 @@ int APS5_VABI _ZN7WebCore14SecurityOrigin16createFromStringERKN3WTF6StringE() {
 }
 
 int APS5_VABI _ZN7WebCore14SecurityOrigin6createERKN3WTF3URLE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SecurityPolicy18setLocalLoadPolicyENS0_15LocalLoadPolicyE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -20873,10 +20861,6 @@ int APS5_VABI _ZN7WebCore18isStartOfParagraphERKNS_15VisiblePositionENS_27Editin
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore18platformStrategiesEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore18pluginScriptObjectEPN3JSC14JSGlobalObjectEPNS_13JSHTMLElementE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -22165,10 +22149,6 @@ int APS5_VABI _ZN7WebCore21mainThreadNormalWorldEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore21setPlatformStrategiesEPNS_18PlatformStrategiesE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22CanvasRenderingContext5derefEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -23054,10 +23034,6 @@ int APS5_VABI _ZN7WebCore26IdentityTransformOperation6createEv() {
 }
 
 int APS5_VABI _ZN7WebCore26Matrix3DTransformOperation6createERKNS_20TransformationMatrixE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore26MessagePortChannelProvider17setSharedProviderERS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 

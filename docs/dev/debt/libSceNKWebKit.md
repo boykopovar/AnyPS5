@@ -69,6 +69,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WTF URL escaping](../../../core/libs/prx/libSceNKWebKit/src/WtfUrlEscape.cpp) has no console ABI or behavior verification. `encodeWithURLEscapeSequences` follows [URL.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp#L553) and the user-info encode set in URLParser.cpp at the same revision. Lenient UTF-8 conversion follows StringImpl.cpp: interior unpaired surrogates and lone low surrogates become U+FFFD; a trailing unpaired high surrogate retains its three-byte encoding. Unchanged strings share StringImpl through the existing copy helper; encoded strings use the existing guest allocator. Null accessed storage and overflowing output lengths throw. Closes when: compared with a console module.
 
+- [WebCore registration slots](../../../core/libs/prx/libSceNKWebKit/src/WebCoreRegistrationSlots.cpp) (libSceNKWebKit) - not compared with a console module. The 8-byte `WebAnimation::instances` set and 4-byte `LocalLoadPolicy` are source-derived; the set stays empty as no `WebAnimation` constructor is implemented. `setSharedProvider` crashes off the main thread or when called twice, and its readers are not exported. Follows [WebAnimation.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/animation/WebAnimation.cpp#L67-L71) and [MessagePortChannelProvider.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/dom/messageports/MessagePortChannelProvider.cpp#L51-L56). Closes when: compared with a console module.
+
 ### Functional
 - [WebCore color space conversions and serialization](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColorSpaces.cpp) (libSceNKWebKit) - not checked against a console module. They follow WebKit c55364d53f97 [ColorConversion.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorConversion.cpp) and [ColorSerialization.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorSerialization.cpp), whose declarations match the exported names. Matrix products are not fused into FMA, so a console build that fuses them may differ in the last bit. The `Color` overloads of `serializationForCSS` and `serializationForRenderTreeAsText` and `Color::colorSpaceAndComponents` still throw: that revision packs `Color` differently from the 11.x packing `WebCoreColor.cpp` decodes.
 - [WKSerializedScriptValue](../../../core/libs/prx/libSceNKWebKit/src/SerializedScriptValue.cpp) (libSceNKWebKit) - `WKSerializedScriptValueCreate` and `WKSerializedScriptValueDeserialize` serialize and deserialize JavaScript values via JSON representation (`JSValueCreateJSONString` and `JSValueMakeFromJSONString`) rather than WebKit's full structured clone algorithm; non-serializable objects (such as functions, symbols and circular structures) fail serialization and report errors through the exception pointer on create, deserialization failures set exception to an Error object if provided, and `undefined`, `NaN`, `+Infinity` and `-Infinity` are preserved through explicit markers.
@@ -2048,7 +2050,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore12TextIterator7advanceEv` | `wzTeHvzmD-Q` |
 | `_ZN7WebCore12TextIteratorD1Ev` | `uAQuprnfbIo` |
 | `_ZN7WebCore12TextIteratorD2Ev` | `ONHCFGvD0vw` |
-| `_ZN7WebCore12WebAnimation9instancesEv` | `TPldTG849XM` |
 | `_ZN7WebCore12WorkerThread17workerThreadCountEv` | `FdVPEWL8spY` |
 | `_ZN7WebCore12blobRegistryEv` | `sdYVzaZgFbY` |
 | `_ZN7WebCore12commonVMSlowEv` | `FR4wjgGyss4` |
@@ -2250,7 +2251,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore14ResourceHandle11clearClientEv` | `xCU2xwTBJP8` |
 | `_ZN7WebCore14ResourceHandle12firstRequestEv` | `j4kIUS5T3TY` |
 | `_ZN7WebCore14ResourceHandle16setDefersLoadingEb` | `9HFZvESTOhk` |
-| `_ZN7WebCore14ResourceHandle20forceContentSniffingEv` | `wI4UPNf5YNY` |
 | `_ZN7WebCore14ResourceHandle6cancelEv` | `5H5ytGoOj0A` |
 | `_ZN7WebCore14ResourceHandleD0Ev` | `h+v1uJNkdY4` |
 | `_ZN7WebCore14ResourceHandleD1Ev` | `wCYFnwyl09w` |
@@ -2295,7 +2295,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore14ScrollbarTheme5themeEv` | `na3KO+Tiyu8` |
 | `_ZN7WebCore14SecurityOrigin16createFromStringERKN3WTF6StringE` | `bim4ILT718Q` |
 | `_ZN7WebCore14SecurityOrigin6createERKN3WTF3URLE` | `a8oad1ei+k0` |
-| `_ZN7WebCore14SecurityPolicy18setLocalLoadPolicyENS0_15LocalLoadPolicyE` | `smU-F8Y1zfs` |
 | `_ZN7WebCore14SecurityPolicy27resetOriginAccessAllowlistsEv` | `McQdg5+JTcc` |
 | `_ZN7WebCore14SecurityPolicy29addOriginAccessAllowlistEntryERKNS_14SecurityOriginERKN3WTF6StringES7_b` | `UjUPSlx8Hzc` |
 | `_ZN7WebCore14SecurityPolicy32removeOriginAccessAllowlistEntryERKNS_14SecurityOriginERKN3WTF6StringES7_b` | `JIHFGaq4brI` |
@@ -2929,7 +2928,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore18documentTypeStringERKNS_8DocumentE` | `oXgkWQRuOzU` |
 | `_ZN7WebCore18isEditablePositionERKNS_8PositionENS_12EditableTypeE` | `XoqhvWYzuvU` |
 | `_ZN7WebCore18isStartOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE` | `Q0Ockqsjzp0` |
-| `_ZN7WebCore18platformStrategiesEv` | `tBw4xNkm5xY` |
 | `_ZN7WebCore18pluginScriptObjectEPN3JSC14JSGlobalObjectEPNS_13JSHTMLElementE` | `RbuBuPUm5-0` |
 | `_ZN7WebCore18pluginTooSmallTextEv` | `ryA0BvjZKrY` |
 | `_ZN7WebCore18throwThisTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEPKcS6_` | `7mLDMf26EJ8` |
@@ -3251,7 +3249,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore21convertToIntegerClampItEET_RN3JSC14JSGlobalObjectENS2_7JSValueE` | `r2+NfKBLFUQ` |
 | `_ZN7WebCore21identifierToUSVStringERN3JSC14JSGlobalObjectERKNS0_10IdentifierE` | `eX0m5bz4rZc` |
 | `_ZN7WebCore21mainThreadNormalWorldEv` | `BHCyHXCvQZ8` |
-| `_ZN7WebCore21setPlatformStrategiesEPNS_18PlatformStrategiesE` | `zUMbo2HaFrU` |
 | `_ZN7WebCore22CanvasRenderingContext5derefEv` | `ASfhwEyh1cI` |
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformDecryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `lC6NyPIlPns` |
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformEncryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `D4Jb9-xqqBk` |
@@ -3472,7 +3469,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore26ISOProtectionSchemeInfoBoxD2Ev` | `0TEQ2c-FFK8` |
 | `_ZN7WebCore26IdentityTransformOperation6createEv` | `xPYPMODatn4` |
 | `_ZN7WebCore26Matrix3DTransformOperation6createERKNS_20TransformationMatrixE` | `juxjuz-22RA` |
-| `_ZN7WebCore26MessagePortChannelProvider17setSharedProviderERS0_` | `EuJ8rkwxX9c` |
 | `_ZN7WebCore26MessagePortChannelRegistry19didCloseMessagePortERKNS_21MessagePortIdentifierE` | `6ZoLlhh15CA` |
 | `_ZN7WebCore26MessagePortChannelRegistry22didPostMessageToRemoteEONS_23MessageWithMessagePortsERKNS_21MessagePortIdentifierE` | `vKaC4HP88c8` |
 | `_ZN7WebCore26MessagePortChannelRegistry25didDisentangleMessagePortERKNS_21MessagePortIdentifierE` | `2HQ55UMlE5s` |

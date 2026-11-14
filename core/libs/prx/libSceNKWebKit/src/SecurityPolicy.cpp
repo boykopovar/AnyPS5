@@ -60,7 +60,10 @@
 
 namespace {
 
+using NKWebKit::WebCoreAbi::LocalLoadPolicy;
 using NKWebKit::WtfAbi::String;
+
+LocalLoadPolicy localLoadPolicy = NKWebKit::WebCoreAbi::AllowLocalLoadsForLocalOnly;
 
 bool ProtocolIs(const String& string, const char* protocol) {
     if (!string.impl) return false;
@@ -84,7 +87,23 @@ bool ProtocolIs(const String& string, const char* protocol) {
 
 }
 
+namespace NKWebKit::WebCoreAbi {
+
+bool SecurityPolicyRestrictAccessToLocal() {
+    return localLoadPolicy != AllowLocalLoadsForAll;
+}
+
+bool SecurityPolicyAllowSubstituteDataAccessToLocal() {
+    return localLoadPolicy != AllowLocalLoadsForLocalOnly;
+}
+
+}
+
 extern "C" {
+
+void APS5_VABI _ZN7WebCore14SecurityPolicy18setLocalLoadPolicyENS0_15LocalLoadPolicyE(LocalLoadPolicy policy) {
+    localLoadPolicy = policy;
+}
 
 bool APS5_VABI _ZN7WebCore14SecurityPolicy18shouldHideReferrerERKN3WTF3URLERKNS1_6StringE(const NKWebKit::WtfAbi::URL* url, const String* referrer) {
     if (!referrer) throw std::invalid_argument("null WTF::String reference");
