@@ -86,6 +86,9 @@ struct String {
     String& operator=(String other) noexcept { std::swap(impl, other.impl); return *this; }
 };
 
+StringView ViewOf(const StringImpl* impl);
+char16_t CodeUnitAt(const StringView& view, unsigned index);
+
 StringImpl* EmptyStringImpl();
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
 String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
