@@ -197,13 +197,23 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
         throw std::runtime_error("GDS src2 operations are not supported");
     }
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
+    const std::uint32_t width = memory.dataDwords;
     const IrU32 address = readU32(inst.source0);
     MemoryInfo source = memory;
     source.offset = memory.secondaryOffset;
     source.secondaryOffset = 0u;
-    IrValue* value = loadSharedU32(1u, address, source, inst.programCounter);
+    IrValue* value = loadSharedU32(width, address, source, inst.programCounter);
     MemoryInfo target = memory;
     target.secondaryOffset = 0u;
+    if (width == 2u) {
+        IrValue* low = extractSharedU32(value, width, 0u);
+        IrValue* high = extractSharedU32(value, width, 1u);
+        if (opcode == IrOpcode::WriteSharedU32) {
+            writeSharedU32(width, address, {low, high}, target, inst.programCounter);
+            return true;
+        }
+        value = &ir.ConstructU64(*low, *high);
+    }
     target.flushDenormals = floatAtomicFlush(opcode);
     target.flushDenormalResults = opcode == IrOpcode::SharedAtomicFAdd32 && (!floatMode.has_value() || ((floatMode->floatMode >> 5u) & 1u) == 0u);
     IrValue& active = ir.GetExec();
