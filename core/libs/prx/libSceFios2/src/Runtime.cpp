@@ -1,13 +1,19 @@
 #include "Runtime.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <map>
 #include <optional>
+#include <stdexcept>
+#include <thread>
+#include <vector>
 
 namespace Fios {
 namespace {
@@ -25,20 +31,38 @@ struct Op {
     Work work;
     bool done = false;
     bool queued = false;
+    bool syncRequested = false;
+    bool executing = false;
+    bool ioDone = false;
     bool cancelled = false;
+    bool callbackExecuting = false;
+    bool callbackFinished = false;
+    bool deleteDeferred = false;
+    bool deleteFired = false;
+    std::thread::id callbackThread{};
+    std::thread::id inlineOwner{};
     std::int32_t error = SCE_FIOS_OK;
     std::int64_t result = 0;
+    ExecutionPolicy policy = Async;
+    std::exception_ptr exception;
 };
 
 struct State {
     std::mutex mutex;
     std::condition_variable finished;
+    std::condition_variable workAvailable;
     std::map<SceFiosHandle, std::shared_ptr<Op>> ops;
+    std::map<SceFiosHandle, std::shared_ptr<Op>> inlineCompletions;
     std::map<SceFiosHandle, std::shared_ptr<FileHandle>> files;
     std::map<SceFiosHandle, std::shared_ptr<DirectoryHandle>> directories;
     std::deque<SceFiosOp> pending;
+    std::map<std::thread::id, std::vector<SceFiosOp>> callbackStackByThread;
     SceFiosHandle lastHandle = 0;
     bool initialized = false;
+    bool terminating = false;
+    bool workerRunning = false;
+    Pthread worker = nullptr;
+    std::exception_ptr retainedException;
     std::vector<std::uint8_t> parameters;
     std::uint32_t suspendCount = 0;
     std::optional<SceFiosOpAttr> globalAttr;
@@ -51,58 +75,53 @@ State& Global() {
 
 thread_local std::optional<SceFiosOpAttr> g_threadAttr;
 
+struct ThreadAttributes {
+    ThreadAttributes() {
+        if (scePthreadAttrInit(&value) != 0) throw std::runtime_error("libSceFios2: scePthreadAttrInit failed");
+    }
+    ~ThreadAttributes() { static_cast<void>(scePthreadAttrDestroy(&value)); }
+    ThreadAttributes(const ThreadAttributes&) = delete;
+    ThreadAttributes& operator=(const ThreadAttributes&) = delete;
+    PthreadAttr value = nullptr;
+};
+
+void ProcessShutdown();
+void* APS5_VABI FiosWorkerEntry_nid_no_patch(void*);
+
+void StartWorkerLocked(State& state) {
+    if (state.workerRunning) return;
+    ThreadAttributes attributes;
+    const KernelSchedParam schedule{260};
+    if (scePthreadAttrSetinheritsched(&attributes.value, 0) != 0 ||
+        scePthreadAttrSetschedparam(&attributes.value, &schedule) != 0 ||
+        scePthreadAttrSetstacksize(&attributes.value, 0x14000) != 0) {
+        throw std::runtime_error("libSceFios2: worker thread attribute rejected");
+    }
+    static const bool registered = (LibcRegisterShutdown_nid_postfix(ProcessShutdown), true);
+    static_cast<void>(registered);
+    state.workerRunning = true;
+    const int created = scePthreadCreate(&state.worker, &attributes.value, FiosWorkerEntry_nid_no_patch, nullptr, "SceFiosWorker");
+    if (created != 0) {
+        state.workerRunning = false;
+        state.worker = nullptr;
+        throw std::runtime_error("libSceFios2: scePthreadCreate failed");
+    }
+}
+
 bool HandleInUse(const State& state, SceFiosHandle handle) {
     return state.ops.count(handle) != 0 || state.files.count(handle) != 0 || state.directories.count(handle) != 0;
+}
+
+bool HandleAllocated(const State& state, SceFiosHandle handle) {
+    return HandleInUse(state, handle) || state.inlineCompletions.count(handle) != 0;
 }
 
 SceFiosHandle NextHandle(State& state) {
     for (int attempts = 0; attempts < 0x7fffffff; ++attempts) {
         state.lastHandle = state.lastHandle >= 0x7ffffffe ? 1 : state.lastHandle + 1;
-        if (!HandleInUse(state, state.lastHandle)) return state.lastHandle;
+        if (!HandleAllocated(state, state.lastHandle)) return state.lastHandle;
     }
     return 0;
-}
-
-void Finish(const std::shared_ptr<Op>& op, const Completion& completion) {
-    SceFiosOpCallback callback = nullptr;
-    void* context = nullptr;
-    {
-        const std::lock_guard lock(Global().mutex);
-        op->error = completion.error;
-        op->result = completion.result;
-        op->done = true;
-        op->queued = false;
-        op->work = nullptr;
-        callback = op->attr.pCallback;
-        context = op->attr.pCallbackContext;
-        Global().finished.notify_all();
-    }
-    if (callback != nullptr) callback(context, op->id, SCE_FIOS_OPEVENT_COMPLETE, completion.error);
-}
-
-void Run(const std::shared_ptr<Op>& op) {
-    Work work;
-    bool cancelled = false;
-    {
-        const std::lock_guard lock(Global().mutex);
-        work = std::move(op->work);
-        cancelled = op->cancelled;
-    }
-    Completion completion;
-    if (cancelled || !work) {
-        completion.error = SCE_FIOS_ERROR_CANCELLED;
-        Finish(op, completion);
-        return;
-    }
-    try {
-        work(completion);
-    } catch (...) {
-        completion.error = SCE_FIOS_ERROR_UNKNOWN;
-        completion.result = 0;
-        Finish(op, completion);
-        throw;
-    }
-    Finish(op, completion);
 }
 
 std::shared_ptr<Op> FindOp(State& state, SceFiosOp id) {
@@ -110,36 +129,160 @@ std::shared_ptr<Op> FindOp(State& state, SceFiosOp id) {
     return found == state.ops.end() ? nullptr : found->second;
 }
 
-void FireDelete(const std::shared_ptr<Op>& op) {
-    if (op->attr.pCallback != nullptr) op->attr.pCallback(op->attr.pCallbackContext, op->id, SCE_FIOS_OPEVENT_DELETE, SCE_FIOS_OK);
+std::deque<SceFiosOp>::iterator ReadyPending(State& state) {
+    if (state.terminating || state.suspendCount == 0) return state.pending.begin();
+    return std::find_if(state.pending.begin(), state.pending.end(), [&](SceFiosOp id) {
+        const auto op = FindOp(state, id);
+        return !op || op->syncRequested;
+    });
 }
 
-bool CancelQueued(const std::shared_ptr<Op>& op) {
-    {
-        const std::lock_guard lock(Global().mutex);
-        if (op->done || !op->queued) return false;
-        auto& pending = Global().pending;
-        pending.erase(std::remove(pending.begin(), pending.end(), op->id), pending.end());
-        op->cancelled = true;
+bool IsInAnyCallback(const State& state, std::thread::id threadId) {
+    const auto it = state.callbackStackByThread.find(threadId);
+    return it != state.callbackStackByThread.end() && !it->second.empty();
+}
+
+bool IsSelfOrAncestorCallback(const State& state, std::thread::id threadId, SceFiosOp opId) {
+    const auto it = state.callbackStackByThread.find(threadId);
+    if (it == state.callbackStackByThread.end()) return false;
+    const auto& stack = it->second;
+    return std::find(stack.begin(), stack.end(), opId) != stack.end();
+}
+
+void CompleteOpLocked(std::unique_lock<std::mutex>& lock, const std::shared_ptr<Op>& op, const Completion& completion, std::exception_ptr caughtException) {
+    op->error = completion.error;
+    op->result = completion.result;
+    if (caughtException && !op->exception) op->exception = caughtException;
+    op->ioDone = true;
+    op->executing = false;
+
+    SceFiosOpCallback callback = op->attr.pCallback;
+    void* context = op->attr.pCallbackContext;
+    const SceFiosOp opId = op->id;
+    const std::int32_t opError = completion.error;
+    const std::thread::id threadId = std::this_thread::get_id();
+
+    if (callback != nullptr) {
+        op->callbackExecuting = true;
+        op->callbackThread = threadId;
+        Global().callbackStackByThread[threadId].push_back(opId);
+
+        lock.unlock();
+        try {
+            callback(context, opId, SCE_FIOS_OPEVENT_COMPLETE, opError);
+        } catch (...) {
+            if (!caughtException) caughtException = std::current_exception();
+        }
+        lock.lock();
+
+        if (caughtException && !op->exception) op->exception = caughtException;
+
+        if (op->deleteDeferred && !op->deleteFired) {
+            op->deleteFired = true;
+
+            lock.unlock();
+            try {
+                callback(context, opId, SCE_FIOS_OPEVENT_DELETE, SCE_FIOS_OK);
+            } catch (...) {
+                if (!caughtException) caughtException = std::current_exception();
+            }
+            lock.lock();
+            if (caughtException && !op->exception) op->exception = caughtException;
+            Global().ops.erase(opId);
+        }
+
+        auto& stack = Global().callbackStackByThread[threadId];
+        stack.erase(std::remove(stack.begin(), stack.end(), opId), stack.end());
+        if (stack.empty()) {
+            Global().callbackStackByThread.erase(threadId);
+        }
+        op->callbackExecuting = false;
+        op->callbackThread = std::thread::id();
+    } else {
+        if (op->deleteDeferred && !op->deleteFired) {
+            op->deleteFired = true;
+            Global().ops.erase(opId);
+        }
     }
+
+    op->callbackFinished = true;
+    op->done = true;
+    if (op->exception && !Global().retainedException) Global().retainedException = op->exception;
+    Global().finished.notify_all();
+}
+
+void ExecuteOpLocked(std::unique_lock<std::mutex>& lock, const std::shared_ptr<Op>& op) {
+    Work work = std::move(op->work);
+    const bool cancelled = op->cancelled;
+    op->work = nullptr;
+
+    lock.unlock();
+
     Completion completion;
-    completion.error = SCE_FIOS_ERROR_CANCELLED;
-    Finish(op, completion);
+    std::exception_ptr caughtException = nullptr;
+    if (cancelled || !work) {
+        completion.error = SCE_FIOS_ERROR_CANCELLED;
+        completion.result = 0;
+    } else {
+        try {
+            work(completion);
+        } catch (...) {
+            caughtException = std::current_exception();
+            completion.error = SCE_FIOS_ERROR_UNKNOWN;
+            completion.result = 0;
+        }
+    }
+
+    lock.lock();
+    CompleteOpLocked(lock, op, completion, caughtException);
+}
+
+bool CancelQueuedLocked(std::unique_lock<std::mutex>& lock, const std::shared_ptr<Op>& op) {
+    if (op->done || !op->queued || op->executing) return false;
+    auto& pending = Global().pending;
+    pending.erase(std::remove(pending.begin(), pending.end(), op->id), pending.end());
+    op->queued = false;
+    op->cancelled = true;
+    Completion completion{SCE_FIOS_ERROR_CANCELLED, 0};
+    CompleteOpLocked(lock, op, completion, nullptr);
     return true;
 }
 
-void RunIfQueued(const std::shared_ptr<Op>& op) {
-    {
-        const std::lock_guard lock(Global().mutex);
-        if (op->done || !op->queued) return;
-        auto& pending = Global().pending;
-        pending.erase(std::remove(pending.begin(), pending.end(), op->id), pending.end());
+void* APS5_VABI FiosWorkerEntry_nid_no_patch(void*) {
+    std::unique_lock lock(Global().mutex);
+    while (Global().workerRunning) {
+        if (!Global().terminating && ReadyPending(Global()) == Global().pending.end()) {
+            Global().workAvailable.wait(lock, [&] {
+                return !Global().workerRunning || Global().terminating || ReadyPending(Global()) != Global().pending.end();
+            });
+            if (!Global().workerRunning && (!Global().terminating || Global().pending.empty())) break;
+        }
+        if (Global().pending.empty()) {
+            if (Global().terminating || !Global().workerRunning) break;
+            continue;
+        }
+
+        const auto ready = ReadyPending(Global());
+        if (ready == Global().pending.end()) continue;
+        const SceFiosOp id = *ready;
+        Global().pending.erase(ready);
+        const auto op = FindOp(Global(), id);
+        if (!op) continue;
+        if (op->done) {
+            op->queued = false;
+            continue;
+        }
         op->queued = false;
+        op->executing = true;
+
+        ExecuteOpLocked(lock, op);
     }
-    Run(op);
+    Global().workerRunning = false;
+    Global().finished.notify_all();
+    return nullptr;
 }
 
-}
+} // namespace
 
 std::int32_t FromKernelError(std::int64_t kernelResult) {
     if (kernelResult >= 0) return SCE_FIOS_OK;
@@ -184,46 +327,91 @@ std::uint64_t TimespecToDate(std::int64_t seconds, std::int64_t nanoseconds) {
     return static_cast<std::uint64_t>(seconds) * 1000000000ull + static_cast<std::uint64_t>(nanoseconds);
 }
 
-SceFiosOp Submit(const SceFiosOpAttr* attr, OpInfo info, Work work) {
+SceFiosOp Submit(const SceFiosOpAttr* attr, OpInfo info, Work work, ExecutionPolicy policy) {
     auto op = std::make_shared<Op>();
     bool runNow = false;
     SceFiosOpAttr given{};
     if (attr != nullptr && !CopyIn(&given, attr, sizeof(given))) return SCE_FIOS_ERROR_BAD_PTR;
     {
-        const std::lock_guard lock(Global().mutex);
+        std::unique_lock lock(Global().mutex);
         State& state = Global();
+        if (state.terminating) {
+            NotImplemented_nid_no_patch(__func__);
+        }
         const SceFiosHandle id = NextHandle(state);
         if (id == 0) return SCE_FIOS_ERROR_CANT_ALLOCATE_OP;
         if (attr != nullptr) op->attr = given;
         else if (g_threadAttr) op->attr = *g_threadAttr;
         else if (state.globalAttr) op->attr = *state.globalAttr;
         op->id = id;
+        op->policy = policy;
         op->path = std::move(info.path);
         op->offset = info.offset;
         op->request = info.request;
         op->buffer = info.buffer;
         op->work = std::move(work);
         state.ops[id] = op;
-        if (state.suspendCount > 0) {
+        if (policy == Inline) {
+            op->inlineOwner = std::this_thread::get_id();
+            try {
+                state.inlineCompletions[id] = op;
+            } catch (...) {
+                state.ops.erase(id);
+                throw;
+            }
+            op->executing = true;
+            runNow = true;
+        } else {
+            try {
+                StartWorkerLocked(state);
+            } catch (...) {
+                state.ops.erase(id);
+                throw;
+            }
             op->queued = true;
             state.pending.push_back(id);
-        } else {
-            runNow = true;
+            if (state.suspendCount == 0) {
+                state.workAvailable.notify_one();
+            }
         }
     }
-    if (runNow) Run(op);
+    if (runNow) {
+        try {
+            std::unique_lock lock(Global().mutex);
+            ExecuteOpLocked(lock, op);
+        } catch (...) {
+            std::lock_guard lock(Global().mutex);
+            Global().inlineCompletions.erase(op->id);
+            Global().ops.erase(op->id);
+            Global().finished.notify_all();
+            throw;
+        }
+    }
     return op->id;
 }
 
-SceFiosOp SubmitFailed(const SceFiosOpAttr* attr, OpInfo info, std::int32_t error) {
-    return Submit(attr, std::move(info), [error](Completion& completion) { completion.error = error; });
+SceFiosOp SubmitFailed(const SceFiosOpAttr* attr, OpInfo info, std::int32_t error, ExecutionPolicy policy) {
+    return Submit(attr, std::move(info), [error](Completion& completion) { completion.error = error; }, policy);
 }
 
 std::int32_t Wait(SceFiosOp op) {
     std::unique_lock lock(Global().mutex);
     const auto found = FindOp(Global(), op);
     if (!found) return SCE_FIOS_ERROR_BAD_OP;
-    Global().finished.wait(lock, [&] { return found->done; });
+
+    const std::thread::id threadId = std::this_thread::get_id();
+    if (IsInAnyCallback(Global(), threadId)) {
+        if (IsSelfOrAncestorCallback(Global(), threadId, op)) {
+            if (found->exception) std::rethrow_exception(found->exception);
+            return found->error;
+        }
+        if (!found->done && !found->ioDone) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+    }
+
+    Global().finished.wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
+    if (found->exception) std::rethrow_exception(found->exception);
     return found->error;
 }
 
@@ -231,7 +419,23 @@ std::int32_t WaitUntil(SceFiosOp op, SceFiosTime deadline) {
     std::unique_lock lock(Global().mutex);
     const auto found = FindOp(Global(), op);
     if (!found) return SCE_FIOS_ERROR_BAD_OP;
-    if (!Global().finished.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::nanoseconds(deadline)), [&] { return found->done; })) return SCE_FIOS_ERROR_TIMEOUT;
+
+    const std::thread::id threadId = std::this_thread::get_id();
+    if (IsInAnyCallback(Global(), threadId)) {
+        if (IsSelfOrAncestorCallback(Global(), threadId, op)) {
+            if (found->exception) std::rethrow_exception(found->exception);
+            return found->error;
+        }
+        if (!found->done && !found->ioDone) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+    }
+
+    if (!Global().finished.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::nanoseconds(deadline)),
+                                      [&] { return found->callbackFinished && !found->callbackExecuting; })) {
+        return SCE_FIOS_ERROR_TIMEOUT;
+    }
+    if (found->exception) std::rethrow_exception(found->exception);
     return found->error;
 }
 
@@ -249,53 +453,155 @@ std::int64_t SyncCount(SceFiosOp op) {
 }
 
 bool SyncWait(SceFiosOp op, Completion& completion) {
-    std::shared_ptr<Op> found;
-    {
-        const std::lock_guard lock(Global().mutex);
-        found = FindOp(Global(), op);
+    std::unique_lock lock(Global().mutex);
+    auto found = FindOp(Global(), op);
+    const std::thread::id threadId = std::this_thread::get_id();
+    if (!found) {
+        const auto it = Global().inlineCompletions.find(op);
+        if (it != Global().inlineCompletions.end() && it->second->inlineOwner == threadId) {
+            found = it->second;
+        }
     }
     if (!found) return false;
-    RunIfQueued(found);
-    {
-        std::unique_lock lock(Global().mutex);
-        Global().finished.wait(lock, [&] { return found->done; });
-        completion.error = found->error;
-        completion.result = found->result;
+
+    if (IsInAnyCallback(Global(), threadId)) {
+        if (IsSelfOrAncestorCallback(Global(), threadId, op)) {
+            completion.error = found->error;
+            completion.result = found->result;
+            const auto ex = found->exception;
+            lock.unlock();
+            if (ex) std::rethrow_exception(ex);
+            DeleteOp(op);
+            return true;
+        }
+        if (!found->done && !found->ioDone) {
+            NotImplemented_nid_no_patch(__func__);
+        }
     }
+
+    if (found->queued) {
+        found->syncRequested = true;
+        Global().workAvailable.notify_one();
+    }
+
+    Global().finished.wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
+
+    completion.error = found->error;
+    completion.result = found->result;
+    const auto exception = found->exception;
+    const bool isOwnerConsumption = (found->inlineOwner == threadId);
+    lock.unlock();
+
+    auto releaseLease = [&]() {
+        if (isOwnerConsumption) {
+            const std::lock_guard leaseLock(Global().mutex);
+            Global().inlineCompletions.erase(op);
+            Global().finished.notify_all();
+        }
+    };
+
+    struct LeaseGuard {
+        decltype(releaseLease)& cleanup;
+        ~LeaseGuard() { cleanup(); }
+    } guard{releaseLease};
+
     DeleteOp(op);
+    if (exception) std::rethrow_exception(exception);
     return true;
 }
 
 bool OpDone(SceFiosOp op) {
     const std::lock_guard lock(Global().mutex);
     const auto found = FindOp(Global(), op);
-    return found && found->done;
+    if (!found) return false;
+    const std::thread::id threadId = std::this_thread::get_id();
+    if (IsSelfOrAncestorCallback(Global(), threadId, op)) {
+        return found->done || found->ioDone;
+    }
+    return found->done;
 }
 
 bool DeleteOp(SceFiosOp op) {
     std::shared_ptr<Op> found;
-    {
-        const std::lock_guard lock(Global().mutex);
-        found = FindOp(Global(), op);
-    }
-    if (!found) return false;
-    CancelQueued(found);
+    SceFiosOpCallback callback = nullptr;
+    void* context = nullptr;
     {
         std::unique_lock lock(Global().mutex);
-        Global().finished.wait(lock, [&] { return found->done; });
-        if (Global().ops.erase(op) == 0) return false;
+        found = FindOp(Global(), op);
+        if (!found) return false;
+
+        const std::thread::id threadId = std::this_thread::get_id();
+        if (IsInAnyCallback(Global(), threadId)) {
+            if (IsSelfOrAncestorCallback(Global(), threadId, op)) {
+                found->deleteDeferred = true;
+                return true;
+            }
+            if (!found->done && !found->ioDone) {
+                NotImplemented_nid_no_patch(__func__);
+            }
+        }
+
+        if (found->deleteFired) {
+            Global().finished.wait(lock, [&] { return found->callbackFinished && !found->callbackExecuting; });
+            if (found->exception) std::rethrow_exception(found->exception);
+            return false;
+        }
+
+        CancelQueuedLocked(lock, found);
+
+        Global().finished.wait(lock, [&] {
+            return found->callbackFinished && !found->callbackExecuting;
+        });
+
+        if (found->deleteFired) {
+            if (found->exception) std::rethrow_exception(found->exception);
+            return false;
+        }
+        if (Global().ops.count(op) == 0) {
+            if (found->exception) std::rethrow_exception(found->exception);
+            return false;
+        }
+        found->deleteFired = true;
+        callback = found->attr.pCallback;
+        context = found->attr.pCallbackContext;
+
+        if (callback != nullptr) {
+            found->callbackFinished = false;
+            found->callbackExecuting = true;
+            found->callbackThread = threadId;
+            Global().callbackStackByThread[threadId].push_back(op);
+
+            lock.unlock();
+            std::exception_ptr callbackException;
+            try {
+                callback(context, op, SCE_FIOS_OPEVENT_DELETE, SCE_FIOS_OK);
+            } catch (...) {
+                callbackException = std::current_exception();
+            }
+            lock.lock();
+            if (callbackException && !found->exception) found->exception = callbackException;
+
+            auto& stack = Global().callbackStackByThread[threadId];
+            stack.erase(std::remove(stack.begin(), stack.end(), op), stack.end());
+            if (stack.empty()) Global().callbackStackByThread.erase(threadId);
+
+            found->callbackExecuting = false;
+            found->callbackFinished = true;
+            found->callbackThread = std::thread::id();
+            Global().finished.notify_all();
+        }
+        if (found->exception && !Global().retainedException) Global().retainedException = found->exception;
+        Global().ops.erase(op);
     }
-    FireDelete(found);
+
+    if (found->exception) std::rethrow_exception(found->exception);
     return true;
 }
 
 bool CancelOp(SceFiosOp op) {
-    std::shared_ptr<Op> found;
-    {
-        const std::lock_guard lock(Global().mutex);
-        found = FindOp(Global(), op);
-    }
-    return found && CancelQueued(found);
+    std::unique_lock lock(Global().mutex);
+    const auto found = FindOp(Global(), op);
+    return found && CancelQueuedLocked(lock, found);
 }
 
 bool OpIsCancelled(SceFiosOp op) {
@@ -309,7 +615,7 @@ bool QueryOp(SceFiosOp op, std::int64_t& request, std::int64_t& actual, std::int
     const auto found = FindOp(Global(), op);
     if (!found) return false;
     request = found->request;
-    actual = found->done ? found->result : 0;
+    actual = (found->done || found->ioDone) ? found->result : 0;
     offset = found->offset;
     return true;
 }
@@ -318,7 +624,7 @@ bool OpError(SceFiosOp op, std::int32_t& error) {
     const std::lock_guard lock(Global().mutex);
     const auto found = FindOp(Global(), op);
     if (!found) return false;
-    error = found->done ? found->error : 1;
+    error = (found->done || found->ioDone) ? found->error : 1;
     return true;
 }
 
@@ -326,7 +632,7 @@ std::int32_t SetOpBuffer(SceFiosOp op, void* buffer) {
     const std::lock_guard lock(Global().mutex);
     const auto found = FindOp(Global(), op);
     if (!found) return SCE_FIOS_ERROR_BAD_OP;
-    if (found->queued) return SCE_FIOS_ERROR_BUSY;
+    if (found->queued || found->executing) return SCE_FIOS_ERROR_BUSY;
     found->buffer = buffer;
     return SCE_FIOS_OK;
 }
@@ -365,14 +671,12 @@ std::uint32_t ListOps(SceFiosOp* out, std::uint32_t capacity) {
 }
 
 void CancelAll() {
+    std::unique_lock lock(Global().mutex);
     std::vector<std::shared_ptr<Op>> queued;
-    {
-        const std::lock_guard lock(Global().mutex);
-        for (const SceFiosOp id : Global().pending) {
-            if (const auto found = FindOp(Global(), id)) queued.push_back(found);
-        }
+    for (const SceFiosOp id : Global().pending) {
+        if (const auto found = FindOp(Global(), id)) queued.push_back(found);
     }
-    for (const auto& op : queued) CancelQueued(op);
+    for (const auto& op : queued) CancelQueuedLocked(lock, op);
 }
 
 SceFiosFH AddFile(std::shared_ptr<FileHandle> file) {
@@ -465,6 +769,7 @@ bool StoreParameters(State& state, const void* params) {
 
 bool Initialize(const void* params) {
     const std::lock_guard lock(Global().mutex);
+    if (Global().terminating) NotImplemented_nid_no_patch(__func__);
     if (!StoreParameters(Global(), params)) return false;
     Global().initialized = true;
     return true;
@@ -472,22 +777,92 @@ bool Initialize(const void* params) {
 
 bool UpdateParameters(const void* params) {
     const std::lock_guard lock(Global().mutex);
-    return Global().initialized && StoreParameters(Global(), params);
+    if (Global().terminating) NotImplemented_nid_no_patch(__func__);
+    if (!Global().initialized) return false;
+    return StoreParameters(Global(), params);
 }
 
 void Terminate() {
-    CancelAll();
-    CloseAllFiles();
-    const std::lock_guard lock(Global().mutex);
-    State& state = Global();
-    state.directories.clear();
-    for (auto found = state.ops.begin(); found != state.ops.end();) {
-        found = found->second->done ? state.ops.erase(found) : std::next(found);
+    Pthread workerToJoin = nullptr;
+    std::exception_ptr retainedException = nullptr;
+    {
+        std::unique_lock lock(Global().mutex);
+        State& state = Global();
+        const std::thread::id threadId = std::this_thread::get_id();
+        if (IsInAnyCallback(state, threadId) || (state.worker != nullptr && scePthreadSelf() == state.worker)) {
+            NotImplemented_nid_no_patch(__func__);
+        }
+        if (state.terminating) {
+            state.finished.wait(lock, [&] { return !state.terminating; });
+            return;
+        }
+        state.terminating = true;
+
+        for (const SceFiosOp id : state.pending) {
+            if (const auto op = FindOp(state, id)) {
+                op->cancelled = true;
+            }
+        }
+        state.workAvailable.notify_all();
+
+        if (state.workerRunning) {
+            state.finished.wait(lock, [&] {
+                return !state.workerRunning;
+            });
+            workerToJoin = state.worker;
+            state.worker = nullptr;
+        }
+
+        state.finished.wait(lock, [&] {
+            if (!state.callbackStackByThread.empty()) return false;
+            for (const auto& entry : state.ops) {
+                const auto& op = entry.second;
+                if (op->executing || op->callbackExecuting) return false;
+            }
+            return state.inlineCompletions.empty();
+        });
+
+        retainedException = state.retainedException;
+        for (const auto& entry : state.ops) {
+            if (entry.second->exception && !retainedException) {
+                retainedException = entry.second->exception;
+            }
+        }
     }
-    state.parameters.clear();
-    state.suspendCount = 0;
-    state.initialized = false;
+
+    if (workerToJoin != nullptr) {
+        if (scePthreadJoin(workerToJoin, nullptr) != 0) {
+            throw std::runtime_error("libSceFios2: scePthreadJoin failed");
+        }
+    }
+
+    CloseAllFiles();
+
+    {
+        const std::lock_guard lock(Global().mutex);
+        State& state = Global();
+        state.directories.clear();
+        state.ops.clear();
+        state.inlineCompletions.clear();
+        state.pending.clear();
+        state.parameters.clear();
+        state.suspendCount = 0;
+        state.initialized = false;
+        state.retainedException = nullptr;
+        state.terminating = false;
+        state.finished.notify_all();
+    }
+
+    if (retainedException) std::rethrow_exception(retainedException);
 }
+
+namespace {
+
+void ProcessShutdown() {
+    Terminate();
+}
+
+} // namespace
 
 bool IsInitialized(void* out) {
     std::vector<std::uint8_t> copy;
@@ -506,21 +881,12 @@ void Suspend() {
 }
 
 void Resume() {
-    std::vector<std::shared_ptr<Op>> ready;
-    {
-        const std::lock_guard lock(Global().mutex);
-        State& state = Global();
-        if (state.suspendCount == 0) return;
-        if (--state.suspendCount != 0) return;
-        for (const SceFiosOp id : state.pending) {
-            if (const auto found = FindOp(state, id)) {
-                found->queued = false;
-                ready.push_back(found);
-            }
-        }
-        state.pending.clear();
+    const std::lock_guard lock(Global().mutex);
+    State& state = Global();
+    if (state.suspendCount == 0) return;
+    if (--state.suspendCount == 0) {
+        state.workAvailable.notify_one();
     }
-    for (const auto& op : ready) Run(op);
 }
 
 std::uint32_t SuspendCount() {
@@ -530,7 +896,14 @@ std::uint32_t SuspendCount() {
 
 bool IsIdle() {
     const std::lock_guard lock(Global().mutex);
-    return Global().pending.empty();
+    if (!Global().pending.empty()) return false;
+    for (const auto& entry : Global().ops) {
+        const auto& op = entry.second;
+        if (op->queued || op->executing || op->callbackExecuting || !op->callbackFinished) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool SetGlobalAttr(const SceFiosOpAttr* attr) {
@@ -610,7 +983,7 @@ void FillStat(const FileStat& native, SceFiosStat& stat) {
     stat.mode = native.st_mode;
 }
 
-}
+} // namespace
 
 std::int32_t StatPath(const std::string& path, SceFiosStat& stat) {
     FileStat native{};
@@ -626,4 +999,4 @@ std::int32_t StatDescriptor(int descriptor, SceFiosStat& stat) {
     return SCE_FIOS_OK;
 }
 
-}
+} // namespace Fios

@@ -571,7 +571,7 @@ SceFiosOp APS5_VABI sceFiosResolve(const SceFiosOpAttr* attr, const void* reques
         }
         std::uint8_t copied[0x410];
         if (!Fios::CopyIn(copied, request, sizeof(copied)) || !Fios::CopyOut(result, copied, sizeof(copied))) completion.error = SCE_FIOS_ERROR_BAD_PTR;
-    });
+    }, Fios::Async);
 }
 
 bool APS5_VABI sceFiosOpIsDone(SceFiosOp op) {

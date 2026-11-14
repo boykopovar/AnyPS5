@@ -41,7 +41,7 @@ bool CanWrite(const Fios::FileHandle& file) {
     return (file.params.openFlags & SCE_FIOS_O_WRITE) != 0;
 }
 
-SceFiosOp SubmitHandle(const SceFiosOpAttr* attr, SceFiosFH handle, std::int64_t request, std::int64_t offset, void* buffer, std::int32_t invalid, HandleWork work) {
+SceFiosOp SubmitHandle(const SceFiosOpAttr* attr, SceFiosFH handle, std::int64_t request, std::int64_t offset, void* buffer, std::int32_t invalid, HandleWork work, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
     info.request = request;
     info.offset = offset;
@@ -63,7 +63,7 @@ SceFiosOp SubmitHandle(const SceFiosOpAttr* attr, SceFiosFH handle, std::int64_t
             return;
         }
         work(*file, completion);
-    });
+    }, policy);
 }
 
 std::int32_t CheckRange(const void* buffer, SceFiosSize length, SceFiosOffset offset, bool positioned) {
@@ -84,14 +84,14 @@ void Transfer(Fios::FileHandle& file, Fios::Completion& completion, void* buffer
     else completion.result = count;
 }
 
-SceFiosOp StartTransfer(const SceFiosOpAttr* attr, SceFiosFH handle, void* buffer, SceFiosSize length, SceFiosOffset offset, bool positioned, bool write) {
+SceFiosOp StartTransfer(const SceFiosOpAttr* attr, SceFiosFH handle, void* buffer, SceFiosSize length, SceFiosOffset offset, bool positioned, bool write, Fios::ExecutionPolicy policy = Fios::Async) {
     const std::int32_t invalid = CheckRange(buffer, length, offset, positioned);
     return SubmitHandle(attr, handle, length, positioned ? offset : 0, buffer, invalid, [=](Fios::FileHandle& file, Fios::Completion& completion) {
         Transfer(file, completion, buffer, length, offset, positioned, write);
-    });
+    }, policy);
 }
 
-SceFiosOp StartVectors(const SceFiosOpAttr* attr, SceFiosFH handle, const SceFiosBuffer* iov, int iovcnt, SceFiosOffset offset, bool positioned, bool write) {
+SceFiosOp StartVectors(const SceFiosOpAttr* attr, SceFiosFH handle, const SceFiosBuffer* iov, int iovcnt, SceFiosOffset offset, bool positioned, bool write, Fios::ExecutionPolicy policy = Fios::Async) {
     std::int32_t invalid = SCE_FIOS_OK;
     std::vector<SceFiosBuffer> vectors;
     if (iovcnt <= 0 || iovcnt > MaxVectors) invalid = SCE_FIOS_ERROR_BAD_IOVCNT;
@@ -124,10 +124,10 @@ SceFiosOp StartVectors(const SceFiosOpAttr* attr, SceFiosFH handle, const SceFio
             position += count;
             if (static_cast<std::uint64_t>(count) < vector.length) return;
         }
-    });
+    }, policy);
 }
 
-SceFiosOp StartOpen(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* path, const SceFiosOpenParams* openParams, std::int32_t nativeMode) {
+SceFiosOp StartOpen(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* path, const SceFiosOpenParams* openParams, std::int32_t nativeMode, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
     std::int32_t invalid = outFH == nullptr ? SCE_FIOS_ERROR_BAD_PTR : Fios::CopyPath(path, info.path);
     SceFiosOpenParams params{};
@@ -173,10 +173,10 @@ SceFiosOp StartOpen(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* pat
             sceKernelClose(descriptor);
             completion.error = SCE_FIOS_ERROR_BAD_PTR;
         }
-    });
+    }, policy);
 }
 
-SceFiosOp StartClose(const SceFiosOpAttr* attr, SceFiosFH handle) {
+SceFiosOp StartClose(const SceFiosOpAttr* attr, SceFiosFH handle, Fios::ExecutionPolicy policy = Fios::Async) {
     Fios::OpInfo info;
     if (const auto file = Fios::FindFile(handle)) info.path = file->path;
     return Fios::Submit(attr, std::move(info), [handle](Fios::Completion& completion) {
@@ -188,28 +188,28 @@ SceFiosOp StartClose(const SceFiosOpAttr* attr, SceFiosFH handle) {
         const std::lock_guard lock(file->mutex);
         completion.error = Fios::FromKernelError(sceKernelClose(file->descriptor));
         file->descriptor = -1;
-    });
+    }, policy);
 }
 
-SceFiosOp StartStat(const SceFiosOpAttr* attr, SceFiosFH handle, SceFiosStat* outStatus) {
+SceFiosOp StartStat(const SceFiosOpAttr* attr, SceFiosFH handle, SceFiosStat* outStatus, Fios::ExecutionPolicy policy = Fios::Async) {
     return SubmitHandle(attr, handle, 0, 0, nullptr, SCE_FIOS_OK, [outStatus](Fios::FileHandle& file, Fios::Completion& completion) {
         SceFiosStat stat{};
         if (const std::int32_t error = Fios::StatDescriptor(file.descriptor, stat)) completion.error = error;
         else if (outStatus == nullptr || !Fios::CopyOut(outStatus, &stat, sizeof(stat))) completion.error = SCE_FIOS_ERROR_BAD_PTR;
-    });
+    }, policy);
 }
 
-SceFiosOp StartTruncate(const SceFiosOpAttr* attr, SceFiosFH handle, SceFiosSize length) {
+SceFiosOp StartTruncate(const SceFiosOpAttr* attr, SceFiosFH handle, SceFiosSize length, Fios::ExecutionPolicy policy = Fios::Async) {
     return SubmitHandle(attr, handle, length, 0, nullptr, length < 0 ? SCE_FIOS_ERROR_BAD_SIZE : SCE_FIOS_OK, [length](Fios::FileHandle& file, Fios::Completion& completion) {
         if (!CanWrite(file)) completion.error = SCE_FIOS_ERROR_READ_ONLY;
         else completion.error = Fios::FromKernelError(sceKernelFtruncate(file.descriptor, length));
-    });
+    }, policy);
 }
 
-SceFiosOp StartSync(const SceFiosOpAttr* attr, SceFiosFH handle) {
+SceFiosOp StartSync(const SceFiosOpAttr* attr, SceFiosFH handle, Fios::ExecutionPolicy policy = Fios::Async) {
     return SubmitHandle(attr, handle, 0, 0, nullptr, SCE_FIOS_OK, [](Fios::FileHandle& file, Fios::Completion& completion) {
         completion.error = Fios::FromKernelError(sceKernelFsync(file.descriptor));
-    });
+    }, policy);
 }
 
 int StatusSync(SceFiosOp op) {
@@ -256,115 +256,115 @@ void APS5_VABI sceFiosDeallocatePassthruFH(SceFiosFH handle) {
 }
 
 SceFiosOp APS5_VABI sceFiosFHOpen(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* path, const SceFiosOpenParams* openParams) {
-    return StartOpen(attr, outFH, path, openParams, DefaultNativeMode);
+    return StartOpen(attr, outFH, path, openParams, DefaultNativeMode, Fios::Async);
 }
 
 int APS5_VABI sceFiosFHOpenSync(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* path, const SceFiosOpenParams* openParams) {
-    return StatusSync(StartOpen(attr, outFH, path, openParams, DefaultNativeMode));
+    return StatusSync(StartOpen(attr, outFH, path, openParams, DefaultNativeMode, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHOpenWithMode(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* path, const SceFiosOpenParams* openParams, std::int32_t nativeMode) {
-    return StartOpen(attr, outFH, path, openParams, nativeMode);
+    return StartOpen(attr, outFH, path, openParams, nativeMode, Fios::Async);
 }
 
 int APS5_VABI sceFiosFHOpenWithModeSync(const SceFiosOpAttr* attr, SceFiosFH* outFH, const char* path, const SceFiosOpenParams* openParams, std::int32_t nativeMode) {
-    return StatusSync(StartOpen(attr, outFH, path, openParams, nativeMode));
+    return StatusSync(StartOpen(attr, outFH, path, openParams, nativeMode, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHClose(const SceFiosOpAttr* attr, SceFiosFH fh) {
-    return StartClose(attr, fh);
+    return StartClose(attr, fh, Fios::Async);
 }
 
 int APS5_VABI sceFiosFHCloseSync(const SceFiosOpAttr* attr, SceFiosFH fh) {
-    return StatusSync(StartClose(attr, fh));
+    return StatusSync(StartClose(attr, fh, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHStat(const SceFiosOpAttr* attr, SceFiosFH fh, SceFiosStat* outStatus) {
-    return StartStat(attr, fh, outStatus);
+    return StartStat(attr, fh, outStatus, Fios::Async);
 }
 
 int APS5_VABI sceFiosFHStatSync(const SceFiosOpAttr* attr, SceFiosFH fh, SceFiosStat* outStatus) {
-    return StatusSync(StartStat(attr, fh, outStatus));
+    return StatusSync(StartStat(attr, fh, outStatus, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHTruncate(const SceFiosOpAttr* attr, SceFiosFH fh, SceFiosSize length) {
-    return StartTruncate(attr, fh, length);
+    return StartTruncate(attr, fh, length, Fios::Async);
 }
 
 int APS5_VABI sceFiosFHTruncateSync(const SceFiosOpAttr* attr, SceFiosFH fh, SceFiosSize length) {
-    return StatusSync(StartTruncate(attr, fh, length));
+    return StatusSync(StartTruncate(attr, fh, length, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHSync(const SceFiosOpAttr* attr, SceFiosFH fh) {
-    return StartSync(attr, fh);
+    return StartSync(attr, fh, Fios::Async);
 }
 
 int APS5_VABI sceFiosFHSyncSync(const SceFiosOpAttr* attr, SceFiosFH fh) {
-    return StatusSync(StartSync(attr, fh));
+    return StatusSync(StartSync(attr, fh, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHRead(const SceFiosOpAttr* attr, SceFiosFH fh, void* buffer, SceFiosSize length) {
-    return StartTransfer(attr, fh, buffer, length, 0, false, false);
+    return StartTransfer(attr, fh, buffer, length, 0, false, false, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHReadSync(const SceFiosOpAttr* attr, SceFiosFH fh, void* buffer, SceFiosSize length) {
-    return CountSync(StartTransfer(attr, fh, buffer, length, 0, false, false));
+    return CountSync(StartTransfer(attr, fh, buffer, length, 0, false, false, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHWrite(const SceFiosOpAttr* attr, SceFiosFH fh, const void* buffer, SceFiosSize length) {
-    return StartTransfer(attr, fh, const_cast<void*>(buffer), length, 0, false, true);
+    return StartTransfer(attr, fh, const_cast<void*>(buffer), length, 0, false, true, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHWriteSync(const SceFiosOpAttr* attr, SceFiosFH fh, const void* buffer, SceFiosSize length) {
-    return CountSync(StartTransfer(attr, fh, const_cast<void*>(buffer), length, 0, false, true));
+    return CountSync(StartTransfer(attr, fh, const_cast<void*>(buffer), length, 0, false, true, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHPread(const SceFiosOpAttr* attr, SceFiosFH fh, void* buffer, SceFiosSize length, SceFiosOffset offset) {
-    return StartTransfer(attr, fh, buffer, length, offset, true, false);
+    return StartTransfer(attr, fh, buffer, length, offset, true, false, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHPreadSync(const SceFiosOpAttr* attr, SceFiosFH fh, void* buffer, SceFiosSize length, SceFiosOffset offset) {
-    return CountSync(StartTransfer(attr, fh, buffer, length, offset, true, false));
+    return CountSync(StartTransfer(attr, fh, buffer, length, offset, true, false, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHPwrite(const SceFiosOpAttr* attr, SceFiosFH fh, const void* buffer, SceFiosSize length, SceFiosOffset offset) {
-    return StartTransfer(attr, fh, const_cast<void*>(buffer), length, offset, true, true);
+    return StartTransfer(attr, fh, const_cast<void*>(buffer), length, offset, true, true, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHPwriteSync(const SceFiosOpAttr* attr, SceFiosFH fh, const void* buffer, SceFiosSize length, SceFiosOffset offset) {
-    return CountSync(StartTransfer(attr, fh, const_cast<void*>(buffer), length, offset, true, true));
+    return CountSync(StartTransfer(attr, fh, const_cast<void*>(buffer), length, offset, true, true, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHReadv(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt) {
-    return StartVectors(attr, fh, iov, iovcnt, 0, false, false);
+    return StartVectors(attr, fh, iov, iovcnt, 0, false, false, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHReadvSync(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt) {
-    return CountSync(StartVectors(attr, fh, iov, iovcnt, 0, false, false));
+    return CountSync(StartVectors(attr, fh, iov, iovcnt, 0, false, false, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHWritev(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt) {
-    return StartVectors(attr, fh, iov, iovcnt, 0, false, true);
+    return StartVectors(attr, fh, iov, iovcnt, 0, false, true, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHWritevSync(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt) {
-    return CountSync(StartVectors(attr, fh, iov, iovcnt, 0, false, true));
+    return CountSync(StartVectors(attr, fh, iov, iovcnt, 0, false, true, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHPreadv(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt, SceFiosOffset offset) {
-    return StartVectors(attr, fh, iov, iovcnt, offset, true, false);
+    return StartVectors(attr, fh, iov, iovcnt, offset, true, false, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHPreadvSync(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt, SceFiosOffset offset) {
-    return CountSync(StartVectors(attr, fh, iov, iovcnt, offset, true, false));
+    return CountSync(StartVectors(attr, fh, iov, iovcnt, offset, true, false, Fios::Inline));
 }
 
 SceFiosOp APS5_VABI sceFiosFHPwritev(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt, SceFiosOffset offset) {
-    return StartVectors(attr, fh, iov, iovcnt, offset, true, true);
+    return StartVectors(attr, fh, iov, iovcnt, offset, true, true, Fios::Async);
 }
 
 SceFiosSize APS5_VABI sceFiosFHPwritevSync(const SceFiosOpAttr* attr, SceFiosFH fh, const SceFiosBuffer* iov, int iovcnt, SceFiosOffset offset) {
-    return CountSync(StartVectors(attr, fh, iov, iovcnt, offset, true, true));
+    return CountSync(StartVectors(attr, fh, iov, iovcnt, offset, true, true, Fios::Inline));
 }
 
 SceFiosOffset APS5_VABI sceFiosFHSeek(SceFiosFH fh, SceFiosOffset offset, std::int32_t whence) {

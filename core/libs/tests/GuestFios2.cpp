@@ -3,12 +3,15 @@
 #include "prx/libc/include/General.hpp"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -89,6 +92,90 @@ static SceFiosOpAttr CountingAttr() {
     attr.pCallback = CountEvents;
     attr.pCallbackContext = reinterpret_cast<void*>(0x1234);
     return attr;
+}
+
+struct ThreadingContext {
+    std::thread::id callerThread;
+    std::mutex* mutex;
+    std::atomic<bool>* ranOnCaller;
+    std::atomic<bool>* ranOnWorker;
+    std::atomic<Pthread>* workerPthread;
+};
+
+static int APS5_VABI ThreadingCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)op;
+    (void)error;
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        auto* c = static_cast<ThreadingContext*>(context);
+        if (std::this_thread::get_id() == c->callerThread) {
+            c->ranOnCaller->store(true);
+            return 0;
+        }
+        c->workerPthread->store(scePthreadSelf());
+        c->mutex->lock();
+        c->ranOnWorker->store(true);
+        c->mutex->unlock();
+    }
+    return 0;
+}
+
+static void CheckCallbackThreading(const std::string& file) {
+    const std::thread::id callerThread = std::this_thread::get_id();
+    const Pthread callerPthread = scePthreadSelf();
+    std::mutex callerMutex;
+    std::atomic<bool> ranOnCaller{false};
+    std::atomic<bool> ranOnWorker{false};
+    std::atomic<Pthread> workerPthread{nullptr};
+
+    callerMutex.lock();
+
+    ThreadingContext ctx{callerThread, &callerMutex, &ranOnCaller, &ranOnWorker, &workerPthread};
+
+    SceFiosOpAttr attr{};
+    attr.pCallbackContext = &ctx;
+    attr.pCallback = ThreadingCallback;
+
+    const SceFiosOp op = sceFiosFileGetSize(&attr, file.c_str());
+    REQUIRE(op > 0);
+    callerMutex.unlock();
+
+    REQUIRE(sceFiosOpWait(op) == SCE_FIOS_OK);
+    REQUIRE(ranOnWorker.load());
+    REQUIRE(!ranOnCaller.load());
+    REQUIRE(workerPthread.load() != nullptr);
+    REQUIRE(workerPthread.load() != callerPthread);
+    sceFiosOpDelete(op);
+
+    ranOnCaller.store(false);
+    ranOnWorker.store(false);
+    sceFiosSuspend();
+    const SceFiosOp unrequested = sceFiosFileGetSize(nullptr, file.c_str());
+    const SceFiosOp suspended = sceFiosFileGetSize(&attr, file.c_str());
+    std::mutex waitMutex;
+    std::condition_variable finished;
+    bool returned = false;
+    bool forcedResume = false;
+    std::thread resumer([&] {
+        std::unique_lock lock(waitMutex);
+        if (!finished.wait_for(lock, std::chrono::seconds(2), [&] { return returned; })) {
+            forcedResume = true;
+            lock.unlock();
+            sceFiosResume();
+        }
+    });
+    const auto result = sceFiosOpSyncWait(suspended);
+    {
+        const std::lock_guard lock(waitMutex);
+        returned = true;
+    }
+    finished.notify_all();
+    resumer.join();
+    const bool remainedSuspended = sceFiosIsSuspended();
+    const bool unrequestedPending = !sceFiosOpIsDone(unrequested);
+    if (!forcedResume) sceFiosResume();
+    REQUIRE(sceFiosOpSyncWait(unrequested) == 10);
+    REQUIRE(!forcedResume && remainedSuspended && unrequestedPending);
+    REQUIRE(result == 10 && ranOnWorker.load() && !ranOnCaller.load());
 }
 
 static void CheckInitialization() {
@@ -267,12 +354,15 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     SceFiosStat asyncStat{};
     std::memset(&asyncStat, 0xaa, sizeof(asyncStat));
     const SceFiosOp statOp = sceFiosStat(nullptr, file.c_str(), &asyncStat);
+    REQUIRE(sceFiosOpWait(statOp) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpGetError(statOp) == SCE_FIOS_OK && asyncStat.fileSize == 10 && (asyncStat.statFlags & SCE_FIOS_STAT_DIRECTORY) == 0);
     REQUIRE(sceFiosOpSyncWait(statOp) == 0);
     const SceFiosOp directoryStat = sceFiosStat(nullptr, directory.c_str(), &asyncStat);
+    REQUIRE(sceFiosOpWait(directoryStat) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpGetError(directoryStat) == SCE_FIOS_OK && (asyncStat.statFlags & SCE_FIOS_STAT_DIRECTORY) != 0);
     REQUIRE(sceFiosOpSyncWait(directoryStat) == 0);
     const SceFiosOp missingStat = sceFiosStat(nullptr, (directory + "/missing").c_str(), &asyncStat);
+    REQUIRE(sceFiosOpWait(missingStat) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(sceFiosOpGetError(missingStat) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(sceFiosOpSyncWait(missingStat) == SCE_FIOS_ERROR_BAD_PATH);
 }
@@ -296,9 +386,9 @@ static void CheckOperationLifecycle(const std::string& file) {
     const SceFiosOp op = sceFiosFileGetSize(nullptr, file.c_str());
     REQUIRE(op > 0);
     REQUIRE(sceFiosIsValidHandle(op));
+    REQUIRE(sceFiosOpWait(op) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpIsDone(op));
     REQUIRE(sceFiosOpGetError(op) == SCE_FIOS_OK);
-    REQUIRE(sceFiosOpWait(op) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpGetActualCount(op) == 10);
     REQUIRE(sceFiosOpGetPath(op) != nullptr && file == sceFiosOpGetPath(op));
     REQUIRE(sceFiosOpGetAttr(op) != nullptr && !sceFiosOpIsCancelled(op));
@@ -317,18 +407,22 @@ static void CheckOperationLifecycle(const std::string& file) {
 
     bool exists = false;
     const SceFiosOp existsOp = sceFiosExists(nullptr, file.c_str(), &exists);
-    REQUIRE(exists && sceFiosOpGetActualCount(existsOp) == 1);
     REQUIRE(sceFiosOpSyncWait(existsOp) == 1);
+    REQUIRE(exists);
     const SceFiosOp missingOp = sceFiosExists(nullptr, "fios2_probe/none", &exists);
-    REQUIRE(!exists && sceFiosOpSyncWait(missingOp) == 0);
+    REQUIRE(sceFiosOpSyncWait(missingOp) == 0);
+    REQUIRE(!exists);
 
     const SceFiosOp directoryOp = sceFiosDirectoryExists(nullptr, "fios2_probe", &exists);
+    REQUIRE(sceFiosOpWait(directoryOp) == SCE_FIOS_OK);
     REQUIRE(exists && sceFiosOpGetActualCount(directoryOp) == 1);
     REQUIRE(sceFiosOpSyncWait(directoryOp) == 1);
     const SceFiosOp fileAsDirectoryOp = sceFiosDirectoryExists(nullptr, file.c_str(), &exists);
+    REQUIRE(sceFiosOpWait(fileAsDirectoryOp) == SCE_FIOS_OK);
     REQUIRE(!exists && sceFiosOpSyncWait(fileAsDirectoryOp) == 0);
 
     const SceFiosOp failed = sceFiosFileGetSize(nullptr, "fios2_probe/none");
+    REQUIRE(sceFiosOpWait(failed) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(sceFiosOpGetError(failed) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(sceFiosOpSyncWait(failed) == SCE_FIOS_ERROR_BAD_PATH);
 }
@@ -338,6 +432,7 @@ static void CheckCallbacks(const std::string& file) {
     g_deleted = 0;
     const SceFiosOpAttr attr = CountingAttr();
     const SceFiosOp op = sceFiosFileExists(&attr, file.c_str(), nullptr);
+    REQUIRE(sceFiosOpWait(op) == SCE_FIOS_OK);
     REQUIRE(g_completed == 1 && g_lastOp == op && g_lastError == SCE_FIOS_OK);
     REQUIRE(g_deleted == 0);
     sceFiosOpDelete(op);
@@ -346,6 +441,7 @@ static void CheckCallbacks(const std::string& file) {
     REQUIRE(g_completed == 2 && g_deleted == 2);
 
     const SceFiosOp failed = sceFiosFileGetSize(&attr, "fios2_probe/none");
+    REQUIRE(sceFiosOpWait(failed) == SCE_FIOS_ERROR_BAD_PATH);
     REQUIRE(g_completed == 3 && g_lastError == SCE_FIOS_ERROR_BAD_PATH);
     sceFiosOpDelete(failed);
 
@@ -359,6 +455,7 @@ static void CheckCallbacks(const std::string& file) {
     sceFiosGetDefaultOpAttr(&effective);
     REQUIRE(effective.userTag == 77);
     const SceFiosOp usesGlobal = sceFiosFileExists(nullptr, file.c_str(), nullptr);
+    REQUIRE(sceFiosOpWait(usesGlobal) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpGetAttr(usesGlobal)->userTag == 77 && g_completed == 4);
     sceFiosOpDelete(usesGlobal);
 
@@ -374,12 +471,501 @@ static void CheckCallbacks(const std::string& file) {
     });
     other.join();
     const SceFiosOp usesThread = sceFiosFileExists(nullptr, file.c_str(), nullptr);
+    REQUIRE(sceFiosOpWait(usesThread) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpGetAttr(usesThread)->userTag == 88);
     sceFiosOpDelete(usesThread);
     sceFiosSetThreadDefaultOpAttr(nullptr);
     REQUIRE(!sceFiosGetThreadDefaultOpAttr(&stored));
     sceFiosSetGlobalDefaultOpAttr(nullptr);
     REQUIRE(!sceFiosGetGlobalDefaultOpAttr(&stored));
+}
+
+static int APS5_VABI NestedOuterCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)op;
+    (void)error;
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        auto* flag = static_cast<std::atomic<bool>*>(context);
+        if (sceFiosFileExistsSync(nullptr, "fios2_probe/data.bin")) flag->store(true);
+    }
+    return 0;
+}
+
+struct SyncSubmissionContext {
+    const char* path;
+    SceFiosOpAttr attr;
+    std::thread::id callerThread;
+    SceFiosOp nested = 0;
+    bool ranOnCaller = false;
+};
+
+static int APS5_VABI SubmitFromSyncCallback(void* context, SceFiosOp, SceFiosOpEvent event, int) {
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        auto& submission = *static_cast<SyncSubmissionContext*>(context);
+        submission.ranOnCaller = std::this_thread::get_id() == submission.callerThread;
+        submission.nested = sceFiosFileGetSize(&submission.attr, submission.path);
+    }
+    return 0;
+}
+
+static void CheckNestedCallbacks(const std::string& file) {
+    std::atomic<bool> nestedRan{false};
+    SceFiosOpAttr outerAttr{};
+    outerAttr.pCallbackContext = &nestedRan;
+    outerAttr.pCallback = NestedOuterCallback;
+    const SceFiosOp op = sceFiosFileGetSize(&outerAttr, file.c_str());
+    REQUIRE(op > 0);
+    REQUIRE(sceFiosOpWait(op) == SCE_FIOS_OK);
+    REQUIRE(nestedRan.load());
+    sceFiosOpDelete(op);
+
+    std::mutex callerMutex;
+    std::atomic<bool> ranOnCaller{false};
+    std::atomic<bool> ranOnWorker{false};
+    std::atomic<Pthread> workerPthread{nullptr};
+    ThreadingContext threading{std::this_thread::get_id(), &callerMutex, &ranOnCaller, &ranOnWorker, &workerPthread};
+    SceFiosOpAttr nestedAttr{};
+    nestedAttr.pCallback = ThreadingCallback;
+    nestedAttr.pCallbackContext = &threading;
+    SyncSubmissionContext submission{file.c_str(), nestedAttr, std::this_thread::get_id()};
+    SceFiosOpAttr syncAttr{};
+    syncAttr.pCallback = SubmitFromSyncCallback;
+    syncAttr.pCallbackContext = &submission;
+    std::unique_lock callerLock(callerMutex);
+    REQUIRE(sceFiosFileGetSizeSync(&syncAttr, file.c_str()) == 10);
+    callerLock.unlock();
+    REQUIRE(submission.ranOnCaller && submission.nested > 0);
+    const auto deadline = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch() + std::chrono::seconds(2)).count();
+    REQUIRE(sceFiosOpWaitUntil(submission.nested, deadline) == SCE_FIOS_OK);
+    REQUIRE(ranOnWorker.load() && !ranOnCaller.load());
+    REQUIRE(workerPthread.load() != nullptr && workerPthread.load() != scePthreadSelf());
+    sceFiosOpDelete(submission.nested);
+}
+
+struct SelfDeleteContext {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::atomic<int> completes{0};
+    std::atomic<int> deletes{0};
+};
+
+static int APS5_VABI SelfDeleteCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)error;
+    auto* c = static_cast<SelfDeleteContext*>(context);
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        c->completes.fetch_add(1);
+        sceFiosOpDelete(op);
+    } else if (event == SCE_FIOS_OPEVENT_DELETE) {
+        c->deletes.fetch_add(1);
+        std::lock_guard lock(c->mutex);
+        c->cv.notify_all();
+    }
+    return 0;
+}
+
+struct ExtDeleteContext {
+    std::mutex mutex;
+    std::condition_variable enteredCv;
+    std::condition_variable finishCv;
+    bool entered = false;
+    bool canFinish = false;
+    std::atomic<int> completes{0};
+    std::atomic<int> deletes{0};
+};
+
+static int APS5_VABI ExtDeleteCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)op;
+    (void)error;
+    auto* c = static_cast<ExtDeleteContext*>(context);
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        c->completes.fetch_add(1);
+        {
+            std::lock_guard lock(c->mutex);
+            c->entered = true;
+            c->enteredCv.notify_all();
+        }
+        {
+            std::unique_lock lock(c->mutex);
+            c->finishCv.wait_for(lock, std::chrono::seconds(2), [&] { return c->canFinish; });
+        }
+    } else if (event == SCE_FIOS_OPEVENT_DELETE) {
+        c->deletes.fetch_add(1);
+    }
+    return 0;
+}
+
+static void CheckSelfDeleteAndExternalDelete(const std::string& file) {
+    SelfDeleteContext selfCtx;
+    SceFiosOpAttr selfAttr{};
+    selfAttr.pCallbackContext = &selfCtx;
+    selfAttr.pCallback = SelfDeleteCallback;
+
+    const SceFiosOp selfOp = sceFiosFileGetSize(&selfAttr, file.c_str());
+    REQUIRE(selfOp > 0);
+    {
+        std::unique_lock lock(selfCtx.mutex);
+        REQUIRE(selfCtx.cv.wait_for(lock, std::chrono::seconds(2), [&] { return selfCtx.deletes.load() == 1; }));
+    }
+    REQUIRE(selfCtx.completes.load() == 1);
+    REQUIRE(selfCtx.deletes.load() == 1);
+    REQUIRE(!sceFiosIsValidHandle(selfOp));
+
+    ExtDeleteContext extCtx;
+    SceFiosOpAttr extAttr{};
+    extAttr.pCallbackContext = &extCtx;
+    extAttr.pCallback = ExtDeleteCallback;
+
+    const SceFiosOp extOp = sceFiosFileGetSize(&extAttr, file.c_str());
+    REQUIRE(extOp > 0);
+    {
+        std::unique_lock lock(extCtx.mutex);
+        REQUIRE(extCtx.enteredCv.wait_for(lock, std::chrono::seconds(2), [&] { return extCtx.entered; }));
+    }
+    std::thread deleteThread([extOp] {
+        sceFiosOpDelete(extOp);
+    });
+    {
+        std::lock_guard lock(extCtx.mutex);
+        extCtx.canFinish = true;
+        extCtx.finishCv.notify_all();
+    }
+    deleteThread.join();
+    REQUIRE(extCtx.completes.load() == 1);
+    REQUIRE(extCtx.deletes.load() == 1);
+    REQUIRE(!sceFiosIsValidHandle(extOp));
+}
+
+struct OwnSyncContext {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    int syncResult = -1;
+    std::atomic<int> deleteEvents{0};
+};
+
+static int APS5_VABI OwnSyncCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)error;
+    auto* c = static_cast<OwnSyncContext*>(context);
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        c->syncResult = sceFiosOpSyncWait(op);
+    } else if (event == SCE_FIOS_OPEVENT_DELETE) {
+        c->deleteEvents.fetch_add(1);
+        std::lock_guard lock(c->mutex);
+        c->done = true;
+        c->cv.notify_all();
+    }
+    return 0;
+}
+
+static void CheckOwnSyncWait(const std::string& file) {
+    OwnSyncContext ctx;
+    SceFiosOpAttr attr{};
+    attr.pCallbackContext = &ctx;
+    attr.pCallback = OwnSyncCallback;
+    const SceFiosOp op = sceFiosFileGetSize(&attr, file.c_str());
+    REQUIRE(op > 0);
+    {
+        std::unique_lock lock(ctx.mutex);
+        REQUIRE(ctx.cv.wait_for(lock, std::chrono::seconds(2), [&] { return ctx.done; }));
+    }
+    REQUIRE(ctx.syncResult == 10);
+    REQUIRE(ctx.deleteEvents.load() == 1);
+    REQUIRE(!sceFiosIsValidHandle(op));
+}
+
+struct NestedAncestorContext {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    int waitResult = -1;
+    SceFiosOp opA = 0;
+    std::string filePath;
+};
+
+struct NestedBContext {
+    NestedAncestorContext* parent = nullptr;
+};
+
+static int APS5_VABI NestedBCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)op;
+    (void)error;
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        auto* bCtx = static_cast<NestedBContext*>(context);
+        bCtx->parent->waitResult = sceFiosOpWait(bCtx->parent->opA);
+    }
+    return 0;
+}
+
+static int APS5_VABI NestedACallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)op;
+    (void)error;
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        auto* aCtx = static_cast<NestedAncestorContext*>(context);
+        NestedBContext bCtx{aCtx};
+        SceFiosOpAttr bAttr{};
+        bAttr.pCallbackContext = &bCtx;
+        bAttr.pCallback = NestedBCallback;
+        const SceFiosOp opB = sceFiosFileGetSizeSync(&bAttr, aCtx->filePath.c_str());
+        (void)opB;
+        std::lock_guard lock(aCtx->mutex);
+        aCtx->done = true;
+        aCtx->cv.notify_all();
+    }
+    return 0;
+}
+
+static void CheckNestedAncestorWait(const std::string& file) {
+    NestedAncestorContext ctx;
+    ctx.filePath = file;
+    SceFiosOpAttr attr{};
+    attr.pCallbackContext = &ctx;
+    attr.pCallback = NestedACallback;
+    ctx.opA = sceFiosFileGetSize(&attr, file.c_str());
+    REQUIRE(ctx.opA > 0);
+    {
+        std::unique_lock lock(ctx.mutex);
+        REQUIRE(ctx.cv.wait_for(lock, std::chrono::seconds(2), [&] { return ctx.done; }));
+    }
+    REQUIRE(ctx.waitResult == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpWait(ctx.opA) == SCE_FIOS_OK);
+    sceFiosOpDelete(ctx.opA);
+}
+
+struct DeferredDeleteBarrierContext {
+    std::mutex mutex;
+    std::condition_variable enteredCv;
+    std::condition_variable releaseCv;
+    bool deleteEntered = false;
+    bool canFinishDelete = false;
+    std::atomic<bool> deleteCompleted{false};
+};
+
+static int APS5_VABI DeferredDeleteBarrierCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)error;
+    auto* c = static_cast<DeferredDeleteBarrierContext*>(context);
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        sceFiosOpDelete(op);
+    } else if (event == SCE_FIOS_OPEVENT_DELETE) {
+        {
+            std::lock_guard lock(c->mutex);
+            c->deleteEntered = true;
+            c->enteredCv.notify_all();
+        }
+        {
+            std::unique_lock lock(c->mutex);
+            c->releaseCv.wait_for(lock, std::chrono::seconds(2), [&] { return c->canFinishDelete; });
+        }
+        c->deleteCompleted.store(true);
+    }
+    return 0;
+}
+
+static void CheckDeferredDeleteExternalWaitBarrier(const std::string& file) {
+    DeferredDeleteBarrierContext ctx;
+    SceFiosOpAttr attr{};
+    attr.pCallbackContext = &ctx;
+    attr.pCallback = DeferredDeleteBarrierCallback;
+
+    const SceFiosOp op = sceFiosFileGetSize(&attr, file.c_str());
+    REQUIRE(op > 0);
+
+    {
+        std::unique_lock lock(ctx.mutex);
+        REQUIRE(ctx.enteredCv.wait_for(lock, std::chrono::seconds(2), [&] { return ctx.deleteEntered; }));
+    }
+
+    std::atomic<bool> waitFinished{false};
+    std::thread waitThread([op, &waitFinished] {
+        sceFiosOpWait(op);
+        waitFinished.store(true);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    REQUIRE(!waitFinished.load());
+    REQUIRE(!ctx.deleteCompleted.load());
+
+    {
+        std::lock_guard lock(ctx.mutex);
+        ctx.canFinishDelete = true;
+        ctx.releaseCv.notify_all();
+    }
+
+    waitThread.join();
+    REQUIRE(waitFinished.load());
+    REQUIRE(ctx.deleteCompleted.load());
+}
+
+static void CheckConcurrentTermination(const std::string& file) {
+    sceFiosSuspend();
+    for (int i = 0; i < 10; ++i) {
+        const SceFiosOp op = sceFiosFileGetSize(nullptr, file.c_str());
+        REQUIRE(op > 0);
+    }
+    std::thread t1([] { sceFiosTerminate(); });
+    std::thread t2([] { sceFiosTerminate(); });
+    std::thread t3([] { sceFiosTerminate(); });
+    t1.join();
+    t2.join();
+    t3.join();
+    REQUIRE(!sceFiosIsInitialized(nullptr));
+}
+
+struct InlineTerminateBarrierContext {
+    SceFiosFH fh = 0;
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool callbackEntered = false;
+    bool releaseCallback = false;
+    bool callbackReleased = false;
+    bool terminateStarted = false;
+    bool terminateFinished = false;
+    bool fhValidInCallback = false;
+    SceFiosOp observedOp = 0;
+};
+
+static int APS5_VABI InlineTerminateBarrierCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)error;
+    auto& barrier = *static_cast<InlineTerminateBarrierContext*>(context);
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        std::unique_lock lock(barrier.mutex);
+        barrier.observedOp = op;
+        barrier.callbackEntered = true;
+        barrier.changed.notify_all();
+        barrier.callbackReleased = barrier.changed.wait_for(lock, std::chrono::seconds(5), [&] { return barrier.releaseCallback; });
+        barrier.fhValidInCallback = sceFiosIsValidHandle(barrier.fh);
+    }
+    return 0;
+}
+
+static void CheckInlineWorkTerminateBarrier(const std::string& file) {
+    SceFiosOpenParams params{};
+    params.openFlags = SCE_FIOS_O_READ;
+    SceFiosFH fh = 0;
+    REQUIRE(sceFiosFHOpenSync(nullptr, &fh, file.c_str(), &params) == SCE_FIOS_OK);
+    REQUIRE(fh > 0);
+
+    InlineTerminateBarrierContext barrier;
+    barrier.fh = fh;
+    SceFiosOpAttr attr{};
+    attr.pCallbackContext = &barrier;
+    attr.pCallback = InlineTerminateBarrierCallback;
+    SceFiosSize readResult = 0;
+    char buffer[16] = {};
+    std::exception_ptr readerException;
+    std::exception_ptr terminateException;
+    std::thread reader([&] {
+        try {
+            readResult = sceFiosFHPreadSync(&attr, fh, buffer, sizeof(buffer), 0);
+        } catch (...) {
+            readerException = std::current_exception();
+        }
+    });
+    bool callbackEntered = false;
+    {
+        std::unique_lock lock(barrier.mutex);
+        callbackEntered = barrier.changed.wait_for(lock, std::chrono::seconds(5), [&] { return barrier.callbackEntered; });
+    }
+    std::thread terminator([&] {
+        {
+            const std::lock_guard lock(barrier.mutex);
+            barrier.terminateStarted = true;
+            barrier.changed.notify_all();
+        }
+        try {
+            sceFiosTerminate();
+        } catch (...) {
+            terminateException = std::current_exception();
+        }
+        const std::lock_guard lock(barrier.mutex);
+        barrier.terminateFinished = true;
+        barrier.changed.notify_all();
+    });
+    bool terminateStarted = false;
+    bool finishedBeforeRelease = false;
+    {
+        std::unique_lock lock(barrier.mutex);
+        terminateStarted = barrier.changed.wait_for(lock, std::chrono::seconds(5), [&] { return barrier.terminateStarted; });
+        finishedBeforeRelease = barrier.changed.wait_for(lock, std::chrono::milliseconds(50), [&] { return barrier.terminateFinished; });
+        barrier.releaseCallback = true;
+        barrier.changed.notify_all();
+    }
+    reader.join();
+    terminator.join();
+    REQUIRE(callbackEntered && terminateStarted && !finishedBeforeRelease);
+    REQUIRE(!readerException && !terminateException);
+    REQUIRE(barrier.callbackReleased && barrier.fhValidInCallback);
+    REQUIRE(readResult == 10 && std::memcmp(buffer, "0123456789", 10) == 0);
+    REQUIRE(barrier.terminateFinished);
+    REQUIRE(!sceFiosIsValidHandle(fh));
+    REQUIRE(!sceFiosIsValidHandle(barrier.observedOp));
+    REQUIRE(!sceFiosIsInitialized(nullptr));
+}
+
+struct InlineSelfDeleteContext {
+    std::atomic<int> completes{0};
+    std::atomic<int> deletes{0};
+    SceFiosOp observedOp = 0;
+    bool validInCallback = false;
+};
+
+static int APS5_VABI InlineSelfDeleteCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)error;
+    auto* c = static_cast<InlineSelfDeleteContext*>(context);
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        c->observedOp = op;
+        c->validInCallback = sceFiosIsValidHandle(op);
+        c->completes.fetch_add(1);
+        sceFiosOpDelete(op);
+    } else if (event == SCE_FIOS_OPEVENT_DELETE) {
+        c->deletes.fetch_add(1);
+    }
+    return 0;
+}
+
+struct InlineSelfSyncContext {
+    std::atomic<int> completes{0};
+    std::atomic<int> deletes{0};
+    int callbackSyncResult = -1;
+    SceFiosOp observedOp = 0;
+};
+
+static int APS5_VABI InlineSelfSyncCallback(void* context, SceFiosOp op, SceFiosOpEvent event, int error) {
+    (void)error;
+    auto* c = static_cast<InlineSelfSyncContext*>(context);
+    if (event == SCE_FIOS_OPEVENT_COMPLETE) {
+        c->observedOp = op;
+        c->completes.fetch_add(1);
+        c->callbackSyncResult = sceFiosOpSyncWait(op);
+    } else if (event == SCE_FIOS_OPEVENT_DELETE) {
+        c->deletes.fetch_add(1);
+    }
+    return 0;
+}
+
+static void CheckInlineSelfDeleteAndSyncWait(const std::string& file) {
+    InlineSelfDeleteContext selfCtx;
+    SceFiosOpAttr selfAttr{};
+    selfAttr.pCallbackContext = &selfCtx;
+    selfAttr.pCallback = InlineSelfDeleteCallback;
+    const SceFiosSize size = sceFiosFileGetSizeSync(&selfAttr, file.c_str());
+    REQUIRE(size == 10);
+    REQUIRE(selfCtx.completes.load() == 1);
+    REQUIRE(selfCtx.deletes.load() == 1);
+    REQUIRE(selfCtx.validInCallback);
+    REQUIRE(selfCtx.observedOp > 0);
+    REQUIRE(!sceFiosIsValidHandle(selfCtx.observedOp));
+
+    InlineSelfSyncContext syncCtx;
+    SceFiosOpAttr syncAttr{};
+    syncAttr.pCallbackContext = &syncCtx;
+    syncAttr.pCallback = InlineSelfSyncCallback;
+    const SceFiosSize syncSize = sceFiosFileGetSizeSync(&syncAttr, file.c_str());
+    REQUIRE(syncSize == 10);
+    REQUIRE(syncCtx.completes.load() == 1);
+    REQUIRE(syncCtx.deletes.load() == 1);
+    REQUIRE(syncCtx.callbackSyncResult == 10);
+    REQUIRE(syncCtx.observedOp > 0);
+    REQUIRE(!sceFiosIsValidHandle(syncCtx.observedOp));
 }
 
 static void CheckSuspension(const std::string& file) {
@@ -405,6 +991,7 @@ static void CheckSuspension(const std::string& file) {
     });
     REQUIRE(sceFiosOpWait(first) == SCE_FIOS_OK);
     resumer.join();
+    REQUIRE(sceFiosOpWait(second) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpIsDone(second) && sceFiosIsIdle() && g_completed == 2);
     REQUIRE(sceFiosOpGetActualCount(first) == 10 && sceFiosOpGetActualCount(second) == 10);
     sceFiosOpDelete(first);
@@ -481,7 +1068,7 @@ static void CheckMutations(const std::string& directory) {
     std::memset(buffer, 0, sizeof(buffer));
     const SceFiosOp read = sceFiosFileRead(nullptr, target.c_str(), buffer, 5, 6);
     REQUIRE(sceFiosOpGetRequestCount(read) == 5 && sceFiosOpGetOffset(read) == 6 && sceFiosOpGetBuffer(read) == buffer);
-    REQUIRE(sceFiosOpGetActualCount(read) == 5 && sceFiosOpSyncWaitForIO(read) == 5 && std::memcmp(buffer, "world", 5) == 0);
+    REQUIRE(sceFiosOpSyncWaitForIO(read) == 5 && std::memcmp(buffer, "world", 5) == 0);
 
     REQUIRE(sceFiosFileTruncateSync(nullptr, target.c_str(), 4) == SCE_FIOS_OK);
     REQUIRE(sceFiosFileGetSizeSync(nullptr, target.c_str()) == 4);
@@ -511,10 +1098,12 @@ static void CheckMutations(const std::string& directory) {
     g_completed = 0;
     const SceFiosOpAttr attr = CountingAttr();
     const SceFiosOp created = sceFiosDirectoryCreate(&attr, sub.c_str());
+    REQUIRE(sceFiosOpWait(created) == SCE_FIOS_OK);
     REQUIRE(g_completed == 1 && sceFiosOpGetError(created) == SCE_FIOS_OK);
     sceFiosOpDelete(created);
     const SceFiosOp removed = sceFiosDelete(&attr, sub.c_str());
-    REQUIRE(g_completed == 2 && sceFiosOpSyncWait(removed) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpSyncWait(removed) == SCE_FIOS_OK);
+    REQUIRE(g_completed == 2);
 }
 
 static void CheckFileHandles(const std::string& directory) {
@@ -613,10 +1202,12 @@ static void CheckFileHandles(const std::string& directory) {
     g_completed = 0;
     const SceFiosOpAttr attr = CountingAttr();
     const SceFiosOp opened = sceFiosFHOpen(&attr, &fh, created.c_str(), &reader);
+    REQUIRE(sceFiosOpWait(opened) == SCE_FIOS_OK);
     REQUIRE(g_completed == 1 && sceFiosOpGetError(opened) == SCE_FIOS_OK && sceFiosIsValidHandle(fh));
     sceFiosOpDelete(opened);
     const SceFiosOp closed = sceFiosFHClose(&attr, fh);
-    REQUIRE(g_completed == 2 && sceFiosOpSyncWait(closed) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpSyncWait(closed) == SCE_FIOS_OK);
+    REQUIRE(g_completed == 2);
 
     sceFiosSuspend();
     const SceFiosOp deferred = sceFiosFHOpen(nullptr, &fh, created.c_str(), &reader);
@@ -743,9 +1334,11 @@ static void CheckDirectories(const std::string& directory) {
     g_completed = 0;
     const SceFiosOpAttr attr = CountingAttr();
     const SceFiosOp opened = sceFiosDHOpen(&attr, &dh, (root + "/").c_str(), big);
+    REQUIRE(sceFiosOpWait(opened) == SCE_FIOS_OK);
     REQUIRE(g_completed == 1 && sceFiosOpGetError(opened) == SCE_FIOS_OK);
     sceFiosOpDelete(opened);
     const SceFiosOp read = sceFiosDHRead(nullptr, dh, &entry);
+    REQUIRE(sceFiosOpWait(read) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpGetError(read) == SCE_FIOS_OK && entry.fullPathLength > root.size() + 1);
     REQUIRE(entry.fullPath[root.size()] == '/' && entry.fullPath[root.size() + 1] != '/');
     sceFiosOpDelete(read);
@@ -836,7 +1429,26 @@ static void CheckBadPointers(const std::string& file) {
     sceFiosUpdateParameters(reinterpret_cast<const SceFiosParams*>(0x10));
 }
 
-int main() {
+static void CheckTerminateAndReinit(const std::string& file) {
+    sceFiosSuspend();
+    const SceFiosOp op = sceFiosFileGetSize(nullptr, file.c_str());
+    REQUIRE(op > 0);
+    REQUIRE(!sceFiosOpIsDone(op));
+    sceFiosTerminate();
+    REQUIRE(!sceFiosIsValidHandle(op));
+
+    std::uint32_t params[16] = {};
+    params[0] = (sizeof(params) << 1) | 0u;
+    REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
+    const SceFiosOp reinitOp = sceFiosFileGetSize(nullptr, file.c_str());
+    REQUIRE(reinitOp > 0);
+    REQUIRE(sceFiosOpWait(reinitOp) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(reinitOp) == 10);
+    sceFiosOpDelete(reinitOp);
+    sceFiosTerminate();
+}
+
+int main(int argc, char** argv) {
     const std::filesystem::path directory = "fios2_probe";
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
@@ -845,11 +1457,26 @@ int main() {
         std::ofstream out(file, std::ios::binary);
         out << "0123456789";
     }
+    if (argc > 1 && std::strcmp(argv[1], "--regression-only") == 0) {
+        CheckCallbackThreading(file);
+        CheckInlineSelfDeleteAndSyncWait(file);
+        CheckInlineWorkTerminateBarrier(file);
+        std::filesystem::remove_all(directory);
+        std::puts("guest_fios2 regression ok");
+        return 0;
+    }
+    CheckCallbackThreading(file);
     CheckInitialization();
     CheckQueries(directory.generic_string(), file);
     CheckPathCompare();
     CheckOperationLifecycle(file);
     CheckCallbacks(file);
+    CheckNestedCallbacks(file);
+    CheckSelfDeleteAndExternalDelete(file);
+    CheckOwnSyncWait(file);
+    CheckNestedAncestorWait(file);
+    CheckDeferredDeleteExternalWaitBarrier(file);
+    CheckConcurrentTermination(file);
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
     CheckFileHandles(directory.generic_string());
@@ -858,6 +1485,9 @@ int main() {
     REQUIRE(sceFiosIOFilterGetInfo(0, nullptr, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
     CheckDates();
     CheckBadPointers(file);
+    CheckInlineSelfDeleteAndSyncWait(file);
+    CheckInlineWorkTerminateBarrier(file);
+    CheckTerminateAndReinit(file);
     sceFiosTerminate();
     REQUIRE(!sceFiosIsInitialized(nullptr));
     REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
