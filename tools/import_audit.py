@@ -70,7 +70,7 @@ def elf_sections(path, data):
     return [unpack("<IIQQQQIIQQ", data, section_offset + index * 64, path, f"section header {index}") for index in range(section_count)]
 
 
-def elf_program_dynamic_symbols(path, data):
+def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     ident, program_offset, program_size, program_count = header[0], header[5], header[9], header[10]
     if ident[6] != 1 or header[3] != 1:
@@ -129,6 +129,14 @@ def elf_program_dynamic_symbols(path, data):
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
     symbol_size = dynamic.get(11)
+    if section_symbol_count == 0 and symbol_address is None:
+        if not needed_offsets:
+            return {}, set(), set()
+        if string_address is None or not string_size:
+            raise AuditError(f"{path}: incomplete dynamic string table")
+        string_offset = file_offset(string_address, string_size, "dynamic string table")
+        needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
+        return {}, set(), needed
     if None in (string_address, string_size, symbol_address, symbol_size) or symbol_size != 24 or string_size == 0:
         raise AuditError(f"{path}: incomplete dynamic string or symbol table")
     string_offset = file_offset(string_address, string_size, "dynamic string table")
@@ -165,7 +173,9 @@ def elf_program_dynamic_symbols(path, data):
                 symbol_index += 1
         symbol_count = maximum + 1
     if symbol_count is None:
-        raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
+        if section_symbol_count is None:
+            raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
+        symbol_count = section_symbol_count
     symbol_offset = file_offset(symbol_address, symbol_count * symbol_size, "dynamic symbol table")
     imports = {}
     exports = set()
@@ -180,6 +190,17 @@ def elf_program_dynamic_symbols(path, data):
             exports.add(symbol)
     needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
     return imports, exports, needed
+
+
+def elf_has_dynamic_segment(path, data, header):
+    program_offset, program_size, program_count = header[5], header[9], header[10]
+    if not program_count:
+        return False
+    if not program_offset or program_size != 56:
+        raise AuditError(f"{path}: ELF needs 56-byte program headers")
+    take(data, program_offset, program_count * program_size, path, "program header table")
+    return any(unpack("<I", data, program_offset + index * program_size, path, "program header type")[0] == 2
+               for index in range(program_count))
 
 
 def elf_exports(path, data):
@@ -214,6 +235,9 @@ def elf_exports(path, data):
             if name == 0 or index == 0 or binding not in (1, 2, 10) or visibility not in (0, 3):
                 continue
             names.add(cstring(data, strings_offset + name, strings_offset + strings_size, path, "export name").split(MODULE_SUFFIX, 1)[0])
+    section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
+    if elf_has_dynamic_segment(path, data, header) and names != elf_program_dynamic_symbols(path, data, section_symbol_count)[1]:
+        raise AuditError(f"{path}: ELF section exports disagree with PT_DYNAMIC")
     return names
 
 
@@ -255,6 +279,11 @@ def elf_imports(path, data):
                     needed.add(cstring(data, strings_offset + value, strings_offset + strings_size, path, "needed library name"))
             if not terminated:
                 raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
+    if elf_has_dynamic_segment(path, data, header):
+        section_symbol_count = max((section[5] // 24 for section in sections if section[1] == 11), default=0)
+        runtime_imports, _, runtime_needed = elf_program_dynamic_symbols(path, data, section_symbol_count)
+        if symbols != runtime_imports or needed != runtime_needed:
+            raise AuditError(f"{path}: ELF section imports or dependencies disagree with PT_DYNAMIC")
     return symbols, needed
 
 
@@ -331,7 +360,10 @@ def pe_exports(path, data):
             continue
         if rva <= function_rva < rva + size:
             offset, limit = to_offset(function_rva, 1)
-            cstring(data, offset, min(limit, offset + rva + size - function_rva), path, "export forwarder", "ASCII", "strict")
+            forwarder = cstring(data, offset, min(limit, offset + rva + size - function_rva), path, "export forwarder", "ASCII", "strict")
+            module, separator, target = forwarder.partition(".")
+            if not module or not separator or not target or target.startswith("#") and re.fullmatch(r"#[0-9]+", target) is None:
+                raise AuditError(f"{path}: invalid export forwarder {forwarder!r}")
         names.add(name)
     return names
 
@@ -725,10 +757,19 @@ def source_stub_classes(source):
     return stubs, partial
 
 
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def read_registry(path):
     try:
-        entries = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+        entries = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read registry: {error}") from error
     if not isinstance(entries, list):
         raise AuditError(f"{path}: a registry is a JSON list, got {type(entries).__name__}")
@@ -968,8 +1009,8 @@ def write_json(path, result):
     destination = Path(os.path.realpath(path))
     if destination.is_symlink():
         raise AuditError(f"{path}: JSON output is a symbolic link loop")
-    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=destination.name + ".", suffix=".tmp") as directory:
-        temporary = Path(directory) / destination.name
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".import-audit-") as directory:
+        temporary = Path(directory) / "report.json"
         try:
             temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             if destination.exists():

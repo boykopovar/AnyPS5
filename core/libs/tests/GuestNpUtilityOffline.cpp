@@ -75,6 +75,9 @@ void CheckWordFilter() {
     const int context = sceNpWordFilterCreateTitleCtx(selfNpId);
     Require(context == WordFilterTitleCtxBase + 1, "sceNpWordFilterCreateTitleCtx", "the first word filter context is not 0x01000001");
     Require(sceNpWordFilterCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpWordFilterCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpWordFilterCreateAsyncRequest", "errno was not preserved");
     Require(sceNpWordFilterCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpWordFilterCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpWordFilterCreateAsyncRequest", "an unknown context was taken");
     const int sync = sceNpWordFilterCreateRequest(context);
@@ -135,6 +138,9 @@ void CheckAppLaunchLink(const char* name, Init init, Finalize finalize, Create c
     Require(create(-1, param, &request) == invalidArgument, name, "user -1 was taken");
     Require(create(1, nullptr, &request) == invalidArgument, name, "a null parameter was taken");
     Require(create(1, param, nullptr) == invalidArgument, name, "a null output was taken");
+    errno = 71;
+    Require(create(1, param, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, name, "an unwritable request id output was taken");
+    Require(errno == 71, name, "an unwritable request id changed errno");
     Require(create(1, param, &request) == 0 && request == 1, name, "the first request is not id 1");
     std::int32_t num = -1;
     Require(getNum(request, &num) == 0 && num == 0, name, "the compatible title count was not zero");
@@ -168,6 +174,9 @@ void CheckNpUtilityPayloads() {
     Require(sceNpAppInfoIntCreateRequest(&request) == AppInfoNotInitialized, "sceNpAppInfoIntCreateRequest", "a request was created before initialization");
     Require(sceNpAppInfoIntInitialize(0) == 0, "sceNpAppInfoIntInitialize", "initialization failed");
     Require(sceNpAppInfoIntCreateRequest(nullptr) == AppInfoInvalid, "sceNpAppInfoIntCreateRequest", "a null output was taken");
+    errno = 71;
+    Require(sceNpAppInfoIntCreateRequest(reinterpret_cast<std::int32_t*>(0x10)) == AppInfoInvalid, "sceNpAppInfoIntCreateRequest", "an unwritable request output was taken");
+    Require(errno == 71, "sceNpAppInfoIntCreateRequest", "an unwritable output changed errno");
     Require(sceNpAppInfoIntCreateRequest(&request) == 0 && request == 1, "sceNpAppInfoIntCreateRequest", "the first request is not id 1");
     Require(sceNpAppInfoIntAbortRequest() == 0, "sceNpAppInfoIntAbortRequest", "aborting the request failed");
     Require(sceNpAppInfoIntAbortRequest() == AppInfoInvalid, "sceNpAppInfoIntAbortRequest", "an aborted request was found");
@@ -186,6 +195,9 @@ void CheckNpUtilityPayloads() {
     CheckAppLaunchLink("sceNpAppLaunchLink", sceNpAppLaunchLinkIntInitialize, sceNpAppLaunchLinkIntFinalize, sceNpAppLaunchLinkIntCreateRequest, sceNpAppLaunchLinkIntAbortRequest, sceNpAppLaunchLinkIntDestroyRequest, sceNpAppLaunchLinkIntGetCompatibleTitleIdNum, sceNpAppLaunchLinkIntGetCompatibleTitleIdList, LaunchNotInitialized, LaunchNotFound, LaunchInvalid);
     CheckAppLaunchLink("sceNpAppLaunchLink2", sceNpAppLaunchLink2IntInitialize, sceNpAppLaunchLink2IntFinalize, sceNpAppLaunchLink2IntCreateRequest, sceNpAppLaunchLink2IntAbortRequest, sceNpAppLaunchLink2IntDestroyRequest, sceNpAppLaunchLink2IntGetCompatibleTitleIdNum, sceNpAppLaunchLink2IntGetCompatibleTitleIdList, Launch2NotInitialized, Launch2NotFound, Launch2Invalid);
     Require(sceNpServiceCheckerIntInitialize(0) == 0, "sceNpServiceCheckerIntInitialize", "initialization failed");
+    errno = 71;
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, reinterpret_cast<std::int32_t*>(0x10)) == ServiceInvalid, "sceNpServiceCheckerIntCreateRequest", "an unwritable request output was taken");
+    Require(errno == 71, "sceNpServiceCheckerIntCreateRequest", "an unwritable output changed errno");
     Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &request) == 0 && request == 1, "sceNpServiceCheckerIntCreateRequest", "the first request is not id 1");
     std::uint32_t availability = 0xA5A5A5A5;
     Require(sceNpServiceCheckerIntGetAvailability(request, nullptr, &availability) == ServiceInvalid, "sceNpServiceCheckerIntGetAvailability", "a null NpId was taken");
@@ -282,6 +294,9 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 2) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 2 was not set");
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 10) == 0, "sceNpServiceChecker2IntIsSetServiceType", "type 10 was taken");
     Require(sceNpServiceChecker2IntIsSetServiceType(nullptr, 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "a null mask was taken");
+    errno = 71;
+    Require(sceNpServiceChecker2IntIsSetServiceType(reinterpret_cast<const std::uint32_t*>(0x10), 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "an unmapped mask was taken");
+    Require(errno == 71, "sceNpServiceChecker2IntIsSetServiceType", "errno was not preserved");
     Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization failed");
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "reinitialization failed");
     int boundaryId = 0;
@@ -444,6 +459,9 @@ void DeleteLookup(int reqId) {
 void CheckLookupAsync() {
     const int context = sceNpLookupCreateTitleCtx(selfNpId);
     Require(sceNpLookupCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpLookupCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpLookupCreateAsyncRequest", "errno was not preserved");
     Require(sceNpLookupCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpLookupCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpLookupCreateAsyncRequest", "an unknown context was taken");
 

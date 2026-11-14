@@ -27,6 +27,7 @@ struct RunReportGame {
 
 extern "C" void LibcRunReportSetGameProvider_nid_no_patch(bool (*provider)(RunReportGame*));
 extern "C" void LibcRunReportFinishExit_nid_no_patch(int exitCode) noexcept;
+extern "C" void LibcRunReportTerminate_nid_no_patch(const char* what) noexcept;
 extern "C" void LibcRunReportRegisterComponent_nid_no_patch(const char* name, const char* commit, int modified) noexcept;
 extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, const char* file, int line) noexcept;
 extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept;

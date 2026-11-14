@@ -145,6 +145,10 @@ int main(int argc, char** argv) {
     Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0002));
     bootParam.reserved[31] = 0;
     Require(sceNpEntitlementAccessInitialize(&initParam, nullptr) == static_cast<int>(0x817D0002));
+    errno = 71;
+    Require(sceNpEntitlementAccessInitialize(reinterpret_cast<const NpEntitlementAccessInitParam*>(0x10), &bootParam) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessInitialize(&initParam, reinterpret_cast<NpEntitlementAccessBootParam*>(0x10)) == static_cast<int>(0x817D0002));
+    Require(errno == 71);
     Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == 0);
     Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0003));
     NpEntitlementAccessAddcontEntitlementInfo list[3]{};

@@ -8,7 +8,7 @@ Print a readable summary of a report with:
 python3 tools/run_report_summary.py path/to/anyps5-report.json
 ```
 
-The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. It reads the local report and does not upload it.
+The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The output is UTF-8, including when redirected. It reads the local report and does not upload it.
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 
@@ -20,7 +20,7 @@ The report is written by default. Turn it off with the launch flag `--aps5-repor
 
 `anyps5-report.json` is written next to the game's executable. If that folder can't be written, it goes to the AnyPS5 data folder under `reports/<run id>/` and the runtime prints where. `run.id` is that same id: 32 lowercase hex characters, random per run.
 
-The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that is killed, crashes or aborts writes no report.
+The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 
 ## What `anyps5.modified` means
 
@@ -58,7 +58,7 @@ Values pass through the same text filter as the report, so a path or a user name
 
 ## Stop
 
-`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. The schema lists the other kinds and reasons; this build writes only these.
+`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. A run that ended in `std::terminate` has `stop.reason` `runtime-stop`: `stop.kind` is `missing-function` with the function and its `source` when a function that is not implemented threw, otherwise `other` with the exception's text as the message. The schema lists the other kinds and reasons; this build writes only these.
 
 ## What `system` holds
 

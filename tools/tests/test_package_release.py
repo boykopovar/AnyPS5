@@ -215,6 +215,88 @@ class PublicHeaderPackageTests(unittest.TestCase):
                         self.assertFalse(path.exists())
                 self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
 
+    def test_archive_interrupted_renames_restore_output_and_allow_retry(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        real_replace = Path.replace
+        for existing in (False, True):
+            for operation in (("backup", "promotion") if existing else ("promotion",)):
+                for failing in names:
+                    for after_rename in (False, True):
+                        for kind in (OSError, KeyboardInterrupt):
+                            with self.subTest(existing=existing, operation=operation, failing=failing,
+                                              after_rename=after_rename, exception=kind.__name__), tempfile.TemporaryDirectory() as directory:
+                                output = Path(directory) / "output"
+                                output.mkdir()
+                                sentinel = output / "unrelated.asset"
+                                sentinel.write_bytes(b"keep unrelated asset")
+                                if existing:
+                                    for index, name in enumerate(names):
+                                        target = output / name
+                                        target.write_bytes(("previous " + name).encode())
+                                        os.utime(target, ns=(1_600_000_000_000_000_000 + index,
+                                                            1_600_000_000_000_000_000 + index))
+
+                                def snapshot(path):
+                                    return path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns
+
+                                before = {file.name: snapshot(file) for file in output.iterdir()}
+                                source_before = {file: snapshot(file) for file in self.source.rglob("*") if file.is_file()}
+                                failure = kind("archive rename interrupted")
+
+                                def replace(source, target):
+                                    target = Path(target)
+                                    backup = source == output / failing and target.parent.name == "previous"
+                                    promotion = target == output / failing and source.parent.name.startswith(".headers-")
+                                    if backup if operation == "backup" else promotion:
+                                        if after_rename:
+                                            real_replace(source, target)
+                                        raise failure
+                                    return real_replace(source, target)
+
+                                with patch.object(Path, "replace", replace), self.assertRaises(kind) as caught:
+                                    package_headers.package(self.source, output, "v1")
+                                self.assertIs(caught.exception, failure)
+                                self.assertEqual({file.name: snapshot(file) for file in output.iterdir()}, before)
+                                self.assertEqual({file: snapshot(file) for file in source_before}, source_before)
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    package_headers.package(self.source, output, "v1")
+                                self.assertEqual({file.name for file in output.iterdir()}, {sentinel.name, *names})
+                                self.assertEqual(snapshot(sentinel), before[sentinel.name])
+                                with zipfile.ZipFile(output / names[0]) as archive:
+                                    self.assertEqual(archive.read("LICENSE"), (self.source / "LICENSE").read_bytes())
+                                with tarfile.open(output / names[1]) as archive:
+                                    self.assertEqual(archive.extractfile("LICENSE").read(), (self.source / "LICENSE").read_bytes())
+
+    def test_interrupted_promotion_with_failed_restore_keeps_recovery_files(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        real_replace = Path.replace
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+            previous = {name: ("previous " + name).encode() for name in names}
+            for name, data in previous.items():
+                (output / name).write_bytes(data)
+            (output / "unrelated.asset").write_bytes(b"keep")
+
+            def replace(source, target):
+                target = Path(target)
+                if target == output / names[1] and source.parent.name.startswith(".headers-"):
+                    raise KeyboardInterrupt("second archive promotion interrupted")
+                if target == output / names[1] and source.parent.name == "previous":
+                    raise PermissionError("archive restore blocked")
+                return real_replace(source, target)
+
+            with patch.object(Path, "replace", replace), self.assertRaisesRegex(RuntimeError, "second archive promotion interrupted.*unrestored backups") as caught:
+                package_headers.package(self.source, output, "v1")
+            self.assertIsInstance(caught.exception.__cause__, PermissionError)
+            self.assertEqual((output / names[0]).read_bytes(), previous[names[0]])
+            self.assertEqual((output / "unrelated.asset").read_bytes(), b"keep")
+            recovery = list(output.glob(".headers-*/previous"))
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual((recovery[0] / names[1]).read_bytes(), previous[names[1]])
+            self.assertIn(str(recovery[0]), str(caught.exception))
+            self.assertIn(names[1], str(caught.exception))
+
     def test_archive_restore_failure_preserves_unrestored_backup(self):
         names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
         original_replace = Path.replace
@@ -493,6 +575,29 @@ class ReleasePackageTests(unittest.TestCase):
         with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
             self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
             self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
+
+    def test_cairo_pixman_and_libpng_licenses_in_archives(self):
+        (self.source / "core/libs/prx/libcairo").mkdir()
+        (self.unpatched.parent / "libcairo.prx").write_bytes(b"unpatched library")
+        (self.build / "core/libs/libs/libcairo.prx").write_bytes(b"cairo")
+        notices = {
+            "cairo/COPYING": ("cairo.txt", b"cairo notice"),
+            "cairo/COPYING-LGPL-2.1": ("cairo-lgpl-2.1.txt", b"cairo LGPL"),
+            "cairo/COPYING-MPL-1.1": ("cairo-mpl-1.1.txt", b"cairo MPL"),
+            "pixman/COPYING": ("pixman.txt", b"pixman notice"),
+            "libpng/LICENSE": ("libpng.txt", b"libpng notice"),
+        }
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.read("libs/licenses/" + name), content)
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
 
     def fontconfig_notices(self):
         (self.source / "core/libs/prx/libfontconfig").mkdir()
@@ -1146,6 +1251,138 @@ class DocumentationAssetsTests(unittest.TestCase):
                 package_release.collect_docs(source, output)
                 expected.update({"A.md": b"first document", "B.md": b"second document"})
                 self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, expected)
+
+    def test_document_promotion_failure_restores_output_and_allows_retry(self):
+        for failing in ("A.md", "B.md", "C.md"):
+            for after_rename in (False, True):
+                for readonly in (False, True):
+                    for kind in (OSError, KeyboardInterrupt):
+                        with self.subTest(failing=failing, after_rename=after_rename, readonly=readonly, exception=kind.__name__), tempfile.TemporaryDirectory() as directory:
+                            root = Path(directory)
+                            source, output = root / "docs", root / "assets"
+                            source.mkdir()
+                            output.mkdir()
+                            unrelated = output / "existing.zip"
+                            unrelated.write_bytes(b"unrelated asset")
+                            for index, name in enumerate(("A.md", "B.md", "C.md")):
+                                document = source / name
+                                document.write_text(name, encoding="utf-8")
+                                os.utime(document, ns=(1_600_000_000_000_000_000 + index, 1_600_000_000_000_000_000 + index))
+                                if readonly:
+                                    document.chmod(stat.S_IREAD)
+
+                            def snapshot(path):
+                                return path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_mtime_ns
+
+                            expected = {path.name: snapshot(path) for path in source.iterdir()}
+                            original_asset = snapshot(unrelated)
+                            real_replace = Path.replace
+                            failure = kind("document promotion failed")
+                            restored = {}
+
+                            def replace(path, destination):
+                                destination = Path(destination)
+                                if destination == output / failing:
+                                    if after_rename:
+                                        real_replace(path, destination)
+                                    raise failure
+                                result = real_replace(path, destination)
+                                if path.parent == output and destination.parent.name.startswith(".docs-"):
+                                    restored[destination.name] = snapshot(destination)
+                                return result
+
+                            with patch.object(Path, "replace", replace), self.assertRaises(kind) as caught:
+                                package_release.collect_docs(source, output)
+                            self.assertIs(caught.exception, failure)
+                            self.assertEqual({path.name for path in output.iterdir()}, {unrelated.name})
+                            self.assertEqual(snapshot(unrelated), original_asset)
+                            self.assertEqual({path.name: snapshot(path) for path in source.iterdir()}, expected)
+                            promoted = [name for name in sorted(expected) if name < failing or after_rename and name == failing]
+                            self.assertEqual(restored, {name: expected[name] for name in promoted})
+                            package_release.collect_docs(source, output)
+                            self.assertEqual({name: snapshot(output / name) for name in expected}, expected)
+                            self.assertEqual(snapshot(unrelated), original_asset)
+
+    def test_failed_document_rollback_reports_remaining_paths_and_recovers_other_docs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root / "docs", root / "assets"
+            source.mkdir()
+            output.mkdir()
+            unrelated = output / "existing.zip"
+            unrelated.write_bytes(b"unrelated asset")
+            for name in ("A.md", "B.md", "C.md"):
+                document = source / name
+                document.write_text(name, encoding="utf-8")
+                document.chmod(stat.S_IREAD)
+            real_replace = Path.replace
+            restored = []
+
+            def replace(path, destination):
+                destination = Path(destination)
+                if destination == output / "C.md":
+                    raise OSError("last promotion failed")
+                if path == output / "B.md":
+                    raise OSError("B rollback blocked")
+                result = real_replace(path, destination)
+                if path == output / "A.md":
+                    restored.append(destination)
+                return result
+
+            with patch.object(Path, "replace", replace):
+                try:
+                    package_release.collect_docs(source, output)
+                except (OSError, RuntimeError) as error:
+                    observed = error
+                else:
+                    self.fail("promotion unexpectedly succeeded")
+            self.assertIsInstance(observed, RuntimeError)
+            self.assertIn("last promotion failed", str(observed))
+            self.assertIn("B rollback blocked", str(observed))
+            self.assertIn(str(output / "B.md"), str(observed))
+            self.assertIn("require recovery", str(observed))
+            self.assertEqual([path.name for path in restored], ["A.md"])
+            self.assertEqual({path.name for path in output.iterdir()}, {"existing.zip", "B.md"})
+            self.assertEqual(unrelated.read_bytes(), b"unrelated asset")
+            self.assertEqual({path.name: path.read_text(encoding="utf-8") for path in source.iterdir()}, {name: name for name in ("A.md", "B.md", "C.md")})
+            (output / "B.md").chmod(stat.S_IREAD | stat.S_IWRITE)
+            (output / "B.md").unlink()
+            package_release.collect_docs(source, output)
+            self.assertEqual({path.name for path in output.iterdir()}, {"existing.zip", "A.md", "B.md", "C.md"})
+
+    def test_document_promotion_cli_failure_preserves_assets_and_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "anchor").mkdir()
+            source, output = root / "anchor" / ".." / "docs", root / "anchor" / ".." / "assets"
+            source.mkdir()
+            output.mkdir()
+            (output / "existing.zip").write_bytes(b"unrelated asset")
+            for name in ("A.md", "B.md"):
+                (source / name).write_text(name, encoding="utf-8")
+            promoted_output = package_release.resolve_release_path(output)
+            injected = []
+            real_replace = Path.replace
+
+            def replace(path, destination):
+                if Path(destination) == promoted_output / "B.md":
+                    self.assertEqual((promoted_output / "A.md").read_bytes(), b"A.md")
+                    self.assertEqual(path.read_bytes(), b"B.md")
+                    injected.append(path.name)
+                    raise OSError("document promotion blocked")
+                return real_replace(path, destination)
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(Path, "replace", replace), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+                package_release.main(["--docs", str(source), "--output", str(output)])
+            self.assertEqual(injected, ["B.md"])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("document promotion blocked", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, {"existing.zip": b"unrelated asset"})
+            self.assertEqual(package_release.main(["--docs", str(source), "--output", str(output)]), 0)
+            self.assertEqual({path.name for path in output.iterdir()}, {"existing.zip", "A.md", "B.md"})
 
     def test_readonly_source_metadata_survives_staging(self):
         with tempfile.TemporaryDirectory() as directory:
