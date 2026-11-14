@@ -2269,6 +2269,15 @@ std::uint64_t CollectEpochBumps() {
 namespace {
 std::atomic<std::uint64_t> proofSerial{1};
 thread_local bool proofThread = false;
+std::atomic<void (*)(std::uint64_t, std::size_t)> storeHook{nullptr};
+
+void noteDriverStore(std::uint64_t address, std::size_t bytes) {
+    if (const auto hook = storeHook.load(std::memory_order_acquire)) hook(address, bytes);
+}
+}
+
+void SetStoreHook(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    storeHook.store(hook, std::memory_order_release);
 }
 
 std::uint64_t ProofSerial() {
@@ -2645,6 +2654,7 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, co
     if (bytes == 0) return 0;
     const auto pinned = pinStoreRanges(address, bytes);
     BreakProofs();
+    noteDriverStore(address, bytes);
     const auto stampStored = [complete](WriteTracker& tracker, std::pair<std::uint64_t, std::uint64_t> stored) -> std::uint64_t {
         if (stored.second <= stored.first) return 0;
         ++tracker.generation;
@@ -2712,6 +2722,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 
 static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, std::uint64_t* order = nullptr) {
     BreakProofs();
+    noteDriverStore(address, bytes);
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
     if (order != nullptr) *order = 0;

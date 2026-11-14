@@ -18,6 +18,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -54,51 +55,51 @@ alignas(256) constexpr std::array<std::uint32_t, 7> CopyAcross{0x34020082u, 0xe0
 alignas(256) constexpr std::array<std::uint32_t, 8> AddOne{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a040481u, 0xe0701000u, 0x80000201u, 0xbf810000u};
 
 struct Block {
-    explicit Block(bool tracked) : watched(tracked && AgcDriver::GuestMemory::WriteWatched()) {
+    Block(bool tracked, std::size_t bytes) : watched(tracked && AgcDriver::GuestMemory::WriteWatched()), size(bytes) {
 #ifdef _WIN32
         if (watched) {
-            data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes * 2u, BlockBytes));
-            GuestArena::GuestArenaCommit_nid_postfix(data, BlockBytes, PAGE_READWRITE, BlockBytes);
+            data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(size * 2u, BlockBytes));
+            GuestArena::GuestArenaCommit_nid_postfix(data, size, PAGE_READWRITE, BlockBytes);
         } else {
-            data = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            data = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         }
 #else
         if (watched) {
-            void* raw = mmap(nullptr, BlockBytes * 2u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            void* raw = mmap(nullptr, size * 2u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             Require(raw != MAP_FAILED, "input twins: cannot map a block");
             const auto begin = reinterpret_cast<std::uintptr_t>(raw);
             const auto aligned = (begin + BlockBytes - 1) & ~(static_cast<std::uintptr_t>(BlockBytes) - 1);
             if (aligned != begin) munmap(raw, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes * 2u) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + BlockBytes - aligned);
+            if (aligned + size != begin + size * 2u) munmap(reinterpret_cast<void*>(aligned + size), begin + size - aligned);
             data = reinterpret_cast<std::uint8_t*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, BlockBytes);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, size);
         } else {
-            data = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
+            data = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, size));
         }
 #endif
         Require(data != nullptr, "input twins: cannot allocate a block");
-        std::memset(data, 0, BlockBytes);
+        std::memset(data, 0, size);
         GuestAllocations::Mutation mutation;
-        mutation.Add(data, BlockBytes, true, true, true);
+        mutation.Add(data, size, true, true, true);
     }
 
     ~Block() {
-        AgcDriver::Graphics::StorageTexture::FlushPending(Address(), BlockBytes, nullptr, "test release");
+        AgcDriver::Graphics::StorageTexture::FlushPending(Address(), size, nullptr, "test release");
         {
             GuestAllocations::Mutation mutation;
             mutation.Remove(data);
         }
 #ifdef _WIN32
         if (watched) {
-            GuestArena::GuestArenaReset_nid_postfix(data, BlockBytes);
-            GuestArena::GuestArenaRelease_nid_postfix(data, BlockBytes * 2u);
+            GuestArena::GuestArenaReset_nid_postfix(data, size);
+            GuestArena::GuestArenaRelease_nid_postfix(data, size * 2u);
         } else {
             VirtualFree(data, 0, MEM_RELEASE);
         }
 #else
         if (watched) {
-            munmap(data, BlockBytes);
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, BlockBytes);
+            munmap(data, size);
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, size);
         } else {
             std::free(data);
         }
@@ -112,13 +113,14 @@ struct Block {
     std::uint32_t* Words(std::size_t offset = 0) const { return reinterpret_cast<std::uint32_t*>(data + offset); }
 
     bool watched;
+    std::size_t size;
     std::uint8_t* data = nullptr;
 };
 
 std::vector<std::unique_ptr<Block>> blocks;
 
-const Block& NewBlock(bool tracked) {
-    blocks.push_back(std::make_unique<Block>(tracked));
+const Block& NewBlock(bool tracked, std::size_t bytes = BlockBytes) {
+    blocks.push_back(std::make_unique<Block>(tracked, bytes));
     return *blocks.back();
 }
 
@@ -126,9 +128,9 @@ std::array<std::uint32_t, 4> Descriptor(std::uint64_t address, std::uint32_t byt
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint64_t first, std::uint64_t second) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint64_t first, std::uint64_t second, std::uint32_t firstBytes = BufferBytes) {
     std::vector<std::uint32_t> userData(8, 0u);
-    const auto one = Descriptor(first, BufferBytes);
+    const auto one = Descriptor(first, firstBytes);
     std::copy(one.begin(), one.end(), userData.begin());
     if (second != 0) {
         const auto two = Descriptor(second, BufferBytes);
@@ -183,6 +185,10 @@ struct Marks {
         now.reuses -= before.reuses;
         now.outdated -= before.outdated;
         now.demoted -= before.demoted;
+        now.memoised -= before.memoised;
+        now.checked -= before.checked;
+        now.verified -= before.verified;
+        now.differing -= before.differing;
         for (std::size_t miss = 0; miss < AgcDriver::Graphics::InputTwinMisses; ++miss) now.missed[miss] -= before.missed[miss];
         return now;
     }
@@ -476,6 +482,230 @@ void Untracked(AgcDriver::VulkanDevice& device, bool twins) {
     Require(since.demoted == 1 && since.copies < Uses && Missed(since, InputTwinMiss::Volatile) >= 1, "input twins: an input copied on every use gave " + Text(since) + ", " + std::to_string(since.demoted) + " demotions and " + std::to_string(Missed(since, InputTwinMiss::Volatile)) + " volatile misses, expected it left in place after a few uses");
 }
 
+struct Settings {
+    bool twins;
+    bool staged;
+    bool verdicts;
+    bool verify;
+};
+
+std::string Verdicts(const InputTwinCounts& counts) {
+    return std::to_string(counts.memoised) + " served by a memoised verdict, " + std::to_string(counts.checked) + " checked in full, " + std::to_string(counts.verified) + " verified, " + std::to_string(counts.differing) + " differing";
+}
+
+void OneEpoch(AgcDriver::VulkanDevice& device, const Settings& settings) {
+    const auto& source = NewBlock(true);
+    const auto& first = NewBlock(true);
+    const auto& second = NewBlock(true);
+    Fill(source, 14000);
+    const auto toFirst = Copy(device, source.Address(), first.Address());
+    const auto toSecond = Copy(device, source.Address(), second.Address());
+    Run(device, toFirst);
+    Run(device, toSecond);
+    device.WaitIdle();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const Marks marks;
+    constexpr std::uint32_t Dispatches = 400;
+    const auto started = std::chrono::steady_clock::now();
+    for (std::uint32_t use = 0; use < Dispatches; ++use) Run(device, use % 2u == 0 ? toFirst : toSecond);
+    const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count();
+    device.WaitIdle();
+    Expect(first, 14000, "an input read by many dispatches of one collect epoch");
+    Expect(second, 14000, "an input read by a second program in one collect epoch");
+    const auto since = marks.Since();
+    std::printf("input twins: %u dispatches of one collect epoch took %.2f us each (%s)\n", Dispatches, elapsed / Dispatches, Verdicts(since).c_str());
+    ExpectOff(settings.twins, marks, "dispatches of one collect epoch");
+    if (!settings.twins) return;
+    Require(since.copies == 0 && since.reuses == Dispatches, "input twins: " + std::to_string(Dispatches) + " dispatches of one collect epoch gave " + Text(since) + ", expected a reuse each");
+    if (!settings.verdicts) {
+        Require(since.memoised == 0 && since.checked == Dispatches, "input twins: without memoised verdicts, " + std::to_string(Dispatches) + " dispatches gave " + Verdicts(since) + ", expected a full check each");
+        return;
+    }
+    Require(since.checked == 1 && since.memoised == Dispatches - 1, "input twins: " + std::to_string(Dispatches) + " dispatches of two programs over one twin in one collect epoch gave " + Verdicts(since) + ", expected one full check");
+    if (settings.verify) Require(since.verified == Dispatches && since.differing == 0, "input twins: the verification of memoised verdicts gave " + Verdicts(since));
+}
+
+void LargeInput(AgcDriver::VulkanDevice& device, const Settings& settings) {
+    constexpr std::size_t InputBytes = std::size_t{2} << 20u;
+    constexpr std::uint32_t Dispatches = 200;
+    const auto& source = NewBlock(true, InputBytes);
+    const auto& target = NewBlock(true);
+    Fill(source, 20000);
+    const auto copy = Compile(device, CopyAcross, source.Address(), target.Address(), static_cast<std::uint32_t>(InputBytes));
+    Run(device, copy);
+    Run(device, copy);
+    device.WaitIdle();
+    const auto timed = [&](bool ordered) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto started = std::chrono::steady_clock::now();
+        for (std::uint32_t use = 0; use < Dispatches; ++use) {
+            if (ordered) AgcDriver::GuestMemory::BumpCollectEpoch();
+            Run(device, copy);
+        }
+        const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / Dispatches;
+        device.WaitIdle();
+        return elapsed;
+    };
+    const Marks marks;
+    const auto inEpoch = timed(false);
+    const auto epochs = timed(true);
+    const auto since = marks.Since();
+    double walk = 0;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto started = std::chrono::steady_clock::now();
+        for (std::uint32_t use = 0; use < Dispatches; ++use) {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            Require(AgcDriver::GuestMemory::CollectWrites(source.Address(), InputBytes) != 0, "input twins: a 2 MiB input is not write-watched");
+        }
+        walk = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / Dispatches;
+    }
+    Expect(target, 20000, "a 2 MiB input");
+    std::printf("input twins: a dispatch over a 2 MiB input took %.2f us within one collect epoch and %.2f us behind an ordering point each (%s); a collect of the 2 MiB range in a new epoch took %.2f us\n", inEpoch, epochs, Verdicts(since).c_str(), walk);
+    ExpectOff(settings.twins, marks, "a 2 MiB input");
+    if (!settings.twins) return;
+    Require(since.copies == 0 && since.reuses == Dispatches * 2u, "input twins: an unchanged 2 MiB input gave " + Text(since) + ", expected a reuse per dispatch");
+    if (settings.verdicts) Require(since.checked == Dispatches + 1u && since.memoised == Dispatches - 1u, "input twins: an unchanged 2 MiB input gave " + Verdicts(since) + ", expected one full check per collect epoch");
+}
+
+void StoresInEpoch(AgcDriver::VulkanDevice& device, const Settings& settings) {
+    const auto& source = NewBlock(true);
+    const auto& target = NewBlock(true);
+    const auto& origin = NewBlock(true);
+    Fill(source, 15000);
+    Fill(origin, 18000);
+    const auto copy = Copy(device, source.Address(), target.Address());
+    const auto produce = Copy(device, origin.Address(), source.Address());
+    const auto twice = [&] {
+        Run(device, copy);
+        Run(device, copy);
+        device.WaitIdle();
+    };
+    Run(device, copy);
+    device.WaitIdle();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const Marks reused;
+    twice();
+    Expect(target, 15000, "an input reused within one collect epoch");
+    const auto inEpoch = reused.Since();
+    const Marks driver;
+    std::array<std::uint32_t, Lanes> words{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) words[lane] = 16000 + lane;
+    AgcDriver::GuestMemory::Write(source.Address(), std::as_bytes(std::span(words)));
+    Run(device, copy);
+    device.WaitIdle();
+    Expect(target, 16000, "an input after a driver store inside one collect epoch");
+    const auto afterDriver = driver.Since();
+    twice();
+    const Marks cpu;
+    Fill(source, 17000);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Run(device, copy);
+    device.WaitIdle();
+    Expect(target, 17000, "an input after a CPU store and an ordering point");
+    const auto afterCpu = cpu.Since();
+    twice();
+    const Marks gpu;
+    Run(device, produce);
+    Run(device, copy);
+    device.WaitIdle();
+    Expect(source, 18000, "what a dispatch wrote into the next one's input inside one collect epoch");
+    Expect(target, 18000, "an input written by a recorded dispatch inside one collect epoch");
+    const auto afterGpu = gpu.Since();
+    twice();
+    Expect(target, 18000, "an input reused after a recorded write was copied");
+    ExpectOff(settings.twins, reused, "stores inside one collect epoch");
+    if (!settings.twins) return;
+    if (settings.verdicts) Require(inEpoch.memoised == 1 && inEpoch.checked == 1, "input twins: two dispatches of one collect epoch gave " + Verdicts(inEpoch) + ", expected one full check and one memoised verdict");
+    Require(afterDriver.copies == 1 && afterDriver.refreshes == 1 && afterDriver.outdated == 1 && afterDriver.memoised == 0, "input twins: a driver store inside one collect epoch gave " + Text(afterDriver) + ", " + Verdicts(afterDriver) + ", expected the twin outdated and refreshed");
+    Require(afterCpu.copies == 1 && afterCpu.refreshes == 1 && afterCpu.memoised == 0, "input twins: a CPU store behind an ordering point gave " + Text(afterCpu) + ", " + Verdicts(afterCpu) + ", expected a refresh");
+    Require(afterGpu.outdated == 1 && Missed(afterGpu, InputTwinMiss::PendingWrite) == 1 && afterGpu.refreshes == 1 && afterGpu.memoised == 0, "input twins: a recorded write over a twin inside one collect epoch gave " + Text(afterGpu) + ", " + Verdicts(afterGpu) + ", expected the twin outdated and copied behind the write");
+}
+
+void ProofOverTwins(AgcDriver::VulkanDevice& device, const Settings& settings) {
+    using AgcDriver::Graphics::DrawProofCounted;
+    using AgcDriver::Graphics::DrawProofKind;
+    using AgcDriver::Graphics::DrawProofMiss;
+    const auto& source = NewBlock(true);
+    const auto& target = NewBlock(true);
+    Fill(source, 19000);
+    const auto shader = Copy(device, source.Address(), target.Address());
+    const AgcDriver::Graphics::CompiledShader compiled{ShaderStage::Compute, &shader, 0};
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    device.WaitIdle();
+    AgcDriver::GuestMemory::MarkProofThread();
+    std::shared_ptr<AgcDriver::Graphics::ShaderResources> resources;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        resources = std::make_shared<AgcDriver::Graphics::ShaderResources>(context, compiled);
+    }
+    struct Release {
+        AgcDriver::VulkanDevice& device;
+        std::shared_ptr<AgcDriver::Graphics::ShaderResources>& resources;
+        ~Release() {
+            try {
+                device.WaitIdle();
+            } catch (const std::exception& error) {
+                std::cerr << error.what() << '\n';
+            }
+            resources.reset();
+        }
+    } release{device, resources};
+    device.WaitIdle();
+    Require(resources->Reusable(), "input twins: the build over a twin is not reusable");
+    const auto revalidate = [&](const std::string& what) {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(resources->Revalidate(compiled), "input twins: " + what + " did not prove current");
+    };
+    const auto delta = [](const AgcDriver::Graphics::DrawProofCounts& before) {
+        const auto& from = before[static_cast<std::size_t>(DrawProofKind::Resources)];
+        auto to = DrawProofCounted()[static_cast<std::size_t>(DrawProofKind::Resources)];
+        to.reused -= from.reused;
+        to.proved -= from.proved;
+        to.verified -= from.verified;
+        to.differing -= from.differing;
+        to.stored -= from.stored;
+        for (std::size_t miss = 0; miss < to.missed.size(); ++miss) to.missed[miss] -= from.missed[miss];
+        return to;
+    };
+    const auto skipped = [&](const AgcDriver::Graphics::DrawProofKindCounts& counts) { return settings.verify ? counts.verified : counts.reused; };
+    const auto text = [](const AgcDriver::Graphics::DrawProofCounts& now, const AgcDriver::Graphics::DrawProofCounts& before) { return AgcDriver::Graphics::DrawProofText(now, before); };
+    const bool proofs = AgcDriver::Graphics::DrawProofsEnabled() && !settings.staged;
+    constexpr std::uint32_t Uses = 4;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto before = DrawProofCounted();
+    for (std::uint32_t use = 0; use < Uses; ++use) revalidate("an unchanged build over a twin");
+    const auto unchanged = delta(before);
+    std::printf("input twins: %u proofs of an unchanged build: %s\n", Uses, text(DrawProofCounted(), before).c_str());
+    if (proofs) Require(unchanged.proved == 1 && skipped(unchanged) == Uses - 1, "input twins: an unchanged build over a current twin did not take a proof once and reuse it");
+    else Require(unchanged.reused == 0 && unchanged.verified == 0, "input twins: a build that takes no proof reused one");
+    before = DrawProofCounted();
+    const Marks marks;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(Recorder::Active() != nullptr, "input twins: no recorder is active");
+        Recorder::Active()->NotePendingWrite(source.Address(), BufferBytes);
+    }
+    revalidate("a build over a twin outdated by a recorded write");
+    const auto outdated = delta(before);
+    const auto copied = marks.Since();
+    std::printf("input twins: a proof after a recorded write over the twin: %s\n", text(DrawProofCounted(), before).c_str());
+    if (proofs && settings.twins) Require(outdated.missed[static_cast<std::size_t>(DrawProofMiss::InputTwins)] == 1 && skipped(outdated) == 0, "input twins: a build whose twin a recorded write outdated kept its proof");
+    if (proofs && !settings.twins) Require(skipped(outdated) == 1, "input twins: a recorded write over an input read in place broke the proof");
+    if (settings.twins) Require(copied.copies == 1 && Missed(copied, InputTwinMiss::PendingWrite) == 1, "input twins: the build whose twin a recorded write outdated gave " + Text(copied) + ", expected a copy behind the write");
+    device.WaitIdle();
+    before = DrawProofCounted();
+    const Marks settled;
+    for (std::uint32_t use = 0; use < Uses; ++use) revalidate("a build over a twin once the write completed");
+    const auto again = delta(before);
+    std::printf("input twins: %u proofs once the write completed: %s\n", Uses, text(DrawProofCounted(), before).c_str());
+    if (proofs) Require(skipped(again) >= Uses - 2 && again.proved <= 1, "input twins: a build whose twin was refreshed did not take a proof again");
+    if (proofs && settings.twins) Require(again.proved == 1 && settled.Since().refreshes == 1, "input twins: a build whose twin was copied behind a write did not refresh it once before its proof");
+    if (settings.verify) Require(unchanged.differing == 0 && outdated.differing == 0 && again.differing == 0 && unchanged.stored == 0 && again.stored == 0, "input twins: the full checks beside reused proofs over twins found a difference");
+    const auto twinCounts = AgcDriver::Graphics::InputTwinCounters();
+    Require(twinCounts.differing == 0, "input twins: " + std::to_string(twinCounts.differing) + " memoised verdicts differed from the full check");
+}
+
 void SetEnvironment(const char* name, const char* value) {
 #ifdef _WIN32
     Require(_putenv_s(name, value) == 0, std::string("input twins: cannot set ") + name);
@@ -537,6 +767,15 @@ int main(int argc, char** argv) {
             std::puts("input twins: an input refused device memory was read in place");
             Untracked(*device, twins);
             std::puts("input twins: an untracked input was read afresh by every dispatch");
+            const Settings settings{twins, mode != "--unstaged", std::getenv("APS5_NO_DRAW_PROOFS") == nullptr, std::getenv("APS5_VERIFY_DRAW_PROOFS") != nullptr};
+            OneEpoch(*device, settings);
+            std::puts("input twins: dispatches of one collect epoch checked their shared twin once");
+            LargeInput(*device, settings);
+            std::puts("input twins: a 2 MiB input was checked once per collect epoch");
+            StoresInEpoch(*device, settings);
+            std::puts("input twins: driver stores, CPU stores behind an ordering point and recorded writes refreshed a twin inside one collect epoch");
+            ProofOverTwins(*device, settings);
+            std::puts("input twins: a build over current twins took and reused a proof and lost it when a twin was outdated");
             device->WaitIdle();
         }
         device->WaitIdle();

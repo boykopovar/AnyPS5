@@ -135,9 +135,19 @@ struct InputTwin {
     std::uint64_t frame = 0;
     std::uint32_t streak = 0;
     bool filled = false;
-    bool current = false;
-    bool demoted = false;
+    std::atomic<bool> current{false};
+    std::atomic<bool> demoted{false};
     bool held = false;
+    std::atomic<std::uint64_t> serial{1};
+    struct Verdict {
+        std::uint64_t epoch = 0;
+        std::uint64_t serial = 0;
+        std::uint64_t registry = 0;
+        std::uint64_t unwatch = 0;
+        std::uint64_t frame = 0;
+        VkBuffer source = VK_NULL_HANDLE;
+    };
+    Verdict verdict;
 };
 
 namespace {
@@ -6386,6 +6396,12 @@ struct TwinStats {
     std::atomic<std::uint64_t> reuses{0};
     std::atomic<std::uint64_t> outdated{0};
     std::atomic<std::uint64_t> demoted{0};
+    std::atomic<std::uint64_t> memoised{0};
+    std::atomic<std::uint64_t> checked{0};
+    std::atomic<std::uint64_t> memoisedNanoseconds{0};
+    std::atomic<std::uint64_t> checkedNanoseconds{0};
+    std::atomic<std::uint64_t> verified{0};
+    std::atomic<std::uint64_t> differing{0};
     std::array<std::atomic<std::uint64_t>, InputTwinMisses> missed{};
     std::atomic<std::int64_t> lastReport{0};
 };
@@ -6393,6 +6409,40 @@ struct TwinStats {
 TwinStats& TwinCounters() {
     static TwinStats stats;
     return stats;
+}
+
+bool twinVerdictsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_DRAW_PROOFS") == nullptr;
+    return enabled;
+}
+
+bool twinVerdictsVerified() {
+    static const bool verified = std::getenv("APS5_VERIFY_DRAW_PROOFS") != nullptr;
+    return verified;
+}
+
+InputTwin::Verdict twinVerdictNow() {
+    if (!twinVerdictsEnabled()) return {};
+    return {GuestMemory::CollectEpoch(), 0, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), GuestMemory::UnwatchSerial(), inputTwinFrames.load(std::memory_order_relaxed), VK_NULL_HANDLE};
+}
+
+bool twinVerdictHolds(const InputTwin& twin, const InputTwin::Verdict& now, VkBuffer source) {
+    const auto& held = twin.verdict;
+    return now.epoch != 0 && held.epoch == now.epoch && held.registry == now.registry && held.unwatch == now.unwatch && held.frame == now.frame && held.source == source && held.serial == twin.serial.load(std::memory_order_acquire);
+}
+
+void outdateTwin(InputTwin& twin) {
+    if (twin.current.exchange(false, std::memory_order_relaxed)) TwinCounters().outdated.fetch_add(1, std::memory_order_relaxed);
+    twin.serial.fetch_add(1, std::memory_order_release);
+}
+
+void noteTwinVerified(const InputTwin& twin, bool differing) {
+    auto& stats = TwinCounters();
+    stats.verified.fetch_add(1, std::memory_order_relaxed);
+    if (!differing) return;
+    stats.differing.fetch_add(1, std::memory_order_relaxed);
+    static std::atomic<int> reports{0};
+    if (reports.fetch_add(1, std::memory_order_relaxed) < 32) std::fprintf(stderr, "[draw-proofs] verify: an input twin verdict differs from the full check (the twin of [0x%llx, 0x%llx) was due a refresh or had pending work over it)\n", static_cast<unsigned long long>(twin.begin), static_cast<unsigned long long>(twin.end));
 }
 
 constexpr std::array<const char*, InputTwinMisses> InputTwinMissNames{"behind a pending write", "under a label or queued store", "untracked", "volatile", "over the budget", "device memory refused", "outside an import"};
@@ -6454,6 +6504,17 @@ void holdTwin(TwinRegistry& registry, const std::shared_ptr<InputTwin>& twin, st
     if (twin->held) return;
     twin->held = true;
     registry.recent.push_back(twin);
+}
+
+void outdateTwinsOver(TwinRegistry& registry, VkDevice device, std::uint64_t begin, std::uint64_t end, std::vector<std::shared_ptr<InputTwin>>& touched) {
+    const auto from = begin > registry.reach ? begin - registry.reach : 0;
+    for (auto slot = registry.twins.lower_bound(TwinKey{device, from, 0, 0}); slot != registry.twins.end() && slot->first.device == device && slot->first.begin < end; ++slot) {
+        if (slot->first.end <= begin) continue;
+        auto twin = slot->second.lock();
+        if (twin == nullptr) continue;
+        outdateTwin(*twin);
+        touched.push_back(std::move(twin));
+    }
 }
 
 bool twinDemoted(TwinRegistry& registry, const TwinKey& key, std::uint64_t frame) {
@@ -6563,7 +6624,7 @@ bool inputTwinAvailable(const Context& context, std::uint64_t begin, std::uint64
     return deviceLocalHasRoom(context, static_cast<std::size_t>(bytes)) && liveTwinBytes.load(std::memory_order_relaxed) + bytes <= inputTwinLimit() / 4u * 3u;
 }
 
-void noteTwinFilled(const std::shared_ptr<InputTwin>& twin, VkBuffer source, std::uint64_t generation, std::uint64_t registryGeneration) {
+std::uint64_t noteTwinFilled(const std::shared_ptr<InputTwin>& twin, VkBuffer source, std::uint64_t generation, std::uint64_t registryGeneration) {
     auto& registry = Twins();
     auto& stats = TwinCounters();
     std::lock_guard lock(registry.mutex);
@@ -6573,13 +6634,15 @@ void noteTwinFilled(const std::shared_ptr<InputTwin>& twin, VkBuffer source, std
     twin->source = source;
     twin->generation = generation;
     twin->registryGeneration = registryGeneration;
-    twin->current = generation != 0 && !twin->demoted;
+    twin->current.store(generation != 0 && !twin->demoted.load(std::memory_order_relaxed), std::memory_order_relaxed);
     holdTwin(registry, twin, frame);
-    if (++twin->streak < TwinDemoteStreak || twin->demoted) return;
-    twin->demoted = true;
-    twin->current = false;
-    registry.demoted[TwinKey{twin->device, twin->begin, twin->end, twin->usage}] = frame;
-    stats.demoted.fetch_add(1, std::memory_order_relaxed);
+    if (++twin->streak >= TwinDemoteStreak && !twin->demoted.load(std::memory_order_relaxed)) {
+        twin->demoted.store(true, std::memory_order_relaxed);
+        twin->current.store(false, std::memory_order_relaxed);
+        registry.demoted[TwinKey{twin->device, twin->begin, twin->end, twin->usage}] = frame;
+        stats.demoted.fetch_add(1, std::memory_order_relaxed);
+    }
+    return twin->serial.fetch_add(1, std::memory_order_release) + 1;
 }
 
 // APS5_TRACE_STAGING=1: every distinct staged range once, with its size and whether an atomic
@@ -6674,6 +6737,10 @@ InputTwinCounts InputTwinCounters() {
     counts.reuses = stats.reuses.load(std::memory_order_relaxed);
     counts.outdated = stats.outdated.load(std::memory_order_relaxed);
     counts.demoted = stats.demoted.load(std::memory_order_relaxed);
+    counts.memoised = stats.memoised.load(std::memory_order_relaxed);
+    counts.checked = stats.checked.load(std::memory_order_relaxed);
+    counts.verified = stats.verified.load(std::memory_order_relaxed);
+    counts.differing = stats.differing.load(std::memory_order_relaxed);
     counts.residentBytes = liveTwinBytes.load(std::memory_order_relaxed);
     counts.limitBytes = inputTwinLimit();
     for (std::size_t miss = 0; miss < InputTwinMisses; ++miss) counts.missed[miss] = stats.missed[miss].load(std::memory_order_relaxed);
@@ -6701,19 +6768,24 @@ void OutdateInputTwins(VkDevice device, std::uint64_t begin, std::uint64_t end) 
     auto& registry = Twins();
     std::vector<std::shared_ptr<InputTwin>> touched;
     std::lock_guard lock(registry.mutex);
-    const auto from = begin > registry.reach ? begin - registry.reach : 0;
-    for (auto slot = registry.twins.lower_bound(TwinKey{device, from, 0, 0}); slot != registry.twins.end() && slot->first.device == device && slot->first.begin < end; ++slot) {
-        if (slot->first.end <= begin) continue;
-        auto twin = slot->second.lock();
-        if (twin == nullptr) continue;
-        if (twin->current) TwinCounters().outdated.fetch_add(1, std::memory_order_relaxed);
-        twin->current = false;
-        touched.push_back(std::move(twin));
-    }
+    outdateTwinsOver(registry, device, begin, end, touched);
 }
 
 void OutdateInputTwins(VkDevice device) {
     OutdateInputTwins(device, 0, std::numeric_limits<std::uint64_t>::max());
+}
+
+void OutdateStoredInputTwins(std::uint64_t address, std::size_t bytes) {
+    if (liveTwinBytes.load(std::memory_order_relaxed) == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    auto& registry = Twins();
+    std::vector<std::shared_ptr<InputTwin>> touched;
+    std::lock_guard lock(registry.mutex);
+    constexpr auto last = std::numeric_limits<std::uint64_t>::max();
+    for (auto slot = registry.twins.begin(); slot != registry.twins.end();) {
+        const auto device = slot->first.device;
+        outdateTwinsOver(registry, device, address, address + bytes, touched);
+        slot = registry.twins.upper_bound(TwinKey{device, last, last, std::numeric_limits<VkBufferUsageFlags>::max()});
+    }
 }
 
 std::uint64_t ReleaseInputTwins(std::uint64_t bytes) {
@@ -6747,7 +6819,8 @@ void ClearInputTwins(VkDevice device) {
             continue;
         }
         (*it)->held = false;
-        (*it)->current = false;
+        (*it)->current.store(false, std::memory_order_relaxed);
+        (*it)->serial.fetch_add(1, std::memory_order_release);
         released.push_back(std::move(*it));
         it = registry.recent.erase(it);
     }
@@ -6757,7 +6830,8 @@ void ClearInputTwins(VkDevice device) {
             continue;
         }
         if (auto twin = slot->second.lock()) {
-            twin->current = false;
+            twin->current.store(false, std::memory_order_relaxed);
+            twin->serial.fetch_add(1, std::memory_order_release);
             released.push_back(std::move(twin));
         }
         slot = registry.twins.erase(slot);
@@ -6776,7 +6850,11 @@ void ReportInputTwins() {
     for (std::size_t miss = 0; miss < InputTwinMisses; ++miss) {
         missed += (missed.empty() ? "" : ", ") + std::to_string(counts.missed[miss] - seen.missed[miss]) + " " + InputTwinMissNames[miss];
     }
-    AgcDriver::ProfilePrint_nid_no_patch("[buffers] input twins (10 s): %llu made, %llu taken from another build, %llu copies out of imports (%.0f KiB, %llu of them refreshes), %llu uses without a copy, %llu outdated by recorded writes, %llu given up as volatile; misses: %s; %.1f MiB resident (limit %llu MiB)\n", static_cast<unsigned long long>(counts.made - seen.made), static_cast<unsigned long long>(counts.shared - seen.shared), static_cast<unsigned long long>(counts.copies - seen.copies), static_cast<double>(counts.copiedBytes - seen.copiedBytes) / 1024.0, static_cast<unsigned long long>(counts.refreshes - seen.refreshes), static_cast<unsigned long long>(counts.reuses - seen.reuses), static_cast<unsigned long long>(counts.outdated - seen.outdated), static_cast<unsigned long long>(counts.demoted - seen.demoted), missed.c_str(), static_cast<double>(counts.residentBytes) / 1048576.0, static_cast<unsigned long long>(counts.limitBytes >> 20u));
+    const auto memoised = counts.memoised - seen.memoised;
+    const auto checked = counts.checked - seen.checked;
+    const auto memoisedUs = static_cast<double>(stats.memoisedNanoseconds.exchange(0, std::memory_order_relaxed)) / 1000.0;
+    const auto checkedUs = static_cast<double>(stats.checkedNanoseconds.exchange(0, std::memory_order_relaxed)) / 1000.0;
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] input twins (10 s): %llu made, %llu taken from another build, %llu copies out of imports (%.0f KiB, %llu of them refreshes), %llu uses without a copy; currency served %llu times by a memoised verdict (%.2f us each) and checked in full %llu times (%.2f us each), verdicts verified %llu, differing %llu; %llu outdated by recorded writes or driver stores, %llu given up as volatile; misses: %s; %.1f MiB resident (limit %llu MiB)\n", static_cast<unsigned long long>(counts.made - seen.made), static_cast<unsigned long long>(counts.shared - seen.shared), static_cast<unsigned long long>(counts.copies - seen.copies), static_cast<double>(counts.copiedBytes - seen.copiedBytes) / 1024.0, static_cast<unsigned long long>(counts.refreshes - seen.refreshes), static_cast<unsigned long long>(counts.reuses - seen.reuses), static_cast<unsigned long long>(memoised), memoised != 0 ? memoisedUs / static_cast<double>(memoised) : 0.0, static_cast<unsigned long long>(checked), checked != 0 ? checkedUs / static_cast<double>(checked) : 0.0, static_cast<unsigned long long>(counts.verified - seen.verified), static_cast<unsigned long long>(counts.differing - seen.differing), static_cast<unsigned long long>(counts.outdated - seen.outdated), static_cast<unsigned long long>(counts.demoted - seen.demoted), missed.c_str(), static_cast<double>(counts.residentBytes) / 1048576.0, static_cast<unsigned long long>(counts.limitBytes >> 20u));
     seen = counts;
 }
 
@@ -6821,8 +6899,7 @@ bool GuestBufferMemory::StagingDecisionsCurrent() const {
     const bool adaptive = AdaptiveStagingGate::Enabled();
     for (const auto& region : regions) {
         if (region.twin != nullptr) {
-            std::lock_guard lock(Twins().mutex);
-            if (region.twin->demoted) return false;
+            if (region.twin->demoted.load(std::memory_order_acquire)) return false;
             continue;
         }
         if (region.untwinned && region.direct != nullptr && twinRetry(region)) return false;
@@ -6853,6 +6930,29 @@ void GuestBufferMemory::InputTwinBuffers(std::vector<std::pair<const void*, std:
     }
 }
 
+bool GuestBufferMemory::InputTwinProof(std::vector<std::uint64_t>& proof) const {
+    proof.clear();
+    for (const auto& region : regions) {
+        if (region.twin == nullptr) continue;
+        const auto serial = region.twin->serial.load(std::memory_order_acquire);
+        if (serial != region.twinChecked || !region.twin->current.load(std::memory_order_relaxed)) return false;
+        proof.push_back(serial);
+    }
+    if (!proof.empty()) proof.push_back(GuestAllocations::GuestAllocationsGeneration_nid_postfix());
+    return true;
+}
+
+bool GuestBufferMemory::InputTwinProofHolds(std::span<const std::uint64_t> proof) const {
+    std::size_t index = 0;
+    for (const auto& region : regions) {
+        if (region.twin == nullptr) continue;
+        if (index >= proof.size() || region.twin->serial.load(std::memory_order_acquire) != proof[index]) return false;
+        ++index;
+    }
+    if (index == 0) return proof.empty();
+    return index + 1 == proof.size() && proof.back() == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+}
+
 bool GuestBufferMemory::twinWanted(const Region& region, bool addressable) const {
     if (!inputTwinsAllowed || addressable || region.sparse || region.mirror != nullptr || !region.writable || region.overlay || !InputTwinsEnabled(context) || !gpuCopiesEnabled() || HoldsLease()) return false;
     const auto bytes = region.end - region.begin;
@@ -6880,6 +6980,7 @@ bool GuestBufferMemory::takeTwin(Region& region, VkBufferUsageFlags usage, bool 
 void GuestBufferMemory::dropTwin(Region& region) const {
     if (region.twin == nullptr) return;
     region.twin = nullptr;
+    region.twinChecked = 0;
     region.buffer = nullptr;
     region.deviceLocal = false;
     region.copiedBack = false;
@@ -6892,7 +6993,7 @@ bool GuestBufferMemory::twinCurrent(const Region& region) const {
     std::uint64_t registryGeneration = 0;
     {
         std::lock_guard lock(registry.mutex);
-        if (!twin.current || twin.demoted || twin.source != region.copySource) return false;
+        if (!twin.current.load(std::memory_order_relaxed) || twin.demoted.load(std::memory_order_relaxed) || twin.source != region.copySource) return false;
         generation = twin.generation;
         registryGeneration = twin.registryGeneration;
     }
@@ -6901,9 +7002,10 @@ bool GuestBufferMemory::twinCurrent(const Region& region) const {
     std::vector<std::shared_ptr<InputTwin>> released;
     std::lock_guard lock(registry.mutex);
     sweepTwins(registry, frame, released);
-    if (!twin.current || twin.generation != generation) return false;
+    if (!twin.current.load(std::memory_order_relaxed) || twin.generation != generation) return false;
     if (!unchanged) {
-        twin.current = false;
+        twin.current.store(false, std::memory_order_relaxed);
+        twin.serial.fetch_add(1, std::memory_order_release);
         return false;
     }
     twin.streak = 0;
@@ -6913,15 +7015,45 @@ bool GuestBufferMemory::twinCurrent(const Region& region) const {
 }
 
 void GuestBufferMemory::recordTwinCopies(std::span<Region* const> twins, Recorder& recorder) {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::recordTwinCopies");
     struct Fill {
         Region* region;
         bool trusted;
         std::uint64_t generation;
     };
     std::vector<Fill> fills;
+    auto& stats = TwinCounters();
+    const bool timed = twinsProfiled();
+    const bool verify = twinVerdictsVerified();
+    const auto now = twinVerdictNow();
+    const auto since = [](std::chrono::steady_clock::time_point started) { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()); };
     for (auto* region : twins) {
-        const auto blocked = twinBlocked(recorder, region->begin, static_cast<std::size_t>(region->end - region->begin));
-        if (!blocked && twinCurrent(*region)) continue;
+        auto& twin = *region->twin;
+        const auto started = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const bool memoised = twinVerdictHolds(twin, now, region->copySource);
+        if (memoised && !verify) {
+            region->twinChecked = twin.verdict.serial;
+            stats.reuses.fetch_add(1, std::memory_order_relaxed);
+            stats.memoised.fetch_add(1, std::memory_order_relaxed);
+            if (timed) stats.memoisedNanoseconds.fetch_add(since(started), std::memory_order_relaxed);
+            continue;
+        }
+        const auto serial = twin.serial.load(std::memory_order_acquire);
+        bool current = twinCurrent(*region);
+        const auto blocked = !current || verify ? twinBlocked(recorder, region->begin, static_cast<std::size_t>(region->end - region->begin)) : std::nullopt;
+        if (verify && (memoised || current)) noteTwinVerified(twin, !current || blocked.has_value());
+        if (blocked) current = false;
+        if (memoised) {
+            if (current) stats.memoised.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            stats.checked.fetch_add(1, std::memory_order_relaxed);
+            if (timed) stats.checkedNanoseconds.fetch_add(since(started), std::memory_order_relaxed);
+        }
+        if (current) {
+            region->twinChecked = serial;
+            if (now.epoch != 0) twin.verdict = {now.epoch, serial, now.registry, now.unwatch, now.frame, region->copySource};
+            continue;
+        }
         if (blocked) countTwinMiss(*blocked);
         fills.push_back({region, !blocked, 0});
     }
@@ -6964,7 +7096,7 @@ void GuestBufferMemory::recordTwinCopies(std::span<Region* const> twins, Recorde
         CopyBuffer(context, commands, region->copySource, region->begin - region->copySourceBase, region->buffer->Handle(), 0, bytes);
         recorder.NotePendingRead(region->begin, static_cast<std::size_t>(bytes), Recorder::ReadKind::GpuCopy);
         region->snapshot.clear();
-        noteTwinFilled(region->twin, region->copySource, fill.generation, registryGeneration);
+        region->twinChecked = noteTwinFilled(region->twin, region->copySource, fill.generation, registryGeneration);
         copied += bytes;
     }
     constexpr VkAccessFlags copiedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;

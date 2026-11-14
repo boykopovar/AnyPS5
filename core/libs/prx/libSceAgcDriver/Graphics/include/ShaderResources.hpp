@@ -108,7 +108,7 @@ struct DrawProofStamp {
     bool operator==(const DrawProofStamp&) const = default;
 };
 enum class DrawProofKind : std::size_t { Resources, Targets, Count };
-enum class DrawProofMiss : std::size_t { None, Epoch, Serial, Registry, DepthSurfaces, Unwatch, Images, DepthPlanes, Imports, Staging, Target, Evicted, Count };
+enum class DrawProofMiss : std::size_t { None, Epoch, Serial, Registry, DepthSurfaces, Unwatch, Images, DepthPlanes, Imports, Staging, Target, Evicted, InputTwins, Count };
 struct DrawProofKindCounts {
     std::uint64_t reused = 0;
     std::uint64_t proved = 0;
@@ -837,9 +837,10 @@ private:
     DrawProofStamp provedStamp;
     bool proofHeld = false;
     std::vector<std::pair<const StorageTexture*, std::uint64_t>> provedImages;
+    std::vector<std::uint64_t> provedTwins;
     bool proofEligible() const;
     DrawProofMiss proofMiss(const DrawProofStamp& now) const;
-    void takeProof(const DrawProofStamp& stamp);
+    bool takeProof(const DrawProofStamp& stamp);
     bool verifyProof(std::span<const CompiledShader> shaders, ProofReport* report);
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.

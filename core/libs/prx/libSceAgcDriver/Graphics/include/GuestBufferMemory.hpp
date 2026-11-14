@@ -234,6 +234,10 @@ struct InputTwinCounts {
     std::uint64_t reuses = 0;
     std::uint64_t outdated = 0;
     std::uint64_t demoted = 0;
+    std::uint64_t memoised = 0;
+    std::uint64_t checked = 0;
+    std::uint64_t verified = 0;
+    std::uint64_t differing = 0;
     std::uint64_t residentBytes = 0;
     std::uint64_t limitBytes = 0;
     std::array<std::uint64_t, InputTwinMisses> missed{};
@@ -245,6 +249,7 @@ std::uint64_t InputTwinLimit();
 void SetInputTwinLimitForTests(std::uint64_t bytes);
 void OutdateInputTwins(VkDevice device, std::uint64_t begin, std::uint64_t end);
 void OutdateInputTwins(VkDevice device);
+void OutdateStoredInputTwins(std::uint64_t address, std::size_t bytes);
 std::uint64_t ReleaseInputTwins(std::uint64_t bytes);
 void ClearInputTwins(VkDevice device);
 void ReportInputTwins();
@@ -399,6 +404,8 @@ public:
     void AllowKeptCopyBacks() { keptCopyBacks = true; }
     void AllowInputTwins() { inputTwinsAllowed = true; }
     void InputTwinBuffers(std::vector<std::pair<const void*, std::uint64_t>>& twins) const;
+    bool InputTwinProof(std::vector<std::uint64_t>& proof) const;
+    bool InputTwinProofHolds(std::span<const std::uint64_t> proof) const;
     bool CopyBackReach(std::vector<std::pair<std::uint64_t, std::uint64_t>>& touched) const;
     void KeepCopiedBytes(Recorder& recorder, const void* owner) const;
     std::uint64_t HandoverToken() const { return handoverToken; }
@@ -565,6 +572,7 @@ private:
         std::shared_ptr<Buffer> shadowCopy;
         bool sharedShadow = false;
         std::shared_ptr<InputTwin> twin;
+        std::uint64_t twinChecked = 0;
         bool untwinned = false;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;

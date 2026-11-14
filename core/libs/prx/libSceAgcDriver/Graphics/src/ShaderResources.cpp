@@ -4154,7 +4154,7 @@ DrawProofCounters& drawProofCounters(DrawProofKind kind) {
     return counters[static_cast<std::size_t>(kind)];
 }
 
-constexpr std::array<const char*, static_cast<std::size_t>(DrawProofMiss::Count)> DrawProofMissNames{"unproved", "epoch", "serial", "registry", "depth surfaces", "unwatch", "images", "depth planes", "imports", "staging", "target", "evicted"};
+constexpr std::array<const char*, static_cast<std::size_t>(DrawProofMiss::Count)> DrawProofMissNames{"unproved", "epoch", "serial", "registry", "depth surfaces", "unwatch", "images", "depth planes", "imports", "staging", "target", "evicted", "input twins"};
 constexpr std::array<const char*, static_cast<std::size_t>(DrawProofKind::Count)> DrawProofKindNames{"resource", "target"};
 
 void reportEpochProofs() {
@@ -4579,7 +4579,7 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
 }
 
 bool ShaderResources::proofEligible() const {
-    if (!reusable || usesBda || bda != nullptr || spaceReuse || guestMemory.HoldsLease() || guestMemory.HasStagedCopies() || !inputTwins.empty() || !comparedTextures.empty() || !comparedTableSpans.empty() || validatedTextures.size() != textures.size()) return false;
+    if (!reusable || usesBda || bda != nullptr || spaceReuse || guestMemory.HoldsLease() || guestMemory.HasStagedCopies() || !comparedTextures.empty() || !comparedTableSpans.empty() || validatedTextures.size() != textures.size()) return false;
     for (std::size_t i = 0; i < textures.size(); ++i) {
         if (textures[i] == nullptr) continue;
         const auto& surface = validatedTextures[i];
@@ -4588,7 +4588,8 @@ bool ShaderResources::proofEligible() const {
     return std::none_of(storageTextures.begin(), storageTextures.end(), [](const std::shared_ptr<StorageTexture>& image) { return image == nullptr; });
 }
 
-void ShaderResources::takeProof(const DrawProofStamp& stamp) {
+bool ShaderResources::takeProof(const DrawProofStamp& stamp) {
+    if (!guestMemory.InputTwinProof(provedTwins)) return false;
     provedImages.clear();
     for (const auto& image : storageTextures) provedImages.emplace_back(image.get(), image->Version());
     for (const auto& surface : validatedTextures) {
@@ -4596,6 +4597,7 @@ void ShaderResources::takeProof(const DrawProofStamp& stamp) {
     }
     provedStamp = stamp;
     proofHeld = true;
+    return true;
 }
 
 DrawProofMiss ShaderResources::proofMiss(const DrawProofStamp& now) const {
@@ -4621,6 +4623,7 @@ DrawProofMiss ShaderResources::proofMiss(const DrawProofStamp& now) const {
         }
     }
     if (!directRegions.empty() && !(importsReconcilable ? HostImportsReconciledUnchanged(context, importsProof) : HostImportsUnchanged(context, importsProof))) return DrawProofMiss::Imports;
+    if (!guestMemory.InputTwinProofHolds(provedTwins)) return DrawProofMiss::InputTwins;
     if (!guestMemory.StagingDecisionsCurrent()) return DrawProofMiss::Staging;
     return DrawProofMiss::None;
 }
@@ -4629,6 +4632,7 @@ bool ShaderResources::verifyProof(std::span<const CompiledShader> shaders, Proof
     const auto keptTextures = textures;
     const auto keptImages = storageTextures;
     const auto images = provedImages;
+    const auto twins = provedTwins;
     const auto pendingBefore = StorageTexture::PendingSerial();
     const auto proofBefore = GuestMemory::ProofSerial();
     ProofReport local;
@@ -4637,9 +4641,10 @@ bool ShaderResources::verifyProof(std::span<const CompiledShader> shaders, Proof
     const bool sameObjects = keptTextures == textures && keptImages == storageTextures;
     const bool uploaded = std::any_of(images.begin(), images.end(), [](const auto& entry) { return entry.first->Version() != entry.second; });
     const bool registry = StorageTexture::PendingSerial() != pendingBefore;
+    const bool refreshed = !guestMemory.InputTwinProofHolds(twins);
     const bool stored = GuestMemory::ProofSerial() != proofBefore;
-    const char* what = !ok ? "it refused the object" : !sameObjects ? "it bound another texture or storage image" : uploaded ? "it uploaded or wrote an image the object reads" : registry ? "it changed the pending registry" : stored ? "a store or write-back during the check" : "none";
-    const bool differing = !ok || !sameObjects || uploaded || registry;
+    const char* what = !ok ? "it refused the object" : !sameObjects ? "it bound another texture or storage image" : uploaded ? "it uploaded or wrote an image the object reads" : registry ? "it changed the pending registry" : refreshed ? "it refreshed or outdated an input twin the object reads" : stored ? "a store or write-back during the check" : "none";
+    const bool differing = !ok || !sameObjects || uploaded || registry || refreshed;
     NoteDrawProofVerified(DrawProofKind::Resources, differing, stored, what);
     if (differing || stored) proofHeld = false;
     return ok;
@@ -4672,10 +4677,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     ProofReport local;
     auto* out = report != nullptr ? report : &local;
     const bool ok = revalidateFull(shaders, out);
-    if (ok && now.epoch != 0 && out->path != ProofPath::Full && proofEligible()) {
-        takeProof(now);
-        NoteDrawProofProved(DrawProofKind::Resources);
-    }
+    if (ok && now.epoch != 0 && out->path != ProofPath::Full && proofEligible() && takeProof(now)) NoteDrawProofProved(DrawProofKind::Resources);
     return ok;
 }
 

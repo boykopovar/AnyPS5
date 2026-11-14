@@ -1688,6 +1688,7 @@ void Recorder::Activate() {
         labelTableOwner = this;
     }
     GuestMemory::SetFlushHook(&FlushForAccess);
+    GuestMemory::SetStoreHook(&OutdateStoredInputTwins);
 }
 
 std::optional<Recorder::LabelHit> Recorder::LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) {
@@ -1803,6 +1804,7 @@ void Recorder::CloseLabelGroup(std::uint64_t trackerGeneration) {
 
 void Recorder::NoteQueuedLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue) {
     if (bytes.size() < 4 || address % 4 != 0) return;
+    OutdateStoredInputTwins(address, bytes.size());
     // The range before the table: the hook covers the group whether or not a table exists to
     // enter it in (no owner: the callback records it outright, by a CPU store when need be).
     QueuedLabelRanges().emplace_back(address, address + bytes.size());
