@@ -19,6 +19,8 @@
 
 - [sceAudioPropagationSourceGetAudioPath](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `outPath` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 - [sceAudioPropagationPathGetNumPoints](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `count` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceAudioPropagationReportRegisterHandler](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `-1` when the `registration` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceAudioPropagationSourceGetAudioPathCount](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `count` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 
 ### Silent stubs
 

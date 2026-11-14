@@ -121,6 +121,21 @@ int main() {
         }
     }
     Require(successes == 30 && errors == 63);
+    errno = 71;
+    Require(FT_Get_SubGlyph_Info_nid_postfix(face->glyph, 0, reinterpret_cast<std::int32_t*>(0x10), nullptr, nullptr, nullptr, nullptr) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Get_SubGlyph_Info_nid_postfix(face->glyph, 0, nullptr, reinterpret_cast<std::uint32_t*>(0x10), nullptr, nullptr, nullptr) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Get_SubGlyph_Info_nid_postfix(face->glyph, 0, nullptr, nullptr, reinterpret_cast<std::int32_t*>(0x10), nullptr, nullptr) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Get_SubGlyph_Info_nid_postfix(face->glyph, 0, nullptr, nullptr, nullptr, reinterpret_cast<std::int32_t*>(0x10), nullptr) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Get_SubGlyph_Info_nid_postfix(face->glyph, 0, nullptr, nullptr, nullptr, nullptr, reinterpret_cast<GuestMatrix*>(0x10)) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
     std::printf("FT_Get_SubGlyph_Info: %d component comparisons, %d error comparisons; aliases and unchanged error outputs checked\n", successes, errors);
     Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
 }

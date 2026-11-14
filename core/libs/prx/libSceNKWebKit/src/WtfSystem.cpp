@@ -18,6 +18,7 @@
 
 namespace NKWebKit {
 void FillRandomBytes(void* buffer, std::size_t bytes);
+std::size_t PageSize();
 }  // namespace NKWebKit
 
 namespace {
@@ -51,7 +52,7 @@ void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::siz
 }
 
 std::size_t APS5_VABI _ZN3WTF8pageSizeEv() {
-    return 4096;
+    return NKWebKit::PageSize();
 }
 
 void APS5_VABI _ZN3WTF6Config17permanentlyFreezeEv() {

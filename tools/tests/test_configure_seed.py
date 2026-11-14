@@ -63,14 +63,14 @@ class ConfigureSeedStdoutTests(unittest.TestCase):
                     configure_seed.main(args)
                 self.assertEqual(error.exception.code, 2)
 
-    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the seed round trip")
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required for the seed round trip")
     def test_stdout_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             seed = root / "seed.cmake"
             seed.write_text(self.stdout_seed(root)[1], encoding="utf-8")
             (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(seed NONE)\nfile(WRITE "${CMAKE_BINARY_DIR}/value" "${KEEP}")\n')
-            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-C", str(seed)], check=True, capture_output=True)
+            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Ninja", "-C", str(seed)], check=True, capture_output=True)
             self.assertEqual((root / "build/value").read_text(), 'semi;quote"dollar$\\path')
 
     def test_stdout_include_and_exclude_are_applied_independently(self):
@@ -397,6 +397,27 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertEqual(fresh["MINI_SIZEOF_INT"][0], str(ctypes.sizeof(ctypes.c_int)))
         self.assertEqual(fresh["HAVE_MINI_SIZEOF_NONE"][0], "FALSE")
         self.assertEqual(fresh["MINI_SIZEOF_NONE"][0], "")
+
+    def test_try_run_results_round_trip_through_cmake(self):
+        source = self.root / "try-run-source"
+        source.mkdir(exist_ok=True)
+        (source / "probe.c").write_text("int main(void) { return 3; }\n", encoding="utf-8")
+        (source / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.20)\nproject(try_run_check C)\nif(NOT DEFINED MINI_RUN)\n"
+            '  message(STATUS "Running MINI_RUN")\n'
+            "  try_run(MINI_RUN MINI_RUN_COMPILES ${CMAKE_BINARY_DIR}/probe ${CMAKE_SOURCE_DIR}/probe.c)\nendif()\n",
+            encoding="utf-8")
+
+        def configure(name, *extra):
+            return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja",
+                                   f"-DCMAKE_C_COMPILER={self.compiler}"], check=True, capture_output=True, text=True).stdout
+
+        self.assertIn("Running MINI_RUN", configure("try-run-fresh"))
+        cache = self.root / "try-run-fresh" / "CMakeCache.txt"
+        self.assertEqual(configure_seed.checks(cache)["MINI_RUN"][0], "3")
+        self.assertNotIn("Running MINI_RUN", configure("try-run-seeded", "-C", str(self.seed(cache, "try-run.cmake"))))
+        self.assertEqual(configure_seed.checks(self.root / "try-run-seeded" / "CMakeCache.txt"),
+                         configure_seed.checks(cache))
 
     def test_values_with_cmake_syntax_round_trip(self):
         cache = self.root / "odd" / "CMakeCache.txt"
