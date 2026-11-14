@@ -234,11 +234,68 @@ struct LibreSslRsa {
     void* mtBlinding;
 };
 
+struct LibreSslX509Name;
+struct LibreSslX509CertInfo;
+
+struct LibreSslAsn1Type {
+    std::int32_t type;
+    void* value;
+};
+
+struct LibreSslX509Algorithm {
+    LibreSslAsn1Object* algorithm;
+    LibreSslAsn1Type* parameter;
+};
+
+struct LibreSslX509Validity {
+    Asn1String* notBefore;
+    Asn1String* notAfter;
+};
+
+struct LibreSslX509PublicKey {
+    LibreSslX509Algorithm* algorithm;
+    Asn1String* publicKey;
+    void* key;
+};
+
+struct LibreSslX509Extension {
+    LibreSslAsn1Object* object;
+    std::int32_t critical;
+    Asn1String* value;
+};
+
 struct LibreSslX509 {
-    void* certificateInfo;
-    void* signatureAlgorithm;
-    void* signature;
+    LibreSslX509CertInfo* certificateInfo;
+    LibreSslX509Algorithm* signatureAlgorithm;
+    Asn1String* signature;
     std::int32_t valid;
+    std::int32_t references;
+    char* name;
+    LibreSslExData exData;
+    std::int64_t pathLength;
+    std::int64_t proxyPathLength;
+    std::uint64_t extensionFlags;
+    std::uint64_t keyUsage;
+    std::uint64_t extendedKeyUsage;
+    std::uint64_t netscapeCertType;
+    Asn1String* subjectKeyId;
+    void* authorityKeyId;
+    void* policyCache;
+    void* crlDistributionPoints;
+    LibreSslStack* alternativeNames;
+    void* nameConstraints;
+    unsigned char sha1Hash[20];
+    void* auxiliary;
+};
+
+struct LibreSslX509Info {
+    LibreSslX509* certificate;
+    void* crl;
+    void* privateKey;
+    const void* cipher;
+    unsigned char iv[16];
+    std::int32_t encryptedLength;
+    char* encryptedData;
     std::int32_t references;
 };
 
@@ -572,17 +629,17 @@ struct LibreSslAsn1Encoding {
 };
 
 struct LibreSslX509CertInfo {
-    void* version;
-    void* serialNumber;
-    void* signature;
-    void* issuer;
-    void* validity;
-    void* subject;
-    void* key;
-    void* issuerUid;
-    void* subjectUid;
-    void* extensions;
-    LibreSslAsn1Encoding enc;
+    Asn1String* version;
+    Asn1String* serialNumber;
+    LibreSslX509Algorithm* signature;
+    LibreSslX509Name* issuer;
+    LibreSslX509Validity* validity;
+    LibreSslX509Name* subject;
+    LibreSslX509PublicKey* key;
+    Asn1String* issuerUid;
+    Asn1String* subjectUid;
+    LibreSslStack* extensions;
+    LibreSslAsn1Encoding encoding;
 };
 
 struct LibreSslCertKey {
@@ -921,7 +978,7 @@ int APS5_VABI X509V3_EXT_print_nid_postfix(void);
 int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension);
 void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension);
 void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension);
-int APS5_VABI X509_INFO_free_nid_postfix(void);
+void APS5_VABI X509_INFO_free_nid_postfix(LibreSslX509Info* info);
 LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void);
 void* APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(const LibreSslX509NameEntry* entry);
 LibreSslX509NameEntry* APS5_VABI X509_NAME_get_entry_nid_postfix(const LibreSslX509Name* name, int loc);
@@ -946,7 +1003,7 @@ int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* p
 int APS5_VABI X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(LibreSslX509VerifyParam* param, const char* text);
 void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyParam* param, std::uint32_t flags);
 int APS5_VABI X509_check_issued_nid_postfix(void);
-int APS5_VABI X509_free_nid_postfix(void);
+void APS5_VABI X509_free_nid_postfix(LibreSslX509* certificate);
 int APS5_VABI X509_get_ext_d2i_nid_postfix(void);
 void* APS5_VABI X509_get_issuer_name_nid_postfix(const LibreSslX509* certificate);
 int APS5_VABI X509_get_pubkey_nid_postfix(void);
@@ -960,7 +1017,7 @@ LibreSslOcspResponse* APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(LibreSslOcspRespon
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output);
 void* APS5_VABI d2i_PKCS12_fp_nid_postfix(FileStream* stream, void** output);
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length);
-int APS5_VABI d2i_X509_nid_postfix(void);
+LibreSslX509* APS5_VABI d2i_X509_nid_postfix(LibreSslX509** certificate, const unsigned char** input, std::int64_t length);
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object);
 int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void);
 int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreSslAsn1Object* object);
