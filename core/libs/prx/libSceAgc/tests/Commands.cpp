@@ -38,6 +38,7 @@
 
 #include <algorithm>
 #include <array>
+#include <tuple>
 #include <cstdio>
 #include <stdexcept>
 #include <cstring>
@@ -773,29 +774,29 @@ void testMemory() {
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
 
     Storage acquireStorage;
-    auto* acquire = sceAgcDcbAcquireMem(&acquireStorage.buffer, 0, 0x1234u, 0x567u, nullptr, 0x1000, 0);
+    auto* acquire = sceAgcDcbAcquireMem(&acquireStorage.buffer, 0, 0x1200u, 0x567u, nullptr, 0x1000, 0);
     check(acquire[0] == Agc::Command::Header(0x58u, 8), "acquire mem header mismatch");
-    check(acquire[1] == 0x1234u, "acquire mem engine bit was set");
+    check(acquire[1] == 0x1200u, "acquire mem engine bit was set");
     check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
-    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(acquire[1] == 0x80001200u, "acquire mem engine bit was not set to 1");
     check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
-    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(acquire[1] == 0x1200u, "acquire mem engine bit was not cleared to 0");
     check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
-    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(acquire[1] == 0x80001200u, "acquire mem engine bit was not set to 1");
     check(sceAgcAcquireMemSetEngine(acquire, 2) == 0, "sceAgcAcquireMemSetEngine failed with engine 2");
-    check(acquire[1] == 0x1234u, "engine 2 did not clear the engine bit");
+    check(acquire[1] == 0x1200u, "engine 2 did not clear the engine bit");
     check(sceAgcAcquireMemSetEngine(acquire, 3) == 0, "sceAgcAcquireMemSetEngine failed with engine 3");
-    check(acquire[1] == 0x80001234u, "engine 3 did not set the engine bit");
+    check(acquire[1] == 0x80001200u, "engine 3 did not set the engine bit");
     check(sceAgcAcquireMemSetEngine(acquire, 4) == 0, "sceAgcAcquireMemSetEngine failed with engine 4");
-    check(acquire[1] == 0x1234u, "engine 4 did not clear the engine bit");
+    check(acquire[1] == 0x1200u, "engine 4 did not clear the engine bit");
     check(sceAgcAcquireMemSetEngine(acquire, static_cast<std::uint8_t>(0xffffffffu)) == 0, "sceAgcAcquireMemSetEngine failed with 0xffffffff");
-    check(acquire[1] == 0x80001234u, "0xffffffff did not set the engine bit");
+    check(acquire[1] == 0x80001200u, "0xffffffff did not set the engine bit");
     check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
-    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(acquire[1] == 0x1200u, "acquire mem engine bit was not cleared to 0");
     check(sceAgcAcquireMemSetEngine(acquire, 0xffu) == 0, "sceAgcAcquireMemSetEngine failed with 0xff");
-    check(acquire[1] == 0x80001234u, "0xff did not set the engine bit");
+    check(acquire[1] == 0x80001200u, "0xff did not set the engine bit");
     check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
-    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(acquire[1] == 0x1200u, "acquire mem engine bit was not cleared to 0");
     const auto beforeAcquire = acquireStorage.words;
     expectFailure([&] { sceAgcAcquireMemSetEngine(nullptr, 0); });
     auto* misalignedAcquire = reinterpret_cast<std::uint32_t*>(reinterpret_cast<unsigned char*>(acquire) + 1);
@@ -812,7 +813,7 @@ void testMemory() {
     check(customLengthAcquire[1] == 0x80004321u, "custom length acquire mem engine bit was not set");
 
     auto* acbAcquire = sceAgcAcbAcquireMem(&acquireStorage.buffer, 0x567u, nullptr, 0x1000, 0);
-    check(acbAcquire[1] == 0x80000000u, "ACB acquire mem engine bit was not default 1");
+    check(acbAcquire[1] == 0u, "ACB acquire mem did not select engine 0");
     check(sceAgcAcquireMemSetEngine(acbAcquire, 0) == 0, "sceAgcAcquireMemSetEngine failed on ACB acquire");
     check(acbAcquire[1] == 0u, "ACB acquire mem engine bit was not cleared to 0");
 }
@@ -1192,33 +1193,37 @@ void testAcquireMem() {
         sceAgcDcbAcquireMem(&measured.buffer, 0, 0, gcrControl, base, 0x1000, 0xa0);
         check(measured.words[7] == gcrWord, "acquire cache control word does not set bit 15 with bit 14");
     }
-    Storage whole;
-    sceAgcDcbAcquireMem(&whole.buffer, 0, 0, 0, base, 0xffffffffffffffffull, 0);
-    check(whole.words[0] == 0xc0065800u && whole.words[2] == 0 && whole.words[4] == 0 && whole.words[6] == 0, "an unbounded acquire did not cover the whole address space");
-    Storage large;
-    sceAgcDcbAcquireMem(&large.buffer, 0, 0, 0, base, (1ull << 40u) + 1u, 0);
-    check(large.words[2] == 0 && large.words[4] == 0, "an acquire over 1 TiB did not cover the whole address space");
-    Storage exact;
-    sceAgcDcbAcquireMem(&exact.buffer, 0, 0, 0, base, 1ull << 40u, 0);
-    check(exact.words[2] == 0 && exact.words[4] == 0, "an acquire of exactly 1 TiB did not cover the whole address space");
-    Storage encodable;
-    sceAgcDcbAcquireMem(&encodable.buffer, 0, 0, 0, nullptr, (1ull << 40u) - 0x100u, 0);
-    check(encodable.words[2] == 0xffffffffu && encodable.words[4] == 0, "an acquire just below 1 TiB was not encoded as its exact size");
-    Storage roundedUp;
-    sceAgcDcbAcquireMem(&roundedUp.buffer, 0, 0, 0, reinterpret_cast<const volatile void*>(0x1ull), (1ull << 40u) - 0xffu, 0);
-    check(roundedUp.words[2] == 0 && roundedUp.words[4] == 0, "an acquire rounded up to 1 TiB did not cover the whole address space");
+    const auto* measuredBase = reinterpret_cast<const volatile void*>(0x100000ull);
+    const std::array<std::tuple<std::uint64_t, std::uint32_t, std::uint32_t>, 13> sizes{{{0, 0, 0}, {1, 1, 0}, {0xff, 1, 0}, {0x100, 1, 0}, {0x101, 2, 0}, {0x1000, 0x10, 0}, {0xffffffffull, 0x1000000u, 0}, {0x100000000ull, 0x1000000u, 0}, {1ull << 40u, 0, 1}, {(1ull << 48u) - 0x100u, 0xffffffffu, 0xff}, {(1ull << 48u) - 0xffu, 0xffffefffu, 0xff}, {(1ull << 48u) - 1u, 0xffffefffu, 0xff}, {0xffffffffffffffffull, 0xffffefffu, 0xff}}};
+    for (const auto& [sizeBytes, low, high] : sizes) {
+        Storage measured;
+        sceAgcDcbAcquireMem(&measured.buffer, 0, 0, 0x4380u, measuredBase, sizeBytes, 0xa0);
+        const std::array<std::uint32_t, 8> expectedSize{0xc0065800u, 0, low, high, 0x1000u, 0, 10, 0xc380u};
+        check(std::equal(expectedSize.begin(), expectedSize.end(), measured.words.begin()), "acquire size is not the measured block count");
+    }
+    Storage offset;
+    sceAgcDcbAcquireMem(&offset.buffer, 0, 0, 0x4380u, reinterpret_cast<const volatile void*>(0x100010ull), 0x1000, 0xa0);
+    check(offset.words[2] == 0x11u && offset.words[4] == 0x1000u, "an unaligned acquire base did not round its range outward");
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 9> operations{{{1, 0}, {2, 0}, {4, 0}, {8, 0}, {0x10, 0}, {0x100, 0x100}, {0x1000, 0x1000}, {0x10000, 0}, {0x100000, 0}}};
+    for (const auto& [cbDbOp, word] : operations) {
+        Storage measured;
+        sceAgcDcbAcquireMem(&measured.buffer, 0, cbDbOp, 0x4380u, measuredBase, 0x1000, 0xa0);
+        check(measured.words[1] == word && measured.words[2] == 0x10u && measured.words[4] == 0x1000u, "acquire CB/DB operation is not the measured word");
+    }
+    for (const std::uint32_t cbDbOp : {0x7fffffffu, 0x4000u, 0x4000000u}) {
+        Storage depth;
+        sceAgcDcbAcquireMem(&depth.buffer, 1, cbDbOp, 0x4380u, measuredBase, 0x1000, 0xa0);
+        const std::array<std::uint32_t, 8> expectedWhole{0xc0065800u, 0x80000000u | (cbDbOp & 0x06007fc0u), 0xfffffffeu, 0xffu, 1, 0, 10, 0xc380u};
+        check(std::equal(expectedWhole.begin(), expectedWhole.end(), depth.words.begin()), "a DB operation did not cover the whole range");
+    }
+    Storage high;
+    sceAgcDcbAcquireMem(&high.buffer, 3, 0x2000200u, 0xfff84000u, reinterpret_cast<const volatile void*>(0xabcdef0123456700ull), 0x100, 0);
+    const std::array<std::uint32_t, 8> expectedHigh{0xc0065800u, 0x82000200u, 1, 0, 0x01234567u, 0xabcdefu, 0, 0xc000u};
+    check(std::equal(expectedHigh.begin(), expectedHigh.end(), high.words.begin()), "acquire did not keep the engine low bit, the CB fields, 19 control bits and the base high bits");
     Storage asynchronous;
     sceAgcAcbAcquireMem(&asynchronous.buffer, 0x55u, base, 0x100, 80);
-    const std::array<std::uint32_t, 8> compute{0xc0065800u, 0x80000000u, 2, 0, 0x12345678u, 0, 5, 0x55u};
-    check(std::equal(compute.begin(), compute.end(), asynchronous.words.begin()), "the asynchronous compute acquire did not select engine 1 with no CB/DB operation");
-    Storage rejected;
-    rejected.words.fill(0xa5a5a5a5u);
-    const auto rejectedWords = rejected.words;
-    const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbAcquireMem(&rejected.buffer, 2, 0, 0, base, 0x100, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbAcquireMem(&rejected.buffer, 0, 0, 0x80000u, base, 0x100, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    const std::array<std::uint32_t, 8> compute{0xc0065800u, 0, 2, 0, 0x12345678u, 0, 5, 0x55u};
+    check(std::equal(compute.begin(), compute.end(), asynchronous.words.begin()), "the asynchronous compute acquire did not select engine 0 with no CB/DB operation");
     Storage saturatedAsync;
     sceAgcAcbAcquireMem(&saturatedAsync.buffer, 0, base, 0x100, 0xffffffffu);
     check(saturatedAsync.words[6] == 0xffffu, "the asynchronous compute acquire did not saturate the poll word at 0xffff");

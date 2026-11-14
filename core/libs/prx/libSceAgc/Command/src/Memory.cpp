@@ -6,6 +6,17 @@
 
 namespace Agc::Command {
 
+std::uint32_t* WriteAcquireMem(CommandBuffer* buffer, std::uint32_t engine, std::uint32_t cbDbOp, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles, const char* function) {
+    constexpr std::uint64_t lastPage = (1ull << 40u) - 1u;
+    const auto requested = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    const bool wholeRange = (cbDbOp & 0x04004000u) != 0;
+    const std::uint64_t page = wholeRange ? 1u : requested >> 8u;
+    const std::uint64_t blocks = !wholeRange && sizeBytes <= (lastPage << 8u) - (requested & 0xffu) ? (sizeBytes + (requested & 0xffu) + 0xffu) >> 8u : page < lastPage ? lastPage - page : 0;
+    const auto control = gcrControl & 0x7ffffu;
+    return Emit(buffer, 0x58u, {((engine & 1u) << 31u) | (cbDbOp & 0x06007fc0u), static_cast<std::uint32_t>(blocks), static_cast<std::uint32_t>(blocks >> 32u) & 0xffu,
+        static_cast<std::uint32_t>(page), static_cast<std::uint32_t>(page >> 32u) & 0xffffffu, std::min(pollCycles >> 4u, 0xffffu), control | ((control & 0x4000u) << 1u)}, function);
+}
+
 std::uint32_t* WriteDma(CommandBuffer* buffer, bool compute, std::uint8_t engine, std::uint8_t dst, std::uint8_t dstCachePolicy, std::uint64_t dstAddress, std::uint8_t src, std::uint8_t srcCachePolicy, std::uint64_t srcAddress, std::uint32_t numBytes, std::uint8_t waitForPrevious, std::uint8_t writeConfirm, std::uint8_t blockEngine, const char* function) {
     CheckBits(engine, 1, function);
     CheckBits(dst, 0xfu, function);
