@@ -1867,8 +1867,10 @@ std::uint32_t EmitPermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
         const auto address = ctx.ShuffleInHalf(inst, 1, from);
         const auto active = ctx.ShuffleInHalf(inst, 2, from);
         const auto target = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u)), ConstantU32(state, 31u));
-        const auto hit = Binary(state, spv::OpLogicalAnd, TypeBool(state), active, Binary(state, spv::OpIEqual, TypeBool(state), target, own));
-        result = Select(state, TypeU32(state), hit, value, result);
+        const auto activeMask = Select(state, TypeU32(state), active, ConstantU32(state, ~0u), ConstantU32(state, 0u));
+        const auto targetMask = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), target, own), ConstantU32(state, ~0u), ConstantU32(state, 0u));
+        const auto hit = Binary(state, spv::OpBitwiseAnd, TypeU32(state), activeMask, targetMask);
+        result = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), value, hit), Binary(state, spv::OpBitwiseAnd, TypeU32(state), result, Unary(state, spv::OpNot, TypeU32(state), hit)));
     }
     return result;
 }
