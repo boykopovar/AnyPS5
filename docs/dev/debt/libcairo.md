@@ -50,12 +50,6 @@
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
-| `cairo_mask` | `D1KYCZ80Sac` |
-| `cairo_show_glyphs` | `FnhwGKKZOjU` |
-| `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
-| `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
-| `cairo_scaled_font_extents` | `FbWFbLUQOys` |
-| `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_font_face_destroy` | `IgBFcd4cF28` |
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
@@ -67,9 +61,6 @@
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
-| `cairo_mesh_pattern_begin_patch` | `Ux6XxakVN+8` |
-| `cairo_mesh_pattern_end_patch` | `VBA3H7mYG70` |
-| `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
