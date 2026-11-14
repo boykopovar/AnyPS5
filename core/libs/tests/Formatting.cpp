@@ -599,6 +599,57 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         }
     }
 #ifdef _WIN32
+    {
+        const struct {
+            const char* input;
+            const char* format;
+            int result;
+        } prefixes[] = {
+            {"0x", "%x", EOF}, {" 0X", "%X", EOF}, {"0x1", "%2x", EOF}, {"0x", "%i", EOF}, {"0x", "%p", EOF},
+            {"0xg", "%x", 0}, {"-0x", "%x", 0}, {"+0xz", "%x", 0}, {"-0x1", "%3x", 0}, {"0xg", "%i", 0}, {"0xg", "%p", 0},
+            {"0x", "%lx", EOF}, {"0x1", "%2llX", EOF}, {"0x", "%lli", EOF},
+            {"0xg", "%lx", 0}, {"-0x1", "%3llX", 0}, {"0xg", "%lli", 0},
+        };
+        for (const auto scan : {sscanf_nid_postfix, ScanList}) {
+            for (const auto& item : prefixes) {
+                alignas(std::uint64_t) std::array<unsigned char, 16> stored;
+                stored.fill(0x55);
+                int count = -7;
+                const std::string format = std::string(item.format) + "%n";
+                const int result = scan(item.input, format.c_str(), stored.data(), &count);
+                if (result != item.result || count != -7 || !std::all_of(stored.begin(), stored.end(), [](unsigned char value) { return value == 0x55; })) {
+                    std::fprintf(stderr, "Plain scan of \"%s\" with \"%s\": result %d, expected %d, count %d\n", item.input, format.c_str(), result, item.result, count);
+                    Require(false);
+                }
+            }
+            for (const char* format : {"%x%n", "%X%n"}) {
+                unsigned int hex = 0x55555555u;
+                int count = -7;
+                Require(scan("0X1f", format, &hex, &count) == 1 && hex == 0x1f && count == 4);
+            }
+            for (const char* format : {"%lx%n", "%llX%n"}) {
+                std::uint64_t hex = 0x5555555555555555ull;
+                int count = -7;
+                Require(scan("0x123456789abcdef0", format, &hex, &count) == 1 && hex == 0x123456789abcdef0ull && count == 18);
+            }
+            unsigned int hex = 0x55555555u;
+            int count = -7;
+            Require(scan("0x1", "%1x%n", &hex, &count) == 1 && hex == 0 && count == 1);
+            int integer = -7;
+            count = -7;
+            Require(scan("0x1f", "%i%n", &integer, &count) == 1 && integer == 31 && count == 4);
+            void* pointer = reinterpret_cast<void*>(0x55);
+            count = -7;
+            Require(scan("0x1f", "%p%n", &pointer, &count) == 1 && reinterpret_cast<std::uintptr_t>(pointer) == 0x1f && count == 4);
+            integer = -7;
+            hex = 0x55555555u;
+            count = -7;
+            Require(scan("5 0x", "%d %x%n", &integer, &hex, &count) == 1 && integer == 5 && hex == 0x55555555u && count == -7);
+            integer = -7;
+            Require(scan("0x 7", "%*x %d%n", &integer, &count) == 0 && integer == -7 && count == -7);
+            Require(scan("0x1f 7", "%*x %d%n", &integer, &count) == 1 && integer == 7 && count == 6);
+        }
+    }
     int scanned = -1;
     int position = -1;
     {
