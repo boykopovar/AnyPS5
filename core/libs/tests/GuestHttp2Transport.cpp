@@ -58,7 +58,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11TruncatedSplit, Http11BadChunk, Http11Gzip, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, StallResponse, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11TruncatedSplit, Http11BadChunk, Http11Gzip, Http11HeadersClose, Http11ResponseClose, Http11ResponseReset, Http11StallRequest, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -123,7 +123,8 @@ struct ResponseSpec {
 class Server {
 public:
     explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302,
-        std::vector<std::string> responseCookies = {}, bool clientMayClose = false, bool plain = false)
+        std::vector<std::string> responseCookies = {}, bool clientMayClose = false, bool plain = false,
+        const char* bindHost = "127.0.0.1")
         : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)), clientMayClose(clientMayClose),
           plain(plain || mode == Mode::Http1Plain) {
         mbedtls_net_init(&listener);
@@ -144,15 +145,16 @@ public:
         mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_NONE);
         mbedtls_ssl_conf_read_timeout(&config, 2000);
         if (mode != Mode::NoAlpn) Require(mbedtls_ssl_conf_alpn_protocols(&config, IsHttp1() ? Http1Protocols : Protocols) == 0, "server ALPN");
-        Require(mbedtls_net_bind(&listener, "127.0.0.1", "0", MBEDTLS_NET_PROTO_TCP) == 0, "server bind");
-        sockaddr_in address{};
+        Require(mbedtls_net_bind(&listener, bindHost, "0", MBEDTLS_NET_PROTO_TCP) == 0, "server bind");
+        sockaddr_storage address{};
 #ifdef _WIN32
         int size = sizeof(address);
 #else
         socklen_t size = sizeof(address);
 #endif
         Require(getsockname(listener.fd, reinterpret_cast<sockaddr*>(&address), &size) == 0, "server port");
-        port = ntohs(address.sin_port);
+        port = address.ss_family == AF_INET6 ? ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port)
+                                            : ntohs(reinterpret_cast<sockaddr_in*>(&address)->sin_port);
         worker = std::thread([this] { Serve(); });
     }
 
@@ -188,6 +190,9 @@ public:
     void Join() { Release(); if (worker.joinable()) worker.join(); }
     const std::multimap<std::string, std::string>& Headers() const { return headers; }
     const std::string& Upload() const { return upload; }
+    explicit Server(Mode mode, std::string location, int redirectStatus, const char* bindHost,
+        std::vector<std::string> responseCookies = {}, bool clientMayClose = false)
+        : Server(mode, std::move(location), redirectStatus, std::move(responseCookies), clientMayClose, false, bindHost) {}
     bool Negotiated() const { return negotiated; }
     bool IsEarly() const { return mode >= Mode::EarlyFinal; }
     bool IsHttp1() const { return mode >= Mode::Http10 && mode <= Mode::Http1Plain; }
@@ -293,6 +298,7 @@ private:
         Require(!responded, "one response per request");
         responded = true;
         if (mode == Mode::StallHeaders) { Stage(2); Stall(); return; }
+        if (mode == Mode::StallResponse) { Stage(2); Stall(); }
         if (mode == Mode::Reset) { Require(nghttp2_submit_rst_stream(session, 0, stream, NGHTTP2_REFUSED_STREAM) == 0, "server reset"); return; }
         body = (mode == Mode::Large || mode == Mode::EarlyLarge) ? std::string(200000, 'x') : "response body";
         const bool redirect = mode == Mode::Redirect || mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || (mode == Mode::RedirectOnce && accepted == 1);
@@ -703,7 +709,7 @@ void CookieBoxDelete(int ssl, Mode mode = Mode::CookieFlood) {
     std::vector<std::string> responseCookies;
     if (mode != Mode::CookieFlood)
         for (int index = 0; index < 1500; ++index) responseCookies.push_back("item" + std::to_string(index) + "=value; Path=/");
-    Server server(mode, "/another", 302, std::move(responseCookies), true);
+    Server server(mode, "/another", 302, "127.0.0.1", std::move(responseCookies), true);
     Client client(ssl, 4, 0, mode == Mode::CookieFlood ? 3 : 2);
     const std::string url = server.Url("127.0.0.1");
     const int box = sceHttp2CreateCookieBox(0x10000);
@@ -927,6 +933,7 @@ void SslCallbacks(int trusted) {
         const bool failure = mode == 2 || mode == 3 || mode == 6 || mode == 7 || mode == 8;
         if (mode == 5) Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x8095f00c), "unverified chain without a callback returns the handshake code");
         else if (mode == 6) Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1080), "SSL callback cancellation aborts the request");
+        else if (mode == 7) Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x817b1080), "SSL callback deletion aborts the request");
         else if (failure) Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "SSL callback refusal fails request");
         else {
             Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "SSL callback accepted real handshake");
@@ -1165,11 +1172,8 @@ void Http1Cancellation(int ssl) {
                 try {
                     char byte = 'z';
                     const int result = mode == Mode::Http11StallBody ? sceHttp2ReadData(client.request, &byte, 1) : sceHttp2SendRequest(client.request, nullptr, 0);
-                    if (result == static_cast<int>(0x817b1100)) {
-                        Require(byte == 'z', "HTTP1 deleted-handle read leaves buffer untouched");
-                        return teardown != 0;
-                    }
-                    return teardown == 0 && result == static_cast<int>(0x817b1080) && byte == 'z';
+                    if (result == static_cast<int>(0x817b1100) || result == static_cast<int>(0x817b1080)) return byte == 'z';
+                    return false;
                 } catch (const std::exception&) { return true; }
             });
             server.WaitStage(2);
@@ -1272,7 +1276,7 @@ void RedirectFailures(int ssl) {
 
 void Success(int ssl, Mode mode, bool disableCa = false) {
     std::fprintf(stderr, "HTTP2 success scenario %d\n", static_cast<int>(mode));
-    Server server(mode);
+    Server server(mode, "/another", 302, mode == Mode::Normal && !disableCa ? "localhost" : "127.0.0.1");
     Client client(ssl);
     if (disableCa) Require(sceHttp2SslDisableOption(client.tmpl, 0x20) == 0, "disable known CA check");
     if (mode == Mode::Normal && !disableCa) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify localhost certificate name");
@@ -1496,6 +1500,406 @@ void GzipFailure(int ssl, Mode mode, const char* message) {
     server.Join();
 }
 
+void Async(int ssl) {
+    std::fprintf(stderr, "HTTP2 async scenario\n");
+    Server server(Mode::Normal, "/another", 302, "localhost");
+    Client client(ssl);
+    Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async host name");
+    client.Create(server.Url("localhost"));
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "http2-async") == 0, "async equeue");
+    Require(sceKernelAddUserEventEdge(eq, client.request) == 0, "async user event");
+    int tag = 0;
+    Http2AsyncOption option{};
+    option.equeue = eq;
+    option.user_event_id = client.request;
+    option.user_data = &tag;
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &option, nullptr) == 0, "async send submission");
+    KernelEvent event{};
+    int count = 0;
+    const KernelUseconds timeout = 10000000;
+    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async send event");
+    Require(event.ident == static_cast<std::uintptr_t>(client.request) && event.udata == &tag, "async send event payload");
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "async send completion");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async send result");
+    std::array<char, 64> buffer{};
+    Http2AsyncOption readOption = option;
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), &readOption, nullptr) == 0, "async read submission");
+    count = 0;
+    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async read event");
+    Require(event.ident == static_cast<std::uintptr_t>(client.request) && event.udata == &tag, "async read event payload");
+    Http2AsyncResult readResult{};
+    Require(sceHttp2WaitAsync(client.request, &readResult, nullptr, nullptr) == 0, "async read completion");
+    Require(readResult.req_id == client.request && readResult.result == 13 && readResult.event_type == 1, "async read result");
+    Require(std::string(buffer.data(), 13) == "response body", "async read body");
+    server.Join();
+    Require(server.Negotiated(), "async h2 ALPN");
+    Require(sceKernelDeleteUserEvent(eq, client.request) == 0, "delete async user event");
+    Require(sceKernelDeleteEqueue(eq) == 0, "delete async equeue");
+}
+
+void AsyncWithoutQueue(int ssl) {
+    std::fprintf(stderr, "HTTP2 async without a kernel queue scenario\n");
+    Server server(Mode::Normal, "/another", 302, "localhost");
+    Client client(ssl);
+    Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify queueless async host name");
+    client.Create(server.Url("localhost"));
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, nullptr, nullptr) == 0, "queueless async send submission");
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "queueless async send completion");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "queueless async send result");
+    std::array<char, 64> buffer{};
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr) == 0, "queueless async read submission");
+    Http2AsyncResult readResult{};
+    Require(sceHttp2WaitAsync(client.request, &readResult, nullptr, nullptr) == 0, "queueless async read completion");
+    Require(readResult.req_id == client.request && readResult.result == 13 && readResult.event_type == 1, "queueless async read result");
+    Require(std::string(buffer.data(), 13) == "response body", "queueless async read body");
+    server.Join();
+    Require(server.Negotiated(), "queueless async h2 ALPN");
+}
+
+struct AsyncQueue {
+    KernelEqueue eq = 0;
+    int tag = 0;
+    Http2AsyncOption option{};
+    explicit AsyncQueue(int request) {
+        Require(sceKernelCreateEqueue(&eq, "http2-async") == 0, "async equeue");
+        Require(sceKernelAddUserEventEdge(eq, request) == 0, "async user event");
+        option.equeue = eq;
+        option.user_event_id = request;
+        option.user_data = &tag;
+    }
+    AsyncQueue(const AsyncQueue&) = delete;
+    AsyncQueue& operator=(const AsyncQueue&) = delete;
+    ~AsyncQueue() {
+        Require(sceKernelDeleteUserEvent(eq, option.user_event_id) == 0, "delete async user event");
+        Require(sceKernelDeleteEqueue(eq) == 0, "delete async equeue");
+    }
+    void ExpectEvent() {
+        KernelEvent event{};
+        int count = 0;
+        const KernelUseconds timeout = 10000000;
+        Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async event");
+        Require(event.ident == static_cast<std::uintptr_t>(option.user_event_id) && event.udata == option.user_data, "async event payload");
+    }
+    void ExpectNoEvent() {
+        KernelEvent event{};
+        int count = 0;
+        const KernelUseconds timeout = 200000;
+        Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) != 0, "deleted request drops completion");
+    }
+};
+
+void AsyncOptionalArguments(int ssl) {
+    std::fprintf(stderr, "HTTP2 async optional arguments scenario\n");
+    Server server(Mode::Normal, "/another", 302, "localhost");
+    Client client(ssl);
+    Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async optional host name");
+    client.Create(server.Url("localhost"));
+    AsyncQueue queue(client.request);
+    int opaque = 0;
+    Http2AsyncResult reserved{};
+    reserved.reserved = &opaque;
+    Require(sceHttp2WaitAsync(client.request, nullptr, nullptr, nullptr) == static_cast<int>(0x817B1225), "async null result");
+    Require(sceHttp2WaitAsync(client.request, &reserved, nullptr, nullptr) == static_cast<int>(0x817B11FE), "async reserved result");
+    Http2AsyncResult clean{};
+    Require(sceHttp2WaitAsync(client.request, &clean, nullptr, &opaque) == static_cast<int>(0x817B11FE), "async reserved wait argument");
+    uint32_t zeroTimeout = 0;
+    Http2AsyncResult polled{};
+    polled.req_id = -1;
+    Require(sceHttp2WaitAsync(client.request, &polled, &zeroTimeout, nullptr) == static_cast<int>(0x817B1065), "unsent zero wait reports no completion");
+    Require(zeroTimeout == 0, "unsent zero wait leaves the timeout at zero");
+    Require(polled.req_id == -1, "unsent zero wait leaves the result untouched");
+    uint32_t unsentTimeout = 5000000;
+    const auto unsentStarted = std::chrono::steady_clock::now();
+    Require(sceHttp2WaitAsync(client.request, &polled, &unsentTimeout, nullptr) == static_cast<int>(0x817B1065), "unsent wait reports no completion");
+    Require(std::chrono::steady_clock::now() - unsentStarted < std::chrono::milliseconds(200), "unsent wait returned late");
+    Require(unsentTimeout == 5000000, "unsent wait leaves the timeout unchanged");
+    Require(polled.req_id == -1, "unsent wait leaves the result untouched");
+    Require(sceHttp2WaitAsync(client.request, &polled, nullptr, nullptr) == static_cast<int>(0x817B1065), "unsent null wait reports no completion");
+    Require(polled.req_id == -1, "unsent null wait leaves the result untouched");
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, &opaque) == 0, "async opaque option submission");
+    queue.ExpectEvent();
+    Http2AsyncResult result{};
+    uint32_t queuedTimeout = 5000000;
+    Require(sceHttp2WaitAsync(client.request, &result, &queuedTimeout, nullptr) == 0, "async opaque option completion");
+    Require(queuedTimeout == 5000000, "queued completion leaves the timeout unchanged");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async opaque option result");
+    std::array<char, 64> buffer{};
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, &opaque) == 0, "async null kqueue read submission");
+    queue.ExpectNoEvent();
+    Http2AsyncResult readResult{};
+    Require(sceHttp2WaitAsync(client.request, &readResult, nullptr, nullptr) == 0, "async null kqueue read completion");
+    Require(readResult.req_id == client.request && readResult.result == 13 && readResult.event_type == 1, "async null kqueue read result");
+    Require(std::string(buffer.data(), 13) == "response body", "async null kqueue read body");
+    server.Join();
+    Require(server.Negotiated(), "async optional h2 ALPN");
+}
+
+void AsyncBlockingWait(int ssl) {
+    std::fprintf(stderr, "HTTP2 async blocking wait scenario\n");
+    Server server(Mode::StallResponse, "/another", 302, "localhost");
+    Client client(ssl);
+    client.Create(server.Url("localhost"));
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async blocking submission");
+    uint32_t zeroTimeout = 0;
+    Http2AsyncResult polled{};
+    polled.req_id = -1;
+    Require(sceHttp2WaitAsync(client.request, &polled, &zeroTimeout, nullptr) == static_cast<int>(0x817B1079), "zero wait reports the pending timeout");
+    Require(zeroTimeout == 0, "zero wait leaves the timeout at zero");
+    Require(polled.req_id == -1, "zero wait leaves the result untouched");
+    std::thread release([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        server.Release();
+    });
+    uint32_t shortTimeout = 1;
+    Http2AsyncResult early{};
+    const auto expired = std::chrono::steady_clock::now();
+    Require(sceHttp2WaitAsync(client.request, &early, &shortTimeout, nullptr) == static_cast<int>(0x817B1079), "expired wait reports the timeout");
+    Require(std::chrono::steady_clock::now() - expired < std::chrono::milliseconds(200), "expired wait returned late");
+    Require(shortTimeout == 0, "expired wait clears the timeout");
+    const auto started = std::chrono::steady_clock::now();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "null timeout waits for the completion");
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    release.join();
+    Require(elapsed >= std::chrono::milliseconds(200), "null timeout returned before the completion");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async blocking result");
+    zeroTimeout = 0;
+    polled = {};
+    polled.req_id = -1;
+    Require(sceHttp2WaitAsync(client.request, &polled, &zeroTimeout, nullptr) == static_cast<int>(0x817B1065), "drained zero wait reports no completion");
+    Require(zeroTimeout == 0, "drained zero wait leaves the timeout at zero");
+    Require(polled.req_id == -1, "drained zero wait leaves the result untouched");
+    queue.ExpectEvent();
+    server.Join();
+}
+
+void AsyncOverallDeadline(int ssl) {
+    std::fprintf(stderr, "HTTP2 async overall deadline scenario\n");
+    Server server(Mode::StallResponse);
+    Client client(ssl);
+    client.Create(server.Url());
+    Require(sceHttp2SetTimeOut(client.request, 500000) == 0, "async overall deadline option");
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async overall deadline submission");
+    server.WaitStage(2);
+    uint32_t timeout = 1000000;
+    Http2AsyncResult waited{};
+    waited.req_id = -1;
+    const auto started = std::chrono::steady_clock::now();
+    Require(sceHttp2WaitAsync(client.request, &waited, &timeout, nullptr) == static_cast<int>(0x817b1079), "async overall deadline publishes no completion");
+    Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(800), "async overall deadline kept the waiter until its timeout");
+    Require(waited.req_id == -1, "async overall deadline leaves the result untouched");
+    server.Release();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "async overall deadline completion after the response");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async overall deadline result");
+    queue.ExpectEvent();
+    server.Join();
+    Require(server.Negotiated(), "async overall deadline h2 ALPN");
+}
+
+void AsyncDelete(int ssl, bool waiter) {
+    std::fprintf(stderr, "HTTP2 async delete scenario waiter %d\n", waiter ? 1 : 0);
+    Server server(Mode::StallHeaders);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async delete submission");
+    server.WaitStage(2);
+    int waitResult = -1;
+    Http2AsyncResult completed{};
+    std::atomic<bool> entered{false};
+    std::thread waiting;
+    if (waiter) {
+        waiting = std::thread([&] {
+            entered.store(true);
+            uint32_t timeout = 4000000;
+            waitResult = sceHttp2WaitAsync(client.request, &completed, &timeout, nullptr);
+            Require(timeout != 0, "delete completion keeps the remaining timeout");
+        });
+        while (!entered.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete in-flight async request");
+    if (waiter) {
+        waiting.join();
+        Require(waitResult == 0, "deleted async wait returns a completion");
+        Require(completed.event_type == 0 && completed.req_id == client.request && completed.result == static_cast<int>(0x817b1080), "deleted async send completion");
+    }
+    server.Release();
+    server.Join();
+    queue.ExpectNoEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == static_cast<int>(0x817b1100), "deleted async request stays invalid");
+}
+
+void AsyncDeleteRead(int ssl) {
+    std::fprintf(stderr, "HTTP2 async delete read scenario\n");
+    Server server(Mode::StallBody);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async read delete submission");
+    Http2AsyncResult sent{};
+    Require(sceHttp2WaitAsync(client.request, &sent, nullptr, nullptr) == 0 && sent.req_id == client.request && sent.result == 0, "async read delete send completion");
+    queue.ExpectEvent();
+    server.WaitStage(2);
+    std::array<char, 64> buffer{};
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), &queue.option, nullptr) == 0, "async read delete read submission");
+    std::atomic<bool> entered{false};
+    int waitResult = -1;
+    Http2AsyncResult completed{};
+    std::thread waiting([&] {
+        entered.store(true);
+        waitResult = sceHttp2WaitAsync(client.request, &completed, nullptr, nullptr);
+    });
+    while (!entered.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete in-flight async read");
+    waiting.join();
+    Require(waitResult == 0, "deleted async read wait returns a completion");
+    Require(completed.event_type == 1 && completed.req_id == client.request && completed.result == static_cast<int>(0x817b1080), "deleted async read completion");
+    Require(buffer == std::array<char, 64>{}, "deleted read leaves the buffer untouched");
+    server.Release();
+    server.Join();
+    Require(buffer == std::array<char, 64>{}, "deleted read leaves the buffer untouched after release");
+    queue.ExpectNoEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == static_cast<int>(0x817b1100), "deleted read request stays invalid");
+}
+
+void AsyncReceiveDeadlineIgnoresOverall(int ssl) {
+    std::fprintf(stderr, "HTTP2 async receive deadline with an ignored overall timeout scenario\n");
+    Server server(Mode::StallResponse);
+    Client client(ssl);
+    client.Create(server.Url());
+    Require(sceHttp2SetTimeOut(client.request, 500000) == 0, "shortened overall timeout option");
+    Require(sceHttp2SetRecvTimeOut(client.request, 1000000) == 0, "receive timeout option");
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "receive deadline submission");
+    server.WaitStage(2);
+    Http2AsyncResult result{};
+    const auto started = std::chrono::steady_clock::now();
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "receive deadline completion");
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    Require(elapsed >= std::chrono::milliseconds(800), "receive deadline kept the receive timeout");
+    Require(result.req_id == client.request && result.result == static_cast<int>(0x817b1222) && result.event_type == 0, "receive deadline result");
+    queue.ExpectEvent();
+    server.Release();
+    server.Join();
+    Require(server.Negotiated(), "receive deadline h2 ALPN");
+}
+
+void AsyncTwoWaiters(int ssl) {
+    std::fprintf(stderr, "HTTP2 async two-waiter scenario\n");
+    Server server(Mode::StallResponse);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "two-waiter submission");
+    server.WaitStage(2);
+    std::atomic<int> successes{0};
+    std::atomic<int> entered{0};
+    int codes[2] = {-1, -1};
+    const auto consume = [&](int index) {
+        Http2AsyncResult result{};
+        entered.fetch_add(1);
+        codes[index] = sceHttp2WaitAsync(client.request, &result, nullptr, nullptr);
+        if (codes[index] == 0) successes.fetch_add(1);
+    };
+    std::thread first(consume, 0);
+    std::thread second(consume, 1);
+    while (entered.load() != 2) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    server.Release();
+    while (successes.load() == 0) std::this_thread::yield();
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete after last completion");
+    first.join();
+    second.join();
+    Require(successes.load() == 1, "one waiter consumes the completion");
+    Require(codes[0] == static_cast<int>(0x817b1100) || codes[1] == static_cast<int>(0x817b1100), "the other waiter observes deletion");
+    server.Join();
+}
+
+void AsyncTeardown(int ssl) {
+    std::fprintf(stderr, "HTTP2 async teardown scenario\n");
+    Server server(Mode::StallHeaders);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async teardown submission");
+    server.WaitStage(2);
+    Require(sceHttp2Term(client.context) == 0, "term context with in-flight async request");
+    client.context = 0;
+    server.Release();
+    server.Join();
+    queue.ExpectNoEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == static_cast<int>(0x817b1100), "torn-down async request stays invalid");
+}
+
+void AsyncFailure(int ssl) {
+    std::fprintf(stderr, "HTTP2 async failure scenario\n");
+    Client client(ssl);
+    client.Create("https://localhost/", "POST", 0);
+    AsyncQueue queue(client.request);
+    const char body = 'x';
+    Require(sceHttp2SendRequestAsync(client.request, &body, 1, &queue.option, nullptr) == 0, "async failure submission");
+    queue.ExpectEvent();
+    Http2AsyncResult result{};
+    Require(Throws([&] { sceHttp2WaitAsync(client.request, &result, nullptr, nullptr); }), "async worker failure reaches waiter");
+}
+
+struct PublishGate {
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+};
+
+void AsyncDeletePublished(int ssl, bool parent) {
+    std::fprintf(stderr, "HTTP2 async delete published scenario parent %d\n", parent ? 1 : 0);
+    Client client(ssl);
+    client.Create("https://localhost/", "POST", 0);
+    const int request = client.request;
+    const int tmpl = client.tmpl;
+    AsyncQueue queue(request);
+    PublishGate gate;
+    GuestSceHttp2Test::SetAsyncPublishHookForTests_nid_no_patch([](void* data) {
+        auto& gate = *static_cast<PublishGate*>(data);
+        gate.entered.store(true, std::memory_order_release);
+        while (!gate.release.load(std::memory_order_acquire)) std::this_thread::yield();
+    }, &gate);
+    const char body = 'x';
+    Require(sceHttp2SendRequestAsync(request, &body, 1, &queue.option, nullptr) == 0, "async published submission");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!gate.entered.load(std::memory_order_acquire)) {
+        Require(std::chrono::steady_clock::now() < deadline, "async publication entered");
+        std::this_thread::yield();
+    }
+    std::atomic<bool> started{false};
+    std::atomic<bool> deleted{false};
+    int deleteResult = -1;
+    std::thread deleter([&] {
+        started.store(true, std::memory_order_release);
+        deleteResult = parent ? sceHttp2DeleteTemplate(tmpl) : sceHttp2DeleteRequest(request);
+        deleted.store(true, std::memory_order_release);
+    });
+    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(!deleted.load(std::memory_order_acquire), "deletion waits for event delivery");
+    gate.release.store(true, std::memory_order_release);
+    deleter.join();
+    GuestSceHttp2Test::SetAsyncPublishHookForTests_nid_no_patch(nullptr, nullptr);
+    Require(deleteResult == 0, "deletion after publication");
+    queue.ExpectEvent();
+    queue.ExpectNoEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == static_cast<int>(0x817b1100), "published completion retired");
+}
+
 void Failure(int ssl, Mode mode) {
     std::fprintf(stderr, "HTTP2 failure scenario %d\n", static_cast<int>(mode));
     Server server(mode);
@@ -1544,14 +1948,13 @@ void Cancellation(int ssl, Mode mode, int teardown) {
     auto pending = std::async(std::launch::async, [&] {
         try {
             const int sent = sceHttp2SendRequest(client.request, upload.data(), upload.size());
-            if (sent == static_cast<int>(0x817b1100)) return teardown != 0;
-            if (sent == static_cast<int>(0x817b1080)) return teardown == 0;
+            if (sent == static_cast<int>(0x817b1100) || sent == static_cast<int>(0x817b1080)) return true;
             Require(sent == 0, "pending send result");
             char byte = 'z';
             const int read = sceHttp2ReadData(client.request, &byte, 1);
             if (read == static_cast<int>(0x817b1100) || read == static_cast<int>(0x817b1080)) {
                 Require(byte == 'z', "failed read leaves buffer untouched");
-                return (teardown != 0) == (read == static_cast<int>(0x817b1100));
+                return true;
             }
             return false;
         } catch (const std::exception&) { return true; }
@@ -2052,6 +2455,20 @@ int main(int argc, char** argv) {
         Refused(ssl);
         Capacity(ssl);
         Retries(ssl);
+        Async(ssl);
+        AsyncWithoutQueue(ssl);
+        AsyncOptionalArguments(ssl);
+        AsyncBlockingWait(ssl);
+        AsyncOverallDeadline(ssl);
+        AsyncDelete(ssl, false);
+        AsyncDelete(ssl, true);
+        AsyncDeleteRead(ssl);
+        AsyncReceiveDeadlineIgnoresOverall(ssl);
+        AsyncTwoWaiters(ssl);
+        AsyncTeardown(ssl);
+        AsyncFailure(ssl);
+        AsyncDeletePublished(ssl, false);
+        AsyncDeletePublished(ssl, true);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
         Handshake(untrusted, Mode::Normal, static_cast<int>(0x8095f00c));

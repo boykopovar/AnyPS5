@@ -73,7 +73,7 @@ struct Capacity {
 
 class Request {
 public:
-    Request(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
+    Request(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url, bool ignoresTotalTimeout = false);
     ~Request();
     Request(const Request&) = delete;
     Request& operator=(const Request&) = delete;
@@ -92,7 +92,7 @@ private:
 
 int AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode);
 std::shared_ptr<Capacity> CreateCapacity_nid_no_patch(int maximum);
-std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
+std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url, bool ignoresTotalTimeout = false);
 
 }
 

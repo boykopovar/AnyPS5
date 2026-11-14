@@ -229,71 +229,84 @@ int main() {
     Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
     Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
     KernelEqueue eq = 0;
-    Require(sceKernelCreateEqueue(&eq, "http2-unsupported-async") == 0);
-    Require(sceKernelAddUserEventEdge(eq, request) == 0);
+    Require(sceKernelCreateEqueue(&eq, "http2-async") == 0);
+    const int failed = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://localhost/", 0);
+    Require(failed > 0);
+    Require(sceKernelAddUserEventEdge(eq, failed) == 0);
+    int tag = 0;
     Http2AsyncOption option{};
     option.equeue = eq;
-    option.user_event_id = request;
-    Require(Throws([&] { sceHttp2SendRequestAsync(request, nullptr, 0, &option, nullptr); }));
-    Http2AsyncResult result{};
-    result.req_id = 123;
-    std::uint32_t timeout = 500;
-    Require(Throws([&] { sceHttp2WaitAsync(request, &result, &timeout, nullptr); }));
-    Require(result.req_id == 123 && timeout == 500);
-    Require(sceHttp2WaitAsync(request, nullptr, &timeout, nullptr) == static_cast<int>(0x817B1225));
-    Require(sceHttp2WaitAsync(request, &result, &timeout, reinterpret_cast<void*>(0x10)) == static_cast<int>(0x817B11FE));
-    Require(sceHttp2WaitAsync(-1, &result, &timeout, nullptr) == InvalidId);
-    Require(sceHttp2ReadDataAsync(request, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80436063));
+    option.user_event_id = failed;
+    option.user_data = &tag;
+    const char body = 'x';
+    Require(sceHttp2SendRequestAsync(failed, &body, 1, &option, nullptr) == 0);
     KernelEvent event{};
-    int count = 123;
-    const KernelUseconds poll = 0;
-    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &poll) != 0);
+    int count = 0;
+    const KernelUseconds timeout = 2000000;
+    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1);
+    Require(event.ident == static_cast<std::uintptr_t>(failed) && event.udata == &tag);
+    Http2AsyncResult result{};
+    Require(Throws([&] { sceHttp2WaitAsync(failed, &result, nullptr, nullptr); }));
+    Require(sceHttp2WaitAsync(0, &result, nullptr, nullptr) == InvalidId);
+    Require(sceHttp2WaitAsync(failed, nullptr, nullptr, nullptr) == static_cast<int>(0x817B1225));
+    Http2AsyncResult reserved{};
+    reserved.reserved = &tag;
+    Require(sceHttp2WaitAsync(failed, &reserved, nullptr, nullptr) == static_cast<int>(0x817B11FE));
+    Http2AsyncResult clean{};
+    Require(sceHttp2WaitAsync(failed, &clean, nullptr, &tag) == static_cast<int>(0x817B11FE));
     {
 #ifdef _WIN32
         _putenv("APS5_NET_DISCONNECTED=1");
 #else
         setenv("APS5_NET_DISCONNECTED", "1", 1);
 #endif
+        const KernelUseconds poll = 0;
         Http2AsyncOption bad_option = option;
         bad_option.equeue = -1;
-        std::atomic<bool> thread_started{false};
+        Require(sceHttp2SendRequestAsync(failed, nullptr, 0, &bad_option, nullptr) == 0);
+        Require(Throws([&] { sceHttp2WaitAsync(failed, &result, nullptr, nullptr); }));
+        Require(sceHttp2SendRequestAsync(failed, nullptr, 0, nullptr, nullptr) == 0);
+        std::uint32_t zero_timeout = 0;
+        Http2AsyncResult polled{};
+        Require(sceHttp2WaitAsync(failed, &polled, &zero_timeout, nullptr) == 0);
+        Require(polled.req_id == failed && polled.result == static_cast<int>(0x80431063) && zero_timeout == 0);
+        KernelEvent extra{};
+        int extra_count = 123;
+        Require(sceKernelWaitEqueue(eq, &extra, 1, &extra_count, &poll) != 0);
         std::atomic<bool> waiter_consumed{false};
         std::thread waiter([&] {
-            thread_started = true;
             KernelEvent event_wait{};
             int count_wait = 0;
             const KernelUseconds poll_wait = 1000000;
             if (sceKernelWaitEqueue(eq, &event_wait, 1, &count_wait, &poll_wait) == 0 && count_wait == 1) {
                 Http2AsyncResult result_wait{};
                 std::uint32_t timeout_wait = 500;
-                if (sceHttp2WaitAsync(request, &result_wait, &timeout_wait, nullptr) == 0) {
-                    if (result_wait.req_id == request && result_wait.result == static_cast<int>(0x80431063)) {
+                if (sceHttp2WaitAsync(failed, &result_wait, &timeout_wait, nullptr) == 0) {
+                    if (result_wait.req_id == failed && result_wait.result == static_cast<int>(0x80431063)) {
                         waiter_consumed = true;
                     }
                 }
             }
         });
-        while (!thread_started) std::this_thread::yield();
-        Require(Throws([&] { sceHttp2SendRequestAsync(request, nullptr, 0, &bad_option, nullptr); }));
-        Require(sceHttp2SendRequestAsync(request, nullptr, 0, &option, nullptr) == 0);
+        Require(sceHttp2SendRequestAsync(failed, nullptr, 0, &option, nullptr) == 0);
         waiter.join();
         Require(waiter_consumed);
-        KernelEvent extra{};
-        int extra_count = 123;
         Require(sceKernelWaitEqueue(eq, &extra, 1, &extra_count, &poll) != 0);
-        Require(sceHttp2SendRequest(request, nullptr, 0) == static_cast<int>(0x80431063));
-        Require(sceHttp2SendRequest(request + 1000, nullptr, 0) == InvalidId);
+        Require(sceHttp2SendRequest(failed, nullptr, 0) == static_cast<int>(0x80431063));
+        Require(sceHttp2SendRequest(failed + 1000, nullptr, 0) == InvalidId);
 #ifdef _WIN32
         _putenv("APS5_NET_DISCONNECTED=");
 #else
         unsetenv("APS5_NET_DISCONNECTED");
 #endif
     }
+    Require(sceKernelDeleteUserEvent(eq, failed) == 0);
     Require(sceKernelDeleteEqueue(eq) == 0);
     const int sibling = sceHttp2CreateTemplate(context, "other", 2, 0);
     const int child = sceHttp2CreateRequestWithURL(sibling, "CONNECT", "https://localhost/", 0);
     Require(sceHttp2DeleteTemplate(tmpl) == 0);
     Require(sceHttp2SslEnableOption(sibling, 0) == 0);
+    Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == InvalidId);
     Require(sceHttp2DeleteRequest(request) == InvalidId);
     Require(sceHttp2SendRequest(request, nullptr, 0) == InvalidId);
     Require(sceHttp2Term(context) == 0);
