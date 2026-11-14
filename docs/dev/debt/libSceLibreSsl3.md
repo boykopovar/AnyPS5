@@ -123,7 +123,7 @@
 | `i2d_SSL_SESSION` | `5aSlVeVSKVc` |
 | `tls_read` | `7RvDjfy4gUA` |
 | `EC_POINT_set_affine_coordinates_GFp` | `8AGfaSvdDq4` |
-| `unknown` | `A-Hs-8mau+8` |
+| `i2d_PUBKEY` | `A-Hs-8mau+8` |
 | `ERR_load_X509_strings` | `A0lZtFjhcTw` |
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
