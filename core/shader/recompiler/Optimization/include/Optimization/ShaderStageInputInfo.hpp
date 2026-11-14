@@ -117,6 +117,7 @@ struct ShaderTessellationInputInfo {
     bool drawParameters = false;
     bool mergedHull = false;
     std::uint32_t geometryItemDwords = 0;
+    std::uint32_t primitiveIdInstancePatches = 0;
 };
 
 struct ShaderVertexInputInfo {

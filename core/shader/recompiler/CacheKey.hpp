@@ -152,6 +152,7 @@ private:
         append(key, tessellation->patchesPerGroup);
         append(key, tessellation->primitiveGroupSize);
         append(key, TessellationInstancePatches(request));
+        append(key, TessellationPrimitiveIdInstancePatches(request));
     }
 
     template<typename TValue>
@@ -386,6 +387,7 @@ private:
         append(key, value.meshWindowBuffer);
         append(key, value.hostInterpolationFirst);
         append(key, value.shaderImageMinLod);
+        append(key, value.tessellationPrimitiveIdPerInstance);
         append(key, value.float16WidenNans);
         append(key, value.float16NarrowNans);
     }
