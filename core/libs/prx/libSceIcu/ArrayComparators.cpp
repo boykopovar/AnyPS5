@@ -31,4 +31,9 @@ std::int32_t APS5_VABI uprv_uint32Comparator_nid_postfix(const void* context, co
     return 1;
 }
 
+std::int32_t APS5_VABI uprv_uint16Comparator_nid_postfix(const void* context, const void* left, const void* right) {
+    (void)context;
+    return static_cast<std::int32_t>(*static_cast<const std::uint16_t*>(left)) - static_cast<std::int32_t>(*static_cast<const std::uint16_t*>(right));
+}
+
 }

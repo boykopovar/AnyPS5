@@ -9338,10 +9338,6 @@ int APS5_VABI _ZN6icu_689UVector32D2Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_uint16Comparator_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_686Locale9getFrenchEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

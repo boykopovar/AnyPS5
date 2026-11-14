@@ -2186,7 +2186,7 @@ int APS5_VABI _ZNK6icu_687UVector7toArrayEPPv_nid_postfix();
 int APS5_VABI ucptrie_internalU8PrevIndex_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_wR3MAUetM9M_nid_no_patch();
 int APS5_VABI _ZN6icu_689UVector32D2Ev_nid_postfix();
-int APS5_VABI uprv_uint16Comparator_nid_postfix();
+std::int32_t APS5_VABI uprv_uint16Comparator_nid_postfix(const void* context, const void* left, const void* right);
 int APS5_VABI _ZN6icu_686Locale9getFrenchEv_nid_postfix();
 int APS5_VABI _ZN6icu_6814ResourceBundleC1ER10UErrorCode_nid_postfix();
 int APS5_VABI ucase_getType_nid_postfix();
