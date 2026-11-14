@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cerrno>
+#include <stdexcept>
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +14,8 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -39,14 +44,75 @@ void Require(bool value, const char* what) {
     std::abort();
 }
 
+template <typename TValue, std::size_t TCount, typename TFunction>
+void CheckCountMemory(TFunction function, const std::array<TValue, TCount>& input, int expected, const char* name) {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr, "allocation failed");
+    DWORD previous;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0, "guard failed");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0, "page size unavailable");
+    const auto page = static_cast<std::size_t>(pageSize);
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED, "allocation failed");
+    Require(mprotect(memory + page, page, PROT_NONE) == 0, "guard failed");
+#endif
+    constexpr auto extent = TCount * sizeof(TValue);
+    for (const auto* pointer : {static_cast<const TValue*>(nullptr), reinterpret_cast<const TValue*>(memory + page), reinterpret_cast<const TValue*>(memory + page - extent / 2)}) {
+        bool threw = false;
+        try {
+            function(pointer);
+        } catch (const std::runtime_error& error) {
+            threw = std::string(error.what()) == std::string(name) + " not implemented";
+        }
+        Require(threw, "unreadable input did not take the named unsupported path");
+    }
+    auto* exact = reinterpret_cast<TValue*>(memory + page - extent);
+    std::memcpy(exact, input.data(), extent);
+#ifdef _WIN32
+    Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "read-only protection failed");
+#else
+    Require(mprotect(memory, page, PROT_READ) == 0, "read-only protection failed");
+#endif
+    errno = EDOM;
+    Require(function(exact) == expected, "exact read-only input extent failed");
+    Require(errno == EDOM, "successful query changed errno");
+    Require(std::memcmp(exact, input.data(), extent) == 0, "query changed its input");
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "release failed");
+#else
+    Require(munmap(memory, page * 2) == 0, "release failed");
+#endif
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     const auto numInfoGetTotal = Resolve<WordsFn>("sceNpTrophyNumInfoGetTotal");
     const auto groupArrayGetNum = Resolve<WordsFn>("sceNpTrophyGroupArrayGetNum");
     const auto setInfoGetTrophyNum = Resolve<BytesFn>("sceNpTrophySetInfoGetTrophyNum");
     const auto setInfoGetTrophyFlagArray = Resolve<FlagArrayFn>("sceNpTrophySetInfoGetTrophyFlagArray");
     const auto configHasGroupFeature = Resolve<BytesFn>("sceNpTrophyConfigHasGroupFeature");
+
+    if (argc == 2) {
+        if (std::strcmp(argv[1], "group-memory") == 0) {
+            CheckCountMemory(groupArrayGetNum, std::array<std::uint32_t, 1>{0xffffffffu}, 32, "sceNpTrophyGroupArrayGetNum");
+        } else if (std::strcmp(argv[1], "sum-memory") == 0) {
+            CheckCountMemory(numInfoGetTotal, std::array<std::uint32_t, 4>{0xffffffffu, 2, 0, 0}, 1, "sceNpTrophyNumInfoGetTotal");
+        } else if (std::strcmp(argv[1], "set-memory") == 0) {
+            std::array<std::uint8_t, 64> input{};
+            input.fill(0x0f);
+            CheckCountMemory(setInfoGetTrophyNum, input, 256, "sceNpTrophySetInfoGetTrophyNum");
+        } else {
+            Require(false, "unknown test mode");
+        }
+        return 0;
+    }
 
     const std::uint32_t counts[4] = {1, 20, 300, 4000};
     Require(numInfoGetTotal(counts) == 4321, "the four counts were not summed");
