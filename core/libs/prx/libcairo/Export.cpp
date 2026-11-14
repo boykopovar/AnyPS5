@@ -243,11 +243,6 @@ int APS5_VABI cairo_push_group() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_ft_font_options_substitute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI cairo_select_font_face() {
     NotImplemented_nid_no_patch(__func__);
 }

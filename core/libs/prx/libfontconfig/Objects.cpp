@@ -344,7 +344,7 @@ FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second)
     return 1;
 }
 
-FcBool APS5_VABI FcPatternDel(FcPattern* pattern, const char* object) {
+FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
     const auto entry = pattern->objects.find(object);
     if (entry == pattern->objects.end()) return 0;
@@ -361,7 +361,7 @@ FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id)
     return 1;
 }
 
-FcResult APS5_VABI FcPatternGet(const FcPattern* pattern, const char* object, int id, FcValue* value) {
+FcResult APS5_VABI FcPatternGet_nid_postfix(const FcPattern* pattern, const char* object, int id, FcValue* value) {
     if (!object) NotImplemented_nid_no_patch(__func__);
     if (!pattern) return FcResultNoMatch;
     const auto entry = pattern->objects.find(object);
@@ -374,7 +374,7 @@ FcResult APS5_VABI FcPatternGet(const FcPattern* pattern, const char* object, in
 
 FcResult APS5_VABI FcPatternGetInteger(const FcPattern* pattern, const char* object, int id, int* value) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != FcTypeInteger) return FcResultTypeMismatch;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -384,7 +384,7 @@ FcResult APS5_VABI FcPatternGetInteger(const FcPattern* pattern, const char* obj
 
 FcResult APS5_VABI FcPatternGetBool(const FcPattern* pattern, const char* object, int id, FcBool* value) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != FcTypeBool) return FcResultTypeMismatch;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -394,7 +394,7 @@ FcResult APS5_VABI FcPatternGetBool(const FcPattern* pattern, const char* object
 
 FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* object, int id, FcChar8** value) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != FcTypeString) return FcResultTypeMismatch;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -404,7 +404,7 @@ FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* obje
 
 FcResult APS5_VABI FcPatternGetFTFace(const FcPattern* pattern, const char* object, int id, void** face) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != FcTypeFTFace) return FcResultTypeMismatch;
     if (!face) NotImplemented_nid_no_patch(__func__);
@@ -414,7 +414,7 @@ FcResult APS5_VABI FcPatternGetFTFace(const FcPattern* pattern, const char* obje
 
 FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* object, int id, FcMatrix** value) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != FcTypeMatrix) return FcResultTypeMismatch;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -424,7 +424,7 @@ FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* obje
 
 FcResult APS5_VABI FcPatternGetCharSet(const FcPattern* pattern, const char* object, int id, FcCharSet** value) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != FcTypeCharSet) return FcResultTypeMismatch;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -434,7 +434,7 @@ FcResult APS5_VABI FcPatternGetCharSet(const FcPattern* pattern, const char* obj
 
 FcResult APS5_VABI FcPatternGetLangSet(const FcPattern* pattern, const char* object, int id, FcLangSet** value) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != FcTypeLangSet) return FcResultTypeMismatch;
     if (!value) NotImplemented_nid_no_patch(__func__);
@@ -442,7 +442,7 @@ FcResult APS5_VABI FcPatternGetLangSet(const FcPattern* pattern, const char* obj
     return FcResultMatch;
 }
 
-FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int value) {
+FcBool APS5_VABI FcPatternAddInteger_nid_postfix(FcPattern* pattern, const char* object, int value) {
     try {
         PatternValue entry;
         entry.type = FcTypeInteger;
@@ -451,7 +451,7 @@ FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int
     } catch (const std::bad_alloc&) { return 0; }
 }
 
-FcBool APS5_VABI FcPatternAddBool(FcPattern* pattern, const char* object, FcBool value) {
+FcBool APS5_VABI FcPatternAddBool_nid_postfix(FcPattern* pattern, const char* object, FcBool value) {
     try {
         PatternValue entry;
         entry.type = FcTypeBool;

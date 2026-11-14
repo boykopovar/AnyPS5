@@ -99,7 +99,6 @@ int APS5_VABI cairo_pattern_destroy();
 int APS5_VABI cairo_pattern_set_matrix();
 int APS5_VABI cairo_pattern_set_filter();
 int APS5_VABI cairo_push_group();
-int APS5_VABI cairo_ft_font_options_substitute();
 int APS5_VABI cairo_select_font_face();
 int APS5_VABI cairo_scaled_font_reference();
 int APS5_VABI cairo_font_face_reference();

@@ -64,8 +64,8 @@ static void Patterns() {
     FcValue value{};
     value.type = FcTypeRange;
     value.u.i = 123;
-    CHECK(FcPatternGet(nullptr, "family", 0, &value) == FcResultNoMatch);
-    CHECK(FcPatternGet(pattern, "missing", 0, &value) == FcResultNoMatch);
+    CHECK(FcPatternGet_nid_postfix(nullptr, "family", 0, &value) == FcResultNoMatch);
+    CHECK(FcPatternGet_nid_postfix(pattern, "missing", 0, &value) == FcResultNoMatch);
     CHECK(value.type == FcTypeRange && value.u.i == 123);
     char object[] = "family";
     FcChar8 original[] = "Example";
@@ -80,16 +80,16 @@ static void Patterns() {
     CHECK(std::strcmp(reinterpret_cast<const char*>(savedString), "Example") == 0);
     CHECK(FcPatternGetString(pattern, "family", 1, &string) == FcResultMatch);
     CHECK(std::strcmp(reinterpret_cast<const char*>(string), "Second") == 0);
-    CHECK(FcPatternGet(pattern, "family", -1, &value) == FcResultNoId);
-    CHECK(FcPatternGet(pattern, "family", INT_MAX, &value) == FcResultNoId);
+    CHECK(FcPatternGet_nid_postfix(pattern, "family", -1, &value) == FcResultNoId);
+    CHECK(FcPatternGet_nid_postfix(pattern, "family", INT_MAX, &value) == FcResultNoId);
     CHECK(value.type == FcTypeRange && value.u.i == 123);
     int integer = 0x12345678;
     CHECK(FcPatternGetInteger(pattern, "family", 0, &integer) == FcResultTypeMismatch);
     CHECK(integer == 0x12345678);
-    CHECK(FcPatternAddInteger(pattern, "family", 4) == 0);
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "family", 4) == 0);
     CHECK(FcPatternAddString(pattern, "family", nullptr) == 0);
     CHECK(FcPatternAddMatrix(pattern, "matrix", nullptr) == 0);
-    CHECK(FcPatternAddInteger(pattern, "slant", INT_MIN));
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "slant", INT_MIN));
     CHECK(FcPatternAddDouble(pattern, "slant", -3.75));
     CHECK(FcPatternGetInteger(pattern, "slant", 0, &integer) == FcResultMatch && integer == INT_MIN);
     CHECK(FcPatternGetInteger(pattern, "slant", 1, &integer) == FcResultTypeMismatch);
@@ -97,17 +97,17 @@ static void Patterns() {
     CHECK(FcPatternAddDouble(pattern, "size", 2147483647.75));
     CHECK(FcPatternGetInteger(pattern, "size", 0, &integer) == FcResultTypeMismatch);
     CHECK(integer == INT_MIN);
-    CHECK(FcPatternAddBool(pattern, "antialias", 7));
+    CHECK(FcPatternAddBool_nid_postfix(pattern, "antialias", 7));
     CHECK(FcPatternGetBool(pattern, "antialias", 0, &integer) == FcResultMatch && integer == 7);
-    CHECK(FcPatternAddInteger(pattern, "antialias", 1) == 0);
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "antialias", 1) == 0);
     CHECK(FcPatternAddString(pattern, "lang", Text("en")));
-    CHECK(FcPatternAddBool(pattern, "lang", 1) == 0);
-    CHECK(FcPatternAddInteger(pattern, "custom", 42));
+    CHECK(FcPatternAddBool_nid_postfix(pattern, "lang", 1) == 0);
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "custom", 42));
     CHECK(FcPatternAddString(pattern, "custom", Text("mixed")));
-    CHECK(FcPatternGet(pattern, "custom", 0, &value) == FcResultMatch && value.type == FcTypeInteger && value.u.i == 42);
-    CHECK(FcPatternGet(pattern, "custom", 1, &value) == FcResultMatch && value.type == FcTypeString);
+    CHECK(FcPatternGet_nid_postfix(pattern, "custom", 0, &value) == FcResultMatch && value.type == FcTypeInteger && value.u.i == 42);
+    CHECK(FcPatternGet_nid_postfix(pattern, "custom", 1, &value) == FcResultMatch && value.type == FcTypeString);
     CHECK(FcPatternAddString(pattern, "Family", Text("case-sensitive object name")));
-    CHECK(FcPatternAddInteger(pattern, "Family", 5));
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "Family", 5));
     FcMatrix input{1, 2, 3, 4};
     CHECK(FcPatternAddMatrix(pattern, "matrix", &input));
     input.xx = 99;
@@ -132,15 +132,15 @@ static void Patterns() {
     CHECK(FcPatternGetString(pattern, "family", 0, &string) == FcResultMatch);
     CHECK(std::strcmp(reinterpret_cast<const char*>(string), "Second") == 0);
     CHECK(FcPatternRemove(pattern, "family", 0));
-    CHECK(FcPatternGet(pattern, "family", 0, &value) == FcResultNoMatch);
-    CHECK(!FcPatternDel(pattern, "family"));
-    CHECK(FcPatternDel(pattern, "custom"));
-    CHECK(!FcPatternDel(pattern, "custom"));
+    CHECK(FcPatternGet_nid_postfix(pattern, "family", 0, &value) == FcResultNoMatch);
+    CHECK(!FcPatternDel_nid_postfix(pattern, "family"));
+    CHECK(FcPatternDel_nid_postfix(pattern, "custom"));
+    CHECK(!FcPatternDel_nid_postfix(pattern, "custom"));
     FcPatternReference(copy);
     FcPatternDestroy(copy);
     CHECK(FcPatternGetInteger(copy, "slant", 0, &integer) == FcResultMatch && integer == INT_MIN);
-    CHECK(FcPatternGet(copy, "absent", 0, nullptr) == FcResultNoMatch);
-    CHECK(FcPatternGet(copy, "slant", 2, nullptr) == FcResultNoId);
+    CHECK(FcPatternGet_nid_postfix(copy, "absent", 0, nullptr) == FcResultNoMatch);
+    CHECK(FcPatternGet_nid_postfix(copy, "slant", 2, nullptr) == FcResultNoId);
     CHECK(FcPatternGetString(copy, "slant", 0, nullptr) == FcResultTypeMismatch);
     FcPatternDestroy(copy);
     FcPatternDestroy(pattern);
@@ -152,7 +152,7 @@ static void IntegerGetters() {
     CHECK(pattern);
     const int integers[] = {INT_MIN, -1, 0, 1, INT_MAX};
     for (int i = 0; i < static_cast<int>(std::size(integers)); ++i) {
-        CHECK(FcPatternAddInteger(pattern, "integer", integers[i]));
+        CHECK(FcPatternAddInteger_nid_postfix(pattern, "integer", integers[i]));
         int output = 0x12345678;
         CHECK(FcPatternGetInteger(pattern, "integer", i, &output) == FcResultMatch);
         CHECK(output == integers[i]);
@@ -165,7 +165,7 @@ static void IntegerGetters() {
     for (int i = 0; i < static_cast<int>(std::size(doubles)); ++i) {
         CHECK(FcPatternAddDouble(pattern, "double", doubles[i]));
         FcValue value{};
-        CHECK(FcPatternGet(pattern, "double", i, &value) == FcResultMatch);
+        CHECK(FcPatternGet_nid_postfix(pattern, "double", i, &value) == FcResultMatch);
         CHECK(value.type == FcTypeDouble);
         int output = 0x12345678;
         CHECK(FcPatternGetInteger(pattern, "double", i, &output) == FcResultTypeMismatch);
@@ -211,7 +211,7 @@ static void Equality() {
     auto* first = FcPatternCreate();
     auto* second = FcPatternCreate();
     CHECK(first && second);
-    CHECK(FcPatternAddInteger(first, "custom", 42));
+    CHECK(FcPatternAddInteger_nid_postfix(first, "custom", 42));
     CHECK(FcPatternAddDouble(second, "custom", 42));
     CHECK(FcPatternEqual(first, second));
     CHECK(FcPatternAddDouble(first, "nan", std::numeric_limits<double>::quiet_NaN()));
@@ -226,13 +226,13 @@ static void FontSets() {
     auto* pattern = FcPatternCreate();
     auto* set = FcFontSetCreate();
     CHECK(pattern && set);
-    CHECK(FcPatternAddInteger(pattern, "weight", 80));
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "weight", 80));
     CHECK(FcFontSetAdd(set, pattern));
     CHECK(set->nfont == 1);
     CHECK(set->fonts[0] != pattern);
     CHECK(FcPatternEqual(set->fonts[0], pattern));
-    CHECK(FcPatternDel(pattern, "weight"));
-    CHECK(FcPatternAddInteger(pattern, "weight", 200));
+    CHECK(FcPatternDel_nid_postfix(pattern, "weight"));
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "weight", 200));
     CHECK(FcFontSetAdd(set, pattern));
     CHECK(set->nfont == 2);
     CHECK(set->fonts[1] != pattern && set->fonts[1] != set->fonts[0]);
@@ -253,7 +253,7 @@ static void FreeTypeFaceGetter() {
     CHECK(pattern);
     CHECK(FcPatternGetFTFace(pattern, "ftface", 0, &face) == FcResultNoMatch && face == &sentinel);
     CHECK(FcPatternAddString(pattern, "family", Text("Sans")) == 1);
-    CHECK(FcPatternAddInteger(pattern, "weight", 80) == 1);
+    CHECK(FcPatternAddInteger_nid_postfix(pattern, "weight", 80) == 1);
     CHECK(FcPatternGetFTFace(pattern, "family", 0, &face) == FcResultTypeMismatch && face == &sentinel);
     CHECK(FcPatternGetFTFace(pattern, "weight", 0, &face) == FcResultTypeMismatch && face == &sentinel);
     CHECK(FcPatternGetFTFace(pattern, "family", 0, nullptr) == FcResultTypeMismatch);
@@ -282,10 +282,10 @@ static void CharSetValues() {
     CHECK(FcPatternGetCharSet(pattern, "charset", INT_MAX, &borrowed) == FcResultNoId && borrowed == second);
     CHECK(FcPatternAddString(pattern, "family", Text("example")));
     CHECK(FcPatternGetCharSet(pattern, "family", 0, &borrowed) == FcResultTypeMismatch && borrowed == second);
-    CHECK(FcPatternDel(pattern, "family"));
+    CHECK(FcPatternDel_nid_postfix(pattern, "family"));
     CHECK(FcPatternGetCharSet(pattern, "charset", 0, &borrowed) == FcResultMatch && borrowed == first);
     FcValue value{};
-    CHECK(FcPatternGet(pattern, "charset", 0, &value) == FcResultMatch && value.type == FcTypeCharSet && value.u.c == borrowed);
+    CHECK(FcPatternGet_nid_postfix(pattern, "charset", 0, &value) == FcResultMatch && value.type == FcTypeCharSet && value.u.c == borrowed);
     FcCharSetDestroy(first);
     CHECK(FcCharSetAddChar(borrowed, 0x1f680));
     CHECK(!FcPatternEqual(pattern, other));
@@ -327,7 +327,7 @@ static void LangSetValues() {
     CHECK(FcPatternGetLangSet(pattern, "lang", 2, &borrowed) == FcResultNoId && borrowed == languages);
     CHECK(FcPatternGetLangSet(pattern, "lang", 1, &borrowed) == FcResultMatch && borrowed != languages);
     FcValue value{};
-    CHECK(FcPatternGet(pattern, "lang", 1, &value) == FcResultMatch && value.type == FcTypeLangSet && value.u.l == borrowed);
+    CHECK(FcPatternGet_nid_postfix(pattern, "lang", 1, &value) == FcResultMatch && value.type == FcTypeLangSet && value.u.l == borrowed);
     CHECK(FcLangSetAdd(languages, Text("fr")));
     CHECK(FcLangSetHasLang(borrowed, Text("fr")) == FcLangDifferentLang);
     FcLangSetDestroy(languages);
@@ -353,7 +353,7 @@ static void LangSetValues() {
     CHECK(FcPatternEqual(pattern, copy));
     CHECK(FcLangSetAdd(selectedFirst, Text("it")));
     CHECK(FcLangSetHasLang(selectedSecond, Text("it")) == FcLangDifferentLang);
-    CHECK(FcPatternDel(pattern, "lang"));
+    CHECK(FcPatternDel_nid_postfix(pattern, "lang"));
     FcPatternDestroy(pattern);
     FcPatternDestroy(copy);
     CHECK(FcLangSetHasLang(selectedFirst, Text("it")) == FcLangEqual);
@@ -366,7 +366,7 @@ static void PatternFiltering() {
     CHECK(source);
     CHECK(FcPatternAddString(source, "family", Text("First")));
     CHECK(FcPatternAddString(source, "family", Text("Second")));
-    CHECK(FcPatternAddInteger(source, "weight", 180));
+    CHECK(FcPatternAddInteger_nid_postfix(source, "weight", 180));
     CHECK(FcPatternAddDouble(source, "size", 12.5));
     auto* select = FcObjectSetBuild("family", "missing", "family", "size", static_cast<const char*>(nullptr));
     auto* selectNone = FcObjectSetBuild(nullptr);
@@ -378,17 +378,17 @@ static void PatternFiltering() {
     CHECK(filtered && empty && !FcPatternEqual(source, filtered));
     FcPatternDestroy(source);
     FcValue value{};
-    CHECK(FcPatternGet(empty, "family", 0, &value) == FcResultNoMatch);
-    CHECK(FcPatternGet(filtered, "missing", 0, &value) == FcResultNoMatch);
-    CHECK(FcPatternGet(filtered, "weight", 0, &value) == FcResultNoMatch);
-    CHECK(FcPatternGet(filtered, "size", 0, &value) == FcResultMatch && value.type == FcTypeDouble && value.u.d == 12.5);
+    CHECK(FcPatternGet_nid_postfix(empty, "family", 0, &value) == FcResultNoMatch);
+    CHECK(FcPatternGet_nid_postfix(filtered, "missing", 0, &value) == FcResultNoMatch);
+    CHECK(FcPatternGet_nid_postfix(filtered, "weight", 0, &value) == FcResultNoMatch);
+    CHECK(FcPatternGet_nid_postfix(filtered, "size", 0, &value) == FcResultMatch && value.type == FcTypeDouble && value.u.d == 12.5);
     const char* expected[] = {"First", "Second", "First", "Second"};
     for (int index = 0; index < static_cast<int>(std::size(expected)); ++index) {
         FcChar8* text = nullptr;
         CHECK(FcPatternGetString(filtered, "family", index, &text) == FcResultMatch);
         CHECK(std::strcmp(reinterpret_cast<const char*>(text), expected[index]) == 0);
     }
-    CHECK(FcPatternGet(filtered, "family", 4, &value) == FcResultNoId);
+    CHECK(FcPatternGet_nid_postfix(filtered, "family", 4, &value) == FcResultNoId);
     FcPatternDestroy(empty);
     FcPatternDestroy(filtered);
 }
