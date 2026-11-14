@@ -124,9 +124,9 @@ bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t 
             cursor += count;
         }
         stageCapture.heapReadWords = std::move(owned);
-        stageCapture.userDataUse = reads.userDataUse;
-        stageCapture.capture = std::move(reads.capture);
         stageCapture.userDataMask = UserDataMask(program, context.vertexInfos[i], reads.userDataUse.asValue | reads.userDataUse.asBase, *stageCapture.compiled);
+        stageCapture.userDataUse = std::move(reads.userDataUse);
+        stageCapture.capture = std::move(reads.capture);
         stageCapture.ring = true;
         context.memory.insert(context.memory.end(), stageCapture.regions.begin(), stageCapture.regions.end());
     }

@@ -420,16 +420,12 @@ std::shared_ptr<ShaderRecompiler::HeapStageWords> recycledStageWords() {
     return HostThreadLocal<RecycledStagePool<ShaderRecompiler::HeapStageWords>, RecycledWordsStorage>().Take(ResetHeapStageWords);
 }
 
-std::shared_ptr<const std::vector<std::uint32_t>> recycledValues(const std::vector<std::uint32_t>& values) {
-    auto copy = HostThreadLocal<RecycledStagePool<std::vector<std::uint32_t>>, RecycledValuesStorage>().Take(clearRecycled<std::vector<std::uint32_t>>);
-    copy->assign(values.begin(), values.end());
-    return copy;
+std::shared_ptr<std::vector<std::uint32_t>> takeRecycledValues() {
+    return HostThreadLocal<RecycledStagePool<std::vector<std::uint32_t>>, RecycledValuesStorage>().Take(clearRecycled<std::vector<std::uint32_t>>);
 }
 
-std::shared_ptr<const AddressRanges> recycledRanges(const AddressRanges& ranges) {
-    auto copy = HostThreadLocal<RecycledStagePool<AddressRanges>, RecycledRangesStorage>().Take(clearRecycled<AddressRanges>);
-    copy->assign(ranges.begin(), ranges.end());
-    return copy;
+std::shared_ptr<AddressRanges> takeRecycledRanges() {
+    return HostThreadLocal<RecycledStagePool<AddressRanges>, RecycledRangesStorage>().Take(clearRecycled<AddressRanges>);
 }
 
 }
@@ -437,10 +433,9 @@ std::shared_ptr<const AddressRanges> recycledRanges(const AddressRanges& ranges)
 HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
                                            std::uint64_t shaderBase) {
     struct ReadsStorage {};
-    struct RangesStorage {};
-    struct ValuesStorage {};
     auto& reads = HostThreadLocal<WalkReads, ReadsStorage>();
-    auto& ranges = HostThreadLocal<AddressRanges, RangesStorage>();
+    auto sharedRanges = takeRecycledRanges();
+    auto& ranges = *sharedRanges;
     reads.Reset();
     Graphics::HeapCostScope snapshotCost(Graphics::HeapCost::Guards);
     const auto before = Graphics::Recorder::PendingWriteSnapshot();
@@ -456,7 +451,8 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
         return {};
     }
     CoalesceWalkReads(reads.runs, ranges);
-    auto& values = HostThreadLocal<std::vector<std::uint32_t>, ValuesStorage>();
+    auto sharedValues = takeRecycledValues();
+    auto& values = *sharedValues;
     if (!reads.failed) copyRangeValues(ranges, values);
     const bool settled = rangesSettled(ranges, before.get(), generation);
     walkCost.Stop();
@@ -473,9 +469,7 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     materializeCost.Stop();
     const bool complete = !reads.failed && result != nullptr;
     HeapStageMaterialized materialized;
-    auto shared = complete ? recycledValues(values) : nullptr;
-    auto sharedRanges = complete ? recycledRanges(ranges) : nullptr;
-    if (complete) materialized.reads = {sharedRanges, shared, capture->userDataUse, capture, true};
+    if (complete) materialized.reads = {std::move(sharedRanges), std::move(sharedValues), capture->userDataUse, capture, true};
     materialized.result = std::move(result);
     materialized.words = std::move(words);
     return materialized;
