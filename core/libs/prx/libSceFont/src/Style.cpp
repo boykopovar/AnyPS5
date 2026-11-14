@@ -334,9 +334,21 @@ int APS5_VABI sceFontGetRenderEffectSlant(FontHandle fontHandle, float* slantRat
 }
 
 int APS5_VABI sceFontGetRenderEffectWeight(FontHandle fontHandle, float* weightXScale, float* weightYScale, std::uint32_t* mode) {
-    const int rc = ReadRenderStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetWeightScale(&font->cached_style.state, weightXScale, weightYScale, mode); });
-    if (rc != SCE_FONT_OK) ResetWeightOutputs(weightXScale, weightYScale, mode);
-    return rc;
+    float localX = 1.0f;
+    float localY = 1.0f;
+    std::uint32_t localMode = 0;
+    const int rc = ReadRenderStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!weightXScale && !weightYScale && !mode) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetWeightScale(&font->cached_style.state, weightXScale ? &localX : nullptr, weightYScale ? &localY : nullptr, mode ? &localMode : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetWeightOutputs(weightXScale, weightYScale, mode);
+        return rc;
+    }
+    if (weightXScale && !CopyOutGuest(weightXScale, localX)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (weightYScale && !CopyOutGuest(weightYScale, localY)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (mode && !CopyOutGuest(mode, localMode)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontStyleFrameInit(FontStyleFrame* styleFrame) {
