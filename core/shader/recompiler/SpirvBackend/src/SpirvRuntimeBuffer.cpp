@@ -360,8 +360,14 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
         const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, context.Memory(instruction).resource);
         const auto block = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferU8Pointer(state), block, bytes, ConstantU32(state, element));
-        EmitIfCondition(state, EmitMemoryElementInBounds(state, access, last), [&] {
-            const auto first = EmitAddU32(state, EmitAddU32(state, Binary(state, spv::OpShiftLeftLogical, u32, index, ConstantU32(state, 2u)), misalignment), EmitAndConstant(state, address, 3u));
+        const auto length = state.module.AllocateId();
+        state.module.AddFunction(spv::OpArrayLength, u32, length, block, 0u);
+        const auto base = Binary(state, spv::OpShiftLeftLogical, u32, index, ConstantU32(state, 2u));
+        const auto first = EmitAddU32(state, EmitAddU32(state, base, misalignment), EmitAndConstant(state, address, 3u));
+        const auto width = ConstantU32(state, bits / 8u);
+        const auto noWrap = both(state, Binary(state, spv::OpULessThanEqual, TypeBool(state), index, ConstantU32(state, 0x3fffffffu)), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), first, base));
+        const auto fits = both(state, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), length, width), Binary(state, spv::OpULessThanEqual, TypeBool(state), first, Binary(state, spv::OpISub, u32, length, width)));
+        EmitIfCondition(state, both(state, noWrap, fits), [&] {
             for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
                 const auto pointer = state.module.AllocateId();
                 state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferU8ElementPointer(state), pointer, block, ConstantU32(state, 0u), EmitAddU32(state, first, ConstantU32(state, byte)));

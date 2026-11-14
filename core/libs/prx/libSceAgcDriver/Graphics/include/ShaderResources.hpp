@@ -585,7 +585,7 @@ private:
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
-    VkDescriptorBufferInfo wholeDwordRange(VkDescriptorBufferInfo info) const;
+    VkDescriptorBufferInfo wholeDwordRange(VkDescriptorBufferInfo info, bool written) const;
     void noteReusable();
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)

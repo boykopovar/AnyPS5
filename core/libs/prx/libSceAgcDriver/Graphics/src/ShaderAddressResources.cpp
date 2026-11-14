@@ -242,7 +242,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
 }
 
 VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
-    if (allocation.guest) return wholeDwordRange(guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment));
+    if (allocation.guest) return wholeDwordRange(guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment), allocation.written);
     if (allocation.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
         const auto placeholder = allocation.oversized ? context.oversizedBuffer : context.emptyBuffer;
         Require(placeholder != VK_NULL_HANDLE, "no placeholder buffer for a null V#");
@@ -256,8 +256,8 @@ VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
     return {allocation.buffer->Handle(), 0, allocation.size};
 }
 
-VkDescriptorBufferInfo ShaderResources::wholeDwordRange(VkDescriptorBufferInfo info) const {
-    if (context.exactRobustLoads && info.range >= 4u) info.range &= ~VkDeviceSize{3};
+VkDescriptorBufferInfo ShaderResources::wholeDwordRange(VkDescriptorBufferInfo info, bool written) const {
+    if (context.exactRobustLoads && !written && info.range >= 4u) info.range &= ~VkDeviceSize{3};
     return info;
 }
 

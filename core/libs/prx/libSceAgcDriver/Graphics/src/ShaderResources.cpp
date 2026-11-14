@@ -7154,7 +7154,7 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
                 const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
                 if (snapshotIndex == selected.size()) continue;
                 const auto& snapshot = result.snapshots[snapshotIndex];
-                buffers[offset + element] = wholeDwordRange({snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes});
+                buffers[offset + element] = wholeDwordRange({snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes}, allocations[binding.allocations[element]].written);
             }
         }
     }

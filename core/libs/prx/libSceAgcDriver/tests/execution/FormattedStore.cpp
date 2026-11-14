@@ -148,6 +148,52 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
+void RunTightTail(AgcDriver::VulkanDevice& device) {
+    Input.fill(0x3f800000u);
+    for (const auto base : {0u, 2u}) {
+        const auto first = 8u - base / 2u;
+        const auto last = first + (Threads - 1u) * 4u;
+        const std::array<std::uint32_t, 9> code{
+            0x34020084u, 0x34060082u, 0x4a060680u | first, 0xe0301000u, 0x80000401u,
+            0xbf8c3f70u, 0xe0102000u, 0x80010403u, 0xbf810000u,
+        };
+        for (const auto records : {last, last + 2u, last + 1u}) {
+            Output.fill(0xa5a5a5a5u);
+            std::vector<std::uint32_t> userData(8u, 0u);
+            const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * sizeof(std::uint32_t)));
+            auto output = BufferDescriptor(reinterpret_cast<std::uint8_t*>(Output.data()) + base, records);
+            output[1] |= 2u << 16u;
+            output[3] = (output[3] & ~((0x7fu << 12u) | (3u << 28u))) | (8u << 12u) | (1u << 28u);
+            std::copy(input.begin(), input.end(), userData.begin());
+            std::copy(output.begin(), output.end(), userData.begin() + 4u);
+            const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
+            const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+            ShaderRecompiler::RecompileRequest request{
+                {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+                {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+                device.Target(),
+                {0, 0, 0, 128}
+            };
+            request.useCache = false;
+            const auto result = ShaderRecompiler::Recompile(request);
+            device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+            device.WaitIdle();
+            const auto* bytes = reinterpret_cast<const std::uint8_t*>(Output.data());
+            for (std::size_t byte = 0; byte < Output.size() * sizeof(std::uint32_t); ++byte) {
+                auto value = static_cast<std::uint8_t>(0xa5u);
+                if (byte >= 16u && byte < 16u + Threads * 8u) {
+                    const auto relative = static_cast<std::uint32_t>(byte - 16u);
+                    const auto lane = relative / 8u;
+                    if (relative % 8u < 2u && first + lane * 4u < records)
+                        value = static_cast<std::uint8_t>(relative % 8u == 0u ? 0xffu : 0x7fu);
+                }
+                Require(bytes[byte] == value, "formatted store tight tail: base " + std::to_string(base) + " records " + std::to_string(records) + " byte " + std::to_string(byte) + " is " + Hex(bytes[byte]) + ", expected " + Hex(value));
+            }
+            std::cout << "formatted store tight tail passed: base " << base << " records " << records << '\n';
+        }
+    }
+}
+
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
@@ -158,12 +204,16 @@ void Check() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "--tight-tail"), "formatted store: unknown argument");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
+        if (argc == 2) RunTightTail(*device);
+        else {
+            Run(*device);
+            Check();
+        }
         std::puts("formatted store tests passed");
         return 0;
     } catch (const std::exception& error) {
