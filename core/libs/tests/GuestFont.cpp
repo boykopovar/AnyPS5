@@ -4,10 +4,12 @@
 #include "prx/libc/include/General.hpp"
 #include "tests/FontFixture.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -481,6 +483,12 @@ static void CheckGlyphScale(FontHandle font, const FontMemory* memory, float exp
     FontGlyph glyph = nullptr;
     Require(sceFontGenerateCharGlyph(font, 'A', nullptr, &glyph) == SCE_FONT_OK && glyph != nullptr);
     Require(sceFontGlyphGetScalePixel(glyph, &width, &height) == SCE_FONT_OK);
+    errno = 71;
+    Require(sceFontGlyphGetScalePixel(glyph, reinterpret_cast<float*>(0x10), &height) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGlyphGetScalePixel(glyph, &width, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     if (width != expectedW || height != expectedH) {
         std::fprintf(stderr, "Generated glyph scale %.3f x %.3f differs from font scale %.3f x %.3f\n", width, height, expectedW, expectedH);
     }
@@ -742,6 +750,11 @@ int main() {
     Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     FontLibrary fontLibrary = nullptr;
     Require(sceFontGetLibrary(font, &fontLibrary) == SCE_FONT_OK && fontLibrary == library);
+    FontLibrary staleOwner = reinterpret_cast<FontLibrary>(&staleOwner);
+    Require(sceFontGetLibrary(nullptr, &staleOwner) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && staleOwner == nullptr);
+    alignas(16) unsigned char zeroedHandle[0x400]{};
+    staleOwner = reinterpret_cast<FontLibrary>(&staleOwner);
+    Require(sceFontGetLibrary(reinterpret_cast<FontHandle>(zeroedHandle), &staleOwner) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && staleOwner == nullptr);
     Font::FontLibNative invalidLibrary{};
     Require(sceFontSetFontsOpenMode(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
     Require(sceFontSetFontsOpenMode(&invalidLibrary, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
@@ -874,6 +887,12 @@ int main() {
     Require(sceFontGetResolutionDpi(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSetResolutionDpi(font, 0, 300) == SCE_FONT_OK);
     Require(sceFontGetResolutionDpi(font, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 72 && vDpi == 300);
+    errno = 71;
+    Require(sceFontGetResolutionDpi(font, reinterpret_cast<std::uint32_t*>(0x10), &vDpi) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGetResolutionDpi(font, &hDpi, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontGetResolutionDpi(nullptr, &hDpi, &vDpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && hDpi == 0 && vDpi == 0);
     FontHandleOpaque unopened{};
     hDpi = 1;
@@ -889,6 +908,9 @@ int main() {
     std::uint32_t glyphCode = 1;
     Require(sceFontGetCharGlyphCode(font, 'A', &glyphCode) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH && glyphCode == 0);
     Require(sceFontGetCharGlyphCode(font, 'A', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetCharGlyphCode(font, 'A', reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     glyphCode = 1;
     Require(sceFontGetCharGlyphCode(nullptr, 'A', &glyphCode) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && glyphCode == 0);
     glyphCode = 1;

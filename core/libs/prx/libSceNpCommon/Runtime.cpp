@@ -5,6 +5,7 @@
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <iterator>
 #include <mutex>
 #include <random>
@@ -897,9 +898,14 @@ void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
-    if (tick->tick == 0) return NP_ERROR_INVALID_ARGUMENT;
+    if (tick == nullptr || seconds == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    RtcTick localTick{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localTick, tick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied || localTick.tick == 0) return NP_ERROR_INVALID_ARGUMENT;
     RtcDateTime time {};
-    const int result = sceRtcSetTick(&time, tick);
+    const int result = sceRtcSetTick(&time, &localTick);
     if (result < 0) return result;
     return NpResult(sceRtcGetTime_t(&time, seconds));
 }
@@ -1109,6 +1115,8 @@ static std::uint64_t ClockUsec() {
     return static_cast<std::uint64_t>(usec);
 }
 
+static thread_local bool calloutContextEnded = false;
+
 static void* APS5_VABI CalloutThread(void* arg) {
     auto* context = static_cast<NpCalloutContext*>(arg);
     sceNpMutexLock(&context->mutex);
@@ -1121,6 +1129,7 @@ static void* APS5_VABI CalloutThread(void* arg) {
             sceNpMutexUnlock(&context->mutex);
 
             head->handler(head->arg);
+            if (calloutContextEnded) return nullptr;
             sceNpMutexLock(&context->mutex);
 
             continue;
@@ -1160,8 +1169,16 @@ int APS5_VABI sceNpCalloutInitCtx(NpCalloutContext* context, const char* name, s
 
 void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
     if (context->initialized == 0) return;
-    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0)
-        throw std::runtime_error("sceNpCalloutTermCtx: terminating a callout context from one of its own callouts is not implemented");
+    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0) {
+        sceNpMutexLock(&context->mutex);
+        sceNpMutexUnlock(&context->mutex);
+        sceNpCondDestroy(&context->cond);
+        sceNpMutexDestroy(&context->mutex);
+        scePthreadDetach(context->thread);
+        context->initialized = 0;
+        calloutContextEnded = true;
+        return;
+    }
     sceNpMutexLock(&context->mutex);
 
     context->stopping = 1;
