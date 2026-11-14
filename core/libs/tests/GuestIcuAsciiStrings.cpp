@@ -52,6 +52,17 @@ void TestStricmp() {
     Require(uprv_stricmp_nid_postfix("\xC3", "\xE3") == -32, "stricmp compares bytes above 127 unsigned without case folding");
 }
 
+void TestStrnicmp() {
+    Require(uprv_strnicmp_nid_postfix(nullptr, nullptr, 5) == 0, "strnicmp: two null strings are equal");
+    Require(uprv_strnicmp_nid_postfix(nullptr, "a", 1) == -1, "strnicmp: a null first string sorts first");
+    Require(uprv_strnicmp_nid_postfix("a", nullptr, 1) == 1, "strnicmp: a null second string sorts last");
+    Require(uprv_strnicmp_nid_postfix("abcdef", "ABCxyz", 3) == 0, "strnicmp compares only the first n bytes");
+    Require(uprv_strnicmp_nid_postfix("abcdef", "ABCxyz", 4) == -20, "strnicmp reports the first differing byte after lowercasing");
+    Require(uprv_strnicmp_nid_postfix("abcdef", "xyz", 0) == 0, "strnicmp with n = 0 compares nothing");
+    Require(uprv_strnicmp_nid_postfix("ab", "ab", 10) == 0, "strnicmp stops at the common terminator");
+    Require(uprv_strnicmp_nid_postfix("ab", "abc", 10) == -1, "strnicmp: a shorter string sorts first");
+}
+
 }
 
 int main() {
@@ -59,5 +70,6 @@ int main() {
     TestToUpper();
     TestAsciiToLower();
     TestStricmp();
+    TestStrnicmp();
     return 0;
 }
