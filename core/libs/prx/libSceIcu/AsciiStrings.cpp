@@ -22,4 +22,9 @@ char APS5_VABI uprv_toupper_nid_postfix(char c) {
     return c;
 }
 
+char APS5_VABI uprv_asciitolower_nid_postfix(char c) {
+    if (0x41 <= c && c <= 0x5a) c = static_cast<char>(c + 0x20);
+    return c;
+}
+
 }
