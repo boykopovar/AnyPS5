@@ -1,3 +1,12 @@
+// Derived from icu4c/source/common/uloc.cpp@84e1f26ea77152936e70d53178a816dbfbf69989 (ICU 68.2): the LANGUAGES_3 and COUNTRIES_3 code pairs below.
+// https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uloc.cpp
+//
+// The upstream file's notice, verbatim:
+//   © 2016 and later: Unicode, Inc. and others.
+//   License & terms of use: http://www.unicode.org/copyright.html
+//   Copyright (C) 1997-2016, International Business Machines
+//   Corporation and others.  All Rights Reserved.
+
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 
