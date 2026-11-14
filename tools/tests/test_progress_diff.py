@@ -72,6 +72,10 @@ class SymbolSetTests(unittest.TestCase):
         self.assertEqual(row["inert_names"], {"added": ["e"], "removed": []})
         self.assertEqual(row["done_names"], {"added": [], "removed": []})
 
+    def test_duplicate_symbol_names_are_reported_once(self):
+        row = self.row({"name": "G"}, {"name": "G", "done_names": ["x", "x"]})
+        self.assertEqual(row["done_names"], {"added": ["x"], "removed": []})
+
 
 if __name__ == "__main__":
     unittest.main()
