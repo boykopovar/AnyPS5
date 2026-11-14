@@ -295,7 +295,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_6eXsoe6i_plus_w4_nid_no_patch();
 int APS5_VABI _ZN7WebCore23AuthenticationChallengeC1ERKNS_15ProtectionSpaceERKNS_10CredentialEjRKNS_16ResourceResponseERKNS_13ResourceErrorE();
 int APS5_VABI _ZN7WebCore6ISOBox4readERN3JSC8DataViewERj();
 int APS5_VABI _ZNK7WebCore12ISOWebVTTCue8settingsEv();
-int APS5_VABI _ZN7WebCore6FourCC10fromStringERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore12TextEncoding6decodeEPKcmbRb();
 int APS5_VABI _ZN7WebCore21getCachedDOMStructureERNS_17JSDOMGlobalObjectEPKN3JSC9ClassInfoE();
 int APS5_VABI _ZN7WebCore11DisplayList18FillCompositedRectD1Ev();

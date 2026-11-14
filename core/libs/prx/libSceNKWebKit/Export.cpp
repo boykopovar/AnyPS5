@@ -1226,10 +1226,6 @@ int APS5_VABI _ZNK7WebCore12ISOWebVTTCue8settingsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore6FourCC10fromStringERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore12TextEncoding6decodeEPKcmbRb() {
     NotImplemented_nid_no_patch(__func__);
 }
