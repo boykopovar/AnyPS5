@@ -13,7 +13,17 @@ elseif(APPLE)
         LINKER:-unexported_symbol,_png_*)
 endif()
 
+target_sources(libcairo PRIVATE ScaledFont.cpp)
+
 if(BUILD_TESTING)
+    add_test_executable(guest_cairo_scaled_font_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestCairoScaledFont.cpp ScaledFont.cpp Context.cpp)
+    target_include_directories(guest_cairo_scaled_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_scaled_font_tests PRIVATE libc cairo_backend)
+    configure_windows_unwind(guest_cairo_scaled_font_tests)
+    add_test(NAME guest_cairo_scaled_font COMMAND guest_cairo_scaled_font_tests)
+    set_tests_properties(guest_cairo_scaled_font PROPERTIES TIMEOUT 30)
+
     add_test_executable(guest_cairo_png_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoPng.cpp)
     target_include_directories(guest_cairo_png_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_cairo_png_tests PRIVATE libcairo libc decoder_png)
