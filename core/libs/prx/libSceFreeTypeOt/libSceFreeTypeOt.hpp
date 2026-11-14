@@ -12,7 +12,7 @@
 #include "prx/libSceFreeTypeOt/include/System.hpp"
 
 extern "C" {
-int APS5_VABI FT_Glyph_Stroke_nid_postfix();
+int APS5_VABI FT_Glyph_Stroke_nid_postfix(FreeType::GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy);
 int APS5_VABI FT_New_GlyphSlot_nid_postfix();
 int APS5_VABI FT_Set_Debug_Hook_nid_postfix();
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch();

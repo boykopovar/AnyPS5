@@ -168,3 +168,12 @@ int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void
 void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
 int APS5_VABI sceFreeTypeOtOpenFace_nid_no_patch();
 }
+
+namespace FreeType {
+
+extern "C" int FreeTypeGlyphMutationToBitmapHost_nid_no_patch(GuestGlyphRec** glyph, std::int32_t renderMode, const GuestVector* origin, std::uint8_t destroy, const char* function);
+extern "C" int FreeTypeGlyphMutationTransformHost_nid_no_patch(GuestGlyphRec* glyph, const GuestMatrix* matrix, const GuestVector* delta, const char* function);
+extern "C" int FreeTypeGlyphMutationStrokeHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy, const char* function);
+extern "C" int FreeTypeGlyphMutationStrokeBorderHost_nid_no_patch(GuestGlyphRec** glyph, void* stroker, std::uint8_t inside, std::uint8_t destroy, const char* function);
+
+}

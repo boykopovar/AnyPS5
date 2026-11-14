@@ -125,22 +125,24 @@ int APS5_VABI sceFreeTypeOtGlyphGetCBox_nid_no_patch() {
 }
 APS5_EXPORT("avLzN0tTxLI", sceFreeTypeOtGlyphGetCBox_nid_no_patch);
 
-int APS5_VABI FT_Glyph_Stroke_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI FT_Glyph_Stroke_nid_postfix(FreeType::GuestGlyphRec** glyph, void* stroker, std::uint8_t destroy) {
+    return FreeType::FreeTypeGlyphMutationStrokeHost_nid_no_patch(glyph, stroker, destroy, __func__);
 }
 
-int APS5_VABI sceFreeTypeOtGlyphStrokeBorder_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtGlyphStrokeBorder_nid_no_patch(FreeType::GuestGlyphRec** glyph, void* stroker, std::uint8_t inside, std::uint8_t destroy) {
+    return FreeType::FreeTypeGlyphMutationStrokeBorderHost_nid_no_patch(glyph, stroker, inside, destroy, __func__);
 }
 APS5_EXPORT("BBRhYfYBDgU", sceFreeTypeOtGlyphStrokeBorder_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtGlyphToBitmap_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtGlyphToBitmap_nid_no_patch(FreeType::GuestGlyphRec** glyph, std::int32_t renderMode, const FreeType::GuestVector* origin,
+                                                       std::uint8_t destroy) {
+    return FreeType::FreeTypeGlyphMutationToBitmapHost_nid_no_patch(glyph, renderMode, origin, destroy, __func__);
 }
 APS5_EXPORT("c1nbr8oSWlg", sceFreeTypeOtGlyphToBitmap_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtGlyphTransform_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFreeTypeOtGlyphTransform_nid_no_patch(FreeType::GuestGlyphRec* glyph, const FreeType::GuestMatrix* matrix,
+                                                       const FreeType::GuestVector* delta) {
+    return FreeType::FreeTypeGlyphMutationTransformHost_nid_no_patch(glyph, matrix, delta, __func__);
 }
 APS5_EXPORT("AVEEb57HhUw", sceFreeTypeOtGlyphTransform_nid_no_patch);
 
