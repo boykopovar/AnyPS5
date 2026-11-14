@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/platform/graphics/GeometryUtilities.cpp
+// Derived from Source/WebCore/platform/graphics/GeometryUtilities.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2013 Google Inc. All rights reserved.
@@ -25,7 +25,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/platform/graphics/texmap/TextureMapperBackingStore.cpp
+// Derived from Source/WebCore/platform/graphics/texmap/TextureMapperBackingStore.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  Copyright (C) 2012 Nokia Corporation and/or its subsidiary(-ies)
 
