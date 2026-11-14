@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace NKWebKit {
@@ -252,7 +253,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -260,7 +261,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }
@@ -280,7 +281,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -288,7 +289,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }
@@ -372,6 +373,24 @@ public:
     bool canShowMIMEType() const noexcept { return canShowMIMEType_; }
 private:
     bool canShowMIMEType_ = true;
+};
+
+class AuthenticationDecisionListener final : public ObjectOf<ObjectType::AuthenticationDecisionListener> {
+public:
+    enum class Decision { None, Cancel, UseCredential, RejectProtectionSpace };
+    Decision decision = Decision::None;
+    Retained<Object> credential;
+};
+
+class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
+public:
+    std::string requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener;
+    int previousFailureCount = 0;
+    Retained<Object> proposedCredential;
+    Retained<Object> protectionSpace;
+    bool isForMainResource = false;
+    bool isInMainFrame = false;
 };
 
 }  // namespace NKWebKit

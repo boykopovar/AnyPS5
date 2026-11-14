@@ -129,6 +129,9 @@ void CheckInit() {
     bad.work_memory = g_work;
     bad.direct_memory_garlic_alignment = 0x1000;
     Require(sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(&bad)) == ArgumentInvalid);
+    errno = 71;
+    Require(sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(0x10)) == ArgumentInvalid);
+    Require(errno == 71);
     Require(sceVrTrackerInit(nullptr) == ArgumentInvalid);
     Require(sceVrTrackerTerm() == NotInit);
 
