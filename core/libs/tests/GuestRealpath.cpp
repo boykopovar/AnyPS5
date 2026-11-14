@@ -14,9 +14,23 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static const char* UnreadablePage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return static_cast<const char*>(page);
+}
 
 static bool Resolves(const std::string& path, const std::string& expected) {
     char out[1024];
@@ -78,6 +92,20 @@ int main() {
     free_nid_postfix(allocated);
 
     Require(Fails(nullptr, 22));
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix(unusable, nullptr) == nullptr && *__error_nid_postfix() == 14);
+        char out[1024];
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix(unusable, out) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix((guest + "/file.txt").c_str(), const_cast<char*>(unusable)) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix((guest + "/missing").c_str(), const_cast<char*>(unusable)) == nullptr && *__error_nid_postfix() == 2);
+    }
+    const std::string unbounded(4096, 'a');
+    *__error_nid_postfix() = 0;
+    Require(realpath_nid_postfix(unbounded.c_str(), nullptr) == nullptr && *__error_nid_postfix() == 63);
     Require(Fails("", 2));
     Require(Fails((guest + "/missing").c_str(), 2, guest + "/missing"));
     Require(Fails((guest + "/missing/../file.txt").c_str(), 2, guest + "/missing"));

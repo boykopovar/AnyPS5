@@ -742,6 +742,11 @@ int main() {
     Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     FontLibrary fontLibrary = nullptr;
     Require(sceFontGetLibrary(font, &fontLibrary) == SCE_FONT_OK && fontLibrary == library);
+    FontLibrary staleOwner = reinterpret_cast<FontLibrary>(&staleOwner);
+    Require(sceFontGetLibrary(nullptr, &staleOwner) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && staleOwner == nullptr);
+    alignas(16) unsigned char zeroedHandle[0x400]{};
+    staleOwner = reinterpret_cast<FontLibrary>(&staleOwner);
+    Require(sceFontGetLibrary(reinterpret_cast<FontHandle>(zeroedHandle), &staleOwner) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && staleOwner == nullptr);
     Font::FontLibNative invalidLibrary{};
     Require(sceFontSetFontsOpenMode(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
     Require(sceFontSetFontsOpenMode(&invalidLibrary, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
