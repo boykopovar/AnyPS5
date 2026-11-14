@@ -1,7 +1,7 @@
 add_test_executable(agc_push_data_shadow_tests EXCLUDE_FROM_ALL tests/PushDataShadow.cpp)
 target_include_directories(agc_push_data_shadow_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
 set_target_properties(agc_push_data_shadow_tests PROPERTIES CXX_EXTENSIONS OFF)
-configure_windows_unwind(agc_push_data_shadow_tests)
+configure_host_test_executable(agc_push_data_shadow_tests)
 
 if(BUILD_TESTING)
     agc_add_default_test(agc_push_data_shadow_tests)
