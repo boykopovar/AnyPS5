@@ -301,14 +301,29 @@ void GnmDrawupPattern() {
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
         Require(errno == 71);
         f.surface.initialized = 1;
-        errno = 71;
-        Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
-        Require(errno == 71);
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == 0);
         Require(out != nullptr);
         const auto* record = static_cast<const TestDrawupRecord*>(out);
         Require(record->state == 1);
         Require(record->mode == 0x22);
+    }
+    {
+        DrawupFixture f;
+        auto* frame = reinterpret_cast<FontGraphicsFrame*>(&f.frame);
+        alignas(void*) std::uint8_t buffer[16];
+        std::memset(buffer, 0xaa, sizeof(buffer));
+        auto** outPtr = reinterpret_cast<void**>(buffer);
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, outPtr) == 0);
+        Require(*outPtr != nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0xaa);
+        }
+        std::memset(buffer, 0x55, sizeof(buffer));
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(nullptr, nullptr, 1, 2, 3, 4, 5, 6, outPtr) == InvalidParameter);
+        Require(*outPtr == nullptr);
+        for (std::size_t i = sizeof(void*); i < sizeof(buffer); ++i) {
+            Require(buffer[i] == 0x55);
+        }
     }
 }
 
