@@ -402,7 +402,8 @@ IrValue* TranslationContext::propagatedNanResultF32(std::initializer_list<IrValu
 IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
     IrValue& lhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*lhs), ir.Constant(0x7fffffffu));
     IrValue& rhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*rhs), ir.Constant(0x7fffffffu));
-    const auto infZero = [&](IrValue& inf, IrValue& zero) -> IrValue& { return ir.LogicalAnd(ir.IEqual(inf, ir.Constant(0x7f800000u)), ir.IEqual(zero, ir.Constant(0u))); };
+    const auto zero = [&](IrValue& magnitude) -> IrValue& { return (f32DenormalFlush & 4u) != 0u ? ir.ULessThan(magnitude, ir.Constant(0x00800000u)) : ir.IEqual(magnitude, ir.Constant(0u)); };
+    const auto infZero = [&](IrValue& inf, IrValue& factor) -> IrValue& { return ir.LogicalAnd(ir.IEqual(inf, ir.Constant(0x7f800000u)), zero(factor)); };
     return ir.LogicalOr(infZero(lhsMagnitude, rhsMagnitude), infZero(rhsMagnitude, lhsMagnitude));
 }
 
