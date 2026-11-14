@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,7 +20,7 @@ struct GuestTimeval {
 };
 
 struct GuestDescriptorSet {
-    std::array<std::uint64_t, 1024 / 64> words{};
+    std::array<std::uint64_t, 2048 / 64> words{};
 
     void Add(int descriptor) {
         words[descriptor / 64] |= (std::uint64_t{1} << (descriptor % 64));
@@ -33,7 +34,7 @@ struct GuestDescriptorSet {
 static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int GuestEbadf = 9;
-constexpr int GuestEinval = 22;
+constexpr int GuestEfault = 14;
 constexpr int GuestDescriptorLimit = 1024;
 constexpr std::int16_t EvfiltUser = -11;
 constexpr std::uint16_t EvAdd = 0x0001;
@@ -356,11 +357,68 @@ int main() {
     }
 
     {
+        constexpr int Above = 1500;
+        const char byte = 'w';
+        Require(write_nid_postfix(writer, &byte, 1) == 1);
+        GuestTimeval limit{0, 200000};
         GuestDescriptorSet read{};
         read.Add(reader);
-        GuestTimeval limit{0, 50000};
-        Require(select_nid_postfix(GuestDescriptorLimit + 1, read.words.data(), nullptr, nullptr, &limit) == -1);
-        Require(*__error_nid_postfix() == GuestEinval);
+        Require(select_nid_postfix(GuestDescriptorLimit + 1, read.words.data(), nullptr, nullptr, &limit) == 1);
+        Require(read.Has(reader));
+
+        read = {};
+        read.Add(reader);
+        read.Add(Above);
+        Require(select_nid_postfix(2048, read.words.data(), nullptr, nullptr, &limit) == -1);
+        Require(*__error_nid_postfix() == GuestEbadf);
+        GuestDescriptorSet except{};
+        except.Add(Above);
+        Require(select_nid_postfix(2048, nullptr, nullptr, except.words.data(), &limit) == -1);
+        Require(*__error_nid_postfix() == GuestEbadf);
+
+        Require(dup2_nid_postfix(reader, Above) == Above);
+        read = {};
+        read.Add(Above);
+        Require(select_nid_postfix(Above + 1, read.words.data(), nullptr, nullptr, &limit) == 1);
+        Require(read.Has(Above));
+        Require(close_nid_postfix(Above) == 0);
+
+        Require(dup2_nid_postfix(writer, Above) == Above);
+        GuestDescriptorSet write{};
+        write.Add(Above);
+        Require(select_nid_postfix(Above + 1, nullptr, write.words.data(), nullptr, &limit) == 1);
+        Require(write.Has(Above));
+        Require(close_nid_postfix(Above) == 0);
+
+        constexpr std::size_t Page = 0x4000;
+        constexpr std::size_t EdgeBytes = GuestDescriptorLimit / 8 + 1;
+        auto* const memory = static_cast<std::uint8_t*>(mmap_nid_postfix(nullptr, 2 * Page, 3, 0x1002, -1, 0));
+        Require(memory != reinterpret_cast<std::uint8_t*>(static_cast<std::uintptr_t>(-1)));
+        Require(mprotect_nid_postfix(memory + Page, Page, 0) == 0);
+        auto* const edge = memory + Page - EdgeBytes;
+        std::fill(edge, edge + EdgeBytes, std::uint8_t{0});
+        edge[reader / 8] = static_cast<std::uint8_t>(1u << (reader % 8));
+        Require(select_nid_postfix(GuestDescriptorLimit + 1, edge, nullptr, nullptr, &limit) == 1);
+        Require(edge[reader / 8] == (1u << (reader % 8)));
+        Require(select_nid_postfix(GuestDescriptorLimit + 9, edge, nullptr, nullptr, &limit) == -1);
+        Require(*__error_nid_postfix() == GuestEfault);
+        edge[GuestDescriptorLimit / 8] = 2;
+        Require(select_nid_postfix(GuestDescriptorLimit + 9, edge, nullptr, nullptr, &limit) == -1);
+        Require(*__error_nid_postfix() == GuestEbadf);
+        std::fill(memory, memory + Page, std::uint8_t{0});
+        Require(select_nid_postfix(std::numeric_limits<int>::max(), memory, nullptr, nullptr, &limit) == -1);
+        Require(*__error_nid_postfix() == GuestEfault);
+        Require(munmap_nid_postfix(memory, 2 * Page) == 0);
+
+        char buffer[8]{};
+        Require(read_nid_postfix(reader, buffer, sizeof(buffer)) == 1 && buffer[0] == byte);
+        Require(dup2_nid_postfix(reader, Above) == Above);
+        read = {};
+        read.Add(Above);
+        const GuestTimeval idle{0, 20000};
+        Require(select_nid_postfix(Above + 1, read.words.data(), nullptr, nullptr, &idle) == 0);
+        Require(!read.Has(Above));
+        Require(close_nid_postfix(Above) == 0);
     }
 
     {
