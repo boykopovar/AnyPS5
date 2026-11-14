@@ -396,7 +396,13 @@ bool pull(InputStream& stream, std::size_t size) {
             stream.chunkSize = chunk.size;
         }
         const std::size_t count = std::min(size, static_cast<std::size_t>(stream.chunkSize));
-        stream.data.insert(stream.data.end(), stream.chunk, stream.chunk + count);
+        const std::size_t old = stream.data.size();
+        stream.data.resize(old + count);
+        if (!GuestCopyIn_nid_no_patch(stream.data.data() + old, stream.chunk, count)) {
+            stream.data.resize(old);
+            stream.status = SCE_PNG_DEC_ERROR_INVALID_ADDR;
+            break;
+        }
         stream.chunk += count;
         stream.chunkSize -= static_cast<std::uint32_t>(count);
         size -= count;
