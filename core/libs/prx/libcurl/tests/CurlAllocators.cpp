@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <fstream>
 #include <limits>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <new>
 #include <source_location>
 #include <string>
 
@@ -20,6 +22,30 @@ static void Require(bool condition, std::source_location location = std::source_
         std::abort();
     }
 }
+
+static bool throwNextGuestCalloc = false;
+struct GuestAllocationFailure {};
+
+#ifndef _WIN32
+static std::size_t failHostAllocationOfSize = 0;
+static void (*hostFaultProbe)() = nullptr;
+static bool captureNextCalloc = false;
+static CURL* capturedDuplicate = nullptr;
+static std::size_t capturedDuplicateBytes = 0;
+static bool duplicateRegisteredAtFault = false;
+
+void* operator new(std::size_t bytes) {
+    if (bytes != 0 && failHostAllocationOfSize == bytes) {
+        failHostAllocationOfSize = 0;
+        if (hostFaultProbe) hostFaultProbe();
+        throw std::bad_alloc();
+    }
+    if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+#endif
 
 struct AllocationTracker {
     std::size_t mallocCalls = 0;
@@ -141,6 +167,10 @@ static char* APS5_VABI AllocatorA_Strdup(const char* str) {
 
 static void* APS5_VABI AllocatorA_Calloc(size_t nmemb, size_t size) {
     ++trackerA.callocCalls;
+    if (throwNextGuestCalloc) {
+        throwNextGuestCalloc = false;
+        throw GuestAllocationFailure{};
+    }
     if (trackerA.failNextCalloc) {
         trackerA.failNextCalloc = false;
         return nullptr;
@@ -150,6 +180,13 @@ static void* APS5_VABI AllocatorA_Calloc(size_t nmemb, size_t size) {
         Require(trackerB.livePointers.find(ptr) == trackerB.livePointers.end());
         Require(trackerA.livePointers.find(ptr) == trackerA.livePointers.end());
         trackerA.livePointers[ptr] = nmemb * size;
+#ifndef _WIN32
+        if (captureNextCalloc) {
+            captureNextCalloc = false;
+            capturedDuplicate = static_cast<CURL*>(ptr);
+            capturedDuplicateBytes = nmemb * size;
+        }
+#endif
     }
     return ptr;
 }
@@ -631,6 +668,110 @@ static void TestBackendObjectsLifecycle() {
     Require(trackerA.LiveCount() == 0);
 }
 
+struct DuplicateSource {
+    int frees = 0;
+};
+
+static std::size_t APS5_VABI DuplicateRead(char*, std::size_t, std::size_t, void*) { return 0; }
+static void APS5_VABI DuplicateFree(void* opaque) { ++static_cast<DuplicateSource*>(opaque)->frees; }
+
+#ifndef _WIN32
+static void ProbeDuplicateRegistration() {
+    duplicateRegisteredAtFault = false;
+    if (!capturedDuplicate || !trackerA.livePointers.contains(capturedDuplicate)) return;
+    try {
+        duplicateRegisteredAtFault = curl_easy_setopt_nid_postfix(capturedDuplicate, CURLOPT_PRIVATE, &duplicateRegisteredAtFault) == CURLE_OK;
+    } catch (...) {}
+}
+#endif
+
+static void TestDuplicateBookkeepingFailure() {
+    Require(curl_global_init_mem_nid_postfix(CURL_GLOBAL_DEFAULT, AllocatorA_Malloc, AllocatorA_Free, AllocatorA_Realloc, AllocatorA_Strdup, AllocatorA_Calloc) == CURLE_OK);
+    const auto globalPointers = trackerA.livePointers;
+    for (bool copiedSource : {false, true}) {
+        DuplicateSource source;
+        CURL* easy = curl_easy_init_nid_postfix();
+        Require(easy != nullptr);
+        auto* mime = curl_mime_init_nid_postfix(easy);
+        Require(mime != nullptr);
+        auto* part = curl_mime_addpart_nid_postfix(mime);
+        Require(part != nullptr);
+        Require(curl_mime_data_cb_nid_postfix(part, 0, DuplicateRead, nullptr, DuplicateFree, &source) == CURLE_OK);
+        Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_MIMEPOST, mime) == CURLE_OK);
+        if (copiedSource) {
+            CURL* copy = curl_easy_duphandle_nid_postfix(easy);
+            Require(copy != nullptr);
+            curl_mime_free_nid_postfix(mime);
+            mime = nullptr;
+            curl_easy_cleanup_nid_postfix(easy);
+            easy = copy;
+        }
+
+        CURL* warm = curl_easy_duphandle_nid_postfix(easy);
+        Require(warm != nullptr);
+        curl_easy_cleanup_nid_postfix(warm);
+        const auto before = trackerA.livePointers;
+        int expectedFrees = source.frees;
+        throwNextGuestCalloc = true;
+        bool guestException = false;
+        try {
+            curl_easy_duphandle_nid_postfix(easy);
+        } catch (const GuestAllocationFailure&) {
+            guestException = true;
+        }
+        Require(guestException && !throwNextGuestCalloc);
+        Require(trackerA.livePointers == before && source.frees == expectedFrees);
+
+#ifndef _WIN32
+        const auto nativeBytes = trackerA.livePointers.at(easy);
+        capturedDuplicate = nullptr;
+        capturedDuplicateBytes = 0;
+        duplicateRegisteredAtFault = false;
+        captureNextCalloc = true;
+        hostFaultProbe = ProbeDuplicateRegistration;
+        failHostAllocationOfSize = sizeof(std::shared_ptr<void>);
+        CURL* failed = nullptr;
+        bool escaped = false;
+        try {
+            failed = curl_easy_duphandle_nid_postfix(easy);
+        } catch (const std::bad_alloc&) {
+            escaped = true;
+        }
+        const bool consumed = failHostAllocationOfSize == 0;
+        failHostAllocationOfSize = 0;
+        hostFaultProbe = nullptr;
+        const bool captured = !captureNextCalloc;
+        captureNextCalloc = false;
+        if (!consumed || !captured || capturedDuplicateBytes != nativeBytes || !duplicateRegisteredAtFault) {
+            std::fprintf(stderr, "curl duplicate fault stage invalid: consumed=%d captured=%d bytes=%zu expected=%zu registered=%d\n",
+                consumed, captured, capturedDuplicateBytes, nativeBytes, duplicateRegisteredAtFault);
+            std::abort();
+        }
+        ++expectedFrees;
+        if (failed || escaped || trackerA.livePointers != before || source.frees != expectedFrees) {
+            std::fprintf(stderr, "curl duplicate bookkeeping cleanup failed: copied=%d registered=%d escaped=%d before=%zu after=%zu frees=%d expected=%d\n",
+                copiedSource, duplicateRegisteredAtFault, escaped, before.size(), trackerA.LiveCount(), source.frees, expectedFrees);
+            std::abort();
+        }
+        Require(!trackerA.livePointers.contains(capturedDuplicate) && trackerB.LiveCount() == 0);
+#endif
+
+        CURL* successful = curl_easy_duphandle_nid_postfix(easy);
+        Require(successful != nullptr);
+        curl_easy_cleanup_nid_postfix(successful);
+        Require(source.frees == ++expectedFrees);
+        if (mime) {
+            curl_mime_free_nid_postfix(mime);
+            Require(source.frees == ++expectedFrees);
+        }
+        curl_easy_cleanup_nid_postfix(easy);
+        if (copiedSource) ++expectedFrees;
+        Require(source.frees == expectedFrees && trackerA.livePointers == globalPointers && trackerB.LiveCount() == 0);
+    }
+    curl_global_cleanup_nid_postfix();
+    Require(trackerA.LiveCount() == 0 && trackerB.LiveCount() == 0);
+}
+
 static void TestRepeatSetupTeardown() {
     for (int cycle = 0; cycle < 3; ++cycle) {
         Require(trackerA.LiveCount() == 0);
@@ -713,6 +854,7 @@ int main() {
     TestBinaryEscapingAndResultLengths();
     TestDeterministicFailureInjection();
     TestBackendObjectsLifecycle();
+    TestDuplicateBookkeepingFailure();
     TestRepeatSetupTeardown();
     TestFileTransferUsesCustomHeap();
 

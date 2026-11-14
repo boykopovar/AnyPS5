@@ -1078,15 +1078,28 @@ CURL* APS5_VABI curl_easy_duphandle_nid_postfix(CURL* handle) {
     auto* easy = ::curl_easy_duphandle(handle);
     if (!easy) return nullptr;
     std::shared_ptr<EasyContext> context;
+    const auto forget = [&] {
+        ForgetEasyMime(easy);
+        std::lock_guard lock(contextMutex);
+        easies.erase(easy);
+    };
     try {
         context = std::make_shared<EasyContext>(*source);
-        std::lock_guard lock(contextMutex);
-        easies.emplace(easy, context);
+        {
+            std::lock_guard lock(contextMutex);
+            easies.emplace(easy, context);
+        }
+        CopyEasyMime(handle, easy);
     } catch (const std::bad_alloc&) {
-        ::curl_easy_cleanup(easy);
+        try {
+            ::curl_easy_cleanup(easy);
+        } catch (...) {
+            try { forget(); } catch (...) {}
+            throw;
+        }
+        forget();
         return nullptr;
     }
-    CopyEasyMime(handle, easy);
     RebindEasy(easy, context.get());
     return easy;
 }
