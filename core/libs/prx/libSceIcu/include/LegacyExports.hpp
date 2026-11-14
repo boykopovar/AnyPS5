@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -117,7 +118,7 @@ int APS5_VABI _ZNK6icu_6813UnicodeString11lastIndexOfEPKDsiiii_nid_postfix();
 int APS5_VABI ucptrie_internalSmallU8Index_nid_postfix();
 int APS5_VABI _ZN6icu_6822UCharCharacterIteratorC2Ev_nid_postfix();
 int APS5_VABI _ZNK6icu_6810ICUService6getKeyERNS_13ICUServiceKeyEPNS_13UnicodeStringEPKNS_17ICUServiceFactoryER10UErrorCode_nid_postfix();
-int APS5_VABI uprv_toupper_nid_postfix();
+char APS5_VABI uprv_toupper_nid_postfix(char c);
 int APS5_VABI sceIcuLegacyUnknown_1LicYZSc3Q8_nid_no_patch();
 int APS5_VABI _ZN6icu_686LocaleC2EOS0__nid_postfix();
 int APS5_VABI ucnv_fixFileSeparator_nid_postfix();
@@ -517,7 +518,7 @@ int APS5_VABI _ZN6icu_6818Normalizer2Factory14getFCDInstanceER10UErrorCode_nid_p
 int APS5_VABI _ZN6icu_6818CharStringByteSinkD2Ev_nid_postfix();
 int APS5_VABI uprv_getUTCtime_nid_postfix();
 int APS5_VABI _ZN6icu_6811ICUNotifierC2Ev_nid_postfix();
-int APS5_VABI uprv_stricmp_nid_postfix();
+int APS5_VABI uprv_stricmp_nid_postfix(const char* str1, const char* str2);
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryD2Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Bz2aeA6fU_plus_c_nid_no_patch();
 int APS5_VABI _ZN6icu_689UVector32D0Ev_nid_postfix();
@@ -1376,7 +1377,7 @@ int APS5_VABI _ZNK6icu_6810UnicodeSet8containsERKNS_13UnicodeStringE_nid_postfix
 int APS5_VABI sceIcuLegacyUnknown_aE2su5DZ1Sc_nid_no_patch();
 int APS5_VABI _ZN6icu_6813UnicodeString8allocateEi_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_aIzYHS_minus_alR0_nid_no_patch();
-int APS5_VABI uprv_asciitolower_nid_postfix();
+char APS5_VABI uprv_asciitolower_nid_postfix(char c);
 int APS5_VABI _ZN6icu_6813UnicodeStringC1EPKcS2__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_aLhXGPn5dTg_nid_no_patch();
 int APS5_VABI _ZNK6icu_6822UCharCharacterIterator8hashCodeEv_nid_postfix();
@@ -1432,7 +1433,7 @@ int APS5_VABI _ZN6icu_6816ICULocaleServiceD0Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_bZ1DVZdIg90_nid_no_patch();
 int APS5_VABI sceIcuLegacyUnknown_bb5xsagH_plus_cs_nid_no_patch();
 int APS5_VABI _ZNK6icu_6813UnicodeString11hasMetaDataEv_nid_postfix();
-int APS5_VABI uprv_strnicmp_nid_postfix();
+int APS5_VABI uprv_strnicmp_nid_postfix(const char* str1, const char* str2, std::uint32_t n);
 int APS5_VABI sceIcuLegacyUnknown_bgX_plus_dtmmGbI_nid_no_patch();
 int APS5_VABI _ZN6icu_686Locale9getCanadaEv_nid_postfix();
 int APS5_VABI _ZN6icu_687CaseMap7toUpperEPKcjPKDsiPDsiPNS_5EditsER10UErrorCode_nid_postfix();
@@ -2089,7 +2090,7 @@ int APS5_VABI sceIcuLegacyUnknown_tmx6qeUDqns_nid_no_patch();
 int APS5_VABI _ZNK6icu_6815Normalizer2Impl9recomposeERNS_16ReorderingBufferEia_nid_postfix();
 int APS5_VABI ucnv_getType_nid_postfix();
 int APS5_VABI _ZN6icu_6810Normalizer17previousNormalizeEv_nid_postfix();
-int APS5_VABI uprv_isASCIILetter_nid_postfix();
+std::int8_t APS5_VABI uprv_isASCIILetter_nid_postfix(char c);
 int APS5_VABI _ZN6icu_6817StringTrieBuilderD0Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_u0d88zW5hEg_nid_no_patch();
 int APS5_VABI _ZN6icu_689UVector32C2EiR10UErrorCode_nid_postfix();
