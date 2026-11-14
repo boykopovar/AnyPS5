@@ -7,9 +7,6 @@
 // ICU and its data are distributed under the Unicode licence:
 //   https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/LICENSE
 //
-// Error codes are ICU's UErrorCode values: U_ZERO_ERROR is 0 and
-// U_ILLEGAL_ARGUMENT_ERROR is 1. A status that already holds a failure is
-// left unchanged, as in ICU.
 
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 
@@ -20,7 +17,6 @@ namespace {
 
 constexpr std::int32_t ZeroError = 0;
 constexpr std::int32_t IllegalArgumentError = 1;
-// ICU's MIN_QSORT: below this many elements the sort is an insertion sort.
 constexpr std::int32_t MinQsort = 9;
 
 void InsertionSort(char* array, std::int32_t length, std::int32_t itemSize, std::int32_t (APS5_VABI* cmp)(const void*, const void*, const void*), const void* context) {
@@ -43,9 +39,6 @@ void InsertionSort(char* array, std::int32_t length, std::int32_t itemSize, std:
 }
 
 
-// ICU's semi-recursive quicksort: the smaller partition is sorted recursively
-// and the larger one is looped over. The middle item is copied to px and the
-// swap buffer is pw.
 void SubQuickSort(char* array, std::int32_t start, std::int32_t limit, std::int32_t itemSize, std::int32_t (APS5_VABI* cmp)(const void*, const void*, const void*), const void* context, char* px, char* pw) {
     std::int32_t left, right;
     do {
