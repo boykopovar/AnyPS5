@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -52,7 +53,9 @@ constexpr int ErrorCnCheck = static_cast<int>(0x8095f00b);
 constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
 constexpr int ErrorNotAfterCheck = static_cast<int>(0x8095f00d);
 constexpr int ErrorNotBeforeCheck = static_cast<int>(0x8095f00e);
+constexpr int ErrorEagain = static_cast<int>(0x8095f00f);
 constexpr int ErrorFatalAlert = static_cast<int>(0x8095f010);
+constexpr int ErrorBusy = static_cast<int>(0x8095f012);
 constexpr int ErrorWantPollIn = static_cast<int>(0x8095f013);
 constexpr int ErrorWantPollOut = static_cast<int>(0x8095f014);
 constexpr int ErrorSocketClosed = static_cast<int>(0x8095170d);
@@ -66,6 +69,7 @@ constexpr int ErrorNetPipe = static_cast<int>(0x80410120);
 constexpr int ErrorNetReset = static_cast<int>(0x80410136);
 constexpr int ErrorKernelInvalid = static_cast<int>(0x80020016);
 constexpr std::uint32_t FlagServerVerify = 0x1;
+constexpr std::uint32_t DetailChain = 0x2;
 constexpr std::uint32_t FlagCnCheck = 0x4;
 constexpr std::uint32_t FlagNotAfterCheck = 0x8;
 constexpr std::uint32_t FlagNotBeforeCheck = 0x10;
@@ -334,6 +338,14 @@ bool HostTimedOut(int error) {
 
 enum class Operation { Connect, Read, Write, Close };
 
+struct SavedSession;
+
+struct VerifyRecord {
+    std::atomic<int> error{0};
+    std::atomic<std::uint32_t> detail{0};
+    std::atomic<bool> accepted{false};
+};
+
 struct Session {
     int contextHandle;
     std::shared_ptr<Context> context;
@@ -344,6 +356,7 @@ struct Session {
     std::uintptr_t socket;
     std::mutex mutex;
     int hostError = 0;
+    bool singleTransfer = false;
     std::uint32_t verifyOptions = 0;
     std::vector<std::string> alpnStrings;
     std::vector<const char*> alpnList;
@@ -358,7 +371,10 @@ struct Session {
     bool reset = false;
     bool gone = false;
     int verifyResult = 0;
+    bool callbackRejected = false;
     unsigned int failedOptions = 0;
+    std::shared_ptr<SavedSession> offered;
+    std::shared_ptr<VerifyRecord> record = std::make_shared<VerifyRecord>();
     Random random;
     PrivateKey privateKey;
     mbedtls_x509_crt authorities;
@@ -477,25 +493,20 @@ struct Session {
     void Verify() {
         const auto flags = mbedtls_ssl_get_verify_result(&ssl);
         failedOptions = 0;
-        verifyResult = 0;
         if (!(verifyOptions & FlagServerVerify)) return;
+        constexpr std::uint32_t optional =
+            MBEDTLS_X509_BADCERT_NOT_TRUSTED | MBEDTLS_X509_BADCERT_CN_MISMATCH | MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
+        if ((verifyOptions & FlagKnownCaCheck) && (flags & ~optional)) failedOptions |= DetailChain;
         if ((verifyOptions & FlagKnownCaCheck) && (flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED)) failedOptions |= FlagKnownCaCheck;
         if ((verifyOptions & FlagCnCheck) && (flags & MBEDTLS_X509_BADCERT_CN_MISMATCH)) failedOptions |= FlagCnCheck;
         if ((verifyOptions & FlagNotAfterCheck) && (flags & MBEDTLS_X509_BADCERT_EXPIRED)) failedOptions |= FlagNotAfterCheck;
         if ((verifyOptions & FlagNotBeforeCheck) && (flags & MBEDTLS_X509_BADCERT_FUTURE)) failedOptions |= FlagNotBeforeCheck;
-        constexpr std::uint32_t optional =
-            MBEDTLS_X509_BADCERT_NOT_TRUSTED | MBEDTLS_X509_BADCERT_CN_MISMATCH | MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
-        if (failedOptions & FlagKnownCaCheck) verifyResult = ErrorUnknownCa;
-        else if (failedOptions & FlagCnCheck) verifyResult = ErrorCnCheck;
-        else if (failedOptions & FlagNotAfterCheck) verifyResult = ErrorNotAfterCheck;
-        else if (failedOptions & FlagNotBeforeCheck) verifyResult = ErrorNotBeforeCheck;
-        else if (flags & ~optional) verifyResult = ErrorInvalidCert;
     }
 
     int Code(int result, Operation operation) {
         switch (result) {
-            case MBEDTLS_ERR_SSL_WANT_READ: return ErrorWantPollIn;
-            case MBEDTLS_ERR_SSL_WANT_WRITE: return ErrorWantPollOut;
+            case MBEDTLS_ERR_SSL_WANT_READ: return singleTransfer ? ErrorEagain : ErrorWantPollIn;
+            case MBEDTLS_ERR_SSL_WANT_WRITE: return singleTransfer ? ErrorEagain : ErrorWantPollOut;
             case MBEDTLS_ERR_NET_CONN_RESET:
                 reset = true;
                 if (operation == Operation::Write) return ErrorNetPipe;
@@ -522,6 +533,16 @@ struct Session {
     }
 };
 
+struct SavedSession {
+    std::shared_ptr<Context> context;
+    mbedtls_ssl_session data;
+    explicit SavedSession(std::shared_ptr<Context> owner) : context(std::move(owner)) { mbedtls_ssl_session_init(&data); }
+    ~SavedSession() {
+        PoolScope scope(context->pool);
+        mbedtls_ssl_session_free(&data);
+    }
+};
+
 constexpr int SslVersionSsl30 = 2;
 constexpr int SslVersionTls12 = 5;
 
@@ -536,6 +557,10 @@ struct SslConnection {
     std::string alpn;
     std::shared_ptr<Session> session;
     bool systemRoots = false;
+    std::shared_ptr<SavedSession> resume;
+    bool resumeOffered = false;
+    bool singleTransfer = false;
+    std::shared_ptr<VerifyRecord> record = std::make_shared<VerifyRecord>();
 };
 
 struct Runtime {
@@ -573,8 +598,15 @@ SslConnection& RequireConnection(const char* function, int sslConnectionId) {
     return *connection;
 }
 
+std::uint32_t CompiledSdkVersion() {
+    const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
+    return sdkVersion;
+}
+
 void RequireUsable(const char* function, const Session& session) {
-    if (session.verifyResult != 0 && session.verifyResult != ErrorCallbackCheck)
+    if (session.verifyResult != 0 && !session.callbackRejected)
         throw std::logic_error(std::string(function) + ": the connection failed verification; the console's behaviour is unknown");
 }
 
@@ -780,12 +812,7 @@ int APS5_VABI sceSslUnloadCert(int sslCtxId) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
-    if (found == state.contexts.end()) {
-        const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-        std::uint32_t sdkVersion;
-        std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
-        return sdkVersion < 0x07500000 ? 0 : ErrorInvalidId;
-    }
+    if (found == state.contexts.end()) return CompiledSdkVersion() < 0x07500000 ? 0 : ErrorInvalidId;
     auto& context = *found->second;
     context.authorities.clear();
     context.identity.reset();
@@ -880,16 +907,29 @@ int APS5_VABI sceSslFreeCaCerts(int sslCtxId, SceSsl::CaCerts* certificates) {
     return 0;
 }
 
-int APS5_VABI sceSslCreateConnection(int sslCtxId, int sockId, const char* host) {
+}
+
+namespace {
+
+int CreateConnection(int sslCtxId, int sockId, const char* host, bool singleTransfer) {
     if (!host) return ErrorInvalidValue;
     std::lock_guard lock(State().mutex);
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     auto& state = State();
     if (state.nextHandle > static_cast<unsigned>(std::numeric_limits<int>::max())) throw std::overflow_error("SSL connection handles exhausted");
     const auto id = static_cast<int>(state.nextHandle);
-    state.connections.emplace(id, SslConnection{sslCtxId, sockId, host, nullptr, nullptr});
+    auto& connection = state.connections.emplace(id, SslConnection{sslCtxId, sockId, host, nullptr, nullptr}).first->second;
+    connection.singleTransfer = singleTransfer;
     ++state.nextHandle;
     return id;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceSslCreateConnection(int sslCtxId, int sockId, const char* host) {
+    return CreateConnection(sslCtxId, sockId, host, false);
 }
 
 int SslTrustSystemRoots_nid_no_patch(int sslConnectionId) {
@@ -925,14 +965,43 @@ int APS5_VABI sceSslSetVerifyCallback(int sslConnectionId, SslVerifyCallback cbf
 
 namespace {
 
-int RunCallback(Session& session, std::unique_lock<std::mutex>& sessionLock, SslVerifyCallback callback, void* argument) {
-    session.verifying = true;
-    sessionLock.unlock();
-    const int decision = callback(session.contextHandle, session.failedOptions, session.peerHandles.data(),
-        static_cast<int>(session.peerHandles.size()), argument);
-    sessionLock.lock();
-    session.verifying = false;
-    return decision < 0 ? ErrorCallbackCheck : 0;
+int DetailCode(std::uint32_t detail) {
+    if (detail & DetailChain) return ErrorInvalidCert;
+    if (detail & FlagCnCheck) return ErrorCnCheck;
+    if (detail & FlagKnownCaCheck) return ErrorUnknownCa;
+    if (detail & FlagNotAfterCheck) return ErrorNotAfterCheck;
+    if (detail & FlagNotBeforeCheck) return ErrorNotBeforeCheck;
+    return ErrorCallbackCheck;
+}
+
+int Decide(Session& session, std::unique_lock<std::mutex>& sessionLock, SslVerifyCallback callback, void* argument) {
+    auto& record = *session.record;
+    const auto detail = record.detail.load();
+    session.callbackRejected = false;
+    if (callback && (session.verifyOptions & FlagServerVerify) && !(record.accepted && detail == 0)) {
+        session.verifying = true;
+        sessionLock.unlock();
+        const int decision = callback(session.contextHandle, detail, session.peerHandles.data(), static_cast<int>(session.peerHandles.size()), argument);
+        sessionLock.lock();
+        session.verifying = false;
+        if (decision >= 0) {
+            record.accepted = true;
+            return 0;
+        }
+        session.callbackRejected = true;
+        if (decision != -1 || CompiledSdkVersion() < 0x07500000) return decision;
+    } else if (detail == 0) {
+        return 0;
+    }
+    record.error = ErrorInvalidCert;
+    return DetailCode(detail);
+}
+
+bool Resumed(const Session& session) {
+    const auto* negotiated = session.ssl.MBEDTLS_PRIVATE(session);
+    if (!session.offered || !negotiated) return false;
+    const auto& master = session.offered->data.MBEDTLS_PRIVATE(master);
+    return std::memcmp(negotiated->MBEDTLS_PRIVATE(master), master, sizeof(master)) == 0;
 }
 
 int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session>& session) {
@@ -950,7 +1019,14 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
             if (!KernelLookupSocketNative_nid_no_patch(connection->socket, &owner, &native)) return ErrorNetBadDescriptor;
             PoolScope scope(context->pool);
             session = std::make_shared<Session>(connection->context, std::move(context), std::move(owner), native);
+            session->singleTransfer = connection->singleTransfer;
+            session->record = connection->record;
             session->Configure(connection->host, connection->alpn, connection->verifyOptions, connection->systemRoots ? SystemRoots() : nullptr);
+            if (connection->resume) {
+                CheckBackend(mbedtls_ssl_set_session(&session->ssl, &connection->resume->data), "SSL session resumption setup failed");
+                session->offered = connection->resume;
+            }
+            connection->resumeOffered = true;
             connection->session = session;
         } else {
             session = connection->session;
@@ -961,7 +1037,7 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
     std::unique_lock sessionLock(session->mutex);
     if (session->verifying) throw std::logic_error(std::string(function) + ": the verify callback is running");
     if (session->verified) {
-        if (session->verifyResult == ErrorCallbackCheck && callback) session->verifyResult = RunCallback(*session, sessionLock, callback, callbackArgument);
+        if (session->callbackRejected && callback) session->verifyResult = Decide(*session, sessionLock, callback, callbackArgument);
         return session->verifyResult;
     }
     if (session->gone) return 0;
@@ -986,15 +1062,18 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
             session->handshaken = true;
             const char* selected = mbedtls_ssl_get_alpn_protocol(&session->ssl);
             session->alpnSelected = selected ? selected : "";
+            if (Resumed(*session)) {
+                session->verified = true;
+                return 0;
+            }
         }
         session->Verify();
-        if (callback && session->verifyResult == ErrorInvalidCert)
-            throw std::runtime_error(std::string(function) + ": the chain failed a check no verify option names; what the console passes to the verify callback is unknown");
+        session->record->detail |= session->failedOptions;
         if (callback) RegisterPeer(*session);
     }
-    if (callback) session->verifyResult = RunCallback(*session, sessionLock, callback, callbackArgument);
+    session->verifyResult = Decide(*session, sessionLock, callback, callbackArgument);
     session->verified = true;
-    if (session->verifyResult != 0 && session->verifyResult != ErrorCallbackCheck) {
+    if (session->verifyResult != 0 && !session->callbackRejected) {
         PoolScope scope(session->context->pool);
         mbedtls_ssl_close_notify(&session->ssl);
         session->closed = true;
@@ -1041,7 +1120,7 @@ int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) 
                 session->peekSize = 0;
                 session->peekBuffer.reset();
             }
-            if (flags != 0) break;
+            if (flags != 0 || session->singleTransfer) break;
             continue;
         }
         if (flags == 3 && !session->peekBuffer) session->peekBuffer = Allocate(MBEDTLS_SSL_IN_CONTENT_LEN);
@@ -1054,7 +1133,7 @@ int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) 
         }
         if (result > 0) {
             received += static_cast<std::size_t>(result);
-            if (flags != 0) break;
+            if (flags != 0 || session->singleTransfer) break;
             continue;
         }
         if (result == 0 || result == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || result == MBEDTLS_ERR_SSL_CONN_EOF) break;
@@ -1098,6 +1177,7 @@ int APS5_VABI sceSslWrite(int sslConnectionId, void* buf, size_t len, int flags)
             return code;
         }
         written += static_cast<std::size_t>(result);
+        if (session->singleTransfer) break;
     }
     return static_cast<int>(written);
 }
@@ -1359,19 +1439,23 @@ int APS5_VABI VLONG_freeVlongQueue() {
     return 0;
 }
 
-int APS5_VABI sceSslCheckRecvPending() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSslCheckRecvPending(int sslConnectionId, std::uint8_t* pending) {
+    if (!pending) return ErrorInvalidValue;
+    const std::uint8_t value = 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(pending, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
+    std::lock_guard lock(State().mutex);
+    return FindConnection(sslConnectionId) ? 0 : ErrorInvalidId;
 }
 
-int APS5_VABI sceSslCreateSslConnection() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSslCreateSslConnection(int sslCtxId, int sockId, const char* host) {
+    return CreateConnection(sslCtxId, sockId, host, true);
 }
 
-int APS5_VABI sceSslDeleteSslConnection() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSslDeleteSslConnection(int sslConnectionId) {
+    return sceSslDeleteConnection(sslConnectionId);
 }
 
 int APS5_VABI sceSslDisableOption() {
@@ -1409,9 +1493,21 @@ int APS5_VABI sceSslGetPeerCert() {
     return 0;
 }
 
-int APS5_VABI sceSslGetSslError() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSslGetSslError(int sslConnectionId, int* errNum, std::uint32_t* detail) {
+    if (!errNum || !detail) return ErrorInvalidValue;
+    int error;
+    std::uint32_t bits;
+    {
+        std::lock_guard lock(State().mutex);
+        const auto* connection = FindConnection(sslConnectionId);
+        if (!connection) return ErrorInvalidId;
+        error = connection->record->error;
+        bits = connection->record->detail;
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(errNum, &error, sizeof(error)) && GuestCopyOut_nid_no_patch(detail, &bits, sizeof(bits));
+    errno = savedErrno;
+    return copied ? 0 : ErrorInvalidValue;
 }
 
 int APS5_VABI sceSslLoadRootCACert() {
@@ -1424,7 +1520,39 @@ int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen) {
 }
 
 int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::shared_ptr<Session> session;
+    std::shared_ptr<SavedSession> saved;
+    bool unverified = false;
+    {
+        std::lock_guard lock(State().mutex);
+        const auto* connection = FindConnection(sslConnectionId);
+        if (!connection) return ErrorInvalidId;
+        session = connection->session;
+        if (session) saved = std::make_shared<SavedSession>(State().contexts.at(connection->context));
+    }
+    std::unique_lock<std::mutex> sessionLock;
+    if (session) {
+        sessionLock = std::unique_lock(session->mutex, std::try_to_lock);
+        if (!sessionLock.owns_lock() || session->verifying) return ErrorBusy;
+        if (!session->handshaken) {
+            saved.reset();
+        } else if (session->verified && session->verifyResult == 0) {
+            PoolScope scope(session->context->pool);
+            CheckBackend(mbedtls_ssl_get_session(&session->ssl, &saved->data), "sceSslReuseConnection: the session could not be saved");
+        } else {
+            saved.reset();
+            unverified = true;
+        }
+    }
+    std::lock_guard lock(State().mutex);
+    auto* connection = FindConnection(sslConnectionId);
+    if (!connection) return ErrorInvalidId;
+    if (connection->session != session) return ErrorBusy;
+    if (saved) connection->resume = std::move(saved);
+    else if (unverified || !connection->resumeOffered) connection->resume.reset();
+    connection->resumeOffered = false;
+    connection->session.reset();
+    connection->socket = sockId;
     return 0;
 }
 
