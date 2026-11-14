@@ -3147,7 +3147,7 @@ static void CheckAtanhf() {
         {0x3dcccccdu, 0x3dcd7c9eu}, {0x3e800000u, 0x3e82c578u}, {0xbe800000u, 0xbe82c578u}, {0x3eaaaaaau, 0x3eb17217u},
         {0x3eaaaaabu, 0x3eb17218u}, {0x3effffffu, 0x3f0c9f53u}, {0x3f000000u, 0x3f0c9f54u}, {0xbf000000u, 0xbf0c9f54u},
         {0x3f199999u, 0x3f317217u}, {0x3f19999au, 0x3f317218u}, {0x3f400000u, 0x3f791396u}, {0xbf400000u, 0xbf791396u},
-        {0x3f666666u, 0x3fbc71afu}, {0x3f7fffffu, 0x410aa123u}, {0xbf7fffffu, 0xc10aa123u},
+        {0x3f666666u, 0x3fbc71afu}, {0x3f7fffefu, 0x40e7ed6du}, {0x3f7fffffu, 0x410aa123u}, {0xbf7fffffu, 0xc10aa123u},
     };
     for (const auto& test : cases) {
         *__error_nid_postfix() = 12345;
@@ -3170,6 +3170,16 @@ static void CheckAtanhf() {
         Require(std::isnan(atanhf_nid_postfix(std::bit_cast<float>(input))) && *__error_nid_postfix() == EDOM);
         Require(std::fetestexcept(FE_INVALID) != 0);
     }
+    for (const std::uint32_t input : {0x3f800001u, 0x40000000u, 0x7f800000u, 0xff800000u}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 0;
+        Require(std::bit_cast<std::uint32_t>(atanhf_nid_postfix(std::bit_cast<float>(input))) == 0xffc00000u && *__error_nid_postfix() == EDOM);
+        Require(std::fetestexcept(FE_INVALID) != 0 && std::fetestexcept(FE_DIVBYZERO) == 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    *__error_nid_postfix() = 0;
+    Require(std::bit_cast<std::uint32_t>(atanhf_nid_postfix(std::bit_cast<float>(0x7fc00001u))) == 0x7fc00001u && *__error_nid_postfix() == EDOM);
+    Require(std::fetestexcept(FE_INVALID) != 0);
     *__error_nid_postfix() = 0;
 }
 
