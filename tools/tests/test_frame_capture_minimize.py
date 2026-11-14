@@ -64,6 +64,10 @@ else:
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
                 frame_capture_minimize.parse_args(["--capture", "in", "--replay", "run", "--filter", "filter", "--output", "out", "--match-regex", "failure", "--expect-exit-code", "1", *arguments])
 
+    def test_accepts_a_finite_positive_replay_timeout(self):
+        args = frame_capture_minimize.parse_args(["--capture", "in", "--replay", "run", "--filter", "filter", "--output", "out", "--match-regex", "failure", "--expect-exit-code", "1", "--replay-timeout", "45.5"])
+        self.assertEqual(args.replay_timeout, 45.5)
+
     def test_cli_keeps_only_units_needed_for_a_repeated_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
