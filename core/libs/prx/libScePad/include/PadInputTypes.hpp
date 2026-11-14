@@ -63,7 +63,8 @@ enum class MouseButton : std::uint8_t {
 
 enum class InputMode : std::uint8_t {
     Hold,
-    Toggle
+    Toggle,
+    Turbo
 };
 
 struct InputBinding {

@@ -116,6 +116,7 @@ Pad::KeyboardMouse::KeyboardMouse(InputConfiguration configuration)
     : configuration(std::move(configuration)),
       pressed(this->configuration.bindings.size()),
       latched(this->configuration.bindings.size()),
+      pressedAt(this->configuration.bindings.size()),
       wheelReleaseTimes(this->configuration.bindings.size()),
       mouse(this->configuration.settings) {}
 
@@ -128,6 +129,7 @@ void Pad::KeyboardMouse::Replace(InputConfiguration next) {
     configuration = std::move(next);
     pressed.assign(configuration.bindings.size(), false);
     latched.assign(configuration.bindings.size(), false);
+    pressedAt.assign(configuration.bindings.size(), Clock::time_point{});
     wheelReleaseTimes.assign(configuration.bindings.size(), Clock::time_point{});
     mouse = MouseStick(configuration.settings);
 }
@@ -137,7 +139,11 @@ bool Pad::KeyboardMouse::MouseMode() const {
 }
 
 bool Pad::KeyboardMouse::active(std::size_t index) const {
-    return configuration.bindings[index].mode == InputMode::Toggle ? latched[index] : pressed[index];
+    const auto mode = configuration.bindings[index].mode;
+    if (mode == InputMode::Toggle) return latched[index];
+    if (mode != InputMode::Turbo || !pressed[index]) return pressed[index];
+    const auto elapsed = std::max(lastAdvance - pressedAt[index], Clock::duration::zero());
+    return elapsed % TurboPeriod < TurboPeriod / 2;
 }
 
 Pad::KeyboardMouse::StickInput Pad::KeyboardMouse::stickInput() const {
@@ -216,6 +222,7 @@ bool Pad::KeyboardMouse::Advance(Clock::time_point now) {
     for (std::size_t index = 0; index < configuration.bindings.size(); ++index) {
         const auto& binding = configuration.bindings[index];
         if (pressed[index] && binding.control == InputControl::Shake) changed = true;
+        if (pressed[index] && binding.mode == InputMode::Turbo) changed = true;
         if ((binding.wheelDirection == 0 && binding.wheelTilt == 0) || !pressed[index] || now < wheelReleaseTimes[index]) continue;
         pressed[index] = false;
         wheelReleaseTimes[index] = {};
@@ -237,6 +244,7 @@ void Pad::KeyboardMouse::SetTitleReadsMouse(bool reads) {
 void Pad::KeyboardMouse::Release() {
     std::fill(pressed.begin(), pressed.end(), false);
     std::fill(latched.begin(), latched.end(), false);
+    std::fill(pressedAt.begin(), pressedAt.end(), Clock::time_point{});
     std::fill(wheelReleaseTimes.begin(), wheelReleaseTimes.end(), Clock::time_point{});
     stickAxes = {};
     triggerAxes = {};
@@ -333,6 +341,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         if (binding.control == InputControl::ToggleMouse && down && !pressed[index]) requests.toggleMouse = true;
         if (binding.control == InputControl::ReloadInputMapping && keyboard && down && !pressed[index]) requests.reloadInputMapping = true;
         if (binding.mode == InputMode::Toggle && down && !pressed[index]) latched[index] = !latched[index];
+        if (down && !pressed[index]) pressedAt[index] = now;
         pressed[index] = down;
     }
     return requests;
