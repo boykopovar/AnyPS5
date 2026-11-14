@@ -92,6 +92,12 @@ std::uint32_t Ngs2ReadSamplerPcm(Ngs2Voice& voice, float* dest, std::uint32_t st
         }
         if (block.data != nullptr && block.dataCursor >= block.info.data_size) {
             if (voice.blocks.size() == 1 && voice.acceptsBlocks) break;
+            const auto samples = static_cast<std::uint64_t>(block.info.num_skip_samples) + block.info.num_samples;
+            if (block.info.num_repeats == UINT32_MAX && voice.blocks.size() > 1 && block.info.data_size != 0 && samples * frameBytes > block.info.data_size) {
+                block.dataCursor = 0;
+                ++block.numRepeated;
+                continue;
+            }
             Ngs2FinishBlock(voice);
             continue;
         }

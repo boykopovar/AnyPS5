@@ -255,7 +255,11 @@ int APS5_VABI sceVoiceGetBitRate(std::uint32_t portId, std::uint32_t* bitrate) {
     if (found == voice.ports.end()) return PortNotFound;
     const auto& port = found->second;
     if (port.type != PortInVoice && port.type != PortOutVoice) return PortNotFound;
-    *bitrate = port.bitrate;
+    const std::uint32_t localBitrate = port.bitrate;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(bitrate, &localBitrate, sizeof(localBitrate));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 
@@ -378,7 +382,11 @@ int APS5_VABI sceVoiceGetMuteFlag(std::uint32_t portId, bool* muted) {
     if (!muted) return InvalidArgument;
     const auto found = voice.ports.find(portId);
     if (found == voice.ports.end()) return PortNotFound;
-    *muted = found->second.muted || voice.mutedAll;
+    const bool localMuted = found->second.muted || voice.mutedAll;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(muted, &localMuted, sizeof(localMuted));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 

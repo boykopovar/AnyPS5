@@ -1,6 +1,7 @@
 add_library(libSceJsc SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_sources(libSceJsc PRIVATE LegacyExports.cpp src/PlacementNew.cpp src/WtfRandom.cpp src/WtfStringSearch.cpp src/WtfUrl.cpp)
 target_include_directories(libSceJsc PRIVATE ${LIBS_INCLUDE_DIR})
+target_sources(libSceJsc PRIVATE src/WtfHexNumber.cpp src/WtfMediaTime.cpp src/WtfSixCharacterHash.cpp)
 configure_windows_unwind(libSceJsc)
 target_sources(libSceJsc PRIVATE src/WtfSha1.cpp)
 
@@ -58,6 +59,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_jsc_trivial_returns COMMAND guest_jsc_trivial_returns_tests)
     if(WIN32)
         set_tests_properties(guest_jsc_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
+    endif()
+    add_test_executable(jsc_wtf_helpers_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/WtfHelpers.cpp)
+    target_include_directories(jsc_wtf_helpers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(jsc_wtf_helpers_tests PRIVATE libSceJsc libc)
+    configure_windows_unwind(jsc_wtf_helpers_tests)
+    add_test(NAME jsc_wtf_helpers COMMAND jsc_wtf_helpers_tests)
+    if(WIN32)
+        set_tests_properties(jsc_wtf_helpers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
     endif()
     add_test_executable(guest_jsc_register_sets_and_constructors_tests ${LIBS_INCLUDE_DIR}/tests/GuestJscRegisterSetsAndConstructors.cpp)

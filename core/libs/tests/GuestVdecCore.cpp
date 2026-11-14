@@ -359,6 +359,12 @@ void CheckDecodeArguments() {
 void CheckEmptyQueue() {
     void* decoder = CreateAvc(100);
     std::uint32_t count = 7;
+    errno = 71;
+    Require(sceVdecCoreTrySyncDecode(decoder, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument && errno == 71, "try-sync with unwritable count");
+    errno = 71;
+    Require(sceVdecCoreSyncDecode(decoder, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument && errno == 71, "sync with unwritable count");
+    errno = 71;
+    Require(sceVdecCoreSyncDecodeWptr(decoder, reinterpret_cast<std::uint32_t*>(0x10), nullptr, nullptr) == InvalidArgument && errno == 71, "sync wptr with unwritable count");
     Require(sceVdecCoreTrySyncDecode(decoder, &count) == 0 && count == 0, "try-sync on an idle decoder");
     count = 7;
     Require(sceVdecCoreSyncDecode(decoder, &count) == 0 && count == 0, "sync on an idle decoder");
