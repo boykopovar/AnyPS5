@@ -7289,6 +7289,54 @@ void descriptorSnapshotTests() {
     }
 }
 
+void drawMovedInPlaceTests() {
+    using AgcDriver::Graphics::DescriptorCache;
+    using AgcDriver::Graphics::Recorder;
+    using AgcDriver::Graphics::ShaderResources;
+    mock = MockVulkan{};
+    mock.allowCopies = true;
+    auto context = mockContext();
+    {
+        DescriptorCache cache(context);
+        context.descriptorCache = &cache;
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(context);
+        ShaderRecompiler::RecompileResult vertex, fragment;
+        auto binding = makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)));
+        binding.bufferWritten = {false, false};
+        vertex.bindings.push_back(binding);
+        vertex.pushConstants.resize(8);
+        fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 4, 1, vsharp(guestThird.data(), 8)));
+        const auto state = AgcDriver::Graphics::DecodeState(makeState());
+        ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
+        const auto original = findWrite(0).buffers;
+        const auto import = reinterpret_cast<VkBuffer>(std::uintptr_t{0x3000});
+        std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> block{};
+        resources.PatchPushConstants(block);
+        const auto cached = block;
+        Require(!ShaderResources::MovedPushPatches({}) && !resources.PatchMovedPushConstants(block, {}) && block == cached, "a draw without elements read in place changed its push block");
+        std::vector<ShaderResources::MovedBuffer> moved;
+        moved.push_back({1, reinterpret_cast<std::uintptr_t>(guestSecond.data()) + 12, 8, {}, import, 4096, 12});
+        mock.writes.clear();
+        const auto bindings = resources.PrepareDrawBindings(recorder, moved);
+        Require(bindings != nullptr && bindings->snapshots.size() == 1 && bindings->snapshots[0].buffer == nullptr && bindings->snapshots[0].handle == import, "an element read in place was copied");
+        Require(mock.copies.empty() && mock.writes.size() == 2, "the in-place descriptor set was not written once per binding");
+        const auto& write = mock.writes.front();
+        Require(write.binding == 0 && write.count == 2 && write.buffers[0].buffer == original[0].buffer && write.buffers[0].offset == original[0].offset && write.buffers[0].range == original[0].range, "binding an element in place changed its neighbour");
+        Require(write.buffers[1].buffer == import && write.buffers[1].offset == 4096 && write.buffers[1].range == 20, "an element read in place is not bound at its aligned place in the import");
+        Require(ShaderResources::MovedPushPatches(moved) && resources.PatchMovedPushConstants(block, moved), "the offset of an element read in place did not reach the push block");
+        std::size_t changed = 0;
+        for (std::size_t index = 0; index < block.size(); ++index) {
+            if (block[index] == cached[index]) continue;
+            ++changed;
+            Require(block[index] == std::byte{12}, "the push block carries another offset than the moved element's");
+        }
+        Require(changed == 1, "the moved element's offset is not the one byte that changed in the push block");
+        recorder.Sync();
+    }
+    Require(mock.live == 0, "in-place draw bindings leaked Vulkan objects");
+}
+
 alignas(16) std::array<std::uint32_t, 8> guestMovedFirst{0x51515151, 0x52525252, 0x53535353, 0x54545454, 0x55555555, 0x56565656, 0x57575757, 0x58585858};
 alignas(16) std::array<std::uint32_t, 8> guestMovedSecond{0x61616161, 0x62626262, 0x63636363, 0x64646464, 0x65656565, 0x66666666, 0x67676767, 0x68686868};
 
@@ -15273,6 +15321,7 @@ int main(int argc, char** argv) {
         viewAtRangeLimitTests();
         guestBufferViewBytesTests();
         descriptorSnapshotTests();
+        drawMovedInPlaceTests();
         dispatchMoveTests();
         descriptorCacheTests();
         bufferBudgetPlacementTests();

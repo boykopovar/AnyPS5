@@ -37,10 +37,6 @@ int APS5_VABI cairo_ft_scaled_font_lock_face() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_glyph_path() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_set_source_rgb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -88,10 +84,6 @@ int APS5_VABI cairo_ft_font_face_create_for_pattern() {
 
 
 int APS5_VABI cairo_scaled_font_extents() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_show_glyphs() {
     NotImplemented_nid_no_patch(__func__);
 }
 

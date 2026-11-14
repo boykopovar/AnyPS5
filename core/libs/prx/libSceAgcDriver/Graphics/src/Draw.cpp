@@ -2777,6 +2777,7 @@ void captureInputs(const Context& context, Recorder& recorder, VkCommandBuffer c
     };
     if (bindings != nullptr) {
         for (const auto& snapshot : bindings->snapshots) {
+            if (snapshot.buffer == nullptr) continue;
             const auto bytes = snapshot.Bytes();
             addSample(snapshot.address, bytes.size(), snapshot.buffer->Handle(), snapshot.offset, bytes.data());
         }
@@ -2875,6 +2876,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
     }
     passReads.insert(passReads.end(), inputs.inPlaceReads.begin(), inputs.inPlaceReads.end());
+    for (const auto& entry : record.moved) {
+        if (entry.inPlace == VK_NULL_HANDLE) continue;
+        const auto begin = entry.address - entry.adjustment;
+        passReads.emplace_back(begin, begin + GuestBufferMemory::ViewBytes(entry.size, entry.adjustment));
+    }
     const auto passImages = resources.StorageImages();
     std::vector<std::pair<VkImage, bool>> passAttachments;
     passAttachments.reserve(record.targets.size());
@@ -3006,7 +3012,18 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
     if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
+    std::array<std::byte, PipelinePushConstantBytes> movedPush;
+    const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = record.pushBytes;
+    VkShaderStageFlags pushStages = record.pushStages;
+    if (ShaderResources::MovedPushPatches(record.moved)) {
+        movedPush = pushBytes != nullptr ? *pushBytes : AssemblePushConstants(shaders);
+        if (pushBytes == nullptr) resources.PatchPushConstants(movedPush);
+        if (resources.PatchMovedPushConstants(movedPush, record.moved)) {
+            if (pushBytes == nullptr) pushStages = PushConstantStages(shaders);
+            pushBytes = &movedPush;
+        }
+    }
+    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, pushBytes, pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
     auto eachDrawTiming = Recorder::NoTiming;
@@ -3020,7 +3037,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
-        recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
+        recordStencilReplay(context, recording, state, draw, inputs, record.stencilReplay, shaders, resources, pushBytes, pushStages);
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
