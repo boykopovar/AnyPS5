@@ -187,9 +187,9 @@ void TestSimplifyWhiteSpace() {
     Check(Equals8(_ZN3WTF10StringImpl18simplifyWhiteSpaceEv(doubled.impl), "a b"), __LINE__);
     String blank = Make8(" \n ");
     Check(IsEmptyStatic(_ZN3WTF10StringImpl18simplifyWhiteSpaceEv(blank.impl)), __LINE__);
-    String ideographic = Make16(u"　a  b ");
-    Check(Equals16(_ZN3WTF10StringImpl18simplifyWhiteSpaceEv(ideographic.impl), u"a b "), __LINE__);
-    String nonSpace = Make16(u"a​b\u0085");
+    String ideographic = Make16(u"\u3000a\u2003\u2028b\u00A0");
+    Check(Equals16(_ZN3WTF10StringImpl18simplifyWhiteSpaceEv(ideographic.impl), u"a b\u00A0"), __LINE__);
+    String nonSpace = Make16(u"a\u200Bb\u0085");
     {
         String same = _ZN3WTF10StringImpl18simplifyWhiteSpaceEv(nonSpace.impl);
         Check(same.impl == nonSpace.impl, __LINE__);
