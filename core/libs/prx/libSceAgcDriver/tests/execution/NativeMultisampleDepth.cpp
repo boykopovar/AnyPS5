@@ -76,6 +76,7 @@ namespace AgcDriver::DriverDetail {
 struct DriverTestAccess {
     static void UseDevice(std::shared_ptr<VulkanDevice> device) { Driver::Get().device = std::move(device); }
     static std::shared_ptr<VulkanDevice> GetDevice() { return Driver::Get().device.Load(); }
+    static std::pair<std::uint64_t, std::uint64_t> SerialProgress() { return Driver::Get().SerialProgress(); }
     static void Stop() { Driver::Get().stop(); }
     static void WaitQueue() {
         auto& driver = Driver::Get();
@@ -1838,7 +1839,15 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                         catch (const std::exception& error) { failure = error.what(); }
                         Recorder::FailNextSubmitsForTest(0u);
                         recorder.Activate();
-                        Require(failure.find("injected failure") != std::string::npos, "the HTILE clear dispatch's batch was not discarded ('" + failure + "')");
+                        if (failure.find("injected failure") == std::string::npos) {
+                            const auto [accepted, completed] = AgcDriver::DriverDetail::DriverTestAccess::SerialProgress();
+                            std::string late = "none";
+                            gpuLock.unlock();
+                            try { AgcDriverWaitIdle_nid_postfix(); }
+                            catch (const std::exception& error) { late = error.what(); }
+                            gpuLock.lock();
+                            Require(false, "the HTILE clear dispatch's batch was not discarded by the wait ('" + failure + "'; serials accepted " + std::to_string(accepted) + " completed " + std::to_string(completed) + ", failure latched after the wait: '" + late + "')");
+                        }
                         if (!AgcDriver::GuestMemory::Watched(target.htileAddress, metadataBytes)) {
                             std::puts("skipped native HTILE discarded dispatch: the write tracker does not cover the imported metadata range, so the clear was never armed");
                             return;
