@@ -67,6 +67,7 @@ struct Api {
     decltype(&freetypeLegacyGetBDFCharsetID_nid_no_patch) charset;
     decltype(&freetypeLegacyGetSfntLangTag_nid_no_patch) tag;
     decltype(&freetypeLegacyGetWinFNTHeader_nid_no_patch) header;
+    decltype(&FT_Error_String_nid_postfix) errorString;
 };
 
 static void CheckText(const char* actual, const char* expected) {
@@ -343,6 +344,13 @@ int main(int argc, char** argv) {
     api.charset = Import<decltype(api.charset)>(module, patched ? "KVRW5HPnbgU" : "KVRW5HPnbgU_nid_no_patch_cut");
     api.tag = Import<decltype(api.tag)>(module, patched ? "MDsMjUGulyY" : "MDsMjUGulyY_nid_no_patch_cut");
     api.header = Import<decltype(api.header)>(module, patched ? "suWwpZzQl00" : "suWwpZzQl00_nid_no_patch_cut");
+    api.errorString = Import<decltype(api.errorString)>(module, patched ? "boXwTAWsas0" : "FT_Error_String_nid_postfix");
+    for (int code : std::array<int, 5>{FT_Err_Ok, FT_Err_Invalid_Argument, FT_Err_Unknown_File_Format, -1, 0x7fff}) {
+        CheckText(api.errorString(code), FT_Error_String(code));
+    }
+#ifdef ANYPS5_BUNDLED_FREETYPE
+    Require(api.errorString(FT_Err_Invalid_Argument) != nullptr);
+#endif
     CheckProperty(api, nullptr, nullptr, "FONT_ASCENT");
     CheckCharset(api, nullptr, nullptr);
     CheckTag(api, nullptr, nullptr, 0x8001);

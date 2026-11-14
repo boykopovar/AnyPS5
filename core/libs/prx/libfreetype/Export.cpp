@@ -2,6 +2,9 @@
 #include "prx/libfreetype/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_ERRORS_H
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include FT_MODULE_H
 #ifdef ANYPS5_BUNDLED_FREETYPE
@@ -56,10 +59,9 @@ int APS5_VABI freetypeLegacyFtcManagerNew_nid_no_patch() {
 APS5_EXPORT("DYbLD-s1oiQ", freetypeLegacyFtcManagerNew_nid_no_patch);
 
 
-int APS5_VABI freetypeLegacyErrorString_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI FT_Error_String_nid_postfix(std::int32_t errorCode) {
+    return FT_Error_String(errorCode);
 }
-APS5_EXPORT("boXwTAWsas0", freetypeLegacyErrorString_nid_no_patch);
 
 
 int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch() {
