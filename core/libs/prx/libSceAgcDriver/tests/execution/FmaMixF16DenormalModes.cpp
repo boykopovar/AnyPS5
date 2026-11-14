@@ -26,6 +26,10 @@ alignas(256) constexpr std::array<std::uint32_t, 12> Code{
     0x34020084u, 0x34040083u, 0xe03c1000u, 0x80000401u, 0xbf8c3f70u, 0xcc20600au, 0x1c120b04u, 0xcc20600bu,
     0x0c120d04u, 0xe0741000u, 0x80010a02u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 14> MixHalfDenormCode{
+    0x34020084u, 0x34040083u, 0xe03c1000u, 0x80000401u, 0x7e140280u, 0x7e160280u, 0xbf8c3f70u, 0xcc21000au,
+    0x041a0b04u, 0xcc22000bu, 0x041a0b04u, 0xe0741000u, 0x80010a02u, 0xbf810000u,
+};
 constexpr std::uint32_t Rows[Threads][3] = {
     {0x00010000u, 0x00000000u, 0x3f800000u},
     {0x80010000u, 0x00000000u, 0x00800000u},
@@ -139,18 +143,12 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Mode& mode) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
-        Input[tid * Inputs + 3u] = 0u;
-    }
-    Output.fill(0xdeadbeefu);
+void RunProgram(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, ShaderRecompiler::ShaderFloatMode floatMode) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -160,10 +158,19 @@ void Run(AgcDriver::VulkanDevice& device, const Mode& mode) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    request.context.floatMode = mode.value;
+    request.context.floatMode = floatMode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+}
+
+void Run(AgcDriver::VulkanDevice& device, const Mode& mode) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
+        Input[tid * Inputs + 3u] = 0u;
+    }
+    Output.fill(0xdeadbeefu);
+    RunProgram(device, Code, mode.value);
 }
 
 bool Matches(std::uint32_t actual, std::uint32_t expected) {
@@ -181,6 +188,29 @@ void Check(const Mode& mode) {
             const std::uint32_t expected = Expected[f32Kept][f16InputsKept][tid][form];
             Require(Matches(actual, expected), std::string(Names[form]) + " " + mode.name + " of " + Hex(Rows[tid][0]) + ", " + Hex(Rows[tid][1]) + ", " + Hex(Rows[tid][2]) + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
+    }
+}
+
+void TestMixHalfDenormals(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Input[tid * Inputs + 0u] = 0x007fffffu;
+        Input[tid * Inputs + 1u] = 0x7e800000u;
+        Input[tid * Inputs + 2u] = 0x00000000u;
+        Input[tid * Inputs + 3u] = 0u;
+    }
+    if (device.Target().float32DenormPreserve) {
+        Output.fill(0xdeadbeefu);
+        RunProgram(device, MixHalfDenormCode, ShaderRecompiler::ShaderFloatMode{0xd0u, true, false, false});
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            Require(Output[tid * Results + 0u] == 0x00003c00u, "v_fma_mixlo_f16 mode 1 (preserve) is " + Hex(Output[tid * Results + 0u]) + ", expected 0x00003c00");
+            Require(Output[tid * Results + 1u] == 0x3c000000u, "v_fma_mixhi_f16 mode 1 (preserve) is " + Hex(Output[tid * Results + 1u]) + ", expected 0x3c000000");
+        }
+    }
+    Output.fill(0xdeadbeefu);
+    RunProgram(device, MixHalfDenormCode, ShaderRecompiler::ShaderFloatMode{0xe0u, true, false, false});
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Require(Output[tid * Results + 0u] == 0x00000000u, "v_fma_mixlo_f16 mode 2 (flush) is " + Hex(Output[tid * Results + 0u]) + ", expected 0x00000000");
+        Require(Output[tid * Results + 1u] == 0x00000000u, "v_fma_mixhi_f16 mode 2 (flush) is " + Hex(Output[tid * Results + 1u]) + ", expected 0x00000000");
     }
 }
 
@@ -212,6 +242,7 @@ int main() {
             Run(*device, mode);
             Check(mode);
         }
+        TestMixHalfDenormals(*device);
         std::puts("v_fma_mix_f32 f16 denormal mode tests passed");
         return 0;
     } catch (const std::exception& error) {
