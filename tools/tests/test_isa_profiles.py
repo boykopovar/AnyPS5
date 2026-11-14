@@ -273,5 +273,63 @@ class LoadGfx1013FormsTests(unittest.TestCase):
             isa_profiles.load_gfx1013_forms(Path(directory) / "missing.txt")
 
 
+class InventoryTextTests(unittest.TestCase):
+    def test_header_is_comment_only_and_names_the_pinned_sources(self):
+        header = isa_profiles.gfx1013_forms_header()
+        self.assertTrue(header.endswith("\n"))
+        self.assertTrue(all(line.startswith("#") for line in header.splitlines()))
+        self.assertIn(isa_profiles.ISA_RELEASE, header)
+        self.assertIn(isa_profiles.ISA_HASHES["rdna1"], header)
+        self.assertIn(isa_profiles.ISA_HASHES["rdna2"], header)
+        self.assertIn(isa_profiles.LLVM_TAG, header)
+
+    def test_header_alone_loads_as_no_forms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forms.txt"
+            path.write_text(isa_profiles.gfx1013_forms_header(), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, f"no ISA forms in {re.escape(str(path))}"):
+                isa_profiles.load_gfx1013_forms(path)
+
+    def test_committed_inventory_starts_with_the_generated_header(self):
+        committed = (TOOLS / "gfx1013_isa_forms.txt").read_text(encoding="utf-8")
+        self.assertTrue(committed.startswith(isa_profiles.gfx1013_forms_header()))
+
+    def test_text_is_the_header_followed_by_one_row_per_form(self):
+        with pinned(rdna1=RDNA1, rdna2=RDNA2):
+            text = isa_profiles.gfx1013_forms_text(RDNA1, RDNA2)
+            forms = isa_profiles.generate_gfx1013_forms(RDNA1, RDNA2)
+            header = isa_profiles.gfx1013_forms_header()
+        self.assertTrue(text.startswith(header))
+        rows = "".join(f"{name} {encoding} {form} {opcode}\n" for name, encoding, form, opcode in forms)
+        self.assertEqual(text, header + rows)
+        self.assertIn("S_MOV_B32 SOP1 base 3\n", text)
+        self.assertIn("V_ADD_F32 VOP2 vop3 259\n", text)
+
+    def test_text_loads_back_to_the_generated_forms(self):
+        with pinned(rdna1=RDNA1, rdna2=RDNA2), tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forms.txt"
+            path.write_text(isa_profiles.gfx1013_forms_text(RDNA1, RDNA2), encoding="utf-8")
+            loaded = isa_profiles.load_gfx1013_forms(path)
+            self.assertEqual(loaded, isa_profiles.generate_gfx1013_forms(RDNA1, RDNA2))
+
+    def test_write_stores_the_utf8_text_bytes(self):
+        with pinned(rdna1=RDNA1, rdna2=RDNA2), tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forms.txt"
+            isa_profiles.write_gfx1013_forms(path, RDNA1, RDNA2)
+            self.assertEqual(path.read_bytes(), isa_profiles.gfx1013_forms_text(RDNA1, RDNA2).encode("utf-8"))
+
+    def test_failed_generation_leaves_the_target_untouched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            existing = Path(directory) / "existing.txt"
+            existing.write_bytes(b"old\n")
+            absent = Path(directory) / "absent.txt"
+            with pinned(rdna1=RDNA1, rdna2=RDNA2):
+                for target in (existing, absent):
+                    with self.subTest(target=target.name), self.assertRaisesRegex(ValueError, "expected AMD RDNA 2 XML"):
+                        isa_profiles.write_gfx1013_forms(target, RDNA1, RDNA1)
+            self.assertEqual(existing.read_bytes(), b"old\n")
+            self.assertFalse(absent.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
