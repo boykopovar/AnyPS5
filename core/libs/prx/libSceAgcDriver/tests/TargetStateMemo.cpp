@@ -802,8 +802,8 @@ void cmaskClearRecorded(AgcDriver::VulkanDevice& device) {
     }
     // A CMASK the write watch does not cover (no userfaultfd write protection on this host) cannot be proved
     // unwritten, so no draw may repeat over it.
-    const bool watched = GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(color.cmaskAddress, color.cmaskBytes);
-    std::cout << "the CMASK is " << (watched ? "" : "not ") << "covered by the write watch; a draw " << (repeated ? "repeated" : "did not repeat") << "\n";
+    const bool watched = AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes);
+    std::cout << "the CMASK is " << (watched ? "" : "not ") << "write-watched; a draw " << (repeated ? "repeated" : "did not repeat") << "\n";
     Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !watched, "no draw repeated its targets over a recorded CMASK clear");
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Clear); }, "repeated draws over a recorded CMASK clear");
 }
@@ -896,7 +896,7 @@ void cmaskPaddingBesideExpandedTiles(AgcDriver::VulkanDevice& device) {
         draw(device, color);
         repeated = lookups() == before;
     }
-    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(color.cmaskAddress, color.cmaskBytes), "no draw over expanded tiles with zero padding repeated its targets");
+    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes), "no draw over expanded tiles with zero padding repeated its targets");
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Old); }, "draws over expanded tiles with zero padding");
 }
 
