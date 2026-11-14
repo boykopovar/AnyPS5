@@ -17,16 +17,19 @@
 #include <time.h>
 #endif
 
+namespace NKWebKit {
+double CurrentWallTime();
+double CurrentMonotonicTime();
+}  // namespace NKWebKit
+
 namespace WTF {
 
 static double currentWallTimeSeconds() {
-    auto now = std::chrono::system_clock::now();
-    return std::chrono::duration<double>(now.time_since_epoch()).count();
+    return NKWebKit::CurrentWallTime();
 }
 
 static double currentMonotonicTimeSeconds() {
-    auto now = std::chrono::steady_clock::now();
-    return std::chrono::duration<double>(now.time_since_epoch()).count();
+    return NKWebKit::CurrentMonotonicTime();
 }
 
 static bool isLeapYear(int year) {
