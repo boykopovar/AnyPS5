@@ -21,7 +21,7 @@ bool GetProgramAddressRegisterOffset(std::uint8_t type, std::uint32_t& loOffset)
     }
 }
 
-int PatchProgramAddressRegister(ShaderRegister* regs, std::uint32_t numRegs, std::uint8_t type, std::uint64_t base) {
+int PatchProgramAddressRegister(ShaderRegister* regs, std::uint32_t numRegs, std::uint8_t type, std::uint64_t base, std::uint64_t previousBase) {
     std::uint32_t loOffset = 0;
     if (!GetProgramAddressRegisterOffset(type, loOffset)) {
         return 0;
@@ -37,9 +37,13 @@ int PatchProgramAddressRegister(ShaderRegister* regs, std::uint32_t numRegs, std
         if (hiIndex >= numRegs || regs[hiIndex].offset != loOffset + 1u) {
             throw std::runtime_error("sceAgcCreateShader: shader program address hi register missing");
         }
-        const std::uint64_t shaderOffset =
+        const std::uint64_t patched =
             (static_cast<std::uint64_t>(regs[i].value) << 8u) |
             ((static_cast<std::uint64_t>(regs[hiIndex].value) & 0xFFu) << 40u);
+        if (patched < previousBase) {
+            throw std::runtime_error(std::string(__func__) + ": shader program address below the previous code address");
+        }
+        const std::uint64_t shaderOffset = patched - previousBase;
         if (base > 0xffffffffffffull || shaderOffset > 0xffffffffffffull - base) {
             throw std::runtime_error(std::string(__func__) + ": shader program address overflow");
         }
