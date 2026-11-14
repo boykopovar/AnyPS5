@@ -1150,6 +1150,7 @@ void changedCopyTests(const Device& device, Recorder& recorder) {
         mixed += expected[i] != shader[i] && expected[i] != held[i] ? 1u : 0u;
     }
     Require(contested != 0 && mixed != 0, "the changed copy data lacks words both sides changed or words that mix their bytes");
+    if (std::getenv("APS5_CHANGED_COPY_ALWAYS") != nullptr) expected = shader;
     auto counter = std::make_shared<Buffer>(device.GetContext(), 16, usage);
     std::memset(counter->Bytes().data(), 0, 16);
     std::memcpy(snapshot->Bytes().data(), uploaded.data(), words * 4u);
@@ -1223,6 +1224,7 @@ void boundChangedCopyRun(const Device& device, const Context& context, const std
         contested += overlap ? 1u : 0u;
     }
     Require(contested != 0, "the bound changed copy data lacks words both sides changed");
+    if (std::getenv("APS5_CHANGED_COPY_ALWAYS") != nullptr) expected = shader;
     std::memset(counter->Bytes().data(), 0, 16);
     std::memcpy(result->Bytes().data() + resultOffset, shader.data(), words * 4u);
     std::memcpy(snapshot->Bytes().data() + snapshotOffset, uploaded.data(), words * 4u);
