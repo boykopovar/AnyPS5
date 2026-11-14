@@ -1,3 +1,4 @@
+// Derived from Source/WebCore/dom/UserTypingGestureIndicator.cpp@08b3d0cd20ab0329b6354a6e625c44660b6fb6d6
 /*
  * Copyright (C) 2010 Apple Inc. All rights reserved.
  *
