@@ -164,9 +164,20 @@ def queue_body(queue, total, ready):
     return "\n".join(lines) + "\n"
 
 
+def pagination_cursor(connection, seen, label):
+    cursor = connection["pageInfo"]["endCursor"]
+    if not isinstance(cursor, str) or not cursor:
+        raise ValueError(f"{label} page has no cursor")
+    if cursor in seen:
+        raise ValueError(f"{label} pagination did not advance")
+    seen.add(cursor)
+    return cursor
+
+
 def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after = [], None
+    seen = set()
     while True:
         args = ["api", "graphql", "-f", f"query={QUERY}", "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"size={PAGE_SIZE}"]
         if after:
@@ -178,12 +189,13 @@ def fetch(repo):
         prs += [pull(node) for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
             return prs
-        after = connection["pageInfo"]["endCursor"]
+        after = pagination_cursor(connection, seen, "open pull request")
 
 
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
     closed, after = [], None
+    seen = set()
     while True:
         args = ["api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
                 "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"]
@@ -196,9 +208,7 @@ def closed_with_label(repo):
         closed += [node["number"] for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
             return closed
-        after = connection["pageInfo"]["endCursor"]
-        if not after:
-            raise ValueError("closed pull request page has no cursor")
+        after = pagination_cursor(connection, seen, "closed pull request")
 
 
 def apply(repo, prs, queue, dry_run, closed=()):
