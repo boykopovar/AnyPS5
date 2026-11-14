@@ -45,11 +45,22 @@ void TestLinearPathAndEmptyArrays() {
     Require(Search(small, 0, 1) == -1, "search: an empty array has insertion point zero");
 }
 
+void TestOutOfRangeKeysOnBothSidesOfTheThreshold() {
+    std::int32_t nine[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    Require(Search(nine, 9, 0) == -1, "search: a key below a nine-element array is inserted first");
+    Require(Search(nine, 9, 10) == -10, "search: a key above a nine-element array is inserted last");
+    Require(Search(nine, 9, 9) == 8, "search: the last of nine elements is found at index eight");
+    std::int32_t twelve[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    Require(Search(twelve, 12, 0) == -1, "search: a key below a twelve-element array is inserted first");
+    Require(Search(twelve, 12, 13) == -13, "search: a key above a twelve-element array is inserted last");
+}
+
 }
 
 int main() {
     TestFoundAndInsertionPoints();
     TestLastOccurrenceAmongDuplicates();
     TestLinearPathAndEmptyArrays();
+    TestOutOfRangeKeysOnBothSidesOfTheThreshold();
     return 0;
 }
