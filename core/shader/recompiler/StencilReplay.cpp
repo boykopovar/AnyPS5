@@ -1,6 +1,7 @@
 #include "StencilReplay.hpp"
 #include "Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <functional>
 #include <iterator>
@@ -943,7 +944,16 @@ bool LayerReplaySafe(const IrProgram& program) {
     return true;
 }
 
-bool StencilReplaySafe(const IrProgram& program) {
+bool StencilReplayLanesFixed(std::span<const std::uint32_t> capabilities) {
+    const auto has = [&](spv::Capability capability) { return std::ranges::find(capabilities, static_cast<std::uint32_t>(capability)) != capabilities.end(); };
+    return has(spv::CapabilityPhysicalStorageBufferAddresses) && has(spv::CapabilityInt64);
+}
+
+bool StencilReplayNeedsStore(const IrProgram& program, std::span<const std::uint32_t> capabilities) {
+    return StencilReplayLanesFixed(capabilities) && !StencilReplaySafe(program, false);
+}
+
+bool StencilReplaySafe(const IrProgram& program, bool lanesFixed) {
     if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
     for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
@@ -959,7 +969,8 @@ bool StencilReplaySafe(const IrProgram& program) {
             const auto opcode = instruction->Opcode();
             if (opcode == IrOpcode::Loop || opcode == IrOpcode::LoopMerge || opcode == IrOpcode::ImageBvhIntersectRay || BufferAccessOf(opcode) == BufferAccess::Atomic || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || SharedAccessOf(opcode) != SharedAccess::None || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) return false;
             if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) return false;
-            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::SwizzleU32) return false;
+            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock) return false;
+            if (!lanesFixed && (opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::SwizzleU32)) return false;
             masks = masks || opcode == IrOpcode::Ballot || opcode == IrOpcode::LaneId || opcode == IrOpcode::WqmU64;
             if (!instruction->MayHaveSideEffects()) continue;
             switch (opcode) {
@@ -998,7 +1009,7 @@ bool StencilReplaySafe(const IrProgram& program) {
             }
         }
     }
-    return !masks || MaskReplaySafety(program).Check();
+    return lanesFixed || !masks || MaskReplaySafety(program).Check();
 }
 
 }

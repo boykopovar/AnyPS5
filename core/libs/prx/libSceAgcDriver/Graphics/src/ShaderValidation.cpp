@@ -246,10 +246,12 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilitySignedZeroInfNanPreserve;
 
                 const bool isBdaCapability =
-                    shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version &&
-                    (capability == spv::CapabilityInt64 ||
-                     capability == spv::CapabilityPhysicalStorageBufferAddresses ||
-                     capability == spv::CapabilityStorageBuffer8BitAccess);
+                    (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version &&
+                     (capability == spv::CapabilityInt64 ||
+                      capability == spv::CapabilityPhysicalStorageBufferAddresses ||
+                      capability == spv::CapabilityStorageBuffer8BitAccess)) ||
+                    (fragment && !shader.stencilReferences.empty() &&
+                     (capability == spv::CapabilityInt64 || capability == spv::CapabilityPhysicalStorageBufferAddresses));
 
                 const bool isTessellationCapability =
                     (control || evaluation) &&
@@ -362,7 +364,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     terminateExtension = true;
                     break;
                 }
-                Require(extension == "SPV_KHR_float_controls" || (fmaFloat16 && extension == "SPV_KHR_fma") || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (viewportIndexLayer && extension == "SPV_EXT_shader_viewport_index_layer") || (fragment && demoteToHelperInvocation && extension == "SPV_EXT_demote_to_helper_invocation") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (fragment && !primitiveLocations.empty() && extension == "SPV_EXT_mesh_shader") || (geometry && state.tessellationCapture && extension == "SPV_KHR_physical_storage_buffer") || ((descriptorIndexing || runtimeDescriptorArray) && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
+                Require(extension == "SPV_KHR_float_controls" || (fmaFloat16 && extension == "SPV_KHR_fma") || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (viewportIndexLayer && extension == "SPV_EXT_shader_viewport_index_layer") || (fragment && demoteToHelperInvocation && extension == "SPV_EXT_demote_to_helper_invocation") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (fragment && !primitiveLocations.empty() && extension == "SPV_EXT_mesh_shader") || (fragment && !shader.stencilReferences.empty() && extension == "SPV_KHR_physical_storage_buffer") || (geometry && state.tessellationCapture && extension == "SPV_KHR_physical_storage_buffer") || ((descriptorIndexing || runtimeDescriptorArray) && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
                 break;
             }
             case spv::OpTerminateInvocation:
