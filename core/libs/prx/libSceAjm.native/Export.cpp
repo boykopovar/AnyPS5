@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 // Entry points this library does not implement: reported before the unimplemented-call exception so an
 // APS5_TRACE_AJM run shows which one a title reached.
@@ -33,6 +34,7 @@ constexpr std::size_t VORBIS_COMMENT_SIZE = 16;
 constexpr std::size_t WVORBIS_SETUP_MIN_SIZE = 9;
 constexpr std::size_t WVORBIS_SETUP_PART1_LENGTH_OFFSET = 7;
 constexpr std::size_t WVORBIS_LENGTH_FIELD_MAX = 0xFFFF;
+constexpr std::size_t WVORBIS_SETUP_MAX_SIZE = 2 * WVORBIS_LENGTH_FIELD_MAX;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MIN = 64;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MAX = 8192;
 constexpr std::uint8_t VORBIS_MAGIC[] {'v', 'o', 'r', 'b', 'i', 's'};
@@ -103,35 +105,40 @@ const char* APS5_VABI sceAjmStrError(int error) {
 
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* param) {
     if (param == nullptr) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
-    if (param->size != sizeof(WVorbisHeaderPacketParameter)) return AJM_WVORBIS_ERROR_INVALID_SIZE;
-    if (param->bytesPerSecond < 0) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
-    if (WVorbisBlockSize(param->shortBlockExponent) < VORBIS_BLOCK_SIZE_MIN) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
-    if (param->longBlockExponent < param->shortBlockExponent || WVorbisBlockSize(param->longBlockExponent) > VORBIS_BLOCK_SIZE_MAX)
+    WVorbisHeaderPacketParameter p{};
+    if (!GuestCopyIn_nid_no_patch(&p, param, sizeof(p))) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    if (p.size != sizeof(WVorbisHeaderPacketParameter)) return AJM_WVORBIS_ERROR_INVALID_SIZE;
+    if (p.bytesPerSecond < 0) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    if (WVorbisBlockSize(p.shortBlockExponent) < VORBIS_BLOCK_SIZE_MIN) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    if (p.longBlockExponent < p.shortBlockExponent || WVorbisBlockSize(p.longBlockExponent) > VORBIS_BLOCK_SIZE_MAX)
         return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
-    if (param->setupPacket == nullptr) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
-    if (param->setupPacketSize < WVORBIS_SETUP_MIN_SIZE) return AJM_WVORBIS_ERROR_INVALID_SETUP;
-    if (param->output == nullptr) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    if (p.setupPacket == nullptr) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    if (p.setupPacketSize < WVORBIS_SETUP_MIN_SIZE || p.setupPacketSize > WVORBIS_SETUP_MAX_SIZE) return AJM_WVORBIS_ERROR_INVALID_SETUP;
+    if (p.output == nullptr) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
     constexpr std::size_t headers = WVORBIS_LENGTH_TABLE_SIZE + VORBIS_IDENTIFICATION_SIZE + VORBIS_COMMENT_SIZE;
-    if (param->outputCapacity < headers || param->setupPacketSize > param->outputCapacity - headers) return AJM_WVORBIS_ERROR_OUTPUT_TOO_SMALL;
+    if (p.outputCapacity < headers || p.setupPacketSize > p.outputCapacity - headers) return AJM_WVORBIS_ERROR_OUTPUT_TOO_SMALL;
 
-    const auto* setup = static_cast<const std::uint8_t*>(param->setupPacket);
+    std::vector<std::uint8_t> setup(p.setupPacketSize);
+    if (!GuestCopyIn_nid_no_patch(setup.data(), p.setupPacket, setup.size())) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
     const auto part1 = static_cast<std::uint16_t>(setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET] | setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET + 1] << 8);
-    if (part1 > param->setupPacketSize || param->setupPacketSize - part1 > WVORBIS_LENGTH_FIELD_MAX) return AJM_WVORBIS_ERROR_INVALID_SETUP;
-    auto* out = static_cast<std::uint8_t*>(param->output);
+    if (part1 > p.setupPacketSize || p.setupPacketSize - part1 > WVORBIS_LENGTH_FIELD_MAX) return AJM_WVORBIS_ERROR_INVALID_SETUP;
+
+    std::vector<std::uint8_t> packet(headers + p.setupPacketSize);
+    auto* out = packet.data();
     out = PutLittle(out, 0, 2);
     out = PutLittle(out, VORBIS_IDENTIFICATION_SIZE, 2);
     out = PutLittle(out, VORBIS_COMMENT_SIZE, 2);
     out = PutLittle(out, part1, 2);
-    out = PutLittle(out, static_cast<std::uint32_t>(param->setupPacketSize - part1), 2);
+    out = PutLittle(out, static_cast<std::uint32_t>(p.setupPacketSize - part1), 2);
 
     out = PutVorbisHeaderStart(out, 1);
     out = PutLittle(out, 0, 4);
-    out = PutLittle(out, static_cast<std::uint32_t>(param->channels), 1);
-    out = PutLittle(out, param->sampleRate, 4);
+    out = PutLittle(out, static_cast<std::uint32_t>(p.channels), 1);
+    out = PutLittle(out, p.sampleRate, 4);
     out = PutLittle(out, 0, 4);
-    out = PutLittle(out, static_cast<std::uint32_t>(param->bytesPerSecond) * 8u, 4);
+    out = PutLittle(out, static_cast<std::uint32_t>(p.bytesPerSecond) * 8u, 4);
     out = PutLittle(out, 0, 4);
-    *out++ = static_cast<std::uint8_t>((param->shortBlockExponent & 0xF) | (param->longBlockExponent & 0xF) << 4);
+    *out++ = static_cast<std::uint8_t>((p.shortBlockExponent & 0xF) | (p.longBlockExponent & 0xF) << 4);
     *out++ = 1;
 
     out = PutVorbisHeaderStart(out, 3);
@@ -139,8 +146,19 @@ int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* p
     out = PutLittle(out, 0, 4);
     *out++ = 1;
 
-    std::memcpy(out, setup, param->setupPacketSize);
-    param->outputSize = headers + param->setupPacketSize;
+    std::memcpy(out, setup.data(), p.setupPacketSize);
+    const std::size_t finalOutputSize = headers + p.setupPacketSize;
+    std::size_t previousOutputSize = 0;
+    if (!GuestCopyIn_nid_no_patch(&previousOutputSize, &param->outputSize, sizeof(previousOutputSize))) {
+        return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    }
+    if (!GuestCopyOut_nid_no_patch(&param->outputSize, &finalOutputSize, sizeof(finalOutputSize))) {
+        return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    }
+    if (!GuestCopyOut_nid_no_patch(p.output, packet.data(), finalOutputSize)) {
+        GuestCopyOut_nid_no_patch(&param->outputSize, &previousOutputSize, sizeof(previousOutputSize));
+        return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
