@@ -5964,6 +5964,10 @@ void ShaderResources::PrecollectSurfaces() const {
     for (const auto& range : describedRanges) GuestMemory::CollectWrites(range.address, static_cast<std::size_t>(range.bytes));
 }
 
+void ShaderResources::AppendSurfaceRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const {
+    for (const auto& range : describedRanges) ranges.emplace_back(range.address, range.bytes);
+}
+
 void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags) {
     Require(binding.count != 0, "empty descriptor binding");
     const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding.binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));

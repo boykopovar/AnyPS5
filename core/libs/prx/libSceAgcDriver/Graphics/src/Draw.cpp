@@ -4043,6 +4043,14 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             recipe->fragmentOutputs = inputs.fragmentOutputs;
             recipe->shaderStages = inputs.shaderStages;
             recipe->hasDepth = state.depth.has_value();
+            resources->AppendSurfaceRanges(recipe->surfaces);
+            for (std::size_t index = 0; index < owners.size() && index < state.colors.size(); ++index) {
+                if (owners[index] == nullptr || state.colors[index].arrayLastSlice != 0) continue;
+                const auto& surface = owners[index]->Descriptor();
+                const auto bytes = owners[index]->GuestBytes();
+                recipe->surfaces.emplace_back(surface.baseAddress, bytes);
+                if (surface.dccAddress != 0 && bytes / 256 != 0) recipe->surfaces.emplace_back(surface.dccAddress, bytes / 256);
+            }
             *recipeOut = std::move(recipe);
         }
         timing.Mark("draw_and_resource_release");
