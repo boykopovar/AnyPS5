@@ -93,6 +93,14 @@ class PercentageTests(unittest.TestCase):
         self.assertEqual(section["baseline_percent"], 12.345)
         self.assertEqual(section["candidate_percent"], 12.349)
 
+    def test_each_section_has_its_own_percentages(self):
+        base = snapshot(library_percent=10.0, shader_percent=50)
+        head = snapshot(library_percent=10.126, shader_percent=49.5)
+        result = progress_diff.compare(base, head)
+        self.assertEqual(result["libraries"]["change_percentage_points"], 0.13)
+        self.assertEqual(result["shaders"]["change_percentage_points"], -0.5)
+        self.assertEqual(result["shaders"]["baseline_percent"], 50)
+
 
 if __name__ == "__main__":
     unittest.main()
