@@ -266,13 +266,11 @@ private:
             directive.suppress = true;
             ++format;
         }
-        const char16_t* digits = format;
         for (; *format >= u'0' && *format <= u'9'; ++format) {
             const std::size_t digit = static_cast<std::size_t>(*format - u'0');
             const std::size_t limit = (std::numeric_limits<std::size_t>::max() - digit) / 10;
             directive.width = directive.width > limit ? std::numeric_limits<std::size_t>::max() : directive.width * 10 + digit;
         }
-        if (format != digits && directive.width == 0) Fail("zero field width");
         if (*format == u'h' || *format == u'l') {
             directive.length += static_cast<char>(*format++);
             if (*format == directive.length[0]) directive.length += static_cast<char>(*format++);
@@ -479,7 +477,8 @@ private:
     }
 
     Outcome Count(const Directive& directive) {
-        if (directive.suppress || directive.width != 0) Fail("%n with suppression or width");
+        converted = true;
+        if (directive.suppress) return Outcome::Done;
         const std::size_t size = IntegerSize(directive.length);
         void* target = args.Next<void*>();
         if (target == nullptr) return Outcome::Violation;

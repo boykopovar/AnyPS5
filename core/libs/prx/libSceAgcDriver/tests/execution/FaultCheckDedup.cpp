@@ -45,10 +45,13 @@ constexpr std::uint32_t OutputStride = 16;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t Initial = 0x5a5a5a5au;
 constexpr std::uint32_t Format = 0x00016facu;
+constexpr std::uint32_t BadSelectorFormat = (Format & ~0x7u) | 2u;
 constexpr std::uint32_t Raw = 3u << 28u;
 constexpr std::uint32_t ReservedBit = 1u << 30u;
 constexpr std::uint32_t FirstResult = 24u;
 constexpr std::uint32_t SaveSgpr = 24u;
+constexpr std::uint32_t LoopSgpr = 20u;
+constexpr std::uint32_t LoopPasses = 3u;
 constexpr std::uint32_t DescriptorA = 8u;
 constexpr std::uint32_t DescriptorB = 16u;
 constexpr std::uint32_t Slots = 4u;
@@ -56,9 +59,12 @@ constexpr std::uint32_t HalfLanes = 16u;
 
 enum class Slot { Initial, A, B, AInHalf };
 
+enum class FirstState { Valid, Reserved, BadSelector };
+
 struct Site {
     bool secondDescriptor;
     std::uint32_t op;
+    bool formatted = false;
 };
 
 struct Expectation {
@@ -73,6 +79,7 @@ using Body = std::function<void(Program&)>;
 struct Program {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> loadPcs;
+    bool formatted = false;
 
     void Mubuf(std::uint32_t op, bool offen, std::uint32_t immediate, std::uint32_t vaddr, std::uint32_t vdata, std::uint32_t resource) {
         code.push_back(0xe0000000u | (op << 18u) | (offen ? 0x1000u : 0u) | immediate);
@@ -94,6 +101,23 @@ struct Program {
         loadPcs.push_back(static_cast<std::uint32_t>(code.size() * 4u));
         Mubuf(12u, false, 0u, 0u, FirstResult + slot, descriptor);
         code.push_back(0xbf8c3f70u);
+    }
+
+    void FormatLoad(std::uint32_t descriptor, std::uint32_t slot) {
+        formatted = true;
+        loadPcs.push_back(static_cast<std::uint32_t>(code.size() * 4u));
+        Mubuf(0u, false, 0u, 0u, FirstResult + slot, descriptor);
+        code.push_back(0xbf8c3f70u);
+    }
+
+    void Loop(const Body& body) {
+        code.push_back(0xbe800380u | (LoopSgpr << 16u));
+        const auto start = code.size();
+        body(*this);
+        code.push_back(0x80008100u | (LoopSgpr << 16u) | LoopSgpr);
+        code.push_back(0xbf0a0000u | ((0x80u + LoopPasses) << 8u) | LoopSgpr);
+        const auto back = static_cast<std::int32_t>(start) - static_cast<std::int32_t>(code.size() + 1u);
+        code.push_back(0xbf850000u | (static_cast<std::uint32_t>(back) & 0xffffu));
     }
 
     void DivergentIf(std::uint32_t lanes, bool branch, const Body& body) {
@@ -191,10 +215,26 @@ std::vector<Case> Cases() {
             {0, {{false, 0}, {true, 1}}, {Slot::A, Slot::B, Slot::Initial, Slot::Initial}}},
         {"different descriptors, second repeated", [](Program& p) { p.VectorLoad(DescriptorB, 0); p.VectorLoad(DescriptorA, 1); p.VectorLoad(DescriptorB, 2); },
             {1, {{true, 0}, {false, 1}, {true, 2}}, {Slot::B, Slot::A, Slot::B, Slot::Initial}}},
+        {"formatted load, same descriptor twice", [](Program& p) { p.FormatLoad(DescriptorA, 0); p.FormatLoad(DescriptorA, 1); },
+            {2, {{false, 0, true}, {false, 1, true}}, {Slot::A, Slot::A, Slot::Initial, Slot::Initial}}},
+        {"formatted load, then a raw load of the same descriptor", [](Program& p) { p.FormatLoad(DescriptorA, 0); p.VectorLoad(DescriptorA, 1); },
+            {1, {{false, 0, true}, {false, 1}}, {Slot::A, Slot::A, Slot::Initial, Slot::Initial}}},
+        {"raw load does not cover the selector check of a formatted load", [](Program& p) { p.VectorLoad(DescriptorA, 0); p.FormatLoad(DescriptorA, 1); },
+            {1, {{false, 0}, {false, 1, true}}, {Slot::A, Slot::A, Slot::Initial, Slot::Initial}}},
+        {"formatted load before a loop covers the formatted load in its body", [](Program& p) { p.FormatLoad(DescriptorA, 0); p.Loop([](Program& q) { q.FormatLoad(DescriptorA, 1); }); },
+            {2, {{false, 0, true}, {false, 1, true}}, {Slot::A, Slot::A, Slot::Initial, Slot::Initial}}},
+        {"raw load before a loop covers the raw load in its body", [](Program& p) { p.VectorLoad(DescriptorA, 0); p.Loop([](Program& q) { q.VectorLoad(DescriptorA, 1); }); },
+            {1, {{false, 0}, {false, 1}}, {Slot::A, Slot::A, Slot::Initial, Slot::Initial}}},
+        {"check in a loop body covers the loop exit", [](Program& p) { p.Loop([](Program& q) { q.VectorLoad(DescriptorA, 0); }); p.VectorLoad(DescriptorA, 1); },
+            {1, {{false, 0}, {false, 1}}, {Slot::A, Slot::A, Slot::Initial, Slot::Initial}}},
+        {"check in a skipped loop does not cover the join", [](Program& p) { p.UniformIf([](Program& q) { q.Loop([](Program& r) { r.VectorLoad(DescriptorA, 0); }); }); p.VectorLoad(DescriptorA, 1); },
+            {0, {{false, 1}}, {Slot::Initial, Slot::A, Slot::Initial, Slot::Initial}}},
+        {"different descriptor in a loop", [](Program& p) { p.Loop([](Program& q) { q.VectorLoad(DescriptorB, 0); }); p.VectorLoad(DescriptorA, 1); p.VectorLoad(DescriptorB, 2); },
+            {1, {{true, 0}, {false, 1}, {true, 2}}, {Slot::B, Slot::A, Slot::B, Slot::Initial}}},
     };
 }
 
-alignas(256) std::array<std::array<std::uint32_t, 128>, 16> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 128>, 32> Programs{};
 std::uint32_t ProgramCount = 0;
 std::uint32_t Runs = 0;
 
@@ -246,13 +286,14 @@ std::uint32_t DataWord(std::uint32_t byte) {
     return value;
 }
 
-void Prepare(GuestBlock& guest, std::uint32_t shift, bool invalidA, bool invalidB) {
+void Prepare(GuestBlock& guest, std::uint32_t shift, FirstState first, bool invalidB) {
     auto* bytes = guest.Data();
     std::memset(bytes, 0, BlockBytes);
     const auto data = guest.Address() + DataBase + shift;
     const auto second = data + SecondDescriptorOffset;
+    const auto firstWord3 = (first == FirstState::BadSelector ? BadSelectorFormat : Format) | Raw | (first == FirstState::Reserved ? ReservedBit : 0u);
     const std::array<std::uint32_t, 9> table{
-        static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), 4096u, Format | Raw | (invalidA ? ReservedBit : 0u), 0u,
+        static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), 4096u, firstWord3, 0u,
         static_cast<std::uint32_t>(second), static_cast<std::uint32_t>((second >> 32u) & 0xffffu), 4096u, Format | Raw | (invalidB ? ReservedBit : 0u),
     };
     std::memcpy(bytes + TableBase, table.data(), sizeof(table));
@@ -313,13 +354,13 @@ struct Outcome {
     std::uint32_t calls = 0;
 };
 
-Outcome Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code, std::uint32_t shift, bool dedup, bool invalidA, bool invalidB) {
+Outcome Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code, std::uint32_t shift, bool dedup, FirstState first, bool invalidB) {
     SetDedup(dedup);
     const auto shader = Recompile(code, guest, shift, device.Target());
     SetDedup(true);
     Outcome outcome;
     outcome.calls = CountFaultCalls(shader.spirv.Words());
-    Prepare(guest, shift, invalidA, invalidB);
+    Prepare(guest, shift, first, invalidB);
     StderrCapture log;
     try {
         device.Dispatch(shader, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -361,19 +402,22 @@ void RunCase(AgcDriver::VulkanDevice& device, GuestBlock& guest, const Case& tes
     program.End();
     const auto code = Store(program);
     const std::string name = std::string("fault check dedup, ") + test.name;
-    for (const bool invalidA : {false, true}) {
+    std::vector<FirstState> states{FirstState::Valid, FirstState::Reserved};
+    if (program.formatted) states.push_back(FirstState::BadSelector);
+    for (const auto first : states) {
         for (const bool invalidB : {false, true}) {
-            const std::string label = name + (invalidA ? ", A invalid" : ", A valid") + (invalidB ? ", B invalid" : ", B valid");
+            const std::string label = name + (first == FirstState::Valid ? ", A valid" : first == FirstState::Reserved ? ", A invalid" : ", A with a reserved selector") + (invalidB ? ", B invalid" : ", B valid");
             const auto shift = 4u * Runs++;
-            const auto off = Run(device, guest, code, shift, false, invalidA, invalidB);
-            const auto on = Run(device, guest, code, shift, true, invalidA, invalidB);
+            const auto off = Run(device, guest, code, shift, false, first, invalidB);
+            const auto on = Run(device, guest, code, shift, true, first, invalidB);
             Require(off.calls >= on.calls && off.calls - on.calls == test.expect.removed, label + ": the default removed " + std::to_string(off.calls - on.calls) + " record_bda_fault calls (" + std::to_string(off.calls) + " opt-out, " + std::to_string(on.calls) + " default), expected " + std::to_string(test.expect.removed));
             Require(off.fault == on.fault, label + ": the fault differs, opt-out '" + off.fault + "', default '" + on.fault + "'");
             Require(off.output == on.output, label + ": the output differs between the default and APS5_NO_FAULT_CHECK_DEDUP");
             std::string expectedFault;
             bool faults = false;
             for (const auto& site : test.expect.executed) {
-                if (site.secondDescriptor ? !invalidB : !invalidA) continue;
+                const bool firstFaults = first == FirstState::Reserved || (first == FirstState::BadSelector && site.formatted);
+                if (site.secondDescriptor ? !invalidB : !firstFaults) continue;
                 faults = true;
                 expectedFault = FaultText(guest.Address() + DataBase + shift + (site.secondDescriptor ? SecondDescriptorOffset : 0u), program.loadPcs.at(site.op));
                 break;

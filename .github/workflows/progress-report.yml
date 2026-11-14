@@ -7,6 +7,11 @@ on:
       - 'core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp'
       - 'tools/nid_names.py'
       - 'tools/progress.py'
+      - 'tools/shader_scan.py'
+      - 'tools/isa_profiles.py'
+      - 'tools/rdna2_isa_forms.txt'
+      - 'tools/gfx1013_isa_forms.txt'
+      - 'core/shader/recompiler/**'
       - 'tools/rdna_isa.txt'
       - '.github/workflows/progress-report.yml'
 

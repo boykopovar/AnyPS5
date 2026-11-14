@@ -518,13 +518,15 @@ int APS5_VABI sceImeKeyboardGetInfo(uint32_t resource_id, KeyboardInfo* info) {
 }
 
 int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids) {
+    {
+        std::lock_guard lock(g_keyboardMutex);
+        if (!g_openKeyboards.contains(user_id)) return ErrorNotOpened;
+    }
     if (!resource_ids) return ErrorInvalidAddress;
-    if (user_id == UserIdInvalid) return ErrorInvalidUserId;
     KeyboardResourceIdArray localIds{};
     localIds.user_id = user_id;
     if (!GuestCopyOut_nid_no_patch(resource_ids, &localIds, sizeof(localIds))) return ErrorInvalidAddress;
-    std::lock_guard lock(g_keyboardMutex);
-    return g_openKeyboards.contains(user_id) ? ErrorConnectionFailed : ErrorNotOpened;
+    return ErrorConnectionFailed;
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
@@ -565,6 +567,7 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
     if (!caret) return ErrorInvalidAddress;
     if (caret->index > g_session->text.size()) return ErrorInvalidParam;
     g_session->caret = caret->index;
+    NormalizeCaret(*g_session);
     ++g_session->revision;
     return 0;
 }
@@ -583,7 +586,7 @@ int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
     if (!ValidText(text, count, (session.param.option & OptionMultiline) != 0)) return ErrorInvalidText;
     session.text.assign(text, count);
     ++session.revision;
-    if (session.caret > session.text.size()) session.caret = static_cast<uint32_t>(session.text.size());
+    NormalizeCaret(session);
     SyncBuffers(session);
     return 0;
 }

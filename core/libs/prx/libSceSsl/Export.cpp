@@ -3,8 +3,8 @@
 #include <winsock2.h>
 #else
 #include <sys/socket.h>
-#include <cerrno>
 #endif
+#include <cerrno>
 
 #include "SslTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -1248,7 +1248,12 @@ int APS5_VABI sceSslGetNotBefore(int sslCtxId, void* sslCert, SceSsl::RtcTick* b
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     if (!sslCert || !begin) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    begin->tick = TimeToTick(crt->valid_from);
+    SceSsl::RtcTick localTick{};
+    localTick.tick = TimeToTick(crt->valid_from);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(begin, &localTick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
     return 0;
 }
 
@@ -1257,7 +1262,12 @@ int APS5_VABI sceSslGetNotAfter(int sslCtxId, void* sslCert, SceSsl::RtcTick* li
     if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     if (!sslCert || !limit) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    limit->tick = TimeToTick(crt->valid_to);
+    SceSsl::RtcTick localTick{};
+    localTick.tick = TimeToTick(crt->valid_to);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(limit, &localTick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidValue;
     return 0;
 }
 

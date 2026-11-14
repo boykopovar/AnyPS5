@@ -1,6 +1,7 @@
 #include "prx/libSceNpAuth/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -19,6 +20,9 @@ int main() {
     bool authorizationRequired = true;
     NpAuthAuthorizedAppCodeParameter parameter{40, 1, reinterpret_cast<const NpAuthClientId*>(client.data()), "", 0};
     Require(sceNpAuthGetAuthorizedAppCode(0, nullptr, code.data(), nullptr, &authorizationRequired) == invalidArgument);
+    errno = 71;
+    Require(sceNpAuthGetAuthorizedAppCode(0, reinterpret_cast<const NpAuthAuthorizedAppCodeParameter*>(0x10), code.data(), nullptr, &authorizationRequired) == invalidArgument);
+    Require(errno == 71);
     parameter.size = 39;
     Require(sceNpAuthGetAuthorizedAppCode(0, &parameter, code.data(), nullptr, &authorizationRequired) == invalidSize);
     parameter.size = 40;

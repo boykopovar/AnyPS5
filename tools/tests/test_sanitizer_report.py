@@ -249,6 +249,26 @@ class SanitizerReportTests(unittest.TestCase):
                          "/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2")
         self.assertEqual(sanitizer_report.first_report("FAIL: plain assertion\n"), "")
 
+    def test_first_report_keeps_source_paths_with_spaces(self):
+        locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
+                     "/build \u03a9 folder/src/value.cpp:12:3")
+        for location in locations:
+            report = location + ": runtime error: signed integer overflow"
+            with self.subTest(location=location):
+                self.assertEqual(sanitizer_report.first_report("startup log\n" + report + "\nstack frame\n"), report)
+
+    def test_cli_keeps_source_paths_in_json_and_markdown(self):
+        report = r"D:\build folder\src\value.cpp:12:3: runtime error: shift exponent 64"
+        junit = self.write(suite(case("overflow", "fail", '<failure/><system-err>' + html.escape(report) + '</system-err>')))
+        original = junit.read_bytes()
+        summary = self.write("existing summary\n", "summary.md")
+        code, stdout, stderr = self.run_main(junit, "--json", "--summary", summary)
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout)["tests"][0]["report"], report)
+        self.assertIn("| `overflow` | " + report + " |", summary.read_text(encoding="utf-8"))
+        self.assertEqual(junit.read_bytes(), original)
+
     def test_first_report_is_shortened(self):
         report = sanitizer_report.first_report("SUMMARY: AddressSanitizer: " + "x" * 400)
         self.assertEqual(len(report), sanitizer_report.REPORT_LENGTH)
