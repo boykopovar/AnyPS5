@@ -10,6 +10,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <string_view>
+#include <stdexcept>
 
 namespace {
 
@@ -106,8 +107,20 @@ int main() {
     std::array<char, 16> output{};
     output.fill('Q');
     std::int32_t status = 0;
-    assert(uloc_getLanguage(nullptr, output.data(), 16, &status) == 0);
-    assert(status == 1 && output[0] == 'Q');
+    for (const LocaleFunction function : std::array<LocaleFunction, 5>{
+             uloc_getLanguage, uloc_getCountry, uloc_getScript, uloc_getBaseName, uloc_canonicalize}) {
+        status = 0;
+        bool thrown = false;
+        try {
+            function(nullptr, output.data(), 16, &status);
+        } catch (const std::runtime_error&) {
+            thrown = true;
+        }
+        assert(thrown && status == 0 && output[0] == 'Q');
+        status = 15;
+        assert(function(nullptr, output.data(), 16, &status) == 0);
+        assert(status == 15 && output[0] == 'Q');
+    }
     status = 0;
     assert(uloc_getScript("sr_Latn", nullptr, 8, &status) == 0);
     assert(status == 1);
