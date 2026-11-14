@@ -308,6 +308,7 @@ struct OperandStub {
     std::size_t End;
     std::vector<std::uint8_t> Body;
     std::size_t Operands = 0;
+    std::vector<StubRelocation> Relocations = {};
 };
 
 struct ExitSite {
@@ -510,39 +511,64 @@ void frameSegment(
         for (const auto k : stubbed) {
             if (reason != nullptr) break;
             if (!stubs.empty() && k < stubs.back().Last) continue;
-            OperandStub stub{k, k, body[k].Offset, body[k].Offset, {}};
-            while (stub.Last < body.size() && stub.End - stub.Begin < kJumpBytes) {
-                const auto& covered = body[stub.Last];
-                if (covered.Offset != stub.End || covered.Info.FlowKind != ControlFlowKind::Sequential || covered.Info.HasRipRelativeDisp || frees.contains(stub.Last)) break;
-                const auto use = memoryUse(at(stub.Last), covered);
-                const auto bytes = use.RspBased ? withDisplacement(at(stub.Last), covered, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(stub.Last), at(stub.Last) + covered.Length);
-                if (!bytes) break;
-                stub.Body.insert(stub.Body.end(), bytes->begin(), bytes->end());
-                if (use.RspBased) ++stub.Operands;
-                stub.End += covered.Length;
-                ++stub.Last;
+            const auto grow = [&](const bool ripRelative) {
+                OperandStub stub{k, k, body[k].Offset, body[k].Offset, {}};
+                while (stub.Last < body.size() && stub.End - stub.Begin < kJumpBytes) {
+                    const auto& covered = body[stub.Last];
+                    if (covered.Offset != stub.End || covered.Info.FlowKind != ControlFlowKind::Sequential || (covered.Info.HasRipRelativeDisp && !ripRelative) || frees.contains(stub.Last)) break;
+                    const auto use = memoryUse(at(stub.Last), covered);
+                    const auto bytes = use.RspBased ? withDisplacement(at(stub.Last), covered, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(stub.Last), at(stub.Last) + covered.Length);
+                    if (!bytes) break;
+                    stub.Body.insert(stub.Body.end(), bytes->begin(), bytes->end());
+                    if (use.RspBased) ++stub.Operands;
+                    stub.End += covered.Length;
+                    ++stub.Last;
+                }
+                while (stub.End - stub.Begin < kJumpBytes && stub.First > p) {
+                    const auto j = stub.First - 1;
+                    const auto& prior = body[j];
+                    if (prior.Offset + prior.Length != stub.Begin || prior.Info.FlowKind != ControlFlowKind::Sequential || (prior.Info.HasRipRelativeDisp && !ripRelative) || frees.contains(j)) break;
+                    const auto use = memoryUse(at(j), prior);
+                    const auto bytes = use.RspBased ? withDisplacement(at(j), prior, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(j), at(j) + prior.Length);
+                    if (!bytes) break;
+                    stub.Body.insert(stub.Body.begin(), bytes->begin(), bytes->end());
+                    if (use.RspBased) ++stub.Operands;
+                    stub.Begin = prior.Offset;
+                    stub.First = j;
+                }
+                return stub;
+            };
+            const auto fits = [&](const OperandStub& stub) {
+                return stub.End - stub.Begin >= kJumpBytes && !targetInside(stub.Begin, stub.End) && !overlapsSite(stub.Begin, stub.End) && !overlapsExisting(stub.Begin, stub.End);
+            };
+            auto stub = grow(false);
+            if (!fits(stub)) stub = grow(true);
+            if (!fits(stub)) {
+                reason = "rsp operand that cannot move and has no room for a stub";
+                continue;
             }
-            while (stub.End - stub.Begin < kJumpBytes && stub.First > p) {
-                const auto j = stub.First - 1;
-                const auto& prior = body[j];
-                if (prior.Offset + prior.Length != stub.Begin || prior.Info.FlowKind != ControlFlowKind::Sequential || prior.Info.HasRipRelativeDisp || frees.contains(j)) break;
-                const auto use = memoryUse(at(j), prior);
-                const auto bytes = use.RspBased ? withDisplacement(at(j), prior, use, use.RspDisp + shift) : std::vector<std::uint8_t>(at(j), at(j) + prior.Length);
-                if (!bytes) break;
-                stub.Body.insert(stub.Body.begin(), bytes->begin(), bytes->end());
-                if (use.RspBased) ++stub.Operands;
-                stub.Begin = prior.Offset;
-                stub.First = j;
+            std::size_t position = 0;
+            for (auto j = stub.First; j < stub.Last; ++j) {
+                const auto& part = body[j];
+                const auto use = memoryUse(at(j), part);
+                const auto length = use.RspBased ? withDisplacement(at(j), part, use, use.RspDisp + shift)->size() : part.Length;
+                if (part.Info.HasRipRelativeDisp) {
+                    std::int32_t displacement = 0;
+                    std::memcpy(&displacement, at(j) + part.Info.RipRelativeDispOffset, sizeof(displacement));
+                    const auto target = static_cast<std::int64_t>(part.Offset + part.Length) + displacement;
+                    stub.Relocations.push_back({position + part.Info.RipRelativeDispOffset, position + length, target - static_cast<std::int64_t>(stub.Begin), part.Info.AddressSize32});
+                }
+                position += length;
             }
-            if (stub.End - stub.Begin < kJumpBytes || targetInside(stub.Begin, stub.End) || overlapsSite(stub.Begin, stub.End) || overlapsExisting(stub.Begin, stub.End)) reason = "rsp operand that cannot move and has no room for a stub";
-            else stubs.push_back(std::move(stub));
+            stubs.push_back(std::move(stub));
         }
         if (reason != nullptr) { skip(reason); continue; }
         for (const auto& stub : stubs)
             for (auto k = stub.First; k < stub.Last; ++k) moves.erase(k);
 
-        const auto addSite = [&](const std::size_t begin, const std::size_t end, std::vector<std::uint8_t> code) {
+        const auto addSite = [&](const std::size_t begin, const std::size_t end, std::vector<std::uint8_t> code, std::vector<StubRelocation> relocations = {}) {
             TrampolineSite site;
+            site.Relocations = std::move(relocations);
             site.Offset = ph.Offset + begin;
             site.Address = ph.MappedAddress + begin;
             site.Length = end - begin;
@@ -567,7 +593,7 @@ void frameSegment(
             code.insert(code.end(), tail.begin(), tail.end());
             addSite(exit.Begin, exit.End, std::move(code));
         }
-        for (auto& stub : stubs) addSite(stub.Begin, stub.End, std::move(stub.Body));
+        for (auto& stub : stubs) addSite(stub.Begin, stub.End, std::move(stub.Body), std::move(stub.Relocations));
         for (auto& [k, move] : moves) displacements.push_back({ph.Offset + move.first, std::move(move.second)});
         ++report.Framed;
         if (!rbpPrologue) ++report.FramedWithoutFramePointer;
