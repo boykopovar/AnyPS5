@@ -2594,23 +2594,25 @@ bool drawCovers(const Registers& cx, VkExtent2D extent, const ColorTarget* gcnTa
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue) {
     const auto& cx = queue.context;
     const auto control = find(cx, 0x000);
-    if (control == cx.end() || (control->second & 4u) == 0) return std::nullopt;
-    Require((control->second & ~0xf84u) == 0, "DB depth copy combined with a stencil copy, clear, resummarize or decompress");
+    if (control == cx.end() || (control->second & 0xcu) == 0) return std::nullopt;
+    const bool stencil = (control->second & 8u) != 0;
+    Require((control->second & ~(stencil ? 0xf88u : 0xf84u)) == 0, "DB depth copy combined with a stencil copy, clear, resummarize or decompress");
     Require((read(cx, 0x200) & 0xfu) == 0, "DB depth copy with depth or stencil tests");
-    Require((read(cx, 0x010) & 3u) == 3u, "DB depth copy from a depth plane that is not Z_32_FLOAT");
+    Require(stencil ? (read(cx, 0x011) & 1u) != 0 : (read(cx, 0x010) & 3u) == 3u, stencil ? "DB stencil copy without a stencil plane" : "DB depth copy from a depth plane that is not Z_32_FLOAT");
     const auto viewRegister = find(cx, 0x002);
     Require((read(cx, 0x010) & 0x000f1000u) == 0 && ((viewRegister == cx.end() ? 0u : viewRegister->second) & 0x3c000000u) == 0, "DB depth copy from a mipmapped or partially resident depth plane");
-    Require(ColorWriteMask(cx) == 1u, "DB depth copy into anything but the red channel of color target 0");
+    Require(stencil ? ColorWriteMask(cx) != 0u : ColorWriteMask(cx) == 1u, "DB depth copy into anything but the red channel of color target 0");
     Require((read(cx, 0x1e0) & (1u << 30u)) == 0, "DB depth copy with color target 0 blending is unsupported");
     DepthCopyPass pass{};
     pass.source = decodeDepthPlane(cx);
+    pass.stencil = stencil;
     const auto maskLow = find(cx, 0x30e);
     const auto maskHigh = find(cx, 0x30f);
     Require((maskLow == cx.end() || maskLow->second == 0xffffffffu) && (maskHigh == cx.end() || maskHigh->second == 0xffffffffu), "DB depth copy with a sample mask is unsupported");
     pass.sample = (control->second & 0x80u) != 0 ? 0u : (control->second >> 8u) & 0xfu;
     Require(pass.sample < pass.source.samples, "DB depth copy of a sample the depth plane does not have");
     pass.color = DecodeColorBuffer(cx, 0);
-    Require(pass.color.format == VK_FORMAT_R32_SFLOAT && pass.color.samples == 1 && pass.color.mip == 0 && pass.color.layers == 1, "DB depth copy into a color target that is not a single-sample R32 float");
+    Require(pass.color.format == (stencil ? VK_FORMAT_R8_UINT : VK_FORMAT_R32_SFLOAT) && pass.color.samples == 1 && pass.color.mip == 0 && pass.color.layers == 1, stencil ? "DB stencil copy into a color target that is not a single-sample R8 uint" : "DB depth copy into a color target that is not a single-sample R32 float");
     Require(pass.color.extent.width == pass.source.extent.width && pass.color.extent.height == pass.source.extent.height, "DB depth copy into a color target of another size");
     return pass;
 }

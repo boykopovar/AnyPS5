@@ -4378,15 +4378,15 @@ DepthCopySourceScope::~DepthCopySourceScope() {
     depthCopySourceActive = previous;
 }
 
-std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target) {
+std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target, bool stencil) {
     const bool multisampled = target.samples != 1u;
-    const auto base = (target.address | target.pipeBankXor) >> 8u;
-    const auto metadata = multisampled ? target.htileAddress >> 8u : 0u;
+    const auto base = ((stencil ? target.stencilAddress : target.address) | target.pipeBankXor) >> 8u;
+    const auto metadata = multisampled && !stencil ? target.htileAddress >> 8u : 0u;
     const auto count = static_cast<std::uint32_t>(std::countr_zero(target.samples));
     const auto width = target.extent.width - 1u, height = target.extent.height - 1u;
     const auto type = multisampled ? 14u : 9u;
-    const auto word6 = (multisampled && target.iterate256 ? 1u << 10u : 0u) | (multisampled && target.htilePipeAligned ? 1u << 19u : 0u) | (metadata != 0 ? 1u << 21u : 0u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u);
-    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (22u << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (type << 28u) | (target.depthSwizzle << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, word6, static_cast<std::uint32_t>(metadata >> 8u)};
+    const auto word6 = (multisampled && !stencil && target.iterate256 ? 1u << 10u : 0u) | (multisampled && !stencil && target.htilePipeAligned ? 1u << 19u : 0u) | (metadata != 0 ? 1u << 21u : 0u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u);
+    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | ((stencil ? 5u : 22u) << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (type << 28u) | (target.depthSwizzle << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, word6, static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage) {
