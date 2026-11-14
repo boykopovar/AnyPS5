@@ -187,7 +187,7 @@ bool memoSwitchedOff() {
 }
 
 bool memoResolves() {
-    static const bool resolves = std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr || std::getenv("APS5_DRAW_PIPELINE") == nullptr;
+    static const bool resolves = std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr || !ShaderResources::EpochProofs();
     return resolves || memoSwitchedOff();
 }
 
@@ -197,7 +197,7 @@ std::uint64_t lookups() {
 }
 
 bool memoServes() {
-    static const bool serves = std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr && std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    static const bool serves = std::getenv("APS5_NO_TEXTURE_CACHE") == nullptr && ShaderResources::EpochProofs();
     return serves && !memoSwitchedOff();
 }
 
