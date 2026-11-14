@@ -76,6 +76,7 @@ constexpr FormatEntry kFormatLookup[] = {
     {134, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, false},
     {135, VK_FORMAT_R5G5B5A1_UNORM_PACK16, 2, false},
     {136, VK_FORMAT_B4G4R4A4_UNORM_PACK16, 2, false},
+    {137, VK_FORMAT_R4G4_UNORM_PACK8, 1, false},
     {141, VK_FORMAT_D24_UNORM_S8_UINT, 4, false},
     {169, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8, true},
     {170, VK_FORMAT_BC1_RGBA_SRGB_BLOCK, 8, true},
