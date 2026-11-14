@@ -50,8 +50,6 @@
 
 - [Deprecated::ScriptValue getters](../../../core/libs/prx/libSceJsc/Export.cpp) (libSceJsc) - the console JavaScriptCore version is unverified, the object layout is not checked beyond the 8 bytes read, and the mangled names do not encode the return types. In firmware 13.42 `jsValue` reads the pointer at offset 0 of `this` and returns 0 when it is null, otherwise the 64-bit value it points to, in the 64-bit return register. `hasNoValue` returns 1 when that pointer is null or points to 0, and 0 otherwise, writing only the low 8 bits of the return register, so it is declared `bool`. Neither writes memory or reads another argument. Read from disassembly, not measured on a console.
 
-- [Deprecated::ScriptValue copy, assignment and destructors](../../../core/libs/prx/libSceJsc/src/DeprecatedScriptValue.cpp) (libSceJsc) - not compared with a console module; the console JavaScriptCore version is unverified, and only the 8-byte handle slot at offset 0 that the firmware 13.42 constructors zero is read or written. They follow the `Strong<Unknown>` member of pinned [ScriptValue.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/JavaScriptCore/bindings/ScriptValue.h#L47-L57) and its [Strong.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/JavaScriptCore/heap/Strong.h#L55-L134): copying an empty value writes an empty slot, assigning between empty values changes nothing and returns `this`, and destroying an empty value does nothing. A non-null slot is a handle in a VM's `HandleSet`, which nothing here creates, as the `VM` constructors still throw; those paths throw. Null pointers throw where WebKit faults.
-
 ### Additional callable exports
 
 - [Additional shared older exports](../../../core/libs/prx/libSceJsc/Export.cpp): 17 unidentified function NIDs are present in both older JSC and WebKit images and in the later JSC image. The declarations throw; names, prototypes, runtime behavior and cross-module routing are unverified.
@@ -82,10 +80,15 @@
 | `JSGlobalContextUnsetDebuggerRunLoop` | `rWPnHtWTIRg` |
 | `JSRunLoopIterateCurrentRunLoop` | `XIAOofO0nN4` |
 | `JSWeakObjectMapClear` | `x94EvR+FAZc` |
+| `_ZN10Deprecated11ScriptValueC1ERKS0_` | `ykyWnXSOang` |
 | `_ZN10Deprecated11ScriptValueC1ERN3JSC2VMENS1_7JSValueE` | `NwRNxHDt8jE` |
 | `_ZN10Deprecated11ScriptValueC1Ev` | `OqmzSQH+gMQ` |
+| `_ZN10Deprecated11ScriptValueC2ERKS0_` | `8JDGfjB7ysY` |
 | `_ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE` | `mbd08Y2w+gs` |
 | `_ZN10Deprecated11ScriptValueC2Ev` | `tei1IrlQ7Yg` |
+| `_ZN10Deprecated11ScriptValueD1Ev` | `ale+MG3sPCU` |
+| `_ZN10Deprecated11ScriptValueD2Ev` | `eRd+WZ6MHqY` |
+| `_ZN10Deprecated11ScriptValueaSERKS0_` | `35ORvn0jTS8` |
 | `_ZN10Deprecated12ScriptObjectC1EPN3JSC14JSGlobalObjectEPNS1_8JSObjectE` | `svwNDrtDkgI` |
 | `_ZN10Deprecated12ScriptObjectC2EPN3JSC14JSGlobalObjectEPNS1_8JSObjectE` | `lwZZL1IghHU` |
 | `_ZN10Deprecated18ScriptFunctionCall4callEv` | `Tetq4yJ0ZO0` |
