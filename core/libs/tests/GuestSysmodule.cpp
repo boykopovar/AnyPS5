@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceSysmodule/ModuleTable.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -121,6 +122,9 @@ void CheckUnwindInfo() {
     }
     Require(threw);
     Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #endif
 
@@ -213,6 +217,11 @@ void CheckUnwindInfo() {
     RequireUnwindMatchesRegion(memory + 2 * page);
     Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
     RequireUnwindMatchesRegion(memory);
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    Require(errno == 71);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #elif defined(__APPLE__)
 void RequireUnwindMatchesRegion(const void* pointer, const char* nameEnd) {
@@ -259,6 +268,11 @@ void CheckUnwindInfo() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    Require(errno == 71);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #endif
 

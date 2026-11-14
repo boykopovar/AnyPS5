@@ -185,8 +185,15 @@ int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, 
     if (!info) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: null info");
     }
-    if (!fillModuleInfoForUnwind(addr, info)) {
+    ModuleInfoForUnwind localInfo{};
+    if (!fillModuleInfoForUnwind(addr, &localInfo)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: invalid info pointer");
     }
     return 0;
 }
