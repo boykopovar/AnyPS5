@@ -685,7 +685,7 @@ bool TranslationContext::floatBinary(const RdnaInstruction& inst, IrOpcode opcod
         if (opcode == IrOpcode::FPMul32) result = directedF32(*args[0], *args[1], zero.Value(), true);
     }
     if (result == nullptr) result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1]});
-    if (opcode == IrOpcode::FPMul32 && rounding == 0u) result = &flushTinyProduct(args[0], args[1], result).Value();
+    if (opcode == IrOpcode::FPMul32) result = &flushTinyProduct(args[0], args[1], result).Value();
     if (opcode == IrOpcode::FPAdd32) result = propagatedNanResultF32({args[0], args[1]}, result);
     if (opcode == IrOpcode::FPMul32) result = nanResultF32({args[0], args[1]}, result, nullptr, true);
     if (opcode == IrOpcode::FPSub32) {
@@ -705,11 +705,9 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
     }
     const bool f32Sources = !mix || !(sourceAt(inst, 0u).opSelHi || sourceAt(inst, 1u).opSelHi || (!accumulator && sourceAt(inst, 2u).opSelHi));
     const std::uint32_t rounding = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
+    const bool directed = rounding != 0u && f32Sources && (opcode == IrOpcode::FPFma32 || opcode == IrOpcode::FPMad32);
     IrValue* result = nullptr;
-    if (rounding != 0u && (opcode == IrOpcode::FPFma32 || opcode == IrOpcode::FPMad32)) {
-        if (!f32Sources) {
-            throw std::runtime_error("v_fma_mix_f32 at pc " + std::to_string(inst.programCounter) + " in FLOAT_MODE " + std::to_string(floatMode->floatMode) + " (f16 sources under directed f32 rounding) is not implemented");
-        }
+    if (directed) {
         const IrF32 zero(ir.ConstantF32(0.0f));
         const IrF32 one(ir.ConstantF32(1.0f));
         if (opcode == IrOpcode::FPFma32) {
@@ -720,7 +718,7 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
         }
     }
     if (result == nullptr) result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1], args[2]});
-    if (opcode == IrOpcode::FPFma32 && rounding == 0u) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
+    if (opcode == IrOpcode::FPFma32) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
     if (opcode == IrOpcode::FPFma32 && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result, &invalidProductF32(args[0], args[1]));
     if (opcode == IrOpcode::FPFma32 && !f32Sources) {
         IrValue& bits = ir.BitCastU32(*result);
