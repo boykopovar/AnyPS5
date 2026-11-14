@@ -4,6 +4,7 @@
 
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/include/FontGraphics.hpp"
+#include "prx/libSceFont/include/FontInternal.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 
 namespace {
@@ -335,14 +336,16 @@ int ReportGraphicsError(int error) {
 
 int GraphicsRegionInit(FontGraphicsRegion* region, float x, float y, float width, float height) {
     if (!region || 0.0f > width || 0.0f > height) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
-    *region = {x, y, width, height, RectangleRegionFlags, RegionTag, 0.0f, 0.0f};
+    const FontGraphicsRegion value{x, y, width, height, RectangleRegionFlags, RegionTag, 0.0f, 0.0f};
+    if (!CopyOutGuest(region, value)) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     return SCE_FONT_OK;
 }
 
 int GraphicsRegionInitCircular(FontGraphicsRegion* region, float centerX, float centerY, float outerRadius, float innerRadius) {
     if (innerRadius > outerRadius || !region || 0.0f >= outerRadius || 0.0f >= innerRadius) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     const float diameter = outerRadius + outerRadius;
-    *region = {centerX - outerRadius, centerY - outerRadius, diameter, diameter, CircularRegionFlags, RegionTag, outerRadius, innerRadius};
+    const FontGraphicsRegion value{centerX - outerRadius, centerY - outerRadius, diameter, diameter, CircularRegionFlags, RegionTag, outerRadius, innerRadius};
+    if (!CopyOutGuest(region, value)) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     return SCE_FONT_OK;
 }
 
@@ -350,7 +353,8 @@ int GraphicsRegionInitRoundish(FontGraphicsRegion* region, float x, float y, flo
     if (!region || 0.0f > innerRadius || 0.0f > outerRadius || 0.0f >= height || 0.0f >= width || flags > 0xff) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     if (outerRadius > height * 0.5f || outerRadius > width * 0.5f) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     if (outerRadius < innerRadius && outerRadius != 0.0f) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
-    *region = {x, y, width, height, flags, RegionTag, outerRadius, innerRadius};
+    const FontGraphicsRegion value{x, y, width, height, flags, RegionTag, outerRadius, innerRadius};
+    if (!CopyOutGuest(region, value)) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     return SCE_FONT_OK;
 }
 
@@ -359,11 +363,12 @@ int GraphicsFillMethodInit(FontGraphicsFillMethod* method, std::int32_t mode, st
     const bool modeValid = (modeBits & 0xf) == 0 && (modeBits >> 4) < 6;
     const bool typeValid = static_cast<std::uint32_t>(type) - 1 < 7 || type == 12;
     if (!method || !modeValid || !typeValid) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
-    *method = {};
-    method->mode = mode;
-    method->type = type;
-    method->flags = FillMethodFlags;
-    method->tag = FillMethodTag;
+    FontGraphicsFillMethod value{};
+    value.mode = mode;
+    value.type = type;
+    value.flags = FillMethodFlags;
+    value.tag = FillMethodTag;
+    if (!CopyOutGuest(method, value)) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     return SCE_FONT_OK;
 }
 

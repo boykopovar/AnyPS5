@@ -210,4 +210,22 @@ int main() {
 #else
     pipe.Close();
 #endif
+
+    FileStream probe(TemporaryFile::Open());
+    auto* unmapped = reinterpret_cast<std::int64_t*>(std::uintptr_t{0x10});
+    bool threw = false;
+    try {
+        fgetpos_nid_postfix(&probe, unmapped);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        fsetpos_nid_postfix(&probe, unmapped);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    probe.Close();
 }

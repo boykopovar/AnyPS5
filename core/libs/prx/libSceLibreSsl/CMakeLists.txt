@@ -16,7 +16,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PemPrivateKey.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_bn_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBn.cpp)
@@ -24,9 +24,10 @@ if(BUILD_TESTING)
     target_link_libraries(guest_libressl_bn_tests PRIVATE libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl_bn_tests)
     add_test(NAME guest_libressl_bn COMMAND guest_libressl_bn_tests)
-    set_tests_properties(guest_libressl_bn PROPERTIES TIMEOUT 30)
+    add_test(NAME guest_libressl_bn_allocator COMMAND guest_libressl_bn_tests --allocator)
+    set_tests_properties(guest_libressl_bn guest_libressl_bn_allocator PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_libressl_bn PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_libressl_bn guest_libressl_bn_allocator PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
@@ -347,6 +348,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
+    add_test_executable(guest_libressl_ocsp_response_decode_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslOcspResponseDecode.cpp)
+    target_include_directories(guest_libressl_ocsp_response_decode_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ocsp_response_decode_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ocsp_response_decode_tests)
+    add_test(NAME guest_libressl_ocsp_response_decode COMMAND guest_libressl_ocsp_response_decode_tests)
+    set_tests_properties(guest_libressl_ocsp_response_decode PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ocsp_response_decode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_x509_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslX509.cpp)
     target_include_directories(guest_libressl_x509_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_x509_tests PRIVATE libSceLibreSsl)
@@ -591,6 +603,7 @@ endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509VerifyParam.cpp)
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/GeneralName.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspResponseDer.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_x509_verify_param_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509VerifyParam.cpp)

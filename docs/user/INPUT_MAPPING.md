@@ -25,6 +25,8 @@ Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`,
 
 `ReloadInputMapping` (F1 by default) reads `anyps5-input.ini` and the title's profile again while the game keeps running, so you can try a change without restarting the title. The new file is read completely before anything changes: if it has an error, the previous mapping stays active and the log names the file, the line and the reason. A successful reload replaces the whole mapping at once.
 
+Set `ANYPS5_INPUT_WATCH=1` to reload automatically when the file or the title's profile changes. AnyPS5 checks the modification time and size about once a second on a background thread, and reloads only after a change has stayed the same for one check, so a file still being saved is not read half-written. The option is off by default.
+
 A key bound to `ShowPadStatus` and to another action triggers both, as for every other action. F9 is the built-in key of `ShowPadStatus`: if you moved `Screenshot`, `TogglePerformanceOverlay` or another action to F9, also rebind `ShowPadStatus` to a key you do not use, or each press shows the controller status panel too. The [web configurator](#web-configurator) warns about a key that two actions share.
 
 Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeUp` (F6) and `ToggleMute` (F8), described in [host volume and mute](USAGE.md#host-volume-and-mute). They accept only keyboard keys too.
@@ -174,7 +176,7 @@ An invalid line stops the game when video output starts, with an error that name
 
 ## Web configurator
 
-The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. `PAD:` chords in an imported file are kept and exported, but new chords are written by hand. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
 
 From the repository root, with Node.js 22 or later:
 

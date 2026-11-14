@@ -185,6 +185,9 @@ static void CheckAngularVelocityDeadband(int handle) {
 }
 
 static void CheckStickDeadZones(int handle) {
+    errno = 71;
+    Require(scePadGetControllerInformation(handle, reinterpret_cast<PadControllerInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     PadControllerInformation info{};
     Require(scePadGetControllerInformation(handle, &info) == PAD_OK);
     Require(info.stickInfo.deadZoneLeft == 13 && info.stickInfo.deadZoneRight == 13);
@@ -701,6 +704,9 @@ static void CheckRemoteController(int handle) {
     Require(scePadIsRemoteController(handle + 1, &remote) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadIsRemoteController(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(remote);
+    errno = 71;
+    Require(scePadIsRemoteController(handle, reinterpret_cast<bool*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadIsRemoteController(handle, &remote) == PAD_OK);
     Require(!remote);
 }
@@ -1173,6 +1179,9 @@ static void CheckAccessibilityControllerState(int handle) {
     Require(scePadGetAccessibilityControllerState(handle + 1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetAccessibilityControllerState(handle + 1, &state) == PAD_ERROR_INVALID_HANDLE);
     Require(state == 7);
+    errno = 71;
+    Require(scePadGetAccessibilityControllerState(handle, reinterpret_cast<std::uint32_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetAccessibilityControllerState(handle, &state) == PAD_OK);
     Require(state == 0);
     Require(scePadGetAccessibilityControllerState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -1186,9 +1195,13 @@ static void CheckControllerType(int handle) {
     Require(scePadGetControllerType(handle + 1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetControllerType(handle + 1, &type) == PAD_ERROR_INVALID_HANDLE);
     Require(type == -1);
-    Require(scePadGetControllerType(handle, &type) == PAD_OK);
-    Require(type == PAD_CONTROLLER_TYPE_DUAL_SENSE);
     Require(scePadGetControllerType(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetControllerType(handle, reinterpret_cast<std::int32_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    alignas(16) std::int32_t typeBuffer[3] = {-1, -1, -1};
+    Require(scePadGetControllerType(handle, &typeBuffer[1]) == PAD_OK);
+    Require(typeBuffer[0] == -1 && typeBuffer[1] == PAD_CONTROLLER_TYPE_DUAL_SENSE && typeBuffer[2] == -1);
     for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadGetControllerType(invalid, &type) == PAD_ERROR_INVALID_HANDLE);
     }
@@ -1674,6 +1687,13 @@ int main() {
     Require(scePadIsLightBarBaseBrightnessControllable(handle2 + 99) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetLightBarBaseBrightness(handle2, 1) == PAD_OK);
     Require(scePadSetLightBarBaseBrightness(handle2 + 99, 1) == PAD_ERROR_INVALID_HANDLE);
+    const int special = scePadOpen_nid_postfix(user2, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0);
+    Require(scePadIsLightBarBaseBrightnessControllable(special) == 0);
+    Require(scePadSetLightBarBaseBrightness(special, 1) == PAD_OK);
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(scePadIsLightBarBaseBrightnessControllable(special) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBaseBrightness(special, 1) == PAD_ERROR_INVALID_HANDLE);
 
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);

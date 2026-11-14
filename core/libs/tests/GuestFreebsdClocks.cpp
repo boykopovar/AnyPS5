@@ -60,15 +60,15 @@ static bool OmittedResolutionSucceeds() {
     return true;
 }
 
-static void UnsupportedResolutionStillThrows() {
-    KernelTimespec resolution{-1, -1};
-    bool rejected = false;
-    try {
-        clock_getres_nid_postfix(32, &resolution);
-    } catch (const std::runtime_error&) {
-        rejected = true;
+static void OutOfRangeResolutionIsInvalid() {
+    constexpr int einval = static_cast<int>(0x80020016u);
+    for (const int clockId : {32, 100, INT_MAX}) {
+        KernelTimespec resolution{-1, -1};
+        *__error_nid_postfix() = 0;
+        Require(clock_getres_nid_postfix(clockId, &resolution) == -1 && *__error_nid_postfix() == 22);
+        Require(sceKernelClockGetres(clockId, &resolution) == einval);
+        Require(resolution.tv_sec == -1 && resolution.tv_nsec == -1);
     }
-    Require(rejected && resolution.tv_sec == -1 && resolution.tv_nsec == -1);
     constexpr int fault = static_cast<int>(0x8002000eu);
     Require(sceKernelClockGetres(GUEST_CLOCK_REALTIME, nullptr) == fault);
     Require(sceKernelClockGetres(32, nullptr) == fault);
@@ -178,14 +178,15 @@ static void ResolutionsAreTheConsoles() {
 
 static void Clock20UsesScaledMonotonicTime() {
     constexpr int clockId = 20;
-    constexpr std::int64_t tickCeilingNanos = 30519;
+    constexpr std::int64_t tickCeilingNanos = 30518;
+    constexpr std::int64_t microsecondTruncationNanos = 1000;
     const auto before = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
     const auto posix = Nanos(clockId);
     KernelTimespec sceTime{-1, -1};
     Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
     const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
     const auto after = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
-    Require(before - tickCeilingNanos <= posix && posix <= sce && sce <= after);
+    Require(before - tickCeilingNanos - microsecondTruncationNanos <= posix && posix <= sce && sce <= after);
     Require(posix % 1000 == 0 && sce % 1000 == 0);
 }
 
@@ -389,6 +390,12 @@ static void CalendarConversionsFollowTheHostZone() {
     RequireZone("BRT+3", summer, -10800, 0, 0);
     RequireZone("EST5EDT", winter, -18000, 3600, 0);
     RequireZone("EST5EDT", summer, -18000, 3600, 3600);
+    constexpr std::int64_t cycle = 146097LL * 86400LL;
+    for (const std::int64_t cycles : {700000000LL, -700000000LL}) {
+        RequireZone("IST-5:30", winter + cycles * cycle, 19800, 0, 0);
+        RequireZone("EST5EDT", winter + cycles * cycle, -18000, 3600, 0);
+        RequireZone("EST5EDT", summer + cycles * cycle, -18000, 3600, 3600);
+    }
     SetTimeZone("UTC0");
 }
 
@@ -435,7 +442,7 @@ static void KernelTimezoneIsUtc() {
 int main() {
     if (!OmittedResolutionSucceeds()) return 1;
     KernelTimezoneIsUtc();
-    UnsupportedResolutionStillThrows();
+    OutOfRangeResolutionIsInvalid();
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
     ClockIoErrorIds();
