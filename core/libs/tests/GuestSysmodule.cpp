@@ -419,9 +419,13 @@ int main() {
     Require(unloadArgResult == -1);
     Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == kModuleUnloaded);
     Require(unloadArgResult == -1);
+    Require(ThrowsRuntimeError([] { sceSysmoduleLoadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, reinterpret_cast<int*>(0x10)); }));
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == kModuleUnloaded);
     int loadArgResult = -1;
     Require(sceSysmoduleLoadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &loadArgResult) == 0);
     Require(loadArgResult == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, reinterpret_cast<int*>(0x10)); }));
     Require(sceSysmoduleIsLoadedInternal(kAgcDriverModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternalWithArg(kAgcDriverModuleId, 0, nullptr, 0, &unloadArgResult) == 0);
     Require(unloadArgResult == 0);
@@ -468,6 +472,7 @@ int main() {
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModule(kAudioPropagationModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == 0);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, reinterpret_cast<std::int32_t*>(0x10)); }));
     Require(sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, &audioPropagationHandle) == 0);
     Require(audioPropagationHandle >= 0);
     void* audioPropagationSymbol = nullptr;
