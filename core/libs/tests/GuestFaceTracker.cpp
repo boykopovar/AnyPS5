@@ -43,5 +43,14 @@ int main() {
     Require(sceFaceTrackerGetUserFeature(1, &feature, reinterpret_cast<int*>(0x10), context.data()) == kErrInvalid);
     Require(errno == 71);
 
+    errno = 71;
+    Require(sceFaceTrackerRegisterUser(1, reinterpret_cast<const void*>(0x10), 16, context.data()) == kErrInvalid);
+    Require(errno == 71);
+
+    Require(sceFaceTrackerGetDefaultConfig(nullptr) == kErrInvalid);
+    errno = 71;
+    Require(sceFaceTrackerGetDefaultConfig(reinterpret_cast<void*>(0x10)) == kErrInvalid);
+    Require(errno == 71);
+
     return 0;
 }

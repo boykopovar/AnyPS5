@@ -117,6 +117,13 @@ int userDbRegister(void *context, int userId, const void *feature, int featureSi
         featureSize <= 0) {
         return kErrInvalid;
     }
+    std::uint8_t localFeature[kMaxFeatureSize]{};
+    const int savedErrno = errno;
+    const bool copiedFeature = GuestCopyIn_nid_no_patch(localFeature, feature, static_cast<std::size_t>(featureSize));
+    errno = savedErrno;
+    if (!copiedFeature) {
+        return kErrInvalid;
+    }
     const int32_t count = userDbCount(context);
     if (count <= 0) {
         return kErrFull;
@@ -138,7 +145,7 @@ int userDbRegister(void *context, int userId, const void *feature, int featureSi
         return kErrFull;
     }
     std::memcpy(userDbFeatures(context) + static_cast<std::size_t>(freeIndex) * kFeatureStride,
-                feature, static_cast<std::size_t>(featureSize));
+                localFeature, static_cast<std::size_t>(featureSize));
     uint8_t *entry = entries + static_cast<std::size_t>(freeIndex) * kUserEntryStride;
     entry[0] = 1;
     std::memcpy(entry + 8, &userId, sizeof(userId));
@@ -348,8 +355,15 @@ int APS5_VABI sceFaceTrackerGetDefaultConfig(void *config) {
     if (config == nullptr) {
         return kErrInvalid;
     }
+    alignas(4) std::uint8_t localConfig[0x7e]{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(localConfig, config, sizeof(localConfig))) {
+        errno = savedErrno;
+        return kErrInvalid;
+    }
+    errno = savedErrno;
     std::uint32_t param[0x38 / 4] = {};
-    auto *out = static_cast<std::uint32_t *>(config);
+    auto *out = reinterpret_cast<std::uint32_t *>(localConfig);
     if (sceFaceDetectionGetDefaultParam(param) == 0) {
         out[0x00 / 4] = param[0x08 / 4];
         out[0x04 / 4] = param[0x10 / 4];
@@ -377,13 +391,19 @@ int APS5_VABI sceFaceTrackerGetDefaultConfig(void *config) {
     out[0x58 / 4] = 5;
     out[0x5c / 4] = 0x42480000;
     out[0x60 / 4] = 0xa;
-    static_cast<std::uint8_t *>(config)[0x64] = 1;
+    localConfig[0x64] = 1;
     out[0x68 / 4] = 0xf;
     out[0x6c / 4] = 0x42500000;
     out[0x70 / 4] = 0x1e;
     out[0x74 / 4] = 0xf;
     out[0x78 / 4] = 5;
-    static_cast<std::uint16_t *>(config)[0x7c / 2] = 0x101;
+    reinterpret_cast<std::uint16_t *>(localConfig)[0x7c / 2] = 0x101;
+    const int savedOutErrno = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(config, localConfig, sizeof(localConfig));
+    errno = savedOutErrno;
+    if (!copiedOut) {
+        return kErrInvalid;
+    }
     return 0;
 }
 
