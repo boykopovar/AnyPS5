@@ -1484,20 +1484,14 @@ int RenderPassDepthLocations(AgcDriver::VulkanDevice& device) {
         std::printf("skipped, the pipeline store and draw recipes do not key the rendering mode: run with APS5_NO_PIPELINE_CACHE=1 and APS5_NO_DRAW_RECIPE=1\n");
         return VulkanTestSkipped;
     }
+    if (!context.graphicsPipelineLibrary) {
+        std::printf("skipped, the device draws only through render passes, so no rendering mode independent of render pass begin draws the reference\n");
+        return VulkanTestSkipped;
+    }
+    const auto reference = RenderCheckerboard(device, context, samples, 0u, locations);
+    CheckScene(reference, samples, "dynamic rendering");
     auto passes = context;
     passes.graphicsPipelineLibrary = false;
-    std::optional<Rendered> reference;
-    if (context.graphicsPipelineLibrary) {
-        reference = RenderCheckerboard(device, context, samples, 0u, locations);
-        try {
-            CheckScene(*reference, samples, "dynamic rendering");
-        } catch (const std::exception& error) {
-            std::printf("skipped, the device does not render the reference scene through dynamic rendering, so the render pass runs have nothing to match: %s\n", error.what());
-            return VulkanTestSkipped;
-        }
-    } else {
-        std::printf("the device draws through render passes only: the render pass runs are compared with each other\n");
-    }
     OwnRecorder own(passes, context.recorder);
     constexpr std::size_t runs = 4u;
     std::size_t differences = 0;
@@ -1505,17 +1499,13 @@ int RenderPassDepthLocations(AgcDriver::VulkanDevice& device) {
         const auto rendered = RenderCheckerboard(device, passes, samples, 1u + run, locations);
         const auto what = "render pass run " + std::to_string(run);
         CheckScene(rendered, samples, what);
-        if (!reference) {
-            reference = rendered;
-            continue;
-        }
-        const auto color = Differences(reference->color, rendered.color, samples, what + ", color", true);
-        const auto depth = Differences(reference->depth, rendered.depth, samples, what + ", depth", true);
-        std::printf("%s at %ux%u, 2x, pixel (0,0)'s locations in every pixel: %zu color and %zu depth samples differ from the reference\n", what.c_str(), ReferenceExtent.width, ReferenceExtent.height, color, depth);
+        const auto color = Differences(reference.color, rendered.color, samples, what + ", color", true);
+        const auto depth = Differences(reference.depth, rendered.depth, samples, what + ", depth", true);
+        std::printf("%s at %ux%u, 2x, pixel (0,0)'s locations in every pixel: %zu color and %zu depth samples differ from the dynamic rendering reference\n", what.c_str(), ReferenceExtent.width, ReferenceExtent.height, color, depth);
         differences += color + depth;
     }
-    Require(differences == 0u, "a 2x draw at custom sample locations through render passes did not render like the reference, bit for bit, in every run");
-    std::puts("a 2x draw at custom sample locations renders through render passes like the reference, bit for bit, in every run");
+    Require(differences == 0u, "a 2x draw at custom sample locations through render passes did not render like dynamic rendering, bit for bit, in every run");
+    std::puts("a 2x draw at custom sample locations renders through render passes like dynamic rendering, bit for bit, in every run");
     return 0;
 }
 
