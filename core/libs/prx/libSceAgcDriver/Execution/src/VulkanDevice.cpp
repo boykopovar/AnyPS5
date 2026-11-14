@@ -5871,15 +5871,21 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     VkAccessFlags covered = 0;
     bool overlapped = false;
     const std::array<const void*, 2> runOwners{record.resources.get(), resources.MemoryOwner()};
-    const auto keptTaker = argumentImport != nullptr && recorder.PendingCopyBackOverlaps(arguments, 12) ? std::uint64_t{0} : resources.HandoverToken();
-    const auto commands = overlapCapable && unordered ? recorder.OverlapCommands(overlapQueue, runOwners, runAccesses, &covered, overlapped, keptTaker) : recorder.CommandsKeeping(keptTaker, &covered);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> touched;
+    Graphics::Recorder::CopyBackReach reach{resources.HandoverToken(), resources.CopyBackReach(touched), false, {}};
+    if (argumentImport != nullptr) {
+        if (recorder.PendingCopyBackOverlaps(arguments, 12)) reach = {};
+        else touched.emplace_back(arguments, arguments + 12);
+    }
+    if (reach.known) reach.touched = touched;
+    const auto commands = overlapCapable && unordered ? recorder.OverlapCommands(overlapQueue, runOwners, runAccesses, &covered, overlapped, reach) : recorder.CommandsKeeping(reach, &covered);
     constexpr VkAccessFlags runLeadingCovered = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     if (overlapCapable && !overlapped && (covered & runLeadingCovered) != runLeadingCovered) covered = 0;
     recordStep(PhaseRecordCommands);
     recorder.Keep(record.objects);
     if (record.resources != nullptr) record.resources->KeepStorageImageBytes(recorder);
     recorder.Keep(record.resources);
-    if (record.resources != nullptr) recorder.KeepBytes(record.resources.get(), record.resources->CopiedBytes());
+    if (record.resources != nullptr) record.resources->KeepCopiedBytes(recorder);
     if (record.bindings != nullptr) {
         recorder.Keep(record.bindings);
         for (const auto& snapshot : record.bindings->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());

@@ -1868,6 +1868,8 @@ struct DispatchOrder {
 thread_local DispatchOrder nextDispatchOrder;
 std::atomic<std::uint64_t> overlapDeferred{0}, overlapJoined{0}, overlapFlushed{0};
 std::atomic<std::uint64_t> handoversTaken{0}, handoverSkipped{0}, handoverRedirected{0}, handoverForwardedBytes{0}, handoverElided{0}, handoverElidedBytes{0}, handoverLanded{0}, handoverLandedBytes{0};
+std::array<std::atomic<std::uint64_t>, Recorder::LandingSites> handoverLandedAt{};
+constexpr std::array<const char*, Recorder::LandingSites> LandingSiteNames{"another command", "a draw pass", "a label store", "a store run", "sample counting", "a submit", "a sync", "the kept bytes bound", "a staging copy over the region", "a staging copy of unknown reach", "a dispatch over the region", "a dispatch of unknown reach", "an overlapping copy-back"};
 
 using GuestRanges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
 
@@ -1881,6 +1883,15 @@ std::uint64_t RangeBytes(const GuestRanges& ranges) {
     return bytes;
 }
 
+struct LandingSiteScope {
+    Recorder::LandingSite& slot;
+    Recorder::LandingSite previous;
+    LandingSiteScope(Recorder::LandingSite& slot, Recorder::LandingSite site) : slot(slot), previous(std::exchange(slot, site)) {}
+    ~LandingSiteScope() { slot = previous; }
+    LandingSiteScope(const LandingSiteScope&) = delete;
+    LandingSiteScope& operator=(const LandingSiteScope&) = delete;
+};
+
 }
 
 bool Recorder::StagingHandoverEnabled() {
@@ -1889,7 +1900,20 @@ bool Recorder::StagingHandoverEnabled() {
 }
 
 Recorder::HandoverStatistics Recorder::HandoverCounts() {
-    return HandoverStatistics{handoversTaken.load(std::memory_order_relaxed), handoverSkipped.load(std::memory_order_relaxed), handoverRedirected.load(std::memory_order_relaxed), handoverForwardedBytes.load(std::memory_order_relaxed), handoverElided.load(std::memory_order_relaxed), handoverElidedBytes.load(std::memory_order_relaxed), handoverLanded.load(std::memory_order_relaxed), handoverLandedBytes.load(std::memory_order_relaxed)};
+    HandoverStatistics counts{handoversTaken.load(std::memory_order_relaxed), handoverSkipped.load(std::memory_order_relaxed), handoverRedirected.load(std::memory_order_relaxed), handoverForwardedBytes.load(std::memory_order_relaxed), handoverElided.load(std::memory_order_relaxed), handoverElidedBytes.load(std::memory_order_relaxed), handoverLanded.load(std::memory_order_relaxed), handoverLandedBytes.load(std::memory_order_relaxed), {}};
+    for (std::size_t site = 0; site < LandingSites; ++site) counts.landedAt[site] = handoverLandedAt[site].load(std::memory_order_relaxed);
+    return counts;
+}
+
+const char* Recorder::LandingSiteName(LandingSite site) {
+    return LandingSiteNames[static_cast<std::size_t>(site)];
+}
+
+bool Recorder::landsFor(const StagedCopyBack& held, const CopyBackReach* reach) {
+    if (reach == nullptr) return true;
+    if (reach->taker != 0 && held.taker == reach->taker) return false;
+    if (!reach->known) return true;
+    return std::any_of(reach->touched.begin(), reach->touched.end(), [&](const auto& range) { return held.begin < range.second && range.first < held.end; });
 }
 
 void Recorder::CountForwardedCopyIns(std::uint64_t skipped, std::uint64_t redirected, std::uint64_t bytes) {
@@ -1898,15 +1922,15 @@ void Recorder::CountForwardedCopyIns(std::uint64_t skipped, std::uint64_t redire
     handoverForwardedBytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
-void Recorder::flushCopyBacks(std::uint64_t keptTaker) {
+void Recorder::flushCopyBacks(LandingSite site, const CopyBackReach* reach) {
     if (open == nullptr || open->copyBacks.empty()) return;
     auto& pending = open->copyBacks;
     std::vector<StagedCopyBack> landing;
-    if (keptTaker == 0) {
+    if (reach == nullptr) {
         landing = std::move(pending);
         pending.clear();
     } else {
-        const auto kept = std::stable_partition(pending.begin(), pending.end(), [&](const StagedCopyBack& held) { return held.taker == keptTaker; });
+        const auto kept = std::stable_partition(pending.begin(), pending.end(), [&](const StagedCopyBack& held) { return !landsFor(held, reach); });
         landing.assign(std::make_move_iterator(kept), std::make_move_iterator(pending.end()));
         pending.erase(kept, pending.end());
     }
@@ -1940,6 +1964,7 @@ void Recorder::flushCopyBacks(std::uint64_t keptTaker) {
     EndGpuTiming(timing, bytes);
     handoverLanded.fetch_add(landing.size(), std::memory_order_relaxed);
     handoverLandedBytes.fetch_add(bytes, std::memory_order_relaxed);
+    handoverLandedAt[static_cast<std::size_t>(site)].fetch_add(landing.size(), std::memory_order_relaxed);
 }
 
 bool Recorder::PendingCopyBackOverlaps(std::uint64_t address, std::size_t bytes) const {
@@ -1962,7 +1987,9 @@ void Recorder::DeferCopyBack(StagedCopyBack entry) {
         *same = std::move(entry);
         return;
     }
-    if (std::any_of(pending.begin(), pending.end(), [&](const StagedCopyBack& held) { return held.begin < entry.end && entry.begin < held.end; })) flushCopyBacks();
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> over{{{entry.begin, entry.end}}};
+    const CopyBackReach reach{0, true, false, over};
+    flushCopyBacks(LandingSite::Overlap, &reach);
     open->copyBacks.push_back(std::move(entry));
 }
 
@@ -1984,8 +2011,8 @@ std::uint64_t Recorder::ClaimCopyBacks(std::span<StagedClaim> claims) {
     return token;
 }
 
-bool Recorder::JoinsRun(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses) const {
-    return joinsRun(queueKey, std::span(&owner, 1), accesses);
+bool Recorder::JoinsRun(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, const CopyBackReach& reach) const {
+    return joinsRun(queueKey, std::span(&owner, 1), accesses, reach);
 }
 
 void Recorder::CloseRun() {
@@ -2050,16 +2077,20 @@ bool Recorder::runConflict(std::span<const RunAccess> accesses) const {
     return false;
 }
 
-bool Recorder::joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) const {
+bool Recorder::joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, const CopyBackReach& reach) const {
     if (queueKey == 0 || open == nullptr || open->deferredDispatchQueue != queueKey || open->renderPass.open || open->run.open) return false;
     const auto taken = [&](const void* owner) { return std::find(open->deferredRun.begin(), open->deferredRun.end(), owner) != open->deferredRun.end(); };
+    const auto writtenByRun = [&](const std::pair<std::uint64_t, std::uint64_t>& range) {
+        return std::any_of(open->runAccess.begin(), open->runAccess.end(), [&](const RunAccess& member) { return (member[2] & RunAccessImage) == 0 && (member[2] & RunAccessWritten) != 0 && member[0] <= range.first && range.second <= member[1]; });
+    };
+    if (std::any_of(open->copyBacks.begin(), open->copyBacks.end(), [&](const StagedCopyBack& held) { return landsFor(held, &reach) && !std::all_of(held.written.begin(), held.written.end(), writtenByRun); })) return false;
     return std::none_of(owners.begin(), owners.end(), taken) && !runConflict(accesses);
 }
 
-VkCommandBuffer Recorder::RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess) {
+VkCommandBuffer Recorder::RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess, const CopyBackReach& reach) {
     GuestMemory::AssertGpuLockHeld("Recorder::RunCommands");
-    inRun = joinsRun(queueKey, std::span(&owner, 1), accesses);
-    if (!inRun) return Commands(coveredAccess);
+    inRun = joinsRun(queueKey, std::span(&owner, 1), accesses, reach);
+    if (!inRun) return CommandsKeeping(reach, coveredAccess);
     if (coveredAccess != nullptr) *coveredAccess = 0;
     return open->commands;
 }
@@ -2076,10 +2107,10 @@ bool Recorder::CloseRunOwing(const void* owner) {
     return true;
 }
 
-VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, std::uint64_t keptTaker) {
+VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped, const CopyBackReach& reach) {
     GuestMemory::AssertGpuLockHeld("Recorder::OverlapCommands");
-    overlapped = joinsRun(queueKey, owners, accesses);
-    if (!overlapped) return CommandsKeeping(keptTaker, coveredAccess);
+    overlapped = joinsRun(queueKey, owners, accesses, reach);
+    if (!overlapped) return CommandsKeeping(reach, coveredAccess);
     if (coveredAccess != nullptr) *coveredAccess = 0;
     return open->commands;
 }
@@ -2131,13 +2162,20 @@ std::uint64_t Recorder::ReapsWithWork() {
 }
 
 VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
-    return CommandsKeeping(0, coveredAccess);
-}
-
-VkCommandBuffer Recorder::CommandsKeeping(std::uint64_t keptTaker, VkAccessFlags* coveredAccess) {
     ensureOpen();
     flushDeferredDispatch();
-    flushCopyBacks(keptTaker);
+    flushCopyBacks(LandingSite::Command);
+    return openCommands(coveredAccess);
+}
+
+VkCommandBuffer Recorder::CommandsKeeping(const CopyBackReach& reach, VkAccessFlags* coveredAccess) {
+    ensureOpen();
+    flushDeferredDispatch();
+    flushCopyBacks(reach.known ? (reach.staging ? LandingSite::StagingReach : LandingSite::DispatchReach) : (reach.staging ? LandingSite::StagingUnknown : LandingSite::DispatchUnknown), &reach);
+    return openCommands(coveredAccess);
+}
+
+VkCommandBuffer Recorder::openCommands(VkAccessFlags* coveredAccess) {
     // Work recorded after a draw's render pass or an inline store run must see their writes: the
     // pass's end and the run's trailing barrier go in first (a per-batch run waits for Submit, or
     // for a caller whose ranges overlap a queued store: FlushStores).
@@ -2155,7 +2193,7 @@ void Recorder::MarkCovered(VkAccessFlags access) {
 Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access) {
     ensureOpen();
     flushDeferredDispatch();
-    flushCopyBacks();
+    flushCopyBacks(LandingSite::DrawPass);
     auto& pass = open->renderPass;
     if (!pass.open || forced || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
         const auto reason = !pass.open ? pass.closedBy : forced ? PassBreak::Forced : PassBreak::Segment;
@@ -2334,7 +2372,7 @@ void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const
     if (bytes.empty()) return;
     ensureOpen();
     flushDeferredDispatch();
-    flushCopyBacks();
+    flushCopyBacks(LandingSite::LabelStore);
     auto& run = open->run;
     const VkDeviceSize end = offset + bytes.size();
     storeCount.fetch_add(1, std::memory_order_relaxed);
@@ -2426,7 +2464,7 @@ void Recorder::flushPendingStore() {
 
 bool Recorder::closeStoreRun(bool atSubmit) {
     flushDeferredDispatch();
-    flushCopyBacks();
+    flushCopyBacks(LandingSite::StoreRun);
     auto& run = open->run;
     if (LabelRunsPerBatch()) {
         auto stores = std::move(run.queued);
@@ -3060,7 +3098,7 @@ void Recorder::PrepareSampleSlot() {
     if (!countingSamples || !segmentMode()) return;
     ensureOpen();
     flushDeferredDispatch();
-    flushCopyBacks();
+    flushCopyBacks(LandingSite::Samples);
     Require(!open->renderPass.open, "a sample slot is prepared inside a render pass");
     if (!segmentSlotReady(*open)) takeSegmentPool(*open);
 }
@@ -3266,7 +3304,7 @@ bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address) {
     if (target == 0 || !gpuSampleCounter()) return false;
     countingSamples = true;
     flushDeferredDispatch();
-    flushCopyBacks();
+    flushCopyBacks(LandingSite::Samples);
     if (segmentMode()) {
         ensureOpen();
         if (address != 0 && LabelRunsPerBatch() && pendingSamples.size() < SegmentFoldCapacity && open->queuedDumps < DumpFoldCapacity) {
@@ -3667,7 +3705,10 @@ void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
 
 void Recorder::BoundKeptBytes() {
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
-    if (open != nullptr && open->keptBytes >= KeptBytesBudget) Submit();
+    if (open != nullptr && open->keptBytes >= KeptBytesBudget) {
+        const LandingSiteScope landing(submitSite, LandingSite::KeptBytes);
+        Submit();
+    }
     if (DeferredBytes() != 0 && inFlightKeptBytes + DeferredBytes() > 2 * KeptBytesBudget) DestroyDeferred(TakeDeferred(), false);
     while (!inFlight.empty() && inFlightKeptBytes > 2 * KeptBytesBudget) {
         auto batch = std::move(inFlight.front());
@@ -4922,7 +4963,7 @@ void Recorder::Submit() {
     if (open == nullptr) return;
     GuestMemory::AssertGpuLockHeld("Recorder::Submit");
     flushDeferredDispatch();
-    flushCopyBacks();
+    flushCopyBacks(submitSite);
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass(PassBreak::NewBatch);
     const bool segments = segmentMode();
@@ -5127,7 +5168,10 @@ void Recorder::Sync() {
     PerformanceTimer frameTiming("Recorder.Sync");
     const auto source = std::exchange(announcedSource, 4);
     const void* site = std::exchange(announcedSite, nullptr);
-    Submit();
+    {
+        const LandingSiteScope landing(submitSite, LandingSite::Sync);
+        Submit();
+    }
     // Counted only when something is waited for: an idle recorder's Sync is free and would only
     // swamp the site table with the callers that check nothing first.
     const auto previousSite = inFlight.empty() ? activeSyncSite : BeginSyncSite(source, site != nullptr ? site : __builtin_return_address(0));
@@ -5278,6 +5322,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     // SyncThrough disabled everything is the target as well.
     std::uint64_t targetSerial = 0;
     if (!SyncThroughEnabled() || (open != nullptr && overlaps(*open, address, end))) {
+        const LandingSiteScope landing(submitSite, LandingSite::Sync);
         Submit();
         targetSerial = submissions;
     } else {

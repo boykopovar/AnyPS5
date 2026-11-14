@@ -2000,6 +2000,13 @@ bool UsesAddressTables(const CompiledShader& compute) {
     return std::any_of(compute.program->bindings.begin(), compute.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
 }
 
+bool BindsGuestRangesOnly(const CompiledShader& compute) {
+    Require(compute.program != nullptr, "missing compiled shader");
+    return std::all_of(compute.program->bindings.begin(), compute.program->bindings.end(), [](const auto& binding) {
+        return binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
+    });
+}
+
 }
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), htileClear(htileClear), deferredCompute(compute), deferredSnapshots(snapshots) {
@@ -2008,6 +2015,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     // buffers need (a synchronous draw's use would not).
     guestMemory.AllowDeviceStaging();
     guestMemory.AllowCopyBackDeferral();
+    if (BindsGuestRangesOnly(compute) && !htileClear.has_value()) guestMemory.AllowKeptCopyBacks();
     static const std::uint64_t addressStagingMinThreads = [] {
         const char* value = std::getenv("APS5_BDA_STAGING_MIN_THREADS");
         return value != nullptr ? std::strtoull(value, nullptr, 10) : 512ull;
@@ -3060,6 +3068,7 @@ void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
     stagedBytes = guestMemory.StagedBytes();
+    guestMemory.StagedShadows(stagedShadows);
     reusable = false;
     importsReconcilable = false;
     spaceReuse = false;
@@ -5105,18 +5114,22 @@ void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> reso
         entries.pop_back();
     }
     if (entries.front().second->StagedBytes() != 0) {
+        std::unordered_set<const void*> counted;
         std::uint64_t staged = 0;
-        for (const auto& entry : entries) staged += entry.second->StagedBytes();
-        for (auto it = std::prev(entries.end()); staged > StagedByteBudget() && it != entries.begin();) {
-            const auto bytes = it->second->StagedBytes();
-            if (bytes == 0) {
-                --it;
+        for (auto it = entries.begin(); it != entries.end();) {
+            std::uint64_t added = 0;
+            for (const auto& [shadow, bytes] : it->second->StagedShadows()) {
+                if (!counted.contains(shadow)) added += bytes;
+            }
+            if (it != entries.begin() && added != 0 && staged + added > StagedByteBudget()) {
+                if (evicted != nullptr) evicted->push_back(std::move(it->second));
+                index.erase(it->first);
+                it = entries.erase(it);
                 continue;
             }
-            staged -= bytes;
-            if (evicted != nullptr) evicted->push_back(std::move(it->second));
-            index.erase(it->first);
-            it = std::prev(entries.erase(it));
+            for (const auto& [shadow, bytes] : it->second->StagedShadows()) counted.insert(shadow);
+            staged += added;
+            ++it;
         }
     }
     if (entries.front().second->TableElements() == 0) return;

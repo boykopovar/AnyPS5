@@ -152,7 +152,7 @@ void AlternatingBuilds(AgcDriver::VulkanDevice& device, const GuestBlock& block,
     }
     Require(since.elided == Pairs * 2u - 1u, "staging handover: two alternating programs elided " + std::to_string(since.elided) + " copy-backs, expected 5");
     Require(since.landed == 1, "staging handover: two alternating programs landed " + std::to_string(since.landed) + " copy-backs, expected 1");
-    Require(since.redirected >= 1, "staging handover: no copy-in of two alternating programs read the other program's shadow");
+    Require(since.skipped + since.redirected == Pairs * 2u - 1u, "staging handover: two alternating programs read " + std::to_string(since.skipped + since.redirected) + " copy-ins from the previous shadow, expected 5");
 }
 
 void UnwrittenBytesBetween(AgcDriver::VulkanDevice& device, bool active) {
@@ -197,7 +197,7 @@ void FailingTaker(AgcDriver::VulkanDevice& device, bool active) {
     ExpectLanes(block.Words(), 1, 0, "a dispatch whose successor failed after reading its shadow");
     const auto since = counts.Since();
     if (active) {
-        Require(since.taken == 1 && since.redirected == 1, "staging handover: the failing dispatch took " + std::to_string(since.taken) + " handovers and redirected " + std::to_string(since.redirected) + " copy-ins, expected 1 and 1");
+        Require(since.taken == 1 && since.skipped + since.redirected == 1, "staging handover: the failing dispatch took " + std::to_string(since.taken) + " handovers and read " + std::to_string(since.skipped + since.redirected) + " copy-ins from the previous shadow, expected 1 and 1");
         Require(since.elided == 0 && since.landed == 1, "staging handover: after a failing taker " + std::to_string(since.elided) + " copy-backs were elided and " + std::to_string(since.landed) + " landed, expected 0 and 1");
     }
     device.Dispatch(addOne, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(AddOne.data()));

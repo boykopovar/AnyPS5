@@ -6260,6 +6260,66 @@ std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes,
     }
 }
 
+struct ShadowKey {
+    VkDevice device;
+    std::uint64_t begin;
+    std::uint64_t end;
+    VkBufferUsageFlags usage;
+    auto operator<=>(const ShadowKey&) const = default;
+};
+
+struct ShadowRegistry {
+    std::mutex mutex;
+    std::map<ShadowKey, std::weak_ptr<Buffer>> shadows;
+};
+
+ShadowRegistry& Shadows() {
+    static auto* registry = new ShadowRegistry;
+    return *registry;
+}
+
+std::atomic<std::uint64_t> sharedShadowHits{0};
+
+bool sharedShadowsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_SHARED_STAGING_SHADOWS") == nullptr;
+    return enabled;
+}
+
+std::shared_ptr<Buffer> liveSharedShadow(const ShadowKey& key) {
+    auto& registry = Shadows();
+    std::lock_guard lock(registry.mutex);
+    const auto found = registry.shadows.find(key);
+    return found != registry.shadows.end() ? found->second.lock() : nullptr;
+}
+
+std::shared_ptr<Buffer> sharedStagingBuffer(const Context& context, std::uint64_t begin, std::uint64_t end, VkBufferUsageFlags usage) {
+    const ShadowKey key{context.device, begin, end, usage};
+    if (auto live = liveSharedShadow(key)) {
+        sharedShadowHits.fetch_add(1, std::memory_order_relaxed);
+        return live;
+    }
+    auto made = stagingBuffer(context, static_cast<std::size_t>(end - begin), usage);
+    if (made == nullptr) return nullptr;
+    auto* shadow = made.get();
+    std::shared_ptr<Buffer> shared(shadow, [owner = std::move(made), key](Buffer*) mutable {
+        owner.reset();
+        auto& registry = Shadows();
+        std::lock_guard lock(registry.mutex);
+        if (const auto found = registry.shadows.find(key); found != registry.shadows.end() && found->second.expired()) registry.shadows.erase(found);
+    });
+    auto& registry = Shadows();
+    std::shared_ptr<Buffer> raced;
+    {
+        std::lock_guard lock(registry.mutex);
+        auto& slot = registry.shadows[key];
+        raced = slot.lock();
+        if (raced == nullptr) slot = shared;
+    }
+    if (raced == nullptr) return shared;
+    sharedShadowHits.fetch_add(1, std::memory_order_relaxed);
+    return raced;
+}
+
 // APS5_TRACE_STAGING=1: every distinct staged range once, with its size and whether an atomic
 // element lies in it, to see which elements the staging window admits at a stage.
 void traceStaged(std::uint64_t begin, std::uint64_t end, bool atomic) {
@@ -6316,6 +6376,12 @@ void reportStaging() {
     const auto out = stats.stagedOutBytes.load() + handover.landedBytes;
     AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging: %llu regions staged device-local (%llu with atomics, %llu of reused builds), %.0f KiB copied in, %.0f KiB copied back, %llu without copy-back, %llu shadows refused, %llu MiB in live shadows (limit %llu MiB); last 10 s: %llu regions, %.0f KiB in, %.0f KiB back\n", static_cast<unsigned long long>(staged), static_cast<unsigned long long>(stats.stagedAtomic.load()), static_cast<unsigned long long>(stats.stagedReused.load()), in / 1024.0, out / 1024.0, static_cast<unsigned long long>(stats.stagedLost.load()), static_cast<unsigned long long>(stats.stagingRefused.load()), static_cast<unsigned long long>(liveShadowBytes.load() >> 20u), static_cast<unsigned long long>(liveShadowLimit.load() >> 20u), static_cast<unsigned long long>(staged - lastStaged), (in - lastIn) / 1024.0, (out - lastOut) / 1024.0);
     AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging handover: %llu uses took pending copy-backs over, %llu copy-ins skipped and %llu redirected (%.0f KiB not read from imports), %llu copy-backs elided (%.0f KiB), %llu landed (%.0f KiB)\n", static_cast<unsigned long long>(handover.taken), static_cast<unsigned long long>(handover.skipped), static_cast<unsigned long long>(handover.redirected), handover.forwardedBytes / 1024.0, static_cast<unsigned long long>(handover.elided), handover.elidedBytes / 1024.0, static_cast<unsigned long long>(handover.landed), handover.landedBytes / 1024.0);
+    std::string landings;
+    for (std::size_t site = 0; site < Recorder::LandingSites; ++site) {
+        if (handover.landedAt[site] == 0) continue;
+        landings += (landings.empty() ? "" : ", ") + std::to_string(handover.landedAt[site]) + " by " + Recorder::LandingSiteName(static_cast<Recorder::LandingSite>(site));
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] staging landings: %s; %llu shadows shared with an earlier build, %llu MiB in live shadows\n", landings.empty() ? "none" : landings.c_str(), static_cast<unsigned long long>(sharedShadowHits.load(std::memory_order_relaxed)), static_cast<unsigned long long>(liveShadowBytes.load(std::memory_order_relaxed) >> 20u));
     lastStaged = staged;
     lastIn = in;
     lastOut = out;
@@ -6369,6 +6435,7 @@ bool GuestBufferMemory::StagingDecisionsCurrent() const {
     for (const auto& region : regions) {
         if (region.unstaged && region.direct != nullptr) {
             const auto bytes = static_cast<std::size_t>(region.end - region.begin);
+            if (sharesShadows() && liveSharedShadow({context.device, region.begin, region.end, gpuCopyUsage(context, false)}) != nullptr) return false;
             if (deviceLocalHasRoom(context, bytes) && liveShadowBytes.load(std::memory_order_relaxed) + bytes <= liveShadowLimit.load(std::memory_order_relaxed) / 4u * 3u) return false;
             continue;
         }
@@ -6384,6 +6451,44 @@ std::uint64_t GuestBufferMemory::StagedBytes() const {
         if (region.gpuCopy && region.deviceLocal) bytes += (region.end - region.begin) * (changedCopyBacks(context) ? 2u : 1u);
     }
     return bytes;
+}
+
+void GuestBufferMemory::StagedShadows(std::vector<std::pair<const void*, std::uint64_t>>& shadows) const {
+    shadows.clear();
+    for (const auto& region : regions) {
+        if (!region.gpuCopy || !region.deviceLocal) continue;
+        const auto bytes = region.end - region.begin;
+        shadows.emplace_back(region.buffer != nullptr ? static_cast<const void*>(region.buffer.get()) : static_cast<const void*>(&region), bytes);
+        if (changedCopyBacks(context)) shadows.emplace_back(region.shadowCopy != nullptr ? static_cast<const void*>(region.shadowCopy.get()) : static_cast<const void*>(&region.shadowCopy), bytes);
+    }
+}
+
+bool GuestBufferMemory::sharesShadows() const {
+    return copyBackDeferral && sharedShadowsEnabled() && !HoldsLease();
+}
+
+std::shared_ptr<Buffer> GuestBufferMemory::stagingShadow(Region& region, VkBufferUsageFlags usage) const {
+    region.sharedShadow = sharesShadows();
+    return region.sharedShadow ? sharedStagingBuffer(context, region.begin, region.end, usage) : stagingBuffer(context, static_cast<std::size_t>(region.end - region.begin), usage);
+}
+
+void GuestBufferMemory::KeepCopiedBytes(Recorder& recorder, const void* owner) const {
+    std::size_t own = 0;
+    for (const auto& region : regions) {
+        if (region.buffer == nullptr) continue;
+        const auto bytes = static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
+        if (region.sharedShadow && region.gpuCopy && region.deviceLocal) recorder.KeepBytes(region.buffer.get(), bytes);
+        else own += bytes;
+    }
+    recorder.KeepBytes(owner, own);
+}
+
+bool GuestBufferMemory::CopyBackReach(std::vector<std::pair<std::uint64_t, std::uint64_t>>& touched) const {
+    touched.clear();
+    if (!keptCopyBacks || !Recorder::StagingHandoverEnabled() || HoldsLease()) return false;
+    for (const auto& region : regions) touched.emplace_back(region.begin, region.end);
+    touched.insert(touched.end(), writes.begin(), writes.end());
+    return true;
 }
 
 bool GuestBufferMemory::stagingWanted(const Region& region, bool addressable) const {
@@ -6574,7 +6679,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             const bool misaligned = !bindableInPlace(HostImportOffset(*entry, region.begin), addressable);
             if (staged) {
                 const auto allocateStart = std::chrono::steady_clock::now();
-                region.buffer = stagingBuffer(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(context, addressable));
+                region.buffer = stagingShadow(region, gpuCopyUsage(context, addressable));
                 if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
                 if (region.buffer == nullptr) {
                     // No shadow to be had: in place when aligned, else the host copy below.
@@ -7047,7 +7152,10 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     std::vector<Recorder::RunAccess> runAccesses;
     const auto runKey = Recorder::DispatchOverlapEnabled() && recorder->RunOpen() ? Recorder::PeekUnorderedDispatch() : 0u;
     if (runKey != 0) RunAccesses(runAccesses);
-    const bool joinsRun = runKey != 0 && recorder->JoinsRun(runKey, this, runAccesses);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> touched;
+    Recorder::CopyBackReach reach{0, CopyBackReach(touched), true, {}};
+    reach.touched = touched;
+    const bool joinsRun = runKey != 0 && recorder->JoinsRun(runKey, this, runAccesses, reach);
     constexpr auto unclaimed = std::numeric_limits<std::size_t>::max();
     std::vector<Recorder::StagedClaim> claims;
     std::vector<std::size_t> claimOf(copies.size(), unclaimed);
@@ -7068,7 +7176,8 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         }
     }
     const auto claimFor = [&](std::size_t index) -> const Recorder::StagedClaim* { return handoverToken != 0 && claimOf[index] != unclaimed && claims[claimOf[index]].shadow != nullptr ? &claims[claimOf[index]] : nullptr; };
-    const auto commands = joinsRun ? recorder->RunCommands(runKey, this, runAccesses, inRun, &covered) : recorder->CommandsKeeping(handoverToken, &covered);
+    reach.taker = handoverToken;
+    const auto commands = joinsRun ? recorder->RunCommands(runKey, this, runAccesses, inRun, &covered, reach) : recorder->CommandsKeeping(reach, &covered);
     const auto untouched = [&](std::size_t index) {
         const auto* claim = claimFor(index);
         return claim != nullptr && claim->shadow.get() == copies[index]->buffer.get() && claim->forwarded.size() == 1 && claim->forwarded.front().first == claim->begin && claim->forwarded.front().second == claim->end;
@@ -7144,7 +7253,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         if (region->buffer == nullptr) {
             // Not made by UploadPrepare (the registry was stale then): made here, under the lock.
             const auto allocateStart = std::chrono::steady_clock::now();
-            if (region->deviceLocal) region->buffer = stagingBuffer(context, static_cast<std::size_t>(bytes), gpuCopyUsage(context, addressable));
+            if (region->deviceLocal) region->buffer = stagingShadow(*region, gpuCopyUsage(context, addressable));
             if (region->buffer == nullptr) {
                 // Or no shadow to be had: a host copy serves the region instead, aligned or not.
                 region->deviceLocal = false;
@@ -8014,6 +8123,14 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
     if (state.device != proof.device) return false;
     if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
     return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
+}
+
+std::uint64_t LiveStagingShadowBytes() {
+    return liveShadowBytes.load(std::memory_order_relaxed);
+}
+
+std::uint64_t SharedStagingShadowHits() {
+    return sharedShadowHits.load(std::memory_order_relaxed);
 }
 
 void SetDeviceLocalFullForTests(bool full) {

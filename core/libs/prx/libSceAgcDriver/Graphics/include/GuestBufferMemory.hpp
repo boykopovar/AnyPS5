@@ -220,6 +220,8 @@ void SetDeviceLocalFullForTests(bool full);
 bool DeviceLocalFullForTests();
 std::uint64_t StagingShadowsRefused();
 std::uint64_t StagingShadowLimit();
+std::uint64_t LiveStagingShadowBytes();
+std::uint64_t SharedStagingShadowHits();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -368,6 +370,9 @@ public:
     // guest memory by that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
     void AllowCopyBackDeferral() { copyBackDeferral = true; }
+    void AllowKeptCopyBacks() { keptCopyBacks = true; }
+    bool CopyBackReach(std::vector<std::pair<std::uint64_t, std::uint64_t>>& touched) const;
+    void KeepCopiedBytes(Recorder& recorder, const void* owner) const;
     std::uint64_t HandoverToken() const { return handoverToken; }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
@@ -382,6 +387,7 @@ public:
     void RecordStagingCopies(Recorder& recorder);
     bool StagingDecisionsCurrent() const;
     std::uint64_t StagedBytes() const;
+    void StagedShadows(std::vector<std::pair<const void*, std::uint64_t>>& shadows) const;
     void AddSnapshot(const GuestMemorySnapshot& snapshot);
     // Upload is the two stages below back to back. UploadPrepare needs no device lock: it merges the
     // regions, binds the image mirrors and host imports that already serve them (an import pointer is
@@ -529,6 +535,7 @@ private:
         VkDeviceAddress copySourceAddress = 0;
         bool copiedBack = false;
         std::shared_ptr<Buffer> shadowCopy;
+        bool sharedShadow = false;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
         bool swept = false;
@@ -596,12 +603,15 @@ private:
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     bool defersCopyBacks() const;
+    bool sharesShadows() const;
+    std::shared_ptr<Buffer> stagingShadow(Region& region, VkBufferUsageFlags usage) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writtenWithin(std::uint64_t begin, std::uint64_t end) const;
     void takeHeapReferences();
     void releaseHeapReferences() noexcept;
     Context context;
     bool stagingAllowed = false;
     bool copyBackDeferral = false;
+    bool keptCopyBacks = false;
     std::uint64_t handoverToken = 0;
     bool addressStaging = true;
     bool adjustedRegions = false;

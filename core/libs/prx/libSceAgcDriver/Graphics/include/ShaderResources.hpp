@@ -306,6 +306,8 @@ public:
     std::span<const std::byte> AddressTableBytes() const;
     bool AddressTableGuardCurrent();
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
+    void KeepCopiedBytes(Recorder& recorder) const { guestMemory.KeepCopiedBytes(recorder, this); }
+    bool CopyBackReach(std::vector<std::pair<std::uint64_t, std::uint64_t>>& touched) const { return guestMemory.CopyBackReach(touched); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
     // Whether a region the recorded work reads in place through a host import overlaps the range.
@@ -324,6 +326,7 @@ public:
     bool HoldsReleasedTexture() const;
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }
     std::uint64_t StagedBytes() const { return stagedBytes; }
+    const std::vector<std::pair<const void*, std::uint64_t>>& StagedShadows() const { return stagedShadows; }
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
@@ -519,6 +522,7 @@ private:
     std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     std::array<std::uint32_t, 2> tableElements{};
     std::uint64_t stagedBytes = 0;
+    std::vector<std::pair<const void*, std::uint64_t>> stagedShadows;
     std::array<std::size_t, 2> storageTableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
