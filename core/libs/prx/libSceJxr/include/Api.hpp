@@ -84,7 +84,7 @@ void APS5_VABI useLPQuantizer_nid_postfix(void* codec, std::size_t count, std::s
 std::int32_t APS5_VABI getDCACPredMode_nid_postfix(void* codec, std::size_t column);
 void APS5_VABI updatePredInfo_nid_postfix(void* codec, void* macroblock, std::size_t column, std::int32_t format);
 
-int APS5_VABI AllocateCodingContextDec_nid_postfix();
+std::int32_t APS5_VABI AllocateCodingContextDec_nid_postfix(void* codec, std::int32_t count);
 std::int64_t APS5_VABI CloseWS_List_nid_postfix(Jxr::Stream** stream);
 std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* buffer, std::size_t size);
 std::int64_t APS5_VABI CreateWS_List_nid_postfix(Jxr::Stream** stream);

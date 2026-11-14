@@ -767,7 +767,7 @@ int APS5_VABI HMAC_Update_nid_postfix(HmacContext* context, const unsigned char*
 void APS5_VABI OBJ_cleanup_nid_postfix(void);
 int APS5_VABI OBJ_create_nid_postfix(const char* oid, const char* shortName, const char* longName);
 const char* APS5_VABI OBJ_nid2sn_nid_postfix(int nid);
-int APS5_VABI OBJ_obj2nid_nid_postfix(void);
+int APS5_VABI OBJ_obj2nid_nid_postfix(const LibreSslAsn1Object* object);
 int APS5_VABI OBJ_sn2nid_nid_postfix(const char* name);
 void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response);
 void APS5_VABI OCSP_RESPONSE_free_nid_postfix(LibreSslOcspResponse* response);
@@ -956,7 +956,7 @@ int APS5_VABI X509_load_crl_file_nid_postfix(void);
 int APS5_VABI X509_print_ex_nid_postfix(void);
 int APS5_VABI X509_verify_cert_nid_postfix(void);
 const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t error);
-int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void);
+LibreSslOcspResponse* APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(LibreSslOcspResponse** response, const unsigned char** input, std::int64_t length);
 void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output);
 void* APS5_VABI d2i_PKCS12_fp_nid_postfix(FileStream* stream, void** output);
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length);
