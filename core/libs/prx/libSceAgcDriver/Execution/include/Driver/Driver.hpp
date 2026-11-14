@@ -88,6 +88,7 @@ public:
     bool Settled();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
+    bool VideoOutputRegistered(std::uint32_t handle);
     void AttachWindow(const PresentationWindow& window);
     void Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context);
     void TracePresent(std::uint32_t width, std::uint32_t height);

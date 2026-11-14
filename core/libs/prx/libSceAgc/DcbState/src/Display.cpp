@@ -11,6 +11,7 @@
 extern "C" {
 
 uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_handle, int32_t display_buffer_index, uint32_t flip_mode, int64_t flip_arg) {
+    if (buf != nullptr && !AgcDriverVideoOutputRegistered_nid_postfix(video_out_handle)) return nullptr;
     auto* packet = Agc::Command::Allocate(buf, AgcDriver::FlipPacketWords, __func__);
     packet[0] = AgcDriver::FlipPacketHeader;
     packet[1] = video_out_handle;

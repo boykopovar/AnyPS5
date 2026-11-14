@@ -72,6 +72,7 @@ std::uint32_t APS5_VABI sceAgcAcbRewindGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, std::uint32_t videoOutHandle, std::uint32_t displayBufferIndex) {
+    if (buf != nullptr && !AgcDriverVideoOutputRegistered_nid_postfix(videoOutHandle)) return nullptr;
     auto* packet = Agc::Command::Allocate(buf, AgcDriver::RenderingWaitPacketWords, __func__);
     packet[0] = AgcDriver::RenderingWaitPacketHeader;
     packet[1] = videoOutHandle;
@@ -81,6 +82,7 @@ std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, 
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t videoOutHandle, std::int32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg) {
+    if (buf != nullptr && !AgcDriverVideoOutputRegistered_nid_postfix(videoOutHandle)) return nullptr;
     auto* packet = Agc::Command::Allocate(buf, AgcDriver::FlipPacketWords, __func__);
     packet[0] = AgcDriver::FlipPacketHeader;
     packet[1] = videoOutHandle;
