@@ -9,11 +9,12 @@ int APS5_VABI _Atthreadexit_nid_postfix();
 int APS5_VABI _CStrftime_nid_postfix();
 int APS5_VABI _CStrxfrm_nid_postfix();
 int APS5_VABI _CWcsxfrm_nid_postfix();
-int APS5_VABI _Call_onceEx_nid_postfix();
+void APS5_VABI _Call_onceEx_nid_postfix(std::int32_t* flag,
+                                      void (APS5_VABI *callback)(void*), void* argument);
 int APS5_VABI _Closreg_nid_postfix();
 int APS5_VABI _Daysto_nid_postfix(int year, int month);
 int APS5_VABI _Deletegloballocale_nid_postfix();
-int APS5_VABI _Do_call_nid_postfix();
+void APS5_VABI _Do_call_nid_postfix(void* target);
 int APS5_VABI _Fac_tidy_nid_postfix();
 int APS5_VABI _Fail_s_nid_postfix();
 int APS5_VABI _Fgpos_nid_postfix();
