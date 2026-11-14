@@ -4,6 +4,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -67,33 +69,71 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     if (!initialized) return NOT_INITIALIZED;
     if (!source || !sourceLength || !destination || !requestId || !destinationLength ||
         destinationLength > 65536 || destinationLength % 2048 != 0) return INVALID_ARGUMENT;
-    std::uint64_t testProbe = 0;
-    const int savedErrnoProbe = errno;
-    const bool probeSuccess = GuestCopyOut_nid_no_patch(requestId, &testProbe, sizeof(testProbe));
-    errno = savedErrnoProbe;
-    if (!probeSuccess) return INVALID_ARGUMENT;
     if (reinterpret_cast<std::uintptr_t>(destination) % 2048 != 0)
         throw std::runtime_error("sceZlibInflate: unaligned destination driver behavior is not implemented");
     if (nextId == std::numeric_limits<std::uint64_t>::max()) throw std::runtime_error("sceZlibInflate: request IDs exhausted");
+    const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source);
+    if (sourceLength > std::numeric_limits<std::uintptr_t>::max() - sourceAddress) return INVALID_ARGUMENT;
+    std::array<Bytef, 16384> inputBuffer{};
+    std::array<Bytef, 65536> outputBuffer{};
     z_stream stream{};
-    stream.next_in = const_cast<Bytef*>(static_cast<const Bytef*>(source));
-    stream.avail_in = sourceLength;
-    stream.next_out = static_cast<Bytef*>(destination);
+    stream.next_out = outputBuffer.data();
     stream.avail_out = destinationLength;
     if (inflateInit(&stream) != Z_OK) throw std::runtime_error("sceZlibInflate: decoder initialization failed");
-    const int decoded = inflate(&stream, Z_FINISH);
+    std::uint32_t supplied = 0;
+    bool invalidInput = false;
+    int decoded = Z_BUF_ERROR;
+    for (;;) {
+        if (stream.avail_in == 0 && supplied < sourceLength) {
+            const auto chunk = std::min<std::uint32_t>(sourceLength - supplied, inputBuffer.size());
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(inputBuffer.data(),
+                reinterpret_cast<const void*>(sourceAddress + supplied), chunk);
+            errno = savedErrno;
+            if (!copied) {
+                invalidInput = true;
+                break;
+            }
+            stream.next_in = inputBuffer.data();
+            stream.avail_in = chunk;
+            supplied += chunk;
+        }
+        const auto previousInput = stream.total_in;
+        const auto previousOutput = stream.total_out;
+        decoded = inflate(&stream, Z_FINISH);
+        if (decoded == Z_STREAM_END || (decoded != Z_OK && decoded != Z_BUF_ERROR) || stream.avail_out == 0 ||
+            (stream.avail_in == 0 && supplied == sourceLength)) break;
+        if (stream.total_in == previousInput && stream.total_out == previousOutput && stream.avail_in != 0) break;
+    }
     const auto produced = static_cast<std::uint32_t>(stream.total_out);
     const std::int32_t status = decoded == Z_STREAM_END ? 0 :
-        (decoded == Z_BUF_ERROR && stream.avail_out == 0 && stream.avail_in != 0 ? NO_SPACE : FATAL);
+        ((decoded == Z_OK || decoded == Z_BUF_ERROR) && stream.avail_out == 0 &&
+         (stream.avail_in != 0 || supplied < sourceLength) ? NO_SPACE : FATAL);
     const int ended = inflateEnd(&stream);
     if (ended != Z_OK) throw std::runtime_error("sceZlibInflate: decoder cleanup failed");
-    const std::uint64_t id = nextId++;
-    results[id] = InflateResult{produced, status};
-    completed.push_back(id);
-    completion.NotifyOne();
+    if (invalidInput) return INVALID_ARGUMENT;
     const int savedErrno = errno;
-    GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    const bool copiedOutput = GuestCopyOut_nid_no_patch(destination, outputBuffer.data(), produced);
     errno = savedErrno;
+    if (!copiedOutput) return INVALID_ARGUMENT;
+    const std::uint64_t id = nextId;
+    results.emplace(id, InflateResult{produced, status});
+    try {
+        completed.push_back(id);
+    } catch (...) {
+        results.erase(id);
+        throw;
+    }
+    const int savedIdErrno = errno;
+    const bool copiedId = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedIdErrno;
+    if (!copiedId) {
+        completed.pop_back();
+        results.erase(id);
+        return INVALID_ARGUMENT;
+    }
+    ++nextId;
+    completion.NotifyOne();
     return 0;
 }
 
