@@ -239,6 +239,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if path.startswith("/transfer-fields/"):
+            self.transfer_fields(path)
+            return
         if path.startswith("/sync/"):
             ready = stalled[path.removeprefix("/sync/")].wait(2)
             self.send_response(200 if ready else 500)
@@ -506,15 +509,82 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "embedded-space": "{n} 0, {n}",
             "embedded-tab": "{n}\t0, {n}",
         }
+        repeated = {
+            "repeat-exact": ["{n}", "{n}"],
+            "repeat-ows": ["{n}", " \t{n}\t "],
+            "repeat-zeros": ["{n}", "000{n}"],
+            "repeat-zeros-first": ["000{n}", "{n}"],
+            "repeat-list-second": ["{n}", "{n}, {n}"],
+            "repeat-list-first": ["{n}, {n}", "{n}"],
+            "repeat-two-lists": ["{n},{n}", "000{n}, {n}"],
+            "repeat-many": ["{n}", "000{n}", "{n}, {n}"],
+            "repeat-whitespace-lists": [" \t{n}\t,\t{n} ", "{n}"],
+            "repeat-different": ["{n}", "{other}"],
+            "repeat-mismatch-list": ["{n}", "{n}, {other}"],
+            "repeat-mismatch-first": ["{n}, {other}", "{n}"],
+            "repeat-mismatch-identical": ["{n}, {other}", "{n}, {other}"],
+            "repeat-empty-first": ["", "{n}"],
+            "repeat-empty-second": ["{n}", ""],
+            "repeat-signed": ["{n}", "+{n}"],
+            "repeat-overflow": ["{n}", "18446744073709551616"],
+            "repeat-suffix": ["{n}", "{n}x"],
+            "repeat-last": ["{n}", "000{n}", "{other}"],
+            "etag-duplicate": ["{n}", "{n}"],
+            "repeat-late-mismatch": ["{n}", "000{n}", "{other}" if start else "{n}"],
+        }
         self.send_response(206 if mode == "range" else 200)
         if mode == "range":
             self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
         self.send_header("ETag", '"length-v1"')
-        self.send_header("Content-Length", fields[name].format(n=len(body), other=len(body) + 1))
+        if name == "etag-duplicate":
+            self.send_header("ETag", '"length-v2"')
+        for value in repeated[name] if name in repeated else [fields[name]]:
+            self.send_header("Content-Length", value.format(n=len(body), other=len(body) + 1))
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
+
+    def transfer_fields(self, path):
+        _, _, mode, name, _ = path.split("/")
+        content = pathlib.Path("app0", "payload.bin").read_bytes() if mode != "empty" else b""
+        start = 0
+        end = len(content)
+        if mode == "range":
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+            assert match is not None
+            start, last = map(int, match.groups())
+            end = min(start + 512, last + 1, len(content))
+            if start:
+                assert self.headers.get("If-Range") == '"transfer-v1"'
+        body = content[start:end]
+        fields = {
+            "single": ["chunked"],
+            "case": ["ChUnKeD"],
+            "ows": [" \tchunked\t "],
+            "repeat": ["chunked", "chunked"],
+            "repeat-ows": ["chunked", " \tchunked\t "],
+            "repeat-field-case": ["chunked", "chunked"],
+            "triple": ["chunked", "chunked", "chunked"],
+            "joined": ["chunked, chunked"],
+            "mixed-case": ["chunked", "Chunked"],
+            "before": ["gzip", "chunked"],
+            "after": ["chunked", "gzip"],
+            "empty": ["chunked", ""],
+            "late-repeat": ["chunked", "chunked"] if start else ["chunked"],
+        }
+        self.send_response(206 if mode == "range" else 200)
+        if mode == "range":
+            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
+        self.send_header("ETag", '"transfer-v1"')
+        for index, value in enumerate(fields[name]):
+            field = "tRaNsFeR-EnCoDiNg" if name == "repeat-field-case" and index else "Transfer-Encoding"
+            self.send_header(field, value)
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if body:
+            self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
 
 with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handler) as destination:
     server.redirect_authority = destination.redirect_authority = f"127.0.0.1:{destination.server_port}"

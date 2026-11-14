@@ -333,7 +333,8 @@ endif()
 
 include(prx/libSceFreeType/BuildInfo.cmake)
 
-add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+include(${CMAKE_SOURCE_DIR}/cmake/PatchedRuntimeTargets.cmake)
+add_patched_runtime_targets(libs ${PATCHED_OUTPUTS})
 include(prx/libSceLibreSsl/ErrorQueue.cmake)
 include(prx/libSceLibreSsl/MemoryBio.cmake)
 include(prx/libSceLibreSsl/Cmac.cmake)
@@ -529,6 +530,16 @@ if(BUILD_TESTING)
         add_test(NAME nid_patcher_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_native_paths.py $<TARGET_FILE:nid_patcher>)
         set_tests_properties(nid_patcher_native_paths PROPERTIES TIMEOUT 20)
+        if(CMAKE_GENERATOR MATCHES "^Ninja")
+            add_test(NAME nid_patch_dependencies COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode graph
+                --build "${CMAKE_BINARY_DIR}" --ninja "${CMAKE_MAKE_PROGRAM}" --config "$<CONFIG>")
+            add_test(NAME nid_patch_dependencies_helper COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_patch_dependencies.py --mode helper
+                --cmake "${CMAKE_COMMAND}" --ninja "${CMAKE_MAKE_PROGRAM}"
+                --generator "${CMAKE_GENERATOR}" --config "$<CONFIG>")
+            set_tests_properties(nid_patch_dependencies nid_patch_dependencies_helper PROPERTIES TIMEOUT 20)
+        endif()
     endif()
     add_test_executable(patched_libraries_tests tests/PatchedLibraries.cpp)
     add_dependencies(patched_libraries_tests libs)
@@ -1647,6 +1658,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_gnm_neo_shaders PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
+    endif()
+
+    add_test_executable(guest_agc_driver_unknown_tests tests/GuestAgcDriverUnknown.cpp)
+    target_include_directories(guest_agc_driver_unknown_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_agc_driver_unknown_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(guest_agc_driver_unknown_tests)
+    add_test(NAME guest_agc_driver_unknown COMMAND guest_agc_driver_unknown_tests)
+    if(WIN32)
+        set_tests_properties(guest_agc_driver_unknown PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
     endif()
 
     add_test_executable(guest_gnm_neo_default_state_tests tests/GuestGnmNeoDefaultState.cpp)
