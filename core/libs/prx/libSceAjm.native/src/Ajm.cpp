@@ -797,10 +797,9 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
     const auto segmentEnded = [&] { return instance.gapless.totalSamples != 0 && instance.segmentSamples >= instance.gapless.totalSamples; };
     for (;;) {
-        if (segmentEnded()) break;
         if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input.data() + consumed, input.size() - consumed);
         const std::size_t needed = instance.superframeRemaining == 0 ? superframeSize : instance.superframeRemaining;
-        const bool roomForFrame = Resampling(instance) ? pcmOutputs.Room() >= channels * sampleBytes : pcmOutputs.Room() >= frameBytes;
+        const bool roomForFrame = segmentEnded() || (Resampling(instance) ? pcmOutputs.Room() >= channels * sampleBytes : pcmOutputs.Room() >= frameBytes);
         // A PS4 reports which side ran out (probe runs of a title's ATRAC9 stream through libSceAjm's
         // builders): PARTIAL_INPUT when the input ran out, on a superframe boundary or not, with room
         // left; NOT_ENOUGH_ROOM when the room ran out with input left, after however many frames (and
@@ -841,7 +840,6 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         EmitFrame(instance, pcmOutputs, pcm.data(), frameSamples, channels, sampleBytes);
         if (job.console && (job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
     }
-    if (segmentEnded()) instance.segmentSamples = 0;
 
     if (TraceEnabled()) {
         std::fprintf(stderr, "[ajm] instance %u run flags 0x%llx: %zu input bytes in %u buffers, %zu output bytes in %u buffers, sideband %llu bytes; superframe %d (%d frames), %d channels, %d samples/frame, %d Hz, config %02x %02x %02x %02x -> result 0x%x, decoder status 0x%x, %u frames, consumed %zu, produced %zu, total samples %llu, gapless total %u skip %u skipped %u, input",
@@ -2021,16 +2019,29 @@ int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) {
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) {
     if (!config_data || !config_info) return SCE_AJM_ERROR_INVALID_PARAMETER;
     std::uint8_t config[ATRAC9_CONFIG_DATA_SIZE];
-    std::memcpy(config, config_data, sizeof(config));
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(config, config_data, sizeof(config))) {
+        errno = savedErrno;
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     Atrac9CodecInfo info{};
     const bool valid = DescribeAt9Config(config, info);
     AJM_TRACE("[ajm] parse config %02x %02x %02x %02x -> %s, %d channels, %d Hz, superframe %d bytes (%d frames of %d samples)\n", config[0], config[1], config[2], config[3], valid ? "ok" : "invalid", info.channels, info.samplingRate, info.superframeSize, info.framesInSuperframe, info.frameSamples);
-    if (!valid) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    config_info->channels = static_cast<std::uint32_t>(info.channels);
-    config_info->sample_rate = static_cast<std::uint32_t>(info.samplingRate);
-    config_info->frame_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples);
-    config_info->superframe_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples * info.framesInSuperframe);
-    config_info->superframe_size = static_cast<std::uint32_t>(info.superframeSize);
+    if (!valid) {
+        errno = savedErrno;
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
+    AjmDecAt9ConfigDataInfo localConfigInfo{};
+    localConfigInfo.channels = static_cast<std::uint32_t>(info.channels);
+    localConfigInfo.sample_rate = static_cast<std::uint32_t>(info.samplingRate);
+    localConfigInfo.frame_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples);
+    localConfigInfo.superframe_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples * info.framesInSuperframe);
+    localConfigInfo.superframe_size = static_cast<std::uint32_t>(info.superframeSize);
+    const bool copied = GuestCopyOut_nid_no_patch(config_info, &localConfigInfo, sizeof(localConfigInfo));
+    errno = savedErrno;
+    if (!copied) {
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 

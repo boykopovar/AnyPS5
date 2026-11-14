@@ -124,8 +124,8 @@ void ResetScaleOutputs(float* w, float* h) {
 }
 
 void ResetDpiOutputs(std::uint32_t* hDpi, std::uint32_t* vDpi) {
-    if (hDpi) *hDpi = 0;
-    if (vDpi) *vDpi = 0;
+    if (hDpi) CopyOutGuest(hDpi, std::uint32_t{0});
+    if (vDpi) CopyOutGuest(vDpi, std::uint32_t{0});
 }
 
 void ResetWeightOutputs(float* weightXScale, float* weightYScale, std::uint32_t* mode) {
@@ -238,14 +238,21 @@ int APS5_VABI sceFontGetScalePoint(FontHandle fontHandle, float* w, float* h) {
 }
 
 int APS5_VABI sceFontGetResolutionDpi(FontHandle fontHandle, std::uint32_t* hDpi, std::uint32_t* vDpi) {
+    std::uint32_t localH = 0;
+    std::uint32_t localV = 0;
     const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) {
         if (!hDpi && !vDpi) return SCE_FONT_ERROR_INVALID_PARAMETER;
-        if (hDpi) *hDpi = font->style.dpi_x;
-        if (vDpi) *vDpi = font->style.dpi_y;
+        localH = font->style.dpi_x;
+        localV = font->style.dpi_y;
         return SCE_FONT_OK;
     });
-    if (rc != SCE_FONT_OK) ResetDpiOutputs(hDpi, vDpi);
-    return rc;
+    if (rc != SCE_FONT_OK) {
+        ResetDpiOutputs(hDpi, vDpi);
+        return rc;
+    }
+    if (hDpi && !CopyOutGuest(hDpi, localH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (vDpi && !CopyOutGuest(vDpi, localV)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetEffectSlant(FontHandle fontHandle, float* slantRatio) {
