@@ -620,12 +620,15 @@ int APS5_VABI sceAudio3dAudioOutOpen(uint32_t port_id, int user_id, std::int32_t
         const int handle = sceAudioOutOpen(user_id, type, index, len, freq, param);
         if (handle < 0) return handle;
         bool registered = false;
-        {
+        try {
             std::lock_guard lock(g_mutex);
             if (PortIsOpen(port_id)) {
                 g_port.audio_out_ports.emplace(handle, Audio3dAudioOut{AudioOutBufferBytes(len, param)});
                 registered = true;
             }
+        } catch (...) {
+            try { sceAudioOutClose(handle); } catch (...) {}
+            throw;
         }
         if (!registered) {
             sceAudioOutClose(handle);
