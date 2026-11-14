@@ -1,4 +1,7 @@
-set(LIBRESSL_ROOT ${CMAKE_SOURCE_DIR}/3rdparty/libressl-openbsd/src/lib/libcrypto)
+set(LIBRESSL_ROOT ${PROJECT_SOURCE_DIR}/3rdparty/libressl-openbsd/src/lib/libcrypto)
+if(NOT EXISTS ${LIBRESSL_ROOT}/asn1/a_strex.c OR NOT EXISTS ${LIBRESSL_ROOT}/objects/objects.txt)
+    message(FATAL_ERROR "libSceLibreSsl builds X509_NAME_print_ex from 3rdparty/libressl-openbsd; initialize it with git submodule update --init 3rdparty/libressl-openbsd")
+endif()
 set(LIBRESSL_GEN ${CMAKE_CURRENT_BINARY_DIR}/libressl-gen)
 set(LIBRESSL_INC ${LIBRESSL_GEN}/include)
 set(LIBRESSL_OPENSSL_INC ${LIBRESSL_INC}/openssl)
@@ -73,43 +76,11 @@ foreach(rel IN LISTS LIBRESSL_CRYPTO_SOURCES)
     list(APPEND LIBRESSL_SRC_FILES ${LIBRESSL_ROOT}/${rel})
 endforeach()
 
-set(LIBRESSL_EXTRACTED_SOURCES)
-set(LIBRESSL_INCLUDE_FLAGS)
-foreach(dir IN LISTS LIBRESSL_INCLUDE_DIRS)
-    list(APPEND LIBRESSL_INCLUDE_FLAGS -I${dir})
-endforeach()
-set(LIBRESSL_DEFINES -DLIBRESSL_INTERNAL -DOPENSSL_NO_ASM)
-set(LIBRESSL_COMMON_FLAGS
-    ${CMAKE_C_FLAGS}
-    -ffunction-sections -fdata-sections
-    -include libressl_port.h
-    ${LIBRESSL_DEFINES}
-    ${LIBRESSL_INCLUDE_FLAGS})
-
-foreach(pair IN ITEMS "asn1/t_x509.c;X509_NAME_print" "asn1/asn1_par.c;ASN1_tag2str")
-    list(GET pair 0 rel)
-    list(GET pair 1 keep)
-    get_filename_component(name ${rel} NAME_WE)
-    set(obj ${LIBRESSL_GEN}/${name}.o)
-    set(full ${LIBRESSL_GEN}/${name}.full.o)
-    add_custom_command(
-        OUTPUT ${obj}
-        COMMAND ${CMAKE_C_COMPILER} -c ${LIBRESSL_COMMON_FLAGS}
-            -fno-asynchronous-unwind-tables -fno-unwind-tables
-            -o ${full} ${LIBRESSL_ROOT}/${rel}
-        COMMAND ${CMAKE_LINKER} -r --gc-sections -u ${keep} -o ${obj} ${full}
-        DEPENDS ${LIBRESSL_ROOT}/${rel} ${LIBRESSL_OPENSSL_INC}/obj_mac.h
-            ${LIBRESSL_OPENSSL_INC}/obj_dat.h
-        COMMENT "Extracting ${keep} from ${rel}"
-        WORKING_DIRECTORY ${LIBRESSL_GEN})
-    list(APPEND LIBRESSL_EXTRACTED_SOURCES ${obj})
-endforeach()
-
 add_library(libressl_crypto STATIC EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/libressl/libressl_port.c
     ${CMAKE_CURRENT_SOURCE_DIR}/libressl/glue.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libressl/x509_name_print.c
     ${LIBRESSL_SRC_FILES}
-    ${LIBRESSL_EXTRACTED_SOURCES}
     ${LIBRESSL_OPENSSL_INC}/obj_mac.h
     ${LIBRESSL_OPENSSL_INC}/obj_dat.h)
 

@@ -5,8 +5,10 @@
 #include <openssl/objects.h>
 #include <openssl/stack.h>
 #include <openssl/x509.h>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <new>
 #include <vector>
 
 namespace {
@@ -56,16 +58,26 @@ bool PartialCharacter(const X509_NAME_ENTRY* entry, unsigned long flags) {
     return value && value->length % CharacterWidth(value->type) != 0 && ReachesCharacterDecoder(entry, flags);
 }
 
+int ReadableEntries(const X509_NAME* name) {
+    if (!name->entries) return 0;
+    return std::max(0, std::min(sk_X509_NAME_ENTRY_num(name->entries), name->entries->stack.num_alloc));
+}
+
 class RejectedPartialCharacters {
 public:
     RejectedPartialCharacters(const X509_NAME* name, unsigned long flags) {
-        const int count = sk_X509_NAME_ENTRY_num(name->entries);
+        const int count = ReadableEntries(name);
         bool partial = false;
         for (int index = 0; index < count && !partial; ++index)
             partial = PartialCharacter(sk_X509_NAME_ENTRY_value(name->entries, index), flags);
         if (!partial) return;
-        entries_.reserve(static_cast<std::size_t>(count));
-        values_.reserve(static_cast<std::size_t>(count));
+        try {
+            entries_.reserve(static_cast<std::size_t>(count));
+            values_.reserve(static_cast<std::size_t>(count));
+        } catch (const std::bad_alloc&) {
+            failed_ = true;
+            return;
+        }
         stack_ = sk_X509_NAME_ENTRY_new_null();
         if (!stack_) {
             failed_ = true;
