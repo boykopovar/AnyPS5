@@ -1283,6 +1283,12 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_executable_exports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_executable_exports.py $<TARGET_FILE:relinker>)
     set_tests_properties(macos_executable_exports PROPERTIES TIMEOUT 30 LABELS relinker)
+    add_test(NAME macos_sce_relro COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_sce_relro.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_sce_relro PROPERTIES TIMEOUT 30 LABELS relinker)
+    add_test(NAME macos_exec_segment_fixups COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_exec_segment_fixups.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_exec_segment_fixups PROPERTIES TIMEOUT 60 LABELS relinker)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
@@ -1290,7 +1296,7 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_code_signature.py $<TARGET_FILE:relinker>)
     set_tests_properties(macos_code_signature PROPERTIES TIMEOUT 60 LABELS relinker)
     if(APPLE)
-        set_tests_properties(macos_trace_imports macos_guest_weak_exports macos_executable_exports macos_guest_weak_imports
+        set_tests_properties(macos_trace_imports macos_guest_weak_exports macos_executable_exports macos_guest_weak_imports macos_sce_relro macos_exec_segment_fixups
             macos_code_signature PROPERTIES RUN_SERIAL TRUE)
     endif()
 endif()
