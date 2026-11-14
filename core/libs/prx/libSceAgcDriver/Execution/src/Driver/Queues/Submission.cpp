@@ -503,30 +503,45 @@ void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
     changed.notify_all();
 }
 
-void Driver::holdFlipBehindWorker(const Submission& submission, bool cpuFlip) {
-    if (submission.queue != 0 || onWorkerThread()) return;
+bool Driver::holdFlipBehindWorker(const Submission& submission, bool cpuFlip) {
+    if (submission.queue != 0 || onWorkerThread()) return false;
     bool candidate = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !candidate; cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto words = std::span(submission.commands).subspan(cursor);
         candidate = words[0] == FlipPacketHeader || EopRelease(words);
     }
-    if (!candidate) return;
+    if (!candidate) return false;
     std::unique_lock lock(mutex);
     bool flips = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !flips; cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto words = std::span(submission.commands).subspan(cursor);
         flips = words[0] == FlipPacketHeader || (EopRelease(words) && eopFlips.contains(words[7]));
     }
-    if (!flips) return;
+    if (!flips) return false;
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
     changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
     flipHolders.fetch_sub(1, std::memory_order_acq_rel);
-    if (cpuFlip || failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) != 0) return;
+    return !cpuFlip && !(failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested()) && flipsAhead.load(std::memory_order_acquire) == 0;
+}
+
+bool Driver::flipWorkDone(const std::shared_ptr<FlipWork>& work) {
+    if (work == nullptr) return true;
+    if (!work->finished || !flipWorkDone(work->previous)) return false;
+    if (work->previous != nullptr) {
+        work->serial = std::max(work->serial, work->previous->serial);
+        work->previous.reset();
+    }
+    return true;
+}
+
+void Driver::holdFlipBehindWork(const std::shared_ptr<FlipWork>& earlier) {
+    if (earlier == nullptr) return;
+    std::unique_lock lock(mutex);
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
-    changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkOpen.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
+    changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkDone(earlier) || queue0AwaitsTitle.load(std::memory_order_acquire); });
     flipHolders.fetch_sub(1, std::memory_order_acq_rel);
-    if (failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkOpen.load(std::memory_order_acquire) != 0) return;
-    const auto workSerial = flipWorkSerial.load(std::memory_order_acquire);
+    if (failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || !flipWorkDone(earlier)) return;
+    const auto workSerial = earlier->serial;
     lock.unlock();
     waitFlipWork(workSerial);
 }
@@ -562,10 +577,13 @@ void Driver::releaseFlipHold() {
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
 
-void Driver::finishFlipWork(std::uint64_t workSerial) {
+void Driver::finishFlipWork(const std::shared_ptr<FlipWork>& work, std::uint64_t workSerial) {
     std::lock_guard lock(mutex);
-    if (workSerial > flipWorkSerial.load(std::memory_order_relaxed)) flipWorkSerial.store(workSerial, std::memory_order_release);
-    flipWorkOpen.fetch_sub(1, std::memory_order_acq_rel);
+    if (work != nullptr) {
+        work->serial = std::max(work->serial, workSerial);
+        work->finished = true;
+        flipWorkDone(work);
+    }
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
 
@@ -766,7 +784,8 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     readRegisterLists(submission);
     if (APS5_ENABLE_TIMING_LOG) submission.validatedAt = std::chrono::steady_clock::now();
     waitForFlipRoom(submission);
-    holdFlipBehindWorker(submission, cpuFlip);
+    const bool holdsWork = holdFlipBehindWorker(submission, cpuFlip);
+    std::shared_ptr<FlipWork> earlierFlipWork;
     const auto scan = ReferencedPrograms(submission.commands, submission.registerLists);
     if (!scan.complete || submission.rewindTail != nullptr) {
         AwaitRegistrationPreparation();
@@ -826,7 +845,10 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         if (queue == 0 && !submission.flips.empty()) {
             submission.holdsFlip = true;
             flipsAhead.fetch_add(1, std::memory_order_acq_rel);
-            flipWorkOpen.fetch_add(1, std::memory_order_acq_rel);
+            submission.flipWork = std::make_shared<FlipWork>();
+            submission.flipWork->previous = lastFlipWork;
+            if (holdsWork) earlierFlipWork = lastFlipWork;
+            lastFlipWork = submission.flipWork;
         }
         if (!submission.flips.empty()) ++flipSubmissionsOfThread();
         enqueue(std::move(submission));
@@ -853,6 +875,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         }
         CheckFailure();
     }
+    holdFlipBehindWork(earlierFlipWork);
 }
 
 void Driver::SuspendPoint() {
