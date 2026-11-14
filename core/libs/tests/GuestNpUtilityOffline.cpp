@@ -1,5 +1,6 @@
 #include "prx/libSceNpUtility/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -74,6 +75,9 @@ void CheckWordFilter() {
     const int context = sceNpWordFilterCreateTitleCtx(selfNpId);
     Require(context == WordFilterTitleCtxBase + 1, "sceNpWordFilterCreateTitleCtx", "the first word filter context is not 0x01000001");
     Require(sceNpWordFilterCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpWordFilterCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpWordFilterCreateAsyncRequest", "errno was not preserved");
     Require(sceNpWordFilterCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpWordFilterCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpWordFilterCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpWordFilterCreateAsyncRequest", "an unknown context was taken");
     const int sync = sceNpWordFilterCreateRequest(context);
@@ -103,6 +107,12 @@ void CheckWordFilter() {
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, &result) == InvalidArgument, "sceNpWordFilterSanitizeComment", "an option was taken");
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, nullptr) == 0, "sceNpWordFilterSanitizeComment", "the asynchronous request did not start");
     Require(sceNpWordFilterPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpWordFilterPollAsync", "the request did not finish with SIGNED_OUT");
+    errno = 71;
+    Require(sceNpWordFilterPollAsync(async, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpWordFilterPollAsync", "unwritable result was taken");
+    Require(errno == 71, "sceNpWordFilterPollAsync", "errno was modified");
+    errno = 71;
+    Require(sceNpWordFilterWaitAsync(async, reinterpret_cast<int*>(0x10)) == InvalidArgument, "sceNpWordFilterWaitAsync", "unwritable result was taken");
+    Require(errno == 71, "sceNpWordFilterWaitAsync", "errno was modified");
     Require(sanitized[0] == 'z' && sanitized[4] == 'z', "sceNpWordFilterSanitizeComment", "a sanitized comment was written");
     Require(sceNpWordFilterAbortRequest(async) == 0, "sceNpWordFilterAbortRequest", "aborting a finished request failed");
     Require(sceNpWordFilterPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpWordFilterAbortRequest", "aborting a finished request changed its result");
@@ -275,6 +285,9 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 2) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 2 was not set");
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 10) == 0, "sceNpServiceChecker2IntIsSetServiceType", "type 10 was taken");
     Require(sceNpServiceChecker2IntIsSetServiceType(nullptr, 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "a null mask was taken");
+    errno = 71;
+    Require(sceNpServiceChecker2IntIsSetServiceType(reinterpret_cast<const std::uint32_t*>(0x10), 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "an unmapped mask was taken");
+    Require(errno == 71, "sceNpServiceChecker2IntIsSetServiceType", "errno was not preserved");
     Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization failed");
     Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "reinitialization failed");
     int boundaryId = 0;
@@ -396,6 +409,9 @@ void CheckBandwidthTestShutdownWithDetailedInfo() {
     Require(sceNpBandwidthTestGetStatus(0, &status) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "the status of a test that never started did not return INVALID_ARGUMENT");
     Require(status == 0, "sceNpBandwidthTestGetStatus", "the status of a test that never started was not cleared to 0");
     Require(sceNpBandwidthTestGetStatus(0, nullptr) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "a null status did not return INVALID_ARGUMENT");
+    errno = 0;
+    Require(sceNpBandwidthTestGetStatus(0, reinterpret_cast<int*>(0x10)) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "unwritable status was taken");
+    Require(errno == 0, "sceNpBandwidthTestGetStatus", "errno was modified");
 }
 
 }
@@ -434,6 +450,9 @@ void DeleteLookup(int reqId) {
 void CheckLookupAsync() {
     const int context = sceNpLookupCreateTitleCtx(selfNpId);
     Require(sceNpLookupCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a null parameter was taken");
+    errno = 71;
+    Require(sceNpLookupCreateAsyncRequest(context, reinterpret_cast<const std::uint64_t*>(0x10)) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "an unmapped parameter was taken");
+    Require(errno == 71, "sceNpLookupCreateAsyncRequest", "errno was not preserved");
     Require(sceNpLookupCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a parameter size other than 0x18 was taken");
     Require(sceNpLookupCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpLookupCreateAsyncRequest", "an unknown context was taken");
 

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -29,6 +30,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DrawInputsInPlace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TessellationPipelineCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/IndexedIndirectPatches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupClock.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
@@ -74,6 +76,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+extern char** environ;
 #endif
 #include <atomic>
 #include <chrono>
@@ -239,6 +242,7 @@ const ShaderRecompiler::DiagnosticSink runReportSink{
     .unsupportedInstruction = LibcRunReportUnsupportedInstruction_nid_no_patch,
     .imageFormat = LibcRunReportImageFormat_nid_no_patch,
     .descriptor = CountDescriptor,
+    .compileTime = LibcRunReportShaderCompileTime_nid_no_patch,
 };
 [[maybe_unused]] const bool runReportSinkInstalled = (LibcRunReportSetDescriptorCounters_nid_no_patch(descriptorUse), ShaderRecompiler::SetDiagnosticSink(&runReportSink), true);
 
@@ -365,7 +369,7 @@ public:
         require(pixels.size() <= maxBytes, "a frame dump exceeds the 64 MiB queue");
         changed.wait(lock, [&] { return stopping || pixels.size() <= maxBytes - queuedBytes; });
         require(!stopping, "frame dump writer has stopped");
-        if (!worker.joinable()) worker = std::thread([this] { run(); });
+        if (!worker.joinable()) worker = Libc::StartHostThread([this] { run(); });
         const auto bytes = pixels.size();
         pending.push_back({index, width, height, screenshot, std::move(pixels)});
         queuedBytes += bytes;
@@ -683,6 +687,7 @@ struct VulkanDevice::State {
     bool drawIndirectFirstInstance = false;
     bool multiDrawIndirect = false;
     bool drawIndirectCount = false;
+    bool indexedIndirectPatches = true;
     // The device's resolved entry points (Graphics::DeviceFunctions) and the Graphics::Context
     // built once after setup (see graphicsContext); the context's pool reference is dropped before
     // the pool at teardown.
@@ -1627,6 +1632,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->individuallyFreeDescriptorSets = driver.driverID == VK_DRIVER_ID_MESA_LLVMPIPE;
         state->fusedExactArithmetic = driver.driverID == VK_DRIVER_ID_MOLTENVK;
         state->tessellationPipelineCache = TessellationPipelineCacheUsable(driver.driverID);
+        state->indexedIndirectPatches = IndexedIndirectPatchesUsable(driver.driverID);
         state->hostInterpolationFirst = HostInterpolationPreferred(driver.driverID) && std::getenv("APS5_NO_HOST_INTERPOLATION_FIRST") == nullptr;
         APS5_LOG_OUT("Pixel interpolation driver=%d hostInterpolationFirst=%d", static_cast<int>(driver.driverID), state->hostInterpolationFirst ? 1 : 0);
         state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
@@ -1874,7 +1880,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     const char* requestedPresentMode = std::getenv("ANYPS5_PRESENT_MODE");
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR fifoLatestReadyFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR};
     bool fifoLatestReady = false;
-    if (requestedPresentMode != nullptr && std::strcmp(requestedPresentMode, "fifo_latest_ready") == 0 && fifoLatestReadyExtension != nullptr) {
+    if (window != nullptr && requestedPresentMode != nullptr && std::strcmp(requestedPresentMode, "fifo_latest_ready") == 0 && fifoLatestReadyExtension != nullptr) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &fifoLatestReadyFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         fifoLatestReady = fifoLatestReadyFeatures.presentModeFifoLatestReady == VK_TRUE;
@@ -4898,7 +4904,7 @@ Graphics::Context VulkanDevice::buildContext() const {
 }
 
 VulkanDevice::IndirectDrawSupport VulkanDevice::DrawIndirectSupport() const {
-    return {state->drawIndirectFirstInstance, state->multiDrawIndirect, state->drawIndirectCount};
+    return {state->drawIndirectFirstInstance, state->multiDrawIndirect, state->drawIndirectCount, state->indexedIndirectPatches};
 }
 
 std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const {

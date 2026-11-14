@@ -254,6 +254,14 @@ float SinhfExp(float x) {
 }
 
 float GuestTgammaf(float x) {
+    if (std::isgreater(static_cast<double>(x), 171.63)) {
+        static volatile double zero = 0.0;
+        return static_cast<float>(static_cast<double>(x) / zero);
+    }
+    if (std::isfinite(x) && std::isless(static_cast<double>(x), -190.0) && std::trunc(x) != x) {
+        const double interval = std::floor(-static_cast<double>(x));
+        return std::fmod(interval, 2.0) == 0.0 ? -0.0f : 0.0f;
+    }
     const int savedErrno = errno;
     const float result = static_cast<float>(std::tgamma(static_cast<double>(x)));
     errno = std::isfinite(x) && x < 0.0f && std::trunc(x) == x ? EDOM : savedErrno;
@@ -1375,7 +1383,6 @@ long double APS5_VABI acosl_nid_postfix(long double x) {
 long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
 long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
-long double APS5_VABI atan2l_nid_postfix(long double y, long double x) { return std::atan2(y, x); }
 long double APS5_VABI cbrtl_nid_postfix(long double x) {
     constexpr std::uint32_t B1 = 709958130;
     constexpr int Bias = 0x3fff;
@@ -1423,7 +1430,7 @@ long double APS5_VABI erfl_nid_postfix(long double x) { return std::erf(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return std::erfc(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
 long double APS5_VABI log1pl_nid_postfix(long double x) { return std::log1p(x); }
-long double APS5_VABI log2l_nid_postfix(long double x) { return std::log2(x); }
+long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfix(x, -1); }
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
@@ -2078,7 +2085,7 @@ double APS5_VABI erfc_nid_postfix(double x) {
         return 1.0 + (erx + ratio);
     }
     if (ix >= 0x403c0000) {
-        return hx > 0 ? tiny * tiny : 2.0 - tiny;
+        return hx > 0 ? 0.0 : 2.0 - tiny;
     }
     if (hx < 0 && ix >= 0x40180000) {
         return 2.0 - tiny;
@@ -3988,6 +3995,363 @@ float APS5_VABI ldexpf_nid_postfix(float x, int exp) {
     errno = saved_errno;
     return result;
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/s_expl.c and k_expl.h: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_expl.c */
+/*-
+ * Copyright (c) 2009-2013 Steven G. Kargl
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice unmodified, this list of conditions, and the following
+ *    disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Optimized by Bruce D. Evans.
+ */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static constexpr int ExplIntervals = 128;
+static constexpr int ExplLog2Intervals = 7;
+static constexpr int ExplBias = 16383;
+static constexpr double ExplInvL = 1.8466496523378731e+2;
+static constexpr double ExplL1 = 5.4152123484527692e-3;
+static constexpr double ExplL2 = -3.2819649005320973e-13;
+static constexpr double ExplA2 = 0.5;
+static constexpr double ExplA3 = 1.6666666666666119e-1;
+static constexpr double ExplA4 = 4.1666666666665887e-2;
+static constexpr double ExplA5 = 8.3333354987869413e-3;
+static constexpr double ExplA6 = 1.3888891738560272e-3;
+static constexpr long double ExplOverflowThreshold = 11356.5234062941439488L;
+static constexpr long double ExplUnderflowThreshold = -11399.4985314888605581L;
+static constexpr long double ExplTwoPowerMinus10000 = 0x1p-10000L;
+static constexpr std::uint64_t ExplUnitMantissa = 0x8000000000000000ull;
+static const volatile long double ExplHuge = 0x1p10000L;
+static const volatile long double ExplTiny = 0x1p-10000L;
+static constexpr struct {
+    double hi;
+    double lo;
+} ExplTable[ExplIntervals] = {
+    { 0x1p+0, 0x0p+0 },
+    { 0x1.0163da9fb3335p+0, 0x1.b61299ab8cdb7p-54 },
+    { 0x1.02c9a3e778060p+0, 0x1.dcdef95949ef4p-53 },
+    { 0x1.04315e86e7f84p+0, 0x1.7ae71f3441b49p-53 },
+    { 0x1.059b0d3158574p+0, 0x1.d73e2a475b465p-55 },
+    { 0x1.0706b29ddf6ddp+0, 0x1.8db880753b0f6p-53 },
+    { 0x1.0874518759bc8p+0, 0x1.186be4bb284ffp-57 },
+    { 0x1.09e3ecac6f383p+0, 0x1.1487818316136p-54 },
+    { 0x1.0b5586cf9890fp+0, 0x1.8a62e4adc610bp-54 },
+    { 0x1.0cc922b7247f7p+0, 0x1.01edc16e24f71p-54 },
+    { 0x1.0e3ec32d3d1a2p+0, 0x1.03a1727c57b53p-59 },
+    { 0x1.0fb66affed31ap+0, 0x1.e464123bb1428p-53 },
+    { 0x1.11301d0125b50p+0, 0x1.49d77e35db263p-53 },
+    { 0x1.12abdc06c31cbp+0, 0x1.f72575a649ad2p-53 },
+    { 0x1.1429aaea92ddfp+0, 0x1.66820328764b1p-53 },
+    { 0x1.15a98c8a58e51p+0, 0x1.2406ab9eeab0ap-55 },
+    { 0x1.172b83c7d517ap+0, 0x1.b9bef918a1d63p-53 },
+    { 0x1.18af9388c8de9p+0, 0x1.777ee1734784ap-53 },
+    { 0x1.1a35beb6fcb75p+0, 0x1.e5b4c7b4968e4p-55 },
+    { 0x1.1bbe084045cd3p+0, 0x1.3563ce56884fcp-53 },
+    { 0x1.1d4873168b9aap+0, 0x1.e016e00a2643cp-54 },
+    { 0x1.1ed5022fcd91cp+0, 0x1.71033fec2243ap-53 },
+    { 0x1.2063b88628cd6p+0, 0x1.dc775814a8495p-55 },
+    { 0x1.21f49917ddc96p+0, 0x1.2a97e9494a5eep-55 },
+    { 0x1.2387a6e756238p+0, 0x1.9b07eb6c70573p-54 },
+    { 0x1.251ce4fb2a63fp+0, 0x1.ac155bef4f4a4p-55 },
+    { 0x1.26b4565e27cddp+0, 0x1.2bd339940e9d9p-55 },
+    { 0x1.284dfe1f56380p+0, 0x1.2d9e2b9e07941p-53 },
+    { 0x1.29e9df51fdee1p+0, 0x1.612e8afad1255p-55 },
+    { 0x1.2b87fd0dad98fp+0, 0x1.fbbd48ca71f95p-53 },
+    { 0x1.2d285a6e4030bp+0, 0x1.0024754db41d5p-54 },
+    { 0x1.2ecafa93e2f56p+0, 0x1.1ca0f45d52383p-56 },
+    { 0x1.306fe0a31b715p+0, 0x1.6f46ad23182e4p-55 },
+    { 0x1.32170fc4cd831p+0, 0x1.a9ce78e18047cp-55 },
+    { 0x1.33c08b26416ffp+0, 0x1.32721843659a6p-54 },
+    { 0x1.356c55f929ff0p+0, 0x1.928c468ec6e76p-53 },
+    { 0x1.371a7373aa9cap+0, 0x1.4e28aa05e8a8fp-53 },
+    { 0x1.38cae6d05d865p+0, 0x1.0b53961b37da2p-53 },
+    { 0x1.3a7db34e59ff6p+0, 0x1.d43792533c144p-53 },
+    { 0x1.3c32dc313a8e4p+0, 0x1.08003e4516b1ep-53 },
+    { 0x1.3dea64c123422p+0, 0x1.ada0911f09ebcp-55 },
+    { 0x1.3fa4504ac801bp+0, 0x1.417ee03548306p-53 },
+    { 0x1.4160a21f72e29p+0, 0x1.f0864b71e7b6cp-53 },
+    { 0x1.431f5d950a896p+0, 0x1.b8e088728219ap-53 },
+    { 0x1.44e086061892dp+0, 0x1.89b7a04ef80d0p-59 },
+    { 0x1.46a41ed1d0057p+0, 0x1.c944bd1648a76p-54 },
+    { 0x1.486a2b5c13cd0p+0, 0x1.3c1a3b69062f0p-56 },
+    { 0x1.4a32af0d7d3dep+0, 0x1.9cb62f3d1be56p-54 },
+    { 0x1.4bfdad5362a27p+0, 0x1.d4397afec42e2p-56 },
+    { 0x1.4dcb299fddd0dp+0, 0x1.8ecdbbc6a7833p-54 },
+    { 0x1.4f9b2769d2ca6p+0, 0x1.5a67b16d3540ep-53 },
+    { 0x1.516daa2cf6641p+0, 0x1.8225ea5909b04p-53 },
+    { 0x1.5342b569d4f81p+0, 0x1.be1507893b0d5p-53 },
+    { 0x1.551a4ca5d920ep+0, 0x1.8a5d8c4048699p-53 },
+    { 0x1.56f4736b527dap+0, 0x1.9bb2c011d93adp-54 },
+    { 0x1.58d12d497c7fdp+0, 0x1.295e15b9a1de8p-55 },
+    { 0x1.5ab07dd485429p+0, 0x1.6324c054647adp-54 },
+    { 0x1.5c9268a5946b7p+0, 0x1.c4b1b816986a2p-60 },
+    { 0x1.5e76f15ad2148p+0, 0x1.ba6f93080e65ep-54 },
+    { 0x1.605e1b976dc08p+0, 0x1.60edeb25490dcp-53 },
+    { 0x1.6247eb03a5584p+0, 0x1.63e1f40dfa5b5p-53 },
+    { 0x1.6434634ccc31fp+0, 0x1.8edf0e2989db3p-53 },
+    { 0x1.6623882552224p+0, 0x1.224fb3c5371e6p-53 },
+    { 0x1.68155d44ca973p+0, 0x1.038ae44f73e65p-57 },
+    { 0x1.6a09e667f3bccp+0, 0x1.21165f626cdd5p-53 },
+    { 0x1.6c012750bdabep+0, 0x1.daed533001e9ep-53 },
+    { 0x1.6dfb23c651a2ep+0, 0x1.e441c597c3775p-53 },
+    { 0x1.6ff7df9519483p+0, 0x1.9f0fc369e7c42p-53 },
+    { 0x1.71f75e8ec5f73p+0, 0x1.ba46e1e5de15ap-53 },
+    { 0x1.73f9a48a58173p+0, 0x1.7ab9349cd1562p-53 },
+    { 0x1.75feb564267c8p+0, 0x1.7edd354674916p-53 },
+    { 0x1.780694fde5d3fp+0, 0x1.866b80a02162dp-54 },
+    { 0x1.7a11473eb0186p+0, 0x1.afaa2047ed9b4p-53 },
+    { 0x1.7c1ed0130c132p+0, 0x1.f124cd1164dd6p-54 },
+    { 0x1.7e2f336cf4e62p+0, 0x1.05d02ba15797ep-56 },
+    { 0x1.80427543e1a11p+0, 0x1.6c1bccec9346bp-53 },
+    { 0x1.82589994cce12p+0, 0x1.159f115f56694p-53 },
+    { 0x1.8471a4623c7acp+0, 0x1.9ca5ed72f8c81p-53 },
+    { 0x1.868d99b4492ecp+0, 0x1.01c83b21584a3p-53 },
+    { 0x1.88ac7d98a6699p+0, 0x1.994c2f37cb53ap-54 },
+    { 0x1.8ace5422aa0dbp+0, 0x1.6e9f156864b27p-54 },
+    { 0x1.8cf3216b5448bp+0, 0x1.de55439a2c38bp-53 },
+    { 0x1.8f1ae99157736p+0, 0x1.5cc13a2e3976cp-55 },
+    { 0x1.9145b0b91ffc5p+0, 0x1.114c368d3ed6ep-53 },
+    { 0x1.93737b0cdc5e4p+0, 0x1.e8a0387e4a814p-53 },
+    { 0x1.95a44cbc8520ep+0, 0x1.d36906d2b41f9p-53 },
+    { 0x1.97d829fde4e4fp+0, 0x1.173d241f23d18p-53 },
+    { 0x1.9a0f170ca07b9p+0, 0x1.7462137188ce7p-53 },
+    { 0x1.9c49182a3f090p+0, 0x1.c7c46b071f2bep-56 },
+    { 0x1.9e86319e32323p+0, 0x1.824ca78e64c6ep-56 },
+    { 0x1.a0c667b5de564p+0, 0x1.6535b51719567p-53 },
+    { 0x1.a309bec4a2d33p+0, 0x1.6305c7ddc36abp-54 },
+    { 0x1.a5503b23e255cp+0, 0x1.1684892395f0fp-53 },
+    { 0x1.a799e1330b358p+0, 0x1.bcb7ecac563c7p-54 },
+    { 0x1.a9e6b5579fdbfp+0, 0x1.0fac90ef7fd31p-54 },
+    { 0x1.ac36bbfd3f379p+0, 0x1.81b72cd4624ccp-53 },
+    { 0x1.ae89f995ad3adp+0, 0x1.7a1cd345dcc81p-54 },
+    { 0x1.b0e07298db665p+0, 0x1.2108559bf8deep-53 },
+    { 0x1.b33a2b84f15fap+0, 0x1.ed7fa1cf7b290p-53 },
+    { 0x1.b59728de55939p+0, 0x1.1c7102222c90ep-53 },
+    { 0x1.b7f76f2fb5e46p+0, 0x1.d54f610356a79p-53 },
+    { 0x1.ba5b030a10649p+0, 0x1.0819678d5eb69p-53 },
+    { 0x1.bcc1e904bc1d2p+0, 0x1.23dd07a2d9e84p-55 },
+    { 0x1.bf2c25bd71e08p+0, 0x1.0811ae04a31c7p-53 },
+    { 0x1.c199bdd85529cp+0, 0x1.11065895048ddp-55 },
+    { 0x1.c40ab5fffd07ap+0, 0x1.b4537e083c60ap-54 },
+    { 0x1.c67f12e57d14bp+0, 0x1.2884dff483cadp-54 },
+    { 0x1.c8f6d9406e7b5p+0, 0x1.1acbc48805c44p-56 },
+    { 0x1.cb720dcef9069p+0, 0x1.503cbd1e949dbp-56 },
+    { 0x1.cdf0b555dc3f9p+0, 0x1.889f12b1f58a3p-53 },
+    { 0x1.d072d4a07897bp+0, 0x1.1a1e45e4342b2p-53 },
+    { 0x1.d2f87080d89f1p+0, 0x1.15bc247313d44p-53 },
+    { 0x1.d5818dcfba487p+0, 0x1.2ed02d75b3707p-55 },
+    { 0x1.d80e316c98397p+0, 0x1.7709f3a09100cp-53 },
+    { 0x1.da9e603db3285p+0, 0x1.c2300696db532p-54 },
+    { 0x1.dd321f301b460p+0, 0x1.2da5778f018c3p-54 },
+    { 0x1.dfc97337b9b5ep+0, 0x1.72d195873da52p-53 },
+    { 0x1.e264614f5a128p+0, 0x1.424ec3f42f5b5p-53 },
+    { 0x1.e502ee78b3ff6p+0, 0x1.39e8980a9cc8fp-55 },
+    { 0x1.e7a51fbc74c83p+0, 0x1.2d522ca0c8de2p-54 },
+    { 0x1.ea4afa2a490d9p+0, 0x1.0b1ee7431ebb6p-53 },
+    { 0x1.ecf482d8e67f0p+0, 0x1.1b60625f7293ap-53 },
+    { 0x1.efa1bee615a27p+0, 0x1.dc7f486a4b6b0p-54 },
+    { 0x1.f252b376bba97p+0, 0x1.3a1a5bf0d8e43p-54 },
+    { 0x1.f50765b6e4540p+0, 0x1.9d3e12dd8a18bp-54 },
+    { 0x1.f7bfdad9cbe13p+0, 0x1.1227697fce57bp-53 },
+    { 0x1.fa7c1819e90d8p+0, 0x1.74853f3a5931ep-55 },
+    { 0x1.fd3c22b8f71f1p+0, 0x1.2eb74966579e7p-57 },
+};
+
+struct ExplReduced {
+    long double hi;
+    long double lo;
+    int k;
+};
+
+static long double ExplPowerOfTwo(int exponent) { return JoinExtended(ExplUnitMantissa, static_cast<std::uint16_t>(ExplBias + exponent)); }
+
+static ExplReduced ExplKernel(long double x) {
+    const long double fn = x * ExplInvL + 0x1.8p63 - 0x1.8p63;
+    const long double r = x - fn * ExplL1 - fn * ExplL2;
+    const int n = static_cast<int>(fn);
+    const int n2 = static_cast<int>(static_cast<unsigned>(n) % ExplIntervals);
+    const long double r1 = x - fn * ExplL1;
+    const long double r2 = fn * -ExplL2;
+    const long double z = r * r;
+    const long double q = r2 + z * ExplA2 + z * r * (ExplA3 + r * ExplA4 + z * (ExplA5 + r * ExplA6));
+    const long double t = static_cast<long double>(ExplTable[n2].lo) + ExplTable[n2].hi;
+    return {ExplTable[n2].hi, ExplTable[n2].lo + t * (q + r1), n >> ExplLog2Intervals};
+}
+
+static ExplReduced ExplHalfKernel(long double x) {
+    ExplReduced reduced = ExplKernel(x);
+    const float scale = std::bit_cast<float>(static_cast<std::uint32_t>(0x3f800000 + ((reduced.k - 1) * 0x800000)));
+    reduced.hi *= scale;
+    reduced.lo *= scale;
+    return reduced;
+}
+
+static long double ExplHalf(long double x) {
+    const ExplReduced reduced = ExplKernel(x);
+    return (reduced.lo + reduced.hi) * 2 * ExplPowerOfTwo(reduced.k - 2);
+}
+
+static long double ExplMsun(long double x) {
+    const std::uint16_t signExponent = SplitExtended(x).signExponent;
+    const int exponent = signExponent & 0x7fff;
+    if (exponent >= ExplBias + 13) {
+        if (exponent == ExplBias + 16384) return (signExponent & 0x8000) != 0 ? -1 / x : x + x;
+        if (x > ExplOverflowThreshold) return ExplHuge * ExplHuge;
+        if (x < ExplUnderflowThreshold) return ExplTiny * ExplTiny;
+    } else if (exponent < ExplBias - 75) {
+        return 1 + x;
+    }
+    const ExplReduced reduced = ExplKernel(x);
+    const long double t = reduced.hi + reduced.lo;
+    if (reduced.k >= -16381) {
+        if (reduced.k == 16384) return t * 2 * 0x1p16383L;
+        return t * ExplPowerOfTwo(reduced.k);
+    }
+    return t * ExplPowerOfTwo(reduced.k + 10000) * ExplTwoPowerMinus10000;
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_sinhl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_sinhl.c */
+static constexpr long double SinhlS3 = 1.66666666666666666658e-1L;
+static constexpr double SinhlS5 = 8.3333333333333332e-3;
+static constexpr double SinhlS7 = 1.9841269841270074e-4;
+static constexpr double SinhlS9 = 2.7557319223873889e-6;
+static constexpr double SinhlS11 = 2.5052108406704084e-8;
+static constexpr double SinhlS13 = 1.6059042748655297e-10;
+static constexpr double SinhlS15 = 7.6470006914396920e-13;
+static constexpr double SinhlS17 = 2.8346142308424267e-15;
+static constexpr float HyperbolicOverflowThreshold = 1.13572168e4F;
+static constexpr long double SinhlHuge = 0x1p16383L;
+
+static long double SinhlSmall(long double x) {
+    const long double x2 = x * x;
+    const long double x4 = x2 * x2;
+    return ((SinhlS17 * x2 + SinhlS15) * x4 + (SinhlS13 * x2 + SinhlS11)) * (x2 * x * x4 * x4) + ((SinhlS9 * x2 + SinhlS7) * x2 + SinhlS5) * (x2 * x * x2) + SinhlS3 * (x2 * x) + x;
+}
+
+static long double SinhlMsun(long double x) {
+    const std::int16_t signExponent = static_cast<std::int16_t>(SplitExtended(x).signExponent);
+    const int exponent = signExponent & 0x7fff;
+    if (exponent >= 0x7fff) return x + x;
+    const double sign = signExponent < 0 ? -1 : 1;
+    if (exponent < 0x4005) {
+        if (exponent < ExplBias - 32 && SinhlHuge + x > 1) return x;
+        if (exponent < 0x3fff) return SinhlSmall(x);
+        const ExplReduced half = ExplHalfKernel(std::fabs(x));
+        return sign * (half.lo - 0.25 / (half.hi + half.lo) + half.hi);
+    }
+    if (std::fabs(x) <= HyperbolicOverflowThreshold) return sign * ExplHalf(std::fabs(x));
+    return x * SinhlHuge;
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_coshl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_coshl.c */
+static constexpr long double CoshlC4 = 4.16666666666666682297e-2L;
+static constexpr double CoshlC2 = 0.5;
+static constexpr double CoshlC6 = 1.3888888888888616e-3;
+static constexpr double CoshlC8 = 2.4801587301767953e-5;
+static constexpr double CoshlC10 = 2.7557319163300398e-7;
+static constexpr double CoshlC12 = 2.0876768371393075e-9;
+static constexpr double CoshlC14 = 1.1469537039374480e-11;
+static constexpr double CoshlC16 = 4.8473490896852041e-14;
+
+static long double CoshlSmall(long double x) {
+    const long double x2 = x * x;
+    const long double x4 = x2 * x2;
+    return ((CoshlC16 * x2 + CoshlC14) * x4 + (CoshlC12 * x2 + CoshlC10)) * (x4 * x4 * x2) + ((CoshlC8 * x2 + CoshlC6) * x2 + CoshlC4) * x4 + CoshlC2 * x2 + 1;
+}
+
+static long double CoshlMsun(long double x) {
+    const int exponent = SplitExtended(x).signExponent & 0x7fff;
+    if (exponent >= 0x7fff) return x * x;
+    if (exponent < 0x3fff) {
+        if (exponent < ExplBias - 32) return 1 + ExplTiny;
+        return CoshlSmall(x);
+    }
+    if (exponent < 0x4005) {
+        const ExplReduced half = ExplHalfKernel(std::fabs(x));
+        return half.lo + 0.25 / (half.hi + half.lo) + half.hi;
+    }
+    if (std::fabs(x) <= HyperbolicOverflowThreshold) return ExplHalf(std::fabs(x));
+    return ExplHuge * ExplHuge;
+}
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_tanhl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_tanhl.c */
+static const volatile double TanhlTiny = 1.0e-300;
+static constexpr double TanhlOne = 1.0;
+static constexpr long double TanhlT3 = -3.33333333333333333017e-1L;
+static constexpr double TanhlT5 = 1.3333333333333314e-1;
+static constexpr double TanhlT7 = -5.3968253968210485e-2;
+static constexpr double TanhlT9 = 2.1869488531393817e-2;
+static constexpr double TanhlT11 = -8.8632352345964591e-3;
+static constexpr double TanhlT13 = 3.5921169709993771e-3;
+static constexpr double TanhlT15 = -1.4555786415756001e-3;
+static constexpr double TanhlT17 = 5.8645267876296793e-4;
+static constexpr double TanhlT19 = -2.1121033571392224e-4;
+
+static long double TanhlDivide(long double a, long double b, long double c, long double d, long double e, long double f) {
+    long double w = a + c;
+    c = (a - w) + c;
+    a = w;
+    b = b + c;
+    w = d + f;
+    f = (d - w) + f;
+    d = w;
+    e = e + f;
+    const long double inverse = 1 / (d + e);
+    long double r = (a + b) * inverse;
+    const float rounded = static_cast<float>(r);
+    r = rounded;
+    const float high = static_cast<float>(d + e);
+    e = d - high + e;
+    d = high;
+    return r + (a - d * r + b - e * r) * inverse;
+}
+
+static long double TanhlSmall(long double x) {
+    const long double x2 = x * x;
+    const long double x4 = x2 * x2;
+    return ((TanhlT19 * x2 + TanhlT17) * x4 + (TanhlT15 * x2 + TanhlT13)) * (x2 * x * x2 * x4 * x4) + ((TanhlT11 * x2 + TanhlT9) * x4 + (TanhlT7 * x2 + TanhlT5)) * (x2 * x * x2) + TanhlT3 * (x2 * x) + x;
+}
+
+static long double TanhlMagnitude(long double x, int exponent) {
+    if (exponent >= 0x4004 && std::fabs(x) >= 40) return TanhlOne - TanhlTiny;
+    const ExplReduced half = ExplHalfKernel(2 * std::fabs(x));
+    if (exponent < 0x4001 && std::fabs(x) < 1.5) return TanhlDivide(half.hi, half.lo, -0.5, half.hi, half.lo, 0.5);
+    return TanhlOne - TanhlOne / (half.lo + 0.5 + half.hi);
+}
+
+static long double TanhlMsun(long double x) {
+    const std::int16_t signExponent = static_cast<std::int16_t>(SplitExtended(x).signExponent);
+    const int exponent = signExponent & 0x7fff;
+    if (exponent >= 0x7fff) return signExponent >= 0 ? TanhlOne / x + TanhlOne : TanhlOne / x - TanhlOne;
+    if (exponent < ExplBias - 32) return x == 0 ? x : (0x1p200 * x - x) * 0x1p-200;
+    if (exponent < 0x3ffd) return TanhlSmall(x);
+    const double sign = signExponent < 0 ? -1 : 1;
+    return sign * TanhlMagnitude(x, exponent);
+}
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_fmod.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_fmod.c */
 /*
  * ====================================================
@@ -4308,16 +4672,195 @@ long double APS5_VABI atanl_nid_postfix(long double x) {
     const long double result = AtanHigh[index] - ((x * (even + odd) - AtanLow[index]) - x);
     return negative ? -result : result;
 }
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_atan2l.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_atan2l.c */
+static constexpr std::uint64_t ExtendedFractionMask = 0x7fffffffffffffffull;
+static bool Atan2lOnAxis(long double yValue, const ExtendedParts& y, const ExtendedParts& x, int quadrant, long double& result) {
+    static volatile long double tiny = 1.0e-300;
+    const long double halfPi = AtanHigh[3];
+    const long double pi = Pi;
+    const int yExponent = y.signExponent & 0x7fff;
+    const int xExponent = x.signExponent & 0x7fff;
+    const bool yNegative = (y.signExponent & 0x8000) != 0;
+    if (yExponent == 0 && (y.mantissa & ExtendedFractionMask) == 0) {
+        if (quadrant < 2) result = yValue;
+        else result = quadrant == 2 ? pi + tiny : -pi - tiny;
+    } else if (xExponent == 0 && (x.mantissa & ExtendedFractionMask) == 0) {
+        result = yNegative ? -halfPi - tiny : halfPi + tiny;
+    } else if (xExponent == 0x7fff && yExponent == 0x7fff) {
+        result = quadrant == 0 ? halfPi * 0.5 + tiny : quadrant == 1 ? -halfPi * 0.5 - tiny : quadrant == 2 ? 1.5 * halfPi + tiny : -1.5 * halfPi - tiny;
+    } else if (xExponent == 0x7fff) {
+        result = quadrant == 0 ? 0.0L : quadrant == 1 ? -0.0L : quadrant == 2 ? pi + tiny : -pi - tiny;
+    } else if (yExponent == 0x7fff) {
+        result = yNegative ? -halfPi - tiny : halfPi + tiny;
+    } else {
+        return false;
+    }
+    return true;
+}
+long double APS5_VABI atan2l_nid_postfix(long double y, long double x) {
+    constexpr long double PiLow = -5.01655761266833202345e-20L;
+    const ExtendedParts py = SplitExtended(y);
+    const ExtendedParts px = SplitExtended(x);
+    const int yExponent = py.signExponent & 0x7fff;
+    const int xExponent = px.signExponent & 0x7fff;
+    if ((xExponent == 0x7fff && (px.mantissa & ExtendedFractionMask) != 0) || (yExponent == 0x7fff && (py.mantissa & ExtendedFractionMask) != 0)) return x + y;
+    if (px.signExponent == 0x3fff && (px.mantissa & ExtendedFractionMask) == 0) return atanl_nid_postfix(y);
+    int quadrant = ((py.signExponent >> 15) & 1) | ((px.signExponent >> 14) & 2);
+    long double result;
+    if (Atan2lOnAxis(y, py, px, quadrant, result)) return result;
+    const int k = yExponent - xExponent;
+    long double z;
+    if (k > 64 + 2) {
+        z = SumAtCallerPrecision(AtanHigh[3], AtanLow[3]);
+        quadrant &= 1;
+    } else if ((px.signExponent & 0x8000) != 0 && k < -64 - 2) {
+        z = 0.0L;
+    } else {
+        z = atanl_nid_postfix(std::fabs(y / x));
+    }
+    if (quadrant == 0) return z;
+    if (quadrant == 1) return -z;
+    if (quadrant == 2) return Pi - (z - PiLow);
+    return (z - PiLow) - Pi;
+}
 long double APS5_VABI sinl_nid_postfix(long double x) { return std::sin(x); }
 long double APS5_VABI cosl_nid_postfix(long double x) { return std::cos(x); }
 long double APS5_VABI tanl_nid_postfix(long double x) { return std::tan(x); }
-long double APS5_VABI sinhl_nid_postfix(long double x) { return std::sinh(x); }
-long double APS5_VABI coshl_nid_postfix(long double x) { return std::cosh(x); }
-long double APS5_VABI tanhl_nid_postfix(long double x) { return std::tanh(x); }
-long double APS5_VABI expl_nid_postfix(long double x) { return std::exp(x); }
-long double APS5_VABI exp2l_nid_postfix(long double x) { return std::exp2(x); }
-long double APS5_VABI logl_nid_postfix(long double x) { return std::log(x); }
-long double APS5_VABI log10l_nid_postfix(long double x) { return std::log10(x); }
+long double APS5_VABI sinhl_nid_postfix(long double x) { return SinhlMsun(x); }
+long double APS5_VABI coshl_nid_postfix(long double x) { return CoshlMsun(x); }
+long double APS5_VABI tanhl_nid_postfix(long double x) { return TanhlMsun(x); }
+long double APS5_VABI expl_nid_postfix(long double x) { return ExplMsun(x); }
+/*-
+ * Copyright (c) 2005-2008 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/s_exp2l.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_exp2l.c */
+constexpr double Exp2Table[] = {
+    0x1.6a09e667f3bcdp-1, -0x1.bdd3413b26480p-55, 0x1.6c012750bdabfp-1, -0x1.2895667ff0c00p-57,
+    0x1.6dfb23c651a2fp-1, -0x1.bbe3a683c8800p-58, 0x1.6ff7df9519484p-1, -0x1.83c0f25860f00p-56,
+    0x1.71f75e8ec5f74p-1, -0x1.16e4786887b00p-56, 0x1.73f9a48a58174p-1, -0x1.0a8d96c65d500p-55,
+    0x1.75feb564267c9p-1, -0x1.0245957316e00p-55, 0x1.780694fde5d3fp-1, 0x1.866b80a021600p-55,
+    0x1.7a11473eb0187p-1, -0x1.41577ee049900p-56, 0x1.7c1ed0130c132p-1, 0x1.f124cd1164e00p-55,
+    0x1.7e2f336cf4e62p-1, 0x1.05d02ba157a00p-57, 0x1.80427543e1a12p-1, -0x1.27c86626d9700p-55,
+    0x1.82589994cce13p-1, -0x1.d4c1dd4153300p-55, 0x1.8471a4623c7adp-1, -0x1.8d684a341ce00p-56,
+    0x1.868d99b4492edp-1, -0x1.fc6f89bd4f680p-55, 0x1.88ac7d98a6699p-1, 0x1.994c2f37cb500p-55,
+    0x1.8ace5422aa0dbp-1, 0x1.6e9f156864b00p-55, 0x1.8cf3216b5448cp-1, -0x1.0d55e32e9e400p-57,
+    0x1.8f1ae99157736p-1, 0x1.5cc13a2e39700p-56, 0x1.9145b0b91ffc6p-1, -0x1.dd6792e582500p-55,
+    0x1.93737b0cdc5e5p-1, -0x1.75fc781b58000p-58, 0x1.95a44cbc8520fp-1, -0x1.64b7c96a5f000p-57,
+    0x1.97d829fde4e50p-1, -0x1.d185b7c1b8600p-55, 0x1.9a0f170ca07bap-1, -0x1.173bd91cee600p-55,
+    0x1.9c49182a3f090p-1, 0x1.c7c46b071f200p-57, 0x1.9e86319e32323p-1, 0x1.824ca78e64c00p-57,
+    0x1.a0c667b5de565p-1, -0x1.359495d1cd500p-55, 0x1.a309bec4a2d33p-1, 0x1.6305c7ddc3680p-55,
+    0x1.a5503b23e255dp-1, -0x1.d2f6edb8d4200p-55, 0x1.a799e1330b358p-1, 0x1.bcb7ecac56400p-55,
+    0x1.a9e6b5579fdbfp-1, 0x1.0fac90ef7fd00p-55, 0x1.ac36bbfd3f37ap-1, -0x1.f9234cae76d00p-56,
+    0x1.ae89f995ad3adp-1, 0x1.7a1cd345dcc80p-55, 0x1.b0e07298db666p-1, -0x1.bdef54c80e400p-55,
+    0x1.b33a2b84f15fbp-1, -0x1.2805e3084d800p-58, 0x1.b59728de5593ap-1, -0x1.c71dfbbba6e00p-55,
+    0x1.b7f76f2fb5e47p-1, -0x1.5584f7e54ac00p-57, 0x1.ba5b030a1064ap-1, -0x1.efcd30e542900p-55,
+    0x1.bcc1e904bc1d2p-1, 0x1.23dd07a2d9f00p-56, 0x1.bf2c25bd71e09p-1, -0x1.efdca3f6b9c80p-55,
+    0x1.c199bdd85529cp-1, 0x1.1106589504900p-56, 0x1.c40ab5fffd07ap-1, 0x1.b4537e083c600p-55,
+    0x1.c67f12e57d14bp-1, 0x1.2884dff483c80p-55, 0x1.c8f6d9406e7b5p-1, 0x1.1acbc48805c00p-57,
+    0x1.cb720dcef9069p-1, 0x1.503cbd1e94a00p-57, 0x1.cdf0b555dc3fap-1, -0x1.dd83b53829d00p-56,
+    0x1.d072d4a07897cp-1, -0x1.cbc3743797a80p-55, 0x1.d2f87080d89f2p-1, -0x1.d487b719d8580p-55,
+    0x1.d5818dcfba487p-1, 0x1.2ed02d75b3700p-56, 0x1.d80e316c98398p-1, -0x1.11ec18bede000p-55,
+    0x1.da9e603db3285p-1, 0x1.c2300696db500p-55, 0x1.dd321f301b460p-1, 0x1.2da5778f01900p-55,
+    0x1.dfc97337b9b5fp-1, -0x1.1a5cd4f184b80p-55, 0x1.e264614f5a129p-1, -0x1.7b627817a1480p-55,
+    0x1.e502ee78b3ff6p-1, 0x1.39e8980a9cd00p-56, 0x1.e7a51fbc74c83p-1, 0x1.2d522ca0c8e00p-55,
+    0x1.ea4afa2a490dap-1, -0x1.e9c23179c2880p-55, 0x1.ecf482d8e67f1p-1, -0x1.c93f3b411ad80p-55,
+    0x1.efa1bee615a27p-1, 0x1.dc7f486a4b680p-55, 0x1.f252b376bba97p-1, 0x1.3a1a5bf0d8e80p-55,
+    0x1.f50765b6e4540p-1, 0x1.9d3e12dd8a180p-55, 0x1.f7bfdad9cbe14p-1, -0x1.dbb12d0063500p-55,
+    0x1.fa7c1819e90d8p-1, 0x1.74853f3a59300p-56, 0x1.fd3c22b8f71f1p-1, 0x1.2eb7496657800p-58,
+    0x1.0000000000000p+0, 0.0, 0x1.0163da9fb3335p+0, 0x1.b61299ab8cd80p-54,
+    0x1.02c9a3e778061p+0, -0x1.19083535b0800p-56, 0x1.04315e86e7f85p+0, -0x1.0a31c1977c980p-54,
+    0x1.059b0d3158574p+0, 0x1.d73e2a475b400p-55, 0x1.0706b29ddf6dep+0, -0x1.c91dfe2b13c00p-55,
+    0x1.0874518759bc8p+0, 0x1.186be4bb28400p-57, 0x1.09e3ecac6f383p+0, 0x1.1487818316100p-54,
+    0x1.0b5586cf9890fp+0, 0x1.8a62e4adc6100p-54, 0x1.0cc922b7247f7p+0, 0x1.01edc16e24f80p-54,
+    0x1.0e3ec32d3d1a2p+0, 0x1.03a1727c58000p-59, 0x1.0fb66affed31bp+0, -0x1.b9bedc44ebc00p-57,
+    0x1.11301d0125b51p+0, -0x1.6c51039449b00p-54, 0x1.12abdc06c31ccp+0, -0x1.1b514b36ca800p-58,
+    0x1.1429aaea92de0p+0, -0x1.32fbf9af13680p-54, 0x1.15a98c8a58e51p+0, 0x1.2406ab9eeab00p-55,
+    0x1.172b83c7d517bp+0, -0x1.19041b9d78a00p-55, 0x1.18af9388c8deap+0, -0x1.11023d1970f80p-54,
+    0x1.1a35beb6fcb75p+0, 0x1.e5b4c7b496900p-55, 0x1.1bbe084045cd4p+0, -0x1.95386352ef600p-54,
+    0x1.1d4873168b9aap+0, 0x1.e016e00a26400p-54, 0x1.1ed5022fcd91dp+0, -0x1.1df98027bb780p-54,
+    0x1.2063b88628cd6p+0, 0x1.dc775814a8500p-55, 0x1.21f49917ddc96p+0, 0x1.2a97e9494a600p-55,
+    0x1.2387a6e756238p+0, 0x1.9b07eb6c70580p-54, 0x1.251ce4fb2a63fp+0, 0x1.ac155bef4f500p-55,
+    0x1.26b4565e27cddp+0, 0x1.2bd339940ea00p-55, 0x1.284dfe1f56381p+0, -0x1.a4c3a8c3f0d80p-54,
+    0x1.29e9df51fdee1p+0, 0x1.612e8afad1200p-55, 0x1.2b87fd0dad990p+0, -0x1.10adcd6382000p-59,
+    0x1.2d285a6e4030bp+0, 0x1.0024754db4200p-54, 0x1.2ecafa93e2f56p+0, 0x1.1ca0f45d52400p-56,
+    0x1.306fe0a31b715p+0, 0x1.6f46ad2318300p-55, 0x1.32170fc4cd831p+0, 0x1.a9ce78e180400p-55,
+    0x1.33c08b26416ffp+0, 0x1.3272184365980p-54, 0x1.356c55f929ff1p+0, -0x1.b5cee5c4e4600p-55,
+    0x1.371a7373aa9cbp+0, -0x1.63aeabf42eb00p-54, 0x1.38cae6d05d866p+0, -0x1.e958d3c990480p-54,
+    0x1.3a7db34e59ff7p+0, -0x1.5e436d661f600p-56, 0x1.3c32dc313a8e5p+0, -0x1.efff8375d2a00p-54,
+    0x1.3dea64c123422p+0, 0x1.ada0911f09f00p-55, 0x1.3fa4504ac801cp+0, -0x1.7d023f956fa00p-54,
+    0x1.4160a21f72e2ap+0, -0x1.ef3691c309000p-58, 0x1.431f5d950a897p+0, -0x1.1c7dde35f7a00p-55,
+    0x1.44e086061892dp+0, 0x1.89b7a04ef8000p-59, 0x1.46a41ed1d0057p+0, 0x1.c944bd1648a80p-54,
+    0x1.486a2b5c13cd0p+0, 0x1.3c1a3b6906200p-56, 0x1.4a32af0d7d3dep+0, 0x1.9cb62f3d1be80p-54,
+    0x1.4bfdad5362a27p+0, 0x1.d4397afec4200p-56, 0x1.4dcb299fddd0dp+0, 0x1.8ecdbbc6a7800p-54,
+    0x1.4f9b2769d2ca7p+0, -0x1.4b309d2595800p-54, 0x1.516daa2cf6642p+0, -0x1.f768569bd9400p-55,
+    0x1.5342b569d4f82p+0, -0x1.07abe1db13d00p-55, 0x1.551a4ca5d920fp+0, -0x1.d689cefede600p-55,
+    0x1.56f4736b527dap+0, 0x1.9bb2c011d9380p-54, 0x1.58d12d497c7fdp+0, 0x1.295e15b9a1e00p-55,
+    0x1.5ab07dd485429p+0, 0x1.6324c05464780p-54, 0x1.5c9268a5946b7p+0, 0x1.c4b1b81698000p-60,
+    0x1.5e76f15ad2148p+0, 0x1.ba6f93080e680p-54, 0x1.605e1b976dc09p+0, -0x1.3e2429b56de80p-54,
+    0x1.6247eb03a5585p+0, -0x1.383c17e40b480p-54, 0x1.6434634ccc320p+0, -0x1.c483c759d8900p-55,
+    0x1.6623882552225p+0, -0x1.bb60987591c00p-54, 0x1.68155d44ca973p+0, 0x1.038ae44f74000p-57,
+};
+long double APS5_VABI exp2l_nid_postfix(long double x) {
+    static volatile long double twoToMinus10000 = 0x1p-10000L;
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    if (exponent >= 0x3fff + 14) {
+        if (exponent == 0x7fff) return (parts.signExponent & 0x8000) != 0 && parts.mantissa == 0x8000000000000000ull ? 0.0L : x + x;
+        if (x >= 16384) return std::numeric_limits<long double>::infinity();
+        if (x <= -16446) return twoToMinus10000 * twoToMinus10000;
+    } else if (exponent <= 0x3fff - 66) {
+        return 1.0L + x;
+    }
+    constexpr double redux = 0x1.8p63 / 128;
+    const long double shifted = x + redux;
+    const std::uint32_t bits = static_cast<std::uint32_t>(SplitExtended(shifted).mantissa) + 64;
+    const int scale = static_cast<int>(bits) >> 7;
+    const std::uint32_t index = (bits & 127) << 1;
+    const long double z = x - (shifted - redux);
+    const long double high = Exp2Table[index];
+    const long double low = Exp2Table[index + 1];
+    const long double r = low + (high + low) * z * (0x1.62e42fefa39efp-1 + z * (0x1.ebfbdff82c58fp-3 + z * (0x1.c6b08d7049fap-5 +
+        z * (0x1.3b2ab6fba4da5p-7 + z * (0x1.5d8804780a736p-10 + z * 0x1.430918835e33dp-13))))) + high;
+    if (scale >= -16381) {
+        if (scale == 16384) return r * 2.0 * 0x1p16383L;
+        return r * std::ldexp(1.0L, scale);
+    }
+    return r * std::ldexp(1.0L, scale + 10000) * twoToMinus10000;
+}
+long double APS5_VABI logl_nid_postfix(long double x) { return _LLog_nid_postfix(x, 0); }
+long double APS5_VABI log10l_nid_postfix(long double x) { return _LLog_nid_postfix(x, 1); }
 long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return std::pow(base, exp); }
 long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::ldexp(x, exp); }
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }

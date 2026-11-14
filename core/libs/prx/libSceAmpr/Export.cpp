@@ -566,8 +566,11 @@ int APS5_VABI sceAmprCommandBufferPushMarkerWithColor(Apr::CommandBufferObject* 
 
 int APS5_VABI sceAmprCommandBufferReset(Apr::CommandBufferObject* buffer) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    buffer->offset = 0;
-    buffer->numCommands = 0;
+    Apr::CommandBufferObject localBuffer{};
+    if (!GuestCopyIn_nid_no_patch(&localBuffer, buffer, sizeof(localBuffer))) return SCE_KERNEL_ERROR_EFAULT;
+    localBuffer.offset = 0;
+    localBuffer.numCommands = 0;
+    if (!GuestCopyOut_nid_no_patch(&buffer->offset, &localBuffer.offset, sizeof(std::uint32_t) * 2)) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
