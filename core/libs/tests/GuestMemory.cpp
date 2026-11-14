@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <exception>
@@ -534,6 +535,65 @@ static void CheckBatchMapPlacesAtTheGivenStart() {
     unmaps[1].operation = unmap;
     processed = -1;
     Require(sceKernelBatchMap(unmaps, 2, &processed) == 0 && processed == 2);
+}
+
+static void CheckBatchMapPointerValidation() {
+    constexpr std::size_t page = 0x4000;
+    constexpr int mapFlexible = 3;
+    const auto flexible = [&] { return KernelBatchMapEntry{nullptr, 0, page, 3, 0, 0, mapFlexible}; };
+    int processed = -1;
+    Require(sceKernelBatchMap(nullptr, 1, &processed) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap(nullptr, 0, &processed) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap2(nullptr, 1, &processed, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap2(nullptr, 0, &processed, 0) == SCE_KERNEL_ERROR_EINVAL);
+    KernelBatchMapEntry validEntry = flexible();
+    Require(sceKernelBatchMap(&validEntry, -1, &processed) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap2(&validEntry, -1, &processed, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelBatchMap(&validEntry, 0, nullptr) == 0);
+    Require(sceKernelBatchMap2(&validEntry, 0, nullptr, 0) == 0);
+    validEntry = flexible();
+    Require(sceKernelBatchMap(&validEntry, 1, nullptr) == 0 && validEntry.start != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(validEntry.start), page) == 0);
+    validEntry = flexible();
+    Require(sceKernelBatchMap2(&validEntry, 1, nullptr, 0) == 0 && validEntry.start != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(validEntry.start), page) == 0);
+    for (const std::uintptr_t address : {std::uintptr_t{0x10}, ~std::uintptr_t{0xfff}}) {
+        auto* badOut = reinterpret_cast<int*>(address);
+        validEntry = flexible();
+        errno = 71;
+        Require(sceKernelBatchMap(&validEntry, 0, badOut) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceKernelBatchMap2(&validEntry, 0, badOut, 0) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceKernelBatchMap(&validEntry, 1, badOut) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 71);
+        Require(validEntry.start != nullptr);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(validEntry.start), page) == 0);
+        validEntry = flexible();
+        errno = 71;
+        Require(sceKernelBatchMap2(&validEntry, 1, badOut, 0) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 71);
+        Require(validEntry.start != nullptr);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(validEntry.start), page) == 0);
+    }
+    void* roPage = nullptr;
+    Require(sceKernelMapFlexibleMemory(&roPage, page, 1, 0) == 0 && roPage != nullptr);
+    auto* roOut = static_cast<int*>(roPage);
+    validEntry = flexible();
+    errno = 71;
+    Require(sceKernelBatchMap(&validEntry, 1, roOut) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    Require(validEntry.start != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(validEntry.start), page) == 0);
+    validEntry = flexible();
+    errno = 71;
+    Require(sceKernelBatchMap2(&validEntry, 1, roOut, 0) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    Require(validEntry.start != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(validEntry.start), page) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(roPage), page) == 0);
 }
 
 static void CheckVirtualQueryFindsNeighbours() {
@@ -4387,6 +4447,7 @@ int main(int argc, char** argv) {
 #endif
     CheckBatchMapStopsAtInvalidEntry();
     CheckBatchMapPlacesAtTheGivenStart();
+    CheckBatchMapPointerValidation();
     CheckCheckedReleaseDirectMemory();
     CheckReleaseSkipsFreePages();
     CheckAudioCoprocessorProtection();
