@@ -68,6 +68,9 @@ void CheckClosed() {
     attribute.sizeThis = sizeof(CameraAttribute);
     attribute.channel = 1;
     Require(sceCameraGetAttribute(1, &attribute) == ErrorNotOpen, "reading attributes before any open must report NOT_OPEN");
+    errno = 71;
+    Require(sceCameraGetAttribute(1, reinterpret_cast<CameraAttribute*>(0x10)) == ErrorParam, "unmapped attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     std::uint32_t enable = 7;
     Require(sceCameraGetAutoExposureGain(1, 1, &enable, nullptr) == ErrorNotOpen, "reading auto exposure before any open must report NOT_OPEN");
     Require(sceCameraGetAutoExposureGain(0, 1, &enable, nullptr) == ErrorParam, "reading auto exposure with handle 0 must be rejected");

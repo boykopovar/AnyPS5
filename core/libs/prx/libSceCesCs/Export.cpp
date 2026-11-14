@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -1011,34 +1012,35 @@ int decodeJis2004(bool sjis, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& le
             code = 0xFF61 + (lead - 0xA1);
             return 0;
         }
-        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return rejectLead(length);
+        if (mbcsMax < 2) return needBytes(2, length);
         int row = 0;
         int cell = 0;
-        if (!sjisToJis(lead, mbcs[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+        if (!sjisToJis(lead, mbcs[1], row, cell)) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         if (row <= 94) code = JisX0213::PLANE1[(row - 1) * 94 + (cell - 1)];
         else code = JisX0213::PLANE2[(JIS_X0213_PLANE2_ROWS[row - 95] - 1) * 94 + (cell - 1)];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (lead == 0x8E) {
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return needBytes(2, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         code = 0xFF61 + (mbcs[1] - 0xA1);
         return 0;
     }
     if (lead == 0x8F) {
-        if (mbcsMax < 3) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        if (stopsAtNul(mbcs, mbcsMax, 1, 3, length)) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 3) return needBytes(3, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return rejectTrail(mbcs[1], 3, length);
         length = 3;
         const uint32_t cell = (mbcs[1] - 0xA1) * 94 + (mbcs[2] - 0xA1);
         code = isJisX0213Plane2Row(mbcs[1] - 0xA0) ? JisX0213::PLANE2[cell] : JisX0212::TO_UCS2[cell];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
-    if (lead < 0xA1 || lead > 0xFE) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    if (lead < 0xA1 || lead > 0xFE) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
+    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return rejectTrail(mbcs[1], 2, length);
     length = 2;
     code = JisX0213::PLANE1[(lead - 0xA1) * 94 + (mbcs[1] - 0xA1)];
     return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
@@ -3153,19 +3155,37 @@ void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
 
 int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs) {
     if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte, a native JIS sequence, nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
-    if (ucs) *ucs = 0;
+    if (ucs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(ucs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesJiscsToUcs: a profile other than the eight JIS profiles is not implemented");
     uint32_t code = 0;
     const int result = jiscsToUnicode(profile, jiscs, code);
     if (result != 0) return result;
     if (!ucs) return CES_ERROR_INVALID_DST_BUFFER;
-    *ucs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(ucs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 
 int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs) {
-    if (jiscs) *jiscs = 0;
+    if (jiscs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(jiscs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!isScalar(ucs)) return CES_ERROR_ILLEGAL_CODE;
     if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
     if (!profile) return CES_ERROR_INVALID_PROFILE;
@@ -3175,7 +3195,11 @@ int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jisc
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;
     if (!jiscs) return CES_ERROR_INVALID_DST_BUFFER;
-    *jiscs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(jiscs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 

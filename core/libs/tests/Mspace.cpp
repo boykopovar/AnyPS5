@@ -21,9 +21,11 @@ static void CheckPaf() {
     Require(rejected);
     void* arena = sceLibcPafMspaceCreate_nid_postfix("paf", storage.data(), storage.size(), 0, nullptr);
     Require(arena == storage.data());
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1 && sceLibcPafMspaceIsHeapEmpty_nid_postfix(arena) == 1);
     const int owner = 0;
     auto* block = static_cast<unsigned char*>(sceLibcPafMspaceMalloc_nid_postfix(arena, 40, &owner));
     Require(block != nullptr && sceLibcMspaceMallocUsableSize_nid_postfix(block) >= 40);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 0 && sceLibcPafMspaceIsHeapEmpty_nid_postfix(arena) == 0);
     std::memset(block, 0x5a, 40);
     auto* zeroed = static_cast<unsigned char*>(sceLibcPafMspaceCalloc_nid_postfix(arena, 4, 8, arena));
     Require(zeroed != nullptr && zeroed[0] == 0 && zeroed[31] == 0);
@@ -53,8 +55,11 @@ static void CheckPaf() {
     sceLibcPafMspaceFree_nid_postfix(arena, posixAligned, &owner);
     sceLibcPafMspaceFree_nid_postfix(arena, nullptr, &owner);
 
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1 && sceLibcPafMspaceIsHeapEmpty_nid_postfix(arena) == 1);
     Require(sceLibcPafMspaceDestroy_nid_postfix(arena) == 0);
     Require(sceLibcPafMspaceDestroy_nid_postfix(arena) == -1);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 0);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(nullptr) == 0);
 }
 static void CheckAlignment() {
     alignas(32) static std::array<unsigned char, 65536 + 16> storage{};
