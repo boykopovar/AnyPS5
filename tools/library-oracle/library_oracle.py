@@ -77,7 +77,7 @@ def text(value):
 def environment(modules):
     copy = dict(os.environ)
     for name in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
-        copy[name] = str(modules) + os.pathsep + copy.get(name, "")
+        copy[name] = os.pathsep.join(part for part in (str(modules), copy.get(name, "")) if part)
     return copy
 
 

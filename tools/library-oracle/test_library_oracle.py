@@ -189,6 +189,22 @@ class ModuleTests(unittest.TestCase):
             self.assertEqual(run.commands, [["replay", "--required-modules"]])
             self.assertIn(f"libkernel_sys.prx is not in {directory}", note)
 
+    def test_the_search_path_gets_no_empty_entry_when_the_variable_is_unset_or_empty(self):
+        names = ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH")
+        modules = Path("modules")
+        separator = library_oracle.os.pathsep
+        with mock.patch.dict(library_oracle.os.environ, {"OTHER": "kept"}, clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names}, dict.fromkeys(names, str(modules)))
+            self.assertEqual(copy["OTHER"], "kept")
+        with mock.patch.dict(library_oracle.os.environ, dict.fromkeys(names, ""), clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names}, dict.fromkeys(names, str(modules)))
+        with mock.patch.dict(library_oracle.os.environ, dict.fromkeys(names, "first" + separator + "second"), clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names},
+                             dict.fromkeys(names, str(modules) + separator + "first" + separator + "second"))
+
 
 if __name__ == "__main__":
     unittest.main()
