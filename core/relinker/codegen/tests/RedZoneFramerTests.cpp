@@ -461,6 +461,25 @@ void framesFramePointerLeavesThatPushInTheirBody() {
     require(sites[1].Body == stubBody({0x48, 0x01, 0xd0, 0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, 0x5d, 0xc3}), "the add before pop rbp was not copied ahead of raising rsp");
 }
 
+void framesAFramePointerLeafPastAnInterruptInTheMiddle() {
+    const std::vector<std::uint8_t> framePrologue{0x55, 0x48, 0x89, 0xe5};
+    const std::vector<std::uint8_t> popRbpExit{0x5d, 0xc3};
+    for (const auto& interrupt : {std::vector<std::uint8_t>{0xcc}, std::vector<std::uint8_t>{0xcd, 0x41}}) {
+        std::vector<std::uint8_t> body = StoreBelowPushes;
+        append(body, interrupt);
+        append(body, LoadBelowPushes);
+        const auto input = image({framelessLeaf(framePrologue, body, popRbpExit)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(report.Framed == 1 && report.Exits == 1 && sites.size() == 2, "a frame-pointer leaf with an interrupt in the middle was not framed up to its ret");
+        std::vector<std::uint8_t> exitBody = LoadBelowPushes;
+        append(exitBody, {0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00});
+        append(exitBody, popRbpExit);
+        require(sites[1].Body == stubBody(exitBody), "the exit after the interrupt does not raise rsp before popping rbp");
+    }
+}
+
 void skipsOpcodeEncodedRspUses() {
     const std::vector<std::vector<std::uint8_t>> uses{
         {0x48, 0x0f, 0xcc, 0x48, 0x0f, 0xcc},
@@ -996,6 +1015,7 @@ int main() {
         widensBothExitsOfALeafWithoutPushes();
         widensExitsOverVexOperandsAtRsp();
         framesFramePointerLeavesThatPushInTheirBody();
+        framesAFramePointerLeafPastAnInterruptInTheMiddle();
         skipsLeavesThatCopyRsp();
         skipsOpcodeEncodedRspUses();
         framesOpcodeEncodedNonStackRegisters();

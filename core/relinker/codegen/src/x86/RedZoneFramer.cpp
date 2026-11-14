@@ -365,9 +365,11 @@ void frameSegment(
 
         const std::vector<std::uint8_t> code(seg.begin() + static_cast<std::ptrdiff_t>(start), seg.begin() + static_cast<std::ptrdiff_t>(limit));
         std::vector<Insn> body;
-        for (const auto& match : scanner->ScanCodeSection(code, 0, code.size())) {
-            if (code[match.Offset] == 0xcc && match.Length == 1) break;
-            body.push_back({start + static_cast<std::size_t>(match.Offset), match.Length, decoder.DecodeInstruction(code.data() + match.Offset, match.Length)});
+        const auto matches = scanner->ScanCodeSection(code, 0, code.size());
+        const auto int3 = [&](const auto& match) { return code[match.Offset] == 0xcc && match.Length == 1; };
+        for (std::size_t m = 0; m < matches.size(); ++m) {
+            if (int3(matches[m]) && std::all_of(matches.begin() + static_cast<std::ptrdiff_t>(m), matches.end(), int3)) break;
+            body.push_back({start + static_cast<std::size_t>(matches[m].Offset), matches[m].Length, decoder.DecodeInstruction(code.data() + matches[m].Offset, matches[m].Length)});
         }
         if (body.size() < 3) continue;
         const auto at = [&](const std::size_t k) { return seg.data() + body[k].Offset; };
