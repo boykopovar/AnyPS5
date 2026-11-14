@@ -235,6 +235,34 @@ static void SetValues() {
     FcPatternDestroy(pattern);
 }
 
+static void UndefinedScores() {
+    auto* pattern = FcPatternCreate();
+    auto* font = FcPatternCreate();
+    CHECK(pattern && font);
+    CHECK(FcPatternAddString(pattern, "postscriptname", Text("")));
+    CHECK(FcPatternAddString(font, "postscriptname", Text("")));
+    CHECK(FcPatternAddDouble(pattern, "pixelsize", __builtin_nan("")));
+    CHECK(FcPatternAddInteger(font, "pixelsize", 10));
+    CHECK(FcPatternAddString(pattern, "style", Text("")));
+    CHECK(FcPatternAddString(font, "style", Text("")));
+
+    auto* prepared = FcFontRenderPrepare(nullptr, pattern, font);
+    CHECK(prepared != nullptr);
+    CHECK(Single(prepared, "postscriptname") && StringAt(prepared, "postscriptname", 0, ""));
+    int pixels = 0;
+    CHECK(Single(prepared, "pixelsize") && FcPatternGetInteger(prepared, "pixelsize", 0, &pixels) == FcResultMatch && pixels == 10);
+    CHECK(StringAt(prepared, "style", 0, ""));
+    FcPatternDestroy(prepared);
+
+    CHECK(FcPatternAddString(font, "postscriptname", Text("Xyz")));
+    prepared = FcFontRenderPrepare(nullptr, pattern, font);
+    CHECK(prepared != nullptr);
+    CHECK(Single(prepared, "postscriptname") && StringAt(prepared, "postscriptname", 0, "Xyz"));
+    FcPatternDestroy(prepared);
+    FcPatternDestroy(font);
+    FcPatternDestroy(pattern);
+}
+
 static bool Throws(FcPattern* pattern, FcPattern* font) {
     try {
         FcFontRenderPrepare(nullptr, pattern, font);
@@ -257,6 +285,7 @@ int main() {
     CopiedObjects();
     NameLanguages();
     SetValues();
+    UndefinedScores();
     NullArguments();
     return 0;
 }

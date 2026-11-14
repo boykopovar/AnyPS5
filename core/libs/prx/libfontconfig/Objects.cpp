@@ -458,6 +458,7 @@ bool CompareLists(Matcher matcher, const std::list<PatternValue>& pattern, const
     const bool single = matcher != Matcher::Family && matcher != Matcher::PostScript;
     double best = 1e99;
     std::size_t found = 0;
+    bool scored = false;
     std::size_t j = 0;
     for (const auto& first : pattern) {
         std::size_t k = 0;
@@ -470,6 +471,7 @@ bool CompareLists(Matcher matcher, const std::list<PatternValue>& pattern, const
                 if (bestValue) *bestValue = std::move(match);
                 best = score;
                 found = k;
+                scored = true;
             }
             if (single && best < 1000) {
                 if (position) *position = found;
@@ -479,6 +481,7 @@ bool CompareLists(Matcher matcher, const std::list<PatternValue>& pattern, const
         }
         ++j;
     }
+    if (bestValue && !scored) *bestValue = PatternValue(font.front());
     if (position) *position = found;
     return true;
 }
