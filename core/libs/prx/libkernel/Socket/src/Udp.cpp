@@ -779,6 +779,14 @@ short ClosedStreamEvents(int descriptor, short revents, short requested) {
     revents = static_cast<short>(revents & ~POLLHUP);
     return (sent.revents & (POLLOUT | POLLHUP)) ? static_cast<short>(revents | (requested & POLLOUT)) : revents;
 }
+
+short UnrequestedHangUp(int descriptor, int value) {
+    const auto socket = Find(descriptor);
+    if (!socket || socket->type != 1) return 0;
+    pollfd probe{value, POLLIN, 0};
+    if (::poll(&probe, 1, 0) <= 0) return 0;
+    return ClosedStreamEvents(descriptor, static_cast<short>(probe.revents & (POLLHUP | POLLERR)), 0);
+}
 #endif
 [[noreturn]] void ThrowReadEndWritable(int descriptor) {
     throw std::runtime_error("poll: POLLOUT on the read end of pipe descriptor " + std::to_string(descriptor) + " is not supported");
@@ -2929,6 +2937,10 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             if (WSAPoll(native.data(), static_cast<ULONG>(native.size()), slice) < 0) return Fail(NativeError());
 #else
             if (::poll(native.data(), static_cast<nfds_t>(native.size()), slice) < 0) return Fail(NativeError());
+#endif
+#ifdef __APPLE__
+            for (std::size_t i = 0; i < socketCount; ++i)
+                if (native[i].events == 0) native[i].revents = static_cast<short>(native[i].revents | UnrequestedHangUp(descriptors[owners[i]].descriptor, native[i].fd));
 #endif
         } else if (!ready && !checkedReady && !urgent) {
             const auto wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
