@@ -182,6 +182,9 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(invalidListCount == 42);
     Require(scePlayGoGetLocus(handle, &chunk, 1, &locus) == 0 && locus == 3);
     Require(scePlayGoGetLocus(handle, &chunk, 1, reinterpret_cast<std::int8_t*>(0x10)) == badPointer);
+    errno = 71;
+    Require(scePlayGoGetLocus(handle, reinterpret_cast<const std::uint16_t*>(0x10), 1, &locus) == badPointer);
+    Require(errno == 71);
     const std::uint16_t undeclared[2] = {1, 10};
     std::int8_t loci[2] = {0, 0};
     Require(scePlayGoGetLocus(handle, undeclared, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
@@ -208,6 +211,9 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetProgress(handle, &chunk, 1, nullptr) == badPointer);
     Require(scePlayGoGetProgress(handle, &chunk, 1, reinterpret_cast<PlayGoProgress*>(0x10)) == badPointer);
     Require(scePlayGoGetProgress(handle, nullptr, 1, &progress) == badPointer);
+    errno = 71;
+    Require(scePlayGoGetProgress(handle, reinterpret_cast<const std::uint16_t*>(0x10), 1, &progress) == badPointer);
+    Require(errno == 71);
     Require(scePlayGoGetProgress(handle, &chunk, 0, &progress) == badSize);
     Require(scePlayGoGetProgress(handle, &chunk, 1, &progress) == 0 && progress.progress_size == 1 && progress.total_size == 1);
     Require(scePlayGoSetInstallSpeed(handle + 1, 2) == badHandle);
@@ -269,6 +275,12 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetEta(handle, &chunk, 1, nullptr) == badPointer);
     Require(scePlayGoGetEta(handle, &chunk, 1, reinterpret_cast<std::int64_t*>(0x10)) == badPointer);
     Require(scePlayGoGetEta(handle, nullptr, 1, &eta) == badPointer);
+    errno = 71;
+    Require(scePlayGoGetEta(handle, reinterpret_cast<const std::uint16_t*>(0x10), 1, &eta) == badPointer);
+    Require(errno == 71);
+    errno = 71;
+    Require(scePlayGoPrefetch(handle, reinterpret_cast<const std::uint16_t*>(0x10), 1, 0) == badPointer);
+    Require(errno == 71);
     Require(scePlayGoGetEta(handle, &chunk, 0, &eta) == badSize);
     Require(scePlayGoGetEta(handle, &chunk, 1, &eta) == 0 && eta == 0);
     Require(scePlayGoPrefetchOptionalChunk(handle + 1, 0, nullptr) == badHandle);

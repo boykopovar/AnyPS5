@@ -1201,10 +1201,6 @@ int APS5_VABI _ZN3JSC4Heap25protectedObjectTypeCountsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC4Yarr10parseFlagsEN3WTF10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC4Yarr11YarrPatternC1ERKN3WTF6StringENS2_9OptionSetINS0_5FlagsEEERNS0_9ErrorCodeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1618,10 +1614,6 @@ int APS5_VABI _ZN3WTF25createCanonicalUUIDStringEv() {
 }
 
 int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF6Logger9observersEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

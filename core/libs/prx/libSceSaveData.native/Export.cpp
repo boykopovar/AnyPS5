@@ -1728,11 +1728,11 @@ int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
 }
 
 int APS5_VABI sceSaveDataCancel(std::uint32_t cancelArgument) {
+    (void)cancelArgument;
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataDirNameSearch2(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
