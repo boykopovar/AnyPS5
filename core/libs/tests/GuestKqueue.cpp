@@ -71,6 +71,7 @@ static constexpr std::uint32_t NoteTrigger = 0x01000000;
 static constexpr std::uint32_t NoteLowat = 0x0001;
 static constexpr std::uint32_t NoteFfcopy = 0xc0000000;
 static constexpr std::uint32_t NoteFfor = 0x80000000;
+static constexpr std::uint32_t NoteSeconds = 0x0001;
 static constexpr std::uint32_t NoteMseconds = 0x0002;
 static constexpr std::uint32_t NoteUseconds = 0x0004;
 static constexpr std::uint32_t NoteNseconds = 0x0008;
@@ -347,6 +348,21 @@ static void TimerReadd() {
     Require(Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)) == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
     Require(Poll(kq, events, 4) == 0);
+
+    Require(Apply(kq, Change(14, EvfiltTimer, EvAdd | EvOneshot, 0, 100)) == 0);
+    const auto oneShotArmed = std::chrono::steady_clock::now();
+    Require(Apply(kq, Change(14, EvfiltTimer, EvAdd | EvOneshot, 0, 10)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    Require(Poll(kq, events, 4) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 14 && events[0].data == 1);
+    Require(std::chrono::steady_clock::now() - oneShotArmed >= std::chrono::milliseconds(90));
+    Require(Poll(kq, events, 4) == 0);
+
+    const KernelTimespec halfSecond{0, 500000000};
+    Require(Apply(kq, Change(15, EvfiltTimer, EvAdd | EvOneshot, 0, INTPTR_MAX)) == 0);
+    Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &halfSecond) == 1 && events[0].ident == 15 && events[0].data == 1);
+    Require(Apply(kq, Change(16, EvfiltTimer, EvAdd | EvOneshot, NoteSeconds, INTPTR_MAX)) == 0);
+    Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &halfSecond) == 1 && events[0].ident == 16 && events[0].data == 1);
 
     Require(Apply(kq, Change(13, EvfiltTimer, EvAdd, 0, 30)) == 0);
     const auto unitArmed = std::chrono::steady_clock::now();
