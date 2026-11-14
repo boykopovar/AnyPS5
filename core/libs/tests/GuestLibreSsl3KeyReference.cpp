@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
     if (argc == 1 || std::strcmp(argv[1], "ssl_ctx") == 0)
         CheckKey<LibreSsl3SslCtx>(SSL_CTX_up_ref_nid_postfix, 40);
     if (argc == 1 || std::strcmp(argv[1], "bio") == 0)
-        CheckKey<LibreSsl3Bio>(BIO_up_ref_nid_postfix, 80);
+        CheckKey<LibreSsl::Bio>(BIO_up_ref_nid_postfix, 72);
     if (argc == 1 || std::strcmp(argv[1], "ec_get0") == 0)
         CheckGet0EcKey();
     return 0;

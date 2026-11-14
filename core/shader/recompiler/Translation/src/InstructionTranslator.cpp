@@ -1,6 +1,5 @@
 #include "Translation/InstructionTranslator.hpp"
 #include "Recompiler.hpp"
-#include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -693,6 +692,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
         context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma);
+        context.SetNativeInteger16(options.nativeInteger16);
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetFloat32FlushDeclared(options.float32FlushDeclared);
@@ -744,10 +744,6 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
 
     ValidateProgram(program, false);
     return program;
-}
-
-void InstructionTranslator::translateInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) const {
-    DispatchInstruction(builder, instruction, cfg, options);
 }
 
 TranslationContext::TranslationContext(IrProgram& program, IrBlock& block, std::uint32_t vectorLimit) : program(program), ir(program), block(block), instructionBranchCondition(IrU1(program.CreateValue(IrOpcode::Void, IrType::Bool))), currentVectorLimit(vectorLimit) {
