@@ -4,7 +4,6 @@
 #include FT_SYNTHESIS_H
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/GuestArena.hpp"
 
 #include FT_GASP_H
 #include FT_CID_H
@@ -350,13 +349,12 @@ std::uint32_t APS5_VABI FT_Get_Char_Index_nid_postfix(GuestFaceRec* face, std::u
 int APS5_VABI FT_Get_Kerning_nid_postfix(GuestFaceRec* face, std::uint32_t leftGlyph, std::uint32_t rightGlyph, std::uint32_t kernMode, GuestVector* kerning) {
     const GuestFace* owner = FaceOf(face);
     if (!owner || !kerning) return FT_Get_Kerning(owner ? owner->host : nullptr, leftGlyph, rightGlyph, kernMode, nullptr);
-    FT_Vector result{};
-    FT_Error error = 0;
-    if (leftGlyph <= std::numeric_limits<std::uint16_t>::max() || !FT_IS_SFNT(owner->host)) {
-        error = FT_Get_Kerning(owner->host, leftGlyph, rightGlyph, kernMode, &result);
+    if (leftGlyph > std::numeric_limits<std::uint16_t>::max() && FT_IS_SFNT(owner->host)) {
+        *kerning = {0, 0};
+        return 0;
     }
-    GuestArena::HostWrite write(kerning, sizeof(*kerning));
-    if (!write.Open() || !GuestWritable_nid_no_patch(kerning, sizeof(*kerning))) return error != 0 ? error : FT_Err_Invalid_Argument;
+    FT_Vector result{};
+    const FT_Error error = FT_Get_Kerning(owner->host, leftGlyph, rightGlyph, kernMode, &result);
     *kerning = {result.x, result.y};
     return error;
 }

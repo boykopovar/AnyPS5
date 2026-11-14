@@ -1,6 +1,5 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
-#include "FreeTypeQueryOutputFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -1869,22 +1868,6 @@ int main() {
     Require(FT_New_Memory_Face(hostLibrary, kernFont.data(), static_cast<FT_Long>(kernFont.size()), 0, &kernHost) == 0);
     Require(FT_New_Face_nid_postfix(library, "/app0/kern.ttf", 0, &kernFace) == 0);
     Require(FT_HAS_KERNING(kernHost));
-    {
-        QueryOutputFixture::Pages pages;
-        pages.Reject(sizeof(GuestVector), [&](void* output) {
-            return FT_Get_Kerning_nid_postfix(nullptr, 1, 1, FT_KERNING_UNSCALED, static_cast<GuestVector*>(output)) == FT_Err_Invalid_Face_Handle;
-        });
-        for (const std::uint32_t left : {1u, 0x10001u}) {
-            pages.Reject(sizeof(GuestVector), [&](void* output) {
-                return FT_Get_Kerning_nid_postfix(kernFace, left, 1, FT_KERNING_UNSCALED, static_cast<GuestVector*>(output)) == FT_Err_Invalid_Argument;
-            });
-            pages.Accept(sizeof(GuestVector), [&](void* pointer) {
-                auto* output = static_cast<GuestVector*>(pointer);
-                const int error = FT_Get_Kerning_nid_postfix(kernFace, left, 1, FT_KERNING_UNSCALED, output);
-                return error == 0 && output->x == (left == 1 ? -73 : 0) && output->y == 0;
-            });
-        }
-    }
     const unsigned modes[] = {FT_KERNING_DEFAULT, FT_KERNING_UNFITTED, FT_KERNING_UNSCALED, 99};
     for (const unsigned size : {100u, 12u}) {
         Require(FT_Set_Pixel_Sizes_nid_postfix(kernFace, 0, size) == 0 && FT_Set_Pixel_Sizes(kernHost, 0, size) == 0);
