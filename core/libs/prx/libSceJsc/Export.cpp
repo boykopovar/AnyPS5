@@ -118,8 +118,8 @@ const std::uint16_t* APS5_VABI JSStringGetCharactersPtr_nid_postfix(const GuestJ
 
 std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize_nid_postfix(const GuestJSString* string) {
     if (!string) throw std::invalid_argument("JSStringGetMaximumUTF8CStringSize: null string");
-    const auto length = static_cast<std::uint32_t>(string->characters.size() - 1);
-    return static_cast<std::uint32_t>(length * 3u + 1u);
+    const auto length = string->characters.size() - 1;
+    return length * 3 + 1;
 }
 
 std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* string, char* buffer, std::size_t bufferSize) {

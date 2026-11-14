@@ -228,6 +228,16 @@ static void MaximumSize() {
     JSStringRelease_nid_postfix(string);
 }
 
+static void MaximumSizeAboveUInt32() {
+    constexpr std::size_t units = 1431655766;
+    GuestJSString string;
+    string.characters.reserve(units + 1);
+    string.characters.resize(units + 1, 'u');
+    string.characters.back() = 0;
+    Require(JSStringGetLength_nid_postfix(&string) == units);
+    Require(JSStringGetMaximumUTF8CStringSize_nid_postfix(&string) == units * 3 + 1);
+}
+
 static void Ownership() {
     std::array<std::uint16_t, 4> units{'A', 0, 0x03A9, 'B'};
     auto* string = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
@@ -265,5 +275,6 @@ int main() {
     References();
     Limits();
     MaximumSize();
+    MaximumSizeAboveUInt32();
     Ownership();
 }
