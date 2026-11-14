@@ -2021,16 +2021,29 @@ int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) {
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) {
     if (!config_data || !config_info) return SCE_AJM_ERROR_INVALID_PARAMETER;
     std::uint8_t config[ATRAC9_CONFIG_DATA_SIZE];
-    std::memcpy(config, config_data, sizeof(config));
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(config, config_data, sizeof(config))) {
+        errno = savedErrno;
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     Atrac9CodecInfo info{};
     const bool valid = DescribeAt9Config(config, info);
     AJM_TRACE("[ajm] parse config %02x %02x %02x %02x -> %s, %d channels, %d Hz, superframe %d bytes (%d frames of %d samples)\n", config[0], config[1], config[2], config[3], valid ? "ok" : "invalid", info.channels, info.samplingRate, info.superframeSize, info.framesInSuperframe, info.frameSamples);
-    if (!valid) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    config_info->channels = static_cast<std::uint32_t>(info.channels);
-    config_info->sample_rate = static_cast<std::uint32_t>(info.samplingRate);
-    config_info->frame_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples);
-    config_info->superframe_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples * info.framesInSuperframe);
-    config_info->superframe_size = static_cast<std::uint32_t>(info.superframeSize);
+    if (!valid) {
+        errno = savedErrno;
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
+    AjmDecAt9ConfigDataInfo localConfigInfo{};
+    localConfigInfo.channels = static_cast<std::uint32_t>(info.channels);
+    localConfigInfo.sample_rate = static_cast<std::uint32_t>(info.samplingRate);
+    localConfigInfo.frame_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples);
+    localConfigInfo.superframe_samples_per_channel = static_cast<std::uint32_t>(info.frameSamples * info.framesInSuperframe);
+    localConfigInfo.superframe_size = static_cast<std::uint32_t>(info.superframeSize);
+    const bool copied = GuestCopyOut_nid_no_patch(config_info, &localConfigInfo, sizeof(localConfigInfo));
+    errno = savedErrno;
+    if (!copied) {
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
