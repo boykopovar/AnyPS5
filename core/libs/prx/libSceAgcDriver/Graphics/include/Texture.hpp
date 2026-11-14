@@ -775,6 +775,7 @@ private:
     mutable std::array<ComparedRange, 4> comparedRanges{};
     mutable std::uint32_t nextComparedRange = 0;
     std::vector<std::byte> generationBaseline;
+    std::atomic<bool> hashAtUnwatch{false};
     struct UnwatchHash {
         std::array<std::uint64_t, 2> hash{};
         std::uint64_t generation = 0;
