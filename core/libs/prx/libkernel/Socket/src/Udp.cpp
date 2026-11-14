@@ -1752,6 +1752,10 @@ bool BindUnboundStream(Socket& socket) {
 }
 #endif
 int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if (const int error = forwards->listen(descriptor, backlog)) return Fail(error);
+        return 0;
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->type != 1) return Fail(45);

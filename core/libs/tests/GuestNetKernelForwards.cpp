@@ -146,7 +146,7 @@ static Stream OpenStream(bool net) {
     Require(bind_nid_postfix(stream.listener, local.data(), local.size()) == 0);
     std::uint32_t size = local.size();
     Require(getsockname_nid_postfix(stream.listener, local.data(), &size) == 0);
-    Require((net ? sceNetListen(stream.listener, 1) : listen_nid_postfix(stream.listener, 1)) == 0);
+    Require(listen_nid_postfix(stream.listener, 1) == 0);
     Require((net ? sceNetConnect(stream.client, local.data(), 16) : connect_nid_postfix(stream.client, local.data(), 16)) == 0);
     stream.accepted = net ? sceNetAccept(stream.listener, nullptr, nullptr) : accept_nid_postfix(stream.listener, nullptr, nullptr);
     Require(stream.accepted >= 0);
