@@ -116,6 +116,13 @@ void WriteBackOutline(GuestFace& face) {
     outline.flags = guest.flags;
 }
 
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
 }
 
 extern "C" {
@@ -127,7 +134,7 @@ int APS5_VABI FT_Init_FreeType_nid_postfix(GuestLibrary** alibrary) {
     if (error != 0) return error;
     std::unique_ptr<FT_LibraryRec_, decltype(&FT_Done_FreeType)> native(library->host, &FT_Done_FreeType);
     GuestLibrary* result = library.get();
-    if (!GuestCopyOut_nid_no_patch(alibrary, &result, sizeof(result))) return FT_Err_Invalid_Argument;
+    if (!CopyGuestOut(alibrary, &result, sizeof(result))) return FT_Err_Invalid_Argument;
     native.release();
     library.release();
     return 0;
@@ -350,12 +357,14 @@ int APS5_VABI FT_Get_Kerning_nid_postfix(GuestFaceRec* face, std::uint32_t leftG
     const GuestFace* owner = FaceOf(face);
     if (!owner || !kerning) return FT_Get_Kerning(owner ? owner->host : nullptr, leftGlyph, rightGlyph, kernMode, nullptr);
     if (leftGlyph > std::numeric_limits<std::uint16_t>::max() && FT_IS_SFNT(owner->host)) {
-        *kerning = {0, 0};
+        const GuestVector zero{0, 0};
+        if (!CopyGuestOut(kerning, &zero, sizeof(zero))) return FT_Err_Invalid_Argument;
         return 0;
     }
     FT_Vector result{};
     const FT_Error error = FT_Get_Kerning(owner->host, leftGlyph, rightGlyph, kernMode, &result);
-    *kerning = {result.x, result.y};
+    const GuestVector out{result.x, result.y};
+    if (!CopyGuestOut(kerning, &out, sizeof(out))) return FT_Err_Invalid_Argument;
     return error;
 }
 
@@ -433,11 +442,14 @@ int APS5_VABI FT_Get_SubGlyph_Info_nid_postfix(GuestGlyphSlotRec* slot, std::uin
     FT_Matrix hostTransform{};
     const FT_Error error = FT_Get_SubGlyph_Info(owner ? owner->host->glyph : nullptr, subIndex, &hostIndex, &hostFlags, &hostArg1, &hostArg2, &hostTransform);
     if (error != 0) return error;
-    *index = hostIndex;
-    *flags = hostFlags;
-    *arg1 = hostArg1;
-    *arg2 = hostArg2;
-    *transform = {hostTransform.xx, hostTransform.xy, hostTransform.yx, hostTransform.yy};
+    if (index && !CopyGuestOut(index, &hostIndex, sizeof(hostIndex))) return FT_Err_Invalid_Argument;
+    if (flags && !CopyGuestOut(flags, &hostFlags, sizeof(hostFlags))) return FT_Err_Invalid_Argument;
+    if (arg1 && !CopyGuestOut(arg1, &hostArg1, sizeof(hostArg1))) return FT_Err_Invalid_Argument;
+    if (arg2 && !CopyGuestOut(arg2, &hostArg2, sizeof(hostArg2))) return FT_Err_Invalid_Argument;
+    if (transform) {
+        const GuestMatrix outTransform{hostTransform.xx, hostTransform.xy, hostTransform.yx, hostTransform.yy};
+        if (!CopyGuestOut(transform, &outTransform, sizeof(outTransform))) return FT_Err_Invalid_Argument;
+    }
     return error;
 }
 

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "VulkanTestDevice.hpp"
@@ -257,7 +258,9 @@ struct Surface {
             begin.pClearValues = &clear;
             const std::array<std::uint32_t, 5> push{layer, width, height, samples, elementBytes};
             context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(batch.Handle(), &begin, VK_SUBPASS_CONTENTS_INLINE);
-            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(batch.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            CommandState state;
+            state.Begin(batch.Handle(), false);
+            state.BindPipeline(context, pipeline, 0);
             context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(batch.Handle(), pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, sizeof(push), push.data());
             context.Function<PFN_vkCmdDraw>("vkCmdDraw")(batch.Handle(), 3u, 1u, 0u, 0u);
             context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(batch.Handle());

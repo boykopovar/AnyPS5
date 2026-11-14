@@ -58,7 +58,7 @@ void TextureDetiler::DispatchMultisampleImage(VkCommandBuffer commands, std::uin
     const VkDescriptorImageInfo image{VK_NULL_HANDLE, arrayView, VK_IMAGE_LAYOUT_GENERAL};
     const std::array<VkWriteDescriptorSet, 2> writes{{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0u, 0u, 1u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffer, nullptr}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1u, 0u, 1u, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &image, nullptr, nullptr}}};
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 2u, writes.data(), 0u, nullptr);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
+    context.BindComputePipeline(commands, target);
     context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, imagePipelineLayout, 0u, 1u, &set, 0u, nullptr);
     const std::array<std::uint32_t, 7> push{width, height, layers, fragments, firstElement, elements, static_cast<std::uint32_t>(groupsX * 64u)};
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(push), push.data());
