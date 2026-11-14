@@ -94,6 +94,9 @@ void VerifyLoggedInUser(int userId) {
     UserServiceGamePresets presets{};
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetGamePresets(userId, reinterpret_cast<UserServiceGamePresets*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetGamePresets(userId, &presets) == USER_SERVICE_OK);
     Require(presets.difficulty == 0);
 
@@ -244,6 +247,10 @@ int main() {
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1024) == USER_SERVICE_OK);
+    errno = 71;
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(std::strstr(homePath, "/priv/home/10000000") != nullptr);
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, nullptr, 37) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 36) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
