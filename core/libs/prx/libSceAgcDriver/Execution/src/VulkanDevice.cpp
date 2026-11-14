@@ -30,6 +30,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DrawInputsInPlace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TessellationPipelineCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/IndexedIndirectPatches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupClock.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
@@ -75,6 +76,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+extern char** environ;
 #endif
 #include <atomic>
 #include <chrono>
@@ -240,6 +242,7 @@ const ShaderRecompiler::DiagnosticSink runReportSink{
     .unsupportedInstruction = LibcRunReportUnsupportedInstruction_nid_no_patch,
     .imageFormat = LibcRunReportImageFormat_nid_no_patch,
     .descriptor = CountDescriptor,
+    .compileTime = LibcRunReportShaderCompileTime_nid_no_patch,
 };
 [[maybe_unused]] const bool runReportSinkInstalled = (LibcRunReportSetDescriptorCounters_nid_no_patch(descriptorUse), ShaderRecompiler::SetDiagnosticSink(&runReportSink), true);
 
@@ -454,7 +457,7 @@ struct ComputePipelineKey {
     ShaderRecompiler::PipelineIdentity identity;
     bool pushConstants = false;
     auto operator<=>(const ComputePipelineKey&) const = default;
-    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return {shader.Identity(), pushConstants}; }
+    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return {Graphics::DescribedPipelineIdentity(shader), pushConstants}; }
 };
 
 constexpr std::uint64_t WorkgroupMemoryGranule = 1u << 20u;
@@ -683,6 +686,7 @@ struct VulkanDevice::State {
     bool drawIndirectFirstInstance = false;
     bool multiDrawIndirect = false;
     bool drawIndirectCount = false;
+    bool indexedIndirectPatches = true;
     // The device's resolved entry points (Graphics::DeviceFunctions) and the Graphics::Context
     // built once after setup (see graphicsContext); the context's pool reference is dropped before
     // the pool at teardown.
@@ -819,11 +823,11 @@ struct VulkanDevice::State {
     }
 
     template<typename TFunction>
-    TFunction DeviceFunction(const char* name) const {
+    TFunction DeviceFunction(Graphics::FunctionName name) const {
         ++Graphics::DeviceProcLookups();
-        auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
+        auto function = reinterpret_cast<TFunction>(deviceProc(device, name.Value()));
         if (function == nullptr) {
-            throw std::runtime_error(std::string("Vulkan device function missing: ") + name);
+            throw std::runtime_error(std::string("Vulkan device function missing: ") + name.Value());
         }
         return function;
     }
@@ -1198,6 +1202,7 @@ struct VulkanDevice::State {
             Graphics::ClearRetainedSpaces(device);
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
+            Graphics::ClearUploadCopies(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
@@ -1627,6 +1632,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->individuallyFreeDescriptorSets = driver.driverID == VK_DRIVER_ID_MESA_LLVMPIPE;
         state->fusedExactArithmetic = driver.driverID == VK_DRIVER_ID_MOLTENVK;
         state->tessellationPipelineCache = TessellationPipelineCacheUsable(driver.driverID);
+        state->indexedIndirectPatches = IndexedIndirectPatchesUsable(driver.driverID);
         state->hostInterpolationFirst = HostInterpolationPreferred(driver.driverID) && std::getenv("APS5_NO_HOST_INTERPOLATION_FIRST") == nullptr;
         APS5_LOG_OUT("Pixel interpolation driver=%d hostInterpolationFirst=%d", static_cast<int>(driver.driverID), state->hostInterpolationFirst ? 1 : 0);
         state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
@@ -1871,7 +1877,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     const char* requestedPresentMode = std::getenv("ANYPS5_PRESENT_MODE");
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR fifoLatestReadyFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR};
     bool fifoLatestReady = false;
-    if (requestedPresentMode != nullptr && std::strcmp(requestedPresentMode, "fifo_latest_ready") == 0 && fifoLatestReadyExtension != nullptr) {
+    if (window != nullptr && requestedPresentMode != nullptr && std::strcmp(requestedPresentMode, "fifo_latest_ready") == 0 && fifoLatestReadyExtension != nullptr) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &fifoLatestReadyFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         fifoLatestReady = fifoLatestReadyFeatures.presentModeFifoLatestReady == VK_TRUE;
@@ -1937,7 +1943,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
 #endif
     }
     VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT listRestartFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVE_TOPOLOGY_LIST_RESTART_FEATURES_EXT};
-    if (hasExtension(VK_EXT_PRIMITIVE_TOPOLOGY_LIST_RESTART_EXTENSION_NAME)) {
+    if (hasExtension(VK_EXT_PRIMITIVE_TOPOLOGY_LIST_RESTART_EXTENSION_NAME) && std::getenv("APS5_NO_LIST_RESTART") == nullptr) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &listRestartFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->primitiveListRestart = listRestartFeatures.primitiveTopologyListRestart == VK_TRUE;
@@ -2534,7 +2540,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         const auto host = std::ranges::find_first_of(hosts, available);
         if (std::ranges::find(available, VK_TIME_DOMAIN_DEVICE_KHR) != available.end() && host != hosts.end()) {
             state->hostTimeDomain = *host;
-            state->calibratedTimestamps = state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>(khr ? "vkGetCalibratedTimestampsKHR" : "vkGetCalibratedTimestampsEXT");
+            state->calibratedTimestamps = khr ? state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>("vkGetCalibratedTimestampsKHR") : state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>("vkGetCalibratedTimestampsEXT");
         }
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
@@ -4892,7 +4898,7 @@ Graphics::Context VulkanDevice::buildContext() const {
 }
 
 VulkanDevice::IndirectDrawSupport VulkanDevice::DrawIndirectSupport() const {
-    return {state->drawIndirectFirstInstance, state->multiDrawIndirect, state->drawIndirectCount};
+    return {state->drawIndirectFirstInstance, state->multiDrawIndirect, state->drawIndirectCount, state->indexedIndirectPatches};
 }
 
 std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const {
@@ -4901,6 +4907,10 @@ std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::Stat
 
 void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
     Graphics::RunColorMetadataPass(graphicsContext(), pass);
+}
+
+void VulkanDevice::DepthExpandPass(const Graphics::DepthExpandPass& pass) {
+    Graphics::RunDepthExpandPass(graphicsContext(), pass);
 }
 
 bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
@@ -5464,6 +5474,10 @@ VkDevice VulkanDevice::Device() const {
     return state->device;
 }
 
+bool VulkanDevice::DmaBufImportSelected() const {
+    return Graphics::DmaBufImportSelected(graphicsContext());
+}
+
 VulkanDevice::DispatchMoveCount VulkanDevice::DispatchMoveCounts() {
     auto& moves = DispatchMoves();
     DispatchMoveCount count{moves.checked.load(), moves.exact.load(), moves.moved.load(), 0, 0, moves.rebuilt.load(), moves.kept.load(), moves.served.load()};
@@ -5948,7 +5962,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             recorder.Keep(std::move(checked));
         }
     }
-    context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->pipeline);
+    context.BindComputePipeline(commands, record.objects->pipeline);
     if (record.bindings != nullptr) Graphics::Require(record.bindings->allocation.set != VK_NULL_HANDLE, "dispatch overlay has no descriptor set");
     if (record.bindings != nullptr) context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, 0, 1, &record.bindings->allocation.set, 0, nullptr);
     else resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout);
@@ -6028,7 +6042,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
                 std::snprintf(text, sizeof(text), "Vulkan dispatch: workgroup count %ux%ux%u%s exceeds device limits %ux%ux%u and the shader takes no workgroup offset", record.x, record.y, record.z, counted, limit[0], limit[1], limit[2]);
                 throw std::runtime_error(text);
             }
-            const auto bindPipeline = context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline");
             const auto dispatchChunk = context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch");
             bool firstChunk = true;
             for (std::uint32_t zBase = 0; zBase < record.z; zBase += limit[2]) {
@@ -6036,7 +6049,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
                     for (std::uint32_t xBase = 0; xBase < record.x; xBase += limit[0]) {
                         if (!firstChunk) {
                             Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-                            bindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, splitComputePipeline(context, *record.shader->program, *record.objects, {xBase, yBase, zBase}));
+                            context.BindComputePipeline(commands, splitComputePipeline(context, *record.shader->program, *record.objects, {xBase, yBase, zBase}));
                         }
                         firstChunk = false;
                         dispatchChunk(commands, std::min(limit[0], record.x - xBase), std::min(limit[1], record.y - yBase), std::min(limit[2], record.z - zBase));

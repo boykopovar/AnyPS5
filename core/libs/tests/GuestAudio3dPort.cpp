@@ -1,6 +1,8 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -255,6 +257,9 @@ void CheckObjects() {
     std::uint32_t id = 7;
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     Require(sceAudio3dObjectReserve(0, nullptr) == INVALID_PARAMETER, "null object id");
+    errno = 71;
+    Require(sceAudio3dObjectReserve(0, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable object id");
+    Require(errno == 71, "errno preserved");
     Require(sceAudio3dObjectReserve(1, &object) == INVALID_PORT && object == 7, "reserve on port 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "first object is 1");
     Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 2, "second object is 2");
@@ -281,6 +286,10 @@ void CheckQueue() {
     Require(Open(parameters, &id) == 0 && id == 0, "open");
     CheckAttributes();
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
+    errno = 71;
+    Require(sceAudio3dPortGetQueueLevel(0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == INVALID_PARAMETER, "unwritable level");
+    Require(sceAudio3dPortGetQueueLevel(0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == INVALID_PARAMETER, "unwritable available");
+    Require(errno == 71, "errno preserved");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
     std::uint32_t level = 99;

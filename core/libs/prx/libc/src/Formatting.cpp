@@ -88,12 +88,6 @@ bool HasGuestWideScan(const char* format) {
     return false;
 }
 
-bool ScansWideInProcess(const char* format) {
-    if (!HasGuestWideScan(format)) return false;
-    LibcDetail::RequireNoPositionalWideScan(format);
-    return true;
-}
-
 
 bool HasNarrowCharacterScan(const char* format) {
     if (format == nullptr) return false;
@@ -122,11 +116,7 @@ bool HasNarrowCharacterScan(const char* format) {
 
 #ifdef _WIN32
 bool ScansInProcess(const char* format) {
-    if (HasGuestWideScan(format)) {
-        LibcDetail::RequireNoPositionalWideScan(format);
-        return true;
-    }
-    return HasNarrowCharacterScan(format);
+    return HasGuestWideScan(format) || HasNarrowCharacterScan(format);
 }
 #else
 void RequireScannableWideFields(const char* format) {
@@ -578,7 +568,6 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
-    if (HasGuestWideScan(format)) LibcDetail::RequireNoPositionalWideScan(format);
     const int result = ScanSource(StreamSource(native), format, secure, nextPointer, nextCapacity);
     stream->SyncStatus();
     if (!secure) stream->KeepDirectoryReadError(result == -1);
@@ -687,14 +676,14 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = ScansWideInProcess(format) ? ScanSource(StreamSource(native), format, false, [&] { return __builtin_va_arg(args, void*); }, [] { return 0u; })
-                                                  : LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
+    const int result = HasGuestWideScan(format) ? ScanSource(StreamSource(native), format, false, [&] { return __builtin_va_arg(args, void*); }, [] { return 0u; })
+                                                : LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
     va_start(args, format);
-    const int result = ScansWideInProcess(format) ? ScanSource(StreamSource(native), format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
-                                                  : HostVfscanf(native, format, args);
+    const int result = HasGuestWideScan(format) ? ScanSource(StreamSource(native), format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
+                                                : HostVfscanf(native, format, args);
     va_end(args);
 #endif
     stream->SyncStatus();
@@ -1031,7 +1020,7 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
     int result = 0;
-    if (ScansWideInProcess(format)) {
+    if (HasGuestWideScan(format)) {
         LibcDetail::FormatArguments arguments(args);
         result = ScanSource(StreamSource(native), format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
     } else {

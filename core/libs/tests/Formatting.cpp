@@ -389,6 +389,11 @@ static void CheckSecureFormat() {
     Require(snprintf_s_nid_postfix(buffer, 5, "%d-%ls", 42, u"abcd") == 7 && std::strcmp(buffer, "42-a") == 0);
     Require(FormatListS(buffer, 1, "%x", 0xabcu) == 3 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "") == 0 && buffer[0] == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%zf|%Ld", 1.5, 12) == 11 && std::strcmp(buffer, "1.500000|12") == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%hhf", 0.5) == 8 && std::strcmp(buffer, "0.500000") == 0);
+    char pointerText[32];
+    snprintf_s_nid_postfix(pointerText, sizeof(pointerText), "%p", reinterpret_cast<void*>(0x1234));
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%hp", reinterpret_cast<void*>(0x1234)) == static_cast<int>(std::strlen(pointerText)) && std::strcmp(buffer, pointerText) == 0);
     buffer[0] = 'x';
     Require(FormatListS(buffer, sizeof(buffer), nullptr) < 0 && buffer[0] == 0);
     Require(FormatListS(nullptr, sizeof(buffer), "a") < 0 && snprintf_s_nid_postfix(nullptr, sizeof(buffer), "a") < 0);
@@ -734,9 +739,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         Require(sscanf_nid_postfix("\xc3\xa9", "%*ls") == 0 && sscanf_nid_postfix("\x80", "%*ls") == EOF);
         Require(sscanf_nid_postfix("\xc3\xa9", "%*lc") == EOF && sscanf_nid_postfix("a\xc3", "%*ls") == EOF);
         char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
-        bool positional = false;
-        try { sscanf_nid_postfix("a b", "%2$ls", untouched); } catch (const std::runtime_error&) { positional = untouched[0] == u'!'; }
-        Require(positional);
+        Require(sscanf_nid_postfix("a b", "%2$ls", untouched) == 0 && untouched[0] == u'!');
+        Require(sscanf_nid_postfix("5 ab", "%d %1$ls", &number, untouched) == 1 && number == 5 && untouched[0] == u'!');
     }
 #ifndef _WIN32
     char narrow[8] = {};
