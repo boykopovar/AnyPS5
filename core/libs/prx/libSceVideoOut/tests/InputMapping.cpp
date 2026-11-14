@@ -488,6 +488,17 @@ void turboReject() {
     require(rejects("Cross = TURBO\n"), "TURBO without a source is rejected");
 }
 
+void turboRate() {
+    useConfig("Cross = KEY:F\n");
+    require(Pad::LoadInputMapping().settings.turboRateHz == 10.0, "the turbo rate defaults to 10 Hz");
+    useConfig("TurboRateHz = 2.5\n");
+    require(Pad::LoadInputMapping().settings.turboRateHz == 2.5, "the turbo rate is read");
+    require(rejects("TurboRateHz = 0.5\n"), "a turbo rate below 1 Hz is rejected");
+    require(rejects("TurboRateHz = 31\n"), "a turbo rate above 30 Hz is rejected");
+    require(rejects("TurboRateHz = fast\n"), "a non-numeric turbo rate is rejected");
+    require(rejects("TurboRateHz = 4\nturboratehz = 5\n"), "a turbo rate given twice is rejected");
+}
+
 void writeProfile(const std::string& titleId, const std::string& text) {
     std::ofstream file(root / Pad::InputProfileName(titleId), std::ios::binary | std::ios::trunc);
     file << text;
@@ -766,6 +777,7 @@ int main() try {
     toggleReject();
     turboMode();
     turboReject();
+    turboRate();
     profileNames();
     profileOverridesShared();
     toggleMouseDefaults();

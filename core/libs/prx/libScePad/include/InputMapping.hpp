@@ -37,6 +37,7 @@ struct InputSettings {
     double stickModifierScale = 0.5;
     double keyboardRampMs = 0.0;
     double triggerRampMs = 0.0;
+    double turboRateHz = 10.0;
     bool mouseControlsRightStick = true;
 };
 

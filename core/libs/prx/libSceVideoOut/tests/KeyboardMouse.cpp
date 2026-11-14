@@ -834,6 +834,22 @@ void testTurboButton() {
     }
 }
 
+void testTurboRate() {
+    auto configuration = withSettings([](auto& settings) { settings.turboRateHz = 2.0; });
+    auto turbo = toggleCircle(SDL_SCANCODE_Z);
+    turbo.mode = Pad::InputMode::Turbo;
+    configuration.bindings.push_back(turbo);
+    const std::vector<TimedEvent> events{
+        At(100.0, KeyEvent(SDL_SCANCODE_Z, true)),
+        At(1600.0, KeyEvent(SDL_SCANCODE_Z, false)),
+    };
+    for (const auto& sample : Simulate(configuration, events, 10.0, 1700.0)) {
+        const bool pressing = sample.ms >= 100.0 && sample.ms < 1600.0;
+        const bool expected = pressing && std::fmod(sample.ms - 100.0, 500.0) < 250.0;
+        check(circleHeld(sample.state) == expected, "the turbo rate sets the pulse, 2 Hz is 250 ms on and 250 ms off, at " + std::to_string(sample.ms) + " ms");
+    }
+}
+
 int main() {
     try {
         const std::pair<const char*, std::function<void()>> tests[] = {
@@ -874,7 +890,8 @@ int main() {
             {"pad chord requests", testPadChordRequests},
             {"toggle button", testToggleButton},
             {"toggle focus loss", testToggleFocusLoss},
-            {"turbo button", testTurboButton}
+            {"turbo button", testTurboButton},
+            {"turbo rate", testTurboRate}
         };
         for (const auto& [name, test] : tests) {
             test();
