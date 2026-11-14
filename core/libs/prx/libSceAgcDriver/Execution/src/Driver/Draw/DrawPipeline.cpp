@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
@@ -385,9 +386,15 @@ void DrawPipeline::enqueue(Item item) {
         wake.notify_one();
     }
     static const bool stats = std::getenv("APS5_PIPELINE_STATS") != nullptr;
-    if (!profile && !stats) return;
+    if (!profile && !stats && !Graphics::EpochProofCountsProfiled()) return;
     const auto now = std::chrono::steady_clock::now();
-    if (now - lastReport >= std::chrono::seconds(10)) report(now);
+    if (now - lastReport < std::chrono::seconds(10)) return;
+    if (profile || stats) {
+        report(now);
+    } else {
+        lastReport = now;
+    }
+    Graphics::ReportEpochProofCounts();
 }
 
 void DrawPipeline::report(std::chrono::steady_clock::time_point now) {

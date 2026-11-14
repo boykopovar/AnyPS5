@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
@@ -5873,34 +5874,31 @@ std::size_t RetainedSpaceCount() {
 namespace {
 
 bool epochMirrors() {
-    return DrawPipelineEnabled();
+    return ShaderResources::EpochProofs();
 }
 
 void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space) {
-    static std::atomic<std::uint64_t> reuses{0}, refreshes{0}, compared{0}, differing{0};
+    (reused ? EpochProofCounts().mirrorReuses : EpochProofCounts().mirrorRefreshes).Add();
     static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-    if (reused && verify && reuses.load(std::memory_order_relaxed) % 64u == 0u) {
-        for (const auto index : space.writableMirrors) {
-            const auto& region = space.base[index];
-            const auto& mirror = *region.mirror;
-            if (!mirror.writable || mirror.heap || mirror.shadow.empty()) continue;
-            constexpr std::uint64_t block = 65536;
-            for (auto at = region.begin; at < region.end;) {
-                const auto next = std::min(region.end, (at / block + 1) * block);
-                const auto offset = static_cast<std::size_t>(at - mirror.base);
-                compared.fetch_add(1, std::memory_order_relaxed);
-                if (std::memcmp(mirror.shadow.data() + offset, reinterpret_cast<const void*>(at), static_cast<std::size_t>(next - at)) != 0) differing.fetch_add(1, std::memory_order_relaxed);
-                at = next;
-            }
+    thread_local std::uint64_t reuses = 0;
+    if (!reused || !verify || reuses++ % 64u != 0u) return;
+    static std::atomic<std::uint64_t> compared{0}, differing{0};
+    for (const auto index : space.writableMirrors) {
+        const auto& region = space.base[index];
+        const auto& mirror = *region.mirror;
+        if (!mirror.writable || mirror.heap || mirror.shadow.empty()) continue;
+        constexpr std::uint64_t block = 65536;
+        for (auto at = region.begin; at < region.end;) {
+            const auto next = std::min(region.end, (at / block + 1) * block);
+            const auto offset = static_cast<std::size_t>(at - mirror.base);
+            compared.fetch_add(1, std::memory_order_relaxed);
+            if (std::memcmp(mirror.shadow.data() + offset, reinterpret_cast<const void*>(at), static_cast<std::size_t>(next - at)) != 0) differing.fetch_add(1, std::memory_order_relaxed);
+            at = next;
         }
     }
-    const auto count = (reused ? reuses : refreshes).fetch_add(1, std::memory_order_relaxed) + 1u;
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (!verify && !profile) return;
-    const bool report = count % 65536u == 0u || (count & (count - 1u)) == 0u;
-    if (report) {
-        std::fprintf(stderr, "[epoch-mirrors] address space uses: %llu reused the epoch's refresh, %llu refreshed; verify: %llu blocks compared, %llu differ\n",
-                     static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(refreshes.load()), static_cast<unsigned long long>(compared.load()), static_cast<unsigned long long>(differing.load()));
+    const auto checks = reuses / 64u + 1u;
+    if ((checks & (checks - 1u)) == 0u || checks % 1024u == 0u) {
+        std::fprintf(stderr, "[epoch-mirrors] verify: %llu blocks compared, %llu differ\n", static_cast<unsigned long long>(compared.load()), static_cast<unsigned long long>(differing.load()));
     }
 }
 
