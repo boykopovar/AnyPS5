@@ -431,6 +431,18 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
         self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
 
+    def test_standard_module_dirs_are_staged_without_a_module_dir(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "sce_modules/libfoo.prx", "prx/akcompressor.prx", "prx/readme.txt"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf if name.endswith((".bin", ".prx")) else b"text")
+        expected = ["eboot.elf", "prx/akcompressor.prx", "sce_module/libc.prx", "sce_modules/libfoo.prx"]
+        for index, entry in enumerate(({}, {"relink": ["--module-dir", "prx"]})):
+            target = self.root / f"input{index}"
+            title_run.stage_inputs(source, entry, target)
+            self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)

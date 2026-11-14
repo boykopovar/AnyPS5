@@ -299,6 +299,20 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn(missing.name, errors.getvalue())
         self.assertEqual(module.read_bytes(), original)
 
+    def test_top_must_be_positive(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text("main;libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+        for value in ("0", "-1"):
+            for flags in ((), ("--json",)):
+                with self.subTest(top=value, flags=flags):
+                    errors = io.StringIO()
+                    output = io.StringIO()
+                    with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+                        symbolize_samples.main([str(samples), "--libs", str(self.libs), "--top", value, *flags])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("--top must be positive", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+
     def test_distinct_output_preserves_sample_captures(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
         later, earlier, output = (self.root / name for name in ("later.txt", "earlier.txt", "named.txt"))
@@ -618,6 +632,86 @@ class SymbolizeSamplesTests(unittest.TestCase):
         capture = symbolize_samples.load(samples)
         self.assertEqual(capture.stacks, {stack: 5})
         self.assertEqual(capture.self_counts, {})
+
+    def test_mixed_sample_records_are_rejected_even_when_counts_are_zero(self):
+        samples = self.root / "mixed.txt"
+        for collapsed_count, address_count in ((3, 7), (0, 7), (3, 0), (0, 0)):
+            for reverse in (False, True):
+                with self.subTest(collapsed=collapsed_count, address=address_count, reverse=reverse):
+                    rows = [f"outer;inner {collapsed_count}", f"libSceAgcDriver.prx 0x1011 {address_count} {address_count}"]
+                    samples.write_text("\n".join(reversed(rows) if reverse else rows), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, r"mixed\.txt:2:.*cannot mix"):
+                        symbolize_samples.load(samples)
+        for rows in (("outer;inner 3", "thread 7 samples 0"),
+                     ("thread 7 samples 0", "outer;inner 3")):
+            samples.write_text("\n".join(rows), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"mixed\.txt:2:.*cannot mix"):
+                symbolize_samples.load(samples)
+        samples.write_text("thread 9 samples 7\nlibSceAgcDriver.prx 0x1011 7 7\nouter;inner 3\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, r"mixed\.txt:3:.*cannot mix"):
+            symbolize_samples.load(samples, thread="7")
+
+    def test_sample_formats_keep_shared_headers_and_empty_baselines(self):
+        samples, earlier = self.root / "samples.txt", self.root / "earlier.txt"
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        earlier.write_text(record + "# no samples yet\n", encoding="utf-8")
+        for row in ("outer;libSceAgcDriver.prx+0x1011 3", "libSceAgcDriver.prx 0x1011 3 3"):
+            with self.subTest(row=row):
+                samples.write_text("# 3 samples\n\n" + record + row + "\n# trailing header\n", encoding="utf-8")
+                lines, errors = self.run_main(samples, "--since", earlier, "--libs", self.libs, "--json")
+                self.assertEqual(errors, "")
+                result = json.loads("\n".join(lines))
+                self.assertEqual(result["samples"], 3)
+                self.assertEqual(result["self"], [{"symbol": "libSceAgcDriver.prx!short", "count": 3}])
+
+    def test_mixed_sample_cli_preserves_inputs_and_output(self):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        mixed, good, out = (self.root / name for name in ("mixed.txt", "good.txt", "named.txt"))
+        good.write_text(record + "outer;inner 3\n", encoding="utf-8")
+        for reverse in (False, True):
+            rows = ["outer;inner 3", "libSceAgcDriver.prx 0x1011 7 7"]
+            mixed.write_text(record + "\n".join(reversed(rows) if reverse else rows), encoding="utf-8")
+            for role in ("samples", "since"):
+                for flags in ((), ("--json",), ("--json", "--require-matching-window")):
+                    with self.subTest(reverse=reverse, role=role, flags=flags):
+                        source, baseline = (mixed, good) if role == "samples" else (good, mixed)
+                        out.write_bytes(b"previous profile")
+                        before = {path: path.read_bytes() for path in (mixed, good, out)}
+                        result = subprocess.run([sys.executable, "-B", symbolize_samples.__file__, str(source),
+                                                 "--since", str(baseline), "--libs", str(self.libs), "--out", str(out), *flags],
+                                                capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("mixed.txt:", result.stderr)
+                        self.assertIn("cannot mix", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertEqual({path: path.read_bytes() for path in before}, before)
+
+    def test_since_rejects_different_capture_formats_before_output(self):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        collapsed, address, out = (self.root / name for name in ("collapsed.txt", "address.txt", "named.txt"))
+        collapsed.write_text(record + "outer;libSceAgcDriver.prx+0x1011 3\n", encoding="utf-8")
+        address.write_text(record + "libSceAgcDriver.prx 0x1011 3 3\n", encoding="utf-8")
+        for source, baseline in ((collapsed, address), (address, collapsed)):
+            for flags in ((), ("--json",), ("--json", "--require-matching-window")):
+                with self.subTest(source=source.name, flags=flags):
+                    out.write_bytes(b"previous profile")
+                    before = {path: path.read_bytes() for path in (collapsed, address, out)}
+                    output, errors = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                        symbolize_samples.main([str(source), "--since", str(baseline), "--libs", str(self.libs), *flags])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("different data formats", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual({path: path.read_bytes() for path in before}, before)
+        out.write_bytes(b"previous profile")
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+            symbolize_samples.main([str(collapsed), "--since", str(address), "--libs", str(self.libs), "--out", str(out)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("different data formats", errors.getvalue())
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(out.read_bytes(), b"previous profile")
 
     def test_a_symbol_does_not_reach_into_a_later_code_section(self):
         build_pe(self.libs / "two.prx", second_code=True)
@@ -971,7 +1065,7 @@ class SymbolizeSamplesTests(unittest.TestCase):
             default = subprocess.run(command + ["--since", str(earlier)], capture_output=True, text=True, timeout=5)
             self.assertEqual(default.returncode, 0, default.stderr)
             self.assertIn("3 samples", default.stdout)
-        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\nlibOther.prx 0x20 1 1\n", encoding="utf-8")
+        later.write_text(record + "libSceAgcDriver.prx+0x1011 7\nlibOther.prx+0x20 1\n", encoding="utf-8")
         earlier.write_text(record + "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
         unrecorded = subprocess.run(command + ["--since", str(earlier), "--require-matching-window"], capture_output=True, text=True, timeout=5)
         self.assertEqual(unrecorded.returncode, 2, unrecorded.stderr)
@@ -1103,7 +1197,7 @@ class ThreadFilterInputTests(unittest.TestCase):
                         options = [] if target == "samples" else ["--since", str(plain)]
                         result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
                                                  "--libs", str(root), "--thread", "7", *options],
-                                                capture_output=True, text=True, timeout=5)
+                                                capture_output=True, text=True, encoding="utf-8", timeout=5)
                         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                         self.assertEqual(result.stdout, "")
                         self.assertIn(f"{plain}:{2 if header else 1}:", result.stderr)
