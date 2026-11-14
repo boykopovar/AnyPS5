@@ -4,6 +4,7 @@
 #include <unordered_set>
 
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 
@@ -92,12 +93,22 @@ int APS5_VABI cpuset_getid_nid_postfix(int level, int which, std::int64_t id, in
     if (which < WhichThread || which > WhichDomain || which == WhichIrq || which == WhichDomain) {
         return Fail(GuestEinval);
     }
-    if (which != WhichProcess && which != WhichCpuset) {
-        NotImplemented_nid_no_patch("cpuset_getid other than process or cpuset");
+    if (which != WhichProcess && which != WhichCpuset && which != WhichThread) {
+        NotImplemented_nid_no_patch("cpuset_getid other than process, thread or cpuset");
     }
     int resultId = 0;
     if (which == WhichProcess) {
         if (id != -1 && id != getpid_nid_postfix()) {
+            return Fail(GuestEsrch);
+        }
+        if (level == LevelRoot) {
+            resultId = RootSetId;
+        } else {
+            std::lock_guard lock(setMutex);
+            resultId = currentProcessSetId;
+        }
+    } else if (which == WhichThread) {
+        if (id != -1 && id != scePthreadGetthreadid() && !LiveGuestThreadExists(id)) {
             return Fail(GuestEsrch);
         }
         if (level == LevelRoot) {

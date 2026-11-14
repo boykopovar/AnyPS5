@@ -20,7 +20,7 @@ def compare(base, head):
                 row[state] = {"added": sorted(new - old), "removed": sorted(old - new)}
             groups.append(row)
         result[section] = {"baseline_percent": base[section]["percent"], "candidate_percent": head[section]["percent"],
-                           "change_percentage_points": head[section]["percent"] - base[section]["percent"], "groups": groups}
+                           "change_percentage_points": round(head[section]["percent"] - base[section]["percent"], 2), "groups": groups}
     return result
 
 

@@ -138,16 +138,16 @@ void Fill(const GuestBlock& block, std::uint32_t texture, float bias) {
     for (std::uint32_t texel = 0; texel < Width * Height; ++texel) block.Texels(texture)[texel] = bias + static_cast<float>(texture) * 100.0f + static_cast<float>(texel);
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
-    const auto srtAddress = AddressOf(Srt.data());
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& block, const std::uint32_t* srt = Srt.data(), const std::uint32_t* keys = Keys.data()) {
+    const auto srtAddress = AddressOf(srt);
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     const std::span<const std::uint32_t> code(TableCode);
     const std::span<const std::uint32_t> table(block.Table(), Records * Stride / 4u);
     const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
         {AddressOf(code.data()), std::as_bytes(code)},
-        {srtAddress, std::as_bytes(std::span(Srt))},
+        {srtAddress, std::as_bytes(std::span(srt, Srt.size()))},
         {AddressOf(table.data()), std::as_bytes(table)},
-        {AddressOf(Keys.data()), std::as_bytes(std::span(Keys))},
+        {AddressOf(keys), std::as_bytes(std::span(keys, Keys.size()))},
     }};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
     const ShaderRecompiler::RecompileRequest request{
@@ -253,6 +253,54 @@ void RunImageStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     AgcDriver::Graphics::StorageTexture::FlushPending(AddressOf(block.Texels(23)), TextureBytes, nullptr, "test");
     device.WaitIdle();
     Require(Row(block.Texels(23)) == Row(stored.data()), "image table reuse: the image store wrote the wrong values");
+}
+
+bool RunReusedTableRecords(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& plain) {
+    using AgcDriver::Graphics::ShaderResources;
+    const bool extended = std::getenv("APS5_NO_EXTENDED_FAST_PROOFS") == nullptr;
+    const auto& context = device.graphicsContext();
+    if (context.hostImportAlignment == 0 || AgcDriver::Graphics::HostImportFor(context, AddressOf(block.Table()), BlockBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "image table reuse records: the table block needs a host import");
+        std::puts("host imports are unavailable: the records of a reused table are not tested");
+        return false;
+    }
+    auto* srt = block.Table() + 1024u;
+    auto* keys = block.Table() + 2048u;
+    auto* firstOutput = block.Table() + 4096u;
+    auto* secondOutput = firstOutput + Lanes * 4u;
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(plain, texture, 0.625f);
+        SetRecord(block, texture, texture, &plain);
+    }
+    for (std::uint32_t key = 0; key < Records; ++key) keys[key] = key;
+    const auto table = Buffer(block.Table(), Records * Stride);
+    const auto keyView = Buffer(keys, static_cast<std::uint32_t>(sizeof(Keys)));
+    std::copy(table.begin(), table.end(), srt);
+    std::copy(keyView.begin(), keyView.end(), srt + 4);
+    const auto firstView = Buffer(firstOutput, static_cast<std::uint32_t>(sizeof(Output)));
+    std::copy(firstView.begin(), firstView.end(), srt + 8);
+    const auto first = Compile(device, block, srt, keys);
+    const auto secondView = Buffer(secondOutput, static_cast<std::uint32_t>(sizeof(Output)));
+    std::copy(secondView.begin(), secondView.end(), srt + 8);
+    const auto second = Compile(device, block, srt, keys);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const AgcDriver::Graphics::CompiledShader firstShader{ShaderStage::Compute, &first, 0};
+    const AgcDriver::Graphics::CompiledShader secondShader{ShaderStage::Compute, &second, 0};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    auto firstResources = std::make_shared<ShaderResources>(context, firstShader);
+    auto secondResources = std::make_shared<ShaderResources>(context, secondShader);
+    const auto built = Since(before);
+    Require(built.resolved == 1u && built.reused == 1u, "image table reuse records: the second build did not reuse the first one's table (" + std::to_string(built.reused) + " reused and " + std::to_string(built.resolved) + " resolved tables)");
+    Require(firstResources->Reusable() && secondResources->Reusable(), "image table reuse records: the builds over the table are not reusable");
+    ShaderResources::ProofReport report{};
+    Require(secondResources->Revalidate(secondShader, &report), "image table reuse records: the build over the reused table did not prove current");
+    if (extended) Require(report.path == ShaderResources::ProofPath::Fast, "image table reuse records: the build over the reused table took the full walk instead of the fast proof");
+    else Require(report.path == ShaderResources::ProofPath::Full, "image table reuse records: with the extended fast proofs off the build over the reused table took the fast proof, so the test no longer reaches the case");
+    Require(firstResources->Revalidate(firstShader, &report) && report.path == ShaderResources::ProofPath::Fast, "image table reuse records: the build that resolved the table did not take the fast proof");
+    secondResources.reset();
+    firstResources.reset();
+    return true;
 }
 
 void RunPendingWriteBack(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
@@ -450,8 +498,17 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string(argv[1]) == "records") {
+            GuestBlock shared;
+            GuestBlock plain;
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (!RunReusedTableRecords(*device, shared, plain)) return VulkanTestSkipped;
+            std::puts("image table reuse record tests passed");
+            return 0;
+        }
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
         GuestBlock pending(UnimportableBytes);
