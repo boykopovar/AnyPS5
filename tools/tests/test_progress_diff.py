@@ -58,6 +58,11 @@ class SymbolSetTests(unittest.TestCase):
         self.assertEqual(row["todo_names"], {"added": ["a", "d"], "removed": ["c"]})
         self.assertEqual(row["inert_names"], {"added": [], "removed": ["d"]})
 
+    def test_name_moving_between_states_appears_in_both_states(self):
+        row = self.row({"name": "G", "done_names": ["a"]}, {"name": "G", "todo_names": ["a"]})
+        self.assertEqual(row["done_names"], {"added": [], "removed": ["a"]})
+        self.assertEqual(row["todo_names"], {"added": ["a"], "removed": []})
+
 
 if __name__ == "__main__":
     unittest.main()
