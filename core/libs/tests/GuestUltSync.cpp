@@ -291,6 +291,8 @@ struct alignas(8) UlthreadRuntimeObject {
     std::uint8_t bytes[4096];
 };
 
+std::atomic<int> gUnwritableSelf{0};
+std::atomic<int> gUnwritableSelfErrno{0};
 std::atomic<void*> gSelf{nullptr};
 std::atomic<int> gYield{-1};
 std::atomic<bool> gPastExit{false};
@@ -298,6 +300,9 @@ std::atomic<bool> gRelease{false};
 
 std::int32_t APS5_VABI ExitingEntry(std::uint64_t status) {
     void* self = nullptr;
+    errno = 71;
+    gUnwritableSelf = sceUltUlthreadGetSelf(reinterpret_cast<void**>(0x10));
+    gUnwritableSelfErrno = errno;
     if (sceUltUlthreadGetSelf(&self) == Ok) gSelf = self;
     gYield = sceUltUlthreadYield();
     sceUltUlthreadExit(static_cast<std::int32_t>(status));
@@ -332,6 +337,7 @@ void Ulthreads() {
     std::int32_t status = 0;
     CHECK(sceUltUlthreadJoin(&first, &status) == Ok);
     CHECK(status == 42 && gSelf.load() == &first && gYield.load() == Ok && !gPastExit.load());
+    CHECK(gUnwritableSelf.load() == Null && gUnwritableSelfErrno.load() == 71);
     UlthreadObject second{};
     gSelf = nullptr;
     CHECK(sceUltUlthreadCreate(&second, "tryjoin", ExitingEntry, 7, context, sizeof(context), &runtime, nullptr, 0) == Ok);
@@ -382,6 +388,19 @@ void CheckUnsupportedInfo(TQuery query, void* object, std::uint32_t capacity = 4
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(&info);
     for (std::size_t index = 0; index < sizeof(info); ++index) CHECK(bytes[index] == 0xEE);
     CHECK(std::memcmp(waiters, savedWaiters, sizeof(waiters)) == 0);
+}
+
+template<typename TInfo, typename TQuery>
+void CheckWaiterRecord(TQuery query, void* object, std::int32_t waitValue) {
+    TInfo info;
+    std::memset(&info, 0xEE, sizeof(info));
+    UltWaitingThreadInfo waiter;
+    std::memset(&waiter, 0xAA, sizeof(waiter));
+    waiter.size = sizeof(UltWaitingThreadInfo);
+    CHECK(query(object, &info, &waiter, 1) == Ok);
+    CHECK(info.size == sizeof(TInfo));
+    CHECK(waiter.size == sizeof(UltWaitingThreadInfo));
+    CHECK(waiter.thread != nullptr && waiter.threadType == 1 && waiter.waitValue == waitValue);
 }
 
 template<typename TInfo, typename TQuery>
@@ -674,8 +693,7 @@ void QueueWaiters() {
     WaitForQueueWaiters(queueObj, &info, 0, 1);
     CHECK(info.queuedItems == 0);
     std::memset(waiters, 0xAA, sizeof(waiters));
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 1);
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj);
+    CheckWaiterRecord<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 1);
     CHECK(sceUltGetQueueInfo(queueObj, &info, waiters, 0) == Ok);
     const auto* waiterBytes = reinterpret_cast<const std::uint8_t*>(waiters);
     for (std::size_t index = 0; index < sizeof(waiters); ++index) CHECK(waiterBytes[index] == 0xAA);
@@ -693,8 +711,7 @@ void QueueWaiters() {
     std::thread pusher([&] { pushResult.store(sceUltQueuePush(queueObj, item)); });
     WaitForQueueWaiters(queueObj, &info, 1, 0);
     CHECK(info.queuedItems == 2);
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 1);
-    CheckUnsupportedInfo<UltQueueInfo>(sceUltGetQueueInfo, queueObj);
+    CheckWaiterRecord<UltQueueInfo>(sceUltGetQueueInfo, queueObj, 2);
     CHECK(sceUltGetQueueInfo(queueObj, &info, waiters, 0) == Ok);
     CHECK(info.waitingPushers == 1);
     CHECK(info.waitingPoppers == 0);
@@ -740,10 +757,11 @@ void InfoWaiters() {
         CHECK(sceUltMutexUnlock(&mutex) == Ok);
     });
     WaitForInfoWaiters<UltMutexInfo>(sceUltGetMutexInfo, &mutex);
-    CheckUnsupportedInfo<UltMutexInfo>(sceUltGetMutexInfo, &mutex, 1);
-    CheckUnsupportedInfo<UltMutexInfo>(sceUltGetMutexInfo, &mutex);
+    CheckWaiterRecord<UltMutexInfo>(sceUltGetMutexInfo, &mutex, 0);
     CHECK(sceUltMutexUnlock(&mutex) == Ok);
     mutexWaiter.join();
+    UltMutexInfo mutexAfter{};
+    CHECK(sceUltGetMutexInfo(&mutex, &mutexAfter, nullptr, 0) == Ok && mutexAfter.waitingThreads == 0);
 
     std::thread conditionWaiter([&] {
         CHECK(sceUltMutexLock(&mutex) == Ok);
@@ -754,15 +772,23 @@ void InfoWaiters() {
         CHECK(sceUltMutexUnlock(&mutex) == Ok);
     });
     WaitForInfoWaiters<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition);
-    CheckUnsupportedInfo<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition, 1);
-    CheckUnsupportedInfo<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition);
+    CheckWaiterRecord<UltConditionVariableInfo>(sceUltGetConditionVariableInfo, &condition, 0);
+    CHECK(sceUltMutexLock(&mutex) == Ok);
     CHECK(sceUltConditionVariableSignal(&condition) == Ok);
+    UltConditionVariableInfo signaled{};
+    UltWaitingThreadInfo signaledRecord{};
+    std::memset(&signaledRecord, 0xAA, sizeof(signaledRecord));
+    signaledRecord.size = sizeof(UltWaitingThreadInfo);
+    const UltWaitingThreadInfo poisoned = signaledRecord;
+    CHECK(sceUltGetConditionVariableInfo(&condition, &signaled, &signaledRecord, 1) == Ok);
+    CHECK(signaled.waitingThreads == 0);
+    CHECK(std::memcmp(&poisoned, &signaledRecord, sizeof(poisoned)) == 0);
+    CHECK(sceUltMutexUnlock(&mutex) == Ok);
     conditionWaiter.join();
 
     std::thread semaphoreWaiter([&] { CHECK(sceUltSemaphoreAcquire(&semaphore, 1) == Ok); });
     WaitForInfoWaiters<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore);
-    CheckUnsupportedInfo<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore, 1);
-    CheckUnsupportedInfo<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore);
+    CheckWaiterRecord<UltSemaphoreInfo>(sceUltGetSemaphoreInfo, &semaphore, 0);
     CHECK(sceUltSemaphoreRelease(&semaphore, 1) == Ok);
     semaphoreWaiter.join();
 
@@ -780,6 +806,82 @@ void InfoWaiters() {
     CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
     CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
     CHECK(sceUltConditionVariableDestroy(&condition) == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
+}
+
+void UnreadableNamesAndObjects() {
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    void* const unwritable = reinterpret_cast<void*>(0x10);
+    Object pool{};
+    Object mutex{};
+    Object named{};
+    Object condition{};
+    Object semaphore{};
+    Object rwlock{};
+    alignas(8) std::uint8_t dataPool[512]{};
+    alignas(8) std::uint8_t queue[512]{};
+    alignas(8) std::uint8_t runtime[4096]{};
+    alignas(8) std::uint8_t ulthread[512]{};
+    UltMutexInfo mutexInfo{};
+    UltWaitingQueueResourcePoolInfo poolInfo{};
+    UltQueueDataResourcePoolInfo dataPoolInfo{};
+    UltUlthreadRuntimeInfo runtimeInfo{};
+    UltUlthreadInfo threadInfo{};
+
+    errno = 71;
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, unreadable, 4, 4, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(&pool, &poolInfo) == State);
+    CHECK(sceUltWaitingQueueResourcePoolCreate(unwritable, "pool", 4, 4, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetWaitingQueueResourcePoolInfo(unwritable, &poolInfo) == State);
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, "pool", 4, 4, nullptr, nullptr, 0) == Ok);
+
+    CHECK(sceUltMutexCreate(&mutex, unreadable, &pool, nullptr, 0) == Null);
+    CHECK(sceUltMutexCreate(unwritable, "mutex", &pool, nullptr, 0) == Null);
+    CHECK(sceUltGetMutexInfo(unwritable, &mutexInfo, nullptr, 0) == State);
+    CHECK(sceUltMutexCreate(&mutex, "mutex", &pool, nullptr, 0) == Ok);
+    CHECK(sceUltMutexCreate(&named, "a-mutex-name-longer-than-thirty-one-bytes", &pool, nullptr, 0) == Ok);
+    CHECK(sceUltGetMutexInfo(&named, &mutexInfo, nullptr, 0) == Ok);
+    CHECK(std::strcmp(mutexInfo.name, "a-mutex-name-longer-than-thirty") == 0);
+
+    CHECK(sceUltConditionVariableCreate(&condition, unreadable, &mutex, nullptr, 0) == Null);
+    CHECK(sceUltConditionVariableCreate(&condition, "condition", &mutex, nullptr, 0) == Ok);
+
+    CHECK(sceUltSemaphoreCreate(&semaphore, unreadable, 1, &pool, nullptr, 0) == Null);
+    CHECK(sceUltSemaphoreCreate(unwritable, "semaphore", 1, &pool, nullptr, 0) == Null);
+    CHECK(sceUltSemaphoreCreate(&semaphore, "semaphore", 1, &pool, nullptr, 0) == Ok);
+
+    CHECK(sceUltReaderWriterLockCreate(&rwlock, unreadable, &pool, nullptr, 0) == Null);
+    CHECK(sceUltReaderWriterLockCreate(unwritable, "rwlock", &pool, nullptr, 0) == Null);
+    CHECK(sceUltReaderWriterLockCreate(&rwlock, "rwlock", &pool, nullptr, 0) == Ok);
+
+    CHECK(sceUltQueueDataResourcePoolCreate(dataPool, unreadable, 8, 64, 1, &pool, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltQueueDataResourcePoolCreate(unwritable, "data", 8, 64, 1, &pool, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetQueueDataResourcePoolInfo(unwritable, &dataPoolInfo) == State);
+    CHECK(sceUltQueueDataResourcePoolCreate(dataPool, "data", 8, 64, 1, &pool, nullptr, nullptr, 0) == Ok);
+
+    CHECK(sceUltQueueCreate(queue, unreadable, 64, &pool, dataPool, nullptr, 0) == Null);
+    CHECK(sceUltQueueCreate(unwritable, "queue", 64, &pool, dataPool, nullptr, 0) == Null);
+    CHECK(sceUltQueueCreate(queue, "queue", 64, &pool, dataPool, nullptr, 0) == Ok);
+
+    CHECK(sceUltUlthreadRuntimeCreate(runtime, unreadable, 2, 1, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltUlthreadRuntimeCreate(unwritable, "runtime", 2, 1, nullptr, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadRuntimeInfo(unwritable, &runtimeInfo, nullptr, 0, nullptr, 0) == State);
+    CHECK(sceUltUlthreadRuntimeCreate(runtime, "runtime", 2, 1, nullptr, nullptr, 0) == Ok);
+
+    CHECK(sceUltUlthreadCreate(ulthread, unreadable, ExitingEntry, 0, nullptr, 0, runtime, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadInfo(ulthread, &threadInfo) == State);
+    CHECK(sceUltUlthreadCreate(unwritable, "ulthread", ExitingEntry, 0, nullptr, 0, runtime, nullptr, 0) == Null);
+    CHECK(sceUltGetUlthreadInfo(unwritable, &threadInfo) == State);
+    CHECK(errno == 71);
+
+    CHECK(sceUltUlthreadRuntimeDestroy(runtime) == Ok);
+    CHECK(sceUltQueueDestroy(queue) == Ok);
+    CHECK(sceUltQueueDataResourcePoolDestroy(dataPool) == Ok);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
+    CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);
+    CHECK(sceUltConditionVariableDestroy(&condition) == Ok);
+    CHECK(sceUltMutexDestroy(&named) == Ok);
     CHECK(sceUltMutexDestroy(&mutex) == Ok);
     CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
 }
@@ -804,6 +906,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
     else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();
     else if (std::strcmp(argv[1], "info-waiters") == 0) InfoWaiters();
+    else if (std::strcmp(argv[1], "guest-pointers") == 0) UnreadableNamesAndObjects();
     else return 2;
     CHECK(sceUltFinalize() == Ok);
     std::puts("ULT sync tests passed");

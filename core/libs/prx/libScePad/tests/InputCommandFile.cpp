@@ -1,10 +1,12 @@
 #include "prx/libScePad/include/InputCommandFile.hpp"
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 
 void Check(bool condition) {
     if (!condition) throw std::runtime_error("input command assertion failed");
@@ -110,6 +112,68 @@ int main() {
         Check(sticks.Poll(1900000) == Pad::InputCommandFile::Input{8, true, {0, 255, 128, 64}});
         write("APS5_PAD_TIMELINE 1 17 1\n0 100 8388608\n");
         Check(sticks.Poll(1500000) == Pad::InputCommandFile::Input{});
+        std::string terminators(1, '\0');
+#ifdef _WIN32
+        terminators.push_back('\x1a');
+#endif
+        for (const auto& pulse : {std::string("2000 16384 300"),
+                                  std::string("2000 0 300 0 255 128 128"),
+                                  std::string("2000 0 300 touch(100,200,3,1)")}) {
+            for (const char terminator : terminators) {
+                write(pulse + terminator + "-ignored\n");
+                Pad::InputCommandFile terminated(path);
+                write("1000 64 300\n");
+                Check(terminated.Buttons(0) == 0);
+                write("2001 64 300\n");
+                Check(terminated.Buttons(100000) == 64);
+            }
+        }
+        write(std::string("2000 16384 300") + '\0' + std::string(114, ' ') + '\n');
+        Pad::InputCommandFile overlong(path);
+        write("1 64 300\n");
+        Check(overlong.Buttons(0) == 64);
+        write("APS5_PAD_TIMELINE 1 20 1\n0 100 16\nextra\n");
+        Check(sticks.Poll(2000000) == Pad::InputCommandFile::Input{});
+        write("APS5_PAD_TIMELINE 1 21 1\n0 100 16\n   \r\n\n");
+        Check(sticks.Poll(2100000) == Pad::InputCommandFile::Input{16});
+        Check(sticks.Poll(2200000) == Pad::InputCommandFile::Input{});
+        {
+            std::atomic<bool> stop{false};
+            std::atomic<std::uint64_t> sequence{22};
+            std::thread writer([&]() {
+                while (!stop.load(std::memory_order_relaxed)) {
+                    const auto n = sequence.fetch_add(1, std::memory_order_relaxed);
+                    const auto text = "APS5_PAD_TIMELINE 1 " + std::to_string(n) + " 2\n0 100 16\n100 100 16384\n";
+                    std::ofstream(path, std::ios::trunc) << text;
+                }
+            });
+            try {
+                for (std::uint64_t at = 0; at < 200000; at += 1000) sticks.Poll(2300000 + at);
+            } catch (...) {
+                stop.store(true);
+                writer.join();
+                Check(false);
+            }
+            stop.store(true);
+            writer.join();
+        }
+        {
+            std::string big("APS5_PAD_TIMELINE 1 31 4096\n");
+            for (int row = 0; row < 4096; ++row) big += std::to_string(row) + " 1 16384 255 255 255 255\n";
+            write("30 1 300\n");
+            Pad::InputCommandFile capped(path);
+            write(big);
+            Check(capped.Buttons(100000) == 0);
+        }
+        write(std::string(112, ' ') + "2000 16384 300\n");
+        Pad::InputCommandFile longest(path);
+        Check(longest.Buttons(0) == 0);
+        write(std::string(112, ' ') + "2001 16384 300\n");
+        Check(longest.Buttons(100000) == 16384);
+        write(std::string(113, ' ') + "2000 16384 300\n");
+        Pad::InputCommandFile overlongFirst(path);
+        write(std::string(113, ' ') + "2001 16384 300\n");
+        Check(overlongFirst.Buttons(100000) == 0);
         std::filesystem::remove(path);
         std::cout << "Controller timeline runtime cases passed\n";
         return 0;

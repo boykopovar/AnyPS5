@@ -57,5 +57,43 @@ int main() {
     Require(sceEditMp4QueryMemSize() == 0x387d30);
     Require(sceEditMp4QueryMemSize() == 0x387d30);
     Require(errno == EIO);
+
+    constexpr int invalidParam = static_cast<int>(0x814B0001u);
+    constexpr int nullArgument = static_cast<int>(0x814B0002u);
+    constexpr int invalidHandle = static_cast<int>(0x814B0003u);
+    std::array<std::uint8_t, 0x40> block{};
+    const void* argument = block.data();
+    const std::array<const void*, 4> handles{nullptr, block.data(), reinterpret_cast<const void*>(std::uintptr_t{0x10}),
+                                             reinterpret_cast<const void*>(~std::uintptr_t{0})};
+    for (const void* handle : handles) {
+        Require(sceEditMp4Abort(handle) == invalidHandle);
+        Require(sceEditMp4Terminate(handle) == invalidHandle);
+        Require(sceEditMp4SetFinishCallback(handle) == invalidHandle);
+        Require(sceEditMp4Edit(handle, argument, argument, argument) == invalidHandle);
+        Require(sceEditMp4Unite(handle, argument, argument, argument) == invalidHandle);
+        Require(sceEditMp4GetStatus(handle, block.data()) == invalidHandle);
+        if (handle == nullptr) {
+            Require(sceEditMp4Edit(handle, nullptr, nullptr, nullptr) == invalidHandle);
+            Require(sceEditMp4Unite(handle, nullptr, nullptr, nullptr) == invalidHandle);
+            Require(sceEditMp4GetStatus(handle, nullptr) == invalidHandle);
+            continue;
+        }
+        Require(sceEditMp4GetStatus(handle, nullptr) == nullArgument);
+        for (std::size_t missing = 0; missing < 3; ++missing) {
+            std::array<const void*, 3> arguments{argument, argument, argument};
+            arguments[missing] = nullptr;
+            Require(sceEditMp4Edit(handle, arguments[0], arguments[1], arguments[2]) == nullArgument);
+            Require(sceEditMp4Unite(handle, arguments[0], arguments[1], arguments[2]) == nullArgument);
+        }
+    }
+
+    std::array<std::uint8_t, 0x28> param{};
+    sceEditMp4InitializeParam(param.data());
+    std::uint64_t handleOut = 0x1234;
+    Require(sceEditMp4Initialize(nullptr, &handleOut) == nullArgument);
+    Require(sceEditMp4Initialize(param.data(), nullptr) == nullArgument);
+    Require(sceEditMp4Initialize(nullptr, nullptr) == nullArgument);
+    Require(sceEditMp4Initialize(param.data(), &handleOut) == invalidParam);
+    Require(handleOut == 0x1234);
     return 0;
 }

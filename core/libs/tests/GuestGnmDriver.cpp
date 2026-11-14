@@ -72,6 +72,15 @@ void TestWriters() {
     check(words[0] == Header(0x10, 5) && words[1] == 0x68750001u && std::memcmp(&words[2], "ab", 3) == 0 && WholePackets(words.data(), 6), "the push marker packet is wrong");
     check(sceGnmInsertPopMarker(words.data(), 5) == -1, "a pop marker was written into 5 dwords");
     check(sceGnmInsertPopMarker(words.data(), 6) == 0 && words[0] == Header(0x10, 5) && words[1] == 0x68750002u && WholePackets(words.data(), 6), "the pop marker packet is wrong");
+
+    words.fill(0xdeadbeefu);
+    const auto untouched = words;
+    check(sceGnmInsertDingDongMarker_nid_disambig1(nullptr, 4) == -1, "a null ding dong buffer was accepted");
+    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 3) == -1 && words == untouched, "a ding dong marker was written into 3 dwords");
+    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 5) == -1 && words == untouched, "a ding dong marker was written into 5 dwords");
+    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 4) == 0, "the ding dong marker was not written");
+    check(words[0] == Header(0x10, 3) && words[1] == 0 && words[2] == 0 && words[3] == 0 && words[4] == 0xdeadbeefu && WholePackets(words.data(), 4),
+        "the ding dong marker packet is wrong");
 }
 
 void TestSubmitValidation() {
