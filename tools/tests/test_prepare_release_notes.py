@@ -146,6 +146,38 @@ class PrepareCheckTests(ReleaseNotesCase):
         self.assertFalse((self.root / "missing").exists())
 
 
+class PrepareDistinctPathTests(ReleaseNotesCase):
+    def test_input_and_outputs_must_be_distinct_files_in_both_modes(self):
+        case = 0
+        for pair in ((0, 1), (0, 2), (1, 2)):
+            for alias in ("same", "symlink", "hardlink"):
+                for check in (False, True):
+                    case += 1
+                    with self.subTest(pair=pair, alias=alias, check=check):
+                        directory = self.root / f"case-{case}"
+                        directory.mkdir()
+                        paths = [directory / name for name in ("notes.json", "body.md", "full.md")]
+                        paths[0].write_text(json.dumps({"body": "release notes"}), encoding="utf-8")
+                        paths[1].write_bytes(b"previous body")
+                        paths[2].write_bytes(b"previous full")
+                        first, second = pair
+                        if alias == "same":
+                            paths[second] = paths[first]
+                        else:
+                            paths[second].unlink()
+                            try:
+                                if alias == "symlink":
+                                    paths[second].symlink_to(paths[first])
+                                else:
+                                    os.link(paths[first], paths[second])
+                            except (OSError, NotImplementedError) as error:
+                                self.skipTest(f"cannot create {alias}: {error}")
+                        before = [path.read_bytes() for path in paths]
+                        with self.assertRaisesRegex(ValueError, "distinct files"):
+                            prepare_release_notes.prepare_notes(*paths, check=check)
+                        self.assertEqual([path.read_bytes() for path in paths], before)
+
+
 class ReleaseBodyTests(unittest.TestCase):
     def test_notes_at_or_below_limit_are_returned_unchanged(self):
         short = "## What's Changed\n- entry\n"
