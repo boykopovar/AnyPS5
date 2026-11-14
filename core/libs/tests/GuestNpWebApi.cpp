@@ -562,6 +562,11 @@ void TestMultipartParts() {
     Require(sceNpWebApiAddMultipartPart(-1, nullptr, &index) == InvalidArgument, "null multipart parameter before lookup");
     Require(index == 0, "failed add part leaves index unmodified");
 
+    errno = 71;
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, reinterpret_cast<const NpWebApiMultipartPartParameter*>(0x10), &index) == InvalidArgument, "unreadable multipart parameter");
+    Require(errno == 71, "unreadable multipart parameter changed host errno");
+    Require(index == 0, "unreadable multipart parameter leaves index unmodified");
+
     const NpWebApiHttpHeader headers[2] = {{"Header1", "Val1"}, {"Content-Length", "100"}};
     const NpWebApiMultipartPartParameter validParam{headers, 2, 10};
 
@@ -575,6 +580,11 @@ void TestMultipartParts() {
 
     Require(sceNpWebApiAddMultipartPart(multipartRequest, &validParam, &index) == 0, "add first multipart part");
     Require(index == 1, "first part index is 1");
+
+    errno = 71;
+    const NpWebApiMultipartPartParameter unindexedParam{nullptr, 0, 7};
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, &unindexedParam, reinterpret_cast<int*>(0x10)) == InvalidArgument, "unwritable part index");
+    Require(errno == 71, "unwritable part index changed host errno");
 
     int index2 = 0;
     const NpWebApiMultipartPartParameter paramNoHeaders{nullptr, 0, 20};
@@ -661,6 +671,9 @@ void TestUtilityParseNpId() {
     Require(sceNpWebApiUtilityParseNpId(nullptr, &npId) == NpInvalidArgument, "null jsonNpId");
     Require(sceNpWebApiUtilityParseNpId(nullptr, nullptr) == NpInvalidArgument, "null jsonNpId and null npId");
     Require(sceNpWebApiUtilityParseNpId("cGxheWVy", nullptr) == 0, "null npId with valid jsonNpId");
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVy", reinterpret_cast<NpId*>(0x10)) == NpInvalidArgument, "unwritable npId");
+    Require(errno == 71, "unwritable npId changed host errno");
 
     std::memset(&npId, 0xCC, sizeof(npId));
     Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0, "parse serialized npId");
@@ -839,5 +852,31 @@ int main() {
     TestInternalServicePushEventFilter();
     TestMultipartSendOnPlainRequest();
     TestConnectionChecks();
+    {
+        errno = 71;
+        Require(sceNpWebApiIntInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unreadable IntInitialize args must return InvalidArgument without changing errno");
+        const int libCtx = sceNpWebApiInitialize(1, 4096);
+        Require(libCtx > 0, "libCtx created");
+        const int userCtx = sceNpWebApiCreateContext(libCtx, "user");
+        Require(userCtx > 0, "userCtx created");
+        std::int64_t reqId = 0;
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0,
+                                         reinterpret_cast<const NpWebApiContentParameter*>(static_cast<std::uintptr_t>(0x10)),
+                                         &reqId) == InvalidArgument && errno == 71,
+                "unreadable contentParameter must fail");
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                         reinterpret_cast<std::int64_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unwritable requestId must fail");
+        errno = 71;
+        Require(sceNpWebApiIntCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                            reinterpret_cast<const NpWebApiIntCreateRequestExtraArgs*>(static_cast<std::uintptr_t>(0x10)),
+                                            &reqId) == InvalidArgument && errno == 71,
+                "unreadable internalArgs must fail");
+        Require(sceNpWebApiDeleteContext(userCtx) == 0, "delete userCtx");
+        Require(sceNpWebApiTerminate(libCtx) == 0, "terminate libCtx");
+    }
     return 0;
 }
