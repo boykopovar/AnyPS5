@@ -3005,6 +3005,41 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<I", image, 0x58 + 280 + 20, 0x238 + len(target))
         self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
 
+    def pe_forwarded_export(self, name, target):
+        image = bytearray(build_pe([name]))
+        size = struct.unpack_from("<I", image, 0x58 + 116)[0]
+        pointer = 0x200 + size
+        target = target.encode("ascii") + b"\0"
+        image[pointer:pointer] = target
+        struct.pack_into("<I", image, 0x200 + 40, 0x1000 + size)
+        for field in (8, 16):
+            struct.pack_into("<I", image, 0x58 + 240 + field, size + len(target))
+        struct.pack_into("<II", image, 0x58 + 112, 0x1000, size + len(target))
+        struct.pack_into("<I", image, 0x58 + 280 + 20, pointer + len(target))
+        return image
+
+    def test_pe_forwarders_require_a_module_and_named_or_ordinal_target(self):
+        for target in ("", "NoDot", ".Target", "KERNEL32.", "KERNEL32.#", "KERNEL32.#x", "KERNEL32.#1x", "KERNEL32.#-1", "KERNEL32.#+1"):
+            with self.subTest(target=target), self.assertRaisesRegex(import_audit.AuditError, "invalid export forwarder"):
+                import_audit.pe_exports(Path("lib.prx"), self.pe_forwarded_export("alpha", target))
+        for target in ("NTDLL.#27", "KERNEL32.Sleep", "module.name.with.dots", "Module.?Func@@YAHXZ", "api-ms-win-core-file-l1-1-0.CreateFileW"):
+            with self.subTest(target=target):
+                self.assertEqual(import_audit.pe_exports(Path("lib.prx"), self.pe_forwarded_export("alpha", target)), {"alpha"})
+
+    def test_malformed_forwarder_preserves_previous_audit_report(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        library = work.libs / "libExample.prx"
+        write_registry(registry, [("AAAAAAAAAAA", "libExample.prx")])
+        library.write_bytes(self.pe_forwarded_export("AAAAAAAAAAA", "NoDot"))
+        report.write_bytes(b"previous audit")
+        code, output, errors = work.run(registry, "--json", str(report))
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("invalid export forwarder", errors)
+        self.assertIn(str(library), errors)
+        self.assertNotIn("Traceback", errors)
+        self.assertEqual(report.read_bytes(), b"previous audit")
+
     def test_pe_export_name_pointer_table_must_be_sorted(self):
         image = build_pe(["beta", "alpha"])
         with self.assertRaisesRegex(import_audit.AuditError, "sorted"):
