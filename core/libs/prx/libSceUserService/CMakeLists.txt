@@ -73,6 +73,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_user_service_lifecycle PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
+
+    add_test_executable(guest_user_service_party_chat_transcription_voice_type_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServicePartyChatTranscriptionVoiceType.cpp)
+    target_include_directories(guest_user_service_party_chat_transcription_voice_type_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_party_chat_transcription_voice_type_tests PRIVATE libSceUserService libSceSystemService libc)
+    configure_windows_unwind(guest_user_service_party_chat_transcription_voice_type_tests)
+    add_test(NAME guest_user_service_party_chat_transcription_voice_type COMMAND guest_user_service_party_chat_transcription_voice_type_tests)
+    set_tests_properties(guest_user_service_party_chat_transcription_voice_type PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_party_chat_transcription_voice_type PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
