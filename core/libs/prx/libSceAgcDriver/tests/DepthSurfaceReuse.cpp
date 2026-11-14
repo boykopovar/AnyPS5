@@ -501,6 +501,23 @@ void TestRetiredSurfaceRelease(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void TestDisplacedSurfaceRelease(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    const auto destroyed = [](VkImage image) { return std::find(destroyedImages.begin(), destroyedImages.end(), image) != destroyedImages.end(); };
+    constexpr std::uint64_t address = 0xa0000000;
+    std::vector<VkImage> displaced;
+    for (const auto width : {256u, 224u, 192u}) {
+        DepthSurfaceView(context, {address, 0, {width, width}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+        displaced.push_back(lastImage);
+    }
+    const auto current = displaced.back();
+    displaced.pop_back();
+    DepthSurfaceView(context, {address + 0x1000000u, 0, {256, 256}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(std::all_of(displaced.begin(), displaced.end(), destroyed), "a depth surface whose address a surface of another extent took over must free its image");
+    Require(!destroyed(current), "the depth surface that owns the address must keep its image");
+    ClearDepthSurfaces(context.device);
+}
+
 std::atomic<std::uint64_t> untrackedHtileBegin{0};
 std::atomic<std::uint64_t> untrackedHtileEnd{0};
 std::atomic<int> untrackedHtileReads{0};
@@ -976,6 +993,7 @@ void RunDepthSurfaceReuseTests() {
         Require(clearsAfter(2u * sliceHtile) == std::vector<VkImage>{firstImage, secondImage}, "an HTILE clear over both slices must clear both");
     }
     TestRetiredSurfaceRelease(context);
+    TestDisplacedSurfaceRelease(context);
 
     ClearDepthSurfaces(context.device);
 }

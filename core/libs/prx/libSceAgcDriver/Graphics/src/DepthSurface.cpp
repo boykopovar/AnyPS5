@@ -2559,9 +2559,28 @@ void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address
     entry = {&surface, ++planeBinds};
 }
 
+void retireStoringStale(DepthSurface& surface);
+
+bool ownsPlane(const DepthSurface& surface) {
+    const auto owns = [&](const PlaneOwners& owners) { return std::any_of(owners.begin(), owners.end(), [&](const auto& entry) { return entry.second.surface == &surface; }); };
+    return owns(depthOwners()) || owns(stencilOwners());
+}
+
 void takePlanes(DepthSurface& surface, bool created, VkImageAspectFlags clearAspects) {
+    std::array<DepthSurface*, 2> displaced{};
+    const auto previous = [&](PlaneOwners& owners, std::uint64_t address) {
+        const auto found = owners.find({surface.context.device, address});
+        return found == owners.end() || found->second.surface == &surface ? nullptr : found->second.surface;
+    };
+    displaced[0] = previous(depthOwners(), surface.target.address);
+    if (surface.target.stencilAddress != 0) displaced[1] = previous(stencilOwners(), surface.target.stencilAddress);
     takePlane(surface, depthOwners(), surface.target.address, VK_IMAGE_ASPECT_DEPTH_BIT, created, clearAspects);
     if (surface.target.stencilAddress != 0) takePlane(surface, stencilOwners(), surface.target.stencilAddress, VK_IMAGE_ASPECT_STENCIL_BIT, created, clearAspects);
+    for (std::size_t index = 0; index < displaced.size(); ++index) {
+        auto* owner = displaced[index];
+        if (owner == nullptr || (index == 1 && owner == displaced[0]) || owner->retired || owner->target.samples != 1u || ownsPlane(*owner)) continue;
+        retireStoringStale(*owner);
+    }
 }
 
 DepthSurface* depthSlice(VkDevice device, std::uint64_t address, const DepthTarget& base) {
