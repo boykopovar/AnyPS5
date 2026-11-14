@@ -93,8 +93,8 @@ static int Collect(const char* buffer, int bytes, std::map<std::string, Entry>& 
 
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
 static void CheckLargeDirectoryPaging() {
-    const auto root = std::filesystem::temp_directory_path() /
-        ("anyps5-large-directory-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::path("anyps5-large-directory-test-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     constexpr int FileCount = 2500;
     for (int i = 0; i < FileCount; ++i) {
