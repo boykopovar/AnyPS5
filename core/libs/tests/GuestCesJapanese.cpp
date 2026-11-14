@@ -305,16 +305,27 @@ int main() {
 
     Require(sceCesUtf8ToSJis(Bytes("\xE6\x97\xA5"), 3, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == 0);
     Require(consumed == 3 && produced == 2 && std::memcmp(mbcs, "\x93\xFA", 2) == 0);
+    Require(sceCesUtf8ToSJis(Bytes("\xE6\x97\xA5"), 3, &consumed, nullptr, mbcs, sizeof(mbcs), &produced) == invalidParameter);
+    Require(sceCesUtf8ToSJis(Bytes("\xE6\x97\xA5"), 3, &consumed, sjis, nullptr, sizeof(mbcs), &produced) == invalidDstBuffer);
+    Require(sceCesUtf8ToSJis(Bytes("\xE6\x97\xA5"), 3, &consumed, sjis, mbcs, 1, &produced) == dstBufferEnd);
     Require(sceCesUtf8ToSJis(Bytes("\xE6\x97\xA5"), 2, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == srcBufferEnd);
     Require(sceCesUtf8ToSJis(Bytes("\xF0\x9F\x98\x80"), 4, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUtf8ToSJis(nullptr, 3, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
     Require(sceCesUtf8ToEucJp(Bytes("\xE6\x97\xA5"), 3, &consumed, euc, mbcs, sizeof(mbcs), &produced) == 0);
     Require(produced == 2 && std::memcmp(mbcs, "\xC6\xFC", 2) == 0);
+    Require(sceCesUtf8ToEucJp(nullptr, 3, &consumed, euc, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf8ToEucJp(Bytes("\xE6\x97\xA5"), 3, &consumed, nullptr, mbcs, sizeof(mbcs), &produced) == invalidParameter);
+    Require(sceCesUtf8ToEucJp(Bytes("\xE6\x97\xA5"), 3, &consumed, euc, nullptr, sizeof(mbcs), &produced) == invalidDstBuffer);
+    Require(sceCesUtf8ToEucJp(Bytes("\xE6\x97\xA5"), 3, &consumed, euc, mbcs, 1, &produced) == dstBufferEnd);
 
     const std::uint16_t hiragana[] = {0x3042};
     const std::uint16_t pair[] = {0xD83D, 0xDE00};
     const std::uint16_t lone[] = {0xDC00};
     Require(sceCesUtf16ToSJis(hiragana, 1, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == 0 && consumed == 1 && std::memcmp(mbcs, "\x82\xA0", 2) == 0);
+    Require(sceCesUtf16ToSJis(nullptr, 1, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf16ToSJis(hiragana, 1, &consumed, nullptr, mbcs, sizeof(mbcs), &produced) == invalidParameter);
+    Require(sceCesUtf16ToSJis(hiragana, 1, &consumed, sjis, nullptr, sizeof(mbcs), &produced) == invalidDstBuffer);
+    Require(sceCesUtf16ToSJis(hiragana, 1, &consumed, sjis, mbcs, 1, &produced) == dstBufferEnd);
     Require(sceCesUtf16ToSJis(pair, 2, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUtf16ToSJis(pair, 1, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == srcBufferEnd);
     Require(sceCesUtf16ToSJis(lone, 1, &consumed, sjis, mbcs, sizeof(mbcs), &produced) == invalidEncode);
@@ -323,6 +334,9 @@ int main() {
     Require(sceCesUtf16beToEucJp(&hiraganaBe, 1, &consumed, euc, mbcs, sizeof(mbcs), &produced) == 0 && std::memcmp(mbcs, "\xA4\xA2", 2) == 0);
 
     Require(sceCesUtf32ToSJis(0x65E5, sjis, mbcs, sizeof(mbcs), &produced) == 0 && std::memcmp(mbcs, "\x93\xFA", 2) == 0);
+    Require(sceCesUtf32ToSJis(0x65E5, nullptr, mbcs, sizeof(mbcs), &produced) == invalidParameter);
+    Require(sceCesUtf32ToSJis(0x65E5, sjis, nullptr, sizeof(mbcs), &produced) == invalidDstBuffer);
+    Require(sceCesUtf32ToSJis(0x65E5, sjis, mbcs, 1, &produced) == dstBufferEnd);
     Require(sceCesUtf32ToSJis(0x110000, sjis, mbcs, sizeof(mbcs), &produced) == invalidEncode);
     std::uint32_t utf32Be = 0;
     std::memcpy(&utf32Be, "\x00\x00\x65\xE5", 4);

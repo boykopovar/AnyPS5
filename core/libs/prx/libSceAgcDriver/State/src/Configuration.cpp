@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/State/include/Configuration.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -17,14 +18,30 @@ struct TessellationFactorRing {
 std::mutex tessellationFactorRingMutex;
 TessellationFactorRing tessellationFactorRing;
 
+struct HsOffchipParam {
+ uint16_t granularity = 0;
+ uint16_t buffering = 0;
+};
+
+std::mutex hsOffchipParamMutex;
+HsOffchipParam hsOffchipParam;
+
 }
 
 extern "C" {
 
-int APS5_VABI sceAgcDriverSetHsOffchipParam(uint64_t value0, uint64_t value1, uint64_t value2) {
- (void)value0;
- (void)value1;
- (void)value2;
+int APS5_VABI sceAgcDriverSetHsOffchipParam(uint16_t granularity, uint16_t buffering) {
+ if (granularity > 3 || (buffering > 0x1ff && buffering != 0x3ff)) throw std::runtime_error("sceAgcDriverSetHsOffchipParam: what the console keeps for a granularity above 3 or a buffering above 511 other than 1023 is not measured");
+ std::lock_guard lock(hsOffchipParamMutex);
+ hsOffchipParam = {granularity, static_cast<uint16_t>(buffering & 0x1ff)};
+ return 0;
+}
+
+int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* granularity, uint16_t* buffering) {
+ if (granularity == nullptr || buffering == nullptr) throw std::invalid_argument("sceAgcDriverGetHsOffchipParam: null output");
+ std::lock_guard lock(hsOffchipParamMutex);
+ *granularity = hsOffchipParam.granularity;
+ *buffering = hsOffchipParam.buffering;
  return 0;
 }
 

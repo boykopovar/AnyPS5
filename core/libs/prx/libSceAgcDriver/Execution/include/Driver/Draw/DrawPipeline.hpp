@@ -31,6 +31,7 @@ public:
     };
     enum class DrainReason : std::uint8_t { Packet, Flush, Labels, Capture, Indirect, Submission, Count };
     enum class QueuedWrite : std::uint8_t { None, Stored, Unknown };
+    enum class CommitKind : std::uint8_t { Other, Draw, IndirectDraw, ColorMetadata, Dispatch, SampleDump, DmaFill, DmaWrite, DmaCopy, Store, EndOfPipe, Seal, SubmitEnd, Completion, BufferFill, Count };
 
     static DrawPipeline& Queue0();
     static std::size_t Depth();
@@ -41,7 +42,9 @@ public:
     static unsigned Committers();
 
     void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
+    void Enqueue(CommitKind kind, Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
     void EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes);
+    static void NoteDrawKey(std::uint64_t key, std::uint64_t shape);
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
     void Stop();
     void ReleaseRetired();
@@ -74,6 +77,7 @@ private:
         std::vector<Range> reads;
         bool draw = false;
         bool store = false;
+        CommitKind kind = CommitKind::Other;
     };
     DrawPipeline() = default;
     void enqueue(Item item);
@@ -111,6 +115,8 @@ private:
     std::array<std::uint64_t, 257> drainOpcodes{};
     std::array<std::atomic<std::uint64_t>, 257> drainRequests{};
     std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrainReason::Count)> reasonRequests{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(CommitKind::Count)> kindCommits{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(CommitKind::Count)> kindNs{};
     std::uint64_t depthSum = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };

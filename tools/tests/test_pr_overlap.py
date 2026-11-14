@@ -37,7 +37,7 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
-            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "depends": {12, 34},
+            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "title": "", "depends": {12, 34},
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -57,7 +57,7 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value=json.dumps(pull_requests)):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
-            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "depends": set()},
+            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "title": "", "depends": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):
@@ -81,6 +81,23 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value="  \n"):
             with self.assertRaisesRegex(ValueError, "returned no JSON pages"):
                 pr_overlap.open_prs("main")
+
+
+class ClashDiffReadTests(unittest.TestCase):
+    def test_each_side_diff_is_read_once(self):
+        a = {"tree": "ta", "files": {"f.cpp"}, "added": set()}
+        b = {"tree": "tb", "files": {"f.cpp"}, "added": set()}
+        diffs = {"ta": "@@ -1 +1 @@\n-a\n+b\n@@ -5 +5 @@\n-c\n+d\n@@ -9 +9 @@\n-e\n+f\n",
+                 "tb": "@@ -2 +2 @@\n-g\n+h\n"}
+        calls = []
+
+        def fake_git(*args):
+            calls.append(args)
+            return diffs[args[4]]
+
+        with patch.object(pr_overlap, "git", side_effect=fake_git):
+            self.assertEqual(pr_overlap.clashes(a, b, "f.cpp"), [(1, 2)])
+        self.assertEqual(len(calls), 2)
 
 
 class TopInsertTests(unittest.TestCase):
