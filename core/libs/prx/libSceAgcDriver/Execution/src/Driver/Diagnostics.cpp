@@ -120,8 +120,38 @@ void ReportRefusedDraw(const RefusedDraw& refused) {
     std::fprintf(stderr, "[gpu] APS5_SKIP_REFUSED_DRAWS: skipping the draws that use shader 0x%llx: %.*s\n", static_cast<unsigned long long>(refused.address), static_cast<int>(line.size()), line.data());
 }
 
+bool SkipRefusedDispatches() {
+    static const bool skip = std::getenv("APS5_SKIP_REFUSED_DISPATCHES") != nullptr;
+    return skip;
+}
+
+void ReportRefusedDispatch(std::uint64_t address, std::string_view reason) {
+    auto& shaders = refusedShaders();
+    {
+        std::lock_guard lock(shaders.mutex);
+        if (!shaders.reported.insert(address).second) return;
+    }
+    const auto line = reason.substr(0, reason.find('\n'));
+    std::fprintf(stderr, "[gpu] APS5_SKIP_REFUSED_DISPATCHES: skipping the dispatches that use shader 0x%llx: %.*s\n", static_cast<unsigned long long>(address), static_cast<int>(line.size()), line.data());
+}
+
+bool RefusedDispatch(std::uint64_t address) {
+    if (!SkipRefusedDispatches()) return false;
+    auto& shaders = refusedShaders();
+    std::lock_guard lock(shaders.mutex);
+    return shaders.reported.contains(address);
+}
+
+std::size_t MaxComputeSpirvWords() {
+    static const std::size_t words = [] {
+        const char* text = std::getenv("APS5_MAX_COMPUTE_SPIRV_WORDS");
+        return text != nullptr ? static_cast<std::size_t>(std::strtoull(text, nullptr, 10)) : std::size_t{0};
+    }();
+    return words;
+}
+
 std::optional<std::size_t> RefusedShaderCount() {
-    if (!SkipRefusedDraws()) return std::nullopt;
+    if (!SkipRefusedDraws() && !SkipRefusedDispatches()) return std::nullopt;
     auto& shaders = refusedShaders();
     std::lock_guard lock(shaders.mutex);
     return shaders.reported.size();

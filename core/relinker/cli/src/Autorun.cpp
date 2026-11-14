@@ -34,8 +34,10 @@ int Autorun(const std::string& absPath, bool toWindows) {
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process))
-        throw Domain::RelinkerException("Cannot run the output executable: " + absPath);
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+        const unsigned long runError = GetLastError();
+        throw Domain::RelinkerException("Cannot run the output executable: " + absPath + " (error " + std::to_string(runError) + ")");
+    }
     if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0) {
         const unsigned long waitError = GetLastError();
         CloseHandle(process.hThread);

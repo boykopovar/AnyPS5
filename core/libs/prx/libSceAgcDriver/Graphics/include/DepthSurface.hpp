@@ -18,7 +18,7 @@ class Texture;
 class StorageTexture;
 
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true, bool stencilTested = false);
-VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten);
+VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten, std::optional<std::uint8_t> overwrittenStencil = std::nullopt);
 SampleOrderTarget DepthSurfaceOrderTarget(const Context& context, const DepthTarget& target);
 DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const DepthTarget& target);
 enum class DepthPlaneScope { Overlapped, Whole };
@@ -102,6 +102,14 @@ VkFormat HostDepthFormat(const Context& context, VkFormat format);
 float HostDepthBiasConstant(const Context& context, VkFormat format, float constant);
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip);
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage);
+void RunDepthExpandPass(const Context& context, const DepthExpandPass& pass);
+void StoreDepthExpandWrites(const Context& context);
+struct DepthExpandStatistics {
+    std::uint64_t expands = 0;
+    std::uint64_t skipped = 0;
+    std::uint64_t stored = 0;
+};
+DepthExpandStatistics DepthExpandCounts();
 std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target);
 class DepthCopySourceScope {
 public:

@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -130,6 +131,57 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertEqual(self.advise(), 1)
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_excessively_nested_json_is_a_usage_error(self, run):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                json.loads("[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("JSON decoder accepted every bounded nesting probe")
+        nested = "[" * (depth + 128) + "]" * (depth + 128)
+        for target in (self.param, self.catalog / "index.json"):
+            with self.subTest(target=target.name):
+                original = target.read_text(encoding="utf-8")
+                try:
+                    target.write_text(nested, encoding="utf-8")
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr):
+                        self.assertEqual(self.advise(), 2)
+                    self.assertTrue(stderr.getvalue().startswith("Patch advisor: "), stderr.getvalue())
+                    self.assertNotIn("param.json must be an object", stderr.getvalue())
+                    self.assertNotIn("catalog must have format 1", stderr.getvalue())
+                    run.assert_not_called()
+                finally:
+                    target.write_text(original, encoding="utf-8")
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_excessively_nested_patch_file_rejects_only_its_entry(self, run):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                tomllib.loads("a = " + "[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("TOML decoder accepted every bounded nesting probe")
+        (self.catalog / "deep.toml").write_text("a = " + "[" * (depth + 128) + "]" * (depth + 128), encoding="utf-8")
+        deep = dict(self.entry, patch="deep.toml")
+        self.write_index([deep, self.entry])
+        run.return_value.returncode = 0
+        run.return_value.stdout = VERIFIED
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.advise(), 0)
+        self.assertIn("Catalog entry 1 ('deep.toml'): rejected: ", stdout.getvalue())
+        self.assertIn("Recommended: " + str(self.catalog / "patch.toml"), stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(run.call_args.args[0][2], str(self.catalog / "patch.toml"))
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_catalog_cannot_escape_directory(self, run):
         self.entry["patch"] = "../outside.toml"
         self.write_index()
@@ -173,6 +225,45 @@ class PatchAdvisorTests(unittest.TestCase):
         run.return_value.stdout = VERIFIED
         self.assertEqual(self.advise(), 0)
         run.assert_called_once()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_catalog_keys_cannot_produce_a_recommendation(self, run):
+        entry = json.dumps(self.entry)
+        duplicate_patch = entry.replace('"patch": "patch.toml"',
+                                        '"patch": "missing.toml", "patch": "patch.toml"')
+        catalogs = (
+            '{"format": 0, "format": 1, "entries": [' + entry + ']}',
+            '{"format": 1, "entries": [' + duplicate_patch + ']}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for catalog in catalogs:
+            with self.subTest(catalog=catalog):
+                run.reset_mock()
+                (self.catalog / "index.json").write_text(catalog, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_param_keys_cannot_produce_a_recommendation(self, run):
+        params = (
+            '{"titleId": "OTHER0001", "titleId": "TEST00001", "contentVersion": "01.000.000"}',
+            '{"titleId": "TEST00001", "contentVersion": "00.000.000", "contentVersion": "01.000.000"}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for metadata in params:
+            with self.subTest(metadata=metadata):
+                run.reset_mock()
+                self.param.write_text(metadata, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_matching_malformed_patch_is_rejected(self, run):
