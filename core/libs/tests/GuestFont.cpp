@@ -968,6 +968,9 @@ int main() {
     int glyphAttribute = -1;
     Require(sceFontGlyphGetAttribute(glyph, 0x11, &glyphAttribute) == SCE_FONT_OK && glyphAttribute == 0x11);
     Require(sceFontGlyphGetAttribute(glyph, 0x11, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGlyphGetAttribute(glyph, 0x11, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontGlyphGetAttribute(nullptr, 0x11, &glyphAttribute) == SCE_FONT_ERROR_INVALID_GLYPH);
     Require(sceFontDeleteGlyph(&memory, &glyph) == SCE_FONT_OK && glyph == nullptr);
     FontKerning kerning{1.0f, 1.0f, 1.0f, 1.0f};
