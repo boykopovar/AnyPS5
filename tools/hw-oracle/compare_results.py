@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 
@@ -93,6 +94,9 @@ def nonnegative_integer(value):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="Compare two hw_oracle.py --json reports bit for bit without a GPU. "
                     "Inputs and settings must match; assembly targets may differ.",

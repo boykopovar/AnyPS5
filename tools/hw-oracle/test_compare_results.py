@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -101,6 +102,18 @@ class CompareResultsTests(unittest.TestCase):
         self.assertIn("gfx1030 -> gfx1100", result.stdout)
         self.assertIn("2 rows x 2 registers: 0 differing words", result.stdout)
         self.assertEqual(result.stderr, "")
+
+    def test_targets_outside_the_console_encoding_do_not_turn_a_match_into_a_difference(self):
+        self.report["assembly_target"] = "gfx1030-中"
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        self.after.write_text(json.dumps(self.report), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                capture_output=True, encoding="utf-8", timeout=10,
+                                env=dict(os.environ, PYTHONIOENCODING="cp1252"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("gfx1030-中 -> gfx1030-中", result.stdout)
+        self.assertIn("0 differing words", result.stdout)
 
     def test_bit_differences_include_signed_zero_nan_payload_and_unsigned_words(self):
         after = copy.deepcopy(self.report)
