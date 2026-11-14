@@ -2435,8 +2435,19 @@ bool KeyboardTypeAvailable(std::uint32_t type, std::uint32_t sdkVersion, bool ps
 extern "C" {
 
 int APS5_VABI sceConvertKeycodeGetImeKeyboardType(int32_t userId, uint32_t* type) {
+    if (type == nullptr) return kErrInvalidAddress;
+    const int savedErrno = errno;
+    uint32_t localType = 0;
     const bool ps4Client = Ps4Client();
-    return ImeKeyboardType::Resolve(userId, type, CompiledSdkVersion(), ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
+    const int ret = ImeKeyboardType::Resolve(userId, &localType, CompiledSdkVersion(), ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
+    if (ret != 0) {
+        errno = savedErrno;
+        return ret;
+    }
+    const bool written = GuestCopyOut_nid_no_patch(type, &localType, sizeof(localType));
+    errno = savedErrno;
+    if (!written) return kErrInvalidAddress;
+    return 0;
 }
 int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uint32_t keyboardType, std::uint16_t* virtualKeycode) {
     const int savedErrno = errno;
@@ -2462,10 +2473,15 @@ int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uin
 
 int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(const KeyboardData* keyData, std::int32_t index, std::uint32_t state, std::uint32_t keyboardType, char16_t* character) {
     if (keyData == nullptr || character == nullptr) return kErrInvalidAddress;
-    const auto length = static_cast<std::uint32_t>(keyData->length);
-    if (length > KEYBOARD_MAX_KEYCODES || keyData->led >= 8 || keyData->modifier_key >= 0x100 || (state & 0xE3FFFF7Fu) != 0) return kErrInvalidParameter;
+    const int savedErrno = errno;
+    KeyboardData localKeyData{};
+    const bool read = GuestCopyIn_nid_no_patch(&localKeyData, keyData, sizeof(localKeyData));
+    errno = savedErrno;
+    if (!read) return kErrInvalidAddress;
+    const auto length = static_cast<std::uint32_t>(localKeyData.length);
+    if (length > KEYBOARD_MAX_KEYCODES || localKeyData.led >= 8 || localKeyData.modifier_key >= 0x100 || (state & 0xE3FFFF7Fu) != 0) return kErrInvalidParameter;
     if (index < 0 || static_cast<std::uint32_t>(index) >= length) return kErrInvalidParameter;
-    return sceConvertKeycodeGetCharacter(keyData->key_code[index], state | keyData->modifier_key << 8 | keyData->led << 16, keyboardType, character);
+    return sceConvertKeycodeGetCharacter(localKeyData.key_code[index], state | localKeyData.modifier_key << 8 | localKeyData.led << 16, keyboardType, character);
 }
 
 int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t keycode, std::uint32_t state, std::uint32_t type, char16_t* character) {

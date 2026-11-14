@@ -284,6 +284,13 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetStatus() == 0);
+    Require(sceMsgDialogUpdateStatus() == 0);
+    Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarInc(-1, 0) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, nullptr) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(-1, 0xffffffffu) == kErrNotRunning);
 
     ShownDialog();
     CancelAndFallbacks();

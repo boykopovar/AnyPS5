@@ -2,20 +2,12 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpTextToSpeech/Export.cpp) - 11 entries observed in a 3.20-labelled image and a later 13.60-labelled image are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceNpTextToSpeech/Export.cpp) - 1 entry observed in a 3.20-labelled image and a later 13.60-labelled image is an import-resolution declaration only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. It throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 [Version-pinned selected ELF export records](https://gist.github.com/kyon-eth/752e1b1d4a6ac8a26c97e693527fefbd/a7bddd315c7740a7d065af9e80b0447fcd5b91be) list every NID below with its image label, decoded export module and library, raw qualified symbol, ELF function type, value and size for each inspected version-labelled module. The extract SHA-256 is `63256453dc9620091ce6af95f8b243b7da8f2ce76a585f4886f76aa6625b5b21`; its full-module sorted-function-NID digests and raw module-parameter words permit independent comparison. The extract is an analyst-produced metadata record, not independent authentication of the original images or proof of prototypes or behavior. The separately published 3.20 source catalog has no module file for this library.
 
 | Name | NID |
 | --- | --- |
-| `sceNpTextToSpeechCreateContext` | `haRamb8yLZA` |
-| `sceNpTextToSpeechDestroyContext` | `TxNIFtShi5k` |
-| `sceNpTextToSpeechGetEvent` | `j3hQPQAk3Tw` |
 | `sceNpTextToSpeechInitialize` | `r7RfvNSphGE` |
-| `sceNpTextToSpeechTerminate` | `r93hi3wAJOU` |
-| `Unknown` | `-wGjkwcjXWs` |
-| `Unknown` | `APYz0RAIugo` |
-| `Unknown` | `Fp7i5mx3JWM` |
-| `Unknown` | `i3MidGD-Zfk` |
-| `Unknown` | `oIMRm6q4pUM` |
-| `Unknown` | `rIXr2WILhUE` |
+
+- [The uninitialized answers](../../../core/libs/prx/libSceNpTextToSpeech/Export.cpp) (libSceNpTextToSpeech) - `sceNpTextToSpeechCreateContext`, `sceNpTextToSpeechDestroyContext`, `sceNpTextToSpeechGetEvent`, `sceNpTextToSpeechTerminate` and six NID-only exports return `0x8194F009`, only the 32-bit result being claimed, because `sceNpTextToSpeechInitialize` throws and the library is never initialized here. In firmware 13.42's `libSceNpTextToSpeech.sprx` (SHA-256 `db12abe5058042c35c88f3086c89daa48091de706d88a197812f10ec26bf6548`), read from disassembly and not run on a console, each tests the byte at `0x14060` before any argument is read or any call is made and returns `0x8194F009` unless it is 1. That byte lies beyond its segment's file data, so it starts zero, and the only store of 1 to it in the executable segment is at `0x1d6` in `sceNpTextToSpeechInitialize`. The error's name is unverified.

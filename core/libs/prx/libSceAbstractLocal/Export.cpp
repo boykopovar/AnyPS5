@@ -4,6 +4,13 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED = static_cast<int>(0x809E0005);
+constexpr int SCE_ABSTRACT_STORAGE_ERROR_809E0002 = static_cast<int>(0x809E0002);
+
+}
+
 extern "C" {
 
 
@@ -112,7 +119,7 @@ int APS5_VABI _ZN15AbstractStorage12LocalContent8SeekByteEliPl() {
 }
 
 int APS5_VABI _ZN15AbstractStorage12LocalContent8SeekTimeElPl() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI _ZN15AbstractStorage12LocalContentC1ERKSbIcSt11char_traitsIcENS_8StlAllocIcEEE() {
@@ -200,7 +207,7 @@ int APS5_VABI _ZN15AbstractStorage12LocalStorage13writeExternalESt10shared_ptrIN
 }
 
 int APS5_VABI _ZN15AbstractStorage12LocalStorage14GetStorageSizeEPlS1_S1_() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_809E0002;
 }
 
 int APS5_VABI _ZN15AbstractStorage12LocalStorage15CreateRecursiveERKSbIcSt11char_traitsIcENS_8StlAllocIcEEENS_8ItemTypeEPSt10shared_ptrINS_4ItemEE() {
@@ -248,7 +255,7 @@ int APS5_VABI _ZN15AbstractStorage12LocalStorageD2Ev() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage11LocalFolder10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZNK15AbstractStorage11LocalFolder13GetCapabilityEv() {
@@ -260,11 +267,11 @@ int APS5_VABI _ZNK15AbstractStorage11LocalFolder7GetStatEPNS_4StatE() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalContent10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalContent13GetCapabilityEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0x37C5A;
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalContent7GetStatEPNS_4StatE() {
@@ -272,11 +279,11 @@ int APS5_VABI _ZNK15AbstractStorage12LocalContent7GetStatEPNS_4StatE() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalService14GetServiceTypeEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalStorage10GetServiceEv() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalStorage13GetCapabilityEv() {
@@ -284,7 +291,7 @@ int APS5_VABI _ZNK15AbstractStorage12LocalStorage13GetCapabilityEv() {
 }
 
 int APS5_VABI _ZNK15AbstractStorage12LocalStorage7GetStatEPNS_4StatE() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ABSTRACT_STORAGE_ERROR_809E0002;
 }
 
 }
