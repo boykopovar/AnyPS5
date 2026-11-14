@@ -1,11 +1,11 @@
-// Adapted from uprv_isASCIILetter in ICU 68.2 common/cstring.cpp:
+// Derived from icu4c/source/common/cstring.cpp@84e1f26ea77152936e70d53178a816dbfbf69989 (ICU 68.2):
 // https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/cstring.cpp
 //
-// ICU's notice, kept as the upstream file has it:
+// The upstream file's notice, verbatim:
+//   © 2016 and later: Unicode, Inc. and others.
+//   License & terms of use: http://www.unicode.org/copyright.html
 //   Copyright (C) 1997-2011, International Business Machines
 //   Corporation and others.  All Rights Reserved.
-// ICU and its data are distributed under the Unicode license:
-//   https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/LICENSE
 
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 
