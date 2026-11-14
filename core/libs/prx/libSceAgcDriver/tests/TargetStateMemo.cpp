@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -729,6 +730,14 @@ std::byte* allocateWatched(std::size_t bytes) {
     return static_cast<std::byte*>(memory);
 }
 
+std::uint64_t mapDirectMemory(std::size_t bytes) {
+    std::int64_t physical = -1;
+    Require(sceKernelAllocateDirectMemory(0, 0x10000000000ll, bytes, 65536, 3, &physical) == 0, "cannot allocate direct memory");
+    void* memory = nullptr;
+    Require(sceKernelMapDirectMemory(&memory, bytes, 3, 0, physical, 65536) == 0, "cannot map direct memory");
+    return address(memory);
+}
+
 struct HitCase {
     const char* name;
     bool metadata;
@@ -787,8 +796,9 @@ void dccClear(AgcDriver::VulkanDevice& device) {
 
 void cmaskClearRecorded(AgcDriver::VulkanDevice& device) {
     auto color = colorTarget(false, true);
-    auto* cmask = allocateWatched(65536);
-    color.cmaskAddress = address(cmask);
+    color.cmaskAddress = mapDirectMemory(65536);
+    auto* cmask = reinterpret_cast<std::byte*>(color.cmaskAddress);
+    const bool watchedWhenMapped = AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes);
     std::memset(cmask, 0xff, color.cmaskBytes);
     reset(device, color);
     for (int repeat = 0; repeat < 3; ++repeat) draw(device, color);
@@ -803,7 +813,7 @@ void cmaskClearRecorded(AgcDriver::VulkanDevice& device) {
     // A CMASK the write watch does not cover (no userfaultfd write protection on this host) cannot be proved
     // unwritten, so no draw may repeat over it.
     const bool watched = AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes);
-    std::cout << "the CMASK is " << (watched ? "" : "not ") << "write-watched; a draw " << (repeated ? "repeated" : "did not repeat") << "\n";
+    std::cout << "the direct-memory CMASK is " << (watchedWhenMapped ? "" : "not ") << "write-watched when mapped and " << (watched ? "" : "not ") << "after the draws; a draw " << (repeated ? "repeated" : "did not repeat") << "\n";
     Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !watched, "no draw repeated its targets over a recorded CMASK clear");
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Clear); }, "repeated draws over a recorded CMASK clear");
 }
@@ -876,8 +886,9 @@ void depthPlaneWrittenByCpu(AgcDriver::VulkanDevice& device) {
 
 void cmaskPaddingBesideExpandedTiles(AgcDriver::VulkanDevice& device) {
     auto color = colorTarget(false, true);
-    auto* cmask = reinterpret_cast<std::uint8_t*>(allocateWatched(Cmask.size()));
-    color.cmaskAddress = address(cmask);
+    color.cmaskAddress = mapDirectMemory(65536);
+    auto* cmask = reinterpret_cast<std::uint8_t*>(color.cmaskAddress);
+    const bool watchedWhenMapped = AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes);
     reset(device, color);
     const CmaskLayout layout(Width, Height);
     std::fill(cmask, cmask + Cmask.size(), std::uint8_t{0});
@@ -896,7 +907,9 @@ void cmaskPaddingBesideExpandedTiles(AgcDriver::VulkanDevice& device) {
         draw(device, color);
         repeated = lookups() == before;
     }
-    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes), "no draw over expanded tiles with zero padding repeated its targets");
+    const bool watched = AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes);
+    std::cout << "the direct-memory CMASK is " << (watchedWhenMapped ? "" : "not ") << "write-watched when mapped and " << (watched ? "" : "not ") << "after the draws; a draw " << (repeated ? "repeated" : "did not repeat") << "\n";
+    Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !watched, "no draw over expanded tiles with zero padding repeated its targets");
     expect(device, color, [](std::uint32_t x) { return leftOver(x, Old); }, "draws over expanded tiles with zero padding");
 }
 
