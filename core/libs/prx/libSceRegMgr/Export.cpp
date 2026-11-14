@@ -1,5 +1,6 @@
 #include "prx/libSceRegMgr/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -21,6 +22,7 @@ constexpr int SCE_REG_MGR_ERROR_INVALID_TYPE = static_cast<int>(0x80820006);
 constexpr int SCE_REG_MGR_NONSYS_ERROR_INVALID_PARAM = static_cast<int>(0x800D0202);
 constexpr int SCE_REG_MGR_NONSYS_ERROR_BUFFER_TOO_BIG = static_cast<int>(0x800D0208);
 constexpr std::size_t SCE_REG_MGR_NONSYS_MAX_SIZE = 0x800;
+constexpr std::size_t SCE_REG_MGR_MAX_STRING_SIZE = 1024 * 1024;
 
 enum EntryType {
     TypeInt = 0,
@@ -102,12 +104,45 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end() && it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
-        std::vector<char> bytes(length);
+        std::array<char, 256> bytes{};
+        std::string text;
         const int savedErrno = errno;
-        const bool copied = length == 0 || GuestCopyIn_nid_no_patch(bytes.data(), value, length);
+        const auto address = reinterpret_cast<std::uintptr_t>(value);
+        for (std::size_t offset = 0; offset < length;) {
+            if (text.size() > SCE_REG_MGR_MAX_STRING_SIZE || offset > UINTPTR_MAX - address) {
+                errno = savedErrno;
+                return SCE_REG_MGR_ERROR_INVALID_PARAM;
+            }
+            const std::size_t count = std::min({length - offset, bytes.size(),
+                SCE_REG_MGR_MAX_STRING_SIZE + 1 - text.size()});
+            const auto current = address + offset;
+            if (count - 1 <= UINTPTR_MAX - current && GuestCopyIn_nid_no_patch(bytes.data(),
+                    reinterpret_cast<const void*>(current), count)) {
+                const auto end = std::find(bytes.begin(), bytes.begin() + count, '\0');
+                text.append(bytes.data(), static_cast<std::size_t>(end - bytes.begin()));
+                if (end != bytes.begin() + count) break;
+                offset += count;
+            } else {
+                bool terminated = false;
+                for (std::size_t index = 0; index < count; ++index) {
+                    char character = 0;
+                    if (index > UINTPTR_MAX - current || !GuestCopyIn_nid_no_patch(&character,
+                            reinterpret_cast<const void*>(current + index), 1)) {
+                        errno = savedErrno;
+                        return SCE_REG_MGR_ERROR_INVALID_PARAM;
+                    }
+                    if (character == '\0') {
+                        terminated = true;
+                        break;
+                    }
+                    text.push_back(character);
+                }
+                if (terminated) break;
+                offset += count;
+            }
+        }
         errno = savedErrno;
-        if (!copied) return SCE_REG_MGR_ERROR_INVALID_PARAM;
-        std::string text(bytes.begin(), std::find(bytes.begin(), bytes.end(), '\0'));
+        if (text.size() > SCE_REG_MGR_MAX_STRING_SIZE) return SCE_REG_MGR_ERROR_INVALID_PARAM;
         const bool changed = it == entries_.end() || it->second.strVal != text;
         RegEntry& entry = entries_[key];
         entry.type = TypeStr;

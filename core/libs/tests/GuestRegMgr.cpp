@@ -6,8 +6,15 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -73,8 +80,71 @@ static void CheckRemovedRangeKeys() {
     }
 }
 
+static void CheckStringPageBoundary() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* pages = static_cast<char*>(VirtualAlloc(nullptr, page * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(pages + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* pages = static_cast<char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE,
+                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+#endif
+    constexpr int bad = static_cast<int>(0x80820001u);
+    constexpr int absent = static_cast<int>(0x80820002u);
+    char text[32]{};
+    char* input = pages + page - 3;
+    std::memcpy(input, "ok", 3);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2010, input, page * 2) == 0);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2010, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2010, 0x0d010001u) == 1);
+
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2011, input, std::numeric_limits<std::uint32_t>::max()) == 0);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2011, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2011, 0x0d010001u) == 1);
+
+    std::memcpy(input, "abc", 3);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2012, input, page * 2) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2012, text, sizeof(text)) == absent);
+    Require(sceRegMgrIsChange(0x2012, 0x0d010001u) == 0);
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2010, input, page * 2) == bad);
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2010, text, sizeof(text)) == 0 && std::strcmp(text, "ok") == 0);
+    Require(sceRegMgrIsChange(0x2010, 0x0d010001u) == 0);
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, page * 2) == 0);
+#endif
+}
+
+static void CheckStringLengthCap() {
+    std::string input(1024 * 1024 + 1, 'x');
+    char text[16]{};
+    errno = 71;
+    Require(sceRegMgrSetStr(0x2013, input.data(), input.size()) == static_cast<int>(0x80820001u));
+    Require(errno == 71);
+    Require(sceRegMgrGetStr(0x2013, text, sizeof(text)) == static_cast<int>(0x80820002u));
+    Require(sceRegMgrIsChange(0x2013, 0x0d010001u) == 0);
+}
+
 int main() {
     CheckRemovedRangeKeys();
+    CheckStringPageBoundary();
+    CheckStringLengthCap();
     int32_t intVal = 0;
     char strBuf[64] = {};
     uint8_t binBuf[32] = {};
