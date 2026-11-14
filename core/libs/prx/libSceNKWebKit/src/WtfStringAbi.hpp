@@ -111,6 +111,8 @@ struct CString {
     ~CString() { Release(buffer); }
 };
 
+const char* CStringBytes(const CString& value);
+
 struct ProcessPrivileges {
     unsigned storage;
 };

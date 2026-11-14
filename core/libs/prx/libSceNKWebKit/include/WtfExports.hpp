@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/PalTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfPrintStreamAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
@@ -97,6 +98,25 @@ bool APS5_VABI _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(const WTF::T
 bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF11LogArgumentIPKvE8toStringES2_(const void* argument);
 void* APS5_VABI _ZN3WTF11fastReallocEPvm(void* ptr, std::size_t size);
+void APS5_VABI _ZN3WTF11PrintStream6printfEPKcz(NKWebKit::WtfAbi::PrintStream* self, const char* format, ...);
+void APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc(NKWebKit::WtfAbi::PrintStream& out, char value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE(NKWebKit::WtfAbi::PrintStream& out, NKWebKit::WtfAbi::RawPointer value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKc(NKWebKit::WtfAbi::PrintStream& out, const char* string);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE(NKWebKit::WtfAbi::PrintStream& out, const NKWebKit::WtfAbi::CString& string);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEb(NKWebKit::WtfAbi::PrintStream& out, bool value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEd(NKWebKit::WtfAbi::PrintStream& out, double value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEi(NKWebKit::WtfAbi::PrintStream& out, int value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEj(NKWebKit::WtfAbi::PrintStream& out, unsigned value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEl(NKWebKit::WtfAbi::PrintStream& out, std::int64_t value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEm(NKWebKit::WtfAbi::PrintStream& out, std::uint64_t value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEa(NKWebKit::WtfAbi::PrintStream& out, signed char value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEh(NKWebKit::WtfAbi::PrintStream& out, unsigned char value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEs(NKWebKit::WtfAbi::PrintStream& out, short value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEt(NKWebKit::WtfAbi::PrintStream& out, unsigned short value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEx(NKWebKit::WtfAbi::PrintStream& out, long long value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEy(NKWebKit::WtfAbi::PrintStream& out, unsigned long long value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEf(NKWebKit::WtfAbi::PrintStream& out, float value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(NKWebKit::WtfAbi::PrintStream& out, WTF::ClockType type);
 void APS5_VABI _ZN3WTF11jsValueFreeEPv(void* ptr);
 bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const NKWebKit::WtfAbi::URL* url);
 bool APS5_VABI _ZN3WTF12isMainThreadEv();
