@@ -1,5 +1,6 @@
 #include "prx/libSceRazorCpu/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -104,6 +105,9 @@ int main() {
 
     std::uint8_t context[16]{};
     Require(sceRazorCpuInitializeGpuMarkerContext(nullptr) == 22);
+    errno = 71;
+    Require(sceRazorCpuInitializeGpuMarkerContext(reinterpret_cast<const std::uint8_t*>(0x10)) == 22);
+    Require(errno == 71);
     Require(sceRazorCpuInitializeGpuMarkerContext(context) == 22);
     context[0] = 2;
     Require(sceRazorCpuInitializeGpuMarkerContext(context) == 22);

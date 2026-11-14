@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { translate } from "../i18n.mjs";
 
 const context = vm.createContext({ Uint8Array, Blob, ReadableStream, WritableStream, TransformStream, AbortController, DataView });
 const module = new vm.SourceTextModule(readFileSync(new URL("../archive.mjs", import.meta.url), "utf8"), { context });
 await module.link(async name => {
-  const exports = name.startsWith("https:") ? { BlobReader: class {}, Uint8ArrayReader: class {}, ZipReader: class {}, ZipWriter: class {}, configure() {} } : { batchMemoryEstimate() {}, batchOutputDirectory() {}, memoryEstimate() {}, MEMORY_LIMIT: 0 };
+  const exports = name.startsWith("https:") ? { BlobReader: class {}, Uint8ArrayReader: class {}, ZipReader: class {}, ZipWriter: class {}, configure() {} }
+    : name === "./i18n.mjs" ? { translate }
+    : { batchMemoryEstimate() {}, batchOutputDirectory() {}, memoryEstimate() {}, MEMORY_LIMIT: 0 };
   return new vm.SyntheticModule(Object.keys(exports), function() { for (const [key, value] of Object.entries(exports)) this.setExport(key, value); }, { context });
 });
 await module.evaluate();

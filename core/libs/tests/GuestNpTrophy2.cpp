@@ -3,7 +3,9 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "tests/ExportLookup.hpp"
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -52,6 +54,11 @@ template <typename Call> static bool ThrowsInvalidArgument(Call call) {
     return false;
 }
 
+template <typename Call> static bool RefusesKeepingErrno(Call call) {
+    errno = 71;
+    return ThrowsInvalidArgument(call) && errno == 71;
+}
+
 int main(int argc, char** argv) {
     int userdata = 0;
     Require(sceNpTrophy2UnregisterUnlockCallback() == 0);
@@ -97,4 +104,36 @@ int main(int argc, char** argv) {
     Require(sceNpTrophy2CreateHandle(&handle) == SCE_NP_TROPHY2_OK);
     Require(handle == NP_TROPHY2_HANDLE_DEFAULT);
     Require(sceNpTrophy2DestroyHandle(handle) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2RegisterContext(0, handle, 0) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2RegisterContext(-1, -1, ~0ull) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2AbortHandle(handle) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2AbortHandle(0) == SCE_NP_TROPHY2_OK);
+
+    auto* bad = reinterpret_cast<void*>(0x10);
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2CreateHandle(static_cast<int*>(bad)); }));
+    int first = -1;
+    int second = -1;
+    Require(sceNpTrophy2CreateContext(&first, 1, 0, 0) == SCE_NP_TROPHY2_OK);
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2CreateContext(static_cast<int*>(bad), 1, 0, 0); }));
+    Require(sceNpTrophy2CreateContext(&second, 1, 0, 0) == SCE_NP_TROPHY2_OK);
+    Require(second == first + 1);
+    Require(sceNpTrophy2DestroyContext(first) == SCE_NP_TROPHY2_OK);
+    Require(sceNpTrophy2DestroyContext(second) == SCE_NP_TROPHY2_OK);
+
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGameInfo(1, 1, static_cast<NpTrophy2GameDetails*>(bad), nullptr); }));
+    Require(RefusesKeepingErrno([bad, &details] { sceNpTrophy2GetGameInfo(1, 1, &details, static_cast<NpTrophy2GameData*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGroupInfo(1, 1, 2, static_cast<NpTrophy2GroupDetails*>(bad), nullptr); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGroupInfo(1, 1, 2, nullptr, static_cast<NpTrophy2GroupData*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetTrophyInfo(1, 1, 3, static_cast<NpTrophy2Details*>(bad), nullptr); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetTrophyInfo(1, 1, 3, nullptr, static_cast<NpTrophy2Data*>(bad)); }));
+
+    std::uint32_t count = 99;
+    Require(RefusesKeepingErrno([bad, &count] { sceNpTrophy2GetGroupInfoArray(1, 1, 0, 1, static_cast<NpTrophy2GroupDetails*>(bad), nullptr, &count); }));
+    Require(RefusesKeepingErrno([bad, &count] { sceNpTrophy2GetGroupInfoArray(1, 1, 0, 1, nullptr, static_cast<NpTrophy2GroupData*>(bad), &count); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGroupInfoArray(1, 1, 0, 1, nullptr, nullptr, static_cast<std::uint32_t*>(bad)); }));
+    Require(RefusesKeepingErrno([bad, &count] { sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, static_cast<NpTrophy2Details*>(bad), nullptr, &count); }));
+    Require(RefusesKeepingErrno([bad, &count] { sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, nullptr, static_cast<NpTrophy2Data*>(bad), &count); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, nullptr, nullptr, static_cast<std::uint32_t*>(bad)); }));
+    Require(count == 99);
+    Require(sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, nullptr, nullptr, &count) == SCE_NP_TROPHY2_OK && count == 1);
 }
