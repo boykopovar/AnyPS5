@@ -379,9 +379,10 @@ int APS5_VABI scePlayGoSetLanguageMask(int handle, uint64_t language_mask) {
     return 0;
 }
 
-int APS5_VABI scePlayGoSnapshot() {
+int APS5_VABI scePlayGoSnapshot(int handle, const char* filename) {
+    static_cast<void>(handle);
+    static_cast<void>(filename);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 }
