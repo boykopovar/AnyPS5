@@ -258,10 +258,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
 }
 
 
-void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response) {
-    if (response != nullptr) NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslStack* certificates, LibreSslX509Store* store, std::uint64_t flags) {
     constexpr int responderIdName = 0;
     constexpr int sha1DigestLength = 20;
@@ -289,15 +285,6 @@ int APS5_VABI OCSP_basic_verify_nid_postfix(LibreSslOcspBasicResponse* response,
     if ((flags & noIntern) == 0 && !findKnownMissing(response->certs)) NotImplemented_nid_no_patch(__func__);
     LibreSslPutError_nid_no_patch(39, 0xfff, 118);
     return 0;
-}
-
-void* APS5_VABI OCSP_response_get1_basic_nid_postfix(LibreSslOcspResponse* response) {
-    if (!response) throw std::invalid_argument(std::string(__func__) + ": null response");
-    if (!response->responseBytes) {
-        LibreSslPutError_nid_no_patch(39, 0xfff, 108);
-        return nullptr;
-    }
-    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {}
