@@ -271,6 +271,9 @@ int main() {
     Require(sceVoiceUpdatePort(input, &update) == 0);
     Require(sceVoiceGetMuteFlag(input, &muted) == 0 && muted);
     Require(sceVoiceGetVolume(input, &volume) == 0 && volume == 0.75f);
+    errno = 71;
+    Require(sceVoiceGetVolume(input, reinterpret_cast<float*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
     Require(sceVoiceGetPortInfo(input, &rateInfo) == 0 && rateInfo.frame_size == 27);
     update.voice.bitrate = 1;

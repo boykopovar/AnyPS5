@@ -282,7 +282,11 @@ int APS5_VABI sceVoiceGetVolume(std::uint32_t portId, float* volume) {
     if (!volume) return InvalidArgument;
     const auto found = voice.ports.find(portId);
     if (found == voice.ports.end()) return PortNotFound;
-    *volume = found->second.volume;
+    const float localVolume = found->second.volume;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(volume, &localVolume, sizeof(localVolume));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 
