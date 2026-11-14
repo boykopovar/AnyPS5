@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WebCore/page/DeprecatedGlobalSettings.cpp
+// Derived from Source/WebCore/page/DeprecatedGlobalSettings.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
  *
@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-// Derived from Source/WebCore/page/DeprecatedGlobalSettings.cpp (WebKit c55364d53f97)
+// Derived from Source/WebCore/page/DeprecatedGlobalSettings.cpp@c55364d53f971f63a709976f168d932d558b8909
 /*
  * Copyright (C) 2006, 2007, 2008, 2009, 2011, 2012 Apple Inc. All rights reserved.
  *
