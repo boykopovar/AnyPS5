@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -117,7 +118,7 @@ int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestC
     if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
     auto* const displaced = static_cast<unsigned char*>(malloc_nid_postfix(size));
     if (!displaced) return -1;
+    const std::unique_ptr<unsigned char, decltype(&free_nid_postfix)> owner(displaced, free_nid_postfix);
     HeapSorter(static_cast<unsigned char*>(base), size, compare).Sort(count, displaced);
-    free_nid_postfix(displaced);
     return 0;
 }
