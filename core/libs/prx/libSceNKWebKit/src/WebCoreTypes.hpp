@@ -200,6 +200,41 @@ struct Color {
     std::uint64_t m_colorAndFlags{0};
 };
 
+template<typename T> struct SRGBA {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct LinearSRGBA {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct DisplayP3 {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct LinearDisplayP3 {
+    T red;
+    T green;
+    T blue;
+    T alpha;
+};
+
+template<typename T> struct HSLA {
+    T hue;
+    T saturation;
+    T lightness;
+    T alpha;
+};
+
 struct RedirectChainCacheStatus {
     enum class Status : std::uint8_t {
         NoRedirection,
@@ -292,6 +327,25 @@ static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(alignof(Matrix3DTransformOperation) == 16);
 static_assert(sizeof(Matrix3DTransformOperation) == 144);
 static_assert(sizeof(Color) == 8);
+static_assert(sizeof(SRGBA<std::uint8_t>) == 4);
+static_assert(offsetof(SRGBA<std::uint8_t>, alpha) == 3);
+static_assert(sizeof(SRGBA<float>) == 16);
+static_assert(offsetof(SRGBA<float>, green) == 4);
+static_assert(offsetof(SRGBA<float>, blue) == 8);
+static_assert(offsetof(SRGBA<float>, alpha) == 12);
+static_assert(sizeof(LinearSRGBA<float>) == 16);
+static_assert(offsetof(LinearSRGBA<float>, alpha) == 12);
+static_assert(sizeof(DisplayP3<float>) == 16);
+static_assert(offsetof(DisplayP3<float>, alpha) == 12);
+static_assert(sizeof(LinearDisplayP3<float>) == 16);
+static_assert(offsetof(LinearDisplayP3<float>, alpha) == 12);
+static_assert(sizeof(HSLA<float>) == 16);
+static_assert(offsetof(HSLA<float>, saturation) == 4);
+static_assert(offsetof(HSLA<float>, lightness) == 8);
+static_assert(offsetof(HSLA<float>, alpha) == 12);
+static_assert(std::is_trivially_copyable_v<SRGBA<std::uint8_t>>);
+static_assert(std::is_trivially_copyable_v<SRGBA<float>>);
+static_assert(std::is_trivially_copyable_v<HSLA<float>>);
 static_assert(sizeof(RedirectChainCacheStatus) == 16);
 static_assert(offsetof(RedirectChainCacheStatus, endOfValidity) == 0);
 static_assert(offsetof(RedirectChainCacheStatus, status) == 8);

@@ -79,13 +79,19 @@ void RequireNotInit(std::int32_t handle) {
     Require(sceMoveSetVibration(handle, 0xFF) == kNotInit);
     Require(sceMoveSetLightSphere(handle, 0xFF, 0, 0) == kNotInit);
     Require(sceMoveResetLightSphere(handle) == kNotInit);
-    Require(sceMoveGetBluetoothAddress() == kNotInit);
-    Require(sceMoveGetCalibrationInfo() == kNotInit);
-    Require(sceMoveGetDeviceId() == kNotInit);
+    std::uint64_t address = 0x5a5a5a5a5a5a5a5a;
+    std::uint32_t deviceId = 0x5a5a5a5a;
+    Require(sceMoveGetBluetoothAddress(handle, &address) == kNotInit);
+    Require(sceMoveGetBluetoothAddress(handle, nullptr) == kNotInit);
+    Require(sceMoveGetCalibrationInfo(handle, buffer.bytes) == kNotInit);
+    Require(sceMoveGetCalibrationInfo(handle, nullptr) == kNotInit);
+    Require(sceMoveGetDeviceId(handle, &deviceId) == kNotInit);
+    Require(sceMoveGetDeviceId(handle, nullptr) == kNotInit);
     Require(sceMoveIsReproductionModel() == kNotInit);
-    Require(sceMoveIsValidHandle() == 0);
+    Require(sceMoveIsValidHandle(handle) == 0);
     Require(sceMoveReadStateRecentForTracker() == kNotInit);
-    Require(sceMoveSetCalibrationMode() == kNotInit);
+    Require(sceMoveSetCalibrationMode(handle, 1) == kNotInit);
+    Require(address == 0x5a5a5a5a5a5a5a5a && deviceId == 0x5a5a5a5a);
     Require(sceMoveSetExtensionPortOutput() == kNotInit);
     Require(sceMoveSetLightSphereForTracker() == kNotInit);
     Require(sceMoveWriteCalibrationInfo() == kNotInit);
@@ -110,6 +116,17 @@ void RequireUnknownHandle(std::int32_t handle) {
     Require(sceMoveReadStateLatest(handle, nullptr) == kInvalidArg);
     Require(sceMoveReadStateRecent(handle, -1, buffer.bytes, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(handle, 0, buffer.bytes, nullptr) == kInvalidArg);
+    std::uint64_t address = 0x5a5a5a5a5a5a5a5a;
+    std::uint32_t deviceId = 0x5a5a5a5a;
+    Require(sceMoveGetBluetoothAddress(handle, &address) == kInvalidHandle);
+    Require(sceMoveGetBluetoothAddress(handle, nullptr) == kInvalidArg);
+    Require(sceMoveGetCalibrationInfo(handle, buffer.bytes) == kInvalidHandle);
+    Require(sceMoveGetCalibrationInfo(handle, nullptr) == kInvalidArg);
+    Require(sceMoveGetDeviceId(handle, &deviceId) == kInvalidHandle);
+    Require(sceMoveGetDeviceId(handle, nullptr) == kInvalidArg);
+    Require(sceMoveSetCalibrationMode(handle, 1) == kInvalidHandle);
+    Require(sceMoveIsValidHandle(handle) == 0);
+    Require(address == 0x5a5a5a5a5a5a5a5a && deviceId == 0x5a5a5a5a);
     Require(buffer.Untouched());
     Require(count == -7);
 }
@@ -142,6 +159,8 @@ int main() {
 
     Buffer buffer;
     std::int32_t count = -7;
+    std::uint64_t address = 0x5a5a5a5a5a5a5a5a;
+    std::uint32_t deviceId = 0x5a5a5a5a;
     Require(sceMoveReadStateRecent(first, -1, buffer.bytes, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, nullptr, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, buffer.bytes, nullptr) == kInvalidArg);
@@ -165,6 +184,17 @@ int main() {
     Require(sceMoveSetVibration(first, 0xFF) == kNoControllerConnected);
     Require(sceMoveSetLightSphere(first, 0, 0xFF, 0) == kNoControllerConnected);
     Require(sceMoveResetLightSphere(first) == kOk);
+    Require(sceMoveIsValidHandle(first) == 1);
+    Require(sceMoveIsValidHandle(second) == 1);
+    Require(sceMoveIsValidHandle(first + 1) == 0);
+    Require(sceMoveSetCalibrationMode(first, 1) == kOk);
+    Require(sceMoveSetCalibrationMode(first, -5) == kOk);
+    Require(sceMoveGetBluetoothAddress(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetCalibrationInfo(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetDeviceId(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetBluetoothAddress(first, &address) == kNoControllerConnected && address == 0x5a5a5a5a5a5a5a5a);
+    Require(sceMoveGetCalibrationInfo(first, buffer.bytes) == kNoControllerConnected && buffer.Untouched());
+    Require(sceMoveGetDeviceId(first, &deviceId) == kNoControllerConnected && deviceId == 0x5a5a5a5a);
 
     Require(sceMoveClose(first) == kOk);
     RequireUnknownHandle(first);

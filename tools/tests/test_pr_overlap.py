@@ -37,7 +37,7 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
-            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "depends": {12, 34},
+            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "title": "", "depends": {12, 34},
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -57,7 +57,7 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value=json.dumps(pull_requests)):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
-            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "depends": set()},
+            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "title": "", "depends": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):

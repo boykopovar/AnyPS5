@@ -27,6 +27,7 @@ constexpr int SoLinger = 0x80;
 constexpr int SoReusePort = 0x200;
 constexpr int SoTimestamp = 0x400;
 constexpr int SoNoSigpipe = 0x800;
+constexpr int SoAcceptFilter = 0x1000;
 constexpr int SoSendBuffer = 0x1001;
 constexpr int SoReceiveBuffer = 0x1002;
 constexpr int SoSendLowWater = 0x1003;
@@ -183,6 +184,24 @@ void BooleanOptionsReportTheirBit() {
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+}
+
+void AcceptFilterFollowsFreeBsd() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    Require(stream >= 0, "socket failed");
+    Require(SetFails(stream, SolSocket, SoAcceptFilter, nullptr, 0, ErrorInvalid), "removing the accept filter of a socket that is not listening must fail with EINVAL (22)");
+    Require(close_nid_postfix(stream) == 0, "close failed");
+    int listener = -1;
+    Listen(&listener);
+    Require(setsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, nullptr, 0) == 0, "a NULL SO_ACCEPTFILTER value on a listener removes the filter and returns 0");
+    const std::array<std::uint8_t, 255> shortArgument{};
+    Require(SetFails(listener, SolSocket, SoAcceptFilter, shortArgument.data(), shortArgument.size(), ErrorInvalid), "an SO_ACCEPTFILTER value shorter than struct accept_filter_arg (256 bytes) must fail with EINVAL (22)");
+    std::array<std::uint8_t, 256> filter{};
+    filter.fill(0xbb);
+    std::uint32_t size = filter.size();
+    Require(getsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, filter.data(), &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt of SO_ACCEPTFILTER on a listener without a filter must fail with EINVAL (22)");
+    Require(size == filter.size() && filter[0] == 0xbb && filter[255] == 0xbb, "a failed SO_ACCEPTFILTER get must leave the buffer and its length unchanged");
+    Require(close_nid_postfix(listener) == 0, "close failed");
 }
 
 void ReusePortSharesAPort() {
@@ -432,6 +451,38 @@ void UnknownRequestsFail() {
     Require(close_nid_postfix(stream) == 0, "close failed");
 }
 
+void UnknownLevelsFollowFreeBsd() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    const int stream6 = socket_nid_postfix(28, Stream, 0);
+    const int datagram6 = socket_nid_postfix(28, Datagram, 0);
+    Require(stream >= 0 && datagram >= 0 && stream6 >= 0 && datagram6 >= 0, "socket failed");
+    const int one = 1;
+    int value = 0;
+    std::uint32_t size = sizeof(value);
+    for (const int level : {999, 17, -1}) {
+        Require(SetFails(stream, level, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on a stream socket must fail with EINVAL (22), ip_ctloutput");
+        size = sizeof(value);
+        Require(getsockopt_nid_postfix(stream, level, 1, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt with an unknown protocol level must fail with EINVAL (22)");
+    }
+    Require(SetFails(datagram, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on a datagram socket must fail with EINVAL (22)");
+    Require(SetFails(stream6, 0, 1, &one, sizeof(one), ErrorInvalid), "the IP level on an AF_INET6 socket must fail with EINVAL (22), ip6_ctloutput");
+    Require(SetFails(stream6, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_INET6 socket must fail with EINVAL (22)");
+    Require(SetFails(stream, 0, 0x7777, &one, sizeof(one), ErrorNoProtocolOption), "an unknown IP-level option must fail with ENOPROTOOPT (42)");
+    Require(SetFails(datagram, 17, 77, &one, sizeof(one), ErrorNoProtocolOption), "a UDP-level option with no case in udp_ctloutput must fail with ENOPROTOOPT (42)");
+    Require(SetFails(datagram6, 17, 77, &one, sizeof(one), ErrorInvalid), "the UDP level on an AF_INET6 datagram socket must fail with EINVAL (22), ip6_ctloutput");
+    size = sizeof(value);
+    Require(getsockopt_nid_postfix(datagram6, 17, 77, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt with the UDP level on an AF_INET6 datagram socket must fail with EINVAL (22)");
+    int pair[2]{-1, -1};
+    Require(socketpair_nid_postfix(1, Stream, 0, pair) == 0, "socketpair failed");
+    Require(SetFails(pair[0], 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_UNIX socket must fail with EINVAL (22), uipc_ctloutput");
+    Require(SetFails(pair[0], 0, 77, &one, sizeof(one), 45), "an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45), uipc_ctloutput");
+    size = sizeof(value);
+    Require(getsockopt_nid_postfix(pair[0], 0, 77, &value, &size) == -1 && *__error_nid_postfix() == 45, "getsockopt of an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
+    Require(SetFails(pair[0], 0, 1, &one, sizeof(one), 45), "setting LOCAL_PEERCRED on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
+    for (const int descriptor : {stream, datagram, stream6, datagram6, pair[0], pair[1]}) Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+
 }
 
 constexpr int ErrorFault = 14;
@@ -531,6 +582,7 @@ int main(int argc, char** argv) {
     ReportsAndClearsTheConnectError();
     ReconnectAfterARefusalFails();
     BooleanOptionsReportTheirBit();
+    AcceptFilterFollowsFreeBsd();
     ReusePortSharesAPort();
     LingerFollowsFreeBsd();
     LengthsFollowFreeBsd();
@@ -540,5 +592,6 @@ int main(int argc, char** argv) {
     IpLevelFollowsThePs5();
     MulticastMembership();
     UnknownRequestsFail();
+    UnknownLevelsFollowFreeBsd();
     return 0;
 }

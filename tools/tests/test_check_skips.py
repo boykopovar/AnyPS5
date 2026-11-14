@@ -34,6 +34,7 @@ LIMITATIONS = [
     "skipped, the host has not enough free disk space for a file of more than 2 GiB",
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
+    "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
 ]
 
 HOST_LIMITATIONS = [
@@ -50,6 +51,7 @@ OTHER = [
     "skipped, the device imports shared memory",
     "skipped, the device imports shared memory through host pointersX",
     "skipped, the host has no interface",
+    "skipped, the host mounts /dev/shm",
 ]
 
 

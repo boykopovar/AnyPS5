@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -100,6 +101,26 @@ static void CheckDinkumwareConversions() {
     CheckConversion<long double>(_WStold_nid_postfix, u"-2.5e1", 3, -25000.0L, 6, 0, "_WStold scales by a power of ten");
 }
 
+template<typename TFloat>
+static void CheckDinkumwareNoConversion(TFloat (APS5_VABI *parse)(const char16_t*, char16_t**, std::int64_t)) {
+    const struct { const char16_t* text; bool negative; } cases[]{
+        {u"", false}, {u" ", false}, {u"z", false}, {u"+", false}, {u"+z", false},
+        {u"-", true}, {u"-z", true}, {u" \t-.", true}, {u"-i", false}, {u"-n", false},
+        {u"-+1", true}, {u"--1", true}, {u"- 5", true}, {u"\t-.", true}, {u"-\u3000", true}
+    };
+    for (const auto& test : cases) {
+        for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{-10}, std::int64_t{10}, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()}) {
+            for (const int saved : {0, ERANGE, 97}) for (const bool nullEnd : {false, true}) {
+                char16_t* end = nullptr;
+                *__error_nid_postfix() = saved;
+                const TFloat value = parse(test.text, nullEnd ? nullptr : &end, scale);
+                Require(value == 0 && std::signbit(value) == test.negative, "Dinkumware no-conversion zero sign");
+                Require((nullEnd || end == test.text) && *__error_nid_postfix() == saved, "Dinkumware no-conversion end and errno");
+            }
+        }
+    }
+}
+
 static void CheckClassification() {
     int (APS5_VABI* const classes[])(std::uint32_t) = {
         iswalnum_nid_postfix, iswalpha_nid_postfix, iswcntrl_nid_postfix, iswdigit_nid_postfix,
@@ -142,6 +163,15 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"0xg", u"%x", &value) == 0, "%x prefix without digits is a matching failure");
     void* pointer = nullptr;
     Require(swscanf_s_nid_postfix(u"0x7ffe12345678 5", u"%p%d", &pointer, &first) == 2 && reinterpret_cast<std::uintptr_t>(pointer) == 0x7ffe12345678u && first == 5, "%p takes no size");
+    int counted = -7;
+    Require(swscanf_s_nid_postfix(u"12 34", u"%d%*n%d", &first, &second) == 2 && first == 12 && second == 34, "%*n stores nothing and takes no argument");
+    Require(swscanf_s_nid_postfix(u"12 34", u"%d%5n%d", &first, &counted, &second) == 2 && counted == 2 && second == 34, "%n ignores a width");
+    Require(swscanf_s_nid_postfix(u"12345", u"%0d%n", &first, &counted) == 1 && first == 12345 && counted == 5, "a zero width is no width");
+    counted = -7;
+    first = -7;
+    Require(swscanf_s_nid_postfix(u"", u"%n%d", &counted, &first) == 0 && counted == 0 && first == -7, "%n before an input failure returns 0");
+    Require(swscanf_s_nid_postfix(u"  ", u"%*n%d", &first) == 0 && first == -7, "%*n before an input failure returns 0");
+    Require(swscanf_nid_postfix(u"", u"%n%d", &counted, &first) == 0, "swscanf %n before an input failure returns 0");
 
     char16_t text[6] = {u'?'};
     Require(swscanf_s_nid_postfix(u"hello world", u"%ls", text, std::size_t{6}) == 1 && std::u16string(text) == u"hello", "%ls fits");
@@ -419,6 +449,9 @@ int main() {
     CheckShortCharacterFields();
     CheckStoul();
     CheckDinkumwareConversions();
+    CheckDinkumwareNoConversion(_WStod_nid_postfix);
+    CheckDinkumwareNoConversion(_WStof_nid_postfix);
+    CheckDinkumwareNoConversion(_WStold_nid_postfix);
     CheckClassification();
     CheckScan();
     CheckUnsizedScan();
