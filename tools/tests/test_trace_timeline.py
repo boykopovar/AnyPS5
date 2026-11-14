@@ -59,6 +59,22 @@ class TimelineTests(unittest.TestCase):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
         self.assertEqual(laid["threads"], ["presenter", "queue worker"])
 
+    def test_threads_that_share_a_name_get_their_own_rows(self):
+        names = [{"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": tid, "args": {"name": "shader prepare"}} for tid in (1, 2)]
+        items = names + [complete(tid, "Shader.Prepare", 0, 8000) for tid in (1, 2)]
+        laid = trace_timeline.layout(trace_timeline.window_slices(trace_digest.Trace(items), 0, 10000), 0, 10000, 1000)
+        self.assertEqual(laid["threads"], ["shader prepare", "shader prepare"])
+        self.assertEqual(sorted(bar["y"] for bar in laid["bars"]), [0, trace_timeline.ROW_HEIGHT])
+        path = Path(self.tmp.name) / "a.json"
+        path.write_text(json.dumps(items), encoding="utf-8")
+        out = Path(self.tmp.name) / "a.html"
+        done = subprocess.run([sys.executable, str(Path(trace_timeline.__file__)), str(path), "-o", str(out), "--thread", "shader prepare"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        text = out.read_text(encoding="utf-8")
+        self.assertIn("2 threads, 2 bars", text)
+        self.assertEqual(text.count(">shader prepare</text>"), 2)
+
     def test_layout_keeps_the_longest_slices_and_counts_the_rest(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000, max_slices=1)
         self.assertEqual(len(laid["bars"]), 1)
