@@ -37,6 +37,8 @@ int main() {
     Require(scePadGetInfoByPortType(0, reinterpret_cast<PadPortInfo*>(data)) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadGetInfoByPortType(2, nullptr) == PAD_ERROR_INVALID_ARG && scePadGetInfoByPortType(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetDeviceId(1, &deviceId) == PAD_ERROR_NOT_INITIALIZED && deviceId == 7);
+    Require(scePadReadStateExt(12345, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadStateExt(12345, reinterpret_cast<PadDataExtended*>(data)) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadGetExtensionUnitInfo(1, reinterpret_cast<PadExtensionUnitInfo*>(data)) == PAD_ERROR_NOT_INITIALIZED);
     Require(readHistory(1, reinterpret_cast<PadHistoryData*>(data), 0x960) == PAD_ERROR_NOT_INITIALIZED);
     Require(openExt2(0x10000000, 0x10, param.data()) == PAD_ERROR_NOT_INITIALIZED);
@@ -51,6 +53,8 @@ int main() {
     Require(scePadGetInfoByPortType(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetDeviceId(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetDeviceId(12345, &deviceId) == PAD_ERROR_INVALID_HANDLE && deviceId == -1);
+    Require(scePadReadStateExt(12345, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadStateExt(12345, reinterpret_cast<PadDataExtended*>(data)) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetExtensionUnitInfo(1, nullptr) == PAD_ERROR_INVALID_ARG);
     for (std::uint32_t size : {0u, 0x48u, 0x958u, 0x961u}) Require(readHistory(1, reinterpret_cast<PadHistoryData*>(data), size) == PAD_ERROR_INVALID_ARG);
     Require(openExt2(0x10000000, 0x8, param.data()) == PAD_ERROR_INVALID_ARG && openExt2(0x10000000, 0x10, nullptr) == PAD_ERROR_INVALID_ARG);

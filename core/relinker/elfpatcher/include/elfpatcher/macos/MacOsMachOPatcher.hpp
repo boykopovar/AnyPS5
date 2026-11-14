@@ -5,13 +5,14 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace Elfpatcher::MacOs {
 
 class MacOsMachOPatcher final : public IElfPatcher {
 public:
-    explicit MacOsMachOPatcher(std::optional<std::uint64_t> fixedBase = std::nullopt, std::function<void(std::string_view)> message = {}, bool traceImports = false, bool functionSymbolRoots = false);
+    explicit MacOsMachOPatcher(std::optional<std::uint64_t> fixedBase = std::nullopt, std::function<void(std::string_view)> message = {}, bool traceImports = false, bool functionSymbolRoots = false, std::string identifier = {});
 
     std::vector<std::uint8_t> Patch(
         std::vector<std::uint8_t> sourceElf,
@@ -29,6 +30,7 @@ private:
     std::function<void(std::string_view)> message;
     bool traceImports;
     bool functionSymbolRoots;
+    std::string identifier;
 };
 
 }

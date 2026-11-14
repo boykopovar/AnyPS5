@@ -136,6 +136,7 @@ int main(int argc, char** argv) {
     Require(mainResult == 0 && mainSymbol != nullptr);
     using MainFunction = int (APS5_VABI *)(int, int);
     Require(reinterpret_cast<MainFunction>(mainSymbol)(6, 7) == 42);
+    Require(sceKernelDlsym(0, "GuestDefaultScopeOnly", reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == static_cast<int>(0x8002000eu));
     Require(sceKernelDlsym(0, "anyps5_missing_main_symbol", &mainSymbol) == static_cast<int>(0x80020003u));
     dlerror_nid_postfix();
 
@@ -215,6 +216,10 @@ int main(int argc, char** argv) {
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 1, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, &unloadOpt, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
         Require(sceKernelStopUnloadModule(0, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        for (const int badHandle : {0x7fffffff, -1, 0x7ffffff0}) {
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020003u) && stopped == -1);
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020003u));
+        }
         add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
         Require(add && add(30, 12) == 42);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
@@ -286,6 +291,7 @@ int main(int argc, char** argv) {
     Require(add(40, 2) == 42);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     int local = 0;
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(&local) == -1);

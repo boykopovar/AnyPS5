@@ -73,6 +73,7 @@
 
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
 
 #include <cmath>
@@ -406,7 +407,13 @@ extern "C" {
 
 double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool* isLocalTime) {
     RequireArguments(dateString, isLocalTime, __func__);
-    return ParseDate(dateString, *isLocalTime);
+    bool local = false;
+    if (!GuestCopyIn_nid_no_patch(&local, isLocalTime, sizeof(local)))
+        throw std::invalid_argument(std::string(__func__) + ": unreadable guest isLocalTime pointer faults in WebKit");
+    const double value = ParseDate(dateString, local);
+    if (!GuestCopyOut_nid_no_patch(isLocalTime, &local, sizeof(local)))
+        throw std::invalid_argument(std::string(__func__) + ": unwritable guest isLocalTime pointer faults in WebKit");
+    return value;
 }
 
 double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc(const char* dateString) {
