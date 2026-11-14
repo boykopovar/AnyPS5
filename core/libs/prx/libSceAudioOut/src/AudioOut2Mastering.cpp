@@ -18,7 +18,12 @@ constexpr int SCE_AUDIO_OUT2_ERROR_INVALID_POINTER = static_cast<int>(0x8026800C
 constexpr std::uint32_t AUDIO_OUT2_MASTERING_INIT_EX_MODE = 0x80000000u;
 constexpr std::uint32_t AUDIO_OUT2_MASTERING_SET_PARAM_FLAGS_MAX = 1;
 
+constexpr int SCE_AUDIO_OUT_ERROR_MASTERING_INVALID_FLAGS = static_cast<int>(0x80260201);
+constexpr int SCE_AUDIO_OUT_ERROR_MASTERING_NOT_INITIALIZED = static_cast<int>(0x80260203);
+constexpr int SCE_AUDIO_OUT_ERROR_MASTERING_INVALID_STATES_ID = static_cast<int>(0x80260204);
+
 std::atomic<bool> g_masteringInitialized{false};
+std::atomic<bool> g_legacyMasteringInitialized{false};
 
 int InitializeMastering(uint32_t flags, uint32_t accepted) {
     if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
@@ -55,17 +60,20 @@ static_assert(offsetof(AudioOut2MasteringStates, limiter_states) + offsetof(Audi
 extern "C" {
 
 int APS5_VABI sceAudioOutMasteringInit(uint32_t flags) {
+    if (flags == 1) return SCE_AUDIO_OUT_ERROR_MASTERING_INVALID_FLAGS;
     if (flags != 0) NotImplemented_nid_no_patch(__func__);
+    g_legacyMasteringInitialized.store(true);
     return 0;
 }
 
 int APS5_VABI sceAudioOutMasteringTerm(void) {
-    return 0;
+    return g_legacyMasteringInitialized.exchange(false) ? 0 : SCE_AUDIO_OUT_ERROR_MASTERING_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceAudioOutMasteringGetState(AudioOut2MasteringStatesHeader* state) {
     if (state == nullptr) APS5_INVALID_ARG_EX;
-    if (state->states_id != AUDIO_OUT_MASTERING_STATES_ID_DEFAULT) NotImplemented_nid_no_patch(__func__);
+    if (state->states_id != AUDIO_OUT_MASTERING_STATES_ID_DEFAULT) return SCE_AUDIO_OUT_ERROR_MASTERING_INVALID_STATES_ID;
+    if (!g_legacyMasteringInitialized.load()) return SCE_AUDIO_OUT_ERROR_MASTERING_NOT_INITIALIZED;
     auto* full = static_cast<AudioOut2MasteringStates*>(static_cast<void*>(state));
     std::memset(full->compressor_states.input_rms, 0, sizeof(full->compressor_states.input_rms));
     std::memset(full->compressor_states.compression_coeff, 0, sizeof(full->compressor_states.compression_coeff));

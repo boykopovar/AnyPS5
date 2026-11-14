@@ -11,4 +11,11 @@ if(BUILD_TESTING)
         set_tests_properties(agc_guarded_memory_loads PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_guarded_memory_loads_coherent_atomic_loads COMMAND agc_guarded_memory_loads_tests)
+    set_tests_properties(agc_guarded_memory_loads_coherent_atomic_loads PROPERTIES TIMEOUT 30 ENVIRONMENT "APS5_COHERENT_ATOMIC_LOADS=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_guarded_memory_loads_coherent_atomic_loads PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
 endif()

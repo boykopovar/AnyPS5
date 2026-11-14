@@ -172,7 +172,7 @@ int APS5_VABI sceKernelUnknown17(void);
 int APS5_VABI sceKernelUnknown18(void);
 int APS5_VABI sceKernelUnknown19(void);
 int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void);
-int APS5_VABI sceKernelGetProcessAbiType();
+int APS5_VABI sceKernelGetProcessAbiType(int pid);
 int APS5_VABI __Ux86_64_setcontext();
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret);
 int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret);
@@ -209,6 +209,7 @@ int APS5_VABI sceKernelAllocateDirectMemory(int64_t searchStart, int64_t searchE
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memoryType, int64_t* physAddrOut);
 int APS5_VABI sceKernelAllocateDirectMemoryForApp(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physAddrOut);
 int APS5_VABI sceKernelProtectDirectMemoryForPID(int64_t offset, size_t len, int prot, int pid);
+int APS5_VABI sceKernelGetResidentFmemCount(int pid, uint64_t* resident, uint64_t* mapped);
 int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t searchStart, int64_t searchEnd, size_t alignment, int64_t* physAddrOut, size_t* sizeOut);
 int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t infoSize);
 int APS5_VABI sceKernelGetDirectMemoryType(int64_t offset, int* memoryType, int64_t* start, int64_t* end);
@@ -303,6 +304,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bitPattern, ui
 int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int mode);
 int APS5_VABI shm_unlink_nid_postfix(const char* path);
 int APS5_VABI pipe_nid_postfix(int* descriptors);
+int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags);
 int APS5_VABI chmod_nid_postfix(const char* path, int mode);
 int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags);
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags);

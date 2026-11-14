@@ -47,9 +47,12 @@ query($owner: String!, $name: String!, $after: String, $size: Int!) {
 """
 
 CLOSED_QUERY = """
-query($owner: String!, $name: String!, $label: String!) {
+query($owner: String!, $name: String!, $label: String!, $after: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: [CLOSED, MERGED], labels: [$label], first: 100) { nodes { number } }
+    pullRequests(states: [CLOSED, MERGED], labels: [$label], first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number }
+    }
   }
 }
 """
@@ -180,11 +183,22 @@ def fetch(repo):
 
 def closed_with_label(repo):
     owner, name = repo.split("/", 1)
-    page = json.loads(pr_labels.gh("api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
-                                   "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"))
-    if page.get("errors"):
-        raise ValueError(str(page["errors"])[:300])
-    return [node["number"] for node in listed(page["data"]["repository"]["pullRequests"])]
+    closed, after = [], None
+    while True:
+        args = ["api", "graphql", "-f", f"query={CLOSED_QUERY}", "-F", f"owner={owner}",
+                "-F", f"name={name}", "-f", f"label={QUEUE_LABEL}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        page = json.loads(pr_labels.gh(*args))
+        if page.get("errors"):
+            raise ValueError(str(page["errors"])[:300])
+        connection = page["data"]["repository"]["pullRequests"]
+        closed += [node["number"] for node in listed(connection)]
+        if not connection["pageInfo"]["hasNextPage"]:
+            return closed
+        after = connection["pageInfo"]["endCursor"]
+        if not after:
+            raise ValueError("closed pull request page has no cursor")
 
 
 def apply(repo, prs, queue, dry_run, closed=()):

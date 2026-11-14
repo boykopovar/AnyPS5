@@ -196,6 +196,8 @@ private:
         append(key, value.threadIdComponentCount);
         append(key, value.PartialGroups());
         append(key, value.scratchDwords);
+        append(key, value.granulatedVgprCount);
+        append(key, value.sharedVgprBlocks);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderPixelStageInfo& value) {
@@ -386,6 +388,7 @@ private:
         append(key, value.shaderImageMinLod);
         append(key, value.float16WidenNans);
         append(key, value.float16NarrowNans);
+        append(key, value.meshInlineFunctions);
     }
 };
 
