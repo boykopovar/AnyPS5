@@ -4,6 +4,7 @@ target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoFrameDimen
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoSinkWants.cpp)
 configure_windows_unwind(libwebrtc)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpNack.cpp)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtpPacket.cpp)
 
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/I420BufferChroma.cpp)
 
@@ -771,4 +772,19 @@ if(BUILD_TESTING)
         set_tests_properties(guest_webrtc_rtcp_nack guest_webrtc_rtcp_nack_wraparound PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_rtp_packet_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RtpPacket.cpp)
+    target_include_directories(guest_webrtc_rtp_packet_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_rtp_packet_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_rtp_packet_tests)
+    foreach(case header extensions buffer)
+        add_test(NAME guest_webrtc_rtp_packet_${case} COMMAND guest_webrtc_rtp_packet_tests ${case})
+        set_tests_properties(guest_webrtc_rtp_packet_${case} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_webrtc_rtp_packet_${case} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
 endif()
