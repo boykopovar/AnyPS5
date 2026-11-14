@@ -17,6 +17,10 @@ inline bool LdsLockFencesRequired(VkDriverId driver) {
     return driver == VK_DRIVER_ID_MOLTENVK;
 }
 
+inline bool DeviceAtomicWorkgroupMemoryBarriersRequired(VkDriverId driver) {
+    return driver == VK_DRIVER_ID_AMD_PROPRIETARY;
+}
+
 }
 
 #endif
