@@ -186,9 +186,13 @@ void APS5_VABI FT_Stroker_ExportBorder_nid_postfix(void* stroker, std::int32_t b
     ExportBorder(stroker, border, outline, __func__);
 }
 
+void StrokerExport_nid_no_patch(void* stroker, GuestOutline* outline) {
+    ExportBorder(stroker, FT_STROKER_BORDER_LEFT, outline, "FT_Stroker_Export_nid_postfix");
+    ExportBorder(stroker, FT_STROKER_BORDER_RIGHT, outline, "FT_Stroker_Export_nid_postfix");
+}
+
 void APS5_VABI FT_Stroker_Export_nid_postfix(void* stroker, GuestOutline* outline) {
-    ExportBorder(stroker, FT_STROKER_BORDER_LEFT, outline, __func__);
-    ExportBorder(stroker, FT_STROKER_BORDER_RIGHT, outline, __func__);
+    StrokerExport_nid_no_patch(stroker, outline);
 }
 
 }

@@ -961,7 +961,7 @@ extern "C" bool FinalPathComponentIsDot_nid_no_patch(const char* path) {
     return component == ".";
 }
 
-extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
+extern "C" int GuestChdir_nid_no_patch(const char* path) {
     if (!path) { errno = 14; return -1; }
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
@@ -977,6 +977,10 @@ extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
         return 0;
     } catch (const std::bad_alloc&) { errno = 12; return -1; }
       catch (const std::filesystem::filesystem_error& error) { errno = DirectoryFailure(error.code()); return -1; }
+}
+
+extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
+    return GuestChdir_nid_no_patch(path);
 }
 
 extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {

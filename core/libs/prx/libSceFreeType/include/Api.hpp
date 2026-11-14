@@ -112,6 +112,7 @@ int APS5_VABI FT_Stroker_GetBorderCounts_nid_postfix(void* stroker, std::int32_t
 int APS5_VABI FT_Stroker_ParseOutline_nid_postfix(void* stroker, const FreeType::GuestOutline* outline, std::uint8_t opened);
 void APS5_VABI FT_Stroker_ExportBorder_nid_postfix(void* stroker, std::int32_t border, FreeType::GuestOutline* outline);
 void APS5_VABI FT_Stroker_Export_nid_postfix(void* stroker, FreeType::GuestOutline* outline);
+void StrokerExport_nid_no_patch(void* stroker, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Stroker_EndSubPath_nid_postfix(void* stroker);
 int APS5_VABI FT_Stroker_LineTo_nid_postfix(void* stroker, const FreeType::GuestVector* to);
 int APS5_VABI FT_Stroker_New_nid_postfix(FreeType::GuestLibrary* library, void** stroker);

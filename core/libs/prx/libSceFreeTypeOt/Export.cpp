@@ -247,7 +247,7 @@ int APS5_VABI sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch() {
 APS5_EXPORT("yCEJIsjIOO8", sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch);
 
 void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline) {
-    FT_Stroker_Export_nid_postfix(stroker, outline);
+    StrokerExport_nid_no_patch(stroker, outline);
 }
 APS5_EXPORT("2rcvKZfm5rI", FT_Stroker_ExportForward_nid_no_patch);
 

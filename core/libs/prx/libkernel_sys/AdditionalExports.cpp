@@ -225,11 +225,15 @@ void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData
     Ubsan::ReportCfiCheckFail(data, value, validVtable, false);
 }
 
-int APS5_VABI _dup2_nid_postfix(int from, int to) {
+int GuestDup2_nid_no_patch(int from, int to) {
     return dup2_nid_postfix(from, to);
 }
 
-static int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
+int APS5_VABI _dup2_nid_postfix(int from, int to) {
+    return GuestDup2_nid_no_patch(from, to);
+}
+
+int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
     constexpr int GuestEfault = 14;
     constexpr int GuestEacces = 13;
     constexpr int GuestEnoexec = 8;
@@ -340,7 +344,7 @@ int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* con
     return GuestExecve_nid_no_patch(path, argv, envp);
 }
 
-int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp) {
+int GuestExecvpe_nid_no_patch(const char* name, char* const* argv, char* const* envp) {
     constexpr int GuestEacces = 13;
     constexpr int GuestEnoent = 2;
     constexpr int GuestE2big = 7;
@@ -455,6 +459,10 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
         if (ladder(candidate)) return -1;
     }
     return fail(accessFailure ? GuestEacces : GuestEnoent);
+}
+
+int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp) {
+    return GuestExecvpe_nid_no_patch(name, argv, envp);
 }
 
 int APS5_VABI _wait4_nid_postfix(int pid, int* status, int options, void* usage) {
@@ -1941,5 +1949,1958 @@ int APS5_VABI sceKernelUseCronosStreaming() {
 int APS5_VABI scePthreadRegisterThreadDeathHook() {
     NotImplemented_nid_no_patch(__func__);
 }
+std::int64_t APS5_VABI _fpathconf_nid_no_patch(int fd, int name) {
+    return _fpathconf_nid_postfix(fd, name);
+}
+
+int APS5_VABI _openat_nid_no_patch(int fd, const char* path, int flags, std::uint64_t v0, std::uint64_t v1) {
+    return _openat_nid_postfix(fd, path, flags, v0, v1);
+}
+
+int APS5_VABI amd64_set_fsbase_nid_no_patch(void) {
+    return amd64_set_fsbase_nid_postfix();
+}
+
+int APS5_VABI blockpool_batch_nid_no_patch(void) {
+    return blockpool_batch_nid_postfix();
+}
+
+int APS5_VABI blockpool_map_nid_no_patch(void) {
+    return blockpool_map_nid_postfix();
+}
+
+int APS5_VABI blockpool_open_nid_no_patch(void) {
+    return blockpool_open_nid_postfix();
+}
+
+int APS5_VABI blockpool_unmap_nid_no_patch(void) {
+    return blockpool_unmap_nid_postfix();
+}
+
+int APS5_VABI dynlib_get_obj_member_nid_no_patch(void) {
+    return dynlib_get_obj_member_nid_postfix();
+}
+
+int APS5_VABI get_authinfo_nid_no_patch(int pid, KernelAuthInfo* info) {
+    return get_authinfo_nid_postfix(pid, info);
+}
+
+int APS5_VABI get_module_info_list_nid_no_patch(void) {
+    return get_module_info_list_nid_postfix();
+}
+
+int APS5_VABI get_page_table_stats_nid_no_patch(void) {
+    return get_page_table_stats_nid_postfix();
+}
+
+int APS5_VABI get_sdk_compiled_version_nid_no_patch(void) {
+    return get_sdk_compiled_version_nid_postfix();
+}
+
+int APS5_VABI get_self_auth_info_nid_no_patch(KernelAuthInfo* info) {
+    return get_self_auth_info_nid_postfix(info);
+}
+
+int APS5_VABI get_vm_map_timestamp_nid_no_patch(void) {
+    return get_vm_map_timestamp_nid_postfix();
+}
+
+int APS5_VABI ipmimgr_call_nid_no_patch(void) {
+    return ipmimgr_call_nid_postfix();
+}
+
+int APS5_VABI is_in_sandbox_nid_no_patch(void) {
+    return is_in_sandbox_nid_postfix();
+}
+
+int APS5_VABI ksem_close_nid_no_patch(void) {
+    return ksem_close_nid_postfix();
+}
+
+int APS5_VABI ksem_open_nid_no_patch(void) {
+    return ksem_open_nid_postfix();
+}
+
+int APS5_VABI ksem_unlink_nid_no_patch(void) {
+    return ksem_unlink_nid_postfix();
+}
+
+int APS5_VABI mdbg_service_nid_no_patch(void) {
+    return mdbg_service_nid_postfix();
+}
+
+int APS5_VABI openintr_nid_no_patch(void) {
+    return openintr_nid_postfix();
+}
+
+int APS5_VABI profil_nid_no_patch(void* samples, std::size_t size, std::size_t offset, unsigned int scale) {
+    return profil_nid_postfix(samples, size, offset, scale);
+}
+
+int APS5_VABI pthread_attr_getaffinity_np_nid_no_patch(const PthreadAttr* attr, std::size_t cpusetSize, void* cpuset) {
+    return pthread_attr_getaffinity_np_nid_postfix(attr, cpusetSize, cpuset);
+}
+
+int APS5_VABI pthread_attr_getsolosched_np_nid_no_patch(const PthreadAttr* attr, int* solosched) {
+    return pthread_attr_getsolosched_np_nid_postfix(attr, solosched);
+}
+
+int APS5_VABI pthread_attr_setaffinity_np_nid_no_patch(PthreadAttr* attr, std::size_t cpusetSize, const void* cpuset) {
+    return pthread_attr_setaffinity_np_nid_postfix(attr, cpusetSize, cpuset);
+}
+
+int APS5_VABI pthread_attr_setcreatesuspend_np_nid_no_patch(PthreadAttr* attr) {
+    return pthread_attr_setcreatesuspend_np_nid_postfix(attr);
+}
+
+int APS5_VABI pthread_attr_setstackaddr_nid_no_patch(PthreadAttr* attr, void* stack_addr) {
+    return pthread_attr_setstackaddr_nid_postfix(attr, stack_addr);
+}
+
+int APS5_VABI pthread_get_specificarray_np_nid_no_patch(void) {
+    return pthread_get_specificarray_np_nid_postfix();
+}
+
+int APS5_VABI pthread_get_user_context_np_nid_no_patch(void) {
+    return pthread_get_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_getstack_np_nid_no_patch(void) {
+    return pthread_getstack_np_nid_postfix();
+}
+
+int APS5_VABI pthread_main_np_nid_no_patch(void) {
+    return pthread_main_np_nid_postfix();
+}
+
+int APS5_VABI pthread_multi_np_nid_no_patch(void) {
+    return pthread_multi_np_nid_postfix();
+}
+
+int APS5_VABI pthread_mutex_init_for_mono_nid_no_patch(void) {
+    return pthread_mutex_init_for_mono_nid_postfix();
+}
+
+int APS5_VABI pthread_mutexattr_getgen_np_nid_no_patch(const PthreadMutexattr* attr, int* generation) {
+    return pthread_mutexattr_getgen_np_nid_postfix(attr, generation);
+}
+
+int APS5_VABI pthread_mutexattr_setgen_np_nid_no_patch(PthreadMutexattr* attr, int generation) {
+    return pthread_mutexattr_setgen_np_nid_postfix(attr, generation);
+}
+
+void APS5_VABI pthread_resume_all_np_nid_no_patch(void) {
+    pthread_resume_all_np_nid_postfix();
+}
+
+int APS5_VABI pthread_resume_np_nid_no_patch(Pthread thread) {
+    return pthread_resume_np_nid_postfix(thread);
+}
+
+int APS5_VABI pthread_resume_user_context_np_nid_no_patch(void) {
+    return pthread_resume_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_set_defaultstacksize_np_nid_no_patch(std::size_t size) {
+    return pthread_set_defaultstacksize_np_nid_postfix(size);
+}
+
+int APS5_VABI pthread_set_user_context_np_nid_no_patch(void) {
+    return pthread_set_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_single_np_nid_no_patch(void) {
+    return pthread_single_np_nid_postfix();
+}
+
+int APS5_VABI pthread_suspend_all_np_nid_no_patch(void) {
+    return pthread_suspend_all_np_nid_postfix();
+}
+
+int APS5_VABI pthread_suspend_np_nid_no_patch(void) {
+    return pthread_suspend_np_nid_postfix();
+}
+
+int APS5_VABI pthread_suspend_user_context_np_nid_no_patch(void) {
+    return pthread_suspend_user_context_np_nid_postfix();
+}
+
+int APS5_VABI pthread_switch_add_np_nid_no_patch(void) {
+    return pthread_switch_add_np_nid_postfix();
+}
+
+int APS5_VABI pthread_switch_delete_np_nid_no_patch(void) {
+    return pthread_switch_delete_np_nid_postfix();
+}
+
+int APS5_VABI rtld_printf_nid_no_patch(void) {
+    return rtld_printf_nid_postfix();
+}
+
+int APS5_VABI sched_rr_get_interval_nid_no_patch(int pid, KernelTimespec* interval) {
+    return sched_rr_get_interval_nid_postfix(pid, interval);
+}
+
+int APS5_VABI sched_setscheduler_nid_no_patch(int pid, int policy, const KernelSchedParam* param) {
+    return sched_setscheduler_nid_postfix(pid, policy, param);
+}
+
+int APS5_VABI set_phys_fmem_limit_nid_no_patch(void) {
+    return set_phys_fmem_limit_nid_postfix();
+}
+
+int APS5_VABI settimeofday_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return settimeofday_nid_postfix(tv, tz);
+}
+
+int APS5_VABI sigqueue_nid_no_patch(void) {
+    return sigqueue_nid_postfix();
+}
+
+int APS5_VABI sigreturn_nid_no_patch(const UserUcontext* context) {
+    return sigreturn_nid_postfix(context);
+}
+
+int APS5_VABI sysc_e00_nid_no_patch(void) {
+    return sysc_e00_nid_postfix();
+}
+
+int APS5_VABI sysc_m00_nid_no_patch(void) {
+    return sysc_m00_nid_postfix();
+}
+
+int APS5_VABI sysc_s00_nid_no_patch(void) {
+    return sysc_s00_nid_postfix();
+}
+
+int APS5_VABI tcsetsid_nid_no_patch(int fd, int pid) {
+    return tcsetsid_nid_postfix(fd, pid);
+}
+
+int APS5_VABI uuidgen_nid_no_patch(GuestUuid* store, int count) {
+    return uuidgen_nid_postfix(store, count);
+}
+
+int APS5_VABI wait3_nid_no_patch(void) {
+    return wait3_nid_postfix(nullptr, 0, nullptr);
+}
+
+
+int APS5_VABI pthread_setschedother_np_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
+
+
+
+
+int APS5_VABI sceCoredumpDebugForceCoredumpOnAppClose_nid_no_patch(void) {
+    return sceCoredumpDebugForceCoredumpOnAppClose();
+}
+
+int APS5_VABI sceCoredumpDebugTriggerCoredump_nid_no_patch(void) {
+    return sceCoredumpDebugTriggerCoredump();
+}
+
+int APS5_VABI sceCoredumpGetStopInfoGpu_nid_no_patch(void) {
+    return sceCoredumpGetStopInfoGpu();
+}
+
+int APS5_VABI sceCoredumpInternalGetThreadContextInfo_nid_no_patch(void) {
+    return sceCoredumpInternalGetThreadContextInfo();
+}
+
+int APS5_VABI sceKernelAddCpumodeEvent_nid_no_patch(void) {
+    return sceKernelAddCpumodeEvent();
+}
+
+int APS5_VABI sceKernelAddExternalTriggerEvent_nid_no_patch(void) {
+    return sceKernelAddExternalTriggerEvent();
+}
+
+int APS5_VABI sceKernelAddGpuExceptionEvent_nid_no_patch(void) {
+    return sceKernelAddGpuExceptionEvent();
+}
+
+int APS5_VABI sceKernelAddProcessToCanvasMap_nid_no_patch(void) {
+    return sceKernelAddProcessToCanvasMap();
+}
+
+int APS5_VABI sceKernelAllocateDirectMemory2_nid_no_patch(void) {
+    return sceKernelAllocateDirectMemory2();
+}
+
+int APS5_VABI sceKernelAllocateDirectMemoryForMiniApp_nid_no_patch(void) {
+    return sceKernelAllocateDirectMemoryForMiniApp();
+}
+
+int APS5_VABI sceKernelAllocateToolMemory_nid_no_patch(void) {
+    return sceKernelAllocateToolMemory();
+}
+
+int APS5_VABI sceKernelAllocateTraceDirectMemory_nid_no_patch(void) {
+    return sceKernelAllocateTraceDirectMemory();
+}
+
+int APS5_VABI sceKernelAvailableToolMemorySize_nid_no_patch(void) {
+    return sceKernelAvailableToolMemorySize();
+}
+
+int APS5_VABI sceKernelBacktraceSelf_nid_no_patch(void) {
+    return sceKernelBacktraceSelf();
+}
+
+int APS5_VABI sceKernelCallIndirectBuffer_nid_no_patch(std::uint32_t priority, void* base, std::uint64_t bytes) {
+    return sceKernelCallIndirectBuffer(priority, base, bytes);
+}
+
+int APS5_VABI sceKernelCallIndirectBuffer2_nid_no_patch(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id) {
+    return sceKernelCallIndirectBuffer2(priority, base, bytes, result, id);
+}
+
+int APS5_VABI sceKernelCallIndirectBuffer3_nid_no_patch(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id) {
+    return sceKernelCallIndirectBuffer3(priority, base, bytes, id);
+}
+
+int APS5_VABI sceKernelCheckProsperoSdkVersion_nid_no_patch(void) {
+    return sceKernelCheckProsperoSdkVersion();
+}
+
+int APS5_VABI sceKernelClearBootReqNotifyCount_nid_no_patch(void) {
+    return sceKernelClearBootReqNotifyCount();
+}
+
+int APS5_VABI sceKernelClearGameDirectMemory_nid_no_patch(void) {
+    return sceKernelClearGameDirectMemory();
+}
+
+int APS5_VABI sceKernelCloseEport_nid_no_patch(void) {
+    return sceKernelCloseEport();
+}
+
+int APS5_VABI sceKernelCloseSema_nid_no_patch(void) {
+    return sceKernelCloseSema();
+}
+
+int APS5_VABI sceKernelCreateEport_nid_no_patch(void) {
+    return sceKernelCreateEport();
+}
+
+int APS5_VABI sceKernelDebugAcquireAndUpdateDebugRegister_nid_no_patch(void) {
+    return sceKernelDebugAcquireAndUpdateDebugRegister();
+}
+
+int APS5_VABI sceKernelDebugGetAppStatus_nid_no_patch(void) {
+    return sceKernelDebugGetAppStatus();
+}
+
+int APS5_VABI sceKernelDebugGetPauseCount_nid_no_patch(void) {
+    return sceKernelDebugGetPauseCount();
+}
+
+int APS5_VABI sceKernelDebugGpuPaDebugIsInProgress_nid_no_patch(void) {
+    return sceKernelDebugGpuPaDebugIsInProgress();
+}
+
+int APS5_VABI sceKernelDebugPauseWithDebugContext_nid_no_patch(void) {
+    return sceKernelDebugPauseWithDebugContext();
+}
+
+int APS5_VABI sceKernelDebugRaiseExceptionWithContext_nid_no_patch(void) {
+    return sceKernelDebugRaiseExceptionWithContext();
+}
+
+int APS5_VABI sceKernelDebugRaiseExceptionWithInfo_nid_no_patch(void) {
+    return sceKernelDebugRaiseExceptionWithInfo();
+}
+
+int APS5_VABI sceKernelDebugReleaseDebugContext_nid_no_patch(void) {
+    return sceKernelDebugReleaseDebugContext();
+}
+
+int APS5_VABI sceKernelDeleteCpumodeEvent_nid_no_patch(void) {
+    return sceKernelDeleteCpumodeEvent();
+}
+
+int APS5_VABI sceKernelDeleteEport_nid_no_patch(void) {
+    return sceKernelDeleteEport();
+}
+
+int APS5_VABI sceKernelDeleteExternalTriggerEvent_nid_no_patch(void) {
+    return sceKernelDeleteExternalTriggerEvent();
+}
+
+int APS5_VABI sceKernelDeleteGpuExceptionEvent_nid_no_patch(void) {
+    return sceKernelDeleteGpuExceptionEvent();
+}
+
+int APS5_VABI sceKernelDeleteProcessFromCanvasMap_nid_no_patch(void) {
+    return sceKernelDeleteProcessFromCanvasMap();
+}
+
+int APS5_VABI sceKernelDirectMemoryQueryForId_nid_no_patch(void) {
+    return sceKernelDirectMemoryQueryForId();
+}
+
+int APS5_VABI sceKernelEnableDmemAliasing2_nid_no_patch(void) {
+    return sceKernelEnableDmemAliasing2();
+}
+
+int APS5_VABI sceKernelEnablePthreadObjectCheck_nid_no_patch(void) {
+    return sceKernelEnablePthreadObjectCheck();
+}
+
+int APS5_VABI sceKernelEventLogInit_nid_no_patch(void) {
+    return sceKernelEventLogInit();
+}
+
+int APS5_VABI sceKernelEventLogPread_nid_no_patch(void) {
+    return sceKernelEventLogPread();
+}
+
+int APS5_VABI sceKernelEventLogRead_nid_no_patch(void) {
+    return sceKernelEventLogRead();
+}
+
+int APS5_VABI sceKernelEventLogWrite_nid_no_patch(void) {
+    return sceKernelEventLogWrite();
+}
+
+int APS5_VABI sceKernelExtendMaximumModuleNumber_nid_no_patch(void) {
+    return sceKernelExtendMaximumModuleNumber();
+}
+
+int APS5_VABI sceKernelFlock_nid_no_patch(void) {
+    return sceKernelFlock();
+}
+
+int APS5_VABI sceKernelGetAmprCounter_nid_no_patch(void) {
+    return sceKernelGetAmprCounter();
+}
+
+int APS5_VABI sceKernelGetAppCategoryType_nid_no_patch(int pid, std::uint32_t* category) {
+    return sceKernelGetAppCategoryType(pid, category);
+}
+
+int APS5_VABI sceKernelGetAppLibcData_nid_no_patch(void) {
+    return sceKernelGetAppLibcData();
+}
+
+int APS5_VABI sceKernelGetAslrStatus_nid_no_patch(void) {
+    return sceKernelGetAslrStatus();
+}
+
+int APS5_VABI sceKernelGetAutoUpdateVersion_nid_no_patch(void) {
+    return sceKernelGetAutoUpdateVersion();
+}
+
+int APS5_VABI sceKernelGetBackupRestoreMode_nid_no_patch(void) {
+    return sceKernelGetBackupRestoreMode();
+}
+
+int APS5_VABI sceKernelGetBackupRestoreModeOfNextBoot_nid_no_patch(void) {
+    return sceKernelGetBackupRestoreModeOfNextBoot();
+}
+
+int APS5_VABI sceKernelGetBasicProductShape_nid_no_patch(void) {
+    return sceKernelGetBasicProductShape();
+}
+
+int APS5_VABI sceKernelGetBetaUpdateTestForRcmgr_nid_no_patch(void) {
+    return sceKernelGetBetaUpdateTestForRcmgr();
+}
+
+int APS5_VABI sceKernelGetBioUsageAll_nid_no_patch(void) {
+    return sceKernelGetBioUsageAll();
+}
+
+int APS5_VABI sceKernelGetBootReqNotifyCount_nid_no_patch(void) {
+    return sceKernelGetBootReqNotifyCount();
+}
+
+int APS5_VABI sceKernelGetBuildNumber_nid_no_patch(void) {
+    return sceKernelGetBuildNumber();
+}
+
+int APS5_VABI sceKernelGetCallRecord_nid_no_patch(void) {
+    return sceKernelGetCallRecord();
+}
+
+int APS5_VABI sceKernelGetCanvasHandle_nid_no_patch(void) {
+    return sceKernelGetCanvasHandle();
+}
+
+int APS5_VABI sceKernelGetCanvasHandleByPid_nid_no_patch(void) {
+    return sceKernelGetCanvasHandleByPid();
+}
+
+int APS5_VABI sceKernelGetCompiledSdkVersion_nid_no_patch(std::int32_t* version) {
+    return sceKernelGetCompiledSdkVersion(version);
+}
+
+int APS5_VABI sceKernelGetCompiledSdkVersionByPath_nid_no_patch(void) {
+    return sceKernelGetCompiledSdkVersionByPath();
+}
+
+int APS5_VABI sceKernelGetCompiledSdkVersionByPid_nid_no_patch(int pid, std::int32_t* version) {
+    return sceKernelGetCompiledSdkVersionByPid(pid, version);
+}
+
+int APS5_VABI sceKernelGetCpuCoreClock_nid_no_patch(void) {
+    return sceKernelGetCpuCoreClock();
+}
+
+int APS5_VABI sceKernelGetCpuUsage_nid_no_patch(void* stats, int32_t* size) {
+    return sceKernelGetCpuUsage(stats, size);
+}
+
+int APS5_VABI sceKernelGetCpuUsageAll_nid_no_patch(void) {
+    return sceKernelGetCpuUsageAll();
+}
+
+int APS5_VABI sceKernelGetCpuUsageProc_nid_no_patch(void) {
+    return sceKernelGetCpuUsageProc();
+}
+
+int APS5_VABI sceKernelGetCpuUsageProc2_nid_no_patch(void) {
+    return sceKernelGetCpuUsageProc2();
+}
+
+int APS5_VABI sceKernelGetCpuUsageThread_nid_no_patch(void) {
+    return sceKernelGetCpuUsageThread();
+}
+
+int APS5_VABI sceKernelGetCpumodeGame_nid_no_patch(int* mode) {
+    return sceKernelGetCpumodeGame(mode);
+}
+
+int APS5_VABI sceKernelGetDataTransferMode_nid_no_patch(void) {
+    return sceKernelGetDataTransferMode();
+}
+
+int APS5_VABI sceKernelGetDebugMenuMiniModeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetDebugMenuMiniModeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetDebugMenuModeForPsmForRcmgr_nid_no_patch(void) {
+    return sceKernelGetDebugMenuModeForPsmForRcmgr();
+}
+
+int APS5_VABI sceKernelGetDebugMenuModeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetDebugMenuModeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetDefaultToolMemorySize_nid_no_patch(void) {
+    return sceKernelGetDefaultToolMemorySize();
+}
+
+int APS5_VABI sceKernelGetExtLibcHandle_nid_no_patch(void) {
+    return sceKernelGetExtLibcHandle();
+}
+
+int APS5_VABI sceKernelGetFakeFinalizeMenuForRcmgr_nid_no_patch(void) {
+    return sceKernelGetFakeFinalizeMenuForRcmgr();
+}
+
+int APS5_VABI sceKernelGetFlagedUpdaterForRcmgr_nid_no_patch(void) {
+    return sceKernelGetFlagedUpdaterForRcmgr();
+}
+
+int APS5_VABI sceKernelGetForceUpdateModeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetForceUpdateModeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetGPO_nid_no_patch(void) {
+    return sceKernelGetGPO();
+}
+
+int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch(void) {
+    return sceKernelGetGenuineProsperoSystemSwVersion();
+}
+
+int APS5_VABI sceKernelGetHwFeatureInfoForDecid_nid_no_patch(void) {
+    return sceKernelGetHwFeatureInfoForDecid();
+}
+
+int APS5_VABI sceKernelGetIdPs_nid_no_patch(void) {
+    return sceKernelGetIdPs();
+}
+
+int APS5_VABI sceKernelGetIdTableCurrentCount_nid_no_patch(void) {
+    return sceKernelGetIdTableCurrentCount();
+}
+
+int APS5_VABI sceKernelGetIpcPath_nid_no_patch(void) {
+    return sceKernelGetIpcPath();
+}
+
+int APS5_VABI sceKernelGetKnobs_nid_no_patch(void) {
+    return sceKernelGetKnobs();
+}
+
+int APS5_VABI sceKernelGetModuleInfoInternal_nid_no_patch(KernelModule handle, ModuleInfoEx* info) {
+    return sceKernelGetModuleInfoInternal(handle, info);
+}
+
+int APS5_VABI sceKernelGetModuleListInternal_nid_no_patch(KernelModule* handles, std::size_t count, std::size_t* actual) {
+    return sceKernelGetModuleListInternal(handles, count, actual);
+}
+
+int APS5_VABI sceKernelGetOpenPsIdForSystem_nid_no_patch(void* id) {
+    return sceKernelGetOpenPsIdForSystem(id);
+}
+
+int APS5_VABI sceKernelGetPagingStatsOfAllObjects_nid_no_patch(void) {
+    return sceKernelGetPagingStatsOfAllObjects();
+}
+
+int APS5_VABI sceKernelGetPagingStatsOfAllThreads_nid_no_patch(void) {
+    return sceKernelGetPagingStatsOfAllThreads();
+}
+
+int APS5_VABI sceKernelGetPhysPageSize_nid_no_patch(void) {
+    return sceKernelGetPhysPageSize();
+}
+
+int APS5_VABI sceKernelGetProcessName_nid_no_patch(void) {
+    return sceKernelGetProcessName();
+}
+
+int APS5_VABI sceKernelGetProcessType_nid_no_patch(int pid) {
+    return sceKernelGetProcessType(pid);
+}
+
+int APS5_VABI sceKernelGetProductCode_nid_no_patch(void) {
+    return sceKernelGetProductCode();
+}
+
+int APS5_VABI sceKernelGetProductStr_nid_no_patch(void) {
+    return sceKernelGetProductStr();
+}
+
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion_nid_no_patch(std::int32_t* version) {
+    return sceKernelGetProsperoCompiledSdkVersion(version);
+}
+
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid_nid_no_patch(int pid, std::int32_t* version) {
+    return sceKernelGetProsperoCompiledSdkVersionByPid(pid, version);
+}
+
+int APS5_VABI sceKernelGetPs4CompiledSdkVersion_nid_no_patch(std::int32_t* version) {
+    return sceKernelGetPs4CompiledSdkVersion(version);
+}
+
+int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid_nid_no_patch(int pid, std::int32_t* version) {
+    return sceKernelGetPs4CompiledSdkVersionByPid(pid, version);
+}
+
+int APS5_VABI sceKernelGetPs4SystemSwVersion_nid_no_patch(void) {
+    return sceKernelGetPs4SystemSwVersion();
+}
+
+int APS5_VABI sceKernelGetPsmIntdevModeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetPsmIntdevModeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetPsnAccessTraceLogForRcmgr_nid_no_patch(void) {
+    return sceKernelGetPsnAccessTraceLogForRcmgr();
+}
+
+int APS5_VABI sceKernelGetQafExpirationTimeNotafterForRcmgr_nid_no_patch(void) {
+    return sceKernelGetQafExpirationTimeNotafterForRcmgr();
+}
+
+int APS5_VABI sceKernelGetQafExpirationTimeNotbeforeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetQafExpirationTimeNotbeforeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetQafGenerationForRcmgr_nid_no_patch(void) {
+    return sceKernelGetQafGenerationForRcmgr();
+}
+
+int APS5_VABI sceKernelGetQafNameForRcmgr_nid_no_patch(void) {
+    return sceKernelGetQafNameForRcmgr();
+}
+
+int APS5_VABI sceKernelGetRenderingMode_nid_no_patch(void) {
+    return sceKernelGetRenderingMode();
+}
+
+int APS5_VABI sceKernelGetResidentCount_nid_no_patch(void) {
+    return sceKernelGetResidentCount();
+}
+
+int APS5_VABI sceKernelGetSafemode_nid_no_patch(void) {
+    return sceKernelGetSafemode();
+}
+
+int APS5_VABI sceKernelGetSanitizerMallocReplace_nid_no_patch(void) {
+    return sceKernelGetSanitizerMallocReplace();
+}
+
+int APS5_VABI sceKernelGetSanitizerNewReplace_nid_no_patch(void) {
+    return sceKernelGetSanitizerNewReplace();
+}
+
+int APS5_VABI sceKernelGetSocClock_nid_no_patch(void) {
+    return sceKernelGetSocClock();
+}
+
+int APS5_VABI sceKernelGetSpecialIForRcmgr_nid_no_patch(void) {
+    return sceKernelGetSpecialIForRcmgr();
+}
+
+int APS5_VABI sceKernelGetSubsysId_nid_no_patch(void) {
+    return sceKernelGetSubsysId();
+}
+
+int APS5_VABI sceKernelGetSubsysSubId_nid_no_patch(void) {
+    return sceKernelGetSubsysSubId();
+}
+
+int APS5_VABI sceKernelGetSystemLevelDebuggerModeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetSystemLevelDebuggerModeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetSystemSwBeta_nid_no_patch(void) {
+    return sceKernelGetSystemSwBeta();
+}
+
+int APS5_VABI sceKernelGetThreadName_nid_no_patch(uint32_t id, char* name) {
+    return sceKernelGetThreadName(id, name);
+}
+
+int APS5_VABI sceKernelGetToolMemoryRange_nid_no_patch(void) {
+    return sceKernelGetToolMemoryRange();
+}
+
+int APS5_VABI sceKernelGetUniversalMode_nid_no_patch(void) {
+    return sceKernelGetUniversalMode();
+}
+
+int APS5_VABI sceKernelGetUpdVersion_nid_no_patch(std::uint32_t* version) {
+    return sceKernelGetUpdVersion(version);
+}
+
+int APS5_VABI sceKernelGetUtokenDataExecutionForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenDataExecutionForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenExpirationTimeNotafterForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenExpirationTimeNotafterForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenFakeSharefactoryForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenFakeSharefactoryForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenFlagedUpdaterForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenFlagedUpdaterForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenNpEnvSwitchingForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenNpEnvSwitchingForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenSaveDataRepairForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenSaveDataRepairForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenStoreModeForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenStoreModeForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenUseSoftwagnerForAcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenUseSoftwagnerForAcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenUseSoftwagnerForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenUseSoftwagnerForRcmgr();
+}
+
+int APS5_VABI sceKernelGetUtokenWeakenedPortRestrictionForRcmgr_nid_no_patch(void) {
+    return sceKernelGetUtokenWeakenedPortRestrictionForRcmgr();
+}
+
+int APS5_VABI sceKernelGetVrCaptureSize_nid_no_patch(void) {
+    return sceKernelGetVrCaptureSize();
+}
+
+int APS5_VABI sceKernelGiveDirectMemoryToMapper_nid_no_patch(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
+    return sceKernelGiveDirectMemoryToMapper(searchStart, searchEnd, size, alignment, usage, offset);
+}
+
+int APS5_VABI sceKernelHasNeoMode_nid_no_patch(void) {
+    return sceKernelHasNeoMode();
+}
+
+int APS5_VABI sceKernelHwGetBdDriveInfo_nid_no_patch(void) {
+    return sceKernelHwGetBdDriveInfo();
+}
+
+int APS5_VABI sceKernelHwHasOpticalOut_nid_no_patch(void) {
+    return sceKernelHwHasOpticalOut();
+}
+
+int APS5_VABI sceKernelHwHasWlanBt_nid_no_patch(void) {
+    return sceKernelHwHasWlanBt();
+}
+
+int APS5_VABI sceKernelIccControlBDPowerState_nid_no_patch(void) {
+    return sceKernelIccControlBDPowerState();
+}
+
+int APS5_VABI sceKernelIccControlUSBPowerState_nid_no_patch(void) {
+    return sceKernelIccControlUSBPowerState();
+}
+
+int APS5_VABI sceKernelIccGetBDDriveChuckingState_nid_no_patch(void) {
+    return sceKernelIccGetBDDriveChuckingState();
+}
+
+int APS5_VABI sceKernelIccGetBDPowerState_nid_no_patch(void) {
+    return sceKernelIccGetBDPowerState();
+}
+
+int APS5_VABI sceKernelIccGetCPMode_nid_no_patch(void) {
+    return sceKernelIccGetCPMode();
+}
+
+int APS5_VABI sceKernelIccGetCountTime_nid_no_patch(void) {
+    return sceKernelIccGetCountTime();
+}
+
+int APS5_VABI sceKernelIccGetCpuInfoBit_nid_no_patch(void) {
+    return sceKernelIccGetCpuInfoBit();
+}
+
+int APS5_VABI sceKernelIccGetErrLog_nid_no_patch(void) {
+    return sceKernelIccGetErrLog();
+}
+
+int APS5_VABI sceKernelIccGetHwInfo_nid_no_patch(void) {
+    return sceKernelIccGetHwInfo();
+}
+
+int APS5_VABI sceKernelIccGetPowerNumberOfBootShutdown_nid_no_patch(void) {
+    return sceKernelIccGetPowerNumberOfBootShutdown();
+}
+
+int APS5_VABI sceKernelIccGetPowerOperatingTime_nid_no_patch(void) {
+    return sceKernelIccGetPowerOperatingTime();
+}
+
+int APS5_VABI sceKernelIccGetPowerUpCause_nid_no_patch(void) {
+    return sceKernelIccGetPowerUpCause();
+}
+
+int APS5_VABI sceKernelIccGetSysEventLog_nid_no_patch(void) {
+    return sceKernelIccGetSysEventLog();
+}
+
+int APS5_VABI sceKernelIccGetUSBPowerState_nid_no_patch(void) {
+    return sceKernelIccGetUSBPowerState();
+}
+
+int APS5_VABI sceKernelIccIndicatorBootDone_nid_no_patch(void) {
+    return sceKernelIccIndicatorBootDone();
+}
+
+int APS5_VABI sceKernelIccIndicatorShutdown_nid_no_patch(void) {
+    return sceKernelIccIndicatorShutdown();
+}
+
+int APS5_VABI sceKernelIccIndicatorStandby_nid_no_patch(void) {
+    return sceKernelIccIndicatorStandby();
+}
+
+int APS5_VABI sceKernelIccIndicatorStandbyBoot_nid_no_patch(void) {
+    return sceKernelIccIndicatorStandbyBoot();
+}
+
+int APS5_VABI sceKernelIccIndicatorStandbyShutdown_nid_no_patch(void) {
+    return sceKernelIccIndicatorStandbyShutdown();
+}
+
+int APS5_VABI sceKernelIccNotifyBootStatus_nid_no_patch(void) {
+    return sceKernelIccNotifyBootStatus();
+}
+
+int APS5_VABI sceKernelIccNvsFlush_nid_no_patch(void) {
+    return sceKernelIccNvsFlush();
+}
+
+int APS5_VABI sceKernelIccReadPowerBootMessage_nid_no_patch(void) {
+    return sceKernelIccReadPowerBootMessage();
+}
+
+int APS5_VABI sceKernelIccSetBuzzer_nid_no_patch(void) {
+    return sceKernelIccSetBuzzer();
+}
+
+int APS5_VABI sceKernelIccSetCPMode_nid_no_patch(void) {
+    return sceKernelIccSetCPMode();
+}
+
+int APS5_VABI sceKernelIccSetCpuInfoBit_nid_no_patch(void) {
+    return sceKernelIccSetCpuInfoBit();
+}
+
+int APS5_VABI sceKernelIccSetDownloadMode_nid_no_patch(void) {
+    return sceKernelIccSetDownloadMode();
+}
+
+int APS5_VABI sceKernelIccSetPriorityBuzzer_nid_no_patch(void) {
+    return sceKernelIccSetPriorityBuzzer();
+}
+
+int APS5_VABI sceKernelInternalCreateMapperSharedMemory_nid_no_patch(void) {
+    return sceKernelInternalCreateMapperSharedMemory();
+}
+
+int APS5_VABI sceKernelInternalGetKmemStatistics_nid_no_patch(void) {
+    return sceKernelInternalGetKmemStatistics();
+}
+
+int APS5_VABI sceKernelInternalGetMapStatistics_nid_no_patch(void) {
+    return sceKernelInternalGetMapStatistics();
+}
+
+int APS5_VABI sceKernelInternalHeapPrintBacktraceWithModuleInfo_nid_no_patch(void) {
+    return sceKernelInternalHeapPrintBacktraceWithModuleInfo();
+}
+
+int APS5_VABI sceKernelInternalLockMapperMemory_nid_no_patch(void) {
+    return sceKernelInternalLockMapperMemory();
+}
+
+int APS5_VABI sceKernelInternalMapDirectMemory_nid_no_patch(void) {
+    return sceKernelInternalMapDirectMemory();
+}
+
+int APS5_VABI sceKernelInternalMapNamedDirectMemory_nid_no_patch(void) {
+    return sceKernelInternalMapNamedDirectMemory();
+}
+
+int APS5_VABI sceKernelInternalResumeDirectMemoryRelease_nid_no_patch(void) {
+    return sceKernelInternalResumeDirectMemoryRelease();
+}
+
+int APS5_VABI sceKernelInternalSuspendDirectMemoryRelease_nid_no_patch(void) {
+    return sceKernelInternalSuspendDirectMemoryRelease();
+}
+
+int APS5_VABI sceKernelInternalUnlockMapperMemory_nid_no_patch(void) {
+    return sceKernelInternalUnlockMapperMemory();
+}
+
+int APS5_VABI sceKernelInternalUnmapMapperSharedMemory_nid_no_patch(void) {
+    return sceKernelInternalUnmapMapperSharedMemory();
+}
+
+int APS5_VABI sceKernelIsAllowedToSelectDvdRegion_nid_no_patch(void) {
+    return sceKernelIsAllowedToSelectDvdRegion();
+}
+
+int APS5_VABI sceKernelIsAuthenticNeo_nid_no_patch(void) {
+    return sceKernelIsAuthenticNeo();
+}
+
+int APS5_VABI sceKernelIsCEX_nid_no_patch(void) {
+    return sceKernelIsCEX();
+}
+
+int APS5_VABI sceKernelIsCronos_nid_no_patch(void) {
+    return sceKernelIsCronos();
+}
+
+int APS5_VABI sceKernelIsDebuggerAttached_nid_no_patch(void) {
+    return sceKernelIsDebuggerAttached();
+}
+
+int APS5_VABI sceKernelIsDevKit_nid_no_patch(void) {
+    return sceKernelIsDevKit();
+}
+
+int APS5_VABI sceKernelIsExperimentalBeta_nid_no_patch(void) {
+    return sceKernelIsExperimentalBeta();
+}
+
+int APS5_VABI sceKernelIsGenuineCEX_nid_no_patch(void) {
+    return sceKernelIsGenuineCEX();
+}
+
+int APS5_VABI sceKernelIsGenuineCronosCex_nid_no_patch(void) {
+    return sceKernelIsGenuineCronosCex();
+}
+
+int APS5_VABI sceKernelIsGenuineDevKit_nid_no_patch(void) {
+    return sceKernelIsGenuineDevKit();
+}
+
+int APS5_VABI sceKernelIsGenuineKratosCex_nid_no_patch(void) {
+    return sceKernelIsGenuineKratosCex();
+}
+
+int APS5_VABI sceKernelIsGenuineN_nid_no_patch(void) {
+    return sceKernelIsGenuineN();
+}
+
+int APS5_VABI sceKernelIsGenuineTestKit_nid_no_patch(void) {
+    return sceKernelIsGenuineTestKit();
+}
+
+int APS5_VABI sceKernelIsInSandbox_nid_no_patch(void) {
+    return sceKernelIsInSandbox();
+}
+
+int APS5_VABI sceKernelIsKratos_nid_no_patch(void) {
+    return sceKernelIsKratos();
+}
+
+int APS5_VABI sceKernelIsMainOnStanbyMode_nid_no_patch(void) {
+    return sceKernelIsMainOnStanbyMode();
+}
+
+int APS5_VABI sceKernelIsMainOnStandbyMode_nid_no_patch(void) {
+    return sceKernelIsMainOnStandbyMode();
+}
+
+int APS5_VABI sceKernelIsModuleLoaded_nid_no_patch(const char* name) {
+    return sceKernelIsModuleLoaded(name);
+}
+
+int APS5_VABI sceKernelIsNeoMode_nid_no_patch(void) {
+    return sceKernelIsNeoMode();
+}
+
+int APS5_VABI sceKernelIsProspero_nid_no_patch(void) {
+    return sceKernelIsProspero();
+}
+
+int APS5_VABI sceKernelIsPs4Process_nid_no_patch(void) {
+    return sceKernelIsPs4Process();
+}
+
+int APS5_VABI sceKernelIsTestKit_nid_no_patch(void) {
+    return sceKernelIsTestKit();
+}
+
+int APS5_VABI sceKernelJitGetSharedMemoryInfo_nid_no_patch(void) {
+    return sceKernelJitGetSharedMemoryInfo();
+}
+
+int APS5_VABI sceKernelKernelHeapUsage_nid_no_patch(void) {
+    return sceKernelKernelHeapUsage();
+}
+
+KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule_nid_no_patch(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
+    return sceKernelLoadStartModuleForSysmodule(moduleFileName, args, argp, flags, opt, res);
+}
+
+int APS5_VABI sceKernelLwfsAllocateBlock_nid_no_patch(int32_t fd, int64_t size) {
+    return sceKernelLwfsAllocateBlock(fd, size);
+}
+
+int64_t APS5_VABI sceKernelLwfsLseek_nid_no_patch(int32_t fd, int64_t offset, int32_t whence) {
+    return sceKernelLwfsLseek(fd, offset, whence);
+}
+
+int APS5_VABI sceKernelLwfsSetAttribute_nid_no_patch(int32_t fd, int32_t attribute) {
+    return sceKernelLwfsSetAttribute(fd, attribute);
+}
+
+int APS5_VABI sceKernelLwfsTrimBlock_nid_no_patch(void) {
+    return sceKernelLwfsTrimBlock();
+}
+
+int64_t APS5_VABI sceKernelLwfsWrite_nid_no_patch(int32_t fd, const void* data, std::size_t size) {
+    return sceKernelLwfsWrite(fd, data, size);
+}
+
+int APS5_VABI sceKernelMapSanitizerShadowMemory_nid_no_patch(void) {
+    return sceKernelMapSanitizerShadowMemory();
+}
+
+int APS5_VABI sceKernelMapToolMemory_nid_no_patch(void) {
+    return sceKernelMapToolMemory();
+}
+
+int APS5_VABI sceKernelMapTraceMemory_nid_no_patch(void) {
+    return sceKernelMapTraceMemory();
+}
+
+int APS5_VABI sceKernelMapperGetIndirectBufferInfo_nid_no_patch(void) {
+    return sceKernelMapperGetIndirectBufferInfo();
+}
+
+int APS5_VABI sceKernelMapperGetParam_nid_no_patch(std::uint64_t* param) {
+    return sceKernelMapperGetParam(param);
+}
+
+int APS5_VABI sceKernelMapperGetUsageStatsData_nid_no_patch(void) {
+    return sceKernelMapperGetUsageStatsData();
+}
+
+int APS5_VABI sceKernelMapperSetPageTablePoolOccupancyNotificationThreshold_nid_no_patch(void) {
+    return sceKernelMapperSetPageTablePoolOccupancyNotificationThreshold();
+}
+
+int APS5_VABI sceKernelMemoryPoolMove_nid_no_patch(void) {
+    return sceKernelMemoryPoolMove();
+}
+
+int APS5_VABI sceKernelMlockall_nid_no_patch(void) {
+    return sceKernelMlockall();
+}
+
+int APS5_VABI sceKernelMsync_nid_no_patch(void* address, std::size_t length, int flags) {
+    return sceKernelMsync(address, length, flags);
+}
+
+int APS5_VABI sceKernelNormalizePath_nid_no_patch(void) {
+    return sceKernelNormalizePath();
+}
+
+int APS5_VABI sceKernelNotifyAppStateChanged_nid_no_patch(void) {
+    return sceKernelNotifyAppStateChanged();
+}
+
+int APS5_VABI sceKernelNotifySystemSuspendResumeProgress_nid_no_patch(void) {
+    return sceKernelNotifySystemSuspendResumeProgress();
+}
+
+int APS5_VABI sceKernelNotifySystemSuspendStart_nid_no_patch(void) {
+    return sceKernelNotifySystemSuspendStart();
+}
+
+int APS5_VABI sceKernelOpenEport_nid_no_patch(void) {
+    return sceKernelOpenEport();
+}
+
+int APS5_VABI sceKernelOpenInternal_nid_no_patch(void) {
+    return sceKernelOpenInternal();
+}
+
+int APS5_VABI sceKernelOpenSema_nid_no_patch(void) {
+    return sceKernelOpenSema();
+}
+
+int APS5_VABI sceKernelPltTrap_nid_no_patch(void) {
+    return sceKernelPltTrap();
+}
+
+int APS5_VABI sceKernelProtectDirectMemory_nid_no_patch(void) {
+    return sceKernelProtectDirectMemory();
+}
+
+int APS5_VABI sceKernelQueryToolMemory_nid_no_patch(void) {
+    return sceKernelQueryToolMemory();
+}
+
+int APS5_VABI sceKernelQueryTraceMemory_nid_no_patch(void) {
+    return sceKernelQueryTraceMemory();
+}
+
+int APS5_VABI sceKernelRandomizedPath_nid_no_patch(void) {
+    return sceKernelRandomizedPath();
+}
+
+int APS5_VABI sceKernelReboot_nid_no_patch(void) {
+    return sceKernelReboot();
+}
+
+int APS5_VABI sceKernelReleaseToolMemory_nid_no_patch(void) {
+    return sceKernelReleaseToolMemory();
+}
+
+int APS5_VABI sceKernelReleaseTraceDirectMemory_nid_no_patch(void) {
+    return sceKernelReleaseTraceDirectMemory();
+}
+
+int APS5_VABI sceKernelReportUnpatchedFunctionCall_nid_no_patch(void) {
+    return sceKernelReportUnpatchedFunctionCall();
+}
+
+int APS5_VABI sceKernelReserve2mbPage_nid_no_patch(void) {
+    return sceKernelReserve2mbPage();
+}
+
+int APS5_VABI sceKernelReserveSystemDirectMemory_nid_no_patch(void) {
+    return sceKernelReserveSystemDirectMemory();
+}
+
+int APS5_VABI sceKernelResumeDirectMemoryRelease_nid_no_patch(void) {
+    return sceKernelResumeDirectMemoryRelease();
+}
+
+int APS5_VABI sceKernelRtldControl_nid_no_patch(void) {
+    return sceKernelRtldControl();
+}
+
+int APS5_VABI sceKernelSandboxPath_nid_no_patch(void) {
+    return sceKernelSandboxPath();
+}
+
+int APS5_VABI sceKernelSetAppInfo_nid_no_patch(void) {
+    return sceKernelSetAppInfo();
+}
+
+int APS5_VABI sceKernelSetAppLibcData_nid_no_patch(void) {
+    return sceKernelSetAppLibcData();
+}
+
+int APS5_VABI sceKernelSetBackupRestoreMode_nid_no_patch(void) {
+    return sceKernelSetBackupRestoreMode();
+}
+
+int APS5_VABI sceKernelSetBaseModeClock_nid_no_patch(void) {
+    return sceKernelSetBaseModeClock();
+}
+
+int APS5_VABI sceKernelSetBesteffort_nid_no_patch(void) {
+    return sceKernelSetBesteffort();
+}
+
+int APS5_VABI sceKernelSetBootReqNotify_nid_no_patch(void) {
+    return sceKernelSetBootReqNotify();
+}
+
+int APS5_VABI sceKernelSetCallRecord_nid_no_patch(void) {
+    return sceKernelSetCallRecord();
+}
+
+int APS5_VABI sceKernelSetCanvasHandle_nid_no_patch(void) {
+    return sceKernelSetCanvasHandle();
+}
+
+int APS5_VABI sceKernelSetCompressionAttribute_nid_no_patch(int32_t fd, int32_t attribute) {
+    return sceKernelSetCompressionAttribute(fd, attribute);
+}
+
+int APS5_VABI sceKernelSetCpumodeGame_nid_no_patch(int mode) {
+    return sceKernelSetCpumodeGame(mode);
+}
+
+int APS5_VABI sceKernelSetDataTransferMode_nid_no_patch(void) {
+    return sceKernelSetDataTransferMode();
+}
+
+int APS5_VABI sceKernelSetFsstParam_nid_no_patch(int32_t fd, void* param) {
+    return sceKernelSetFsstParam(fd, param);
+}
+
+int APS5_VABI sceKernelSetGPI_nid_no_patch(void) {
+    return sceKernelSetGPI();
+}
+
+int APS5_VABI sceKernelSetGameDirectMemoryLimit_nid_no_patch(void) {
+    return sceKernelSetGameDirectMemoryLimit();
+}
+
+int APS5_VABI sceKernelSetGpuCu_nid_no_patch(void) {
+    return sceKernelSetGpuCu();
+}
+
+int APS5_VABI sceKernelSetKnobs_nid_no_patch(void) {
+    return sceKernelSetKnobs();
+}
+
+int APS5_VABI sceKernelSetMemoryPstate_nid_no_patch(void) {
+    return sceKernelSetMemoryPstate();
+}
+
+int APS5_VABI sceKernelSetNeoModeClock_nid_no_patch(void) {
+    return sceKernelSetNeoModeClock();
+}
+
+int APS5_VABI sceKernelSetPhysFmemLimit_nid_no_patch(void) {
+    return sceKernelSetPhysFmemLimit();
+}
+
+int APS5_VABI sceKernelSetProcessName_nid_no_patch(void) {
+    return sceKernelSetProcessName();
+}
+
+int APS5_VABI sceKernelSetProcessProperty_nid_no_patch(void) {
+    return sceKernelSetProcessProperty();
+}
+
+int APS5_VABI sceKernelSetProcessPropertyString_nid_no_patch(void) {
+    return sceKernelSetProcessPropertyString();
+}
+
+int APS5_VABI sceKernelSetSafemode_nid_no_patch(void) {
+    return sceKernelSetSafemode();
+}
+
+int APS5_VABI sceKernelSetTimezoneInfo_nid_no_patch(void) {
+    return sceKernelSetTimezoneInfo();
+}
+
+int APS5_VABI sceKernelSetVmContainer_nid_no_patch(void) {
+    return sceKernelSetVmContainer();
+}
+
+int APS5_VABI sceKernelSettimeofday_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return sceKernelSettimeofday(tv, tz);
+}
+
+int APS5_VABI sceKernelSlvNotifyError_nid_no_patch(void) {
+    return sceKernelSlvNotifyError();
+}
+
+int APS5_VABI sceKernelSuspendDirectMemoryRelease_nid_no_patch(void) {
+    return sceKernelSuspendDirectMemoryRelease();
+}
+
+int APS5_VABI sceKernelTerminateSysCore_nid_no_patch(void) {
+    return sceKernelTerminateSysCore();
+}
+
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled_nid_no_patch(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
+}
+
+int APS5_VABI sceKernelTitleWorkdaroundIsEnabled_nid_no_patch(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return sceKernelTitleWorkdaroundIsEnabled(workaround, bit, enabled);
+}
+
+int APS5_VABI sceKernelTraceMemoryTypeProtect_nid_no_patch(void) {
+    return sceKernelTraceMemoryTypeProtect();
+}
+
+int APS5_VABI sceKernelTriggerEport_nid_no_patch(void) {
+    return sceKernelTriggerEport();
+}
+
+int APS5_VABI sceKernelUseCronosKura_nid_no_patch(void) {
+    return sceKernelUseCronosKura();
+}
+
+int APS5_VABI sceKernelUseCronosStreaming_nid_no_patch(void) {
+    return sceKernelUseCronosStreaming();
+}
+
+int APS5_VABI sceKernelVirtualQueryAll_nid_no_patch(void) {
+    return sceKernelVirtualQueryAll();
+}
+
+int APS5_VABI sceKernelWaitCommandBufferCompletion_nid_no_patch(std::uint32_t id) {
+    return sceKernelWaitCommandBufferCompletion(id);
+}
+
+int APS5_VABI sceKernelWriteEventQueueOnCompletionCommand_nid_no_patch(void* dst, std::uint64_t equeue, std::int32_t ident, std::uint64_t data, std::uint64_t* outSize) {
+    return sceKernelWriteEventQueueOnCompletionCommand(dst, equeue, ident, data, outSize);
+}
+
+int APS5_VABI sceKernelWriteMapCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize) {
+    return sceKernelWriteMapCommand(dst, address, size, type, protection, outSize);
+}
+
+int APS5_VABI sceKernelWriteMapCommand2_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t prt, std::uint64_t* outSize) {
+    return sceKernelWriteMapCommand2(dst, address, size, type, protection, prt, outSize);
+}
+
+int APS5_VABI sceKernelWriteMapDirectCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize) {
+    return sceKernelWriteMapDirectCommand(dst, address, directOffset, size, type, protection, outSize);
+}
+
+int APS5_VABI sceKernelWriteMapDirectWithGpuMaskIdCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, address, directOffset, size, type, protection, gpuMaskId, outSize);
+}
+
+int APS5_VABI sceKernelWriteMapWithGpuMaskIdCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    return sceKernelWriteMapWithGpuMaskIdCommand(dst, address, size, type, protection, gpuMaskId, outSize);
+}
+
+int APS5_VABI sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, type, protection, mask, gpuMaskId, outSize);
+}
+
+int APS5_VABI sceKernelWriteModifyProtectCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize) {
+    return sceKernelWriteModifyProtectCommand(dst, address, size, protection, mask, outSize);
+}
+
+int APS5_VABI sceKernelWriteModifyProtectWithGpuMaskIdCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    return sceKernelWriteModifyProtectWithGpuMaskIdCommand(dst, address, size, protection, mask, gpuMaskId, outSize);
+}
+
+int APS5_VABI sceKernelWriteMultiMapCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize) {
+    return sceKernelWriteMultiMapCommand(dst, address, alias, size, protection, outSize);
+}
+
+int APS5_VABI sceKernelWriteMultiMapWithGpuMaskIdCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    return sceKernelWriteMultiMapWithGpuMaskIdCommand(dst, address, alias, size, protection, gpuMaskId, outSize);
+}
+
+int APS5_VABI sceKernelWriteRemapCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize) {
+    return sceKernelWriteRemapCommand(dst, address, source, size, protection, outSize);
+}
+
+int APS5_VABI sceKernelWriteRemapWithGpuMaskIdCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    return sceKernelWriteRemapWithGpuMaskIdCommand(dst, address, source, size, protection, gpuMaskId, outSize);
+}
+
+int APS5_VABI sceKernelWriteSdkEventLog_nid_no_patch(void) {
+    return sceKernelWriteSdkEventLog();
+}
+
+int APS5_VABI sceKernelWriteSdkEventLogV_nid_no_patch(void) {
+    return sceKernelWriteSdkEventLogV();
+}
+
+int APS5_VABI sceKernelWriteUnmapCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t* outSize) {
+    return sceKernelWriteUnmapCommand(dst, address, size, outSize);
+}
+
+int APS5_VABI sceKernelWriteWaitOnAddressCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize) {
+    return sceKernelWriteWaitOnAddressCommand(dst, address, reference, compare, flush, outSize);
+}
+
+int APS5_VABI sceKernelWriteWaitOnCounterCommand_nid_no_patch(void* dst, std::uint8_t counter, std::uint32_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize) {
+    return sceKernelWriteWaitOnCounterCommand(dst, counter, reference, compare, flush, outSize);
+}
+
+int APS5_VABI sceKernelWriteWriteAddressCommand_nid_no_patch(void* dst, std::uint64_t address, std::uint64_t value, std::uint64_t* outSize) {
+    return sceKernelWriteWriteAddressCommand(dst, address, value, outSize);
+}
+
+int APS5_VABI sceKernelWriteWriteCounterCommand_nid_no_patch(void* dst, std::uint8_t counter, std::uint32_t value, std::uint64_t* outSize) {
+    return sceKernelWriteWriteCounterCommand(dst, counter, value, outSize);
+}
+
+int APS5_VABI sceKernelYieldCpumode_nid_no_patch(void) {
+    return sceKernelYieldCpumode();
+}
+
+int APS5_VABI sceLibcMspaceCreateForMonoMutex_nid_no_patch(void) {
+    return sceLibcMspaceCreateForMonoMutex();
+}
+
+int APS5_VABI scePthreadAtfork_nid_no_patch(void (APS5_VABI* prepare)(), void (APS5_VABI* parent)(), void (APS5_VABI* child)()) {
+    return scePthreadAtfork(prepare, parent, child);
+}
+
+int APS5_VABI scePthreadAttrGetscope_nid_no_patch(const PthreadAttr* attr, int* scope) {
+    return scePthreadAttrGetscope(attr, scope);
+}
+
+int APS5_VABI scePthreadAttrSetcreatesuspend_nid_no_patch(PthreadAttr* attr) {
+    return scePthreadAttrSetcreatesuspend(attr);
+}
+
+int APS5_VABI scePthreadAttrSetscope_nid_no_patch(PthreadAttr* attr, int scope) {
+    return scePthreadAttrSetscope(attr, scope);
+}
+
+int APS5_VABI scePthreadBarrierDestroy_nid_no_patch(PthreadBarrierPrivate** barrier) {
+    return scePthreadBarrierDestroy(barrier);
+}
+
+int APS5_VABI scePthreadBarrierInit_nid_no_patch(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
+    return scePthreadBarrierInit(barrier, attr, count, name);
+}
+
+int APS5_VABI scePthreadBarrierWait_nid_no_patch(PthreadBarrierPrivate** barrier) {
+    return scePthreadBarrierWait(barrier);
+}
+
+int APS5_VABI scePthreadBarrierattrDestroy_nid_no_patch(PthreadBarrierattrPrivate** attr) {
+    return scePthreadBarrierattrDestroy(attr);
+}
+
+int APS5_VABI scePthreadBarrierattrGetpshared_nid_no_patch(PthreadBarrierattrPrivate* const* attr, int* pshared) {
+    return scePthreadBarrierattrGetpshared(attr, pshared);
+}
+
+int APS5_VABI scePthreadBarrierattrInit_nid_no_patch(PthreadBarrierattrPrivate** attr) {
+    return scePthreadBarrierattrInit(attr);
+}
+
+int APS5_VABI scePthreadBarrierattrSetpshared_nid_no_patch(PthreadBarrierattrPrivate** attr, int pshared) {
+    return scePthreadBarrierattrSetpshared(attr, pshared);
+}
+
+int APS5_VABI scePthreadCondattrGetclock_nid_no_patch(const PthreadCondattr* attr, KernelClockid* clockId) {
+    return scePthreadCondattrGetclock(attr, clockId);
+}
+
+int APS5_VABI scePthreadGetconcurrency_nid_no_patch(void) {
+    return scePthreadGetconcurrency();
+}
+
+int APS5_VABI scePthreadGetcpuclockid_nid_no_patch(Pthread thread, int* clockId) {
+    return scePthreadGetcpuclockid(thread, clockId);
+}
+
+int APS5_VABI scePthreadMain_nid_no_patch(void) {
+    return scePthreadMain();
+}
+
+int APS5_VABI scePthreadMulti_nid_no_patch(void) {
+    return scePthreadMulti();
+}
+
+int APS5_VABI scePthreadMutexInitForInternalLibc_nid_no_patch(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+    return scePthreadMutexInitForInternalLibc(mutex, attr);
+}
+
+int APS5_VABI scePthreadMutexIsowned_nid_no_patch(PthreadMutex* mutex) {
+    return scePthreadMutexIsowned(mutex);
+}
+
+int APS5_VABI scePthreadMutexattrGetgen_nid_no_patch(const PthreadMutexattr* attr, int* generation) {
+    return scePthreadMutexattrGetgen(attr, generation);
+}
+
+int APS5_VABI scePthreadMutexattrInitForInternalLibc_nid_no_patch(PthreadMutexattr* attr) {
+    return scePthreadMutexattrInitForInternalLibc(attr);
+}
+
+int APS5_VABI scePthreadMutexattrSetgen_nid_no_patch(PthreadMutexattr* attr, int generation) {
+    return scePthreadMutexattrSetgen(attr, generation);
+}
+
+int APS5_VABI scePthreadRegisterThreadDeathHook_nid_no_patch(void) {
+    return scePthreadRegisterThreadDeathHook();
+}
+
+int APS5_VABI scePthreadResume_nid_no_patch(Pthread thread) {
+    return scePthreadResume(thread);
+}
+
+void APS5_VABI scePthreadResumeAll_nid_no_patch(void) {
+    scePthreadResumeAll();
+}
+
+int APS5_VABI scePthreadSetBesteffort_nid_no_patch(void) {
+    return scePthreadSetBesteffort();
+}
+
+int APS5_VABI scePthreadSetDefaultstacksize_nid_no_patch(std::size_t size) {
+    return scePthreadSetDefaultstacksize(size);
+}
+
+void APS5_VABI scePthreadSetName_nid_no_patch(Pthread thread, const char* name) {
+    scePthreadSetName(thread, name);
+}
+
+int APS5_VABI scePthreadSetconcurrency_nid_no_patch(int level) {
+    return scePthreadSetconcurrency(level);
+}
+
+int APS5_VABI scePthreadSingle_nid_no_patch(void) {
+    return scePthreadSingle();
+}
+
+int APS5_VABI scePthreadSuspend_nid_no_patch(void) {
+    return scePthreadSuspend();
+}
+
+int APS5_VABI scePthreadSuspendAll_nid_no_patch(void) {
+    return scePthreadSuspendAll();
+}
+
+int APS5_VABI scePthreadTimedjoin_nid_no_patch(Pthread thread, void** value, KernelUseconds usec) {
+    return scePthreadTimedjoin(thread, value, usec);
+}
+
+
+#if defined(__ELF__)
+__asm__(".protected _fpathconf_nid_postfix");
+__asm__(".protected _openat_nid_postfix");
+__asm__(".protected amd64_set_fsbase_nid_postfix");
+__asm__(".protected blockpool_batch_nid_postfix");
+__asm__(".protected blockpool_map_nid_postfix");
+__asm__(".protected blockpool_open_nid_postfix");
+__asm__(".protected blockpool_unmap_nid_postfix");
+__asm__(".protected dynlib_get_obj_member_nid_postfix");
+__asm__(".protected get_authinfo_nid_postfix");
+__asm__(".protected get_module_info_list_nid_postfix");
+__asm__(".protected get_page_table_stats_nid_postfix");
+__asm__(".protected get_sdk_compiled_version_nid_postfix");
+__asm__(".protected get_self_auth_info_nid_postfix");
+__asm__(".protected get_vm_map_timestamp_nid_postfix");
+__asm__(".protected ipmimgr_call_nid_postfix");
+__asm__(".protected is_in_sandbox_nid_postfix");
+__asm__(".protected ksem_close_nid_postfix");
+__asm__(".protected ksem_open_nid_postfix");
+__asm__(".protected ksem_unlink_nid_postfix");
+__asm__(".protected mdbg_service_nid_postfix");
+__asm__(".protected openintr_nid_postfix");
+__asm__(".protected profil_nid_postfix");
+__asm__(".protected pthread_attr_getaffinity_np_nid_postfix");
+__asm__(".protected pthread_attr_getsolosched_np_nid_postfix");
+__asm__(".protected pthread_attr_setaffinity_np_nid_postfix");
+__asm__(".protected pthread_attr_setcreatesuspend_np_nid_postfix");
+__asm__(".protected pthread_attr_setstackaddr_nid_postfix");
+__asm__(".protected pthread_get_specificarray_np_nid_postfix");
+__asm__(".protected pthread_get_user_context_np_nid_postfix");
+__asm__(".protected pthread_getstack_np_nid_postfix");
+__asm__(".protected pthread_main_np_nid_postfix");
+__asm__(".protected pthread_multi_np_nid_postfix");
+__asm__(".protected pthread_mutex_init_for_mono_nid_postfix");
+__asm__(".protected pthread_mutexattr_getgen_np_nid_postfix");
+__asm__(".protected pthread_mutexattr_setgen_np_nid_postfix");
+__asm__(".protected pthread_resume_all_np_nid_postfix");
+__asm__(".protected pthread_resume_np_nid_postfix");
+__asm__(".protected pthread_resume_user_context_np_nid_postfix");
+__asm__(".protected pthread_set_defaultstacksize_np_nid_postfix");
+__asm__(".protected pthread_set_user_context_np_nid_postfix");
+__asm__(".protected pthread_single_np_nid_postfix");
+__asm__(".protected pthread_suspend_all_np_nid_postfix");
+__asm__(".protected pthread_suspend_np_nid_postfix");
+__asm__(".protected pthread_suspend_user_context_np_nid_postfix");
+__asm__(".protected pthread_switch_add_np_nid_postfix");
+__asm__(".protected pthread_switch_delete_np_nid_postfix");
+__asm__(".protected rtld_printf_nid_postfix");
+__asm__(".protected sched_rr_get_interval_nid_postfix");
+__asm__(".protected sched_setscheduler_nid_postfix");
+__asm__(".protected set_phys_fmem_limit_nid_postfix");
+__asm__(".protected settimeofday_nid_postfix");
+__asm__(".protected sigqueue_nid_postfix");
+__asm__(".protected sigreturn_nid_postfix");
+__asm__(".protected sysc_e00_nid_postfix");
+__asm__(".protected sysc_m00_nid_postfix");
+__asm__(".protected sysc_s00_nid_postfix");
+__asm__(".protected tcsetsid_nid_postfix");
+__asm__(".protected uuidgen_nid_postfix");
+__asm__(".protected wait3_nid_postfix");
+__asm__(".protected sceCoredumpDebugForceCoredumpOnAppClose");
+__asm__(".protected sceCoredumpDebugTriggerCoredump");
+__asm__(".protected sceCoredumpGetStopInfoGpu");
+__asm__(".protected sceCoredumpInternalGetThreadContextInfo");
+__asm__(".protected sceKernelAddCpumodeEvent");
+__asm__(".protected sceKernelAddExternalTriggerEvent");
+__asm__(".protected sceKernelAddGpuExceptionEvent");
+__asm__(".protected sceKernelAddProcessToCanvasMap");
+__asm__(".protected sceKernelAllocateDirectMemory2");
+__asm__(".protected sceKernelAllocateDirectMemoryForMiniApp");
+__asm__(".protected sceKernelAllocateToolMemory");
+__asm__(".protected sceKernelAllocateTraceDirectMemory");
+__asm__(".protected sceKernelAvailableToolMemorySize");
+__asm__(".protected sceKernelBacktraceSelf");
+__asm__(".protected sceKernelCallIndirectBuffer");
+__asm__(".protected sceKernelCallIndirectBuffer2");
+__asm__(".protected sceKernelCallIndirectBuffer3");
+__asm__(".protected sceKernelCheckProsperoSdkVersion");
+__asm__(".protected sceKernelClearBootReqNotifyCount");
+__asm__(".protected sceKernelClearGameDirectMemory");
+__asm__(".protected sceKernelCloseEport");
+__asm__(".protected sceKernelCloseSema");
+__asm__(".protected sceKernelCreateEport");
+__asm__(".protected sceKernelDebugAcquireAndUpdateDebugRegister");
+__asm__(".protected sceKernelDebugGetAppStatus");
+__asm__(".protected sceKernelDebugGetPauseCount");
+__asm__(".protected sceKernelDebugGpuPaDebugIsInProgress");
+__asm__(".protected sceKernelDebugPauseWithDebugContext");
+__asm__(".protected sceKernelDebugRaiseExceptionWithContext");
+__asm__(".protected sceKernelDebugRaiseExceptionWithInfo");
+__asm__(".protected sceKernelDebugReleaseDebugContext");
+__asm__(".protected sceKernelDeleteCpumodeEvent");
+__asm__(".protected sceKernelDeleteEport");
+__asm__(".protected sceKernelDeleteExternalTriggerEvent");
+__asm__(".protected sceKernelDeleteGpuExceptionEvent");
+__asm__(".protected sceKernelDeleteProcessFromCanvasMap");
+__asm__(".protected sceKernelDirectMemoryQueryForId");
+__asm__(".protected sceKernelEnableDmemAliasing2");
+__asm__(".protected sceKernelEnablePthreadObjectCheck");
+__asm__(".protected sceKernelEventLogInit");
+__asm__(".protected sceKernelEventLogPread");
+__asm__(".protected sceKernelEventLogRead");
+__asm__(".protected sceKernelEventLogWrite");
+__asm__(".protected sceKernelExtendMaximumModuleNumber");
+__asm__(".protected sceKernelFlock");
+__asm__(".protected sceKernelGetAmprCounter");
+__asm__(".protected sceKernelGetAppCategoryType");
+__asm__(".protected sceKernelGetAppLibcData");
+__asm__(".protected sceKernelGetAslrStatus");
+__asm__(".protected sceKernelGetAutoUpdateVersion");
+__asm__(".protected sceKernelGetBackupRestoreMode");
+__asm__(".protected sceKernelGetBackupRestoreModeOfNextBoot");
+__asm__(".protected sceKernelGetBasicProductShape");
+__asm__(".protected sceKernelGetBetaUpdateTestForRcmgr");
+__asm__(".protected sceKernelGetBioUsageAll");
+__asm__(".protected sceKernelGetBootReqNotifyCount");
+__asm__(".protected sceKernelGetBuildNumber");
+__asm__(".protected sceKernelGetCallRecord");
+__asm__(".protected sceKernelGetCanvasHandle");
+__asm__(".protected sceKernelGetCanvasHandleByPid");
+__asm__(".protected sceKernelGetCompiledSdkVersion");
+__asm__(".protected sceKernelGetCompiledSdkVersionByPath");
+__asm__(".protected sceKernelGetCompiledSdkVersionByPid");
+__asm__(".protected sceKernelGetCpuCoreClock");
+__asm__(".protected sceKernelGetCpuUsage");
+__asm__(".protected sceKernelGetCpuUsageAll");
+__asm__(".protected sceKernelGetCpuUsageProc");
+__asm__(".protected sceKernelGetCpuUsageProc2");
+__asm__(".protected sceKernelGetCpuUsageThread");
+__asm__(".protected sceKernelGetCpumodeGame");
+__asm__(".protected sceKernelGetDataTransferMode");
+__asm__(".protected sceKernelGetDebugMenuMiniModeForRcmgr");
+__asm__(".protected sceKernelGetDebugMenuModeForPsmForRcmgr");
+__asm__(".protected sceKernelGetDebugMenuModeForRcmgr");
+__asm__(".protected sceKernelGetDefaultToolMemorySize");
+__asm__(".protected sceKernelGetExtLibcHandle");
+__asm__(".protected sceKernelGetFakeFinalizeMenuForRcmgr");
+__asm__(".protected sceKernelGetFlagedUpdaterForRcmgr");
+__asm__(".protected sceKernelGetForceUpdateModeForRcmgr");
+__asm__(".protected sceKernelGetGPO");
+__asm__(".protected sceKernelGetGenuineProsperoSystemSwVersion");
+__asm__(".protected sceKernelGetHwFeatureInfoForDecid");
+__asm__(".protected sceKernelGetIdPs");
+__asm__(".protected sceKernelGetIdTableCurrentCount");
+__asm__(".protected sceKernelGetIpcPath");
+__asm__(".protected sceKernelGetKnobs");
+__asm__(".protected sceKernelGetModuleInfoInternal");
+__asm__(".protected sceKernelGetModuleListInternal");
+__asm__(".protected sceKernelGetOpenPsIdForSystem");
+__asm__(".protected sceKernelGetPagingStatsOfAllObjects");
+__asm__(".protected sceKernelGetPagingStatsOfAllThreads");
+__asm__(".protected sceKernelGetPhysPageSize");
+__asm__(".protected sceKernelGetProcessName");
+__asm__(".protected sceKernelGetProcessType");
+__asm__(".protected sceKernelGetProductCode");
+__asm__(".protected sceKernelGetProductStr");
+__asm__(".protected sceKernelGetProsperoCompiledSdkVersion");
+__asm__(".protected sceKernelGetProsperoCompiledSdkVersionByPid");
+__asm__(".protected sceKernelGetPs4CompiledSdkVersion");
+__asm__(".protected sceKernelGetPs4CompiledSdkVersionByPid");
+__asm__(".protected sceKernelGetPs4SystemSwVersion");
+__asm__(".protected sceKernelGetPsmIntdevModeForRcmgr");
+__asm__(".protected sceKernelGetPsnAccessTraceLogForRcmgr");
+__asm__(".protected sceKernelGetQafExpirationTimeNotafterForRcmgr");
+__asm__(".protected sceKernelGetQafExpirationTimeNotbeforeForRcmgr");
+__asm__(".protected sceKernelGetQafGenerationForRcmgr");
+__asm__(".protected sceKernelGetQafNameForRcmgr");
+__asm__(".protected sceKernelGetRenderingMode");
+__asm__(".protected sceKernelGetResidentCount");
+__asm__(".protected sceKernelGetSafemode");
+__asm__(".protected sceKernelGetSanitizerMallocReplace");
+__asm__(".protected sceKernelGetSanitizerNewReplace");
+__asm__(".protected sceKernelGetSocClock");
+__asm__(".protected sceKernelGetSpecialIForRcmgr");
+__asm__(".protected sceKernelGetSubsysId");
+__asm__(".protected sceKernelGetSubsysSubId");
+__asm__(".protected sceKernelGetSystemLevelDebuggerModeForRcmgr");
+__asm__(".protected sceKernelGetSystemSwBeta");
+__asm__(".protected sceKernelGetThreadName");
+__asm__(".protected sceKernelGetToolMemoryRange");
+__asm__(".protected sceKernelGetUniversalMode");
+__asm__(".protected sceKernelGetUpdVersion");
+__asm__(".protected sceKernelGetUtokenDataExecutionForRcmgr");
+__asm__(".protected sceKernelGetUtokenExpirationTimeNotafterForRcmgr");
+__asm__(".protected sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr");
+__asm__(".protected sceKernelGetUtokenFakeSharefactoryForRcmgr");
+__asm__(".protected sceKernelGetUtokenFlagedUpdaterForRcmgr");
+__asm__(".protected sceKernelGetUtokenNpEnvSwitchingForRcmgr");
+__asm__(".protected sceKernelGetUtokenSaveDataRepairForRcmgr");
+__asm__(".protected sceKernelGetUtokenStoreModeForRcmgr");
+__asm__(".protected sceKernelGetUtokenUseSoftwagnerForAcmgr");
+__asm__(".protected sceKernelGetUtokenUseSoftwagnerForRcmgr");
+__asm__(".protected sceKernelGetUtokenWeakenedPortRestrictionForRcmgr");
+__asm__(".protected sceKernelGetVrCaptureSize");
+__asm__(".protected sceKernelGiveDirectMemoryToMapper");
+__asm__(".protected sceKernelHasNeoMode");
+__asm__(".protected sceKernelHwGetBdDriveInfo");
+__asm__(".protected sceKernelHwHasOpticalOut");
+__asm__(".protected sceKernelHwHasWlanBt");
+__asm__(".protected sceKernelIccControlBDPowerState");
+__asm__(".protected sceKernelIccControlUSBPowerState");
+__asm__(".protected sceKernelIccGetBDDriveChuckingState");
+__asm__(".protected sceKernelIccGetBDPowerState");
+__asm__(".protected sceKernelIccGetCPMode");
+__asm__(".protected sceKernelIccGetCountTime");
+__asm__(".protected sceKernelIccGetCpuInfoBit");
+__asm__(".protected sceKernelIccGetErrLog");
+__asm__(".protected sceKernelIccGetHwInfo");
+__asm__(".protected sceKernelIccGetPowerNumberOfBootShutdown");
+__asm__(".protected sceKernelIccGetPowerOperatingTime");
+__asm__(".protected sceKernelIccGetPowerUpCause");
+__asm__(".protected sceKernelIccGetSysEventLog");
+__asm__(".protected sceKernelIccGetUSBPowerState");
+__asm__(".protected sceKernelIccIndicatorBootDone");
+__asm__(".protected sceKernelIccIndicatorShutdown");
+__asm__(".protected sceKernelIccIndicatorStandby");
+__asm__(".protected sceKernelIccIndicatorStandbyBoot");
+__asm__(".protected sceKernelIccIndicatorStandbyShutdown");
+__asm__(".protected sceKernelIccNotifyBootStatus");
+__asm__(".protected sceKernelIccNvsFlush");
+__asm__(".protected sceKernelIccReadPowerBootMessage");
+__asm__(".protected sceKernelIccSetBuzzer");
+__asm__(".protected sceKernelIccSetCPMode");
+__asm__(".protected sceKernelIccSetCpuInfoBit");
+__asm__(".protected sceKernelIccSetDownloadMode");
+__asm__(".protected sceKernelIccSetPriorityBuzzer");
+__asm__(".protected sceKernelInternalCreateMapperSharedMemory");
+__asm__(".protected sceKernelInternalGetKmemStatistics");
+__asm__(".protected sceKernelInternalGetMapStatistics");
+__asm__(".protected sceKernelInternalHeapPrintBacktraceWithModuleInfo");
+__asm__(".protected sceKernelInternalLockMapperMemory");
+__asm__(".protected sceKernelInternalMapDirectMemory");
+__asm__(".protected sceKernelInternalMapNamedDirectMemory");
+__asm__(".protected sceKernelInternalResumeDirectMemoryRelease");
+__asm__(".protected sceKernelInternalSuspendDirectMemoryRelease");
+__asm__(".protected sceKernelInternalUnlockMapperMemory");
+__asm__(".protected sceKernelInternalUnmapMapperSharedMemory");
+__asm__(".protected sceKernelIsAllowedToSelectDvdRegion");
+__asm__(".protected sceKernelIsAuthenticNeo");
+__asm__(".protected sceKernelIsCEX");
+__asm__(".protected sceKernelIsCronos");
+__asm__(".protected sceKernelIsDebuggerAttached");
+__asm__(".protected sceKernelIsDevKit");
+__asm__(".protected sceKernelIsExperimentalBeta");
+__asm__(".protected sceKernelIsGenuineCEX");
+__asm__(".protected sceKernelIsGenuineCronosCex");
+__asm__(".protected sceKernelIsGenuineDevKit");
+__asm__(".protected sceKernelIsGenuineKratosCex");
+__asm__(".protected sceKernelIsGenuineN");
+__asm__(".protected sceKernelIsGenuineTestKit");
+__asm__(".protected sceKernelIsInSandbox");
+__asm__(".protected sceKernelIsKratos");
+__asm__(".protected sceKernelIsMainOnStanbyMode");
+__asm__(".protected sceKernelIsMainOnStandbyMode");
+__asm__(".protected sceKernelIsModuleLoaded");
+__asm__(".protected sceKernelIsNeoMode");
+__asm__(".protected sceKernelIsProspero");
+__asm__(".protected sceKernelIsPs4Process");
+__asm__(".protected sceKernelIsTestKit");
+__asm__(".protected sceKernelJitGetSharedMemoryInfo");
+__asm__(".protected sceKernelKernelHeapUsage");
+__asm__(".protected sceKernelLoadStartModuleForSysmodule");
+__asm__(".protected sceKernelLwfsAllocateBlock");
+__asm__(".protected sceKernelLwfsLseek");
+__asm__(".protected sceKernelLwfsSetAttribute");
+__asm__(".protected sceKernelLwfsTrimBlock");
+__asm__(".protected sceKernelLwfsWrite");
+__asm__(".protected sceKernelMapSanitizerShadowMemory");
+__asm__(".protected sceKernelMapToolMemory");
+__asm__(".protected sceKernelMapTraceMemory");
+__asm__(".protected sceKernelMapperGetIndirectBufferInfo");
+__asm__(".protected sceKernelMapperGetParam");
+__asm__(".protected sceKernelMapperGetUsageStatsData");
+__asm__(".protected sceKernelMapperSetPageTablePoolOccupancyNotificationThreshold");
+__asm__(".protected sceKernelMemoryPoolMove");
+__asm__(".protected sceKernelMlockall");
+__asm__(".protected sceKernelMsync");
+__asm__(".protected sceKernelNormalizePath");
+__asm__(".protected sceKernelNotifyAppStateChanged");
+__asm__(".protected sceKernelNotifySystemSuspendResumeProgress");
+__asm__(".protected sceKernelNotifySystemSuspendStart");
+__asm__(".protected sceKernelOpenEport");
+__asm__(".protected sceKernelOpenInternal");
+__asm__(".protected sceKernelOpenSema");
+__asm__(".protected sceKernelPltTrap");
+__asm__(".protected sceKernelProtectDirectMemory");
+__asm__(".protected sceKernelQueryToolMemory");
+__asm__(".protected sceKernelQueryTraceMemory");
+__asm__(".protected sceKernelRandomizedPath");
+__asm__(".protected sceKernelReboot");
+__asm__(".protected sceKernelReleaseToolMemory");
+__asm__(".protected sceKernelReleaseTraceDirectMemory");
+__asm__(".protected sceKernelReportUnpatchedFunctionCall");
+__asm__(".protected sceKernelReserve2mbPage");
+__asm__(".protected sceKernelReserveSystemDirectMemory");
+__asm__(".protected sceKernelResumeDirectMemoryRelease");
+__asm__(".protected sceKernelRtldControl");
+__asm__(".protected sceKernelSandboxPath");
+__asm__(".protected sceKernelSetAppInfo");
+__asm__(".protected sceKernelSetAppLibcData");
+__asm__(".protected sceKernelSetBackupRestoreMode");
+__asm__(".protected sceKernelSetBaseModeClock");
+__asm__(".protected sceKernelSetBesteffort");
+__asm__(".protected sceKernelSetBootReqNotify");
+__asm__(".protected sceKernelSetCallRecord");
+__asm__(".protected sceKernelSetCanvasHandle");
+__asm__(".protected sceKernelSetCompressionAttribute");
+__asm__(".protected sceKernelSetCpumodeGame");
+__asm__(".protected sceKernelSetDataTransferMode");
+__asm__(".protected sceKernelSetFsstParam");
+__asm__(".protected sceKernelSetGPI");
+__asm__(".protected sceKernelSetGameDirectMemoryLimit");
+__asm__(".protected sceKernelSetGpuCu");
+__asm__(".protected sceKernelSetKnobs");
+__asm__(".protected sceKernelSetMemoryPstate");
+__asm__(".protected sceKernelSetNeoModeClock");
+__asm__(".protected sceKernelSetPhysFmemLimit");
+__asm__(".protected sceKernelSetProcessName");
+__asm__(".protected sceKernelSetProcessProperty");
+__asm__(".protected sceKernelSetProcessPropertyString");
+__asm__(".protected sceKernelSetSafemode");
+__asm__(".protected sceKernelSetTimezoneInfo");
+__asm__(".protected sceKernelSetVmContainer");
+__asm__(".protected sceKernelSettimeofday");
+__asm__(".protected sceKernelSlvNotifyError");
+__asm__(".protected sceKernelSuspendDirectMemoryRelease");
+__asm__(".protected sceKernelTerminateSysCore");
+__asm__(".protected sceKernelTitleWorkaroundIsEnabled");
+__asm__(".protected sceKernelTitleWorkdaroundIsEnabled");
+__asm__(".protected sceKernelTraceMemoryTypeProtect");
+__asm__(".protected sceKernelTriggerEport");
+__asm__(".protected sceKernelUseCronosKura");
+__asm__(".protected sceKernelUseCronosStreaming");
+__asm__(".protected sceKernelVirtualQueryAll");
+__asm__(".protected sceKernelWaitCommandBufferCompletion");
+__asm__(".protected sceKernelWriteEventQueueOnCompletionCommand");
+__asm__(".protected sceKernelWriteMapCommand");
+__asm__(".protected sceKernelWriteMapCommand2");
+__asm__(".protected sceKernelWriteMapDirectCommand");
+__asm__(".protected sceKernelWriteMapDirectWithGpuMaskIdCommand");
+__asm__(".protected sceKernelWriteMapWithGpuMaskIdCommand");
+__asm__(".protected sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand");
+__asm__(".protected sceKernelWriteModifyProtectCommand");
+__asm__(".protected sceKernelWriteModifyProtectWithGpuMaskIdCommand");
+__asm__(".protected sceKernelWriteMultiMapCommand");
+__asm__(".protected sceKernelWriteMultiMapWithGpuMaskIdCommand");
+__asm__(".protected sceKernelWriteRemapCommand");
+__asm__(".protected sceKernelWriteRemapWithGpuMaskIdCommand");
+__asm__(".protected sceKernelWriteSdkEventLog");
+__asm__(".protected sceKernelWriteSdkEventLogV");
+__asm__(".protected sceKernelWriteUnmapCommand");
+__asm__(".protected sceKernelWriteWaitOnAddressCommand");
+__asm__(".protected sceKernelWriteWaitOnCounterCommand");
+__asm__(".protected sceKernelWriteWriteAddressCommand");
+__asm__(".protected sceKernelWriteWriteCounterCommand");
+__asm__(".protected sceKernelYieldCpumode");
+__asm__(".protected sceLibcMspaceCreateForMonoMutex");
+__asm__(".protected scePthreadAtfork");
+__asm__(".protected scePthreadAttrGetscope");
+__asm__(".protected scePthreadAttrSetcreatesuspend");
+__asm__(".protected scePthreadAttrSetscope");
+__asm__(".protected scePthreadBarrierDestroy");
+__asm__(".protected scePthreadBarrierInit");
+__asm__(".protected scePthreadBarrierWait");
+__asm__(".protected scePthreadBarrierattrDestroy");
+__asm__(".protected scePthreadBarrierattrGetpshared");
+__asm__(".protected scePthreadBarrierattrInit");
+__asm__(".protected scePthreadBarrierattrSetpshared");
+__asm__(".protected scePthreadCondattrGetclock");
+__asm__(".protected scePthreadGetconcurrency");
+__asm__(".protected scePthreadGetcpuclockid");
+__asm__(".protected scePthreadMain");
+__asm__(".protected scePthreadMulti");
+__asm__(".protected scePthreadMutexInitForInternalLibc");
+__asm__(".protected scePthreadMutexIsowned");
+__asm__(".protected scePthreadMutexattrGetgen");
+__asm__(".protected scePthreadMutexattrInitForInternalLibc");
+__asm__(".protected scePthreadMutexattrSetgen");
+__asm__(".protected scePthreadRegisterThreadDeathHook");
+__asm__(".protected scePthreadResume");
+__asm__(".protected scePthreadResumeAll");
+__asm__(".protected scePthreadSetBesteffort");
+__asm__(".protected scePthreadSetDefaultstacksize");
+__asm__(".protected scePthreadSetName");
+__asm__(".protected scePthreadSetconcurrency");
+__asm__(".protected scePthreadSingle");
+__asm__(".protected scePthreadSuspend");
+__asm__(".protected scePthreadSuspendAll");
+__asm__(".protected scePthreadTimedjoin");
+#endif
 
 }

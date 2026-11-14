@@ -195,21 +195,27 @@ int APS5_VABI __sys_workaround8849_nid_disambig1_nid_postfix() {
 }
 
 int APS5_VABI _dup2_nid_disambig1_nid_postfix(int from, int to) {
-    return _dup2_nid_postfix(from, to);
+    return GuestDup2_nid_no_patch(from, to);
 }
 
 int APS5_VABI _execve_nid_disambig1_nid_postfix(const char* path, char* const* argv, char* const* envp) {
-    return _execve_nid_postfix(path, argv, envp);
+    return GuestExecve_nid_no_patch(path, argv, envp);
 }
 
 int APS5_VABI _execvpe_nid_disambig1_nid_postfix(const char* name, char* const* argv, char* const* envp) {
-    return _execvpe_nid_postfix(name, argv, envp);
+    return GuestExecvpe_nid_no_patch(name, argv, envp);
 }
 
 int APS5_VABI _wait4_nid_disambig1_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+extern GuestSignalSet _sigintr_nid_postfix;
+
+GuestSignalSet _sigintr_nid_disambig1_nid_postfix{};
+
+std::uintptr_t __stack_chk_guard_nid_disambig1_nid_postfix = 0xDEADBEEFCAFEBABEull;
 
 int APS5_VABI sceKernelGetPrefixVersion() {
     NotImplemented_nid_no_patch(__func__);

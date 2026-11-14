@@ -319,6 +319,7 @@ void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context);
 void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* thunk, int (APS5_VABI *compare)(void*, const void*, const void*));
 int APS5_VABI access_nid_postfix(const char* path, int mode);
+int GuestAccess_nid_no_patch(const char* path, int mode);
 int APS5_VABI remove_nid_postfix(const char* path);
 double APS5_VABI __adddf3_nid_postfix(double a, double b);
 float APS5_VABI __addsf3_nid_postfix(float a, float b);
@@ -471,6 +472,7 @@ int APS5_VABI putwchar_nid_postfix(char16_t value);
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream);
 int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode);
 int APS5_VABI chdir_nid_postfix(const char* path);
+int GuestChdir_nid_no_patch(const char* path);
 char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);
 void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error);
@@ -1020,6 +1022,8 @@ std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const ch
 std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size);
 void APS5_VABI exit_nid_postfix(int code);
 int* APS5_VABI libc_error_nid_postfix();
+int* GuestError_nid_no_patch();
+[[noreturn]] void GuestStackChkFail_nid_no_patch();
 int APS5_VABI atexit_nid_postfix(GuestExitCallback func);
 int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func);
 int APS5_VABI daemon_nid_postfix(int noChdir, int noClose);
