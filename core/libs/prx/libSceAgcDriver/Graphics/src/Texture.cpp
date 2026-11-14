@@ -2425,6 +2425,14 @@ LookupOutcomes& ThreadLookupOutcomes() {
     return outcomes;
 }
 
+namespace {
+std::atomic<void (*)(std::uint64_t, std::size_t)> refreshUnchangedHookForTest{nullptr};
+}
+
+void StorageTexture::SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    refreshUnchangedHookForTest.store(hook, std::memory_order_release);
+}
+
 bool StorageTexture::Refresh() {
     return refresh(0, trackedLayers);
 }
@@ -2624,7 +2632,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
                 scanBlocks();
                 for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
                     if (stampedBlocks[unit] == 0) {
-                        layerGeneration[unit] = currentFor(unit);
+                        layerGeneration[unit] = advanceUnchanged(unit, currentFor(unit));
                         continue;
                     }
                     changed[unit] = true;
@@ -2709,8 +2717,9 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     else layerBehind.clear();
     if (unchanged) {
         ++Profile().storageReused;
+        if (const auto hook = refreshUnchangedHookForTest.load(std::memory_order_acquire)) hook(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
-            if (!outsideChanged || !outside[layer]) layerGeneration[layer] = currentFor(layer);
+            if (!outsideChanged || !outside[layer]) layerGeneration[layer] = advanceUnchanged(layer, currentFor(layer));
         }
         refreshGeneration();
         if (layerBehind.empty()) takeRefreshProof(alias != nullptr);
@@ -4391,6 +4400,11 @@ void StorageTexture::MarkSliceDirty(std::uint32_t slice, std::uint32_t count) {
 
 bool StorageTexture::anyLayerPending() const {
     return layerPending.Any();
+}
+
+std::uint64_t StorageTexture::advanceUnchanged(std::uint32_t unit, std::uint64_t to) {
+    if (unit < unwatchHash.size() && unwatchHash[unit].generation != 0 && unwatchHash[unit].generation == layerGeneration[unit]) unwatchHash[unit].generation = to;
+    return to;
 }
 
 void StorageTexture::refreshGeneration() {
@@ -6654,7 +6668,7 @@ void StorageTexture::advanceAdjacent(const std::vector<Adjacent>& adjacent, std:
         if (begin < beforeEnd && !GuestMemory::UnchangedSince(begin, static_cast<std::size_t>(beforeEnd - begin), seen)) continue;
         if (afterBegin < end && !GuestMemory::UnchangedSince(afterBegin, static_cast<std::size_t>(end - afterBegin), seen)) continue;
         if (trace) std::fprintf(stderr, "[flush] adjacent pending image 0x%llx+0x%llx layer %u advanced past a write-back's stamps (generation %llu -> %llu)\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), layer, static_cast<unsigned long long>(seen), static_cast<unsigned long long>(now));
-        texture->layerGeneration[layer] = now;
+        texture->layerGeneration[layer] = texture->advanceUnchanged(layer, now);
         texture->refreshGeneration();
     }
 }
@@ -6769,7 +6783,7 @@ void StorageTexture::supersedeHandedOver(std::uint32_t first, std::uint32_t coun
             if (!handedUnits[unit]) continue;
             handedUnits[unit] = false;
             if (!tracked || unit >= cpu.size() || cpu[unit] != 0) continue;
-            layerGeneration[unit] = current;
+            layerGeneration[unit] = advanceUnchanged(unit, current);
             moved = true;
         }
         if (moved) refreshGeneration();
