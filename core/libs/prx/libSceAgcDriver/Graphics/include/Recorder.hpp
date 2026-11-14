@@ -64,6 +64,7 @@ public:
     CommandState& operator=(const CommandState&) = delete;
 
     void Begin(VkCommandBuffer commands, bool suppress = true);
+    void Continue(VkCommandBuffer commands);
     void Invalidate() noexcept;
     VkCommandBuffer Commands() const { return commands; }
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
