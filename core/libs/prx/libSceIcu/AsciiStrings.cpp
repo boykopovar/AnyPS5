@@ -27,4 +27,20 @@ char APS5_VABI uprv_asciitolower_nid_postfix(char c) {
     return c;
 }
 
+int APS5_VABI uprv_stricmp_nid_postfix(const char* str1, const char* str2) {
+    if (str1 == nullptr) return str2 == nullptr ? 0 : -1;
+    if (str2 == nullptr) return 1;
+    for (;;) {
+        const auto c1 = static_cast<unsigned char>(*str1);
+        const auto c2 = static_cast<unsigned char>(*str2);
+        if (c1 == 0) return c2 == 0 ? 0 : -1;
+        if (c2 == 0) return 1;
+        const int rc = static_cast<int>(static_cast<unsigned char>(uprv_asciitolower_nid_postfix(static_cast<char>(c1))))
+                     - static_cast<int>(static_cast<unsigned char>(uprv_asciitolower_nid_postfix(static_cast<char>(c2))));
+        if (rc != 0) return rc;
+        ++str1;
+        ++str2;
+    }
+}
+
 }

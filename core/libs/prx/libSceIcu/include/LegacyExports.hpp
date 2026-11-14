@@ -518,7 +518,7 @@ int APS5_VABI _ZN6icu_6818Normalizer2Factory14getFCDInstanceER10UErrorCode_nid_p
 int APS5_VABI _ZN6icu_6818CharStringByteSinkD2Ev_nid_postfix();
 int APS5_VABI uprv_getUTCtime_nid_postfix();
 int APS5_VABI _ZN6icu_6811ICUNotifierC2Ev_nid_postfix();
-int APS5_VABI uprv_stricmp_nid_postfix();
+int APS5_VABI uprv_stricmp_nid_postfix(const char* str1, const char* str2);
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryD2Ev_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Bz2aeA6fU_plus_c_nid_no_patch();
 int APS5_VABI _ZN6icu_689UVector32D0Ev_nid_postfix();
