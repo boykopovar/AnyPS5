@@ -17,4 +17,9 @@ std::int8_t APS5_VABI uprv_isASCIILetter_nid_postfix(char c) {
     return static_cast<std::int8_t>(('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z'));
 }
 
+char APS5_VABI uprv_toupper_nid_postfix(char c) {
+    if ('a' <= c && c <= 'z') c = static_cast<char>(c + ('A' - 'a'));
+    return c;
+}
+
 }
