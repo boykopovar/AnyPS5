@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -335,7 +336,15 @@ void RunTextureFormatTests() {
     reject([] { ResolveTextureFormat(0); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(183); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(9999); }, "unsupported guest texture format");
-    reject([] { BytesPerElement(3); }, "unsupported guest texture format");
+    reject([] { BytesPerElement(4); }, "unsupported guest texture format");
+    for (const auto& [scaled, unorm, bits] : {std::tuple{3u, 1u, 8u}, std::tuple{9u, 7u, 16u}, std::tuple{16u, 14u, 8u}, std::tuple{25u, 23u, 16u}, std::tuple{58u, 56u, 8u}, std::tuple{67u, 65u, 16u}}) {
+        const auto name = "unsigned scaled format " + std::to_string(scaled);
+        Require(ResolveTextureFormat(scaled) == ResolveTextureFormat(unorm) && BytesPerElement(scaled) == BytesPerElement(unorm), name + " must be stored and viewed like its UNORM layout");
+        Require(ShaderRecompiler::ScaledUnormBits(static_cast<ShaderRecompiler::IrBufferFormat>(scaled)) == bits, name + " must be scaled back from UNORM by its component width");
+        Require(ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(scaled)) == ShaderRecompiler::IrTextureNumericClass::Float, name + " must be sampled as float");
+        Require(FindGuestTextureFormat(ResolveTextureFormat(unorm), BytesPerElement(unorm)) == unorm, "the UNORM view of " + name + " must still map back to UNORM format " + std::to_string(unorm));
+    }
+    for (const std::uint32_t format : {4u, 10u, 17u, 26u, 59u, 68u, 52u}) Require(ShaderRecompiler::ScaledUnormBits(static_cast<ShaderRecompiler::IrBufferFormat>(format)) == 0u, "format " + std::to_string(format) + " has no exact UNORM scaling");
     reject([] { IsBlockCompressed(200); }, "unsupported guest texture format");
     for (const std::uint32_t format : {128u, 129u, 130u, 170u, 172u, 174u, 182u}) Require(IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must be an sRGB texture format");
     for (const std::uint32_t format : {1u, 14u, 56u, 71u, 169u, 171u, 173u, 181u}) Require(!IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must not be an sRGB texture format");

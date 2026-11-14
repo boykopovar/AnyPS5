@@ -12260,6 +12260,34 @@ void verifyArrayVolumeStoreMode() {
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, uintDescriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "3D image atomic on a 2D-array T# was accepted");
 }
 
+void verifyScaledUnormModes() {
+    using namespace ShaderRecompiler;
+    const auto descriptor = [](std::uint32_t format) { return DescriptorValue{{0xf41e7a40u, 0xc0000000u | (format << 20u), 0x021bc3bfu, 0x90000204u, 0u, 0x00700000u, 0u, 0u}, 8u}; };
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    for (const auto& [format, bits] : {std::pair{3u, 8u}, std::pair{16u, 8u}, std::pair{58u, 8u}, std::pair{9u, 16u}, std::pair{25u, 16u}, std::pair{67u, 16u}}) {
+        const auto& mode = modes[ResourceMaterializer::RuntimeImageMode(image, descriptor(format), modes)];
+        require(mode.numericClass == IrTextureNumericClass::Float && mode.scaledUnormBits == bits && mode.conversionFormat == IrBufferFormat::Invalid, "an unsigned scaled image did not select a float mode that scales its UNORM view back by its component width");
+    }
+    for (const auto format : {3u, 9u, 16u, 25u}) {
+        auto selectsAlpha = descriptor(format);
+        selectsAlpha.dwords[3] = 0x90000facu;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, selectsAlpha, modes)); }, "selects the alpha a scaled image format does not have", "a one- or two-channel scaled image whose T# selects the alpha it does not have was accepted");
+    }
+    for (const auto format : {58u, 67u}) {
+        auto selectsAlpha = descriptor(format);
+        selectsAlpha.dwords[3] = 0x90000facu;
+        require(modes[ResourceMaterializer::RuntimeImageMode(image, selectsAlpha, modes)].scaledUnormBits != 0u, "a four-channel scaled image whose T# selects its alpha did not select a scaled mode");
+    }
+    require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor(1u), modes)].scaledUnormBits == 0u, "an 8_UNORM image selected a scaled mode");
+    ImageResource store = image;
+    store.resourceClass = ImageResourceClass::Storage;
+    store.written = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, descriptor(3u), ResourceMaterializer::RuntimeImageModes(store))); }, "unsupported format", "a scaled storage image was accepted although writes through its UNORM view would not be scaled");
+}
+
 void verifySrgbDepthCompareModes() {
     using namespace ShaderRecompiler;
     for (const auto decodeFormats : {0u, 1u, 2u, 3u}) {
@@ -12690,6 +12718,7 @@ int main(int argc, char** argv) {
         verifySamplerTableDeduplication();
         verifyDynamicStorageMipChain();
         verifySrgbDepthCompareModes();
+        verifyScaledUnormModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
         verifyPixelQuadPermReads();

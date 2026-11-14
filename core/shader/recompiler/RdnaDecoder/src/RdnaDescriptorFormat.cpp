@@ -14,9 +14,15 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 87> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 93> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
+    {IrBufferFormat::Format8UScaled, true, false, false},
+    {IrBufferFormat::Format16UScaled, true, false, false},
+    {IrBufferFormat::Format8_8UScaled, true, false, false},
+    {IrBufferFormat::Format16_16UScaled, true, false, false},
+    {IrBufferFormat::Format8_8_8_8UScaled, true, false, false},
+    {IrBufferFormat::Format16_16_16_16UScaled, true, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
     {IrBufferFormat::Format8SInt, true, false, true},
     {IrBufferFormat::Format16UNorm, true, false, false},
@@ -154,6 +160,21 @@ bool IsConvertedUnormTextureFormat(IrBufferFormat format) {
 
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
     return IsConvertedUnormTextureFormat(format) || format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
+}
+
+std::uint32_t ScaledUnormBits(IrBufferFormat format) {
+    switch (format) {
+        case IrBufferFormat::Format8UScaled:
+        case IrBufferFormat::Format8_8UScaled:
+        case IrBufferFormat::Format8_8_8_8UScaled:
+            return 8u;
+        case IrBufferFormat::Format16UScaled:
+        case IrBufferFormat::Format16_16UScaled:
+        case IrBufferFormat::Format16_16_16_16UScaled:
+            return 16u;
+        default:
+            return 0u;
+    }
 }
 
 IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {

@@ -61,6 +61,7 @@ struct DecodedImage {
     bool depthUnorm16 = false;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     bool srgbDecode = false;
+    std::uint32_t scaledUnormBits = 0u;
     bool layerRows = false;
 };
 
@@ -336,6 +337,15 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     decoded.srgbDecode = !storage && !base.depthCompare && (srgbDecodeFormats & SrgbDecodeBit(format)) != 0u;
     if (decoded.srgbDecode && !base.srgbDecodeCompatible) {
         return rejectImage(PoisonReason::SrgbUnsupported, "samples or gathers an sRGB image the device cannot sample, which is not implemented");
+    }
+    decoded.scaledUnormBits = ScaledUnormBits(format);
+    if (decoded.scaledUnormBits != 0u && (storage || base.depthCompare || base.packed)) {
+        return rejectImage(PoisonReason::NumericClass, storage ? "storage image descriptor uses an unsupported format" : "compares or packs a scaled image, which is not implemented");
+    }
+    if (decoded.scaledUnormBits != 0u && format != IrBufferFormat::Format8_8_8_8UScaled && format != IrBufferFormat::Format16_16_16_16UScaled) {
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::NumericClass, "selects the alpha a scaled image format does not have, which is not implemented");
+        }
     }
     if (storage || decoded.conversionFormat != IrBufferFormat::Invalid) {
         decoded.shaderSwizzle = descriptorImageSwizzle(descriptor);
@@ -2444,6 +2454,18 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(mode);
         }
     }
+    if (!image.depthCompare && !storage && !image.packed) {
+        const auto count = modes.size();
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto base = modes[index];
+            if (base.numericClass != IrTextureNumericClass::Float || base.conversionFormat != IrBufferFormat::Invalid || base.packedFormat != IrBufferFormat::Invalid || base.depthBits || base.srgbDecode || (base.emulatedCompare & EmulatedCompare::Enabled) != 0u) continue;
+            for (const auto bits : {8u, 16u}) {
+                auto mode = base;
+                mode.scaledUnormBits = static_cast<std::uint8_t>(bits);
+                modes.push_back(mode);
+            }
+        }
+    }
     if (image.constantSwizzleCompatible && !storage && !image.depthCompare && !image.packed && !table) {
         for (const auto numeric : {IrTextureNumericClass::Float, IrTextureNumericClass::Uint, IrTextureNumericClass::Sint}) {
             auto mode = image;
@@ -2511,7 +2533,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         }
     }
     if (decoded.mipCount > (image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u)) return reject(PoisonReason::InvalidFormat, "runtime storage image mip capacity exceeded");
-    if ((descriptorImageSwizzle(descriptor) & 06666u) == 0u && !decoded.fmask && !decoded.depthBits && decoded.conversionFormat == IrBufferFormat::Invalid && !decoded.srgbDecode) {
+    if ((descriptorImageSwizzle(descriptor) & 06666u) == 0u && !decoded.fmask && !decoded.depthBits && decoded.conversionFormat == IrBufferFormat::Invalid && !decoded.srgbDecode && decoded.scaledUnormBits == 0u) {
         for (std::uint32_t index = 0u; index < modes.size(); ++index) {
             if (modes[index].constantSwizzle && modes[index].numericClass == decoded.numericClass) {
                 result.mode = index;
@@ -2526,7 +2548,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         const auto& mode = modes[index];
         if (mode.constantSwizzle) continue;
         if (((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u) != emulated) continue;
-        if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode && mode.layerRows == decoded.layerRows) {
+        if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode && mode.scaledUnormBits == decoded.scaledUnormBits && mode.layerRows == decoded.layerRows) {
             result.mode = index;
             return result;
         }
