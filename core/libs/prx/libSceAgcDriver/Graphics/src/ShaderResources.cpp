@@ -7051,6 +7051,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
         if (override == moved.end() && (bytes > maxSnapshotBytes || totalSnapshotBytes + bytes > maxSnapshotBytes)) continue;
         const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        const auto forgetSerial = GuestMemory::ForgetSerial();
         if (!stamped) {
             stamp = {GuestMemory::TrackerGeneration(), GuestMemory::CollectEpoch(), registryGeneration};
             stamped = true;
@@ -7080,7 +7081,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 if (buffer == nullptr) {
                     buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                     std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
-                    recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+                    recorder.KeepDrawSnapshot(begin, bytes, generation, forgetSerial, buffer);
                 }
             }
             if (GuestMemory::TrackerGeneration() != stamp[0]) stamped = false;
