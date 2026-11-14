@@ -144,7 +144,7 @@ uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, 
 }
 
 uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
-    return Agc::Marker::Pop(buf, __func__);
+    return Agc::Marker::PopTag(buf, 0u, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {
