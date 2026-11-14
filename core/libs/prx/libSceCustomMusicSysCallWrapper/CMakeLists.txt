@@ -1,0 +1,17 @@
+add_library(libSceCustomMusicSysCallWrapper SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceCustomMusicSysCallWrapper PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceCustomMusicSysCallWrapper PRIVATE libSceNet libSceNetCtl libSceAudiodec libSceAudiodecCpu)
+configure_windows_unwind(libSceCustomMusicSysCallWrapper)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_custom_music_forwarders_tests ${LIBS_INCLUDE_DIR}/tests/GuestCustomMusicForwarders.cpp)
+    target_include_directories(guest_custom_music_forwarders_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_custom_music_forwarders_tests PRIVATE libSceCustomMusicSysCallWrapper libSceNet libSceNetCtl libSceAudiodec libSceAudiodecCpu libkernel libc)
+    configure_windows_unwind(guest_custom_music_forwarders_tests)
+    add_test(NAME guest_custom_music_forwarders COMMAND guest_custom_music_forwarders_tests)
+    set_tests_properties(guest_custom_music_forwarders PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_custom_music_forwarders PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCustomMusicSysCallWrapper>")
+    endif()
+endif()

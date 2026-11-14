@@ -5,228 +5,287 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cstdlib>
+
+extern "C" {
+int APS5_VABI sceAudiodecClearContext(int32_t handle);
+int APS5_VABI sceAudiodecCpuDecode(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, std::uint32_t type);
+int APS5_VABI sceAudiodecCreateDecoder(AudiodecCtrl* ctrl, uint32_t codecType);
+int APS5_VABI sceAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl);
+int APS5_VABI sceAudiodecDeleteDecoder(int32_t handle);
+int APS5_VABI sceKernelClose(int d);
+int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp);
+std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
+int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp);
+int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
+std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes);
+int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen);
+int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen);
+int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen);
+int APS5_VABI sceNetEpollAbort(int eid, int flags);
+int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event);
+int APS5_VABI sceNetEpollCreate(const char* name, int flags);
+int APS5_VABI sceNetEpollDestroy(int eid);
+int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout);
+int* APS5_VABI sceNetErrnoLoc(void);
+const char* APS5_VABI sceNetInetNtop(int af, const void* src, char* dst, uint32_t size);
+int APS5_VABI sceNetInetPton(int af, const char* src, void* dst);
+int APS5_VABI sceNetListen(int s, int backlog);
+int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags);
+int APS5_VABI sceNetPoolDestroy(int memid);
+std::int64_t APS5_VABI sceNetRecv(int s, void* buf, size_t len, int flags);
+int APS5_VABI sceNetResolverAbort(int rid, int flags);
+int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags);
+int APS5_VABI sceNetResolverDestroy(int rid);
+std::int64_t APS5_VABI sceNetSend(int s, const void* buf, size_t len, int flags);
+int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t optlen);
+int APS5_VABI sceNetShutdown(int s, int how);
+int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol);
+int APS5_VABI sceNetSocketAbort(int s, int flags);
+int APS5_VABI sceNetSocketClose(int s);
+int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
+int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
+int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
+int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
+int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
+int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadDetach(Pthread thread);
+void APS5_VABI scePthreadExit(void* retval);
+int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
+int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
+int APS5_VABI scePthreadSetprio(Pthread thread, int prio);
+Pthread APS5_VABI scePthreadSelf();
+void APS5_VABI scePthreadYield();
+int APS5_VABI sceNetCtlInit(void);
+void APS5_VABI sceNetCtlTerm(void);
+int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout);
+}
 
 extern "C" {
 
-int APS5_VABI sceCustomMusicNetInetNtop() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI sceCustomMusicNetInetNtop(int af, const void* src, char* dst, uint32_t size) {
+    return sceNetInetNtop(af, src, dst, size);
 }
 
-int APS5_VABI sceCustomMusicNetShutdown() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetShutdown(int s, int how) {
+    return sceNetShutdown(s, how);
 }
 
-int APS5_VABI sceCustomMusicNetSocketAbort() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetSocketAbort(int s, int flags) {
+    return sceNetSocketAbort(s, flags);
 }
 
-int APS5_VABI sceCustomMusicPthreadAttrGet() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadAttrGet(Pthread thread, PthreadAttr* attr) {
+    return scePthreadAttrGet(thread, attr);
 }
 
-int APS5_VABI sceCustomMusicPthreadSelf() {
-    NotImplemented_nid_no_patch(__func__);
+Pthread APS5_VABI sceCustomMusicPthreadSelf() {
+    return scePthreadSelf();
 }
 
-int APS5_VABI sceCustomMusicSelect() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceCustomMusicSelect(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
+    return select_nid_postfix(nfds, readfds, writefds, exceptfds, timeout);
 }
 
 }
 
 extern "C" {
 
-int APS5_VABI sceCustomMusicAudiodecClearContext() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicAudiodecClearContext(int32_t handle) {
+    return sceAudiodecClearContext(handle);
 }
 
-int APS5_VABI sceCustomMusicAudiodecCpuDecode() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicAudiodecCpuDecode(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory, std::uint32_t type) {
+    return sceAudiodecCpuDecode(ctrl, memory, type);
 }
 
-int APS5_VABI sceCustomMusicAudiodecCreateDecoder() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicAudiodecCreateDecoder(AudiodecCtrl* ctrl, uint32_t codecType) {
+    return sceAudiodecCreateDecoder(ctrl, codecType);
 }
 
-int APS5_VABI sceCustomMusicAudiodecDecode() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl) {
+    return sceAudiodecDecode(handle, ctrl);
 }
 
-int APS5_VABI sceCustomMusicAudiodecDeleteDecoder() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicAudiodecDeleteDecoder(int32_t handle) {
+    return sceAudiodecDeleteDecoder(handle);
 }
 
-int APS5_VABI sceCustomMusicFileClose() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicFileClose(int d) {
+    return sceKernelClose(d);
 }
 
-int APS5_VABI sceCustomMusicFileLseek() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI sceCustomMusicFileLseek(int d, std::int64_t offset, int whence) {
+    return sceKernelLseek(d, offset, whence);
 }
 
-int APS5_VABI sceCustomMusicFileOpenRead() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicFileOpenRead(const char* path, int, std::uint16_t) {
+    return sceKernelOpen(path, 0, 0555);
 }
 
-int APS5_VABI sceCustomMusicFileRead() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI sceCustomMusicFileRead(int d, void* buf, std::size_t nbytes) {
+    return sceKernelRead(d, buf, nbytes);
 }
 
-int APS5_VABI sceCustomMusicKernelGettimeofday() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicKernelGettimeofday(KernelTimeval* tp) {
+    return sceKernelGettimeofday(tp);
 }
 
-int APS5_VABI sceCustomMusicKernelNanosleep() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+    return sceKernelNanosleep(rqtp, rmtp);
 }
 
-int APS5_VABI sceCustomMusicNetAccept() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetAccept(int s, void* addr, uint32_t* addrlen) {
+    return sceNetAccept(s, addr, addrlen);
 }
 
-int APS5_VABI sceCustomMusicNetBind() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetBind(int s, const void* addr, uint32_t addrlen) {
+    return sceNetBind_nid_postfix(s, addr, addrlen);
 }
 
-int APS5_VABI sceCustomMusicNetConnect() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetConnect(int s, const void* addr, uint32_t addrlen) {
+    return sceNetConnect(s, addr, addrlen);
 }
 
 int APS5_VABI sceCustomMusicNetCtlInit() {
-    NotImplemented_nid_no_patch(__func__);
+    return sceNetCtlInit();
 }
 
-int APS5_VABI sceCustomMusicNetCtlTerm() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceCustomMusicNetCtlTerm() {
+    sceNetCtlTerm();
 }
 
-int APS5_VABI sceCustomMusicNetEpollAbort() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetEpollAbort(int eid, int flags) {
+    return sceNetEpollAbort(eid, flags);
 }
 
-int APS5_VABI sceCustomMusicNetEpollControl() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetEpollControl(int eid, int op, int id, const NetEpollEvent* event) {
+    return sceNetEpollControl(eid, op, id, event);
 }
 
-int APS5_VABI sceCustomMusicNetEpollCreate() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetEpollCreate(const char* name, int flags) {
+    return sceNetEpollCreate(name, flags);
 }
 
-int APS5_VABI sceCustomMusicNetEpollDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetEpollDestroy(int eid) {
+    return sceNetEpollDestroy(eid);
 }
 
-int APS5_VABI sceCustomMusicNetEpollWait() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout) {
+    return sceNetEpollWait(eid, events, maxevents, timeout);
 }
 
-int APS5_VABI sceCustomMusicNetErrnoLoc() {
-    NotImplemented_nid_no_patch(__func__);
+int* APS5_VABI sceCustomMusicNetErrnoLoc() {
+    return sceNetErrnoLoc();
 }
 
-int APS5_VABI sceCustomMusicNetInetPton() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetInetPton(int af, const char* src, void* dst) {
+    return sceNetInetPton(af, src, dst);
 }
 
-int APS5_VABI sceCustomMusicNetListen() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetListen(int s, int backlog) {
+    return sceNetListen(s, backlog);
 }
 
-int APS5_VABI sceCustomMusicNetPoolCreate() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetPoolCreate(const char* name, int size, int flags) {
+    return sceNetPoolCreate(name, size, flags);
 }
 
-int APS5_VABI sceCustomMusicNetPoolDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetPoolDestroy(int memid) {
+    return sceNetPoolDestroy(memid);
 }
 
-int APS5_VABI sceCustomMusicNetRecv() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI sceCustomMusicNetRecv(int s, void* buf, size_t len, int flags) {
+    return sceNetRecv(s, buf, len, flags);
 }
 
-int APS5_VABI sceCustomMusicNetResolverAbort() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetResolverAbort(int rid, int flags) {
+    return sceNetResolverAbort(rid, flags);
 }
 
-int APS5_VABI sceCustomMusicNetResolverCreate() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetResolverCreate(const char* name, int memid, int flags) {
+    return sceNetResolverCreate(name, memid, flags);
 }
 
-int APS5_VABI sceCustomMusicNetResolverDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetResolverDestroy(int rid) {
+    return sceNetResolverDestroy(rid);
 }
 
-int APS5_VABI sceCustomMusicNetSend() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI sceCustomMusicNetSend(int s, const void* buf, size_t len, int flags) {
+    return sceNetSend(s, buf, len, flags);
 }
 
-int APS5_VABI sceCustomMusicNetSetsockopt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t optlen) {
+    return sceNetSetsockopt(s, level, optname, optval, optlen);
 }
 
-int APS5_VABI sceCustomMusicNetSocketClose() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetSocketClose(int s) {
+    return sceNetSocketClose(s);
 }
 
-int APS5_VABI sceCustomMusicNetSocket() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicNetSocket(const char* name, int family, int type, int protocol) {
+    return sceNetSocket(name, family, type, protocol);
 }
 
-int APS5_VABI sceCustomMusicPthreadAttrDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadAttrDestroy(PthreadAttr* attr) {
+    return scePthreadAttrDestroy(attr);
 }
 
-int APS5_VABI sceCustomMusicPthreadAttrInit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadAttrInit(PthreadAttr* attr) {
+    return scePthreadAttrInit(attr);
 }
 
-int APS5_VABI sceCustomMusicPthreadCondDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadCondDestroy(PthreadCond* cond) {
+    return scePthreadCondDestroy(cond);
 }
 
-int APS5_VABI sceCustomMusicPthreadCondInit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name) {
+    return scePthreadCondInit(cond, attr, name);
 }
 
-int APS5_VABI sceCustomMusicPthreadCondWait() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) {
+    return scePthreadCondWait(cond, mutex);
 }
 
-int APS5_VABI sceCustomMusicPthreadCreate() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
+    return scePthreadCreate(thread, attr, entry, arg, name);
 }
 
-int APS5_VABI sceCustomMusicPthreadDetach() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadDetach(Pthread thread) {
+    return scePthreadDetach(thread);
 }
 
-int APS5_VABI sceCustomMusicPthreadExit() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceCustomMusicPthreadExit(void* retval) {
+    scePthreadExit(retval);
+    std::abort();
 }
 
-int APS5_VABI sceCustomMusicPthreadJoin() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadJoin(Pthread thread, void** retval) {
+    return scePthreadJoin(thread, retval);
 }
 
-int APS5_VABI sceCustomMusicPthreadMutexDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadMutexDestroy(PthreadMutex* mutex) {
+    return scePthreadMutexDestroy(mutex);
 }
 
-int APS5_VABI sceCustomMusicPthreadMutexInit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name) {
+    return scePthreadMutexInit(mutex, attr, name);
 }
 
-int APS5_VABI sceCustomMusicPthreadMutexLock() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadMutexLock(PthreadMutex* mutex) {
+    return scePthreadMutexLock(mutex);
 }
 
-int APS5_VABI sceCustomMusicPthreadSetprio() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceCustomMusicPthreadSetprio(Pthread thread, int prio) {
+    const int error = scePthreadSetprio(thread, prio + 254);
+    return error < 0 ? error : 0;
 }
 
-int APS5_VABI sceCustomMusicPthreadYield() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceCustomMusicPthreadYield() {
+    scePthreadYield();
 }
 
 int APS5_VABI libSceCustomMusicSysCallWrapperUnknown__plus_LdekyVYugM_nid_no_patch() {
