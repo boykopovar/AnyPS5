@@ -922,7 +922,16 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::vector<std::uint32_t> words;
         freshRuns(i, runs, words);
         const auto& compiled = *stageCaptures[i].compiled;
-        const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
+        const auto& keptPush = kept.patchedPushConstants.empty() ? kept.compiled->pushConstants : kept.patchedPushConstants;
+        const auto sameBindings = [&] {
+            if (compiled.bindings.size() != kept.compiled->bindings.size()) return false;
+            for (std::size_t binding = 0; binding < compiled.bindings.size(); ++binding) {
+                if (compiled.bindings[binding].role == ShaderRecompiler::DescriptorRole::ShaderData) continue;
+                if (compiled.bindings[binding].guestDescriptor != kept.compiled->bindings[binding].guestDescriptor) return false;
+            }
+            return true;
+        };
+        const char* what = joinedRuns(runs) != joinedRuns(kept.runs) ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != keptPush ? "push constants" : !sameBindings() ? "bindings" : nullptr;
         ++dataVerified;
         if (what == nullptr) return;
         char message[640];
