@@ -1,11 +1,14 @@
 import hashlib
+import re
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+TOOLS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(TOOLS))
 import isa_profiles
 
 
@@ -224,6 +227,50 @@ class LlvmSupplementalFormsTests(unittest.TestCase):
         self.assertIn(("DS_ADD_SRC2_U64", "DS", "base", 0xc0), rows)
         self.assertIn(("DS_MAX_SRC2_F64", "DS", "base", 0xd3), rows)
         self.assertIn(("V_MUL_LO_I32", "VOP3", "base", 0x16b), rows)
+
+
+class LoadGfx1013FormsTests(unittest.TestCase):
+    def test_default_path_is_the_committed_inventory(self):
+        self.assertEqual(isa_profiles.load_gfx1013_forms(), isa_profiles.load_gfx1013_forms(TOOLS / "gfx1013_isa_forms.txt"))
+
+    def test_blank_and_comment_lines_are_skipped_and_file_order_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forms.txt"
+            path.write_text("\n  # indented comment\n# comment\nV_B VOP2 base 4\n\nS_A SOP1 base 3\n", encoding="utf-8")
+            self.assertEqual(isa_profiles.load_gfx1013_forms(path), [("V_B", "VOP2", "base", 4), ("S_A", "SOP1", "base", 3)])
+
+    def test_invalid_line_is_reported_with_its_physical_line_number(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forms.txt"
+            path.write_text("# comment\n\nS_A SOP1 base 3\nS_B SOP1 base\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, f"invalid ISA form at {re.escape(str(path))}:4"):
+                isa_profiles.load_gfx1013_forms(path)
+
+    def test_non_numeric_opcode_and_extra_fields_are_invalid_lines(self):
+        for text in ("S_A SOP1 base x\n", "S_A SOP1 base 3 extra\n"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "forms.txt"
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, f"invalid ISA form at {re.escape(str(path))}:1"):
+                    isa_profiles.load_gfx1013_forms(path)
+
+    def test_file_without_forms_is_an_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forms.txt"
+            path.write_text("# only comments\n\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, f"no ISA forms in {re.escape(str(path))}"):
+                isa_profiles.load_gfx1013_forms(path)
+
+    def test_loaded_rows_are_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forms.txt"
+            path.write_text("S_A SOP1 base 3\nS_B SOP1 base 3\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate ISA encoding"):
+                isa_profiles.load_gfx1013_forms(path)
+
+    def test_missing_file_is_not_an_empty_inventory(self):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(FileNotFoundError):
+            isa_profiles.load_gfx1013_forms(Path(directory) / "missing.txt")
 
 
 if __name__ == "__main__":
