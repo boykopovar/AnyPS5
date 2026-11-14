@@ -4,6 +4,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 #define CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -47,7 +48,8 @@ constexpr std::int32_t NormalSpeed = 100;
 class ISourceEvents {
 public:
     virtual ~ISourceEvents() = default;
-    virtual void OnWarning(std::int32_t code) = 0;
+    virtual std::uint64_t OnWarning(std::int32_t code) = 0;
+    virtual bool WarningDelivered(std::uint64_t ticket) = 0;
     virtual void OnError() = 0;
 };
 
@@ -153,9 +155,11 @@ private:
         std::int32_t warning;
         bool autoStart;
         bool error;
+        std::uint64_t ticket = 0;
     };
 
-    void OnWarning(std::int32_t code) override;
+    std::uint64_t OnWarning(std::int32_t code) override;
+    bool WarningDelivered(std::uint64_t ticket) override;
     void OnError() override;
     void queue(const Event& event);
     void controllerLoop(const bool& closed);
@@ -185,6 +189,8 @@ private:
     std::mutex eventMutex;
     TimedWait::Condition eventCondition;
     std::deque<Event> events;
+    std::uint64_t queuedWarnings = 0;
+    std::atomic<std::uint64_t> deliveredWarnings = 0;
     bool quit = false;
     std::shared_ptr<bool> controllerClosed = std::make_shared<bool>(false);
     std::thread controller;

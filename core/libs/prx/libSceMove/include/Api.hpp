@@ -15,13 +15,13 @@ int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* da
 int APS5_VABI sceMoveSetVibration(int32_t handle, uint8_t motor);
 int APS5_VABI sceMoveSetLightSphere(int32_t handle, uint8_t red, uint8_t green, uint8_t blue);
 int APS5_VABI sceMoveResetLightSphere(int32_t handle);
-int APS5_VABI sceMoveGetBluetoothAddress(void);
-int APS5_VABI sceMoveGetCalibrationInfo(void);
-int APS5_VABI sceMoveGetDeviceId(void);
+int APS5_VABI sceMoveGetBluetoothAddress(int32_t handle, uint64_t* address);
+int APS5_VABI sceMoveGetCalibrationInfo(int32_t handle, void* info);
+int APS5_VABI sceMoveGetDeviceId(int32_t handle, uint32_t* deviceId);
 int APS5_VABI sceMoveIsReproductionModel(void);
-int APS5_VABI sceMoveIsValidHandle(void);
+int APS5_VABI sceMoveIsValidHandle(int32_t handle);
 int APS5_VABI sceMoveReadStateRecentForTracker(void);
-int APS5_VABI sceMoveSetCalibrationMode(void);
+int APS5_VABI sceMoveSetCalibrationMode(int32_t handle, int32_t mode);
 int APS5_VABI sceMoveSetExtensionPortOutput(void);
 int APS5_VABI sceMoveSetLightSphereForTracker(void);
 int APS5_VABI sceMoveWriteCalibrationInfo(void);

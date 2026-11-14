@@ -93,10 +93,6 @@ void SkipField(const char*& cursor, const char* end) {
 }
 
 void ParseMapsLine(const char* line, const char* end) {
-    if (g_mappingCount == MappingCapacity) {
-        g_mappingsTruncated = true;
-        return;
-    }
     Mapping mapping{};
     const char* cursor = line;
     if (!ParseHex(cursor, end, mapping.start) || cursor == end || *cursor++ != '-' || !ParseHex(cursor, end, mapping.end)) return;
@@ -116,7 +112,17 @@ void ParseMapsLine(const char* line, const char* end) {
         mapping.name[length] = name[length];
         ++length;
     }
-    g_mappings[g_mappingCount++] = mapping;
+    if (g_mappingCount < MappingCapacity) {
+        g_mappings[g_mappingCount++] = mapping;
+        return;
+    }
+    g_mappingsTruncated = true;
+    if (!mapping.executable) return;
+    for (std::size_t index = g_mappingCount; index > 0; --index) {
+        if (g_mappings[index - 1].executable) continue;
+        g_mappings[index - 1] = mapping;
+        return;
+    }
 }
 
 void ReadMappings() {

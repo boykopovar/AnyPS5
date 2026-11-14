@@ -56,7 +56,7 @@ def build_elf(symbols, needed=()):
     return bytes(image)
 
 
-def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,)):
+def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,), extra_dynamic=()):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
     for name, index, info in symbols:
@@ -88,6 +88,7 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,)):
         (6, 0x400000 + symbols_offset),
         (11, 24),
         (hash_tag, 0x400000 + hash_offset),
+        *extra_dynamic,
         (0, 0),
     ))
     image = bytearray(dynamic_offset + len(dynamic))
@@ -697,6 +698,17 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(err, f"FAIL: {output}: JSON output is a directory\n")
         self.assertEqual(set(work.root.iterdir()), files)
+
+    def test_long_json_filename_can_be_written_and_replaced(self):
+        root = self.work.root
+        directory = Path("\\\\?\\" + str(root.resolve())) if os.name == "nt" else root
+        output = directory / ("a" * 245 + ".json")
+        self.addCleanup(output.unlink, missing_ok=True)
+        files = set(directory.iterdir())
+        for result in ({"complete": True}, {"complete": False}):
+            import_audit.write_json(output, result)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+            self.assertEqual(set(directory.iterdir()), files | {output})
 
     @unittest.skipUnless(os.name == "posix", "POSIX report permissions")
     def test_new_json_report_permissions_follow_the_process_umask(self):
@@ -1523,6 +1535,19 @@ class ImportAuditTests(unittest.TestCase):
             ["libSceA.prx"], gnu_hash=True)
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image),
                          ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, {"libSceA.prx"}))
+
+    def test_sectionless_elf_rejects_conflicting_dynamic_metadata(self):
+        path = Path("module.prx")
+        symbols = [("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB", 1, GLOBAL_FUNCTION)]
+        needed = ["libSceA.prx", "libSceB.prx"]
+        for gnu_hash in (False, True):
+            with self.subTest(gnu_hash=gnu_hash):
+                image = build_sectionless_elf(symbols, needed, gnu_hash, extra_dynamic=((11, 24),))
+                self.assertEqual(import_audit.elf_program_dynamic_symbols(path, image),
+                                 ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, set(needed)))
+                image = build_sectionless_elf(symbols, needed, gnu_hash, extra_dynamic=((11, 16), (11, 24)))
+                with self.assertRaisesRegex(import_audit.AuditError, r"module\.prx: conflicting duplicate DT_SYMENT"):
+                    import_audit.elf_program_dynamic_symbols(path, image)
 
     def test_sectionless_elf_gnu_hash_reads_each_chain_entry_once(self):
         symbols = [(f"symbol{index}", int(index != 0), GLOBAL_FUNCTION) for index in range(32)]
@@ -2981,6 +3006,41 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<I", image, 0x58 + 280 + 20, 0x238 + len(target))
         self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
 
+    def pe_forwarded_export(self, name, target):
+        image = bytearray(build_pe([name]))
+        size = struct.unpack_from("<I", image, 0x58 + 116)[0]
+        pointer = 0x200 + size
+        target = target.encode("ascii") + b"\0"
+        image[pointer:pointer] = target
+        struct.pack_into("<I", image, 0x200 + 40, 0x1000 + size)
+        for field in (8, 16):
+            struct.pack_into("<I", image, 0x58 + 240 + field, size + len(target))
+        struct.pack_into("<II", image, 0x58 + 112, 0x1000, size + len(target))
+        struct.pack_into("<I", image, 0x58 + 280 + 20, pointer + len(target))
+        return image
+
+    def test_pe_forwarders_require_a_module_and_named_or_ordinal_target(self):
+        for target in ("", "NoDot", ".Target", "KERNEL32.", "KERNEL32.#", "KERNEL32.#x", "KERNEL32.#1x", "KERNEL32.#-1", "KERNEL32.#+1"):
+            with self.subTest(target=target), self.assertRaisesRegex(import_audit.AuditError, "invalid export forwarder"):
+                import_audit.pe_exports(Path("lib.prx"), self.pe_forwarded_export("alpha", target))
+        for target in ("NTDLL.#27", "KERNEL32.Sleep", "module.name.with.dots", "Module.?Func@@YAHXZ", "api-ms-win-core-file-l1-1-0.CreateFileW"):
+            with self.subTest(target=target):
+                self.assertEqual(import_audit.pe_exports(Path("lib.prx"), self.pe_forwarded_export("alpha", target)), {"alpha"})
+
+    def test_malformed_forwarder_preserves_previous_audit_report(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        library = work.libs / "libExample.prx"
+        write_registry(registry, [("AAAAAAAAAAA", "libExample.prx")])
+        library.write_bytes(self.pe_forwarded_export("AAAAAAAAAAA", "NoDot"))
+        report.write_bytes(b"previous audit")
+        code, output, errors = work.run(registry, "--json", str(report))
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("invalid export forwarder", errors)
+        self.assertIn(str(library), errors)
+        self.assertNotIn("Traceback", errors)
+        self.assertEqual(report.read_bytes(), b"previous audit")
+
     def test_pe_export_name_pointer_table_must_be_sorted(self):
         image = build_pe(["beta", "alpha"])
         with self.assertRaisesRegex(import_audit.AuditError, "sorted"):
@@ -3159,6 +3219,26 @@ class ImportAuditTests(unittest.TestCase):
             import_audit.read_registry(path)
         write_registry(path, [("AAAAAAAAAAA#A#B", "libSceA.prx")], encoding="utf-8-sig")
         self.assertEqual(import_audit.read_registry(path), [("AAAAAAAAAAA", "libSceA.prx", False)])
+
+    def test_duplicate_registry_keys_cannot_hide_an_absent_import(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.registry.json"
+        report = work.root / "audit.json"
+        registry.write_text('[{"nid":"BBBBBBBBBBB","nid":"AAAAAAAAAAA","library":"libSceA.prx"}]', encoding="utf-8")
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("duplicate JSON key 'nid'", err)
+        self.assertFalse(report.exists())
+
+    def test_duplicate_registry_library_and_weak_fields_are_rejected(self):
+        registry = self.work.root / "game.registry.json"
+        for fields, repeated in ((('"library":"first.prx"', '"library":"second.prx"'), "library"),
+                                 (('"weak":true', '"weak":false'), "weak")):
+            with self.subTest(repeated=repeated):
+                registry.write_text('[{"nid":"AAAAAAAAAAA","library":"libSceA.prx",' + ','.join(fields) + '}]', encoding="utf-8")
+                with self.assertRaisesRegex(import_audit.AuditError, f"duplicate JSON key '{repeated}'"):
+                    import_audit.read_registry(registry)
 
     def test_names_never_download(self):
         work = self.work
