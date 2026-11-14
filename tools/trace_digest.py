@@ -509,6 +509,9 @@ def validate_interval(record):
     counts = record.get("owned_draw_counts", {})
     if not isinstance(counts, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in counts.items()):
         raise ValueError("owned_draw_counts must map names to non-negative integers")
+    graphics = record.get("graphics_track", {})
+    if not isinstance(graphics, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in graphics.items()):
+        raise ValueError("graphics_track must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
 
@@ -531,7 +534,8 @@ def digest_intervals(lines):
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
-                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts")})
+                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"),
+                     "graphics_track": line.get("graphics_track")})
     first = lines[0] if lines else {}
     keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution",
             "cpu", "cpu_threads", "memory_mib", "title_id", "title", "content_version")
@@ -561,6 +565,21 @@ def markdown_intervals(result):
         lines += ["", "| # | " + " | ".join(table_cell(name) for name in count_names) + " |", "|---|" + "---|" * len(count_names)]
         for index, row in enumerate(rows, 1):
             lines.append(f"| {index} | " + " | ".join(str(row["owned_draw_counts"].get(name, 0)) if row["owned_draw_counts"] is not None else "-" for name in count_names) + " |")
+    track = [row["graphics_track"] or {} for row in rows]
+    if any(track):
+        lines += ["", "| # | passes | continued | closed | top close reason | barriers | merged | copies | copy MiB |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for index, (row, counts) in enumerate(zip(rows, track), 1):
+            if row["graphics_track"] is None:
+                lines.append(f"| {index} | " + " | ".join(["-"] * 8) + " |")
+                continue
+            closes = {name[len("Graphics.RenderPass.Close."):]: value for name, value in counts.items() if name.startswith("Graphics.RenderPass.Close.")}
+            top_close = max(closes, key=closes.get) if closes else "-"
+            barriers = sum(value for name, value in counts.items() if name.startswith("Graphics.Barrier."))
+            merged = sum(value for name, value in counts.items() if name.startswith("Graphics.BarrierMerged."))
+            lines.append(f"| {index} | {counts.get('Graphics.RenderPass', 0)} | {counts.get('Graphics.RenderPass.Continued', 0)} "
+                         f"| {sum(closes.values())} | {table_cell(top_close)} | {barriers} | {merged} "
+                         f"| {counts.get('Graphics.Copy', 0)} | {counts.get('Graphics.Copy.bytes', 0) / (1024 * 1024):.1f} |")
     p99 = [row["frame_ms"]["p99"] for row in rows]
     gpu = [row["gpu_busy_ms_per_present"] for row in rows]
     lines += ["", "```", f"p99 ms  {sparkline(p99)}  0-{max(p99):.1f}", f"gpu ms  {sparkline(gpu)}  0-{max(gpu):.1f}", "```"]
