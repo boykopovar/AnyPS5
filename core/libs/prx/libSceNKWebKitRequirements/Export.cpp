@@ -54,60 +54,49 @@ void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix(Ubs
 
 
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_YFlXC_lRh0A_nid_no_patch() {
+int APS5_VABI wpe_key_code_to_unicode() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("YFlXC+lRh0A", sceNKWebKitRequirementsUnknown_YFlXC_lRh0A_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_5i_J_lV6oNw_nid_no_patch() {
+int APS5_VABI wpe_loader_get_loaded_implementation_library_name() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("5i+J+lV6oNw", sceNKWebKitRequirementsUnknown_5i_J_lV6oNw_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_D9Yd1YkgPsI_nid_no_patch() {
+int APS5_VABI wpe_loader_init() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("D9Yd1YkgPsI", sceNKWebKitRequirementsUnknown_D9Yd1YkgPsI_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_9DAe2g9wzX4_nid_no_patch() {
+int APS5_VABI wpe_pasteboard_get_singleton() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("9DAe2g9wzX4", sceNKWebKitRequirementsUnknown_9DAe2g9wzX4_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_5X4b5KyyNp4_nid_no_patch() {
+int APS5_VABI wpe_pasteboard_get_string() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("5X4b5KyyNp4", sceNKWebKitRequirementsUnknown_5X4b5KyyNp4_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown__4JKB5YW3Bk_nid_no_patch() {
+int APS5_VABI wpe_pasteboard_get_types() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("+4JKB5YW3Bk", sceNKWebKitRequirementsUnknown__4JKB5YW3Bk_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_P6lAFGsZE9Q_nid_no_patch() {
+int APS5_VABI wpe_pasteboard_string_free() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("P6lAFGsZE9Q", sceNKWebKitRequirementsUnknown_P6lAFGsZE9Q_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_DtKdjqIP18U_nid_no_patch() {
+int APS5_VABI wpe_pasteboard_string_initialize() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("DtKdjqIP18U", sceNKWebKitRequirementsUnknown_DtKdjqIP18U_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_Xntd0cTWi0o_nid_no_patch() {
+int APS5_VABI wpe_pasteboard_string_vector_free() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Xntd0cTWi0o", sceNKWebKitRequirementsUnknown_Xntd0cTWi0o_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_mpUUmn9tbKs_nid_no_patch() {
+int APS5_VABI wpe_pasteboard_write() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("mpUUmn9tbKs", sceNKWebKitRequirementsUnknown_mpUUmn9tbKs_nid_no_patch);
 
-int APS5_VABI sceNKWebKitRequirementsUnknown_uVoRmKYYtcI_nid_no_patch() {
+int APS5_VABI wpe_unicode_to_key_code() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("uVoRmKYYtcI", sceNKWebKitRequirementsUnknown_uVoRmKYYtcI_nid_no_patch);
 
 
 
