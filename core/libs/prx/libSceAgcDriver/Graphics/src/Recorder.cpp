@@ -4536,7 +4536,10 @@ void Recorder::Submit() {
         submission.pSignalSemaphores = &timeline;
     }
     if (hold != VK_NULL_HANDLE || timeline != VK_NULL_HANDLE) submission.pNext = &timelineInfo;
-    DestroyDeferredAtIdle(context);
+    std::uint64_t completedSerial = 0;
+    const bool queueIdle = timeline != VK_NULL_HANDLE && DeferredObjects(context.device) != 0 &&
+        context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR")(context.device, timeline, &completedSerial) == VK_SUCCESS && completedSerial >= submissions;
+    DestroyDeferredAtIdle(context, std::chrono::steady_clock::now(), queueIdle);
     const auto submitStart = std::chrono::steady_clock::now();
     batch->submitStarted.store(true, std::memory_order_release);
     const auto result = function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, batch->fence);
