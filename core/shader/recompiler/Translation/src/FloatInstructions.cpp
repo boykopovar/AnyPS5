@@ -653,13 +653,38 @@ bool TranslationContext::floatUnary(const RdnaInstruction& inst, IrOpcode opcode
     return true;
 }
 
+IrValue* TranslationContext::directedF32(IrValue& delta, IrValue& coordinate, IrValue& base, bool productZeroSign) {
+    const std::uint32_t rounding = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
+    const std::uint32_t mode = (ieeeMode ? InterpolationQuiet : 0u) | (rounding << InterpolationRound32Shift);
+    IrValue* result = &ir.Emit(IrOpcode::FPInterpolateF32, IrType::F32, {&delta, &coordinate, &base, &ir.Constant(mode)});
+    if (productZeroSign) {
+        const IrU32 magnitude(ir.BitwiseAnd(ir.BitCastU32(*result), ir.Constant(0x7fffffffu)));
+        const IrU32 sign(ir.BitwiseXor(ir.BitwiseAnd(ir.BitCastU32(delta), ir.Constant(0x80000000u)), ir.BitwiseAnd(ir.BitCastU32(coordinate), ir.Constant(0x80000000u))));
+        const IrU32 resultSign(ir.BitwiseAnd(ir.BitCastU32(*result), ir.Constant(0x80000000u)));
+        result = &ir.BitCastF32(ir.BitwiseOr(magnitude.Value(), ir.Select(ir.IEqual(magnitude.Value(), ir.Constant(0u)), sign.Value(), resultSign.Value())));
+    }
+    return result;
+}
+
 bool TranslationContext::floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse) {
     std::array<IrValue*, 2> args{};
     for (std::uint32_t index = 0u; index < args.size(); ++index) {
         const RdnaOperand& operand = sourceAt(inst, reverse ? 1u - index : index);
         args[index] = readOperand(operand, IrOpcodeArgumentType(opcode, index));
     }
-    IrValue* result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1]});
+    const std::uint32_t rounding = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
+    IrValue* result = nullptr;
+    if (rounding != 0u) {
+        const IrF32 zero(ir.ConstantF32(0.0f));
+        const IrF32 one(ir.ConstantF32(1.0f));
+        if (opcode == IrOpcode::FPAdd32) result = directedF32(*args[0], one.Value(), *args[1]);
+        if (opcode == IrOpcode::FPSub32) {
+            IrValue* negated = &ir.BitCastF32(ir.BitwiseXor(ir.BitCastU32(*args[1]), ir.Constant(0x80000000u)));
+            result = directedF32(*args[0], one.Value(), *negated);
+        }
+        if (opcode == IrOpcode::FPMul32) result = directedF32(*args[0], *args[1], zero.Value(), true);
+    }
+    if (result == nullptr) result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1]});
     if (opcode == IrOpcode::FPMul32) result = &flushTinyProduct(args[0], args[1], result).Value();
     if (opcode == IrOpcode::FPAdd32) result = propagatedNanResultF32({args[0], args[1]}, result);
     if (opcode == IrOpcode::FPMul32) result = nanResultF32({args[0], args[1]}, result, nullptr, true);
@@ -678,9 +703,22 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
         const IrType type = IrOpcodeArgumentType(opcode, index);
         args[index] = type == IrType::F32 && mix ? &readMixF32(operand).Value() : readOperand(operand, type);
     }
-    IrValue* result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1], args[2]});
-    if (opcode == IrOpcode::FPFma32) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
     const bool f32Sources = !mix || !(sourceAt(inst, 0u).opSelHi || sourceAt(inst, 1u).opSelHi || (!accumulator && sourceAt(inst, 2u).opSelHi));
+    const std::uint32_t rounding = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
+    const bool directed = rounding != 0u && f32Sources && (opcode == IrOpcode::FPFma32 || opcode == IrOpcode::FPMad32);
+    IrValue* result = nullptr;
+    if (directed) {
+        const IrF32 zero(ir.ConstantF32(0.0f));
+        const IrF32 one(ir.ConstantF32(1.0f));
+        if (opcode == IrOpcode::FPFma32) {
+            result = directedF32(*args[0], *args[1], *args[2]);
+        } else {
+            IrValue* product = directedF32(*args[0], *args[1], zero.Value(), true);
+            result = directedF32(*product, one.Value(), *args[2]);
+        }
+    }
+    if (result == nullptr) result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1], args[2]});
+    if (opcode == IrOpcode::FPFma32) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
     if (opcode == IrOpcode::FPFma32 && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result, &invalidProductF32(args[0], args[1]));
     if (opcode == IrOpcode::FPFma32 && !f32Sources) {
         IrValue& bits = ir.BitCastU32(*result);
