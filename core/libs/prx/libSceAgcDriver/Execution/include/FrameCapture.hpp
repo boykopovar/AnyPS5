@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -82,7 +83,8 @@ public:
     static constexpr std::string_view CallsMagic = "aps5-frame-calls 3\n";
     static constexpr std::string_view CallsMagicV2 = "aps5-frame-calls 2\n";
     static constexpr std::string_view CallsMagicV1 = "aps5-frame-calls 1\n";
-    static constexpr std::string_view MemoryMagic = "aps5-frame-memory 1\n";
+    static constexpr std::string_view MemoryMagic = "aps5-frame-memory 2\n";
+    static constexpr std::string_view MemoryMagicV1 = "aps5-frame-memory 1\n";
     static constexpr std::size_t BlockBytes = 64u * 1024u;
     static constexpr std::size_t ChunkBytes = 4u * 1024u * 1024u;
 
@@ -99,10 +101,18 @@ public:
 
     std::uint64_t RawBytes() const;
     std::uint64_t StoredBytes() const;
+    std::uint64_t SharedBytes() const;
     const std::filesystem::path& Directory() const;
 
 private:
-    void writeChunk(const FrameMemoryChunk& chunk, std::span<const std::byte> payload);
+    struct DeltaPayload {
+        std::uint64_t hash = 0;
+        std::uint64_t check = 0;
+        std::uint64_t offset = 0;
+        std::uint64_t compressedBytes = 0;
+    };
+
+    std::uint64_t writeChunk(const FrameMemoryChunk& chunk, std::span<const std::byte> payload, std::uint64_t sharedOffset = 0);
     std::vector<std::byte> compress(std::span<const std::byte> bytes) const;
 
     std::filesystem::path directory;
@@ -112,6 +122,9 @@ private:
     std::ofstream memory;
     std::uint64_t rawBytes = 0;
     std::uint64_t storedBytes = 0;
+    std::uint64_t sharedBytes = 0;
+    std::uint64_t memoryOffset = 0;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, DeltaPayload> deltaPayloads;
     bool finished = false;
 };
 

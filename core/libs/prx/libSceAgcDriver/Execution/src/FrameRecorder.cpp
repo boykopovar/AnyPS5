@@ -494,6 +494,13 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             offset += bytes;
         }
     }
+    std::ranges::sort(blocks);
+    std::size_t merged = 0;
+    for (const auto& block : blocks) {
+        if (merged != 0 && block.first < blocks[merged - 1].second) blocks[merged - 1].second = std::max(blocks[merged - 1].second, block.second);
+        else blocks[merged++] = block;
+    }
+    blocks.resize(merged);
     std::vector<std::array<std::uint64_t, 4>> parked;
     for (const auto& wait : driver.AwaitedWaits()) {
         if (wait.bytes == 0) parked.push_back({wait.address, 0, 0, 0});
@@ -801,7 +808,7 @@ std::string FrameRecorder::header() const {
     text += ",\"start_boundary\":" + std::to_string(startBoundary) + ",\"frames\":" + std::to_string(recordedFrames);
     text += ",\"calls\":" + std::to_string(recordedCalls) + ",\"prologue_calls\":" + std::to_string(prologue.size());
     text += ",\"ranges\":" + std::to_string(ranges.size()) + ",\"late_ranges\":" + std::to_string(lateRanges) + ",\"snapshot_bytes\":" + std::to_string(snapshotBytes) + ",\"unreadable_bytes\":" + std::to_string(unreadableBytes) + ",\"host_only_sample_bytes\":" + std::to_string(hostOnlySampleBytes);
-    text += ",\"memory_groups\":" + std::to_string(deltaGroups) + ",\"delta_bytes\":" + std::to_string(deltaBytes) + ",\"gpu_store_bytes\":" + std::to_string(gpuStoreBytes);
+    text += ",\"memory_groups\":" + std::to_string(deltaGroups) + ",\"delta_bytes\":" + std::to_string(deltaBytes) + ",\"gpu_store_bytes\":" + std::to_string(gpuStoreBytes) + ",\"shared_delta_bytes\":" + std::to_string(writer->SharedBytes());
     text += ",\"capture_seconds\":" + std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count());
     text += ",\"env\":{";
     bool first = true;
