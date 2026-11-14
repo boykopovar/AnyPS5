@@ -132,6 +132,7 @@ std::uint32_t storedFragments(const ColorTarget& target) {
 constexpr char fmaskPlane[] = "the FMASK of EQAA color target";
 
 std::uint64_t fmaskBytes(const ColorTarget& target) {
+    if (ColorTileModeIsGcn(target.tileMode)) return target.gcnFmaskBytes;
     const auto bitsPerSample = std::bit_ceil(static_cast<std::uint32_t>(std::bit_width(target.eqaaFragments)));
     return ColorTargetLayout(target.extent.width, target.extent.height, ColorTileMode::Z64KBX, std::max(1u, target.samples * bitsPerSample / 8u)).Bytes();
 }
@@ -1147,6 +1148,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
                 moveGuardSpans();
                 target->target.fmaskAddress = use.fmaskAddress;
                 target->target.fmaskPipeBankXor = use.fmaskPipeBankXor;
+                target->target.gcnFmaskBytes = use.gcnFmaskBytes;
             }
         }
         if (target->fromTexture && use.cmaskAddress != 0) {
@@ -1783,7 +1785,7 @@ void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes) {
 
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
     const auto bits = static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.coverageSamples;
-    const auto bytes = std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
+    const auto bytes = ColorTileModeIsGcn(target.tileMode) ? target.gcnFmaskBytes : std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
     std::unique_lock lock(guardedMutex());
     const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
     if (!known) {
