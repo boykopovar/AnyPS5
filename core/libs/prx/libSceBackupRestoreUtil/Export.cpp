@@ -17,8 +17,7 @@ int APS5_VABI sceBackupRestoreUtilBackupData() {
 }
 
 int APS5_VABI sceBackupRestoreUtilCancelBackupData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_BACKUP_RESTORE_UTIL_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceBackupRestoreUtilCancelGetRequiredSize() {
@@ -30,13 +29,11 @@ int APS5_VABI sceBackupRestoreUtilCancelGetTitles() {
 }
 
 int APS5_VABI sceBackupRestoreUtilCancelRestoreData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_BACKUP_RESTORE_UTIL_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceBackupRestoreUtilDeleteBackupData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_BACKUP_RESTORE_UTIL_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceBackupRestoreUtilGetBackupDataInfo() {
@@ -52,8 +49,7 @@ int APS5_VABI sceBackupRestoreUtilGetBackupProgress() {
 }
 
 int APS5_VABI sceBackupRestoreUtilGetRequiredSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_BACKUP_RESTORE_UTIL_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceBackupRestoreUtilGetRestoreProgress() {
@@ -61,8 +57,7 @@ int APS5_VABI sceBackupRestoreUtilGetRestoreProgress() {
 }
 
 int APS5_VABI sceBackupRestoreUtilGetTitles() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_BACKUP_RESTORE_UTIL_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceBackupRestoreUtilInitialize() {
@@ -84,7 +79,7 @@ int APS5_VABI sceBackupRestoreUtilTerminate() {
 }
 
 int APS5_VABI sceBackupRestoreUtilCalcRequiredSize() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_BACKUP_RESTORE_UTIL_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceBackupRestoreUtilCancelCalcRequiredSize() {
@@ -96,7 +91,7 @@ int APS5_VABI sceBackupRestoreUtilGetBackupTelemetryInfo() {
 }
 
 int APS5_VABI sceBackupRestoreUtilGetRestoreFailedTitles() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_BACKUP_RESTORE_UTIL_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceBackupRestoreUtilGetRestoreTelemetryInfo() {
