@@ -420,6 +420,7 @@ if(BUILD_TESTING)
         set_tests_properties(performance_bisect PROPERTIES TIMEOUT 20)
         add_test(NAME emsdk_pin COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_emsdk_pin.py)
+        set_tests_properties(emsdk_pin PROPERTIES TIMEOUT 20)
         set(conventions_wrapped_declarations_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${conventions_wrapped_declarations_source}")
         file(STRINGS "${conventions_wrapped_declarations_source}" conventions_wrapped_declarations_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
@@ -442,13 +443,16 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
+        set_tests_properties(conventions_ci_gate PROPERTIES TIMEOUT 20)
         add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_preview_pad_timeline.py)
         set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
+        set_tests_properties(conventions_git_errors PROPERTIES TIMEOUT 20)
         add_test(NAME tools_base_ref COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_base_ref.py)
+        set_tests_properties(tools_base_ref PROPERTIES TIMEOUT 20)
         add_test(NAME tools_configure_diff COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compare_configure_checks.py)
         set_tests_properties(tools_configure_diff PROPERTIES TIMEOUT 20)
         add_test(NAME ctest_no_tests_flag COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_ctest_no_tests_flag.py)
@@ -493,6 +497,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
+        set_tests_properties(rebase_verify PROPERTIES TIMEOUT 20)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
         set_tests_properties(check_skips PROPERTIES TIMEOUT 20)
