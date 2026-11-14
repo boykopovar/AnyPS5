@@ -1377,7 +1377,7 @@ int APS5_VABI _ZNK6icu_6810UnicodeSet8containsERKNS_13UnicodeStringE_nid_postfix
 int APS5_VABI sceIcuLegacyUnknown_aE2su5DZ1Sc_nid_no_patch();
 int APS5_VABI _ZN6icu_6813UnicodeString8allocateEi_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_aIzYHS_minus_alR0_nid_no_patch();
-int APS5_VABI uprv_asciitolower_nid_postfix();
+char APS5_VABI uprv_asciitolower_nid_postfix(char c);
 int APS5_VABI _ZN6icu_6813UnicodeStringC1EPKcS2__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_aLhXGPn5dTg_nid_no_patch();
 int APS5_VABI _ZNK6icu_6822UCharCharacterIterator8hashCodeEv_nid_postfix();

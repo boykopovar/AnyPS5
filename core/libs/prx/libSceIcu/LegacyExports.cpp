@@ -5881,10 +5881,6 @@ int APS5_VABI sceIcuLegacyUnknown_aIzYHS_minus_alR0_nid_no_patch() {
 }
 APS5_EXPORT("aIzYHS-alR0", sceIcuLegacyUnknown_aIzYHS_minus_alR0_nid_no_patch);
 
-int APS5_VABI uprv_asciitolower_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6813UnicodeStringC1EPKcS2__nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
