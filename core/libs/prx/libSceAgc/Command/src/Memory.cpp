@@ -75,10 +75,9 @@ std::uint32_t* WriteData(CommandBuffer* buffer, bool compute, std::uint8_t dst, 
 }
 
 std::uint32_t* WriteWait(CommandBuffer* buffer, bool compute, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t operation, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles, const char* function) {
-    CheckBits(size, 1, function);
+    if (size > 1u) return nullptr;
     Require(compareFunction <= 6, function, "invalid wait comparison");
     CheckBits(operation, size == 0 ? 0xfu : 7u, function);
-    CheckBits(cachePolicy, 3, function);
     Require((pollCycles >> 4u) <= 0xffffu, function, "wait poll interval overflow");
     if (size == 0) {
         // 32-bit waits only use the low halves; guests commonly pass a full 64-bit mask.
@@ -87,7 +86,7 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, bool compute, std::uint8_t size,
     }
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
     // The address may be left null and filled in later with sceAgcWaitRegMemPatchAddress.
-    if (guestAddress != 0) CheckAddress(guestAddress, size == 0 ? 4 : 8, function);
+    if (guestAddress != 0 && size == 0) CheckAddress(guestAddress, 4, function);
     CheckBits(guestAddress, 0xffffffffffffull, function);
     const auto waitSize = size == 0 ? 7u : 9u;
     const auto tagFlags = compute ? 0u : 4u;
@@ -99,8 +98,8 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, bool compute, std::uint8_t size,
     auto* wait = packet + 4;
     wait[0] = Header(size == 0 ? 0x3cu : 0x93u, waitSize);
     const auto opBits = size == 0 ? ((operation & 3u) << 8u) | ((operation & 0xcu) << 4u) : ((operation & 1u) << 8u) | ((operation & 6u) << 5u);
-    wait[1] = 0x10u | compareFunction | opBits | (static_cast<std::uint32_t>(cachePolicy) << 25u);
-    wait[2] = static_cast<std::uint32_t>(guestAddress);
+    wait[1] = 0x10u | compareFunction | opBits | ((static_cast<std::uint32_t>(cachePolicy) & 3u) << 25u);
+    wait[2] = static_cast<std::uint32_t>(guestAddress) & (size == 0 ? ~0u : ~7u);
     wait[3] = static_cast<std::uint32_t>(guestAddress >> 32u);
     wait[4] = static_cast<std::uint32_t>(reference);
     if (size == 0) {

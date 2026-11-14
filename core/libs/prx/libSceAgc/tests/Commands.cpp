@@ -226,6 +226,34 @@ void testTagHeaders() {
     }
 }
 
+void testWaitConsoleArguments() {
+    const auto pointer = [](std::uintptr_t address) { return reinterpret_cast<const volatile void*>(address); };
+    {
+        Storage storage;
+        const auto* wait = sceAgcAcbWaitRegMem(&storage.buffer, 1, 2, 3, pointer(4), 5, 0, 0);
+        const std::array<std::uint32_t, 16> expected{0xc0027900u, 0x342u, 0xc8020000u, 4u, 0xc0079300u, 0x06000012u, 0u, 0u, 5u, 0u, 0u, 0u, 0u, 0xc0017900u, 0x342u, 0xc8000000u};
+        check(wait == storage.words.data() && std::equal(expected.begin(), expected.end(), wait), "ACB wait does not match the console's packet");
+        check(storage.buffer.cursor_up == storage.words.data() + expected.size(), "ACB wait cursor advance mismatch");
+    }
+    {
+        Storage storage;
+        const auto* wait = sceAgcDcbWaitRegMem(&storage.buffer, 1, 2, 3, 4, pointer(5), 0, 1, 0xffff0);
+        const std::array<std::uint32_t, 16> expected{0xc0027904u, 0x342u, 0xc8020000u, 5u, 0xc0079300u, 0x152u, 0u, 0u, 0u, 0u, 1u, 0u, 0xffffu, 0xc0017904u, 0x342u, 0xc8000000u};
+        check(wait == storage.words.data() && std::equal(expected.begin(), expected.end(), wait), "DCB wait does not match the console's packet");
+        check(storage.buffer.cursor_up == storage.words.data() + expected.size(), "DCB wait cursor advance mismatch");
+    }
+    const auto rejects = [](const auto& build, const char* message) {
+        Storage storage;
+        storage.words.fill(0xdeadbeefu);
+        const auto before = storage.words;
+        check(build(storage.buffer) == nullptr && storage.words == before && storage.buffer.cursor_up == storage.words.data(), message);
+    };
+    rejects([&](CommandBuffer& buffer) { return sceAgcAcbWaitRegMem(&buffer, 0x11, 0x22, 0x33, pointer(0x44444444u), 0x55555555u, 0, 0); }, "ACB wait with size 0x11 wrote a packet");
+    rejects([&](CommandBuffer& buffer) { return sceAgcAcbWaitRegMem(&buffer, 0x22, 0x44, 0, nullptr, 0, 0, 0); }, "ACB wait with size 0x22 wrote a packet");
+    rejects([&](CommandBuffer& buffer) { return sceAgcDcbWaitRegMem(&buffer, 0x11, 0x22, 0x33, 0x44, pointer(0x55555555u), 0, 0, 0); }, "DCB wait with size 0x11 wrote a packet");
+    rejects([&](CommandBuffer& buffer) { return sceAgcDcbWaitRegMem(&buffer, 0x22, 0x44, 0, 0, nullptr, 0, 0, 0); }, "DCB wait with size 0x22 wrote a packet");
+}
+
 void testJumpTargetPatch() {
     const auto target = [](std::uintptr_t address) { return reinterpret_cast<const volatile std::uint32_t*>(address); };
     Storage storage;
@@ -1267,6 +1295,7 @@ int main(int argc, char** argv) {
         testClearState();
         testIndexedIndirectDraws();
         testTagHeaders();
+        testWaitConsoleArguments();
         testMarkers();
         testJumpTargetPatch();
         testMarkerSpans();
