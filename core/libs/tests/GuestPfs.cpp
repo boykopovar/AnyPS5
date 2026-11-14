@@ -104,6 +104,7 @@ void Pread() {
     header = HeaderV2(4, 0x80000, 0x200);
     Require(scePfsPread(buffer.data(), 0x2000, 0x7f000, &header, work.data()) == OutOfRange);
     Require(scePfsPread(buffer.data(), 0x1000, 0x90000, &header, work.data()) == OutOfRange);
+    Require(scePfsPread(buffer.data(), 0xfffffffffffff000ULL, 0x1000, &header, work.data()) == OutOfRange);
     Require(errno == 71);
     for (std::uint8_t byte : buffer) Require(byte == 0xa5);
 }
