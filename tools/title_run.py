@@ -75,7 +75,15 @@ def stage_files(files, work, content):
 
 
 def load_titles(path):
-    titles = json.loads(Path(path).read_text(encoding="utf-8"))
+    def unique_fields(pairs):
+        fields = {}
+        for name, value in pairs:
+            if name in fields:
+                raise ValueError(f"{path}: duplicate field {name!r}")
+            fields[name] = value
+        return fields
+
+    titles = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
     for title_id, entry in titles.items():
         if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
