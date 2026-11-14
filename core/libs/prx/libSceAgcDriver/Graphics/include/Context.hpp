@@ -147,6 +147,7 @@ struct DeviceFunctions {
     PFN_vkCmdUpdateBuffer cmdUpdateBuffer = nullptr;
     PFN_vkCmdFillBuffer cmdFillBuffer = nullptr;
     TrackedFunction<PFN_vkCmdBindPipeline> cmdBindPipeline;
+    TrackedFunction<PFN_vkCmdExecuteCommands> cmdExecuteCommands;
     PFN_vkCmdBindDescriptorSets cmdBindDescriptorSets = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
@@ -510,6 +511,8 @@ std::uint32_t StorageTableCapacity(const Context& context);
 std::uint32_t SamplerTableCapacity(const Context& context);
 bool ImageTableUpdateAfterBind(const Context& context);
 bool SamplerTableUpdateAfterBind(const Context& context);
+
+void DestroyRecordingPools(const Context& context);
 
 }
 

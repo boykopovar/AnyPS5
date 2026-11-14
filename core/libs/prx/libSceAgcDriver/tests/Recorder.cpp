@@ -11567,6 +11567,13 @@ public:
         return continued;
     }
 
+    auto DrawSecondary(Recorder& recorder) const {
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{}, true);
+        if (!start.continued) begin(start.commands, true);
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{}, {}, true);
+        return start;
+    }
+
     void Record(CommandState& recording) const {
         const auto commands = recording.Commands();
         begin(commands);
@@ -11579,7 +11586,7 @@ public:
 
 private:
     static constexpr std::uint64_t PassKey = 0xc0de;
-    void begin(VkCommandBuffer commands) const {
+    void begin(VkCommandBuffer commands, bool secondaryContents = false) const {
         if (context.graphicsPipelineLibrary) {
             if (!transitioned) {
                 transitioned = true;
@@ -11601,13 +11608,14 @@ private:
             rendering.layerCount = 1;
             rendering.colorAttachmentCount = 1;
             rendering.pColorAttachments = &attachment;
+            if (secondaryContents) rendering.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
             context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
         } else {
             VkRenderPassBeginInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
             info.renderPass = renderPass;
             info.framebuffer = framebuffer;
             info.renderArea = {{0, 0}, {8, 8}};
-            context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &info, VK_SUBPASS_CONTENTS_INLINE);
+            context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &info, secondaryContents ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
         }
     }
     void release() noexcept {
@@ -12234,6 +12242,21 @@ void graphicsStateTests(const Device& device) {
     statePipelines.clear();
     stateLog.clear();
     std::cout << "graphics state through the recorder passed (" << (suppressing ? "suppressing" : "unsuppressed") << ")\n";
+}
+
+void passContentsTests(const Device& device) {
+    auto context = device.GetContext();
+    Recorder recorder(context);
+    CoverPass cover(context);
+    Require(!cover.Draw(recorder), "the first inline draw continued a pass");
+    Require(cover.Draw(recorder), "an inline draw did not continue the inline pass of its key");
+    const auto secondary = cover.DrawSecondary(recorder);
+    Require(!secondary.continued && secondary.reason == PassBreak::Forced, "a draw recorded into secondary command buffers continued an inline pass");
+    Require(cover.DrawSecondary(recorder).continued, "a draw recorded into secondary command buffers did not continue the pass begun for them");
+    Require(!cover.Draw(recorder), "an inline draw continued a pass begun for secondary command buffers");
+    Require(cover.Draw(recorder), "an inline draw did not continue the inline pass begun after a secondary one");
+    recorder.Submit();
+    recorder.Sync();
 }
 
 void cmaskPassTests(const Device& device, Recorder& recorder) {
@@ -16705,6 +16728,15 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--snapshot-read-into-staging-only") {
             if (!snapshotReadIntoStagingTests(device, recorder)) return 77;
             std::cout << "Snapshot read into staging tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pass-contents-only") {
+            if (!device.Graphics()) {
+                std::cout << "skipped, the test queue has no graphics\n";
+                return 77;
+            }
+            passContentsTests(device);
+            std::cout << "Pass contents tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uncounted-passes-only") {
