@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "mbedtls/bignum.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -856,6 +857,177 @@ static void TestAddedDigestObjects() {
     Require(accepted[1]);
 }
 
+struct Keygens {
+    int calls;
+    LibreSslRsa* rsa;
+    int bits;
+    Bignum* exponent;
+    void* callback;
+};
+
+static Keygens keygens;
+
+static int APS5_VABI RecordKeygen(LibreSslRsa* rsa, int bits, Bignum* exponent, void* callback) {
+    keygens = {keygens.calls + 1, rsa, bits, exponent, callback};
+    return 7;
+}
+
+constexpr std::uint64_t BignumBitsTooSmall = 0x03FFF075;
+constexpr std::uint64_t RsaBignumFailure = 0x04FFF003;
+constexpr std::uint64_t RsaKeySizeTooSmall = 0x04FFF078;
+constexpr std::uint64_t SmallestSievePrime = 17863;
+
+struct MpiNumber {
+    mbedtls_mpi value;
+    MpiNumber() { mbedtls_mpi_init(&value); }
+    explicit MpiNumber(const void* field) : MpiNumber() {
+        const auto* number = static_cast<const TestBignum*>(field);
+        Require(number != nullptr && number->neg == 0 && number->top >= 0);
+        Require(mbedtls_mpi_read_binary_le(&value, reinterpret_cast<const unsigned char*>(number->d), static_cast<std::size_t>(number->top) * 8) == 0);
+    }
+    MpiNumber(const MpiNumber&) = delete;
+    MpiNumber& operator=(const MpiNumber&) = delete;
+    ~MpiNumber() { mbedtls_mpi_free(&value); }
+};
+
+static void RequireErrors(std::initializer_list<std::uint64_t> expected, std::source_location location = std::source_location::current()) {
+    for (const auto code : expected) Require(ERR_get_error_nid_postfix() == code, location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+static void RequireAllFields(const LibreSslRsa* rsa) {
+    for (void* field : {rsa->n, rsa->e, rsa->d, rsa->p, rsa->q, rsa->dmp1, rsa->dmq1, rsa->iqmp}) Require(field != nullptr);
+}
+
+static void RequireConsistentKey(const LibreSslRsa* rsa, std::uint64_t exponentValue, int modulusBits) {
+    RequireAllFields(rsa);
+    MpiNumber n(rsa->n), e(rsa->e), d(rsa->d), p(rsa->p), q(rsa->q), dmp1(rsa->dmp1), dmq1(rsa->dmq1), iqmp(rsa->iqmp);
+    MpiNumber product, lessP, lessQ, order, check, divisor, message, cipher, plain;
+    Require(mbedtls_mpi_cmp_int(&e.value, static_cast<mbedtls_mpi_sint>(exponentValue)) == 0);
+    if (modulusBits) Require(mbedtls_mpi_bitlen(&n.value) == static_cast<std::size_t>(modulusBits));
+    Require(mbedtls_mpi_cmp_mpi(&p.value, &q.value) > 0);
+    Require(mbedtls_mpi_mul_mpi(&product.value, &p.value, &q.value) == 0 && mbedtls_mpi_cmp_mpi(&product.value, &n.value) == 0);
+    Require(mbedtls_mpi_is_prime_ext(&p.value, 30, [](void*, unsigned char* out, std::size_t size) { for (std::size_t i = 0; i < size; ++i) out[i] = static_cast<unsigned char>(std::rand()); return 0; }, nullptr) == 0);
+    Require(mbedtls_mpi_is_prime_ext(&q.value, 30, [](void*, unsigned char* out, std::size_t size) { for (std::size_t i = 0; i < size; ++i) out[i] = static_cast<unsigned char>(std::rand()); return 0; }, nullptr) == 0);
+    Require(mbedtls_mpi_sub_int(&lessP.value, &p.value, 1) == 0 && mbedtls_mpi_sub_int(&lessQ.value, &q.value, 1) == 0);
+    Require(mbedtls_mpi_mul_mpi(&order.value, &lessP.value, &lessQ.value) == 0);
+    Require(mbedtls_mpi_cmp_mpi(&d.value, &order.value) < 0);
+    Require(mbedtls_mpi_mul_mpi(&check.value, &d.value, &e.value) == 0 && mbedtls_mpi_mod_mpi(&check.value, &check.value, &order.value) == 0);
+    Require(mbedtls_mpi_cmp_int(&check.value, 1) == 0);
+    Require(mbedtls_mpi_gcd(&divisor.value, &lessP.value, &e.value) == 0 && mbedtls_mpi_cmp_int(&divisor.value, 1) == 0);
+    Require(mbedtls_mpi_mod_mpi(&check.value, &d.value, &lessP.value) == 0 && mbedtls_mpi_cmp_mpi(&check.value, &dmp1.value) == 0);
+    Require(mbedtls_mpi_mod_mpi(&check.value, &d.value, &lessQ.value) == 0 && mbedtls_mpi_cmp_mpi(&check.value, &dmq1.value) == 0);
+    Require(mbedtls_mpi_cmp_mpi(&iqmp.value, &p.value) < 0);
+    Require(mbedtls_mpi_mul_mpi(&check.value, &iqmp.value, &q.value) == 0 && mbedtls_mpi_mod_mpi(&check.value, &check.value, &p.value) == 0);
+    Require(mbedtls_mpi_cmp_int(&check.value, 1) == 0);
+    Require(mbedtls_mpi_lset(&message.value, 0x1234567) == 0);
+    Require(mbedtls_mpi_exp_mod(&cipher.value, &message.value, &e.value, &n.value, nullptr) == 0);
+    Require(mbedtls_mpi_exp_mod(&plain.value, &cipher.value, &d.value, &n.value, nullptr) == 0);
+    Require(mbedtls_mpi_cmp_mpi(&plain.value, &message.value) == 0);
+}
+
+static bool SieveSurvivor(const void* field) {
+    MpiNumber prime(field);
+    if (mbedtls_mpi_cmp_int(&prime.value, static_cast<mbedtls_mpi_sint>(SmallestSievePrime)) <= 0) return false;
+    for (std::uint32_t divisor = 3; divisor <= SmallestSievePrime; divisor += 2) {
+        bool isPrime = true;
+        for (std::uint32_t factor = 3; factor * factor <= divisor; factor += 2)
+            if (divisor % factor == 0) isPrime = false;
+        if (!isPrime) continue;
+        mbedtls_mpi_uint remainder = 0;
+        Require(mbedtls_mpi_mod_int(&remainder, &prime.value, divisor) == 0);
+        if (remainder <= 1) return false;
+    }
+    return true;
+}
+
+static void TestGenerateKey() {
+    TestBignum* exponent = AllocatedBignum(65537);
+    auto* empty = reinterpret_cast<Bignum*>(exponent);
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(nullptr, 512, empty, nullptr); });
+
+    auto* rsa = RSA_new_nid_postfix();
+    const LibreSslRsaMethod* defaultMethod = rsa->meth;
+    LibreSslRsaMethod method = *defaultMethod;
+    method.keygen = reinterpret_cast<void*>(RecordKeygen);
+    rsa->meth = &method;
+    int marker = 0;
+    keygens = {};
+    Require(RSA_generate_key_ex_nid_postfix(rsa, -9, empty, &marker) == 7);
+    Require(keygens.calls == 1 && keygens.rsa == rsa && keygens.bits == -9 && keygens.exponent == empty && keygens.callback == &marker);
+    Require(rsa->n == nullptr && rsa->e == nullptr);
+    rsa->meth = nullptr;
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr); });
+    rsa->meth = defaultMethod;
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, empty, &marker); });
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, nullptr, nullptr); });
+    TestBignum* even = AllocatedBignum(65536);
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, reinterpret_cast<Bignum*>(even), nullptr); });
+    TestBignum zero {nullptr, 0, 0, 0, 0};
+    RequireThrows([&] { RSA_generate_key_ex_nid_postfix(rsa, 512, reinterpret_cast<Bignum*>(&zero), nullptr); });
+    Require(rsa->n == nullptr && rsa->e == nullptr);
+
+    ERR_clear_error_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 2, empty, nullptr) == 0);
+    RequireErrors({BignumBitsTooSmall, RsaBignumFailure});
+    RequireAllFields(rsa);
+    Require(static_cast<TestBignum*>(rsa->e)->top == 1 && static_cast<TestBignum*>(rsa->e)->d[0] == 65537);
+    Require(static_cast<TestBignum*>(rsa->p)->top == 0 && static_cast<TestBignum*>(rsa->n)->top == 0);
+
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 3, empty, nullptr) == 0);
+    RequireErrors({BignumBitsTooSmall, RsaBignumFailure});
+    Require(SieveSurvivor(rsa->p) && static_cast<TestBignum*>(rsa->q)->top == 0);
+    RSA_free_nid_postfix(rsa);
+
+    rsa = RSA_new_nid_postfix();
+    void* first = BN_new_nid_postfix();
+    void* second = BN_new_nid_postfix();
+    rsa->p = first;
+    rsa->q = second;
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr) == 1);
+    RequireErrors({});
+    Require((rsa->p == first && rsa->q == second) || (rsa->p == second && rsa->q == first));
+    RequireConsistentKey(rsa, 65537, 512);
+    RSA_free_nid_postfix(rsa);
+
+    rsa = RSA_new_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 1031, empty, nullptr) == 1);
+    RequireConsistentKey(rsa, 65537, 1031);
+    RSA_free_nid_postfix(rsa);
+
+    TestBignum* one = AllocatedBignum(1);
+    rsa = RSA_new_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 130, reinterpret_cast<Bignum*>(one), nullptr) == 1);
+    RequireConsistentKey(rsa, 1, 130);
+    for (void* field : {rsa->d, rsa->dmp1, rsa->dmq1}) Require(static_cast<TestBignum*>(field)->top == 1 && static_cast<TestBignum*>(field)->d[0] == 1);
+    Require(SieveSurvivor(rsa->p) && SieveSurvivor(rsa->q));
+    RSA_free_nid_postfix(rsa);
+
+    TestBignum* three = AllocatedBignum(3);
+    rsa = RSA_new_nid_postfix();
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 18, reinterpret_cast<Bignum*>(three), nullptr) == 0);
+    RequireErrors({RsaKeySizeTooSmall});
+    {
+        MpiNumber p(rsa->p), q(rsa->q);
+        Require(SieveSurvivor(rsa->p) && mbedtls_mpi_cmp_mpi(&p.value, &q.value) == 0);
+        Require(static_cast<TestBignum*>(rsa->n)->top == 0 && static_cast<TestBignum*>(rsa->d)->top == 0);
+    }
+    RSA_free_nid_postfix(rsa);
+
+    std::uint64_t words[1] {};
+    TestBignum fixed {words, 0, 1, 0, BignumStaticData};
+    rsa = RSA_new_nid_postfix();
+    rsa->n = &fixed;
+    Require(RSA_generate_key_ex_nid_postfix(rsa, 512, empty, nullptr) == 0);
+    RequireErrors({RsaBignumFailure});
+    Require(rsa->n == &fixed && fixed.top == 0 && fixed.d == words);
+    Require(static_cast<TestBignum*>(rsa->p)->top > 0 && static_cast<TestBignum*>(rsa->q)->top > 0);
+    rsa->n = nullptr;
+    RSA_free_nid_postfix(rsa);
+
+    for (TestBignum* number : {exponent, even, one, three}) BN_free_nid_postfix(reinterpret_cast<Bignum*>(number));
+}
+
 int main() {
     InitializeHeap();
     TestFlags();
@@ -871,5 +1043,6 @@ int main() {
     TestPublicKeyChecks();
     TestVerify();
     TestAddedDigestObjects();
+    TestGenerateKey();
     std::puts("libSceLibreSsl RSA tests passed");
 }
