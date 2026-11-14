@@ -249,7 +249,7 @@ void CheckUnwindInfo() {
     Require(anonymous != MAP_FAILED);
     RequireUnwindMatchesRegion(anonymous, nullptr);
     Require(munmap(anonymous, page) == 0);
-    void* gap = mmap(nullptr, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void* gap = mmap(reinterpret_cast<void*>(std::uintptr_t{0x400000000000}), page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(gap != MAP_FAILED && munmap(gap, page) == 0);
     ModuleInfoForUnwind info{};
     bool threw = false;

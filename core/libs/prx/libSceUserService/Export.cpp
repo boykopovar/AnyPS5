@@ -404,14 +404,13 @@ int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* 
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
- presets->difficulty = 0;
- presets->priority = 0;
- presets->invert_vertical_view_for_1st_person_view = 0;
- presets->invert_horizontal_view_for_1st_person_view = 0;
- presets->invert_vertical_view_for_3rd_person_view = 0;
- presets->invert_horizontal_view_for_3rd_person_view = 0;
- presets->display_sub_titles = 0;
- presets->audio_language = 0;
+ UserServiceGamePresets localPresets{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(presets, &localPresets, sizeof(localPresets));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
