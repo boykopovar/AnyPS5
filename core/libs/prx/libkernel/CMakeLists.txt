@@ -1840,6 +1840,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sched_priority PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+
+    add_test_executable(guest_kernel_prio_pgrp_limits_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelGetpriorityPgrpLimits.cpp)
+    target_include_directories(guest_kernel_prio_pgrp_limits_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_prio_pgrp_limits_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_kernel_prio_pgrp_limits_tests)
+    add_test(NAME guest_kernel_prio_pgrp_limits COMMAND guest_kernel_prio_pgrp_limits_tests)
+    set_tests_properties(guest_kernel_prio_pgrp_limits PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_prio_pgrp_limits PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_process_abi_type_tests ${LIBS_INCLUDE_DIR}/tests/GuestProcessAbiType.cpp)
     target_include_directories(guest_process_abi_type_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_process_abi_type_tests PRIVATE libkernel libc)
