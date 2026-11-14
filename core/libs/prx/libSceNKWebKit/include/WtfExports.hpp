@@ -1,11 +1,13 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/HttpHeaderMapAbi.hpp"
 #include "prx/libSceNKWebKit/src/PalTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
+#include "prx/libSceNKWebKit/src/YarrErrorCodeAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -57,11 +59,13 @@ unsigned int APS5_VABI _ZN3JSC27numberOfExceptionFuzzChecksEv();
 void APS5_VABI _ZN3JSC30waitForAsynchronousDisassemblyEv();
 unsigned int APS5_VABI _ZN3JSC31numberOfStaticOSRExitFuzzChecksEv();
 unsigned int APS5_VABI _ZN3JSC38numberOfExecutableAllocationFuzzChecksEv();
+NKWebKit::HttpAbi::ASCIILiteral APS5_VABI _ZN3JSC4Yarr12errorMessageENS0_9ErrorCodeE(NKWebKit::YarrAbi::ErrorCode error);
 void APS5_VABI _ZN3PAL10systemBeepEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3PAL19fileSizeDescriptionEm(std::uint64_t size);
 void APS5_VABI _ZN3PAL9SessionID26enableGenerationProtectionEv();
 PAL::SessionID APS5_VABI _ZN3PAL9SessionID26generateEphemeralSessionIDEv();
 PAL::SessionID APS5_VABI _ZN3PAL9SessionID27generatePersistentSessionIDEv();
+unsigned APS5_VABI _ZN3WTF10SymbolImpl17nextHashForSymbolEv();
 std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const NKWebKit::WtfAbi::StringImpl* self, char16_t value, unsigned start);
 std::int32_t APS5_VABI _ZN3WTF10StringImpl19characterStartingAtEj(const NKWebKit::WtfAbi::StringImpl* self, unsigned index);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPDs(unsigned length, char16_t*& data);
