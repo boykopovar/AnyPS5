@@ -77,5 +77,17 @@ class SymbolSetTests(unittest.TestCase):
         self.assertEqual(row["done_names"], {"added": ["x"], "removed": []})
 
 
+class PercentageTests(unittest.TestCase):
+    def section(self, base_percent, head_percent):
+        return progress_diff.compare(snapshot(library_percent=base_percent), snapshot(library_percent=head_percent))["libraries"]
+
+    def test_change_is_rounded_to_two_decimals(self):
+        cases = ((10.0, 10.126, 0.13), (10.0, 9.874, -0.13), (0, 0.124, 0.12), (12.345, 12.349, 0.0))
+        for base_percent, head_percent, change in cases:
+            with self.subTest(base=base_percent, head=head_percent):
+                section = self.section(base_percent, head_percent)
+                self.assertEqual(section["change_percentage_points"], change)
+
+
 if __name__ == "__main__":
     unittest.main()
