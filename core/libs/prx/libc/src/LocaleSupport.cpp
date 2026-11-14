@@ -580,9 +580,7 @@ int ClassifyCharacter(int value, short mask) {
 int ConvertCharacter(int value, bool upper) {
     ValidateCharacter(value);
     if (value < 0) return value;
-    const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
-    const auto character = static_cast<char>(value);
-    return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
+    return (upper ? g_upperTable : g_lowerTable)[static_cast<std::size_t>(value) + 1];
 }
 
 }
@@ -1140,6 +1138,10 @@ GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 
 GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix() {
     return &g_classicLocaleFacade;
+}
+
+const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
+    return &g_wideCollateVtable;
 }
 
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
