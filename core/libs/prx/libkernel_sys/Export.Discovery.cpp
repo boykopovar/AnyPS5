@@ -907,8 +907,13 @@ int APS5_VABI sceKernelGetParentApp(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetPhysPageSize(void) {
-    return static_cast<int>(PS5_PAGE_SIZE);
+extern "C" int GuestMappingPageSize_nid_no_patch(const void* address, std::uint64_t* pageSize);
+
+int APS5_VABI sceKernelGetPhysPageSize(const void* address, std::uint64_t* pageSize) {
+    const int error = GuestMappingPageSize_nid_no_patch(address, pageSize);
+    if (error == 0) return 0;
+    *__error_nid_postfix() = error;
+    return SceKernelError(error);
 }
 
 int APS5_VABI sceKernelGetProcessName(void) {

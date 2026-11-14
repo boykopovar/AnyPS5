@@ -1785,6 +1785,23 @@ bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uint
     return true;
 }
 
+std::uint64_t DirectMappingPageSize(std::uintptr_t address) {
+    constexpr std::uint64_t SmallPage = 0x1000;
+    constexpr std::uint64_t LargePage = 0x200000;
+    std::uintptr_t start = 0;
+    std::uintptr_t end = 0;
+    std::uint64_t phys = 0;
+    int memoryType = 0;
+    if (!QueryDirectMapping(address, &start, &end, &phys, &memoryType)) return SmallPage;
+    const auto granule = address & ~static_cast<std::uintptr_t>(LargePage - 1);
+    if (granule < start || granule + LargePage > end || (phys + (granule - start)) % LargePage != 0) return SmallPage;
+    std::lock_guard lock(g_protectionLock);
+    auto next = g_protections.upper_bound(granule);
+    if (next == g_protections.begin()) return SmallPage;
+    const auto containing = std::prev(next);
+    return granule + LargePage <= containing->second.end ? LargePage : SmallPage;
+}
+
 bool DirectMemoryAliased(std::uintptr_t address, std::size_t bytes) {
     const auto end = address + bytes;
     std::lock_guard lock(g_directLock);

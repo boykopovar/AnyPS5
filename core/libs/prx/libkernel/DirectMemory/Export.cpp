@@ -715,6 +715,35 @@ bool GuestRangeMapped(std::uintptr_t start, std::uintptr_t end) {
     return true;
 }
 
+extern "C" int GuestMappingPageSize_nid_no_patch(const void* address, std::uint64_t* pageSize) {
+    constexpr int GuestEfault = 14;
+    constexpr int GuestEinval = 22;
+    constexpr std::uint64_t SmallPage = 0x1000;
+    const auto location = reinterpret_cast<std::uintptr_t>(address);
+    std::uintptr_t reservedStart = 0;
+    std::uintptr_t reservedEnd = 0;
+    if (GuestReservation(location, &reservedStart, &reservedEnd)) return GuestEinval;
+    std::uint64_t size = SmallPage;
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(location, false);
+    if (range != nullptr) {
+        std::uintptr_t directStart = 0;
+        std::uintptr_t directEnd = 0;
+        std::uint64_t physicalOffset = 0;
+        int memoryType = 0;
+        if (QueryDirectMapping(location, &directStart, &directEnd, &physicalOffset, &memoryType)) size = DirectMappingPageSize(location);
+        else if (range->releasable) {
+            std::uintptr_t stackStart = 0;
+            std::uintptr_t stackEnd = 0;
+            if (!GuestThreadStack(location, &stackStart, &stackEnd)) return GuestEinval;
+        }
+    } else {
+        VirtualQueryInfo info{};
+        if (sceKernelVirtualQuery(address, 0, &info, sizeof(info)) != 0) return GuestEinval;
+    }
+    if (pageSize == nullptr) return GuestEinval;
+    return GuestCopyOut_nid_no_patch(pageSize, &size, sizeof(size)) ? 0 : GuestEfault;
+}
+
 namespace {
 
 bool PageRange(void* address, std::uint64_t length, std::uintptr_t& start, std::uintptr_t& end) {
