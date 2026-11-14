@@ -157,8 +157,11 @@ def estimate(repo, root):
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         return {"available": False, "generated_at": timestamp(), "reason": str(error)}
     finally:
-        refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
-        if refs.returncode == 0:
+        try:
+            refs = git(root, "for-each-ref", "--format=%(refname)", REFS, check=False)
+        except OSError:
+            refs = None
+        if refs is not None and refs.returncode == 0:
             for ref in refs.stdout.splitlines():
                 git(root, "update-ref", "-d", ref, check=False)
 

@@ -164,6 +164,14 @@ class OpenPrProgressTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "API unavailable")
 
+    def test_unavailable_estimate_survives_missing_checkout_cleanup(self):
+        missing = self.root / "missing-checkout"
+        self.assertFalse(missing.exists())
+        with patch.object(progress_prs, "collect_open_prs", side_effect=OSError("checkout missing")):
+            result = progress_prs.estimate("boykopovar/AnyPS5", missing)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "checkout missing")
+
 class DependencyProbeFailureTests(unittest.TestCase):
     def test_fatal_closed_dependency_probe_is_not_an_unresolved_dependency(self):
         pulls = {1: {"depends": {99}, "sha": "head"}}
