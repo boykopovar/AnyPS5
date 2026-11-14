@@ -16,6 +16,38 @@ class ReleaseBodyTests(unittest.TestCase):
         self.assertEqual(prepare_release_notes.release_body(short), short)
         self.assertEqual(prepare_release_notes.release_body(at_limit), at_limit)
 
+    def test_over_limit_removes_only_the_first_whats_changed_section(self):
+        filler = "x" * LIMIT
+        notes = (
+            "Intro\n"
+            "## What's Changed  \r\n"
+            "* one\n"
+            "### Breaking\n"
+            "* two\n"
+            "* " + filler + "\n"
+            "## New Contributors\n"
+            "* newcomer\n"
+            "## What's Changed\n"
+            "* later\n"
+            "**Full Changelog**: https://example.invalid/compare\n"
+        )
+        expected = (
+            "Intro\n"
+            "## New Contributors\n"
+            "* newcomer\n"
+            "## What's Changed\n"
+            "* later\n"
+            "**Full Changelog**: https://example.invalid/compare\n"
+        )
+        self.assertGreater(len(notes), LIMIT)
+        self.assertEqual(prepare_release_notes.release_body(notes), expected)
+
+    def test_over_limit_section_ends_at_single_hash_heading_or_end_of_text(self):
+        prefix = "x" * LIMIT + "\n"
+        self.assertEqual(prepare_release_notes.release_body(prefix + "## What's Changed\n* a\n# Top\nkeep"),
+                         prefix + "# Top\nkeep")
+        self.assertEqual(prepare_release_notes.release_body(prefix + "## What's Changed\n* a\n"), prefix)
+
 
 if __name__ == "__main__":
     unittest.main()
