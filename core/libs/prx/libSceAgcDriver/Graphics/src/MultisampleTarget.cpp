@@ -1045,6 +1045,10 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
+void storeEarlierStorageResults(const ColorTarget& target) {
+    static_cast<void>(StorageTexture::FlushPending(target.address, static_cast<std::size_t>(guardedColorBytes(target)), nullptr, "multisampled color target", PublishScope::None));
+}
+
 void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUse* claimant) {
     for (const auto& range : guarded()) {
         if (!range.fmask && range.use.get() != claimant && address < range.address + range.bytes && range.address < address + bytes) range.use->claimed.store(true, std::memory_order_release);
@@ -1527,6 +1531,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
 }
 
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target) {
+    storeEarlierStorageResults(target);
     TargetsLock lock;
     auto& found = acquire(context, target);
     found.drawn = true;
@@ -1535,6 +1540,7 @@ SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const Col
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image) {
+    storeEarlierStorageResults(target);
     TargetsLock lock;
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
@@ -1544,6 +1550,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image) {
+    storeEarlierStorageResults(target);
     TargetsLock lock;
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
@@ -1634,6 +1641,7 @@ std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, co
 }
 
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target) {
+    storeEarlierStorageResults(target);
     TargetsLock lock;
     acquire(context, target);
 }
@@ -1671,6 +1679,7 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
 }
 
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView) {
+    storeEarlierStorageResults(source);
     TargetsLock lock;
     auto& target = acquire(context, source);
     target.Keep();
@@ -1763,6 +1772,22 @@ void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire) || !mayOverlapGuarded(address, bytes)) return;
     std::shared_lock lock(guardedMutex());
     claimOverlapping(address, bytes, nullptr);
+}
+
+bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return false;
+    std::shared_lock lock(guardedMutex());
+    return std::ranges::any_of(guarded(), [&](const auto& range) { return !range.fmask && address < range.address + range.bytes && range.address < address + bytes; });
+}
+
+void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::shared_lock lock(guardedMutex());
+    for (const auto& range : guarded()) {
+        if (range.fmask || address >= range.address + range.bytes || range.address >= address + bytes || range.use->claimed.exchange(true, std::memory_order_acq_rel)) continue;
+        static std::atomic<int> reports{0};
+        if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] a single-sample storage image store to 0x%llx+0x%llx claims the memory of multisampled color target 0x%llx+0x%llx (%u samples)\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
+    }
 }
 
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
