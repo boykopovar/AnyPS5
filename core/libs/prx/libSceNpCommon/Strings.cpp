@@ -1,5 +1,6 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstddef>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <string_view>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace {
 
@@ -194,18 +196,21 @@ int FormatInteger(char* buf, std::size_t size, std::uint64_t magnitude, char sig
     if (radix > 1) {
         for (std::uint64_t rest = magnitude; rest >= radix; rest /= radix) ++digits;
     }
+    const std::size_t outputLength = prefixLength + digits;
     if (buf != nullptr) {
-        if (size < prefixLength + digits + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-        std::memcpy(buf, prefix, prefixLength);
-        char* end = buf + prefixLength + digits;
+        if (size < outputLength + 1) return NP_ERROR_BUFFER_TOO_SMALL;
+        std::array<char, 3 + sizeof(magnitude) * CHAR_BIT + 1> formatted{};
+        std::memcpy(formatted.data(), prefix, prefixLength);
+        char* end = formatted.data() + outputLength;
         *end = '\0';
         std::uint64_t rest = magnitude;
         for (std::size_t i = 0; i < digits; ++i) {
             *--end = HexDigit(static_cast<std::uint32_t>(rest % radix), (flags & NP_FORMAT_UPPERCASE) != 0);
             rest /= radix;
         }
+        if (!GuestCopyOut_nid_no_patch(buf, formatted.data(), outputLength + 1)) return NP_ERROR_INVALID_ARGUMENT;
     }
-    if (length != nullptr) *length = prefixLength + digits;
+    if (length != nullptr && !GuestCopyOut_nid_no_patch(length, &outputLength, sizeof(outputLength))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

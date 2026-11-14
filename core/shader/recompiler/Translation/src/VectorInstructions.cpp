@@ -1,13 +1,8 @@
-#include "Translation/VectorInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
 #include <stdexcept>
 
 namespace ShaderRecompiler {
-
-void TranslateVectorInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateVectorInstruction not implemented");
-}
 
 namespace {
 
@@ -1086,6 +1081,8 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return floatUnary(inst, IrOpcode::FPLog2);
     case RdnaOpcode::VRsqF32:
         return floatUnary(inst, IrOpcode::FPRecipSqrt32);
+    case RdnaOpcode::VRsqClampF32:
+        return floatUnaryClampInfinity(inst, IrOpcode::FPRecipSqrt32);
     case RdnaOpcode::VSqrtF32:
         return floatUnary(inst, IrOpcode::FPSqrt);
     case RdnaOpcode::VSinF32:
@@ -1311,10 +1308,6 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateVectorInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateVectorInstruction not implemented");
 }
 
 }

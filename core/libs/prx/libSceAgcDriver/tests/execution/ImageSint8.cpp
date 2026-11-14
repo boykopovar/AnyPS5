@@ -22,6 +22,7 @@ constexpr std::uint32_t Width = 128;
 constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t Texels = Width * Height;
 constexpr std::uint32_t Sint8 = 6;
+constexpr std::uint32_t Uint8 = 5;
 constexpr std::uint32_t Unorm8 = 1;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t SwizzleX111 = 0x24cu;
@@ -156,6 +157,21 @@ void CheckSamples(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void CheckGatherConstant(AgcDriver::VulkanDevice& device, std::uint32_t integer, std::uint32_t floating) {
+    Fill();
+    for (const auto format : {Sint8, Uint8, Unorm8}) {
+        Run(device, Gather4Lz, format, LinearSampler, 1);
+        const auto expected = format == Unorm8 ? floating : integer;
+        for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+            Expect(lane, {expected, expected, expected, expected}, "constant gather format " + std::to_string(format));
+        }
+        for (std::size_t word = Threads * 4u; word < Output.size(); ++word) {
+            Require(Output[word] == 0xdeadbeefu, "constant gather changed the output guard");
+        }
+        std::cout << "constant gather format " << format << " passed: " << Hex(expected) << '\n';
+    }
+}
+
 void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t format, const std::array<std::uint32_t, 4>& sampler, const std::string& reason, const std::string& what) {
     std::string refusal;
     try {
@@ -224,14 +240,20 @@ void CheckTable(AgcDriver::VulkanDevice& device) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const std::string mode = argc == 2 ? argv[1] : "";
+        Require(argc == 1 || (argc == 2 && (mode == "--gather-constant-one" || mode == "--gather-constant-all-bits")), "image 8_SINT: unknown argument");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        CheckLoads(*device);
-        CheckSamples(*device);
-        CheckTable(*device);
-        RequireRefused(*device, StoreX, Sint8, PointSampler, "storage image descriptor uses an unsupported format", "8_SINT image_store");
+        if (mode == "--gather-constant-one") CheckGatherConstant(*device, 1u, 0x3f800000u);
+        else if (mode == "--gather-constant-all-bits") CheckGatherConstant(*device, 0xffffffffu, 0x4f800000u);
+        else {
+            CheckLoads(*device);
+            CheckSamples(*device);
+            CheckTable(*device);
+            RequireRefused(*device, StoreX, Sint8, PointSampler, "storage image descriptor uses an unsupported format", "8_SINT image_store");
+        }
         std::puts("image 8_SINT tests passed");
         return 0;
     } catch (const std::exception& error) {

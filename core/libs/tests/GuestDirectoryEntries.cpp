@@ -13,6 +13,12 @@
 #include <fstream>
 #include <map>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -25,6 +31,42 @@ static void Check(bool value, int line) {
 static constexpr int ErrorEinval = static_cast<int>(0x80020016u);
 static constexpr int ErrorEfault = static_cast<int>(0x8002000Eu);
 static constexpr int ErrorEbadf = static_cast<int>(0x80020009u);
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
+        Check(memory != nullptr, __LINE__);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        Check(pageSize > 0, __LINE__);
+        size = static_cast<std::size_t>(pageSize);
+        memory = static_cast<char*>(mmap(nullptr, size, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Check(memory != MAP_FAILED, __LINE__);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    char* Address() const { return memory; }
+
+private:
+    char* memory = nullptr;
+    std::size_t size = 0;
+};
 
 struct Entry {
     std::uint8_t type;
@@ -87,6 +129,22 @@ int main() {
     Require(sceKernelGetdents(directory, tooSmall.data(), static_cast<int>(tooSmall.size())) == ErrorEinval);
     Require(sceKernelGetdents(directory, nullptr, 64) == ErrorEfault);
     Require(sceKernelGetdents(directory, small.data(), 0) == ErrorEinval);
+    {
+        ReadOnlyPage page;
+        char* const unusable[] = {reinterpret_cast<char*>(0x10), page.Address()};
+        std::int64_t base = -1;
+        for (char* pointer : unusable) {
+            Require(sceKernelGetdents(directory, pointer, 64) == ErrorEfault);
+            Require(sceKernelGetdirentries(directory, pointer, 64, &base) == ErrorEfault && base == -1);
+            Require(getdents_nid_postfix(directory, pointer, 64) == -1 && *__error_nid_postfix() == 14);
+        }
+        std::int64_t* const unusableBase[] = {reinterpret_cast<std::int64_t*>(0x10), reinterpret_cast<std::int64_t*>(page.Address())};
+        for (std::int64_t* pointer : unusableBase) {
+            Require(sceKernelGetdirentries(directory, small.data(), static_cast<int>(small.size()), pointer) == ErrorEfault);
+            *__error_nid_postfix() = 0;
+            Require(getdirentries_nid_postfix(directory, small.data(), static_cast<int>(small.size()), pointer) == -1 && *__error_nid_postfix() == 14);
+        }
+    }
     std::array<char, 4096> large{};
     std::map<std::string, Entry> all;
     const int readAll = sceKernelGetdents(directory, large.data(), static_cast<int>(large.size()));

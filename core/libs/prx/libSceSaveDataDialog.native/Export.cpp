@@ -75,7 +75,8 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
  }
  const int savedErrno = errno;
  SaveDataDialogParam p{};
- if (!GuestCopyIn_nid_no_patch(&p, param, sizeof(p))) {
+ const std::size_t copyLen = offsetof(SaveDataDialogParam, user_data) + sizeof(p.user_data);
+ if (!GuestCopyIn_nid_no_patch(&p, param, copyLen)) {
   errno = savedErrno;
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }

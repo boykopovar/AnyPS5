@@ -10,15 +10,10 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int VR_SETUP_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x8A7C0001u);
 constexpr int VR_SETUP_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8A7C0002u);
 constexpr int VR_SETUP_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8A7C0003u);
 constexpr int VR_SETUP_DIALOG_ERROR_BUSY = static_cast<int>(0x8A7C0005u);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 
