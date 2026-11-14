@@ -2561,7 +2561,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     // Counted for the [address-sync] line: a lease released by the completion (the pin waiter
     // finishes the recorder up to the open batch, which holds the kept resources and gets the
     // next serial), or waited for by the caller (any wait releases it at once).
-    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1);
+    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1, !resources->BdaReadOnly());
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
     if (spaceKeep != nullptr) *spaceKeep = resources->ReleaseSpace();
@@ -3605,6 +3605,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             // The reads wait for the producing batch through the flush hook, as the driver's
             // resolve did for every indirect dispatch before its GPU path.
             const auto readStart = std::chrono::steady_clock::now();
+            FinishLeaseWrites();
             const auto count = std::min(args->countIndirect ? Pm4::ReadDrawCount(*args) : args->count, args->count);
             records.reserve(count);
             for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(*args, record));

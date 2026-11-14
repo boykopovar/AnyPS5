@@ -4050,6 +4050,9 @@ struct LeaseState {
     const Recorder* leaseRecorder = nullptr;
     std::uint64_t newestLeaseSerial = 0;
     std::uint64_t finishedLeaseSerial = 0;
+    std::uint64_t newestWritingLeaseSerial = 0;
+    std::atomic<std::uint64_t> notedWritingLeases{0};
+    std::atomic<std::uint64_t> finishedWritingLeases{0};
 };
 
 LeaseState& Leases() {
@@ -4227,6 +4230,15 @@ void ensurePinWaiter() {
     static_cast<void>(registered);
 }
 
+void finishLeaseBatches(std::uint64_t target, const void* site) {
+    const auto& state = Leases();
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || recorder != state.leaseRecorder || target <= recorder->CompletedThrough()) return;
+    if (target >= recorder->OpenSerial()) recorder->Submit();
+    Recorder::AnnounceSyncSite(site);
+    recorder->FinishUpTo(target);
+}
+
 }
 
 bool SyncLeaseWork() {
@@ -4234,7 +4246,7 @@ bool SyncLeaseWork() {
     return sync;
 }
 
-void CountLeaseOutcome(bool synced, std::uint64_t batchSerial) {
+void CountLeaseOutcome(bool synced, std::uint64_t batchSerial, bool writes) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& state = Leases();
     if (!synced) {
@@ -4245,11 +4257,17 @@ void CountLeaseOutcome(bool synced, std::uint64_t batchSerial) {
             state.leaseRecorder = recorder;
             state.newestLeaseSerial = 0;
             state.finishedLeaseSerial = 0;
+            state.newestWritingLeaseSerial = 0;
         }
         state.newestLeaseSerial = std::max(state.newestLeaseSerial, batchSerial);
+        if (writes) {
+            state.newestWritingLeaseSerial = std::max(state.newestWritingLeaseSerial, batchSerial);
+            state.notedWritingLeases.fetch_add(1);
+        }
     }
     std::lock_guard lock(state.mutex);
     ++(synced ? state.stats.synced : state.stats.deferred);
+    if (writes) ++state.stats.writing;
     if (!profile) return;
     // APS5_PROFILE_DRAW: the leases (dispatches and draws) deferred and synced, the guest's
     // pin-contention waits and the BDA table cache, every 10 s (cumulative counts, like the
@@ -4260,18 +4278,20 @@ void CountLeaseOutcome(bool synced, std::uint64_t batchSerial) {
     const auto& stats = state.stats;
     const auto table = BdaResources::TableCacheCounters();
     const auto& snapshots = Snapshots();
-    AgcDriver::ProfilePrint_nid_no_patch("[address-sync] leases: %llu released at completion, %llu synced at once; %llu pin-contention waits by guest threads (%llu finished the lease batch, %llu drained the recorder, %llu cache-only drops) %.1f s; BDA table cache %llu hits / %llu misses (%zu tables held); snapshot compares: %llu skipped (live-backed region), %llu made\n", static_cast<unsigned long long>(stats.deferred), static_cast<unsigned long long>(stats.synced), static_cast<unsigned long long>(stats.contentionWaits), static_cast<unsigned long long>(stats.contentionSyncs), static_cast<unsigned long long>(stats.contentionDrains), static_cast<unsigned long long>(stats.cacheDrops), stats.contentionMs / 1000, static_cast<unsigned long long>(table.hits), static_cast<unsigned long long>(table.misses), table.held, static_cast<unsigned long long>(snapshots.skipped.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshots.checked.load(std::memory_order_relaxed)));
+    AgcDriver::ProfilePrint_nid_no_patch("[address-sync] leases: %llu released at completion, %llu synced at once; %llu by builds that store through addresses; %llu pin-contention waits by guest threads (%llu finished the lease batch, %llu drained the recorder, %llu cache-only drops) %.1f s; BDA table cache %llu hits / %llu misses (%zu tables held); snapshot compares: %llu skipped (live-backed region), %llu made\n", static_cast<unsigned long long>(stats.deferred), static_cast<unsigned long long>(stats.synced), static_cast<unsigned long long>(stats.writing), static_cast<unsigned long long>(stats.contentionWaits), static_cast<unsigned long long>(stats.contentionSyncs), static_cast<unsigned long long>(stats.contentionDrains), static_cast<unsigned long long>(stats.cacheDrops), stats.contentionMs / 1000, static_cast<unsigned long long>(table.hits), static_cast<unsigned long long>(table.misses), table.held, static_cast<unsigned long long>(snapshots.skipped.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshots.checked.load(std::memory_order_relaxed)));
 }
 
 void FinishLeaseWork() {
     GuestMemory::AssertGpuLockHeld("FinishLeaseWork");
-    const auto& state = Leases();
-    auto* recorder = Recorder::Active();
-    const auto target = state.newestLeaseSerial;
-    if (recorder == nullptr || recorder != state.leaseRecorder || target <= recorder->CompletedThrough()) return;
-    if (target >= recorder->OpenSerial()) recorder->Submit();
-    Recorder::AnnounceSyncSite(__builtin_return_address(0));
-    recorder->FinishUpTo(target);
+    finishLeaseBatches(Leases().newestLeaseSerial, __builtin_return_address(0));
+}
+
+void FinishLeaseWrites() {
+    GuestMemory::AssertGpuLockHeld("FinishLeaseWrites");
+    auto& state = Leases();
+    const auto noted = state.notedWritingLeases.load();
+    finishLeaseBatches(state.newestWritingLeaseSerial, __builtin_return_address(0));
+    state.finishedWritingLeases.store(noted);
 }
 
 bool LeaseWorkPending() {
@@ -4279,6 +4299,11 @@ bool LeaseWorkPending() {
     const auto& state = Leases();
     const auto* recorder = Recorder::Active();
     return recorder != nullptr && recorder == state.leaseRecorder && state.newestLeaseSerial > recorder->CompletedThrough();
+}
+
+bool LeaseWritesMayBePending() {
+    const auto& state = Leases();
+    return state.notedWritingLeases.load() > state.finishedWritingLeases.load();
 }
 
 LeaseStats LeaseCounters() {

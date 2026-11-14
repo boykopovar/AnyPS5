@@ -299,6 +299,13 @@ bool EmptyIndirectSkip() {
     return enabled;
 }
 
+void FinishLeaseWritesBeforeRead() {
+    if (!Graphics::LeaseWritesMayBePending()) return;
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Indirect);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    Graphics::FinishLeaseWrites();
+}
+
 struct CpuIndirectProgramsStorage {};
 
 std::unordered_map<std::uint64_t, bool>& CpuIndirectPrograms() {
@@ -541,6 +548,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             const auto& indirect = *drawParameters.indirect;
             recordQueuedLabelsBeforeRead(submission.queue);
             const auto readStart = std::chrono::steady_clock::now();
+            FinishLeaseWritesBeforeRead();
             const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
             bool any = false;
             for (std::uint32_t record = 0; record < count && !any; ++record) any = recordDraws(Pm4::ReadDrawArguments(indirect, record));
@@ -1154,6 +1162,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
+        FinishLeaseWritesBeforeRead();
         const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
         std::vector<Pm4::DrawArguments> records;
         for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(indirect, record));
