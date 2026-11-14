@@ -148,6 +148,11 @@ struct alignas(16) TransformationMatrix {
     };
 };
 
+struct OptionalTransformationMatrix {
+    bool m_engaged{false};
+    TransformationMatrix m_value;
+};
+
 struct MatrixTransformOperation {
     void* m_vptr;
     std::uint32_t m_refCount;
@@ -285,6 +290,8 @@ static_assert(sizeof(OptionalAffineTransform) == 56);
 static_assert(offsetof(OptionalAffineTransform, m_padding) == 1);
 static_assert(offsetof(OptionalAffineTransform, m_value) == 8);
 static_assert(sizeof(TransformationMatrix) == 128);
+static_assert(sizeof(OptionalTransformationMatrix) == 144);
+static_assert(offsetof(OptionalTransformationMatrix, m_value) == 16);
 static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(offsetof(MatrixTransformOperation, m_a) == 16);
 static_assert(sizeof(Color) == 8);

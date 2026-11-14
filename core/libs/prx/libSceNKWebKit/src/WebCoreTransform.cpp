@@ -1,3 +1,32 @@
+/*
+ * Copyright (C) 2005, 2006, 2013 Apple Inc.  All rights reserved.
+ * Copyright (C) 2009 Torch Mobile, Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/*
+ * Derived from Source/WebCore/platform/graphics/transforms/TransformationMatrix.cpp@c55364d53f971f63a709976f168d932d558b8909
+ */
+
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
@@ -6,6 +35,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 namespace WebCore {
@@ -104,6 +134,338 @@ FloatPoint InternalMapPoint(const TransformationMatrix& tm, const FloatPoint& p)
     double ry = 0.0;
     MultVecMatrix2D(tm, static_cast<double>(p.m_x), static_cast<double>(p.m_y), rx, ry);
     return FloatPoint{static_cast<float>(rx), static_cast<float>(ry)};
+}
+
+inline double Rad2Deg(double r) {
+    return r * (180.0 / kPi);
+}
+
+bool IsIdentity(const TransformationMatrix& tm) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if (tm.m_matrix[i][j] != (i == j ? 1.0 : 0.0)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool IsAffine(const TransformationMatrix& tm) {
+    return tm.m_matrix[0][2] == 0.0 && tm.m_matrix[0][3] == 0.0
+        && tm.m_matrix[1][2] == 0.0 && tm.m_matrix[1][3] == 0.0
+        && tm.m_matrix[2][0] == 0.0 && tm.m_matrix[2][1] == 0.0
+        && tm.m_matrix[2][2] == 1.0 && tm.m_matrix[2][3] == 0.0
+        && tm.m_matrix[3][2] == 0.0 && tm.m_matrix[3][3] == 1.0;
+}
+
+void Adjoint(const double m[4][4], double result[4][4]) {
+    double a1 = m[0][0], b1 = m[0][1], c1 = m[0][2], d1 = m[0][3];
+    double a2 = m[1][0], b2 = m[1][1], c2 = m[1][2], d2 = m[1][3];
+    double a3 = m[2][0], b3 = m[2][1], c3 = m[2][2], d3 = m[2][3];
+    double a4 = m[3][0], b4 = m[3][1], c4 = m[3][2], d4 = m[3][3];
+
+    result[0][0] = Determinant3x3(b2, b3, b4, c2, c3, c4, d2, d3, d4);
+    result[1][0] = -Determinant3x3(a2, a3, a4, c2, c3, c4, d2, d3, d4);
+    result[2][0] = Determinant3x3(a2, a3, a4, b2, b3, b4, d2, d3, d4);
+    result[3][0] = -Determinant3x3(a2, a3, a4, b2, b3, b4, c2, c3, c4);
+
+    result[0][1] = -Determinant3x3(b1, b3, b4, c1, c3, c4, d1, d3, d4);
+    result[1][1] = Determinant3x3(a1, a3, a4, c1, c3, c4, d1, d3, d4);
+    result[2][1] = -Determinant3x3(a1, a3, a4, b1, b3, b4, d1, d3, d4);
+    result[3][1] = Determinant3x3(a1, a3, a4, b1, b3, b4, c1, c3, c4);
+
+    result[0][2] = Determinant3x3(b1, b2, b4, c1, c2, c4, d1, d2, d4);
+    result[1][2] = -Determinant3x3(a1, a2, a4, c1, c2, c4, d1, d2, d4);
+    result[2][2] = Determinant3x3(a1, a2, a4, b1, b2, b4, d1, d2, d4);
+    result[3][2] = -Determinant3x3(a1, a2, a4, b1, b2, b4, c1, c2, c4);
+
+    result[0][3] = -Determinant3x3(b1, b2, b3, c1, c2, c3, d1, d2, d3);
+    result[1][3] = Determinant3x3(a1, a2, a3, c1, c2, c3, d1, d2, d3);
+    result[2][3] = -Determinant3x3(a1, a2, a3, b1, b2, b3, d1, d2, d3);
+    result[3][3] = Determinant3x3(a1, a2, a3, b1, b2, b3, c1, c2, c3);
+}
+
+bool InverseMatrix(const double m[4][4], double result[4][4]) {
+    Adjoint(m, result);
+    double det = Determinant4x4(m);
+    if (std::abs(det) < kSmallNumber) {
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            result[i][j] = result[i][j] / det;
+        }
+    }
+    return true;
+}
+
+double V3Length(const double a[3]) {
+    return std::hypot(a[0], a[1], a[2]);
+}
+
+void V3Scale(double v[3], double desiredLength) {
+    double len = V3Length(v);
+    if (len != 0.0) {
+        double l = desiredLength / len;
+        v[0] *= l;
+        v[1] *= l;
+        v[2] *= l;
+    }
+}
+
+double V3Dot(const double a[3], const double b[3]) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+void V3Combine(const double a[3], const double b[3], double result[3], double ascl, double bscl) {
+    result[0] = ascl * a[0] + bscl * b[0];
+    result[1] = ascl * a[1] + bscl * b[1];
+    result[2] = ascl * a[2] + bscl * b[2];
+}
+
+void V3Cross(const double a[3], const double b[3], double result[3]) {
+    result[0] = a[1] * b[2] - a[2] * b[1];
+    result[1] = a[2] * b[0] - a[0] * b[2];
+    result[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+struct Decomposed2 {
+    double scaleX, scaleY;
+    double translateX, translateY;
+    double angle;
+    double m11, m12, m21, m22;
+};
+
+struct Decomposed4 {
+    double scaleX, scaleY, scaleZ;
+    double skewXY, skewXZ, skewYZ;
+    double quaternion[4];
+    double translateX, translateY, translateZ;
+    double perspectiveX, perspectiveY, perspectiveZ, perspectiveW;
+};
+
+bool Decompose2(const TransformationMatrix& tm, Decomposed2& result) {
+    if (IsIdentity(tm)) {
+        result = Decomposed2{};
+        result.scaleX = 1.0;
+        result.scaleY = 1.0;
+        result.m11 = 1.0;
+        result.m22 = 1.0;
+        return true;
+    }
+    double row0x = tm.m_matrix[0][0];
+    double row0y = tm.m_matrix[0][1];
+    double row1x = tm.m_matrix[1][0];
+    double row1y = tm.m_matrix[1][1];
+    result.translateX = tm.m_matrix[3][0];
+    result.translateY = tm.m_matrix[3][1];
+    result.scaleX = std::hypot(row0x, row0y);
+    result.scaleY = std::hypot(row1x, row1y);
+    double determinant = row0x * row1y - row0y * row1x;
+    if (determinant < 0.0) {
+        if (row0x < row1y) {
+            result.scaleX = -result.scaleX;
+        } else {
+            result.scaleY = -result.scaleY;
+        }
+    }
+    if (result.scaleX != 0.0) {
+        row0x *= 1.0 / result.scaleX;
+        row0y *= 1.0 / result.scaleX;
+    }
+    if (result.scaleY != 0.0) {
+        row1x *= 1.0 / result.scaleY;
+        row1y *= 1.0 / result.scaleY;
+    }
+    result.angle = std::atan2(row0y, row0x);
+    if (result.angle != 0.0) {
+        double sn = -row0y;
+        double cs = row0x;
+        double m11 = row0x, m12 = row0y;
+        double m21 = row1x, m22 = row1y;
+        row0x = cs * m11 + sn * m21;
+        row0y = cs * m12 + sn * m22;
+        row1x = -sn * m11 + cs * m21;
+        row1y = -sn * m12 + cs * m22;
+    }
+    result.m11 = row0x;
+    result.m12 = row0y;
+    result.m21 = row1x;
+    result.m22 = row1y;
+    result.angle = Rad2Deg(result.angle);
+    return true;
+}
+
+bool Decompose4(const TransformationMatrix& tm, Decomposed4& result) {
+    if (IsIdentity(tm)) {
+        result = Decomposed4{};
+        result.perspectiveW = 1.0;
+        result.scaleX = 1.0;
+        result.scaleY = 1.0;
+        result.scaleZ = 1.0;
+        return true;
+    }
+    double local[4][4];
+    std::memcpy(local, tm.m_matrix, sizeof(local));
+    if (local[3][3] == 0.0) {
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            local[i][j] /= local[3][3];
+        }
+    }
+    double perspective[4][4];
+    std::memcpy(perspective, local, sizeof(perspective));
+    for (int i = 0; i < 3; ++i) {
+        perspective[i][3] = 0.0;
+    }
+    perspective[3][3] = 1.0;
+    if (Determinant4x4(perspective) == 0.0) {
+        return false;
+    }
+    if (local[0][3] != 0.0 || local[1][3] != 0.0 || local[2][3] != 0.0) {
+        double rightHandSide[4] = {local[0][3], local[1][3], local[2][3], local[3][3]};
+        double inversePerspective[4][4];
+        InverseMatrix(perspective, inversePerspective);
+        double transposed[4][4];
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                transposed[i][j] = inversePerspective[j][i];
+            }
+        }
+        double point[4];
+        for (int j = 0; j < 4; ++j) {
+            point[j] = rightHandSide[0] * transposed[0][j] + rightHandSide[1] * transposed[1][j]
+                     + rightHandSide[2] * transposed[2][j] + rightHandSide[3] * transposed[3][j];
+        }
+        result.perspectiveX = point[0];
+        result.perspectiveY = point[1];
+        result.perspectiveZ = point[2];
+        result.perspectiveW = point[3];
+        local[0][3] = local[1][3] = local[2][3] = 0.0;
+        local[3][3] = 1.0;
+    } else {
+        result.perspectiveX = result.perspectiveY = result.perspectiveZ = 0.0;
+        result.perspectiveW = 1.0;
+    }
+    result.translateX = local[3][0];
+    local[3][0] = 0.0;
+    result.translateY = local[3][1];
+    local[3][1] = 0.0;
+    result.translateZ = local[3][2];
+    local[3][2] = 0.0;
+
+    double row[3][3];
+    for (int i = 0; i < 3; ++i) {
+        row[i][0] = local[i][0];
+        row[i][1] = local[i][1];
+        row[i][2] = local[i][2];
+    }
+    result.scaleX = V3Length(row[0]);
+    V3Scale(row[0], 1.0);
+    result.skewXY = V3Dot(row[0], row[1]);
+    V3Combine(row[1], row[0], row[1], 1.0, -result.skewXY);
+    result.scaleY = V3Length(row[1]);
+    V3Scale(row[1], 1.0);
+    result.skewXY /= result.scaleY;
+    result.skewXZ = V3Dot(row[0], row[2]);
+    V3Combine(row[2], row[0], row[2], 1.0, -result.skewXZ);
+    result.skewYZ = V3Dot(row[1], row[2]);
+    V3Combine(row[2], row[1], row[2], 1.0, -result.skewYZ);
+    result.scaleZ = V3Length(row[2]);
+    V3Scale(row[2], 1.0);
+    result.skewXZ /= result.scaleZ;
+    result.skewYZ /= result.scaleZ;
+
+    double cross[3];
+    V3Cross(row[1], row[2], cross);
+    if (V3Dot(row[0], cross) < 0.0) {
+        result.scaleX *= -1.0;
+        result.scaleY *= -1.0;
+        result.scaleZ *= -1.0;
+        for (int i = 0; i < 3; ++i) {
+            row[i][0] *= -1.0;
+            row[i][1] *= -1.0;
+            row[i][2] *= -1.0;
+        }
+    }
+
+    double s, x, y, z, w;
+    double t = row[0][0] + row[1][1] + row[2][2] + 1.0;
+    if (t > 1e-4) {
+        s = 0.5 / std::sqrt(t);
+        w = 0.25 / s;
+        x = (row[2][1] - row[1][2]) * s;
+        y = (row[0][2] - row[2][0]) * s;
+        z = (row[1][0] - row[0][1]) * s;
+    } else if (row[0][0] > row[1][1] && row[0][0] > row[2][2]) {
+        s = std::sqrt(1.0 + row[0][0] - row[1][1] - row[2][2]) * 2.0;
+        x = 0.25 * s;
+        y = (row[0][1] + row[1][0]) / s;
+        z = (row[0][2] + row[2][0]) / s;
+        w = (row[2][1] - row[1][2]) / s;
+    } else if (row[1][1] > row[2][2]) {
+        s = std::sqrt(1.0 + row[1][1] - row[0][0] - row[2][2]) * 2.0;
+        x = (row[0][1] + row[1][0]) / s;
+        y = 0.25 * s;
+        z = (row[1][2] + row[2][1]) / s;
+        w = (row[0][2] - row[2][0]) / s;
+    } else {
+        s = std::sqrt(1.0 + row[2][2] - row[0][0] - row[1][1]) * 2.0;
+        x = (row[0][2] + row[2][0]) / s;
+        y = (row[1][2] + row[2][1]) / s;
+        z = 0.25 * s;
+        w = (row[1][0] - row[0][1]) / s;
+    }
+    result.quaternion[0] = x;
+    result.quaternion[1] = y;
+    result.quaternion[2] = z;
+    result.quaternion[3] = w;
+    return true;
+}
+
+void Slerp(double qa[4], const double qb[4], double t) {
+    double ax = qa[0], ay = qa[1], az = qa[2], aw = qa[3];
+    double bx = qb[0], by = qb[1], bz = qb[2], bw = qb[3];
+    double scale, invscale;
+    double angle = ax * bx + ay * by + az * bz + aw * bw;
+    if (angle < 0.0) {
+        ax = -ax;
+        ay = -ay;
+        az = -az;
+        aw = -aw;
+        angle = -angle;
+    }
+    if (angle + 1.0 > .05) {
+        if (1.0 - angle >= .05) {
+            double th = std::acos(angle);
+            double invth = 1.0 / std::sin(th);
+            scale = std::sin(th * (1.0 - t)) * invth;
+            invscale = std::sin(th * t) * invth;
+        } else {
+            scale = 1.0 - t;
+            invscale = t;
+        }
+    } else {
+        bx = -ay;
+        by = ax;
+        bz = -aw;
+        bw = az;
+        scale = std::sin(kPi * (.5 - t));
+        invscale = std::sin(kPi * t);
+    }
+    qa[0] = ax * scale + bx * invscale;
+    qa[1] = ay * scale + by * invscale;
+    qa[2] = az * scale + bz * invscale;
+    qa[3] = aw * scale + bw * invscale;
+}
+
+void BlendFloat(double& from, double to, double progress) {
+    if (from != to) {
+        from = from + (to - from) * progress;
+    }
 }
 
 }  // namespace
@@ -662,6 +1024,243 @@ WebCore::TransformationMatrix APS5_VABI _ZNK7WebCore24MatrixTransformOperation6m
     result.m_matrix[3][2] = 0.0;
     result.m_matrix[3][3] = 1.0;
     return result;
+}
+
+
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix7scale3dEddd(
+    WebCore::TransformationMatrix* self, double sx, double sy, double sz) {
+    _ZN7WebCore20TransformationMatrix15scaleNonUniformEdd(self, sx, sy);
+    self->m_matrix[2][0] *= sz;
+    self->m_matrix[2][1] *= sz;
+    self->m_matrix[2][2] *= sz;
+    self->m_matrix[2][3] *= sz;
+    return *self;
+}
+
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8rotate3dEdddd(
+    WebCore::TransformationMatrix* self, double x, double y, double z, double angle) {
+    double length = std::hypot(x, y, z);
+    if (length == 0.0) {
+        return *self;
+    }
+    if (length != 1.0) {
+        x /= length;
+        y /= length;
+        z /= length;
+    }
+    angle = WebCore::Deg2Rad(angle);
+    double sinTheta = std::sin(angle);
+    double cosTheta = std::cos(angle);
+
+    WebCore::TransformationMatrix mat;
+    if (x == 1.0 && y == 0.0 && z == 0.0) {
+        mat.m_matrix[1][1] = cosTheta;
+        mat.m_matrix[1][2] = sinTheta;
+        mat.m_matrix[2][1] = -sinTheta;
+        mat.m_matrix[2][2] = cosTheta;
+    } else if (x == 0.0 && y == 1.0 && z == 0.0) {
+        mat.m_matrix[0][0] = cosTheta;
+        mat.m_matrix[0][2] = -sinTheta;
+        mat.m_matrix[2][0] = sinTheta;
+        mat.m_matrix[2][2] = cosTheta;
+    } else if (x == 0.0 && y == 0.0 && z == 1.0) {
+        mat.m_matrix[0][0] = cosTheta;
+        mat.m_matrix[0][1] = sinTheta;
+        mat.m_matrix[1][0] = -sinTheta;
+        mat.m_matrix[1][1] = cosTheta;
+    } else {
+        double oneMinusCosTheta = 1.0 - cosTheta;
+        mat.m_matrix[0][0] = cosTheta + x * x * oneMinusCosTheta;
+        mat.m_matrix[0][1] = y * x * oneMinusCosTheta + z * sinTheta;
+        mat.m_matrix[0][2] = z * x * oneMinusCosTheta - y * sinTheta;
+        mat.m_matrix[1][0] = x * y * oneMinusCosTheta - z * sinTheta;
+        mat.m_matrix[1][1] = cosTheta + y * y * oneMinusCosTheta;
+        mat.m_matrix[1][2] = z * y * oneMinusCosTheta + x * sinTheta;
+        mat.m_matrix[2][0] = x * z * oneMinusCosTheta + y * sinTheta;
+        mat.m_matrix[2][1] = y * z * oneMinusCosTheta - x * sinTheta;
+        mat.m_matrix[2][2] = cosTheta + z * z * oneMinusCosTheta;
+    }
+    return _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, mat);
+}
+
+WebCore::OptionalTransformationMatrix APS5_VABI _ZNK7WebCore20TransformationMatrix7inverseEv(
+    const WebCore::TransformationMatrix* self) {
+    WebCore::OptionalTransformationMatrix result;
+    auto type = WebCore::GetMatrixType(*self);
+    if (type == WebCore::MatrixType::IdentityOrTranslation) {
+        result.m_engaged = true;
+        if (self->m_matrix[3][0] != 0.0 || self->m_matrix[3][1] != 0.0 || self->m_matrix[3][2] != 0.0) {
+            result.m_value.m_matrix[3][0] = -self->m_matrix[3][0];
+            result.m_value.m_matrix[3][1] = -self->m_matrix[3][1];
+            result.m_value.m_matrix[3][2] = -self->m_matrix[3][2];
+        }
+        return result;
+    }
+    if (type == WebCore::MatrixType::Affine) {
+        double a = self->m_matrix[0][0];
+        double b = self->m_matrix[0][1];
+        double c = self->m_matrix[1][0];
+        double d = self->m_matrix[1][1];
+        double e = self->m_matrix[3][0];
+        double f = self->m_matrix[3][1];
+        double determinant = a * d - b * c;
+        if (std::abs(determinant) < WebCore::kSmallNumber) {
+            return result;
+        }
+        double inverseDeterminant = 1.0 / determinant;
+        result.m_engaged = true;
+        result.m_value.m_matrix[0][0] = d * inverseDeterminant;
+        result.m_value.m_matrix[0][1] = -b * inverseDeterminant;
+        result.m_value.m_matrix[1][0] = -c * inverseDeterminant;
+        result.m_value.m_matrix[1][1] = a * inverseDeterminant;
+        result.m_value.m_matrix[3][0] = (c * f - d * e) * inverseDeterminant;
+        result.m_value.m_matrix[3][1] = (b * e - a * f) * inverseDeterminant;
+        return result;
+    }
+    if (!WebCore::InverseMatrix(self->m_matrix, result.m_value.m_matrix)) {
+        result.m_value = WebCore::TransformationMatrix{};
+        return result;
+    }
+    result.m_engaged = true;
+    return result;
+}
+
+void APS5_VABI _ZN7WebCore20TransformationMatrix6blend2ERKS0_d(
+    WebCore::TransformationMatrix* self, const WebCore::TransformationMatrix& from, double progress) {
+    WebCore::Decomposed2 fromDecomp;
+    WebCore::Decomposed2 toDecomp;
+    if (!WebCore::Decompose2(from, fromDecomp) || !WebCore::Decompose2(*self, toDecomp)) {
+        if (progress < 0.5) {
+            *self = from;
+        }
+        return;
+    }
+    if ((fromDecomp.scaleX < 0.0 && toDecomp.scaleY < 0.0) || (fromDecomp.scaleY < 0.0 && toDecomp.scaleX < 0.0)) {
+        fromDecomp.scaleX = -fromDecomp.scaleX;
+        fromDecomp.scaleY = -fromDecomp.scaleY;
+        fromDecomp.angle += fromDecomp.angle < 0.0 ? 180.0 : -180.0;
+    }
+    if (fromDecomp.angle == 0.0) {
+        fromDecomp.angle = 360.0;
+    }
+    if (toDecomp.angle == 0.0) {
+        toDecomp.angle = 360.0;
+    }
+    if (std::abs(fromDecomp.angle - toDecomp.angle) > 180.0) {
+        if (fromDecomp.angle > toDecomp.angle) {
+            fromDecomp.angle -= 360.0;
+        } else {
+            toDecomp.angle -= 360.0;
+        }
+    }
+    WebCore::BlendFloat(fromDecomp.m11, toDecomp.m11, progress);
+    WebCore::BlendFloat(fromDecomp.m12, toDecomp.m12, progress);
+    WebCore::BlendFloat(fromDecomp.m21, toDecomp.m21, progress);
+    WebCore::BlendFloat(fromDecomp.m22, toDecomp.m22, progress);
+    WebCore::BlendFloat(fromDecomp.translateX, toDecomp.translateX, progress);
+    WebCore::BlendFloat(fromDecomp.translateY, toDecomp.translateY, progress);
+    WebCore::BlendFloat(fromDecomp.scaleX, toDecomp.scaleX, progress);
+    WebCore::BlendFloat(fromDecomp.scaleY, toDecomp.scaleY, progress);
+    WebCore::BlendFloat(fromDecomp.angle, toDecomp.angle, progress);
+
+    *self = WebCore::TransformationMatrix{};
+    self->m_matrix[0][0] = fromDecomp.m11;
+    self->m_matrix[0][1] = fromDecomp.m12;
+    self->m_matrix[1][0] = fromDecomp.m21;
+    self->m_matrix[1][1] = fromDecomp.m22;
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(self, fromDecomp.translateX, fromDecomp.translateY, 0.0);
+    double angle = WebCore::Deg2Rad(fromDecomp.angle);
+    WebCore::TransformationMatrix rotation;
+    rotation.m_matrix[0][0] = std::cos(angle);
+    rotation.m_matrix[0][1] = std::sin(angle);
+    rotation.m_matrix[1][0] = -std::sin(angle);
+    rotation.m_matrix[1][1] = std::cos(angle);
+    _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, rotation);
+    _ZN7WebCore20TransformationMatrix7scale3dEddd(self, fromDecomp.scaleX, fromDecomp.scaleY, 1.0);
+}
+
+void APS5_VABI _ZN7WebCore20TransformationMatrix6blend4ERKS0_d(
+    WebCore::TransformationMatrix* self, const WebCore::TransformationMatrix& from, double progress) {
+    WebCore::Decomposed4 fromDecomp;
+    WebCore::Decomposed4 toDecomp;
+    if (!WebCore::Decompose4(from, fromDecomp) || !WebCore::Decompose4(*self, toDecomp)) {
+        if (progress < 0.5) {
+            *self = from;
+        }
+        return;
+    }
+    WebCore::BlendFloat(fromDecomp.scaleX, toDecomp.scaleX, progress);
+    WebCore::BlendFloat(fromDecomp.scaleY, toDecomp.scaleY, progress);
+    WebCore::BlendFloat(fromDecomp.scaleZ, toDecomp.scaleZ, progress);
+    WebCore::BlendFloat(fromDecomp.skewXY, toDecomp.skewXY, progress);
+    WebCore::BlendFloat(fromDecomp.skewXZ, toDecomp.skewXZ, progress);
+    WebCore::BlendFloat(fromDecomp.skewYZ, toDecomp.skewYZ, progress);
+    WebCore::BlendFloat(fromDecomp.translateX, toDecomp.translateX, progress);
+    WebCore::BlendFloat(fromDecomp.translateY, toDecomp.translateY, progress);
+    WebCore::BlendFloat(fromDecomp.translateZ, toDecomp.translateZ, progress);
+    WebCore::BlendFloat(fromDecomp.perspectiveX, toDecomp.perspectiveX, progress);
+    WebCore::BlendFloat(fromDecomp.perspectiveY, toDecomp.perspectiveY, progress);
+    WebCore::BlendFloat(fromDecomp.perspectiveZ, toDecomp.perspectiveZ, progress);
+    WebCore::BlendFloat(fromDecomp.perspectiveW, toDecomp.perspectiveW, progress);
+    WebCore::Slerp(fromDecomp.quaternion, toDecomp.quaternion, progress);
+
+    *self = WebCore::TransformationMatrix{};
+    self->m_matrix[0][3] = fromDecomp.perspectiveX;
+    self->m_matrix[1][3] = fromDecomp.perspectiveY;
+    self->m_matrix[2][3] = fromDecomp.perspectiveZ;
+    self->m_matrix[3][3] = fromDecomp.perspectiveW;
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(self, fromDecomp.translateX, fromDecomp.translateY, fromDecomp.translateZ);
+
+    const double* q = fromDecomp.quaternion;
+    double xx = q[0] * q[0];
+    double xy = q[0] * q[1];
+    double xz = q[0] * q[2];
+    double xw = q[0] * q[3];
+    double yy = q[1] * q[1];
+    double yz = q[1] * q[2];
+    double yw = q[1] * q[3];
+    double zz = q[2] * q[2];
+    double zw = q[2] * q[3];
+    WebCore::TransformationMatrix rotation;
+    rotation.m_matrix[0][0] = 1.0 - 2.0 * (yy + zz);
+    rotation.m_matrix[0][1] = 2.0 * (xy - zw);
+    rotation.m_matrix[0][2] = 2.0 * (xz + yw);
+    rotation.m_matrix[1][0] = 2.0 * (xy + zw);
+    rotation.m_matrix[1][1] = 1.0 - 2.0 * (xx + zz);
+    rotation.m_matrix[1][2] = 2.0 * (yz - xw);
+    rotation.m_matrix[2][0] = 2.0 * (xz - yw);
+    rotation.m_matrix[2][1] = 2.0 * (yz + xw);
+    rotation.m_matrix[2][2] = 1.0 - 2.0 * (xx + yy);
+    _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, rotation);
+
+    if (fromDecomp.skewYZ != 0.0) {
+        WebCore::TransformationMatrix skew;
+        skew.m_matrix[2][1] = fromDecomp.skewYZ;
+        _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, skew);
+    }
+    if (fromDecomp.skewXZ != 0.0) {
+        WebCore::TransformationMatrix skew;
+        skew.m_matrix[2][0] = fromDecomp.skewXZ;
+        _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, skew);
+    }
+    if (fromDecomp.skewXY != 0.0) {
+        WebCore::TransformationMatrix skew;
+        skew.m_matrix[1][0] = fromDecomp.skewXY;
+        _ZN7WebCore20TransformationMatrix8multiplyERKS0_(self, skew);
+    }
+    _ZN7WebCore20TransformationMatrix7scale3dEddd(self, fromDecomp.scaleX, fromDecomp.scaleY, fromDecomp.scaleZ);
+}
+
+void APS5_VABI _ZN7WebCore20TransformationMatrix5blendERKS0_d(
+    WebCore::TransformationMatrix* self, const WebCore::TransformationMatrix& from, double progress) {
+    if (WebCore::IsIdentity(from) && WebCore::IsIdentity(*self)) {
+        return;
+    }
+    if (WebCore::IsAffine(from) && WebCore::IsAffine(*self)) {
+        _ZN7WebCore20TransformationMatrix6blend2ERKS0_d(self, from, progress);
+    } else {
+        _ZN7WebCore20TransformationMatrix6blend4ERKS0_d(self, from, progress);
+    }
 }
 
 }

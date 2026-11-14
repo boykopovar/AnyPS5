@@ -488,6 +488,168 @@ static void TestAffineTransform() {
     Require(AlmostEqual(tm.m_matrix[1][1], 3.0));
 }
 
+static bool MatrixNear(const WebCore::TransformationMatrix& a, const WebCore::TransformationMatrix& b, double eps = 1e-9) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if (!AlmostEqual(a.m_matrix[i][j], b.m_matrix[i][j], eps)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static WebCore::TransformationMatrix Rotated(double rx, double ry, double rz) {
+    WebCore::TransformationMatrix m;
+    _ZN7WebCore20TransformationMatrix8rotate3dEddd(&m, rx, ry, rz);
+    return m;
+}
+
+static WebCore::TransformationMatrix AxisRotated(double x, double y, double z, double angle) {
+    WebCore::TransformationMatrix m;
+    _ZN7WebCore20TransformationMatrix8rotate3dEdddd(&m, x, y, z, angle);
+    return m;
+}
+
+static WebCore::TransformationMatrix Product(WebCore::TransformationMatrix a, const WebCore::TransformationMatrix& b) {
+    _ZN7WebCore20TransformationMatrix8multiplyERKS0_(&a, b);
+    return a;
+}
+
+static void TestTransformationMatrixScale3dAndAxisRotation() {
+    WebCore::TransformationMatrix m;
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&m, 1.0, 2.0, 3.0);
+    Require(&_ZN7WebCore20TransformationMatrix7scale3dEddd(&m, 2.0, 3.0, 4.0) == &m);
+    Require(m.m_matrix[0][0] == 2.0 && m.m_matrix[1][1] == 3.0 && m.m_matrix[2][2] == 4.0 && m.m_matrix[3][3] == 1.0);
+    Require(m.m_matrix[3][0] == 1.0 && m.m_matrix[3][1] == 2.0 && m.m_matrix[3][2] == 3.0);
+
+    WebCore::TransformationMatrix unchanged = m;
+    Require(&_ZN7WebCore20TransformationMatrix8rotate3dEdddd(&unchanged, 0.0, 0.0, 0.0, 45.0) == &unchanged);
+    Require(std::memcmp(&unchanged, &m, sizeof(m)) == 0);
+
+    Require(MatrixNear(AxisRotated(0.0, 0.0, 2.0, 90.0), Rotated(0.0, 0.0, 90.0), 1e-12));
+    Require(MatrixNear(AxisRotated(3.0, 0.0, 0.0, 30.0), Rotated(30.0, 0.0, 0.0), 1e-12));
+    Require(MatrixNear(AxisRotated(0.0, -1.0, 0.0, 60.0), Rotated(0.0, -60.0, 0.0), 1e-12));
+
+    WebCore::TransformationMatrix cycle = AxisRotated(1.0, 1.0, 1.0, 120.0);
+    WebCore::TransformationMatrix permutation;
+    permutation.m_matrix[0][0] = 0.0;
+    permutation.m_matrix[0][1] = 1.0;
+    permutation.m_matrix[1][1] = 0.0;
+    permutation.m_matrix[1][2] = 1.0;
+    permutation.m_matrix[2][2] = 0.0;
+    permutation.m_matrix[2][0] = 1.0;
+    Require(MatrixNear(cycle, permutation, 1e-12));
+    Require(MatrixNear(Product(AxisRotated(1.0, 2.0, 3.0, 40.0), AxisRotated(1.0, 2.0, 3.0, -40.0)), WebCore::TransformationMatrix{}, 1e-12));
+}
+
+static void TestTransformationMatrixInverse() {
+    WebCore::TransformationMatrix identity;
+    auto inverse = _ZNK7WebCore20TransformationMatrix7inverseEv(&identity);
+    Require(inverse.m_engaged && std::memcmp(&inverse.m_value, &identity, sizeof(identity)) == 0);
+
+    WebCore::TransformationMatrix translation;
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&translation, 5.0, -7.0, 9.0);
+    inverse = _ZNK7WebCore20TransformationMatrix7inverseEv(&translation);
+    WebCore::TransformationMatrix expected;
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&expected, -5.0, 7.0, -9.0);
+    Require(inverse.m_engaged && std::memcmp(&inverse.m_value, &expected, sizeof(expected)) == 0);
+
+    WebCore::TransformationMatrix affine;
+    _ZN7WebCore20TransformationMatrix9translateEdd(&affine, 3.0, 2.0);
+    _ZN7WebCore20TransformationMatrix15scaleNonUniformEdd(&affine, 2.0, 4.0);
+    inverse = _ZNK7WebCore20TransformationMatrix7inverseEv(&affine);
+    expected = WebCore::TransformationMatrix{};
+    expected.m_matrix[0][0] = 0.5;
+    expected.m_matrix[1][1] = 0.25;
+    expected.m_matrix[3][0] = -1.5;
+    expected.m_matrix[3][1] = -0.5;
+    Require(inverse.m_engaged && MatrixNear(inverse.m_value, expected, 0.0));
+
+    WebCore::TransformationMatrix flat;
+    _ZN7WebCore20TransformationMatrix15scaleNonUniformEdd(&flat, 1.0, 0.0);
+    Require(!_ZNK7WebCore20TransformationMatrix7inverseEv(&flat).m_engaged);
+
+    WebCore::TransformationMatrix projective = AxisRotated(1.0, 2.0, 3.0, 40.0);
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&projective, 4.0, -3.0, 2.0);
+    _ZN7WebCore20TransformationMatrix7scale3dEddd(&projective, 1.5, 0.5, 2.0);
+    projective.m_matrix[2][3] = -0.01;
+    inverse = _ZNK7WebCore20TransformationMatrix7inverseEv(&projective);
+    Require(inverse.m_engaged);
+    Require(MatrixNear(Product(projective, inverse.m_value), WebCore::TransformationMatrix{}, 1e-12));
+    Require(MatrixNear(Product(inverse.m_value, projective), WebCore::TransformationMatrix{}, 1e-12));
+
+    WebCore::TransformationMatrix singular = projective;
+    _ZN7WebCore20TransformationMatrix7scale3dEddd(&singular, 1.0, 1.0, 0.0);
+    Require(!_ZNK7WebCore20TransformationMatrix7inverseEv(&singular).m_engaged);
+}
+
+static void TestTransformationMatrixBlend() {
+    WebCore::TransformationMatrix identity;
+    WebCore::TransformationMatrix same;
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&same, identity, 0.3);
+    Require(std::memcmp(&same, &identity, sizeof(identity)) == 0);
+
+    WebCore::TransformationMatrix moved;
+    _ZN7WebCore20TransformationMatrix9translateEdd(&moved, 10.0, 20.0);
+    WebCore::TransformationMatrix half = moved;
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&half, identity, 0.5);
+    WebCore::TransformationMatrix expected;
+    _ZN7WebCore20TransformationMatrix9translateEdd(&expected, 5.0, 10.0);
+    Require(MatrixNear(half, expected, 1e-12));
+
+    for (double progress : {0.0, 0.25, 0.5, 1.0}) {
+        WebCore::TransformationMatrix to = Rotated(0.0, 0.0, 50.0);
+        _ZN7WebCore20TransformationMatrix6blend2ERKS0_d(&to, Rotated(0.0, 0.0, 10.0), progress);
+        Require(MatrixNear(to, Rotated(0.0, 0.0, 10.0 + 40.0 * progress), 1e-12));
+    }
+
+    WebCore::TransformationMatrix shortWay = Rotated(0.0, 0.0, -170.0);
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&shortWay, Rotated(0.0, 0.0, 170.0), 0.5);
+    Require(MatrixNear(shortWay, Rotated(0.0, 0.0, 180.0), 1e-12));
+
+    WebCore::TransformationMatrix scaled;
+    _ZN7WebCore20TransformationMatrix15scaleNonUniformEdd(&scaled, 3.0, 5.0);
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&scaled, identity, 0.5);
+    expected = WebCore::TransformationMatrix{};
+    _ZN7WebCore20TransformationMatrix15scaleNonUniformEdd(&expected, 2.0, 3.0);
+    Require(MatrixNear(scaled, expected, 1e-12));
+
+    for (double progress : {0.0, 0.5, 1.0}) {
+        WebCore::TransformationMatrix turned = AxisRotated(0.0, 1.0, 0.0, 90.0);
+        _ZN7WebCore20TransformationMatrix5blendERKS0_d(&turned, AxisRotated(0.0, 1.0, 0.0, 10.0), progress);
+        Require(MatrixNear(turned, AxisRotated(0.0, 1.0, 0.0, 10.0 + 80.0 * progress), 1e-12));
+    }
+
+    WebCore::TransformationMatrix deep;
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&deep, 0.0, 0.0, 30.0);
+    _ZN7WebCore20TransformationMatrix7scale3dEddd(&deep, 1.0, 1.0, 3.0);
+    WebCore::TransformationMatrix closer;
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&closer, 0.0, 0.0, 10.0);
+    _ZN7WebCore20TransformationMatrix6blend4ERKS0_d(&deep, closer, 0.5);
+    expected = WebCore::TransformationMatrix{};
+    _ZN7WebCore20TransformationMatrix11translate3dEddd(&expected, 0.0, 0.0, 20.0);
+    _ZN7WebCore20TransformationMatrix7scale3dEddd(&expected, 1.0, 1.0, 2.0);
+    Require(MatrixNear(deep, expected, 1e-12));
+
+    WebCore::TransformationMatrix perspective;
+    perspective.m_matrix[2][3] = -0.01;
+    _ZN7WebCore20TransformationMatrix5blendERKS0_d(&perspective, identity, 0.5);
+    expected = WebCore::TransformationMatrix{};
+    expected.m_matrix[2][3] = -0.005;
+    Require(MatrixNear(perspective, expected, 1e-12));
+
+    WebCore::TransformationMatrix degenerate;
+    degenerate.m_matrix[3][3] = 0.0;
+    degenerate.m_matrix[2][3] = 1.0;
+    for (double progress : {0.25, 0.75}) {
+        WebCore::TransformationMatrix target = moved;
+        _ZN7WebCore20TransformationMatrix5blendERKS0_d(&target, degenerate, progress);
+        const auto& wanted = progress < 0.5 ? degenerate : moved;
+        Require(std::memcmp(&target, &wanted, sizeof(target)) == 0);
+    }
+}
+
 static void TestTransformationMatrix() {
     WebCore::TransformationMatrix tm;
     Require(_ZNK7WebCore20TransformationMatrix12isInvertibleEv(&tm));
@@ -711,6 +873,9 @@ int main() {
     TestColor();
     TestAffineTransform();
     TestTransformationMatrix();
+    TestTransformationMatrixScale3dAndAxisRotation();
+    TestTransformationMatrixInverse();
+    TestTransformationMatrixBlend();
     TestApplyPerspective();
     TestMatrixTransformOperation();
     TestIntRectScaleOverflowGivesIntMin();
