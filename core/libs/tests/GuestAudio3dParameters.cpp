@@ -40,12 +40,14 @@ static void CheckInvalidDestination() {
     }
     Require(threw, "null destination must throw invalid_argument");
     threw = false;
+    errno = 71;
     try {
         sceAudio3dGetDefaultOpenParameters(reinterpret_cast<Audio3dOpenParameters*>(std::uintptr_t{0x10}));
     } catch (const std::invalid_argument&) {
         threw = true;
     }
     Require(threw, "unwritable destination must throw invalid_argument");
+    Require(errno == 71, "default parameter copy failure preserves errno");
 }
 
 static void CheckShortBuffer() {

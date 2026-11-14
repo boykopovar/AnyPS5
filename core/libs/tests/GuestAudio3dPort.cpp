@@ -112,6 +112,9 @@ void CheckOpenParameters() {
     Require(sceAudio3dPortOpen(1, &defaults, &id) == INVALID_PARAMETER, "user id must be the system user");
     Require(sceAudio3dPortOpen(SYSTEM_USER, nullptr, &id) == INVALID_PARAMETER, "null parameters");
     Require(sceAudio3dPortOpen(SYSTEM_USER, &defaults, nullptr) == INVALID_PARAMETER, "null port id");
+    errno = 71;
+    Require(sceAudio3dPortOpen(SYSTEM_USER, reinterpret_cast<const Audio3dOpenParameters*>(std::uintptr_t{0x10}), &id) == INVALID_PARAMETER, "unreadable parameters");
+    Require(errno == 71 && id == 7, "parameter copy failure preserves errno and id");
     auto rejects = [&](auto change, const char* message) {
         Audio3dOpenParameters parameters = defaults;
         change(parameters);
@@ -150,8 +153,12 @@ void CheckOpenClose() {
     auto* const badPtr = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
     Require(sceAudio3dPortGetAttributesSupported(0, badPtr, nullptr) == INVALID_PARAMETER, "unwritable attributes pointer with null count");
     std::uint32_t numAttributes = 0;
+    errno = 71;
     Require(sceAudio3dPortGetAttributesSupported(0, badPtr, &numAttributes) == INVALID_PARAMETER, "unwritable attributes pointer");
+    Require(errno == 71 && numAttributes == 3, "attributes copy failure preserves errno and earlier count");
+    errno = 71;
     Require(sceAudio3dPortGetAttributesSupported(0, nullptr, badPtr) == INVALID_PARAMETER, "unwritable numAttributes pointer");
+    Require(errno == 71, "attribute count copy failure preserves errno");
     std::uint32_t second = 7;
     Require(Open(parameters, &second) == OUT_OF_RESOURCES && second == 7, "only one port");
     std::uint32_t level = 0;
@@ -160,7 +167,9 @@ void CheckOpenClose() {
     Require(sceAudio3dPortClose(0) == 0, "close");
     Require(sceAudio3dPortClose(0) == INVALID_PORT, "double close");
     Require(sceAudio3dPortGetQueueLevel(0, &level, nullptr) == INVALID_PORT, "closed port");
+    errno = 71;
     Require(Open(parameters, badPtr) == INVALID_PARAMETER, "open with unwritable id pointer");
+    Require(errno == 71, "port id copy failure preserves errno");
     id = 7;
     Require(Open(parameters, &id) == 0 && id == 0, "open hands out port 0 after rejected id pointer");
     Require(sceAudio3dPortClose(0) == 0, "close after rejected id pointer");
@@ -641,6 +650,10 @@ void CheckPs4Process() {
     Require(sceAudio3dInitialize(0) == 0, "initialize in a PS4 process");
     Require(sceAudio3dInitialize(1) == NOT_READY, "a repeated initialize in a PS4 process is NOT_READY before the reserved check");
     Require(sceAudio3dInitialize(0) == NOT_READY, "a repeated initialize in a PS4 process is NOT_READY");
+    std::uint32_t badParameterId = 7;
+    errno = 71;
+    Require(sceAudio3dPortOpen(SYSTEM_USER, reinterpret_cast<const Audio3dOpenParameters*>(std::uintptr_t{0x10}), &badParameterId) == INVALID_PARAMETER, "PS4 unreadable parameters");
+    Require(errno == 71 && badParameterId == 7, "PS4 parameter copy failure preserves errno and id");
     const Audio3dOpenParameters defaults = Defaults();
     std::uint32_t id = 7;
     auto open = [&](auto change) {
