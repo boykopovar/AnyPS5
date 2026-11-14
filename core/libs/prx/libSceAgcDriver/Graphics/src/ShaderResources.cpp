@@ -1068,6 +1068,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
     }
     if (source != nullptr && resource.dccAddress != 0 && (keys.has_value() ? *keys : scanKeys()) == DccKeys::ClearSingle) source.reset();
+    if (source != nullptr && resource.dccAddress != 0 && source->Descriptor().dccAddress != resource.dccAddress && (keys.has_value() ? IsDccClear(*keys) : IsDccClear(scanKeys()))) source.reset();
 
     // Otherwise a surface in host-imported memory is viewed through its cached storage image (made
     // here when there is none): its refresh after a CPU or GPU write is a GPU-direct detile from the
@@ -1112,7 +1113,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // after them is current at the generation of a second (memoized) collect. The store marks the
     // surface's DCC keys uncompressed, so the keys are read after it.
     const auto flushStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const bool stagedClear = source != nullptr && resource.dccAddress != 0 && [&] {
+    const bool stagedClear = source != nullptr && source->AnyLayerPending() && resource.dccAddress != 0 && source->Descriptor().dccAddress == resource.dccAddress && [&] {
         const auto observedKeys = keys.has_value() ? *keys : scanKeys();
         return IsDccClear(observedKeys) || observedKeys == DccKeys::ClearSingle;
     }();
@@ -2730,6 +2731,29 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     result.layouts.main = context.descriptorCache->Layout(result.mainKey, descriptions[0], updateAfterBind, bindingFlags[0]);
     if (split) result.layouts.fragment = context.descriptorCache->Layout(result.fragmentKey, descriptions[1], updateAfterBind, bindingFlags[1]);
     return result;
+}
+
+ShaderRecompiler::PipelineIdentity DescribedPipelineIdentity(const ShaderRecompiler::RecompileResult& shader) {
+    const auto hash = shader.spirv.ContentHash();
+    if (hash == ShaderRecompiler::SpirvContentHash{}) return {};
+    ShaderRecompiler::PipelineIdentity identity{hash.low, hash.high};
+    const auto mix = [&](std::uint64_t value) {
+        identity.low = (identity.low ^ value) * 0x9e3779b97f4a7c15ull;
+        identity.low ^= identity.low >> 29u;
+        identity.high = (identity.high ^ (value + 0x7f4a7c159e3779b9ull)) * 0xc2b2ae3d27d4eb4full;
+        identity.high ^= identity.high >> 31u;
+    };
+    mix(shader.specialization.size());
+    for (const auto& constant : shader.specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
+    mix(shader.hostSubgroupSize | (shader.fullSubgroups ? 0x10000u : 0u) | (static_cast<std::uint64_t>(shader.workgroupMemoryDwords) << 32u));
+    mix(shader.bindings.size());
+    for (const auto& binding : shader.bindings) {
+        const bool fixedCapacity = binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable;
+        const std::uint64_t count = fixedCapacity ? 0u : binding.count;
+        mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (count << 48u));
+    }
+    if (identity.Empty()) identity.low = 1;
+    return identity;
 }
 
 void ShaderResources::buildComplete() {
@@ -6240,6 +6264,7 @@ void ShaderResources::resolveImageTables() {
             GuestTextureResource resource{};
             std::uint64_t guestBytes = 0;
             bool firstLayer = false;
+            std::string rejected;
         };
         const auto decodeEntry = [&](std::uint32_t element, std::span<const std::uint32_t> words) {
             DecodedEntry decoded;
@@ -6249,9 +6274,15 @@ void ShaderResources::resolveImageTables() {
             const bool depthCompare = element < binding.imageDepthCompare.size() && binding.imageDepthCompare[element];
             decoded.firstLayer = shape == ShaderRecompiler::DescriptorImageShape::Image2D && (resource.dimension == TextureDimension::k2DArray || (depthCompare && resource.dimension == TextureDimension::k1DArray));
             const bool depth1D = depthCompare && ((shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k1D) || (shape == ShaderRecompiler::DescriptorImageShape::Image2DArray && resource.dimension == TextureDimension::k1DArray));
-            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
+            if (!decoded.firstLayer && !depth1D && !MatchesGuestDimension(shape, resource.dimension)) {
+                decoded.rejected = "AGC graphics: guest texture dimension disagrees with the table entry's image shape (shape " + std::to_string(static_cast<int>(shape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")";
+                return decoded;
+            }
             decoded.guestBytes = DescribeSurface(resource).guestBytes;
-            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped");
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(decoded.guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(decoded.guestBytes), false).empty()) {
+                decoded.rejected = "AGC graphics: the table entry's surface at 0x" + HexText(resource.baseAddress) + " (0x" + HexText(decoded.guestBytes) + " bytes) is not mapped";
+                return decoded;
+            }
             static_cast<void>(ResolveTextureFormat(resource.format));
             return decoded;
         };
@@ -6289,8 +6320,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                return error.what();
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                return decoded.rejected;
             }
             const auto sampled = prepareSampled(element, words, decoded);
             std::shared_ptr<Texture> texture;
@@ -6375,8 +6409,11 @@ void ShaderResources::resolveImageTables() {
             try {
                 decoded = decodeEntry(element, words);
             } catch (const std::runtime_error& error) {
-                table.map[faults + element] = rejectTableElement(table, words, error.what());
-                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, error.what()});
+                decoded.rejected = error.what();
+            }
+            if (!decoded.rejected.empty()) {
+                table.map[faults + element] = rejectTableElement(table, words, decoded.rejected);
+                if (reusable) fresh.elements.push_back({{}, {}, {}, 0, false, true, decoded.rejected});
                 continue;
             }
             const auto& resource = decoded.resource;

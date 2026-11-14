@@ -263,6 +263,7 @@ struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     std::atomic<int> receiveTimeout{0};
     std::atomic<int> sendTimeout{0};
     std::atomic<int> connectTimeout{0};
+    std::atomic<int> connectExpired{0};
     NativeSocketHandle(NativeSocket socket, bool stream) : value(socket), stream(stream) {
 #ifdef _WIN32
         transfer = &TransferSocketForKernel;
@@ -1228,6 +1229,10 @@ int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags) {
         return fail(NET_EINVAL);
     }
     std::lock_guard lk(g_mutex);
+    std::uint32_t parameterFlags = 0;
+    std::memcpy(&parameterFlags, g_net_init_param.data(), sizeof(parameterFlags));
+    const std::size_t capacity = (parameterFlags & 1u) != 0 ? 128 : 32;
+    if (g_pools.size() >= capacity) return fail(23);
     const int id = g_next_pool++;
     g_pools.emplace(id, static_cast<std::size_t>(size));
     return id;
@@ -1404,6 +1409,9 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     }
     if (!listener.listening) return fail(NET_EINVAL);
     if (addr && !addrlen) return fail(NET_EINVAL);
+    std::uint32_t capacity = 0;
+    if (addr && (!GuestCopyIn_nid_no_patch(&capacity, addrlen, sizeof(capacity)) ||
+        !GuestCopyOut_nid_no_patch(addrlen, &capacity, sizeof(capacity)))) return fail(NET_EFAULT);
     sockaddr_storage peer{};
     NativeLength peer_length = sizeof(peer);
     const NativeSocket accepted = native_transfer(*listener.native, 0, false, [&](int) {
@@ -1455,9 +1463,14 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
             return fail(error);
         }
     }
-    if (addr && !native_to_guest_address(peer, addr, addrlen)) {
-        sceNetSocketClose(descriptor);
-        return fail(NET_EAFNOSUPPORT);
+    if (addr) {
+        std::array<std::uint8_t, 28> bytes{};
+        const bool converted = native_to_guest_address(peer, bytes.data(), &capacity);
+        if (!converted || !GuestCopyOut_nid_no_patch(addr, bytes.data(), capacity) ||
+            !GuestCopyOut_nid_no_patch(addrlen, &capacity, sizeof(capacity))) {
+            sceNetSocketClose(descriptor);
+            return fail(converted ? NET_EFAULT : NET_EAFNOSUPPORT);
+        }
     }
     return descriptor;
 }
@@ -1549,11 +1562,19 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         const auto current = g_socks.find(s);
         if (current != g_socks.end() && current->second.native == socket.native) current->second.connectAttempted = true;
     }
+    if (const int expired = socket.native->connectExpired.load()) {
+        if (expired > 1) throw std::runtime_error("sceNetConnect: a second retry after an expired connect is not measured");
+        socket.native->connectExpired = 2;
+        return fail(NET_EADDRINUSE);
+    }
     const int connectTimeout = socket.native->connectTimeout;
 #ifndef _WIN32
     if (socket.type == NET_SOCK_STREAM && connectTimeout > 0 && !socket.native->nonblock) {
         const int error = connect_within(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length, connectTimeout);
-        if (error == CONNECT_EXPIRED) throw std::runtime_error("sceNetConnect: the connect timeout expired");
+        if (error == CONNECT_EXPIRED) {
+            socket.native->connectExpired = 1;
+            return fail(NET_EAGAIN);
+        }
         if (error != 0) return fail(error);
 #ifdef __APPLE__
         note_local_address(s, socket);
@@ -1585,7 +1606,10 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         timeval limit{connectTimeout / 1000000, connectTimeout % 1000000};
         const int ready = ::select(0, nullptr, &writable, &failed, connectTimeout > 0 ? &limit : nullptr);
         if (ready < 0) return fail(native_error());
-        if (ready == 0) throw std::runtime_error("sceNetConnect: the connect timeout expired");
+        if (ready == 0) {
+            socket.native->connectExpired = 1;
+            return fail(NET_EAGAIN);
+        }
         int error = 0;
         int size = sizeof(error);
         if (::getsockopt(socket.native->value, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &size) != 0)
@@ -1778,11 +1802,17 @@ int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
 }
 
 int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
-    const auto total = message_length(msg);
-    if (total < 0) return total;
-    NetMsghdr header = *msg;
+    NetMsghdr header{};
+    if (!GuestCopyIn_nid_no_patch(&header, msg, sizeof(header))) return fail(NET_EFAULT);
     std::vector<NetIovec> vectors;
-    if (header.iov_length > 0) vectors.assign(header.iov, header.iov + header.iov_length);
+    auto validated = header;
+    if (header.iov && header.iov_length > 0 && header.iov_length <= NET_UIO_MAXIOV) {
+        vectors.resize(static_cast<std::size_t>(header.iov_length));
+        if (!GuestCopyIn_nid_no_patch(vectors.data(), header.iov, vectors.size() * sizeof(NetIovec))) return fail(NET_EFAULT);
+        validated.iov = vectors.data();
+    }
+    const auto total = message_length(&validated);
+    if (total < 0) return total;
     if (!message_flags_supported(flags, NET_MSG_PEEK | NET_MSG_DONTWAIT)) return fail(NET_EOPNOTSUPP);
     Sock socket;
     {
@@ -2058,17 +2088,12 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return 0;
     }
     if (level == NET_IPPROTO_IPV6) {
-        int value = 0;
-        std::uint32_t length = *optlen;
-        const int error = GuestSocketGetIpv6LevelOption_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), socket.family == NET_AF_INET6, optname, &value, &length);
+        std::uint32_t length = 0;
+        if (!GuestCopyIn_nid_no_patch(&length, optlen, sizeof(length)) ||
+            !GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length))) return fail(NET_EFAULT);
+        const int error = GuestSocketGetIpv6LevelOption_nid_no_patch(static_cast<std::uintptr_t>(socket.native->value), socket.family == NET_AF_INET6, optname, optval, &length);
         if (error != 0) return fail(error);
-        const GuestArena::HostWrite destination(length == 0 ? nullptr : optval, length);
-        if (!destination.Open()) return fail(NET_EFAULT);
-        const GuestArena::HostWrite lengthOutput(optlen, sizeof(*optlen));
-        if (!lengthOutput.Open()) return fail(NET_EFAULT);
-        if (length != 0) std::memcpy(optval, &value, length);
-        *optlen = length;
-        return 0;
+        return GuestCopyOut_nid_no_patch(optlen, &length, sizeof(length)) ? 0 : fail(NET_EFAULT);
     }
     if (level == NET_SOL_SOCKET && (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO)) {
         const int microseconds = optname == NET_SO_RCVTIMEO ? socket.native->receiveTimeout.load() : socket.native->sendTimeout.load();
@@ -2163,6 +2188,17 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
     return 0;
 }
 
+static int CopyGuestSocketAddress(const sockaddr_storage& native, void* address, std::uint32_t* length) {
+    std::uint32_t capacity = 0;
+    if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity)) ||
+        !GuestCopyOut_nid_no_patch(length, &capacity, sizeof(capacity))) return fail(NET_EFAULT);
+    std::array<std::uint8_t, 28> bytes{};
+    if (!native_to_guest_address(native, bytes.data(), &capacity)) return fail(NET_EAFNOSUPPORT);
+    if (!GuestCopyOut_nid_no_patch(address, bytes.data(), capacity) ||
+        !GuestCopyOut_nid_no_patch(length, &capacity, sizeof(capacity))) return fail(NET_EFAULT);
+    return 0;
+}
+
 int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
     Sock socket;
     {
@@ -2183,7 +2219,7 @@ int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
         return fail(native_error());
 #endif
     }
-    return native_to_guest_address(native, addr, addrlen) ? 0 : fail(NET_EAFNOSUPPORT);
+    return CopyGuestSocketAddress(native, addr, addrlen);
 }
 
 int APS5_VABI sceNetGetpeername(int s, void* addr, uint32_t* addrlen) {
@@ -2199,7 +2235,7 @@ int APS5_VABI sceNetGetpeername(int s, void* addr, uint32_t* addrlen) {
     NativeLength native_length = sizeof(native);
     if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&native), &native_length) != 0)
         return fail(native_error());
-    return native_to_guest_address(native, addr, addrlen) ? 0 : fail(NET_EAFNOSUPPORT);
+    return CopyGuestSocketAddress(native, addr, addrlen);
 }
 
 constexpr int NET_SOCKINFO_F_SELF = 0x1;
@@ -2322,6 +2358,15 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     return 0;
 }
 
+static bool CopySockInfo(void* output, std::size_t index, const void* record, std::size_t recordSize) {
+    const auto start = reinterpret_cast<std::uintptr_t>(output);
+    if (index > (UINTPTR_MAX - start) / recordSize) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(start + index * recordSize), record, recordSize);
+    errno = savedErrno;
+    return copied;
+}
+
 int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     if ((flags & ~NET_SOCKINFO_TIME_WAIT) != 0) return fail(NET_EINVAL);
     std::vector<int> listed;
@@ -2345,8 +2390,7 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     NetSockInfo record;
     if (s >= 0) {
         if (const int error = fill_sock_info(s, record)) return fail(error);
-        std::memcpy(info, &record, sizeof(record));
-        return 1;
+        return CopySockInfo(info, 0, &record, sizeof(record)) ? 1 : fail(NET_EFAULT);
     }
     int written = 0;
     for (const int descriptor : listed) {
@@ -2354,7 +2398,7 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
         const int error = fill_sock_info(descriptor, record);
         if (error == NET_EBADF || error == NET_EAFNOSUPPORT) continue;
         if (error != 0) return fail(error);
-        std::memcpy(static_cast<char*>(info) + static_cast<std::size_t>(written) * sizeof(record), &record, sizeof(record));
+        if (!CopySockInfo(info, written, &record, sizeof(record))) return fail(NET_EFAULT);
         ++written;
     }
     return written;
@@ -2426,8 +2470,7 @@ int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32
     NetSockInfo6 record;
     if (s >= 0) {
         if (const int error = fill_sock_info6(s, record, includeIpv4)) return fail(error);
-        *info = record;
-        return 1;
+        return CopySockInfo(info, 0, &record, sizeof(record)) ? 1 : fail(NET_EFAULT);
     }
     int written = 0;
     for (const int descriptor : listed) {
@@ -2435,7 +2478,7 @@ int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32
         const int error = fill_sock_info6(descriptor, record, includeIpv4);
         if (error == NET_EBADF || error == NET_EAFNOSUPPORT) continue;
         if (error != 0) return fail(error);
-        info[written] = record;
+        if (!CopySockInfo(info, written, &record, sizeof(record))) return fail(NET_EFAULT);
         ++written;
     }
     return written;
@@ -4181,8 +4224,9 @@ int APS5_VABI sceNetDumpAbort(std::int32_t dumpId, std::uint32_t flags) {
 int APS5_VABI sceNetDumpCreate(const char* name, std::int32_t bufferSize, std::uint32_t flags) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
     if (name == nullptr) return fail(NET_EINVAL);
-    const bool longName = strnlen(name, 32) > 31;
-    if (longName || bufferSize < 0x800 || flags > 4 || flags == 3) return fail(longName ? NET_ENAMETOOLONG : NET_EINVAL);
+    std::string guestName;
+    if (const int error = CopyGuestString_nid_no_patch(name, 32, guestName)) return fail(error);
+    if (bufferSize < 0x800 || flags > 4 || flags == 3) return fail(NET_EINVAL);
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4198,7 +4242,10 @@ int APS5_VABI sceNetDumpDestroy(std::int32_t dumpId) {
 
 int APS5_VABI sceNetDumpRead(std::int32_t dumpId, void* buffer, std::int32_t bufferSize, std::uint32_t* flags) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
-    if (buffer == nullptr || bufferSize < 0 || (flags != nullptr && (*flags & ~0x20u) != 0)) return fail(NET_EINVAL);
+    if (buffer == nullptr || bufferSize < 0) return fail(NET_EINVAL);
+    std::uint32_t requested = 0;
+    if (flags != nullptr && !GuestCopyIn_nid_no_patch(&requested, flags, sizeof(requested))) return fail(NET_EFAULT);
+    if ((requested & ~0x20u) != 0) return fail(NET_EINVAL);
     NotImplemented_nid_no_patch(__func__);
 }
 

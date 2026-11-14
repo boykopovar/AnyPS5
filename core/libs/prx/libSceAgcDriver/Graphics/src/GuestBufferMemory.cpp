@@ -9,6 +9,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SnapshotCopies.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
@@ -236,6 +237,10 @@ bool addressSpaceCacheEnabled() {
     return !disabled;
 }
 
+struct DmaBufImportFailure : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 struct ImportFailure {
     std::uint64_t base;
     std::uint64_t bytes;
@@ -424,6 +429,7 @@ struct HostImports {
     bool allocationFailed = false;
     std::uint8_t reportNoted = 0;
     std::map<std::uint64_t, std::uint64_t> spaceUses;
+    bool dmaBufSelected = false;
     std::uint64_t budgetRefusals = 0;
     std::array<const HostImport*, 4> recentImports{};
     std::uint64_t recentEpoch = std::numeric_limits<std::uint64_t>::max();
@@ -684,7 +690,20 @@ VkResult createImportBuffer(const Context& context, VkExternalMemoryHandleTypeFl
     return context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, buffer);
 }
 
-const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure) {
+std::optional<std::uint32_t> coherentImportType(const Context& context, std::uint32_t types) {
+    constexpr VkMemoryPropertyFlags coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    std::optional<std::uint32_t> plain;
+    for (std::uint32_t i = 0; i < context.memory.memoryTypeCount; ++i) {
+        if ((types & (1u << i)) == 0) continue;
+        const auto flags = context.memory.memoryTypes[i].propertyFlags;
+        if ((flags & coherent) != coherent) continue;
+        if ((flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0) return i;
+        if (!plain.has_value()) plain = i;
+    }
+    return plain;
+}
+
+const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure, bool hostCoherent = false) {
     const auto failed = [&](const char* step, VkResult result) -> const char* {
         if (entry.buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
         if (allocated && entry.memory) MemoryAccounting::Free(context, entry.memory);
@@ -711,10 +730,16 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, entry.buffer, &requirements);
     const auto types = requirements.memoryTypeBits & importTypes;
     if (types == 0) return failed("memory type selection", VK_ERROR_FORMAT_NOT_SUPPORTED);
+    std::uint32_t type = static_cast<std::uint32_t>(std::countr_zero(types));
+    if (hostCoherent && context.memory.memoryTypeCount != 0) {
+        const auto coherent = coherentImportType(context, types);
+        if (!coherent.has_value()) return failed("memory type selection without host coherency", VK_ERROR_FORMAT_NOT_SUPPORTED);
+        type = *coherent;
+    }
     const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, import, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     allocation.allocationSize = entry.bytes;
-    allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
+    allocation.memoryTypeIndex = type;
     if (const auto result = MemoryAccounting::Allocate(context, allocation, "guest memory import", &entry.memory); result != VK_SUCCESS) return failed("vkAllocateMemory", result);
     allocated = true;
     entry.memoryType = allocation.memoryTypeIndex;
@@ -734,7 +759,7 @@ const char* createHostPointerImport(const Context& context, HostImport& entry, V
     }
     const VkImportMemoryHostPointerInfoEXT import{VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT, nullptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host};
     bool allocated = false;
-    return bindImport(context, entry, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, &import, pointer.memoryTypeBits, allocated, failure);
+    return bindImport(context, entry, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, &import, pointer.memoryTypeBits, allocated, failure, true);
 }
 
 #ifndef _WIN32
@@ -1477,6 +1502,7 @@ void decideImportWatch(const Context& context, HostImports& state) {
     state.unwatchImports = true;
     state.unwatchDmaBufImports = false;
     state.watchPrivateImports = false;
+    state.dmaBufSelected = false;
     if (context.hostImportAlignment == 0 || !GuestMemory::WriteWatched()) return;
     if (context.settleQueue == VK_NULL_HANDLE || context.settleQueueMutex == nullptr) {
         std::fprintf(stderr, "[write-watch] Windows direct host imports use comparisons (no second queue to settle imports on); separate shared aliases retain guest write tracking\n");
@@ -1494,6 +1520,7 @@ void decideImportWatch(const Context& context, HostImports& state) {
     state.watchDevice = context.device;
     state.unwatchImports = false;
     state.unwatchDmaBufImports = false;
+    state.dmaBufSelected = false;
     if (context.hostImportAlignment == 0) return;
     if (!GuestMemory::WriteWatched()) {
         // Without a write watch the write-protection probes cannot measure, but the dma-buf
@@ -1540,6 +1567,7 @@ void decideImportWatch(const Context& context, HostImports& state) {
     state.unwatchDmaBufImports = dmaBuf.writtenAfterSubmit != 0 || dmaBuf.writtenAfterFill != 0 || dmaBuf.writtenByCpu == 0;
     state.dmaBufImportsCoherent = dmaBuf.staleAfterFill == 0;
     std::fprintf(stderr, "[write-watch] dma-buf imports keep write protection: %s (%u of %u scratch pages written after a GPU read, %u after a GPU write, %u after the import, %u seen after a CPU store, %u stale after a GPU store over CPU writes); imported ranges %s%s\n", state.unwatchDmaBufImports ? "no" : "yes", dmaBuf.writtenAfterSubmit, dmaBuf.pages, dmaBuf.writtenAfterFill, dmaBuf.writtenAtImport, dmaBuf.writtenByCpu, dmaBuf.staleAfterFill, state.unwatchDmaBufImports ? "are compared" : "stay watched", state.dmaBufImportsCoherent ? "" : "; dma-buf imports are not CPU-coherent and are not used");
+    state.dmaBufSelected = state.unwatchImports && !state.unwatchDmaBufImports && state.dmaBufImportsCoherent;
 #endif
 }
 
@@ -1628,7 +1656,7 @@ bool importStaysWatched(const Context& context, HostImports& state, const Import
     return importWatching(context, state, !pages.writable, pages.writable, run.bytes).hostPointer;
 #else
     const auto watching = importWatching(context, state, false, true, run.bytes);
-    return watching.hostPointer && (watching.dmaBuf || !sharedBacked(context, run.base, run.bytes));
+    return sharedBacked(context, run.base, run.bytes) ? watching.dmaBuf && (watching.hostPointer || state.dmaBufSelected) : watching.hostPointer;
 #endif
 }
 
@@ -2469,7 +2497,12 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #endif
     const bool watchedHostPointer = watching.hostPointer;
     const bool watchedDmaBuf = watching.dmaBuf;
-    GuestMemory::ImportWatched(base, bytes, [&] {
+#ifndef _WIN32
+    const bool dmaBufOnly = state.dmaBufSelected && sharedBacked(context, base, bytes);
+#else
+    constexpr bool dmaBufOnly = false;
+#endif
+    if (!dmaBufOnly) GuestMemory::ImportWatched(base, bytes, [&] {
         step = watchedDmaBuf == watchedHostPointer ? createImport(context, entry, result, state.dmaBufImportsCoherent) : createHostPointerImport(context, entry, result);
 #ifdef _WIN32
         if (step == nullptr && settled && (step = settleImport(context, state, entry, result)) != nullptr) {
@@ -2481,7 +2514,28 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         return step == nullptr;
     }, watchedHostPointer);
 #ifndef _WIN32
-    if (step != nullptr && watchedDmaBuf != watchedHostPointer && state.dmaBufImportsCoherent) {
+    if (dmaBufOnly) {
+        GuestMemory::ImportWatched(base, bytes, [&] {
+            try {
+                step = createSharedBackingImport(context, entry, result);
+            } catch (const std::exception& error) {
+                throw DmaBufImportFailure(error.what());
+            }
+            return step == nullptr;
+        }, watchedDmaBuf);
+        if (step != nullptr && (std::strcmp(step, "UDMABUF_CREATE") == 0 || std::strcmp(step, "UDMABUF_CREATE_LIST") == 0)) {
+            if (requester == ImportRequester::ColorTarget && !watchedHostPointer) return failedImport();
+            std::fprintf(stderr, "[gpu] dma-buf import of 0x%llx+0x%llx refused by udmabuf; host-pointer import\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes));
+            GuestMemory::ImportWatched(base, bytes, [&] {
+                step = createHostPointerImport(context, entry, result);
+                return step == nullptr;
+            }, watchedHostPointer);
+        } else if (step != nullptr) {
+            char message[160];
+            std::snprintf(message, sizeof(message), "AGC graphics: dma-buf import of 0x%llx+0x%llx failed at %s (%d)", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), step, static_cast<int>(result));
+            throw DmaBufImportFailure(message);
+        }
+    } else if (step != nullptr && watchedDmaBuf != watchedHostPointer && state.dmaBufImportsCoherent) {
         int runsFile = -1;
         std::array<GuestArena::SharedBackingRun, DmaBufRunLimit> runs{};
         std::size_t count = 0;
@@ -2501,6 +2555,11 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             entry.buffer = VK_NULL_HANDLE;
             entry.memory = VK_NULL_HANDLE;
             entry.chunk.reset();
+            if (dmaBufOnly) {
+                char message[160];
+                std::snprintf(message, sizeof(message), "AGC graphics: dma-buf import of 0x%llx+0x%llx failed at %s (%d)", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), step, static_cast<int>(result));
+                throw DmaBufImportFailure(message);
+            }
         } else if (traceSettle) {
             std::fprintf(stderr, "[gpu] settled the dma-buf import of 0x%llx+0x%llx on the settle queue in %.2f ms\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
         }
@@ -2545,6 +2604,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #endif
         return failedImport();
     }
+    if (requester == ImportRequester::ColorTarget && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) return failedImport();
     first = state.imports.lower_bound(base);
     if (first != state.imports.begin() && std::prev(first)->second.base + std::prev(first)->second.bytes > base) --first;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
@@ -4473,12 +4533,20 @@ ImportWatch PrepareImportWatch(const Context& context) {
     return state.unwatchImports ? ImportWatch::Unwatch : ImportWatch::Watch;
 }
 
+bool DmaBufImportSelected(const Context& context) {
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    decideImportWatch(context, state);
+    return state.dmaBufSelected;
+}
+
 void SetImportWatch(const Context& context, ImportWatch watch) {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     state.watchDevice = context.device;
     state.unwatchImports = watch == ImportWatch::Unwatch;
     state.unwatchDmaBufImports = state.unwatchImports;
+    state.dmaBufSelected = false;
     state.gateRefusals.clear();
 }
 
@@ -4717,6 +4785,15 @@ bool ImportsHeldByThisThread() {
     return importsHeld != 0;
 }
 
+bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (importsStale(context, state)) return false;
+    const auto* entry = peekImport(state, address, address + bytes);
+    return entry != nullptr && entry->dmaBuf;
+}
+
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     auto& state = Imports();
@@ -4858,6 +4935,8 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
             }
             if (!state.importedAtMap.emplace(range->address, range->bytes).second && findImport(state, range->address, range->address + range->bytes) == nullptr) continue;
             importAllocation(context, state, range->address, current, ImportRequester::Map, 0, false);
+        } catch (const DmaBufImportFailure&) {
+            throw;
         } catch (const std::exception& error) {
             std::fprintf(stderr, "[gpu] import of GPU memory mapped at 0x%llx+0x%zx failed: %s\n", static_cast<unsigned long long>(range->address), range->bytes, error.what());
         }
@@ -4897,6 +4976,16 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     // Imports of a replaced device are not this device's; a stale registry only means an import
     // may be dropped at the next reconcile, which the binding path handles.
     return state.device == context.device && peekImport(state, address, address + bytes) != nullptr;
+}
+
+bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device) return false;
+    const auto next = state.imports.lower_bound(address);
+    if (next != state.imports.end() && next->first < address + bytes) return true;
+    return next != state.imports.begin() && std::prev(next)->second.base + std::prev(next)->second.bytes > address;
 }
 
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -5598,6 +5687,7 @@ void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
     // direct-write mark, and UploadPrepare copies it without the device lock. A written descriptor
     // overlapping the range still covers it through its own Writes() entry.
     addDescriptorRegion(address, bytes, false, false, true);
+    reads.emplace_back(address, address + bytes);
 }
 
 bool GuestBufferMemory::SpaceOnly() const {
@@ -6388,6 +6478,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
+    if (addressable) StoreDepthExpandWrites(context);
     for (const auto& region : regions) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
     if (space != nullptr) completeSpaceWrites();
     uploaded = true;
@@ -6407,6 +6498,9 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     for (const auto& region : regions) static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
     for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin), htileClear);
     for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
+    if (addressable) {
+        for (const auto& [begin, end] : reads) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "imported buffer region");
+    }
     if (context.hostImportAlignment != 0) {
         auto& state = Imports();
         std::lock_guard lock(state.mutex);
@@ -6603,6 +6697,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         copyRegion(region, addressable);
         if (profile) copyUs += microsecondsSince(copyStart);
     }
+    if (addressable) StoreDepthExpandWrites(context);
     if (heapsEnd > heapsBegin) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
     takeHeapReferences();

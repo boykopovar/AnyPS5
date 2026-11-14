@@ -84,6 +84,9 @@ void VerifyLoggedInUser(int userId) {
 
     std::uint64_t accountId = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetNpAccountId(userId, reinterpret_cast<uint64_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetNpAccountId(userId, &accountId) == USER_SERVICE_OK);
     Require(accountId == 0);
 
@@ -243,6 +246,9 @@ int main() {
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 38) == USER_SERVICE_OK);
     Require(std::strlen(homePath) == 36);
     Require(sceUserServiceGetCurrentUserGroupIndex(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetCurrentUserGroupIndex(reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceSetUserGroupIndex(-2) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceSetUserGroupIndex(129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserGroupName(0, nullptr, 129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);

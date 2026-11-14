@@ -76,6 +76,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+extern char** environ;
 #endif
 #include <atomic>
 #include <chrono>
@@ -456,7 +457,7 @@ struct ComputePipelineKey {
     ShaderRecompiler::PipelineIdentity identity;
     bool pushConstants = false;
     auto operator<=>(const ComputePipelineKey&) const = default;
-    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return {shader.Identity(), pushConstants}; }
+    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return {Graphics::DescribedPipelineIdentity(shader), pushConstants}; }
 };
 
 constexpr std::uint64_t WorkgroupMemoryGranule = 1u << 20u;
@@ -1941,7 +1942,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
 #endif
     }
     VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT listRestartFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVE_TOPOLOGY_LIST_RESTART_FEATURES_EXT};
-    if (hasExtension(VK_EXT_PRIMITIVE_TOPOLOGY_LIST_RESTART_EXTENSION_NAME)) {
+    if (hasExtension(VK_EXT_PRIMITIVE_TOPOLOGY_LIST_RESTART_EXTENSION_NAME) && std::getenv("APS5_NO_LIST_RESTART") == nullptr) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &listRestartFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->primitiveListRestart = listRestartFeatures.primitiveTopologyListRestart == VK_TRUE;
@@ -4907,6 +4908,10 @@ void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
     Graphics::RunColorMetadataPass(graphicsContext(), pass);
 }
 
+void VulkanDevice::DepthExpandPass(const Graphics::DepthExpandPass& pass) {
+    Graphics::RunDepthExpandPass(graphicsContext(), pass);
+}
+
 bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
     PerformanceTimer timing("Vulkan.GraphicsPipelinePrebuild");
     const auto context = graphicsContext();
@@ -5466,6 +5471,10 @@ struct DispatchCompletion {
 
 VkDevice VulkanDevice::Device() const {
     return state->device;
+}
+
+bool VulkanDevice::DmaBufImportSelected() const {
+    return Graphics::DmaBufImportSelected(graphicsContext());
 }
 
 VulkanDevice::DispatchMoveCount VulkanDevice::DispatchMoveCounts() {

@@ -54,6 +54,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "BdaAbi.hpp"
 #include "ShaderCacheSourceVersion.hpp"
+#include "WatchedBlock.hpp"
 #include <SDL_loadso.h>
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -107,35 +108,6 @@ struct TestConfigurationError : std::runtime_error {
 
 using namespace AgcDriver::Graphics;
 using AgcDriver::GuestMemory::GpuMutex;
-
-void* AllocateWatched(std::size_t bytes, std::size_t alignment) {
-    if (!AgcDriver::GuestMemory::WriteWatched()) return nullptr;
-#ifdef _WIN32
-    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, alignment);
-    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
-#else
-    void* raw = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (raw == MAP_FAILED) throw std::runtime_error("cannot map the watched block");
-    const auto begin = reinterpret_cast<std::uintptr_t>(raw);
-    const auto aligned = (begin + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1);
-    if (aligned != begin) munmap(raw, aligned - begin);
-    if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
-    void* block = reinterpret_cast<void*>(aligned);
-    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
-#endif
-    if (!AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uint64_t>(block), bytes)) throw std::runtime_error("the watched block is not watched");
-    return block;
-}
-
-void ReleaseWatched(void* block, std::size_t bytes) {
-#ifdef _WIN32
-    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
-    GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
-#else
-    munmap(block, bytes);
-    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
-#endif
-}
 
 bool collectMappingHistoryTests() {
     constexpr std::size_t bytes = 131072;
@@ -826,10 +798,7 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "ordering pipeline layout");
-    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
-    moduleInfo.pCode = BUFFER_UPDATE_SPV;
-    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "ordering shader module");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "ordering shader module");
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
     pipelineInfo.layout = release.layout;
@@ -1104,10 +1073,7 @@ void copiedWriteBackTests(const Device& device, Recorder& recorder) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
     Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "copied write-back pipeline layout");
-    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
-    moduleInfo.pCode = BUFFER_UPDATE_SPV;
-    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "copied write-back shader module");
+    release.module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "copied write-back shader module");
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
     pipelineInfo.layout = release.layout;
@@ -5864,6 +5830,35 @@ void drawSnapshotUploadTests(const Device& device, Recorder& recorder) {
     recorder.Activate();
 }
 
+void vertexWindowSeriesTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    constexpr std::size_t bytes = 65536;
+    void* block = AllocateWatched(bytes, 65536);
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 7;
+    const auto& context = device.GetContext();
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    constexpr std::size_t quad = 4 * 32;
+    constexpr std::size_t draws = bytes / quad;
+    std::shared_ptr<Buffer> served;
+    for (std::size_t k = 0; k < draws; ++k) {
+        const auto from = (draws - 1 - k) * quad;
+        const auto copy = CopyDrawInput(context, &recorder, address, from + quad, 1, Use::Vertex, from);
+        Require(std::memcmp(copy.buffer->Bytes().data() + from, reinterpret_cast<const void*>(address + from), quad) == 0, "a draw at a falling lowest vertex got other bytes than the guest's");
+        KeepDrawInput(&recorder, address, copy, Use::Vertex, 0);
+        if (k == 0) served = copy.buffer;
+        Require(copy.buffer == served, "a draw below the vertex window of an earlier draw over the same buffer was copied again instead of filled into its snapshot");
+    }
+    words[(bytes - quad) / 4] = 0x4242;
+    const auto stored = CopyDrawInput(context, &recorder, address, bytes, 1, Use::Vertex, bytes - quad);
+    Require(!stored.reused && std::memcmp(stored.buffer->Bytes().data() + bytes - quad, reinterpret_cast<const void*>(address + bytes - quad), quad) == 0, "a store in the vertex window that served the falling draws was not seen");
+}
+
 void ownedDrawInputTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
@@ -6023,6 +6018,17 @@ void ownedDrawInputTests(const Device& device, Recorder& recorder) {
     Require(!crossing.reused && crossing.owned.words.size() == 2, "a draw input spanning two blocks did not arm both");
     KeepDrawInput(&recorder, address + 65536 - 128, crossing, Use::Index32, 0);
     Require(copy(Use::Index32, 256, 65536 - 128).reused, "a two-block owned input was not reused");
+    constexpr std::size_t windowAt = 8192;
+    constexpr std::size_t windowBytes = 1024;
+    constexpr std::size_t windowFrom = 512;
+    const auto* windowGuest = static_cast<const std::byte*>(block) + windowAt;
+    const auto windowed = CopyDrawInput(context, &recorder, address + windowAt, windowBytes, 1, Use::Vertex, windowFrom);
+    Require(!windowed.reused && !windowed.owned.words.empty() && std::memcmp(windowed.buffer->Bytes().data() + windowFrom, windowGuest + windowFrom, windowBytes - windowFrom) == 0, "a windowed vertex input was not armed as an owned copy");
+    KeepDrawInput(&recorder, address + windowAt, windowed, Use::Vertex, 0);
+    const auto inside = CopyDrawInput(context, &recorder, address + windowAt, windowBytes, 1, Use::Vertex, windowFrom + 64);
+    Require(inside.reused && inside.buffer == windowed.buffer, "an owned vertex window was not reused by a draw that starts inside it");
+    const auto below = CopyDrawInput(context, &recorder, address + windowAt, windowBytes, 1, Use::Vertex);
+    Require(!below.reused && std::memcmp(below.buffer->Bytes().data(), windowGuest, windowBytes) == 0, "an owned vertex window served a draw that starts below it");
 #endif
     recorder.Sync();
 }
@@ -6100,6 +6106,56 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     KeepDrawInput(&recorder, pool, after, Use::Vertex, 0);
     const auto small = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
     Require(small.reused && small.buffer == after.buffer, "the new vertex snapshot does not serve shorter reads");
+    const auto window = address + 32768;
+    const auto sameAsGuest = [&](const DrawInputCopy& copy, std::size_t from, std::size_t to) { return copy.buffer->Bytes().size() >= to && std::memcmp(copy.buffer->Bytes().data() + from, reinterpret_cast<const void*>(window + from), to - from) == 0; };
+    const auto tail = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192);
+    Require(!tail.reused && tail.from == 8192 && tail.buffer->Bytes().size() == 16384 && sameAsGuest(tail, 8192, 16384), "a vertex window copy is wrong");
+    KeepDrawInput(&recorder, window, tail, Use::Vertex, 0);
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192).buffer == tail.buffer, "the same vertex window was copied again");
+    Require(CopyDrawInput(context, &recorder, window, 12288, 1, Use::Vertex, 9216).buffer == tail.buffer, "a vertex window inside the kept one was copied again");
+    words[(32768 + 1024) / 4] = 0x1234;
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192).reused, "a store below a vertex window made its snapshot stale");
+    words[(32768 + 13312) / 4] = 0x5678;
+    const auto lower = CopyDrawInput(context, &recorder, window, 12288, 1, Use::Vertex, 4096);
+    Require(lower.reused && lower.buffer == tail.buffer && sameAsGuest(lower, 4096, 12288), "a vertex window below the kept one was not filled in from the guest");
+    const auto past = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192);
+    Require(!past.reused && sameAsGuest(past, 8192, 16384), "filling in a vertex window hid a store past the read that filled it");
+    KeepDrawInput(&recorder, window, past, Use::Vertex, 0);
+    const auto below = CopyDrawInput(context, &recorder, window, 4096, 1, Use::Vertex, 1024);
+    Require(below.reused && below.buffer == past.buffer && sameAsGuest(below, 1024, 4096), "a read below a vertex window was not filled in from the guest into its snapshot");
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192).buffer == past.buffer, "a read below a vertex window dropped its snapshot");
+    const auto filled = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex);
+    Require(filled.reused && filled.buffer == past.buffer && sameAsGuest(filled, 0, 16384), "a whole read did not fill in the kept vertex window from the guest");
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 4096).buffer == past.buffer, "a filled-in vertex window was copied again");
+    words[(32768 + 5120) / 4] = 0x9abc;
+    const auto refilled = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 4096);
+    Require(!refilled.reused && sameAsGuest(refilled, 4096, 16384), "a store in a filled-in vertex window was not seen");
+    bool refused = false;
+    try {
+        CopyDrawInput(context, &recorder, window, 256, 4, Use::Index32, 4);
+    } catch (const std::runtime_error& error) {
+        refused = std::string_view(error.what()).find("only a vertex input starts past its address") != std::string_view::npos;
+        if (!refused) throw;
+    }
+    Require(refused, "an index copy started past its address");
+    refused = false;
+    try {
+        CopyDrawInput(context, &recorder, window, 256, 1, Use::Vertex, 256);
+    } catch (const std::runtime_error& error) {
+        refused = std::string_view(error.what()).find("only a vertex input starts past its address") != std::string_view::npos;
+        if (!refused) throw;
+    }
+    Require(refused, "a vertex window started at its end");
+    const auto indices = CopyDrawInput(context, &recorder, window + 24576, 256, 4, Use::Index32);
+    KeepDrawInput(&recorder, window + 24576, indices, Use::Index32, 9, 7);
+    const auto keptIndices = CopyDrawInput(context, &recorder, window + 24576, 256, 4, Use::Index32);
+    Require(keptIndices.reused && keptIndices.derived == 9 && keptIndices.lowest == 7, "a kept index copy lost its lowest index");
+    const auto rangeAddress = window + 28672;
+    const auto rangeGeneration = CollectWrites(rangeAddress, 4096);
+    recorder.KeepHighestIndex(rangeAddress, 4096, Use::Index16, rangeGeneration, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), 9u, 4u);
+    std::optional<std::uint32_t> rangeHighest;
+    std::uint32_t rangeLowest = 0;
+    Require(recorder.KnownHighestIndex(rangeAddress, 4096, Use::Index16, rangeHighest, &rangeLowest) && rangeHighest == 9u && rangeLowest == 4u, "a kept index range lost its lowest index");
     recorder.Sync();
 }
 
@@ -6182,9 +6238,9 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
     first[2] = 0xffff;
     std::memcpy(reinterpret_cast<void*>(indices), first.data(), kept * 2);
     auto range = InPlaceIndexRange(recorder, indices, kept, 2, false);
-    Require(!range.reused && range.highest == 0xffffu, "an in-place index range was not scanned at its first use");
+    Require(!range.reused && range.highest == 0xffffu && range.lowest == 1u, "an in-place index range was not scanned at its first use");
     range = InPlaceIndexRange(recorder, indices, kept, 2, false);
-    Require(range.reused && range.highest == 0xffffu, "an unchanged in-place index range was scanned again");
+    Require(range.reused && range.highest == 0xffffu && range.lowest == 1u, "an unchanged in-place index range was scanned again");
     range = InPlaceIndexRange(recorder, indices, kept, 2, true);
     Require(!range.reused && range.highest == 9u, "an in-place index range served a scan made under the other restart rule");
     Require(!InPlaceIndexRange(recorder, indices, kept + 2, 2, true).reused, "an in-place index range served a scan of another size");
@@ -6203,7 +6259,7 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
     Require(!InPlaceIndexRange(recorder, indices, kept * 2 - 4, 4, false).reused, "a 32-bit in-place index range below the kept size was kept");
     Require(!InPlaceIndexRange(recorder, indices, kept * 2, 4, false).reused, "a 32-bit in-place index range was not scanned at its first use");
     range = InPlaceIndexRange(recorder, indices, kept * 2, 4, false);
-    Require(range.reused && range.highest == 0x000c0003u, "an unchanged 32-bit in-place index range was scanned again");
+    Require(range.reused && range.highest == 0x000c0003u && range.lowest == 0x00010001u, "an unchanged 32-bit in-place index range was scanned again");
     const std::vector<std::uint16_t> restarts(Recorder::KeptIndexRangeIndices, 0xffff);
     std::memcpy(reinterpret_cast<void*>(indices + 20480), restarts.data(), kept);
     Require(!InPlaceIndexRange(recorder, indices + 20480, kept, 2, true).highest.has_value(), "an index range of restart indices has a highest index");
@@ -13123,10 +13179,7 @@ public:
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &push;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
-        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = code.size_bytes();
-        moduleInfo.pCode = code.data();
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
+        module = CreateShaderModule(context, code.data(), code.size_bytes(), "vkCreateShaderModule");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
         pipelineInfo.layout = pipelineLayout;
@@ -14924,7 +14977,7 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     constexpr std::array<std::uint8_t, 4> blue{0, 0, 255, 255};
     constexpr std::array<std::uint8_t, 8> green{0, 0, 0x00, 0x3c, 0, 0, 0x00, 0x3c};
     constexpr std::array<std::uint8_t, 8> cleared{};
-    enum class Order { Superseded, ReadFirst, Rewritten, CpuStore };
+    enum class Order { Superseded, ReadFirst, Rewritten, CpuStore, SampledClear };
     enum class Path { Refresh, Creation, Detached };
     struct Outcome {
         std::vector<std::byte> bytes;
@@ -14934,9 +14987,10 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     };
     const auto pathName = [](Path path) { return std::string(path == Path::Refresh ? ", at B's refresh" : path == Path::Creation ? ", at B's creation" : ", at B's creation after A left the cache"); };
     const auto run = [&](bool on, Order order, Path path) {
-        const std::string where = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote") + (on ? ", on" : ", off");
+        const std::string where = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : order == Order::CpuStore ? ", a CPU store before B wrote" : ", B sampled under clear keys") + (on ? ", on" : ", off");
         StorageTexture::SetClearHandOver(on);
         recorder.Sync();
+        ClearCachedTextures(context.device);
         std::memset(memory, 0x55, surfaceA);
         std::memset(memory + surfaceA, 0x00, keyCount);
         Outcome outcome{};
@@ -14945,7 +14999,7 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
         {
             auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
             std::shared_ptr<StorageTexture> imageB;
-            if (path == Path::Refresh) imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+            if (path == Path::Refresh) imageB = CachedStorageSurface(context, resourceB);
             draw(imageA, {{1.0f, 0.0f, 0.0f, 1.0f}});
             const std::weak_ptr<StorageTexture> weakA = imageA;
             if (path == Path::Refresh) {
@@ -14987,6 +15041,22 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
             if (order == Order::CpuStore) {
                 std::memset(memory + 65536, 0x77, 65536);
             }
+            if (order == Order::SampledClear) {
+                const auto meta = resourceB.dccAddress >> 8u;
+                std::array<std::uint32_t, 8> words{};
+                words[0] = static_cast<std::uint32_t>(resourceB.baseAddress >> 8u);
+                words[1] = static_cast<std::uint32_t>((resourceB.baseAddress >> 40u) & 0xffu) | (resourceB.format << 20u) | (((resourceB.width - 1u) & 3u) << 30u);
+                words[2] = ((resourceB.width - 1u) >> 2u) | ((resourceB.height - 1u) << 14u);
+                words[3] = 0xfa4u | (27u << 20u) | (9u << 28u);
+                words[6] = (1u << 21u) | static_cast<std::uint32_t>((meta & 0xffu) << 24u);
+                words[7] = static_cast<std::uint32_t>(meta >> 8u);
+                const auto sampled = CachedSampledTexture(context, words);
+                Require(sampled != nullptr && sampled->ViewsStorageImage() && sampled->SharedStorageSource() == imageB, where + ": B sampled under clear keys did not view B's cleared storage image");
+                if (on && watched) {
+                    Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": sampling B stored A's results over B");
+                    Require(filled(readMemory(address, 65536), red), where + ": reading A's memory after B was sampled, before B wrote, did not see A's results");
+                }
+            }
             draw(imageB, {{0.0f, 1.0f, 0.0f, 1.0f}});
             Require(StorageTexture::FlushPending(address, bytes, nullptr, "clear-key hand-over test", PublishScope::Whole), where + ": nothing was pending at the end");
             recorder.Submit();
@@ -14995,15 +15065,17 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
             outcome.bytes = readMemory(address, surfaceA);
             Require(filled(readImage(imageB, 128, 128, 8), green), where + ": B lost its results");
         }
+        ClearCachedTextures(context.device);
         outcome.handOvers = StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() - handOvers;
         outcome.superseded = StorageTexture::HandedOverSuperseded() - superseded;
         recorder.Sync();
         return outcome;
     };
     for (const auto path : {Path::Refresh, Path::Creation, Path::Detached})
-    for (const auto order : {Order::Superseded, Order::ReadFirst, Order::Rewritten, Order::CpuStore}) {
+    for (const auto order : {Order::Superseded, Order::ReadFirst, Order::Rewritten, Order::CpuStore, Order::SampledClear}) {
         if (path == Path::Detached && order == Order::Rewritten) continue;
-        const std::string name = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote");
+        if (path != Path::Refresh && order == Order::SampledClear) continue;
+        const std::string name = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : order == Order::CpuStore ? ", a CPU store before B wrote" : ", B sampled under clear keys");
         const auto off = run(false, order, path);
         const auto on = run(true, order, path);
         const auto& lastA = order == Order::Rewritten ? blue : red;
@@ -15017,6 +15089,7 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
             continue;
         }
         if (order == Order::Superseded) Require(on.superseded == 2, name + ": B's results did not drop A's two units under B (dropped " + std::to_string(on.superseded) + ")");
+        if (order == Order::SampledClear && watched) Require(on.superseded == 1, name + ": B's write did not drop only A's remaining unit after the sample-time read (dropped " + std::to_string(on.superseded) + ")");
         if (order == Order::ReadFirst) Require(on.superseded <= 1, name + ": a unit stored by the read was dropped again");
     }
     static_assert(2 * keyCount <= bytes - surfaceA, "B's and C's DCC keys both follow A inside the block");
@@ -16318,6 +16391,13 @@ int main(int argc, char** argv) {
             std::cout << "In-place draw input tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-input-reuse-only") {
+            if (!AgcDriver::GuestMemory::WriteWatched()) return 77;
+            drawInputReuseTests(device, recorder);
+            vertexWindowSeriesTests(device, recorder);
+            std::cout << "Draw input reuse tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-inputs-copied-only") {
             drawInputInPlaceTests(device, recorder, true);
             std::cout << "Copied draw input tests passed\n";
@@ -16415,6 +16495,7 @@ int main(int argc, char** argv) {
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);
         drawInputReuseTests(device, recorder);
+        if (AgcDriver::GuestMemory::WriteWatched()) vertexWindowSeriesTests(device, recorder);
         drawInputInPlaceTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         sliceDirtyTests(device, recorder);
