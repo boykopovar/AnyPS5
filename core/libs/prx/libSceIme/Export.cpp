@@ -1,10 +1,12 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceIme/include/InventoryExports.hpp"
 #include "prx/libSceIme/include/Api.hpp"
+#include "prx/libSceIme/include/ImeClipboard.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -68,6 +70,11 @@ constexpr uint32_t EventUpdateText = 1;
 constexpr uint32_t EventUpdateCaret = 2;
 constexpr uint32_t EventPressClose = 4;
 constexpr uint32_t EventPressEnter = 5;
+#ifdef __APPLE__
+constexpr bool kAppleBuild = true;
+#else
+constexpr bool kAppleBuild = false;
+#endif
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
@@ -316,6 +323,7 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
             if ((session.param.option & OptionMultiline) != 0) {
                 return Insert(session, u"\n");
             }
+            if (ImeClipboard::CopyEnabled(std::getenv("ANYPS5_IME_COPY"), kAppleBuild) && !session.text.empty()) ImeClipboard::CopyToHost(session.text);
             QueueText(session, EventPressEnter, session.caret, 0);
             return std::nullopt;
         case ImeHostInputKind::Escape:
