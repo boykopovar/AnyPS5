@@ -135,6 +135,9 @@ def read_summary(path):
             continue
         if isinstance(decoded, dict):
             lines.append(decoded)
+    intervals = [line for line in lines if "interval_start_s" in line]
+    if intervals:
+        lines = intervals
     presents = sum(line.get("presents", 0) for line in lines)
     seconds = sum(line.get("window", {}).get("ms", 0) for line in lines) / 1000
     last = lines[-1] if lines else {}
