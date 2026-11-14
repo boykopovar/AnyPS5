@@ -486,6 +486,7 @@ public:
     static const char* CopyRefusal(const Context& context, const StorageTexture* destination, const StorageTexture& source, std::uint64_t address);
     VkImage Image() const { return image; }
     const GuestTextureResource& Descriptor() const { return descriptor; }
+    std::size_t GuestCopyCapacity() const { return original.capacity(); }
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
     VkFormat ImageFormat() const { return imageFormat; }
@@ -527,6 +528,7 @@ public:
     std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
+    bool AnyLayerPending() const;
 
 private:
     std::atomic<std::uint64_t> provedEpoch{0};
@@ -572,7 +574,7 @@ private:
     void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
     bool cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, std::uint64_t to, bool edge) const;
-    void saveBeforeUnwatch();
+    void saveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     void forgetKeptAtUnwatch(std::uint32_t unit);
     bool keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const;
     bool keptForCpu(std::uint32_t unit) const;
@@ -588,6 +590,7 @@ private:
     void applyStoredSave(std::uint64_t ticket, const std::vector<std::uint32_t>& units);
     void cancelStoredSave(std::uint32_t unit);
     void cancelStoredSaves();
+    void releaseUnheldOriginal();
     // Lets the batches holding the saves of the units `layers` selects (every unit for none) complete.
     void awaitStoredSave(const std::vector<bool>* layers);
     bool guestBytesSettled() const;

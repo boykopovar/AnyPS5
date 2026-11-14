@@ -14,6 +14,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -86,7 +87,7 @@ void testCatalog() {
         const auto reason = AgcDriver::Pm4::UnsupportedReason(packet[0]);
         if (!reason.empty()) expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, std::string(reason).c_str());
     }
-    check(values.size() == 56, "reference opcode catalog is incomplete");
+    check(values.size() == 57, "reference opcode catalog is incomplete");
     check(AgcDriver::Pm4::Name(makePacket(0x3a, {0})[0]) == "DRAW_INDEX_MULTI_INST", "opcode 0x3a is not DRAW_INDEX_MULTI_INST");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0xff, {0}), 0); }, "not known");
     check(AgcDriver::Pm4::KnownName(makePacket(0xff, {0})[0]).empty() && AgcDriver::Pm4::Name(makePacket(0xff, {0})[0]) == "UNKNOWN_0xff", "an unknown opcode is named");
@@ -173,6 +174,36 @@ void testRegisters() {
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000}), 0); }, "packet size");
     expectFailure([&] { execute(state, makePacket(0x69, {0xffff, 1, 2})); }, "overflow");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x9f, {0, 0, 0x80000000, 0}), 0x20); }, "compute");
+}
+
+void testContextRegRmw() {
+    AgcDriver::QueueState state;
+    execute(state, makePacket(0x69, {0x202, 0x12345678}));
+    const auto before = AgcDriver::DriverDetail::RegisterStateKey(state);
+    execute(state, {0xc0025100, 0x202, 0x00ff00ff, 0x005500aa});
+    check(state.context.at(0x202) == 0x125556aa, "CONTEXT_REG_RMW lost preserved or replaced bits");
+    check(AgcDriver::DriverDetail::RegisterStateKey(state) != before, "CONTEXT_REG_RMW did not change the fingerprint");
+    execute(state, makePacket(0x69, {0x202, 0x12345678}));
+    execute(state, makePacket(0x51, {0x202, 0x00ff00ff, 0xff55ffaa}));
+    check(state.context.at(0x202) == 0x125556aa, "CONTEXT_REG_RMW used data outside the mask");
+    alignas(4) std::uint32_t readback = 0;
+    execute(state, makePacket(0x40, {0x00100200, 0xa202, 0, low(&readback), high(&readback)}));
+    check(readback == 0x125556aa, "COPY_DATA did not read the CONTEXT_REG_RMW value");
+    execute(state, makePacket(0x51, {0x202, 0, 0xffffffffu}));
+    check(state.context.at(0x202) == 0x125556aa, "zero-mask CONTEXT_REG_RMW changed the register");
+    execute(state, makePacket(0x51, {0x202, 0xffffffffu, 0xabcdef01}));
+    check(state.context.at(0x202) == 0xabcdef01, "full-mask CONTEXT_REG_RMW did not replace the register");
+    for (const auto& packet : {makePacket(0x51, {0x202, 0}), makePacket(0x51, {0x202, 0, 0, 0})})
+        expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, "packet size");
+    expectFailure([&] { execute(state, makePacket(0x51, {0xffff, 0, 0})); }, "no known value");
+    expectFailure([&] { execute(state, makePacket(0x51, {0xffff, 0xffffffffu, 1})); }, "no known value");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x51, {0x202, 0, 0}), 0x20); }, "compute queue");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x51, {0x10000, 0, 0}), 0); }, "reserved offset");
+    AgcDriver::QueueState reset;
+    check(!reset.context.empty(), "context reset state is empty");
+    const auto [offset, value] = *reset.context.begin();
+    execute(reset, makePacket(0x51, {offset, 0xff, 0x5a}));
+    check(reset.context.at(offset) == ((value & ~0xffu) | 0x5au), "CONTEXT_REG_RMW did not read a defined reset value");
 }
 
 void testRegisterFile() {
@@ -1298,6 +1329,30 @@ void testReleaseMemDataSelects() {
     for (const auto select : {6u, 7u}) expectFailure([&] { AgcDriver::Pm4::Validate(release(select), 0); }, "reserved RELEASE_MEM DATA_SEL");
 }
 
+void testGcnReleaseMemSystemCounter() {
+    alignas(8) static std::uint64_t target = 0;
+    const auto release = makePacket(0x49, {0x0030c514, 4u << 29u, low(&target), high(&target), 1, 0, 0});
+    const auto ticks = [](std::chrono::steady_clock::duration elapsed) { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count()) * 4u / 5u; };
+    AgcDriver::QueueState state;
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    const auto firstStart = std::chrono::steady_clock::now();
+    execute(state, release);
+    const auto firstEnd = std::chrono::steady_clock::now();
+    const auto first = target;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto secondStart = std::chrono::steady_clock::now();
+    execute(state, release);
+    const auto secondEnd = std::chrono::steady_clock::now();
+    const auto second = target;
+    const auto label = AgcDriver::Pm4::DecodeLabelWrite(release);
+    const auto stores = AgcDriver::Pm4::DecodeStores(release);
+    ShaderRecompiler::SetGcnGuestShaders(false);
+    check(first < 60ull * 800000000ull, "the GCN DATA_SEL 4 counter did not start near zero");
+    check(second - first + 1 >= ticks(secondStart - firstEnd) && second - first <= ticks(secondEnd - firstStart) + 1, "the GCN DATA_SEL 4 counter does not advance at 800 MHz");
+    check(label.has_value() && label->Bytes().size() == 8, "a GCN DATA_SEL 4 RELEASE_MEM did not resolve as an 8-byte label");
+    check(stores.size() == 1 && stores[0].value == AgcDriver::Pm4::PacketStore::Value::RunTime && stores[0].bytes == 8, "a GCN DATA_SEL 4 RELEASE_MEM did not decode as an 8-byte run-time store");
+}
+
 void testMemSemaphore() {
     alignas(8) static std::uint64_t semaphore = 0;
     alignas(8) static std::uint32_t marker = 0;
@@ -1471,12 +1526,20 @@ void testBranchSubmission() {
     auto words = joinPackets({branch(1, 0, &first, nullptr), writeWord(results[2], 73)});
     submitWords(words);
     AgcDriverWaitIdle_nid_postfix();
-    check(results[0] == 71 && results[1] == 0 && results[2] == 73, "an always-taken if-then COND_INDIRECT_BUFFER did not run its buffer");
+    check(results[0] == 71 && results[1] == 0, "an always-taken if-then COND_INDIRECT_BUFFER did not run its buffer");
+    check(results[2] == 0, "the packet after a taken COND_INDIRECT_BUFFER ran: the branch returned like a call");
     results.fill(0);
     words = joinPackets({branch(2, 0, &first, &second), writeWord(results[2], 74)});
     submitWords(words);
     AgcDriverWaitIdle_nid_postfix();
-    check(results[0] == 71 && results[1] == 0 && results[2] == 74, "an always-taken if-then-else COND_INDIRECT_BUFFER ran the wrong buffer");
+    check(results[0] == 71 && results[1] == 0 && results[2] == 0, "an always-taken if-then-else COND_INDIRECT_BUFFER ran the wrong buffer or returned from it");
+    static std::vector<std::uint32_t> wrapper;
+    results.fill(0);
+    wrapper = joinPackets({branch(1, 0, &first, nullptr), writeWord(results[1], 76)});
+    words = joinPackets({indirectBuffer(wrapper), writeWord(results[2], 77)});
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(results[0] == 71 && results[1] == 0 && results[2] == 77, "a COND_INDIRECT_BUFFER in a called buffer did not replace the rest of that buffer and return to its caller");
     results.fill(0);
     words = joinPackets({branch(1, 0, nullptr, nullptr), writeWord(results[2], 75)});
     submitWords(words);
@@ -2599,6 +2662,11 @@ void testPredicatedIndirectBufferKeepsBusyPipeline() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "context-reg-rmw") {
+            testContextRegRmw();
+            std::puts("PM4 CONTEXT_REG_RMW test passed");
+            return 0;
+        }
         if (argc == 2 && std::string(argv[1]) == "failure") {
             testAsyncMemoryFailure();
             std::puts("PM4 asynchronous memory failure propagated to idle, suspend, submit and shutdown");
@@ -2640,6 +2708,7 @@ int main(int argc, char** argv) {
         testWriteChangedStoresExactlyTheChangedRuns();
         testWriteChangedKeepingGuestKeepsCpuWrites();
         testRegisters();
+        testContextRegRmw();
         testRegisterFile();
         testContextAndBases();
         testIndexedDraw();
@@ -2658,6 +2727,7 @@ int main(int argc, char** argv) {
         testConditionReadSynchronization();
         testEventWrite();
         testReleaseMemDataSelects();
+        testGcnReleaseMemSystemCounter();
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();
