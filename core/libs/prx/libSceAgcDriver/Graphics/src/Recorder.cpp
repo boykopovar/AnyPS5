@@ -2419,9 +2419,9 @@ namespace {
 
 constexpr std::uint32_t MaxTimedRanges = 512;
 constexpr std::size_t CommandClasses = static_cast<std::size_t>(Recorder::CommandClass::Count);
-constexpr const char* CommandClassNames[CommandClasses] = {"dispatch-lead", "dispatch-trail", "indirect-args", "label-run", "fill", "fill-clear", "copy", "staging-in", "staging-out", "draw", "storage-upload", "storage-writeback", "dcc-clear", "dcc-keys", "present-blit", "shadow-publish", "template-refresh"};
-constexpr const char* BarrierScopes[CommandClasses] = {"Graphics.Barrier.dispatch-lead", "Graphics.Barrier.dispatch-trail", "Graphics.Barrier.indirect-args", "Graphics.Barrier.label-run", "Graphics.Barrier.fill", "Graphics.Barrier.fill-clear", "Graphics.Barrier.copy", "Graphics.Barrier.staging-in", "Graphics.Barrier.staging-out", "Graphics.Barrier.draw", "Graphics.Barrier.storage-upload", "Graphics.Barrier.storage-writeback", "Graphics.Barrier.dcc-clear", "Graphics.Barrier.dcc-keys", "Graphics.Barrier.present-blit", "Graphics.Barrier.shadow-publish", "Graphics.Barrier.template-refresh"};
-constexpr const char* BarrierMergedScopes[CommandClasses] = {"Graphics.BarrierMerged.dispatch-lead", "Graphics.BarrierMerged.dispatch-trail", "Graphics.BarrierMerged.indirect-args", "Graphics.BarrierMerged.label-run", "Graphics.BarrierMerged.fill", "Graphics.BarrierMerged.fill-clear", "Graphics.BarrierMerged.copy", "Graphics.BarrierMerged.staging-in", "Graphics.BarrierMerged.staging-out", "Graphics.BarrierMerged.draw", "Graphics.BarrierMerged.storage-upload", "Graphics.BarrierMerged.storage-writeback", "Graphics.BarrierMerged.dcc-clear", "Graphics.BarrierMerged.dcc-keys", "Graphics.BarrierMerged.present-blit", "Graphics.BarrierMerged.shadow-publish", "Graphics.BarrierMerged.template-refresh"};
+constexpr const char* CommandClassNames[CommandClasses] = {"dispatch-lead", "dispatch-trail", "indirect-args", "label-run", "fill", "fill-clear", "copy", "staging-in", "staging-out", "draw", "storage-upload", "storage-writeback", "dcc-clear", "dcc-keys", "present-blit", "shadow-publish", "template-refresh", "input-mirror"};
+constexpr const char* BarrierScopes[CommandClasses] = {"Graphics.Barrier.dispatch-lead", "Graphics.Barrier.dispatch-trail", "Graphics.Barrier.indirect-args", "Graphics.Barrier.label-run", "Graphics.Barrier.fill", "Graphics.Barrier.fill-clear", "Graphics.Barrier.copy", "Graphics.Barrier.staging-in", "Graphics.Barrier.staging-out", "Graphics.Barrier.draw", "Graphics.Barrier.storage-upload", "Graphics.Barrier.storage-writeback", "Graphics.Barrier.dcc-clear", "Graphics.Barrier.dcc-keys", "Graphics.Barrier.present-blit", "Graphics.Barrier.shadow-publish", "Graphics.Barrier.template-refresh", "Graphics.Barrier.input-mirror"};
+constexpr const char* BarrierMergedScopes[CommandClasses] = {"Graphics.BarrierMerged.dispatch-lead", "Graphics.BarrierMerged.dispatch-trail", "Graphics.BarrierMerged.indirect-args", "Graphics.BarrierMerged.label-run", "Graphics.BarrierMerged.fill", "Graphics.BarrierMerged.fill-clear", "Graphics.BarrierMerged.copy", "Graphics.BarrierMerged.staging-in", "Graphics.BarrierMerged.staging-out", "Graphics.BarrierMerged.draw", "Graphics.BarrierMerged.storage-upload", "Graphics.BarrierMerged.storage-writeback", "Graphics.BarrierMerged.dcc-clear", "Graphics.BarrierMerged.dcc-keys", "Graphics.BarrierMerged.present-blit", "Graphics.BarrierMerged.shadow-publish", "Graphics.BarrierMerged.template-refresh", "Graphics.BarrierMerged.input-mirror"};
 // [barriers] counters by class (relaxed: only reported) and the [gputime] totals, which the
 // presenter's thread adds to without the GPU mutex (AddGpuTiming).
 std::atomic<std::uint64_t> classBarriers[CommandClasses]{};
@@ -3460,12 +3460,54 @@ std::size_t SnapshotPool(Recorder::SnapshotUse use) {
 }
 }
 
+void Recorder::dropDrawInputMirror(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    if (entry->second.mirror == nullptr) return;
+    drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))].bytes -= std::get<2>(entry->first);
+    drawInputMirrorBytes -= std::get<2>(entry->first);
+    entry->second.mirror.reset();
+}
+
 void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    dropDrawInputMirror(entry);
     auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
     pool.bytes -= std::get<2>(entry->first);
     pool.recency.erase(entry->second.recent);
     if (!entry->second.owned.words.empty()) --ownedDrawInputs;
     drawSnapshots.erase(entry);
+}
+
+bool Recorder::DrawInputMirrors() {
+    static const bool enabled = std::getenv("APS5_NO_INPUT_MIRRORS") == nullptr;
+    return enabled;
+}
+
+std::pair<std::size_t, std::size_t> Recorder::DrawInputBytes() const {
+    return {drawSnapshotPools[SnapshotPool(SnapshotUse::Vertex)].bytes, drawInputMirrorBytes};
+}
+
+std::shared_ptr<Buffer> Recorder::mirrorDrawInput(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    const auto bytes = std::get<2>(entry->first);
+    auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
+    if (bytes > DrawInputMirrorBudget || 2 * bytes > DrawInputBudget || !context.HostMemoryType(~0u)) return {};
+    const auto host = entry->second.buffer;
+    const auto copied = host->Bytes().size();
+    auto mirror = Buffer::WithinDeviceLocalHeadroom(context, copied, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    if (mirror == nullptr) return {};
+    for (auto oldest = pool.recency.begin(); drawInputMirrorBytes + bytes > DrawInputMirrorBudget && oldest != pool.recency.end(); ++oldest) {
+        if (*oldest != entry->first) dropDrawInputMirror(drawSnapshots.find(*oldest));
+    }
+    while (pool.bytes + bytes > DrawInputBudget && pool.recency.front() != entry->first) eraseDrawSnapshot(drawSnapshots.find(pool.recency.front()));
+    const auto commands = Commands();
+    const auto timing = BeginGpuTiming(CommandClass::InputMirror);
+    CopyBuffer(context, commands, host->Handle(), 0, mirror->Handle(), 0, copied);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT);
+    CountBarriers(CommandClass::InputMirror);
+    EndGpuTiming(timing, copied);
+    Keep(host);
+    Keep(mirror);
+    pool.bytes += bytes;
+    drawInputMirrorBytes += bytes;
+    return mirror;
 }
 
 Recorder::UploadSlice Recorder::DrawUpload(std::size_t bytes) {
@@ -3505,7 +3547,7 @@ void Recorder::NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t byte
     unwrittenBytes += bytes;
 }
 
-std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation, VkDeviceSize* offset, std::size_t from, std::uint32_t* lowest) {
+std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation, VkDeviceSize* offset, std::size_t from, std::uint32_t* lowest, bool mirrored) {
     Require(from == 0 || (use == SnapshotUse::Vertex && from < bytes), "only a vertex snapshot starts past its address");
     auto found = use == SnapshotUse::Vertex ? drawSnapshots.lower_bound({address, use, bytes}) : drawSnapshots.find({address, use, bytes});
     if (found == drawSnapshots.end() || std::get<0>(found->first) != address || std::get<1>(found->first) != use) {
@@ -3531,12 +3573,15 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
         const auto start = from - std::min(from, std::get<2>(found->first) - found->second.from);
         GuestMemory::Read(address + start, found->second.buffer->Bytes().subspan(start, found->second.from - start), 1);
         found->second.from = start;
+        dropDrawInputMirror(found);
     }
     auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
     recency.splice(recency.end(), recency, found->second.recent);
     if (derived != nullptr) *derived = found->second.derived;
     if (lowest != nullptr) *lowest = found->second.lowest;
-    return found->second.buffer;
+    if (!mirrored || use == SnapshotUse::Storage || !DrawInputMirrors()) return found->second.buffer;
+    if (found->second.mirror == nullptr) found->second.mirror = mirrorDrawInput(found);
+    return found->second.mirror != nullptr ? found->second.mirror : found->second.buffer;
 }
 
 std::shared_ptr<Buffer> Recorder::containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset) {
@@ -3631,7 +3676,7 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
     const DrawSnapshotKey key{address, use, bytes};
     pool.recency.push_back(key);
     try {
-        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived, from, lowest});
+        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived, from, lowest, nullptr});
     } catch (...) {
         pool.recency.pop_back();
         throw;

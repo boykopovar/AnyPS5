@@ -5851,14 +5851,14 @@ void vertexWindowSeriesTests(const Device& device, Recorder& recorder) {
     std::shared_ptr<Buffer> served;
     for (std::size_t k = 0; k < draws; ++k) {
         const auto from = (draws - 1 - k) * quad;
-        const auto copy = CopyDrawInput(context, &recorder, address, from + quad, 1, Use::Vertex, from);
+        const auto copy = CopyDrawInput(context, &recorder, address, from + quad, 1, Use::Vertex, from, true);
         Require(std::memcmp(copy.buffer->Bytes().data() + from, reinterpret_cast<const void*>(address + from), quad) == 0, "a draw at a falling lowest vertex got other bytes than the guest's");
         KeepDrawInput(&recorder, address, copy, Use::Vertex, 0);
         if (k == 0) served = copy.buffer;
         Require(copy.buffer == served, "a draw below the vertex window of an earlier draw over the same buffer was copied again instead of filled into its snapshot");
     }
     words[(bytes - quad) / 4] = 0x4242;
-    const auto stored = CopyDrawInput(context, &recorder, address, bytes, 1, Use::Vertex, bytes - quad);
+    const auto stored = CopyDrawInput(context, &recorder, address, bytes, 1, Use::Vertex, bytes - quad, true);
     Require(!stored.reused && std::memcmp(stored.buffer->Bytes().data() + bytes - quad, reinterpret_cast<const void*>(address + bytes - quad), quad) == 0, "a store in the vertex window that served the falling draws was not seen");
 }
 
@@ -6036,6 +6036,159 @@ void ownedDrawInputTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+std::vector<std::byte> deviceBufferBytes(const Context& context, Recorder& recorder, const std::shared_ptr<Buffer>& buffer, std::size_t bytes) {
+    const auto readback = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto commands = recorder.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    CopyBuffer(context, commands, buffer->Handle(), 0, readback->Handle(), 0, bytes);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    recorder.Keep(buffer);
+    recorder.Keep(readback);
+    recorder.Sync();
+    const auto held = readback->Bytes();
+    return {held.begin(), held.begin() + static_cast<std::ptrdiff_t>(bytes)};
+}
+
+bool drawInputHolds(const Context& context, Recorder& recorder, const std::shared_ptr<Buffer>& buffer, std::uint64_t address, std::size_t bytes) {
+    if (buffer->Mapped()) return std::memcmp(buffer->Bytes().data(), reinterpret_cast<const void*>(address), bytes) == 0;
+    return std::memcmp(deviceBufferBytes(context, recorder, buffer, bytes).data(), reinterpret_cast<const void*>(address), bytes) == 0;
+}
+
+void vertexWindowMirrorTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    if (!Recorder::DrawInputMirrors() || !WriteWatched()) return;
+    constexpr std::size_t bytes = 65536;
+    void* block = AllocateWatched(bytes, 65536);
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 11 + 5;
+    const auto& context = device.GetContext();
+    const auto window = reinterpret_cast<std::uint64_t>(block);
+    Recorder cache(context);
+    const auto deviceHolds = [&](const std::shared_ptr<Buffer>& buffer, std::size_t from, std::size_t to) {
+        const auto read = deviceBufferBytes(context, cache, buffer, to);
+        return std::memcmp(read.data() + from, reinterpret_cast<const void*>(window + from), to - from) == 0;
+    };
+    const auto tail = CopyDrawInput(context, &cache, window, 16384, 1, Use::Vertex, 8192);
+    KeepDrawInput(&cache, window, tail, Use::Vertex, 0);
+    const auto first = CopyDrawInput(context, &cache, window, 16384, 1, Use::Vertex, 8192);
+    Require(first.reused && !first.buffer->Mapped() && deviceHolds(first.buffer, 8192, 16384) && cache.DrawInputBytes().second == 16384, "a kept vertex window was not mirrored");
+    const auto lower = CopyDrawInput(context, &cache, window, 16384, 1, Use::Vertex, 4096);
+    Require(lower.reused && lower.buffer != first.buffer && !lower.buffer->Mapped() && cache.DrawInputBytes().second == 16384, "filling in a mirrored vertex window kept its old mirror");
+    Require(deviceHolds(lower.buffer, 4096, 16384), "the mirror of a filled-in vertex window misses the filled bytes");
+    cache.Sync();
+}
+
+constexpr VkDeviceSize TightHeapBudget = VkDeviceSize{64} << 20u;
+constexpr VkDeviceSize TightHeapRoom = 44000;
+
+VKAPI_ATTR void VKAPI_CALL tightMemoryBudget(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    for (auto* next = static_cast<VkBaseOutStructure*>(properties->pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT) continue;
+        auto* budget = reinterpret_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(next);
+        for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+            budget->heapBudget[heap] = TightHeapBudget;
+            budget->heapUsage[heap] = TightHeapBudget - TightHeapBudget / 8u - TightHeapRoom;
+        }
+    }
+}
+
+void drawInputMirrorTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    static_assert(Recorder::DrawInputBudget >= 2 * Recorder::DrawInputMirrorBudget, "the mirror budget test needs room for the mirrors inside the draw input budget");
+    constexpr std::size_t bytes = 65536;
+    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: draw input mirrors not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto& context = device.GetContext();
+    for (std::size_t i = 0; i < bytes; ++i) static_cast<std::uint8_t*>(block)[i] = static_cast<std::uint8_t>(i * 5u + 3u);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto generation = CollectWrites(address, bytes);
+    Require(generation != 0, "the watched block has no generation");
+    const bool mirrors = Recorder::DrawInputMirrors();
+    State plain;
+    State mesh;
+    mesh.stages.mesh.emplace();
+    Require(BindsIndexCopy(plain) && !BindsIndexCopy(mesh), "a mesh draw's index copy may be mirrored although the mesh shader reads its indices from guest memory");
+    Recorder cache(context);
+    constexpr std::size_t held = 256;
+    constexpr auto half = Recorder::DrawInputMirrorBudget / 2;
+    const auto snapshot = [&](std::uint64_t at) {
+        auto buffer = std::make_shared<Buffer>(context, held, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(at), held);
+        return buffer;
+    };
+    const auto reuse = [&](std::uint64_t at) { return cache.ReusableDrawSnapshot(at, held, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true); };
+    const auto use = [&](std::size_t kept, std::size_t mirrored) { return cache.DrawInputBytes() == std::pair<std::size_t, std::size_t>{kept, mirrored}; };
+    const auto first = address;
+    const auto second = address + 4096;
+    const auto third = address + 8192;
+    const auto fourth = address + 12288;
+    const auto firstHost = snapshot(first);
+    const auto secondHost = snapshot(second);
+    cache.KeepDrawSnapshot(first, half + 4096, generation, registry, firstHost, Use::Vertex);
+    cache.KeepDrawSnapshot(second, half, generation, registry, secondHost, Use::Vertex);
+    const auto firstMirror = reuse(first);
+    if (!mirrors) {
+        Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set");
+        Require(drawInputHolds(context, cache, firstMirror, first, held), "a reused draw input lost the bytes of its snapshot");
+        cache.Sync();
+        return;
+    }
+    Require(firstMirror != nullptr && firstMirror != firstHost && !firstMirror->Mapped(), "a reused draw input came back without its device-local mirror");
+    Require(drawInputHolds(context, cache, firstMirror, first, held), "a draw input mirror does not hold the bytes of its snapshot");
+    Require(reuse(first) == firstMirror, "a draw input mirror was made again");
+    Require(use(3 * half + 8192, half + 4096), "a draw input mirror is not counted in the draw input budget");
+    const auto secondMirror = reuse(second);
+    Require(secondMirror != nullptr && secondMirror != secondHost && !secondMirror->Mapped() && use(3 * half + 4096, half), "a full mirror budget did not drop the least recently used mirror for a new one");
+    Require(drawInputHolds(context, cache, secondMirror, second, held), "a draw input mirror made after dropping another does not hold the bytes of its snapshot");
+    Require(cache.ReusableDrawSnapshot(first, held, Use::Vertex) == firstHost, "dropping a mirror dropped its snapshot");
+    const auto filler = snapshot(third);
+    const auto fill = Recorder::DrawInputBudget - (half + 4096);
+    cache.KeepDrawSnapshot(third, fill, generation, registry, filler, Use::Vertex);
+    Require(reuse(second) == nullptr && use(Recorder::DrawInputBudget, 0), "the draw input budget did not evict the least recently used snapshot and its mirror");
+    const auto firstAgain = reuse(first);
+    Require(firstAgain != firstHost && !firstAgain->Mapped() && use(2 * half + 8192, half + 4096), "making a mirror did not evict the least recently used snapshot to stay within the draw input budget");
+    Require(drawInputHolds(context, cache, firstAgain, first, held), "a draw input mirror made after an eviction does not hold the bytes of its snapshot");
+    Require(cache.ReusableDrawSnapshot(third, held, Use::Vertex) == nullptr && reuse(first) == firstAgain, "making a mirror evicted a more recently used snapshot");
+    Require(cache.ReusableDrawSnapshot(first, held, Use::Vertex) == firstHost, "a lookup that reads the bytes on the CPU did not get the host snapshot");
+    std::memset(reinterpret_cast<void*>(first), 0x5a, 16);
+    CollectWrites(first, 16);
+    Require(reuse(first) == nullptr && use(0, 0), "a mirrored snapshot outlived a CPU store or kept its mirror's bytes");
+    cache.Sync();
+    auto tight = context;
+    tight.memoryProperties2 = tightMemoryBudget;
+    Recorder narrow(tight);
+    constexpr std::size_t wide = 40000;
+    const auto wideAt = address + 16384;
+    const auto wideHost = std::make_shared<Buffer>(context, wide, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memcpy(wideHost->Bytes().data(), reinterpret_cast<const void*>(wideAt), wide);
+    const auto olderHost = snapshot(third);
+    narrow.KeepDrawSnapshot(third, Recorder::DrawInputBudget - wide - 4096, generation, registry, olderHost, Use::Vertex);
+    narrow.KeepDrawSnapshot(wideAt, wide, generation, registry, wideHost, Use::Vertex);
+    Require(narrow.ReusableDrawSnapshot(wideAt, wide, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true) == wideHost && narrow.DrawInputBytes() == std::pair<std::size_t, std::size_t>{Recorder::DrawInputBudget - 4096, 0}, "a mirror whose allocation the device-local headroom refuses was made");
+    Require(narrow.ReusableDrawSnapshot(third, held, Use::Vertex) == olderHost, "a mirror the device-local headroom refused evicted an older snapshot");
+    narrow.Sync();
+    auto unified = context;
+    for (std::uint32_t heap = 0; heap < unified.memory.memoryHeapCount; ++heap) unified.memory.memoryHeaps[heap].flags |= VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    Recorder shared(unified);
+    const auto sharedHost = snapshot(fourth);
+    shared.KeepDrawSnapshot(fourth, held, generation, registry, sharedHost, Use::Vertex);
+    Require(shared.ReusableDrawSnapshot(fourth, held, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true) == sharedHost && shared.DrawInputBytes().second == 0, "a draw input was mirrored on a device whose memory is all device-local");
+}
+
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
@@ -6058,16 +6211,25 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
         const auto contents = copy.buffer->Bytes();
         return contents.size() == size && std::memcmp(contents.data(), block, size) == 0;
     };
+    const bool mirrors = Recorder::DrawInputMirrors();
+    const auto servedFrom = [&](const DrawInputCopy& copy, const std::shared_ptr<Buffer>& host, std::uint64_t at, std::size_t read) {
+        const bool kind = mirrors ? copy.buffer != host && !copy.buffer->Mapped() : copy.buffer == host;
+        return copy.reused && kind && drawInputHolds(context, recorder, copy.buffer, at, read);
+    };
     const auto first = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
     Require(!first.reused && first.generation != 0 && equalsGuest(first), "the first draw input copy is wrong");
     KeepDrawInput(&recorder, address, first, Use::Index32, 189);
     const auto second = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
-    Require(second.reused && second.buffer == first.buffer && second.derived == 189, "an unchanged draw input was copied again");
+    Require(servedFrom(second, first.buffer, address, size) && second.derived == 189, "an unchanged draw input was copied again");
+    Require(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).buffer == second.buffer, "a reused draw input was mirrored again");
+    const auto readBack = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32, 0, true);
+    Require(readBack.reused && readBack.buffer == first.buffer && readBack.derived == 189, "a draw input read on the CPU did not get its host snapshot");
     const auto vertex = CopyDrawInput(context, &recorder, address, size, 1, Use::Vertex);
     const auto narrow = CopyDrawInput(context, &recorder, address, size, 2, Use::Index16);
     Require(!vertex.reused && !narrow.reused && equalsGuest(vertex) && equalsGuest(narrow), "a draw input reused another use's copy");
     KeepDrawInput(&recorder, address, vertex, Use::Vertex, 0);
-    Require(CopyDrawInput(context, &recorder, address, size, 1, Use::Vertex).buffer == vertex.buffer && CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).buffer == first.buffer, "the uses' copies displaced each other");
+    const auto vertexAgain = CopyDrawInput(context, &recorder, address, size, 1, Use::Vertex);
+    Require(servedFrom(vertexAgain, vertex.buffer, address, size) && vertexAgain.buffer != second.buffer && CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).buffer == second.buffer, "the uses' copies displaced each other");
     Require(!CopyDrawInput(context, nullptr, address, size, 4, Use::Index32).reused, "a draw input was reused without a recorder");
     words[5] = 0xdead;
     const auto stored = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
@@ -6094,7 +6256,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     Require(!whole.reused && std::memcmp(whole.buffer->Bytes().data(), reinterpret_cast<const void*>(pool), 12288) == 0, "the vertex pool copy is wrong");
     KeepDrawInput(&recorder, pool, whole, Use::Vertex, 0);
     const auto prefix = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
-    Require(prefix.reused && prefix.buffer == whole.buffer, "a shorter vertex read did not reuse the longer snapshot");
+    Require(servedFrom(prefix, whole.buffer, pool, 4096), "a shorter vertex read did not reuse the longer snapshot");
     Require(!CopyDrawInput(context, &recorder, pool, 16384, 1, Use::Vertex).reused, "a longer vertex read reused a shorter snapshot");
     Require(!CopyDrawInput(context, &recorder, pool + 4, 4096, 1, Use::Vertex).reused, "a vertex read at another address reused the snapshot");
     Require(!CopyDrawInput(context, &recorder, pool, 4096, 4, Use::Index32).reused, "an index read reused a longer vertex snapshot");
@@ -6103,35 +6265,35 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     Require(!CopyDrawInput(context, &recorder, pool, 4096, 4, Use::Index32).reused, "an index read reused a longer index snapshot");
     words[(8192 + 8192 + 16) / 4] = 0xbeef;
     const auto prefixAfter = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
-    Require(std::memcmp(prefixAfter.buffer->Bytes().data(), reinterpret_cast<const void*>(pool), 4096) == 0, "a shorter vertex read after a store got other bytes");
+    Require(drawInputHolds(context, recorder, prefixAfter.buffer, pool, 4096), "a shorter vertex read after a store got other bytes");
     const auto after = CopyDrawInput(context, &recorder, pool, 12288, 1, Use::Vertex);
     Require(!after.reused && std::memcmp(after.buffer->Bytes().data(), reinterpret_cast<const void*>(pool), 12288) == 0, "a vertex read over the store reused the old bytes");
     KeepDrawInput(&recorder, pool, after, Use::Vertex, 0);
     const auto small = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
-    Require(small.reused && small.buffer == after.buffer, "the new vertex snapshot does not serve shorter reads");
+    Require(servedFrom(small, after.buffer, pool, 4096) && small.buffer != prefix.buffer, "the new vertex snapshot does not serve shorter reads");
     const auto window = address + 32768;
     const auto sameAsGuest = [&](const DrawInputCopy& copy, std::size_t from, std::size_t to) { return copy.buffer->Bytes().size() >= to && std::memcmp(copy.buffer->Bytes().data() + from, reinterpret_cast<const void*>(window + from), to - from) == 0; };
-    const auto tail = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192);
+    const auto tail = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192, true);
     Require(!tail.reused && tail.from == 8192 && tail.buffer->Bytes().size() == 16384 && sameAsGuest(tail, 8192, 16384), "a vertex window copy is wrong");
     KeepDrawInput(&recorder, window, tail, Use::Vertex, 0);
-    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192).buffer == tail.buffer, "the same vertex window was copied again");
-    Require(CopyDrawInput(context, &recorder, window, 12288, 1, Use::Vertex, 9216).buffer == tail.buffer, "a vertex window inside the kept one was copied again");
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192, true).buffer == tail.buffer, "the same vertex window was copied again");
+    Require(CopyDrawInput(context, &recorder, window, 12288, 1, Use::Vertex, 9216, true).buffer == tail.buffer, "a vertex window inside the kept one was copied again");
     words[(32768 + 1024) / 4] = 0x1234;
-    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192).reused, "a store below a vertex window made its snapshot stale");
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192, true).reused, "a store below a vertex window made its snapshot stale");
     words[(32768 + 13312) / 4] = 0x5678;
-    const auto lower = CopyDrawInput(context, &recorder, window, 12288, 1, Use::Vertex, 4096);
+    const auto lower = CopyDrawInput(context, &recorder, window, 12288, 1, Use::Vertex, 4096, true);
     Require(lower.reused && lower.buffer == tail.buffer && sameAsGuest(lower, 4096, 12288), "a vertex window below the kept one was not filled in from the guest");
-    const auto past = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192);
+    const auto past = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192, true);
     Require(!past.reused && sameAsGuest(past, 8192, 16384), "filling in a vertex window hid a store past the read that filled it");
     KeepDrawInput(&recorder, window, past, Use::Vertex, 0);
-    const auto below = CopyDrawInput(context, &recorder, window, 4096, 1, Use::Vertex, 1024);
+    const auto below = CopyDrawInput(context, &recorder, window, 4096, 1, Use::Vertex, 1024, true);
     Require(below.reused && below.buffer == past.buffer && sameAsGuest(below, 1024, 4096), "a read below a vertex window was not filled in from the guest into its snapshot");
-    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192).buffer == past.buffer, "a read below a vertex window dropped its snapshot");
-    const auto filled = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex);
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 8192, true).buffer == past.buffer, "a read below a vertex window dropped its snapshot");
+    const auto filled = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 0, true);
     Require(filled.reused && filled.buffer == past.buffer && sameAsGuest(filled, 0, 16384), "a whole read did not fill in the kept vertex window from the guest");
-    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 4096).buffer == past.buffer, "a filled-in vertex window was copied again");
+    Require(CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 4096, true).buffer == past.buffer, "a filled-in vertex window was copied again");
     words[(32768 + 5120) / 4] = 0x9abc;
-    const auto refilled = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 4096);
+    const auto refilled = CopyDrawInput(context, &recorder, window, 16384, 1, Use::Vertex, 4096, true);
     Require(!refilled.reused && sameAsGuest(refilled, 4096, 16384), "a store in a filled-in vertex window was not seen");
     bool refused = false;
     try {
@@ -6143,7 +6305,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     Require(refused, "an index copy started past its address");
     refused = false;
     try {
-        CopyDrawInput(context, &recorder, window, 256, 1, Use::Vertex, 256);
+        CopyDrawInput(context, &recorder, window, 256, 1, Use::Vertex, 256, true);
     } catch (const std::runtime_error& error) {
         refused = std::string_view(error.what()).find("only a vertex input starts past its address") != std::string_view::npos;
         if (!refused) throw;
@@ -16807,6 +16969,13 @@ int main(int argc, char** argv) {
             drawSnapshotEpochTests(device);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-input-mirrors-only") {
+            drawInputMirrorTests(device);
+            if (Recorder::DrawInputMirrors()) vertexWindowMirrorTests(device);
+            drawInputReuseTests(device, recorder);
+            std::cout << "Draw input mirror tests passed with mirrors " << (Recorder::DrawInputMirrors() ? "on" : "off") << "\n";
+            return 0;
+        }
 
         if (argc == 2 && (std::string_view(argv[1]) == "--vertex-target-range-copied" || std::string_view(argv[1]) == "--vertex-target-range-imported")) {
             return vertexTargetRangeTests(device, recorder, std::string_view(argv[1]) == "--vertex-target-range-imported") ? 0 : 77;
@@ -16861,7 +17030,9 @@ int main(int argc, char** argv) {
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);
         drawInputReuseTests(device, recorder);
+        drawInputMirrorTests(device);
         if (AgcDriver::GuestMemory::WriteWatched()) vertexWindowSeriesTests(device, recorder);
+        vertexWindowMirrorTests(device);
         drawInputInPlaceTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         sliceDirtyTests(device, recorder);

@@ -1469,7 +1469,11 @@ void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResou
 
 }
 
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from) {
+bool BindsIndexCopy(const State& state) {
+    return !state.stages.mesh;
+}
+
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from, bool hostOnly) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     Require(from == 0 || (use == Recorder::SnapshotUse::Vertex && from < bytes), "only a vertex input starts past its address");
     DrawInputCopy copy;
@@ -1488,14 +1492,14 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
         }
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
-        if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, nullptr, from, &copy.lowest);
+        if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived, 0, nullptr, from, &copy.lowest, !hostOnly);
         else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
         }
     }
-    copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    copy.buffer = std::make_shared<Buffer>(context, bytes, (use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     static const bool poisonPrefix = std::getenv("APS5_POISON_VERTEX_PREFIX") != nullptr;
     const auto held = copy.buffer->Bytes();
     if (poisonPrefix) std::fill(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(from), std::byte{0x7f});
@@ -1901,9 +1905,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart);
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
+        const bool restartTable = skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6);
         const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
         DrawInputCopy copy;
-        if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
+        if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use, 0, !BindsIndexCopy(state));
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
         std::optional<std::uint32_t> highest;
         std::uint32_t lowest = 0;
@@ -1949,7 +1954,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         inputs.maxIndex = *highest;
         inputs.minIndex = lowest;
-        if (skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6)) {
+        if (restartTable) {
             const auto indexSpan = import != nullptr ? std::span<const std::byte>(reinterpret_cast<const std::byte*>(draw.indexAddress), static_cast<std::size_t>(indexBytes)) : copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes));
             inputs.restartTable = MeshRestartTable(indexSpan, draw.indexSize);
         }

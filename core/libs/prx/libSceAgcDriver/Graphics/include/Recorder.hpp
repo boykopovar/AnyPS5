@@ -227,9 +227,12 @@ public:
     static constexpr std::size_t UnwrittenSnapshotEntries = 4096;
     static constexpr std::size_t DrawInputBudget = std::size_t{1024} << 20u;
     static constexpr std::size_t DrawInputEntries = 16384;
+    static constexpr std::size_t DrawInputMirrorBudget = std::size_t{512} << 20u;
+    static bool DrawInputMirrors();
+    std::pair<std::size_t, std::size_t> DrawInputBytes() const;
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
-    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr);
+    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr, bool mirrored = false);
     struct OwnedDrawInputProof {
         std::vector<std::uint64_t> words;
         std::uint64_t since = 0;
@@ -642,7 +645,7 @@ public:
     // or APS5_PROFILE_GPU). A class range covers the command with its own barriers (a dispatch's
     // barriers are classes of their own, its program range stays keyed by the program), so the
     // union of every range of a batch and the batch span differ by what no class times ('untimed').
-    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, Count };
+    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, InputMirror, Count };
     static constexpr std::uint64_t ClassKey(CommandClass which) { return 0x10 + static_cast<std::uint64_t>(which); }
     std::uint32_t BeginGpuTiming(CommandClass which) { return BeginGpuTiming(ClassKey(which)); }
     static void CountBarriers(CommandClass which, std::uint32_t count = 1);
@@ -1058,6 +1061,7 @@ private:
         std::uint32_t derived;
         std::size_t from;
         std::uint32_t lowest;
+        std::shared_ptr<Buffer> mirror;
         OwnedDrawInputProof owned;
     };
     struct DrawSnapshotPool {
@@ -1077,6 +1081,9 @@ private:
     std::array<DrawSnapshotPool, 2> drawSnapshotPools;
     std::size_t ownedDrawInputs = 0;
     void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
+    std::size_t drawInputMirrorBytes = 0;
+    void dropDrawInputMirror(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
+    std::shared_ptr<Buffer> mirrorDrawInput(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     struct IndexRange {
         std::uint64_t generation;
         std::uint64_t registryGeneration;
