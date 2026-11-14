@@ -28,6 +28,11 @@ int main() {
     Require(opt_by_id != nullptr);
     Require(opt_by_id->id == CURLOPT_URL);
 
+    const auto* opt_write_data = curl_easy_option_by_id_nid_postfix(CURLOPT_WRITEDATA);
+    Require(opt_write_data != nullptr);
+    Require(std::strcmp(opt_write_data->name, "WRITEDATA") == 0);
+    Require((opt_write_data->flags & CURLOT_FLAG_ALIAS) == 0);
+
     const auto* opt_invalid_id = curl_easy_option_by_id_nid_postfix(999999);
     Require(opt_invalid_id == nullptr);
 
