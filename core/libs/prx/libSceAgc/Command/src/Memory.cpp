@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <vector>
 
@@ -62,15 +63,17 @@ std::uint32_t* WriteData(CommandBuffer* buffer, bool compute, std::uint8_t dst, 
     CheckBits(writeConfirm, 1, function);
     Require(compute || (address & 3u) == 0, function, "misaligned write address");
     Require(dst != 0 || writeConfirm == 0, function, "register writes do not support write confirmation");
-    std::vector<std::uint32_t> snapshot(count);
-    std::memcpy(snapshot.data(), data, count * sizeof(std::uint32_t));
+    std::array<std::uint32_t, 64> inlineSnapshot;
+    std::vector<std::uint32_t> heapSnapshot(count > inlineSnapshot.size() ? count : 0u);
+    auto* snapshot = count > inlineSnapshot.size() ? heapSnapshot.data() : inlineSnapshot.data();
+    std::memcpy(snapshot, data, count * sizeof(std::uint32_t));
     const auto destination = compute ? static_cast<std::uint32_t>(dst) << 8u : ((dst & 1u) << 30u) | ((dst & 0x1eu) << 7u);
     auto* packet = Allocate(buffer, count + 4u, function);
     packet[0] = Header(0x37u, count + 4u);
     packet[1] = destination | (static_cast<std::uint32_t>(increment) << 16u) | (static_cast<std::uint32_t>(writeConfirm) << 20u) | (static_cast<std::uint32_t>(cachePolicy) << 25u);
     packet[2] = static_cast<std::uint32_t>(address);
     packet[3] = static_cast<std::uint32_t>(address >> 32u);
-    std::copy(snapshot.begin(), snapshot.end(), packet + 4);
+    std::copy_n(snapshot, count, packet + 4);
     return packet;
 }
 
