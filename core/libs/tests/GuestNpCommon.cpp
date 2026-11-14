@@ -18,6 +18,7 @@ static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
 static constexpr int NOT_MATCH = static_cast<int>(0x80550609);
 static constexpr int COND_TIMEDOUT = static_cast<int>(0x8055800B);
 static constexpr int MUTEX_BUSY = static_cast<int>(0x8055800F);
+static constexpr int HEAP_CREATE = static_cast<int>(0x8055800A);
 
 static bool expect(bool condition, const char* message) {
     if (!condition) std::fprintf(stderr, "%s\n", message);
@@ -374,6 +375,128 @@ int testUtf8() {
     return ok ? 0 : 1;
 }
 
+struct RecordingAllocator {
+    int allocations;
+    int reallocations;
+    int releases;
+    std::size_t lastSize;
+    void* lastPointer;
+    void* lastContext;
+    bool fail;
+};
+
+static void* APS5_VABI recordAllocate(std::size_t size, void* context) {
+    auto* record = static_cast<RecordingAllocator*>(context);
+    ++record->allocations;
+    record->lastSize = size;
+    record->lastContext = context;
+    return record->fail ? nullptr : std::malloc(size);
+}
+
+static void* APS5_VABI recordReallocate(void* pointer, std::size_t size, void* context) {
+    auto* record = static_cast<RecordingAllocator*>(context);
+    ++record->reallocations;
+    record->lastSize = size;
+    record->lastPointer = pointer;
+    record->lastContext = context;
+    return std::realloc(pointer, size);
+}
+
+static void APS5_VABI recordRelease(void* pointer, void* context) {
+    auto* record = static_cast<RecordingAllocator*>(context);
+    ++record->releases;
+    record->lastPointer = pointer;
+    record->lastContext = context;
+    std::free(pointer);
+}
+
+static int testAlloc() {
+    NpHeap emptyHeap {};
+    bool ok = expect(_sceNpHeapMalloc(&emptyHeap, 8) == nullptr, "an unset heap allocated memory");
+    ok &= expect(_sceNpHeapRealloc(&emptyHeap, nullptr, 8) == nullptr, "an unset heap reallocated memory");
+    ok &= expect(_sceNpHeapStrdup(&emptyHeap, "text") == nullptr, "an unset heap duplicated a string");
+    ok &= expect(_sceNpHeapStrndup(&emptyHeap, "text", 4) == nullptr, "an unset heap truncated a string");
+    int untracked = 0;
+    _sceNpHeapFree(&emptyHeap, &untracked);
+    _sceNpHeapFree(&emptyHeap, nullptr);
+
+    alignas(16) std::array<char, 65536> arena {};
+    NpHeap heap {};
+    ok &= expect(sceNpHeapInit(&heap, arena.data(), arena.size(), "test") == 0, "the test heap did not initialise");
+    void* block = _sceNpHeapMalloc(&heap, 128);
+    ok &= expect(block != nullptr, "the test heap did not allocate");
+    ok &= expect(static_cast<char*>(block) >= arena.data() && static_cast<char*>(block) < arena.data() + arena.size(),
+        "the test heap allocated outside its arena");
+    void* grown = _sceNpHeapRealloc(&heap, block, 256);
+    ok &= expect(grown != nullptr, "the test heap did not reallocate");
+    char* copy = _sceNpHeapStrdup(&heap, "heap text");
+    ok &= expect(copy != nullptr && std::strcmp(copy, "heap text") == 0, "the heap did not duplicate a string");
+    char* truncated = _sceNpHeapStrndup(&heap, "abcdef", 3);
+    ok &= expect(truncated != nullptr && std::strcmp(truncated, "abc") == 0, "the heap did not truncate a string");
+    _sceNpHeapFree(&heap, grown);
+    _sceNpHeapFree(&heap, copy);
+    _sceNpHeapFree(&heap, truncated);
+    sceNpHeapDestroy(&heap);
+    ok &= expect(heap.mspace == nullptr, "the destroyed heap kept an mspace");
+
+    NpHeap badHeap {};
+    ok &= expect(sceNpHeapInit(&badHeap, nullptr, 4096, "bad") == HEAP_CREATE, "a heap initialised without an arena");
+
+    RecordingAllocator record {};
+    NpAllocator allocator {recordAllocate, recordReallocate, recordRelease, &record};
+    void* allocation = _sceNpAllocatorMalloc(&allocator, 40);
+    ok &= expect(allocation != nullptr && record.allocations == 1 && record.lastSize == 40 && record.lastContext == &record,
+        "the allocator did not forward a malloc");
+    void* resized = _sceNpAllocatorRealloc(&allocator, allocation, 96);
+    ok &= expect(resized != nullptr && record.reallocations == 1 && record.lastSize == 96
+        && record.lastPointer == allocation && record.lastContext == &record, "the allocator did not forward a realloc");
+    char* duplicated = _sceNpAllocatorStrdup(&allocator, "allocator text");
+    ok &= expect(duplicated != nullptr && std::strcmp(duplicated, "allocator text") == 0 && record.allocations == 2
+        && record.lastSize == 15, "the allocator did not forward a strdup");
+    char* shortened = _sceNpAllocatorStrndup(&allocator, "abcdef", 4);
+    ok &= expect(shortened != nullptr && std::strcmp(shortened, "abcd") == 0 && record.lastSize == 5,
+        "the allocator did not forward a strndup");
+    record.fail = true;
+    ok &= expect(_sceNpAllocatorStrndup(&allocator, "abcdef", 4) == nullptr, "the allocator copied a failed strndup");
+    record.fail = false;
+    _sceNpAllocatorFree(&allocator, resized);
+    ok &= expect(record.releases == 1 && record.lastPointer == resized && record.lastContext == &record,
+        "the allocator did not forward a free");
+    _sceNpAllocatorFree(&allocator, duplicated);
+    _sceNpAllocatorFree(&allocator, shortened);
+
+    ok &= expect(_sceNpMalloc(16) == nullptr, "the global heap allocated before sceNpArchInit");
+    ok &= expect(_sceNpRealloc(nullptr, 16) == nullptr, "the global heap reallocated before sceNpArchInit");
+    _sceNpFree(&untracked);
+    return ok ? 0 : 1;
+}
+
+static int testJws() {
+    std::uint32_t encodeSize = 0;
+    bool ok = expect(sceNpJwsHs256GetEncodeSize(0, nullptr) == NP_UTIL_INVALID_ARGUMENT, "a null encode size was accepted");
+    ok &= expect(sceNpJwsHs256GetEncodeSize(0, &encodeSize) == 0 && encodeSize == 0x5E, "an empty payload sized wrongly");
+    ok &= expect(sceNpJwsHs256GetEncodeSize(1, &encodeSize) == 0 && encodeSize == 0x62, "a one-byte payload sized wrongly");
+    ok &= expect(sceNpJwsHs256GetEncodeSize(3, &encodeSize) == 0 && encodeSize == 0x62, "a three-byte payload sized wrongly");
+    ok &= expect(sceNpJwsHs256GetEncodeSize(4, &encodeSize) == 0 && encodeSize == 0x66, "a four-byte payload sized wrongly");
+    return ok ? 0 : 1;
+}
+
+static int testXml() {
+    bool ok = expect(sceNpXmlParseInit(nullptr, nullptr, nullptr, nullptr) == NP_UTIL_INVALID_ARGUMENT,
+        "a null context was initialised");
+    std::array<std::uint8_t, 0x260> context;
+    context.fill(0xAA);
+    int arg2 = 0, arg3 = 0, arg4 = 0;
+    ok &= expect(sceNpXmlParseInit(context.data(), &arg2, &arg3, &arg4) == 0, "the parser context did not initialise");
+    ok &= expect(*reinterpret_cast<void**>(context.data()) == &arg2, "the second argument was not stored at offset 0");
+    bool cleared = true;
+    for (std::size_t i = 8; i < 0x250; ++i) cleared &= context[i] == 0;
+    ok &= expect(cleared, "the parser state was not cleared");
+    ok &= expect(*reinterpret_cast<void**>(context.data() + 0x250) == &arg3, "the third argument was not stored at offset 0x250");
+    ok &= expect(*reinterpret_cast<void**>(context.data() + 0x258) == &arg4, "the fourth argument was not stored at offset 0x258");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
     int status = 2;
@@ -382,6 +505,9 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "clock") == 0) status = testClock();
     else if (std::strcmp(argv[1], "wake") == 0) status = testWake();
     else if (std::strcmp(argv[1], "utf8") == 0) status = testUtf8();
+    else if (std::strcmp(argv[1], "alloc") == 0) status = testAlloc();
+    else if (std::strcmp(argv[1], "jws") == 0) status = testJws();
+    else if (std::strcmp(argv[1], "xml") == 0) status = testXml();
     if (status == 0) std::printf("NpCommon %s tests passed\n", argv[1]);
     return status;
 }
