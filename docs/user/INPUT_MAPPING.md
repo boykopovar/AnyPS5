@@ -11,10 +11,11 @@ Supported input sources are:
 - `KEY:Return`, `KEY:Space`, or another key name accepted by SDL.
 - `MOUSE:Left`, `MOUSE:Middle`, `MOUSE:Right`, `MOUSE:X1`, or `MOUSE:X2`.
 - `WHEEL:Up`, `WHEEL:Down`, `WHEEL:Left` or `WHEEL:Right` for pad buttons. `Left` and `Right` are horizontal scroll steps, such as a tilting wheel's sideways clicks; no action uses them by default.
+- `PAD:Button` or `PAD:Button+Button+...` for emulator actions only: a chord of controller buttons that are all held at once. Button names are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left` and `TouchPad`. The chord fires once, when its last button goes down, and the buttons still reach the title. `PAD:` is accepted for `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeUp`, `VolumeDown`, `ToggleMute` and `ReloadInputMapping`; other actions refuse it. Example: `ToggleFullscreen = PAD:Options+R1`.
 
 While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
 
-The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
+The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad when bound to a key or mouse button. A `PAD:` chord is the one exception: its buttons still reach the title. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
 
 Game-controller bindings are enabled automatically and are not affected by keyboard or mouse overrides in this file.
 
@@ -23,6 +24,8 @@ Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`,
 ### Reloading the mapping
 
 `ReloadInputMapping` (F1 by default) reads `anyps5-input.ini` and the title's profile again while the game keeps running, so you can try a change without restarting the title. The new file is read completely before anything changes: if it has an error, the previous mapping stays active and the log names the file, the line and the reason. A successful reload replaces the whole mapping at once.
+
+Set `ANYPS5_INPUT_WATCH=1` to reload automatically when the file or the title's profile changes. AnyPS5 checks the modification time and size about once a second on a background thread, and reloads only after a change has stayed the same for one check, so a file still being saved is not read half-written. The option is off by default.
 
 A key bound to `ShowPadStatus` and to another action triggers both, as for every other action. F9 is the built-in key of `ShowPadStatus`: if you moved `Screenshot`, `TogglePerformanceOverlay` or another action to F9, also rebind `ShowPadStatus` to a key you do not use, or each press shows the controller status panel too. The [web configurator](#web-configurator) warns about a key that two actions share.
 

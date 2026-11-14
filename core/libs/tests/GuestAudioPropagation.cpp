@@ -375,8 +375,14 @@ int main() {
     Require(sceAudioPropagationSourceGetAudioPath(source, AudioPropagation::MaxPaths, &repeated) == AudioPropagation::ErrorInvalidArgument, "out of range path slot");
     Require(repeated == path, "rejected path lookup changed the output");
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, nullptr) == AudioPropagation::ErrorNullPointer, "null path output");
+    errno = 71;
+    Require(sceAudioPropagationSourceGetAudioPath(source, 0, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path output");
+    Require(errno == 71, "errno preserved on unwritable path output");
     Require(sceAudioPropagationSourceGetAudioPath(0, 0, nullptr) == AudioPropagation::ErrorInvalidHandle, "path lookup handle precedence");
     Require(sceAudioPropagationPathGetNumPoints(path, &count) == 0 && count == 0, "initial path has points");
+    errno = 71;
+    Require(sceAudioPropagationPathGetNumPoints(path, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path points output");
+    Require(errno == 71, "errno preserved on unwritable path points output");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(source, &count); }, "source used as a path");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationPathGetNumPoints(path, nullptr); }, "null point-count output");
     AudioPropagation::AudioPath configured{};
@@ -641,6 +647,9 @@ int main() {
     Require(sceAudioPropagationReportRegisterHandler(2, CaptureReport, &probe, &registration) == -4, "invalid report category");
     Require(sceAudioPropagationReportRegisterHandler(3, CaptureReport, &probe, &registration) == -4, "out of bounds report category");
     Require(sceAudioPropagationReportRegisterHandler(0, nullptr, &probe, &registration) == -2, "null report handler");
+    errno = 71;
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureReport, &probe, reinterpret_cast<AudioPropagation::ReportRegistration**>(0x10)) == -1, "unwritable report registration output");
+    Require(errno == 71, "errno preserved on unwritable report registration output");
     Require(sceAudioPropagationReportRegisterHandler(0, CaptureReport, &probe, &registration) == 0 && registration, "report handler registration");
     Require(sceAudioPropagationReportApi(0, 0x1234, -7, 9, "sceAudioPropagationTest", "%d %s %f", 42, "ok", 3.25) == 0, "report dispatch");
     Require(probe.calls == 1 && probe.fieldsMatch && probe.integerArgument == 42 && std::strcmp(probe.stringArgument, "ok") == 0 && probe.floatingArgument == 3.25, "report info or va_list capture");
