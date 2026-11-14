@@ -7,6 +7,7 @@ add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoOutDriver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayWindow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostFullscreen.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/KeepAwake.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadStatusSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Telemetry.cpp
@@ -113,6 +114,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_out_output_mode_checks PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    add_test_executable(video_out_keep_awake_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/KeepAwake.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/KeepAwake.cpp)
+    target_include_directories(video_out_keep_awake_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(video_out_keep_awake_tests PRIVATE SDL2-static)
+    configure_host_test_executable(video_out_keep_awake_tests)
+    add_test(NAME video_out_keep_awake COMMAND video_out_keep_awake_tests)
+    set_tests_properties(video_out_keep_awake PROPERTIES TIMEOUT 20)
 
     add_test_executable(guest_video_out_firmware_answers_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutFirmwareAnswers.cpp)
     target_include_directories(guest_video_out_firmware_answers_tests PRIVATE ${LIBS_INCLUDE_DIR})
