@@ -15,6 +15,10 @@ namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
+constexpr int kErrNotInit = static_cast<int>(0x8a870001);
+constexpr int kErrAlreadyInit = static_cast<int>(0x8a870002);
+constexpr int kErrNotStarted = static_cast<int>(0x8a870003);
+constexpr int kErrAlreadyStarted = static_cast<int>(0x8a870004);
 constexpr int kErrInvalidArg = static_cast<int>(0x8a870006);
 constexpr std::uint8_t kFill = 0xaa;
 
@@ -67,9 +71,36 @@ int Query(const std::array<std::uint8_t, 0x40>& param, std::array<std::uint8_t, 
     return sceVrHandQueryMemory(param.data(), out.data());
 }
 
+void CheckLifecycle() {
+    Require(sceVrHandFinalize() == kErrNotInit);
+    Require(sceVrHandStart() == kErrNotInit);
+    Require(sceVrHandStop() == kErrNotInit);
+    Require(sceVrHandGetMesh() == kErrNotInit);
+    Require(sceVrHandGetMeshSize() == kErrNotInit);
+    Require(sceVrHandGetResult() == kErrNotInit);
+
+    Require(sceVrHandInitialize() == 0);
+    Require(sceVrHandInitialize() == kErrAlreadyInit);
+
+    Require(sceVrHandStop() == kErrNotStarted);
+    Require(sceVrHandGetMesh() == kErrNotStarted);
+    Require(sceVrHandGetMeshSize() == kErrNotStarted);
+    Require(sceVrHandGetResult() == kErrNotStarted);
+
+    Require(sceVrHandStart() == 0);
+    Require(sceVrHandStart() == kErrAlreadyStarted);
+
+    Require(sceVrHandStop() == 0);
+    Require(sceVrHandStop() == kErrNotStarted);
+
+    Require(sceVrHandFinalize() == 0);
+    Require(sceVrHandFinalize() == kErrNotInit);
+}
+
 }
 
 int main() {
+    CheckLifecycle();
     std::array<std::uint8_t, 0x28> out{};
     auto param = ValidParam();
 
