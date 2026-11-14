@@ -39,6 +39,13 @@ void Write(const Environment& state) {
     _mm_setcsr(state.mxcsr);
 }
 bool Same(const Environment& a,const Environment& b) { return a.x87==b.x87 && a.mxcsr==b.mxcsr; }
+bool HostKeepsSseTraps() {
+    const unsigned saved=_mm_getcsr();
+    _mm_setcsr(saved&~(0x01u<<7));
+    const bool kept=(_mm_getcsr()&(0x01u<<7))==0;
+    _mm_setcsr(saved);
+    return kept;
+}
 
 void StateMatrix() {
     const auto original=Read();
@@ -66,15 +73,18 @@ void StateMatrix() {
                     Require(Same(after,input),"x87 controls/status/tags/pointers and independent MXCSR restored");
                     Require(std::memcmp(&desired,&input,sizeof(input))==0,"input unchanged");
                 }
+    const bool sseKept=HostKeepsSseTraps();
     for(unsigned x87Mask=0;x87Mask<64;++x87Mask)
         for(unsigned sseMask=0;sseMask<64;++sseMask) {
             auto desired=clean;
             desired.x87[0]=(desired.x87[0]&~0x3fu)|x87Mask;
             desired.mxcsr=(desired.mxcsr&~(0x3fu<<7))|(sseMask<<7);
+            auto expected=desired;
+            if(!sseKept) expected.mxcsr|=0x3fu<<7;
             Require(setEnvironment(&desired)==0,"independent exception-mask return");
             const auto after=Read();
             Write(clean);
-            Require(Same(after,desired),"independent x87/SSE exception masks restored");
+            Require(Same(after,expected),"independent x87/SSE exception masks restored");
         }
     alignas(16) std::array<unsigned char,512> extended{};
     asm volatile("fxsave %0" : "=m"(extended));
@@ -142,6 +152,7 @@ void BoundsAndErrors() {
 #else
     Require(munmap(memory,2*page)==0,"release guard pages");
 #endif
+    try { throw std::invalid_argument("exception runtime start"); } catch(const std::invalid_argument&) {}
     bool rejected=false;
     *__error_nid_postfix()=123;
     try { setEnvironment(nullptr); } catch(const std::invalid_argument&) { rejected=true; }
@@ -201,6 +212,7 @@ void Trap(int) { std::_Exit(returned ? 0 : 1); }
 
 void Pending(unsigned bit) {
     Require(bit<6,"pending exception bit");
+    if(!HostKeepsSseTraps()) { std::fprintf(stderr,"fesetenv: the host keeps no unmasked floating-point exception\n"); std::exit(77); }
 #ifdef _WIN32
     constexpr DWORD codes[]{EXCEPTION_FLT_INVALID_OPERATION,EXCEPTION_FLT_DENORMAL_OPERAND,EXCEPTION_FLT_DIVIDE_BY_ZERO,EXCEPTION_FLT_OVERFLOW,EXCEPTION_FLT_UNDERFLOW,EXCEPTION_FLT_INEXACT_RESULT};
     expectedException=codes[bit];
