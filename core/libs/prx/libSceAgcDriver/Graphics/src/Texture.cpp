@@ -1818,6 +1818,8 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         layerPending.assign(trackedLayers, false);
         layerOriginal.assign(trackedLayers, true);
         savedTicket.assign(trackedLayers, 0);
+        baselineDue.assign(trackedLayers, false);
+        rebaseTicket.assign(trackedLayers, 0);
         sliceLinearBytes = geometry.sliceLinearBytes;
         const auto linearBytes = sliceLinearBytes * arrayLayers;
 
@@ -3101,6 +3103,62 @@ void StorageTexture::hashBeforeUnwatch(std::uint64_t address, std::size_t bytes,
     }
 }
 
+void StorageTexture::readBaseline(std::uint32_t unit) {
+    const auto offset = static_cast<std::size_t>(layerBegin(unit) - descriptor.baseAddress);
+    GuestMemory::ReadCommittedUnsynced(layerBegin(unit), std::span<std::byte>(generationBaseline).subspan(offset, static_cast<std::size_t>(layerBytes(unit))));
+    baselineDue[unit] = false;
+}
+
+void StorageTexture::rebaseBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven) {
+    if (released || !proven || !anyBaselineDue.load(std::memory_order_relaxed) || generationBaseline.size() != guestBytes) return;
+    auto* recorder = recorderFor(context);
+    std::vector<std::byte> copy;
+    bool due = false;
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        if (!baselineDue[unit]) continue;
+        const auto begin = layerBegin(unit);
+        const auto unitBytes = static_cast<std::size_t>(layerBytes(unit));
+        if (begin >= address + bytes || address >= begin + unitBytes) {
+            due = true;
+            continue;
+        }
+        if (layerPending[unit] || layerOriginal[unit] || savedTicket[unit] != 0 || layerGeneration[unit] == 0 || rebaseTicket[unit] != 0 || AnyShadowedOverlaps(begin, unitBytes)) continue;
+        const bool storing = recorder != nullptr && recorder->PendingWriteOverlaps(begin, unitBytes);
+        if (!storing) {
+            copy.resize(unitBytes);
+            GuestMemory::ReadCommittedUnsynced(begin, copy);
+        }
+        if (GuestMemory::CollectWritesUncached(begin, unitBytes) == 0 || !GuestMemory::UnchangedSince(begin, unitBytes, layerGeneration[unit])) continue;
+        if (storing) {
+            const auto ticket = ++lastRebaseTicket;
+            rebaseTicket[unit] = ticket;
+            recorder->OnWriteComplete(begin, unitBytes, [texture = weak_from_this(), ticket, unit] {
+                if (auto alive = texture.lock()) alive->applyRebase(ticket, unit);
+            });
+            due = true;
+            continue;
+        }
+        std::memcpy(generationBaseline.data() + static_cast<std::size_t>(begin - descriptor.baseAddress), copy.data(), unitBytes);
+        baselineDue[unit] = false;
+    }
+    anyBaselineDue.store(due, std::memory_order_relaxed);
+}
+
+void StorageTexture::applyRebase(std::uint64_t ticket, std::uint32_t unit) {
+    if (rebaseTicket[unit] != ticket) return;
+    rebaseTicket[unit] = 0;
+    if (generationBaseline.size() == guestBytes) readBaseline(unit);
+}
+
+void StorageTexture::awaitRebase(std::uint32_t unit) {
+    if (rebaseTicket[unit] == 0) return;
+    auto* recorder = recorderFor(context);
+    if (recorder == nullptr) recorder = context.recorder;
+    Require(recorder != nullptr, "a storage image's baseline is due after a store in flight without a recorder");
+    recorder->SyncThrough(layerBegin(unit), static_cast<std::size_t>(layerBytes(unit)));
+    if (rebaseTicket[unit] != 0) recorder->Sync();
+}
+
 void StorageTexture::forgetUnwatchHash(std::uint32_t first, std::uint32_t count) {
     for (auto unit = first; unit < first + count && unit < unwatchHash.size(); ++unit) unwatchHash[unit] = {};
 }
@@ -3249,6 +3307,8 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         }
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (!whole && !(*layers)[layer]) continue;
+            baselineDue[layer] = false;
+            rebaseTicket[layer] = 0;
             forgetKeptAtUnwatch(layer);
             layerGeneration[layer] = collectedLayerGeneration(layer, now);
             if (whole || generationBaseline.size() != guestBytes) continue;
@@ -4581,7 +4641,10 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
                 }
                 auto miss = BaselineMiss::LeftWatchWhilePending;
                 if (layerGeneration[layer] != 0 && savedTicket[layer] != 0) miss = BaselineMiss::SaveInFlight;
-                else if (layerGeneration[layer] != 0 && !GuestMemory::Watched(layerBegin(layer), static_cast<std::size_t>(layerBytes(layer)))) miss = baselineMiss(layer);
+                else if (layerGeneration[layer] != 0 && !GuestMemory::Watched(layerBegin(layer), static_cast<std::size_t>(layerBytes(layer)))) {
+                    awaitRebase(layer);
+                    miss = baselineMiss(layer);
+                }
                 unsaved[layer] = keptForCpu(layer) || miss == BaselineMiss::LeftWatchWhilePending || miss == BaselineMiss::None;
                 pendingMiss[layer] = miss == BaselineMiss::None ? BaselineMiss::SavedBytesDropped : miss;
                 anyUnsaved = anyUnsaved || unsaved[layer];
@@ -5229,7 +5292,7 @@ bool StorageTexture::WaitForFlushing(std::uint64_t address, std::size_t bytes, c
 }
 
 bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) const {
-    return guestBytes > GenerationBaselineBytes && overlapsLive(address, bytes);
+    return (guestBytes > GenerationBaselineBytes || anyBaselineDue.load(std::memory_order_relaxed)) && overlapsLive(address, bytes);
 }
 
 void StorageTexture::SetPublishHookForTest(void (*hook)()) {
@@ -5276,7 +5339,10 @@ void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes)
     if (overlapping.empty() && live.empty()) return;
     RequireGpuLockBeforeImports("the unwatch hook");
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    for (const auto& texture : live) texture->hashBeforeUnwatch(address, bytes, proven);
+    for (const auto& texture : live) {
+        texture->hashBeforeUnwatch(address, bytes, proven);
+        texture->rebaseBeforeUnwatch(address, bytes, proven);
+    }
     for (const auto& texture : overlapping) texture->saveBeforeUnwatch(address, bytes);
 }
 
@@ -7318,6 +7384,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (layers[layer] && !skippedLayer[layer]) {
                 layerGeneration[layer] = collectedLayerGeneration(layer, now, !memoizedCollect);
                 forgetUnwatchHash(layer, 1);
+                if (memoizedCollect && generationBaseline.size() == guestBytes) {
+                    baselineDue[layer] = true;
+                    rebaseTicket[layer] = 0;
+                    anyBaselineDue.store(true, std::memory_order_relaxed);
+                }
             }
         }
         refreshGeneration();

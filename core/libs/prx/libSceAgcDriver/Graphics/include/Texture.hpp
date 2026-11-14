@@ -575,6 +575,10 @@ private:
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
+    void rebaseBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
+    void applyRebase(std::uint64_t ticket, std::uint32_t unit);
+    void readBaseline(std::uint32_t unit);
+    void awaitRebase(std::uint32_t unit);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
@@ -882,6 +886,10 @@ private:
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;
     std::uint64_t lastSaveTicket = 0;
+    std::vector<bool> baselineDue;
+    std::atomic<bool> anyBaselineDue{false};
+    std::vector<std::uint64_t> rebaseTicket;
+    std::uint64_t lastRebaseTicket = 0;
     // The storage cache let the image go (Flush): a lookup makes a new image of the surface, so
     // no fill may put results into this one (guarded by the live-image registry lock).
     bool released = false;

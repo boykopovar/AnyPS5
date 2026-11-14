@@ -3757,6 +3757,21 @@ void Recorder::OnComplete(std::function<void()> action) {
     writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
 }
 
+void Recorder::OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action) {
+    const auto end = address + bytes;
+    Batch* holder = open != nullptr && overlaps(*open, address, end) ? open.get() : nullptr;
+    for (auto batch = inFlight.rbegin(); holder == nullptr && batch != inFlight.rend(); ++batch) {
+        if (overlaps(**batch, address, end)) holder = batch->get();
+    }
+    if (holder == nullptr) {
+        action();
+        return;
+    }
+    holder->completions.push_back(std::move(action));
+    ++holder->writeBackCompletionCount;
+    writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
+}
+
 bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value, std::int64_t word) {
     CaptureTrace::Log("buffer-write batch=%llu address=%llx bytes=%zu label=%d", static_cast<unsigned long long>(submissions + 1), static_cast<unsigned long long>(address), bytes, ownLabel);
     if (bytes == 0) return false;
