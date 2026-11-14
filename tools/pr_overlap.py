@@ -601,7 +601,7 @@ def report(rows, blob, main_exports=None):
             if other_libraries:
                 lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
-        if confirmed:
+        if confirmed or main_exports:
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
