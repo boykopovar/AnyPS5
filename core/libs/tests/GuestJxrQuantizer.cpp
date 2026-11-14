@@ -1,4 +1,7 @@
 #include "prx/libSceJxr/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +32,55 @@ struct Quantizer {
     std::int32_t exponent;
 };
 static_assert(sizeof(Quantizer) == QuantizerSize);
+
+bool failAllocation = false;
+int liveBlocks = 0;
+
+void* APS5_VABI Allocate(std::size_t size) {
+    if (failAllocation) return nullptr;
+    ++liveBlocks;
+    return std::malloc(size);
+}
+void APS5_VABI Free(void* pointer) {
+    if (pointer) --liveBlocks;
+    std::free(pointer);
+}
+void* APS5_VABI Calloc(std::size_t count, std::size_t size) {
+    if (failAllocation) return nullptr;
+    ++liveBlocks;
+    return std::calloc(count, size);
+}
+void* APS5_VABI Reallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI Align(std::size_t, std::size_t size) { return std::malloc(size); }
+void* APS5_VABI Realign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
+int APS5_VABI PosixAlign(void** pointer, std::size_t, std::size_t size) {
+    *pointer = std::malloc(size);
+    return *pointer ? 0 : 12;
+}
+
+void InitializeHeap() {
+    alignas(16) static std::array<std::byte, 0x40> process{};
+    alignas(16) static std::array<std::byte, 0x38> libc{};
+    alignas(16) static std::array<std::byte, 0x78> replacement{};
+    const auto write = [](auto& data, std::size_t offset, auto value) {
+        std::memcpy(data.data() + offset, &value, sizeof(value));
+    };
+    write(process, 0, std::uint64_t{0x40});
+    write(process, 8, std::uint32_t{0x4942524f});
+    write(process, 0x38, libc.data());
+    write(libc, 0, std::uint64_t{0x38});
+    write(libc, 0x30, replacement.data());
+    write(replacement, 0, std::uint64_t{0x78});
+    write(replacement, 8, std::uint64_t{2});
+    write(replacement, 0x20, reinterpret_cast<void*>(&Allocate));
+    write(replacement, 0x28, reinterpret_cast<void*>(&Free));
+    write(replacement, 0x30, reinterpret_cast<void*>(&Calloc));
+    write(replacement, 0x38, reinterpret_cast<void*>(&Reallocate));
+    write(replacement, 0x40, reinterpret_cast<void*>(&Align));
+    write(replacement, 0x48, reinterpret_cast<void*>(&Realign));
+    write(replacement, 0x50, reinterpret_cast<void*>(&PosixAlign));
+    ApplicationHeapInitialize_nid_no_patch(process.data());
+}
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -162,10 +214,29 @@ void TestZigzag() {
 
 } // namespace
 
+void TestFree() {
+    RequireInvalidArgument([] { freeQuantizer_nid_postfix(nullptr); }, "freeQuantizer accepted a null table");
+    void* table[16] = {};
+    const int empty = liveBlocks;
+    freeQuantizer_nid_postfix(table);
+    Require(liveBlocks == empty, "freeQuantizer of an empty table released a block");
+    for (void* entry : table) Require(entry == nullptr, "freeQuantizer changed an empty table");
+    auto* const block = static_cast<std::uint8_t*>(malloc_nid_postfix(3 * 4 * 20));
+    Require(block != nullptr, "allocation");
+    for (std::size_t channel = 0; channel < 3; ++channel) table[channel] = block + channel * 4 * 20;
+    const int live = liveBlocks;
+    freeQuantizer_nid_postfix(table);
+    Require(liveBlocks == live - 1, "freeQuantizer did not release the shared block once");
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        Require(table[channel] == block + channel * 4 * 20, "freeQuantizer changed the channel pointers");
+}
+
 int main() {
+    InitializeHeap();
     TestRemap();
     TestFormat();
     TestAcPredMode();
     TestZigzag();
+    TestFree();
     return 0;
 }
