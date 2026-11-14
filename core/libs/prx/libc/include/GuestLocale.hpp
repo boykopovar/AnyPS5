@@ -236,6 +236,34 @@ struct NumPutVtable {
     OutputIterator (APS5_VABI *putPointer)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const void* value);
 };
 
+struct NumGetVtable {
+    FacetVtable facet;
+    InputIterator (APS5_VABI *getBool)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, bool* value);
+    InputIterator (APS5_VABI *getUnsignedShort)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint16_t* value);
+    InputIterator (APS5_VABI *getUnsignedInt)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint32_t* value);
+    InputIterator (APS5_VABI *getLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::int64_t* value);
+    InputIterator (APS5_VABI *getUnsignedLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    InputIterator (APS5_VABI *getLongLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::int64_t* value);
+    InputIterator (APS5_VABI *getUnsignedLongLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    InputIterator (APS5_VABI *getFloat)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, float* value);
+    InputIterator (APS5_VABI *getDouble)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, double* value);
+    InputIterator (APS5_VABI *getLongDouble)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, long double* value);
+    InputIterator (APS5_VABI *getPointer)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, void** value);
+};
+
+static_assert(offsetof(NumGetVtable, getBool) == 0x20);
+static_assert(offsetof(NumGetVtable, getUnsignedShort) == 0x28);
+static_assert(offsetof(NumGetVtable, getUnsignedInt) == 0x30);
+static_assert(offsetof(NumGetVtable, getLong) == 0x38);
+static_assert(offsetof(NumGetVtable, getUnsignedLong) == 0x40);
+static_assert(offsetof(NumGetVtable, getLongLong) == 0x48);
+static_assert(offsetof(NumGetVtable, getUnsignedLongLong) == 0x50);
+static_assert(offsetof(NumGetVtable, getFloat) == 0x58);
+static_assert(offsetof(NumGetVtable, getDouble) == 0x60);
+static_assert(offsetof(NumGetVtable, getLongDouble) == 0x68);
+static_assert(offsetof(NumGetVtable, getPointer) == 0x70);
+static_assert(sizeof(NumGetVtable) == 0x78);
+
 struct CtypeVtable {
     FacetVtable facet;
     const void* caseMethods[4];
