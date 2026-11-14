@@ -270,19 +270,17 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
         if (fromMemory || error == FT_Err_Unknown_File_Format) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
         return SCE_FONT_ERROR_FS_OPEN_FAILED;
     }
+    std::unique_ptr<FT_FaceRec, decltype(&FT_Done_Face)> faceOwner(face, FT_Done_Face);
     FT_Select_Charmap(face, FT_ENCODING_UNICODE);
     auto* obj = static_cast<FontObj*>(allocFn(library->alloc_ctx, sizeof(FontObj)));
-    if (!obj) {
-        FT_Done_Face(face);
-        return SCE_FONT_ERROR_ALLOCATION_FAILED;
-    }
+    if (!obj) return SCE_FONT_ERROR_ALLOCATION_FAILED;
     std::memset(obj, 0, sizeof(FontObj));
     obj->refcount = 1;
     obj->sub_font_index = subFontIndex;
     obj->prev = nullptr;
     obj->next = *inoutFontObj;
     if (obj->next) obj->next->prev = obj;
-    obj->ft_face = face;
+    obj->ft_face = faceOwner.release();
     obj->ft_ctx_0x58 = ftLibrary;
     *inoutFontObj = obj;
     return SCE_FONT_OK;
