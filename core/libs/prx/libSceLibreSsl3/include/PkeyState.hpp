@@ -69,3 +69,5 @@ inline constexpr std::int32_t LibreSsl3RsaFlagNoBlinding = 0x0080;
 inline constexpr std::int32_t LibreSsl3MaximumDigestSize = 64;
 
 bool IsNativePkeyMethod_nid_no_patch(const void* method);
+LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3EvpPkey** output,
+    const unsigned char** input, std::int64_t length);

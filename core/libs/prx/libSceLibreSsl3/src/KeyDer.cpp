@@ -372,6 +372,7 @@ constexpr int ErrLibEc = 16;
 constexpr int AnyFunction = 0xfff;
 
 constexpr int ErrRRsaLib = 4;
+constexpr int ErrREcLib = 16;
 constexpr int ErrRNestedAsn1Error = 58;
 constexpr int ErrRMallocFailure = 65;
 
@@ -1291,6 +1292,44 @@ template<typename T> void ReplaceOutput(T** output, T* decoded, void (APS5_VABI*
     *output = decoded;
 }
 
+}
+
+LibreSsl3EvpPkey* DecodeTraditionalPrivateKey_nid_no_patch(int type, LibreSsl3EvpPkey** output,
+    const unsigned char** input, std::int64_t length) {
+    if (!input || !*input || length < 0) {
+        PutError(ErrLibAsn1, Asn1RBadObjectHeader);
+        return nullptr;
+    }
+    const std::size_t available = static_cast<std::size_t>(length);
+    LibreSsl3EvpPkey* key = nullptr;
+    if (type == RsaType) {
+        std::span<const unsigned char> remaining(*input, available);
+        key = DecodeRsaPkey(remaining, true, true);
+        if (!key) PutError(ErrLibRsa, ErrRRsaLib);
+    } else if (type == EcType) {
+        std::span<const unsigned char> remaining(*input, available);
+        EcKey* ec = DecodeEcPrivateKey(remaining, 0, true);
+        if (!ec) PutError(ErrLibEc, ErrREcLib);
+        if (ec) {
+            key = EVP_PKEY_new_nid_disambig1_nid_postfix();
+            if (!key || !EVP_PKEY_assign_nid_postfix(key, EcType, ec)) {
+                if (key) EVP_PKEY_free_nid_disambig1_nid_postfix(key);
+                EC_KEY_free_nid_postfix(ec);
+                key = nullptr;
+            }
+        }
+    }
+    if (key) {
+        ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
+        return key;
+    }
+    std::span<const unsigned char> pkcs8Remaining(*input, available);
+    auto* info = DecodePkcs8(pkcs8Remaining);
+    if (!info) return nullptr;
+    key = EVP_PKCS82PKEY_nid_postfix(info);
+    FreePkcs8(info);
+    if (key) ReplaceOutput(output, key, EVP_PKEY_free_nid_disambig1_nid_postfix);
+    return key;
 }
 
 extern "C" {
