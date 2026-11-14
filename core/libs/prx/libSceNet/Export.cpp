@@ -3004,7 +3004,7 @@ int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr,
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
     int error = lookup_ipv4(rid, hostname, __func__, addresses);
-    if (error == 0) std::memcpy(addr, addresses.data(), sizeof(addresses[0]));
+    if (error == 0 && !GuestCopyOut_nid_no_patch(addr, addresses.data(), sizeof(addresses[0]))) error = fail(NET_EFAULT);
     return (flags & NET_RESOLVER_ASYNC) != 0 ? complete_async_lookup(rid, error) : error;
 }
 
@@ -3015,8 +3015,7 @@ int APS5_VABI sceNetResolverStartNtoa6(int rid, const char* hostname, void* addr
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::array<std::uint8_t, 16>> addresses;
     if (const int error = lookup_host(rid, hostname, __func__, AF_INET6, addresses)) return error;
-    std::memcpy(addr, addresses.front().data(), addresses.front().size());
-    return 0;
+    return GuestCopyOut_nid_no_patch(addr, addresses.front().data(), addresses.front().size()) ? 0 : fail(NET_EFAULT);
 }
 
 static_assert(sizeof(NetResolverRecord) == 32 && offsetof(NetResolverRecord, family) == 16);
@@ -3027,14 +3026,14 @@ int lookup_records(int rid, const char* hostname, NetResolverInfo* info, int fla
     if (!hostname || !info) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
     if (const int error = lookup_ipv4(rid, hostname, func, addresses)) return error;
-    *info = {};
-    info->count = static_cast<std::int32_t>(std::min<std::size_t>(addresses.size(), std::size(info->records)));
-    info->count4 = info->count;
-    for (std::int32_t index = 0; index < info->count; ++index) {
-        info->records[index].address = addresses[index];
-        info->records[index].family = NET_AF_INET;
+    NetResolverInfo output{};
+    output.count = static_cast<std::int32_t>(std::min(addresses.size(), std::size(output.records)));
+    output.count4 = output.count;
+    for (std::int32_t index = 0; index < output.count; ++index) {
+        output.records[index].address = addresses[index];
+        output.records[index].family = NET_AF_INET;
     }
-    return 0;
+    return GuestCopyOut_nid_no_patch(info, &output, sizeof(output)) ? 0 : fail(NET_EFAULT);
 }
 
 int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int rid, const char* hostname, NetResolverInfo* info, int timeout,
