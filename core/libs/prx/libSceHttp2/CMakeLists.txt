@@ -76,11 +76,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_http2_gzip_members guest_http2_gzip_headers guest_http2 guest_http2_cookies guest_http2_options guest_http2_transport guest_http2_early_response guest_http2_dns_first guest_http2_system_roots PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
+    add_test(NAME guest_http2_http1_gzip COMMAND guest_http2_transport_tests --http1-gzip)
+    set_tests_properties(guest_http2_http1_gzip PROPERTIES TIMEOUT 30)
     add_test(NAME guest_http2_http1 COMMAND guest_http2_transport_tests --http1)
     add_test(NAME guest_http2_http1_cookies COMMAND guest_http2_transport_tests --http1-cookies)
     set_tests_properties(guest_http2_http1 guest_http2_http1_cookies PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_http2_http1 guest_http2_http1_cookies PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_http2_http1 guest_http2_http1_cookies guest_http2_http1_gzip PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
     endif()
     add_test(NAME guest_http2_ssl_callbacks COMMAND guest_http2_transport_tests --ssl-callbacks)

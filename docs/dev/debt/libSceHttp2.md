@@ -62,7 +62,7 @@
 
 - [libSceHttp2 SSL callbacks](../../../core/libs/prx/libSceHttp2/Transport.cpp) - callback scheduling and refusal error mappings remain unverified on a console. The SSL-context/error-mask/certificate-chain/user-argument signature follows the [on-device header](https://github.com/etaHEN/etaHEN/blob/03d016fd316ecf0a1841465bef8937a71352bff0/Source%20Code/include/libhttp2.h#L22-L27). Zero accepts the chain; nonzero refuses it, following [SharpProspero HTTPS callback semantics](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Net/Http.cs#L700-L708). libSceSsl supplies real peer handles and verification flags for each TLS hop. Refusal and unsupported verification failures throw while their native HTTP2 error mappings are unknown. Changing active-request options remains unsupported.
 
-- [HTTP/1.x gzip inflation](../../../core/libs/prx/libSceHttp2/Transport.cpp) - a nonempty gzip response with inflation enabled throws; the HTTP/1.x decoder is not implemented. With inflation disabled, encoded bytes and wire lengths are retained. Non-gzip responses and bodyless responses retain their existing handling. Native error mapping remains unverified.
+- [HTTP/1.x gzip inflation](../../../core/libs/prx/libSceHttp2/Transport.cpp) - console buffering, decoded-length reporting, host size limits and malformed-stream error mappings remain unverified. Enabled inflation uses the shared HTTP/2 decoder after HTTP/1 framing, retaining its 64 MiB encoded/decoded limits. Disabled inflation preserves wire bytes and lengths; bodyless responses retain their metadata.
 
 ### Additional PS5 3.20 imports (xdCloudy #9485)
 

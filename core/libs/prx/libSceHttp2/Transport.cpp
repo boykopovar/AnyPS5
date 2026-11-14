@@ -560,6 +560,7 @@ struct Request::State {
         contentLength = body.size();
         hasLength = true;
         contentEncoding.clear();
+        chunked = false;
     }
 
     int Connect() {
@@ -768,7 +769,6 @@ struct Request::State {
             remaining = contentLength;
             ready = true;
             ended = method == "HEAD" || status == 204 || status == 304 || (hasLength && remaining == 0);
-            Require(!Inflating() || ended, "sceHttp2: HTTP1 gzip inflation is not implemented");
             return;
         }
     }
@@ -840,8 +840,7 @@ struct Request::State {
 
     }
 
-    int ReadHttp1(void* output, std::size_t size) {
-        const auto deadline = Deadline(settings.recvTimeout, ReceiveTimedOut);
+    int ReadHttp1(void* output, std::size_t size, Limit deadline) {
         size = std::min(size, static_cast<std::size_t>(std::numeric_limits<int>::max()));
         if (chunked) {
             if (chunkTerminator) { Require(Line(deadline).empty(), "sceHttp2: invalid chunk terminator"); chunkTerminator = false; }
@@ -882,6 +881,17 @@ struct Request::State {
         else if (hasLength) { remaining -= count; ended = remaining == 0; }
         else if (!count) ended = true;
         return count;
+    }
+
+    void FinishHttp1Gzip(Limit deadline) {
+        std::array<std::uint8_t, 16384> buffer;
+        while (!ended) {
+            const int count = ReadHttp1(buffer.data(), buffer.size(), deadline);
+            Require(body.size() + static_cast<std::size_t>(count) <= MaxGzipBytes,
+                "sceHttp2: encoded gzip response exceeds the host limit");
+            body.insert(body.end(), buffer.begin(), buffer.begin() + count);
+        }
+        InflateGzip();
     }
 
     template<class TCallback>
@@ -1201,14 +1211,15 @@ int Request::Read(void* data, std::size_t size) {
     if (!size) return 0;
     if (state->ended && state->body.empty()) return 0;
     try {
-        if (state->version < 3) {
-            const int count = state->ReadHttp1(data, size);
+        if (state->version < 3 && !state->Inflating() && !state->inflatedGzip) {
+            const int count = state->ReadHttp1(data, size, state->Deadline(state->settings.recvTimeout, ReceiveTimedOut));
             if (state->ended) state->Close();
             return count;
         }
         const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
         state->Check(deadline);
-        while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
+        if (state->version < 3) state->FinishHttp1Gzip(deadline);
+        else while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
         const auto count = std::min({size, state->body.size() - state->bodyOffset, static_cast<std::size_t>(std::numeric_limits<int>::max())});
         state->Check(deadline);
         if (count) std::memcpy(data, state->body.data() + state->bodyOffset, count);
@@ -1244,7 +1255,8 @@ int Request::ContentLength(int* kind, std::uint64_t* length) {
         Require(!state->readResult || state->ended, "sceHttp2GetResponseContentLength: inflated length after a failed read");
         try {
             const auto deadline = state->Deadline(state->settings.recvTimeout, ReceiveTimedOut);
-            while (!state->ended) state->Pump(deadline);
+            if (state->version < 3) state->FinishHttp1Gzip(deadline);
+            else while (!state->ended) state->Pump(deadline);
         } catch (const RequestFailure&) {
             try { Unknown("sceHttp2GetResponseContentLength: failure while inflating; console error mapping is unknown"); }
             catch (...) { state->Fail(); throw; }
