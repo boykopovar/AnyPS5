@@ -117,6 +117,7 @@ private:
     IrF32 readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused = false);
     IrU32 readF16SourceBits(const RdnaOperand& operand);
     IrF32 readMixF32(const RdnaOperand& operand);
+    IrF32 mixNanSourceF32(const RdnaOperand& operand, IrF32 value);
     IrU32 readU16LaneRaw(const RdnaOperand& operand, bool highLane);
     IrU32 readU16LaneAsU32(const RdnaOperand& operand, bool highLane, bool signExtend);
     IrU32 readU16AsU32(const RdnaOperand& operand, bool signExtend);
