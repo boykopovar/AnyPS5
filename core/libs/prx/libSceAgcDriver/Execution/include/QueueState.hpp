@@ -282,6 +282,7 @@ struct Predication {
     std::uint64_t address = 0;
     std::uint32_t operation = 0;
     bool executeWhenSet = false;
+    bool runWhenUnwritten = false;
 };
 
 struct QueueState {
