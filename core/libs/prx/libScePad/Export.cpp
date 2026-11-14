@@ -409,11 +409,24 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
- WriteDefaultData(data);
+ PadData localData;
+ WriteDefaultData(&localData);
+ const int savedErrno = errno;
+ if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+  errno = savedErrno;
+  return PAD_ERROR_INVALID_ARG;
+ }
+ errno = savedErrno;
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
- *data = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
+ localData = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
+ const int savedErrno2 = errno;
+ if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+  errno = savedErrno2;
+  return PAD_ERROR_INVALID_ARG;
+ }
+ errno = savedErrno2;
 
  return 0;
 }
