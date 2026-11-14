@@ -472,9 +472,13 @@ PacketTag CurrentPacket() {
 }
 
 const char* ReadSiteName(ReadSite site) {
-    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache"};
+    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache", "host-write"};
     const auto index = static_cast<std::size_t>(site);
     return index < static_cast<std::size_t>(ReadSite::Count) ? names[index] : "?";
+}
+
+bool WritesGuestMemory(ReadSite site) {
+    return site == ReadSite::Store || site == ReadSite::HostWrite;
 }
 
 ReadSite SetReadSite(ReadSite site) {
@@ -3445,7 +3449,7 @@ void PrepareHostWrite(std::uintptr_t address, std::size_t bytes) {
     if (GpuMutex().HeldByThisThread()) noteLockedHostWrite(address, bytes);
     const HostWriteInFlight inFlight;
     if (hostWritesStopped.load(std::memory_order_seq_cst)) return;
-    const ReadSiteScope site(ReadSite::Store);
+    const ReadSiteScope site(ReadSite::HostWrite);
     if (!MemoryProfiled()) {
         FlushGpuWrites(address, bytes);
         return;
