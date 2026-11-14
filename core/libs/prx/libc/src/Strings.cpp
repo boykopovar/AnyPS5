@@ -33,7 +33,7 @@ size_t BlocksInPage(const char16_t* s) {
 }
 
 template<bool StopAtZero>
-[[gnu::no_sanitize("address")]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
+[[gnu::no_sanitize_address]] unsigned MismatchedUnits(const char16_t* s1, const char16_t* s2) {
     const __m128i left = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s1));
     const __m128i right = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s2));
     unsigned mask = ~static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(left, right))) & 0xffff;
@@ -133,12 +133,12 @@ const char16_t* UnitAt(uintptr_t block, unsigned mask) {
     return reinterpret_cast<const char16_t*>(block + std::countr_zero(mask));
 }
 
-[[gnu::no_sanitize("address")]] unsigned MatchUnits(uintptr_t block, __m128i target) {
+[[gnu::no_sanitize_address]] unsigned MatchUnits(uintptr_t block, __m128i target) {
     const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
     return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi16(units, target)));
 }
 
-[[gnu::no_sanitize("address")]] unsigned MatchUnitsOrZero(uintptr_t block, __m128i target) {
+[[gnu::no_sanitize_address]] unsigned MatchUnitsOrZero(uintptr_t block, __m128i target) {
     const __m128i units = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
     const __m128i matches = _mm_or_si128(_mm_cmpeq_epi16(units, target), _mm_cmpeq_epi16(units, _mm_setzero_si128()));
     return static_cast<unsigned>(_mm_movemask_epi8(matches));
@@ -175,7 +175,7 @@ const char16_t* FindUnit(const char16_t* s, char16_t c, size_t n) {
     }
 }
 
-[[gnu::no_sanitize("address")]] const char16_t* FindLastUnit(const char16_t* s, char16_t c) {
+[[gnu::no_sanitize_address]] const char16_t* FindLastUnit(const char16_t* s, char16_t c) {
     const __m128i target = _mm_set1_epi16(static_cast<short>(c));
     const __m128i zero = _mm_setzero_si128();
     const auto address = reinterpret_cast<uintptr_t>(s);
