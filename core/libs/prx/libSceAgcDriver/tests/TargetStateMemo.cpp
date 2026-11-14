@@ -607,8 +607,6 @@ void resolveBetween(AgcDriver::VulkanDevice& device) {
     multisampled.coverageSamples = 4;
     const auto color = colorTarget();
     reset(device, color);
-    // Draw the whole multisampled target: with a scissor starting at x = 48, llvmpipe leaves two of the four
-    // samples of texel 47 drawn, and the scissor edge is not what this test is about.
     draw(device, multisampled, {.scissor = Whole});
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -810,8 +808,6 @@ void cmaskClearRecorded(AgcDriver::VulkanDevice& device) {
         draw(device, color);
         repeated = lookups() == before;
     }
-    // A CMASK the write watch does not cover (no userfaultfd write protection on this host) cannot be proved
-    // unwritten, so no draw may repeat over it.
     const bool watched = AgcDriver::GuestMemory::Watched(color.cmaskAddress, color.cmaskBytes);
     std::cout << "the direct-memory CMASK is " << (watchedWhenMapped ? "" : "not ") << "write-watched when mapped and " << (watched ? "" : "not ") << "after the draws; a draw " << (repeated ? "repeated" : "did not repeat") << "\n";
     Require(!LookupOutcomes::Profiled() || memoResolves() || repeated || !watched, "no draw repeated its targets over a recorded CMASK clear");
