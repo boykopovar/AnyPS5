@@ -296,6 +296,15 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("| Failed test |\n| - |\n| `plain` |\n", stdout)
 
+    def test_table_details_preserve_html_text_and_backslashes_before_pipes(self):
+        text, failing = sanitizer_report.summarize(
+            "ASan", {"unexpected": "failed", "known": "failed"},
+            {"known": r"guest<arg>\|host & fallback"},
+            {"unexpected": r"stack<Foo>\|Bar & Baz"},
+        )
+        self.assertTrue(failing)
+        self.assertIn(r"| `unexpected` | stack&lt;Foo&gt;&#92;\|Bar &amp; Baz |", text)
+        self.assertIn(r"| `known` | guest&lt;arg&gt;&#92;\|host &amp; fallback |", text)
 
     def test_names_remain_literal_in_every_summary_table(self):
         names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")
