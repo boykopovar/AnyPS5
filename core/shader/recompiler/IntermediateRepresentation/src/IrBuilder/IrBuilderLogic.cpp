@@ -14,6 +14,12 @@ namespace ShaderRecompiler {
             return Emit(IrOpcode::SelectU32, IrType::U32, {&condition, &trueValue, &falseValue});
         case IrType::F32:
             return Emit(IrOpcode::SelectF32, IrType::F32, {&condition, &trueValue, &falseValue});
+        case IrType::U8: {
+            IrValue& trueU32 = Emit(IrOpcode::ConvertU32U8, IrType::U32, {&trueValue});
+            IrValue& falseU32 = Emit(IrOpcode::ConvertU32U8, IrType::U32, {&falseValue});
+            IrValue& sel = Emit(IrOpcode::SelectU32, IrType::U32, {&condition, &trueU32, &falseU32});
+            return Emit(IrOpcode::ConvertU8U32, IrType::U8, {&sel});
+        }
         case IrType::U16: {
             IrValue& trueU32 = Emit(IrOpcode::ConvertU32U16, IrType::U32, {&trueValue});
             IrValue& falseU32 = Emit(IrOpcode::ConvertU32U16, IrType::U32, {&falseValue});
