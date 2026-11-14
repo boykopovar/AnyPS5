@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/StackBounds.cpp
+// Derived from Source/WTF/wtf/StackBounds.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  *  Copyright (C) 2003-2019 Apple Inc. All rights reserved.
  *  Copyright (C) 2007 Eric Seidel <eric@webkit.org>

@@ -1,4 +1,4 @@
-// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/TimingScope.cpp
+// Derived from Source/WTF/wtf/TimingScope.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 /*
  * Copyright (C) 2017 Apple Inc.  All rights reserved.
  *
