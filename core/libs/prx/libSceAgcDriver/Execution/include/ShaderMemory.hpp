@@ -150,6 +150,7 @@ private:
     bool invalidateRawPages();
     bool pagesCurrent();
     static bool snapshotCurrent(void* context, std::span<const ShaderRecompiler::RegisteredImageView> views);
+    bool invalidateChangedRawPages();
     Page& page(std::uint64_t base);
     void preparePage(Page& page, std::uint64_t base);
     [[nodiscard]] std::size_t pageAtOrAfter(std::uint64_t base) const;
