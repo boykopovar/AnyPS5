@@ -89,6 +89,23 @@ std::uint64_t Number(std::string_view text, int base = 10) {
     return value;
 }
 
+std::uint64_t Http1ContentLength(std::string_view text) {
+    std::uint64_t length = 0;
+    bool first = true;
+    for (;;) {
+        const auto comma = text.find(',');
+        auto digits = text.substr(0, comma);
+        while (!digits.empty() && (digits.front() == ' ' || digits.front() == '\t')) digits.remove_prefix(1);
+        while (!digits.empty() && (digits.back() == ' ' || digits.back() == '\t')) digits.remove_suffix(1);
+        const auto value = Number(digits);
+        Require(first || value == length, "sceHttp2: inconsistent HTTP1 content lengths");
+        length = value;
+        first = false;
+        if (comma == std::string_view::npos) return length;
+        text.remove_prefix(comma + 1);
+    }
+}
+
 struct Url {
     std::string host, authority, path;
     std::uint16_t port = 443;
@@ -193,6 +210,7 @@ struct Lookup {
     std::mutex mutex;
     std::condition_variable changed;
     bool complete = false;
+    int error = 0;
     std::vector<Address> addresses;
     std::exception_ptr failure;
 };
@@ -242,10 +260,11 @@ private:
                 hints.ai_family = AF_UNSPEC;
                 addrinfo* raw = nullptr;
                 const auto service = std::to_string(job->port);
-                if (const auto hook = LookupHookSlot().load(std::memory_order_acquire)) Require(hook(job->host.c_str()) == 0, "sceHttp2: DNS failed; console error mapping is unknown");
-                const int result = getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
+                const auto hook = LookupHookSlot().load(std::memory_order_acquire);
+                const int result = hook && hook(job->host.c_str()) != 0 ? EAI_NONAME :
+                    getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
                 std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
-                Require(result == 0, "sceHttp2: DNS failed; console error mapping is unknown");
+                if (result != 0) job->error = static_cast<int>(0x804101e6);
                 for (auto* entry = raw; entry; entry = entry->ai_next) {
                     Address address;
                     if (entry->ai_family == AF_INET) {
@@ -266,7 +285,7 @@ private:
                     address.bytes[0] = static_cast<std::uint8_t>(address.size);
                     job->addresses.push_back(address);
                 }
-                Require(!job->addresses.empty(), "sceHttp2: DNS returned no supported address");
+                if (!job->error) Require(!job->addresses.empty(), "sceHttp2: DNS returned no supported address");
             } catch (...) {
                 job->failure = std::current_exception();
             }
@@ -559,8 +578,11 @@ struct Request::State {
                 job->changed.wait_for(lock, std::chrono::milliseconds(5));
             }
             Check(deadline);
-            if (!job->failure) break;
-            if (attempt >= settings.resolveRetry) std::rethrow_exception(job->failure);
+            if (!job->failure && !job->error) break;
+            if (attempt >= settings.resolveRetry) {
+                if (job->failure) std::rethrow_exception(job->failure);
+                return job->error;
+            }
         }
         const auto connectDeadline = Deadline(settings.connectTimeout, ConnectTimedOut);
         int result = 0;
@@ -581,7 +603,7 @@ struct Request::State {
                 std::uint32_t size = sizeof(error);
                 result = sceNetGetsockopt(socket, 0xffff, 0x1007, &error, &size);
                 Require(result == 0, "sceHttp2: connect status unavailable; console error mapping is unknown");
-                if (result == 0 && error != 0) result = static_cast<int>(0x80410100u | static_cast<unsigned>(error));
+                if (error != 0) result = static_cast<int>(0x80410100u | static_cast<unsigned>(error));
             }
             if (result == 0) break;
             sceNetSocketClose(std::exchange(socket, -1));
@@ -715,7 +737,7 @@ struct Request::State {
                 if (line.empty()) break;
                 const auto [name, value] = Field(line);
                 if (name == "content-length") {
-                    const auto length = Number(value);
+                    const auto length = Http1ContentLength(value);
                     Require(!hasLength || length == contentLength, "sceHttp2: inconsistent HTTP1 content lengths");
                     hasLength = true;
                     contentLength = length;
@@ -833,13 +855,17 @@ struct Request::State {
                 chunkRemaining = Number(digits, 16);
                 if (!chunkRemaining) {
                     std::size_t bytes = 0;
+                    std::string trailers;
                     for (;;) {
                         const auto trailer = Line(deadline);
                         bytes += trailer.size() + 2;
                         Require(bytes <= 65536, "sceHttp2: trailers exceed host limit");
                         if (trailer.empty()) break;
                         Field(trailer);
+                        trailers += trailer + "\r\n";
                     }
+                    if (!trailers.empty()) trailers += "\r\n";
+                    trailerHeaders = std::move(trailers);
                     ended = true;
                     return 0;
                 }

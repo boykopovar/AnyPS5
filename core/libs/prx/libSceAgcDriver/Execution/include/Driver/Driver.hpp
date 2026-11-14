@@ -84,6 +84,7 @@ public:
     bool WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout);
     bool WaitSettledFor(std::chrono::milliseconds timeout);
     void ReleaseSettled();
+    bool SettledHeld();
     bool Settled();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
@@ -153,6 +154,7 @@ private:
     static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth);
     static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords);
     static void readRegisterLists(Submission& submission);
+    bool refreshIndirectSegment(Submission& submission, std::size_t index);
     void waitForFlipRoom(const Submission& submission);
     void holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
     bool awaitsTitle(std::uint64_t awaited) const;
@@ -196,6 +198,8 @@ private:
     void dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments = 0);
     void verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffset, ShaderRecompiler::RecompileRequest request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const DispatchVariant& variant, std::span<const std::uint32_t> liveWords, const ShaderRecompiler::RecompileResult& patched);
     static bool drawEntries();
+    bool drawEntriesThisDraw();
+    static std::atomic<std::uint64_t>& drawCacheUseful();
     static bool drawDataHits();
     static bool verifyDrawDataHits();
     static bool drawStageDataHits();
@@ -238,6 +242,7 @@ private:
     static std::uint32_t drawUserWord(const DrawProgram& program, std::int32_t sgpr);
     DrawVerdict draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected);
     DrawVerdict finishDraw(DrawTail& tail, PerformanceTimer& timing);
+    void restartFinishedDraw(DrawTail& tail);
     void addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit, bool validated);
     static PendingDispatchPhases& pendingDispatchPhases();
     static std::chrono::steady_clock::time_point& packetStartedAt();
@@ -254,7 +259,7 @@ private:
     static AgcDriver::Mutex& writeHistoryMutex();
     static std::size_t& writeCursor();
     static void dumpPackets(std::span<const std::uint32_t> commands, const std::uint32_t* guest = nullptr);
-    static void validate(const Submission& submission, const std::uint32_t* guest = nullptr);
+    static void validate(const Submission& submission, const std::uint32_t* guest = nullptr, bool report = true);
     static bool matchesFillKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute);
     static bool fillClearEnabled();
     static bool fillClearExactOnly();
@@ -382,6 +387,7 @@ private:
     static Graphics::Recorder::LateStatistics& lateCountsSeen();
     static EpochBumps& epochBumps();
     static void bumpEpoch(std::uint64_t EpochBumps::*counter);
+    static void bumpWaitEpoch(std::uint64_t address, std::size_t bytes);
     static std::chrono::steady_clock::time_point& lastEpochBump();
     static std::deque<const std::uint32_t*>& releasedTails();
     void noteReleasedTails(const Submission& submission);
@@ -408,7 +414,7 @@ private:
     static void timed(double WorkerProfile::*bucket, TWork&& work);
     FrameTiming* frameTiming();
     FrameTiming* includeTimingSubmission(const Submission& submission, bool firstSegment);
-    void execute(const Submission& submission);
+    void execute(Submission& submission);
     void deliverGuestEopInterrupt(std::uint32_t queue, std::uint32_t context);
     static std::optional<std::uint32_t> releaseInterrupt(std::span<const std::uint32_t> packet, std::uint32_t opcode, bool carriesFlip);
     void markCompleted(std::uint64_t serial);
@@ -493,6 +499,7 @@ private:
         std::shared_ptr<IFlipRequest> request;
     };
     std::map<std::uint32_t, EopFlip> eopFlips;
+    std::set<std::pair<std::uint32_t, std::uint32_t>> renderingWaitTargets;
     std::uint32_t nextEopToken = EopFlipTokenBase;
     DevicePointer device;
 
