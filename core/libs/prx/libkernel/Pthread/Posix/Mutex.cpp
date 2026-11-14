@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -114,7 +115,13 @@ int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(const PthreadMutex* mutex
     auto* current = _priorityProtected(const_cast<PthreadMutex*>(mutex), "pthread_mutex_getprioceiling");
     if (!current) return POSIX_EINVAL;
     if (!prioceiling) throw std::runtime_error("pthread_mutex_getprioceiling: null prioceiling");
-    *prioceiling = current->_ceiling;
+    const int savedErrno = errno;
+    const int ceiling = current->_ceiling;
+    if (!GuestCopyOut_nid_no_patch(prioceiling, &ceiling, sizeof(ceiling))) {
+        errno = savedErrno;
+        throw std::runtime_error("pthread_mutex_getprioceiling: unwritable prioceiling");
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -123,14 +130,21 @@ int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(PthreadMutex* mutex, int 
     if (!current) return POSIX_EINVAL;
     if (ceiling < sched_get_priority_min_nid_postfix(POSIX_SCHED_RR) || ceiling > sched_get_priority_max_nid_postfix(POSIX_SCHED_RR))
         throw std::runtime_error("pthread_mutex_setprioceiling: ceiling " + std::to_string(ceiling) + " outside the SCHED_RR priority range");
+    const int previous = current->_ceiling;
+    if (oldCeiling) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(oldCeiling, &previous, sizeof(previous))) {
+            errno = savedErrno;
+            throw std::runtime_error("pthread_mutex_setprioceiling: unwritable oldCeiling");
+        }
+        errno = savedErrno;
+    }
     const bool owned = MutexOperations::IsOwned(mutex);
     if (!owned) {
         if (const int result = scePthreadMutexLock(mutex)) return PosixThread::ToErrno(result);
     }
-    const int previous = current->_ceiling;
     current->_ceiling = ceiling;
     if (!owned && scePthreadMutexUnlock(mutex) != 0) throw std::runtime_error("pthread_mutex_setprioceiling: unlock failed");
-    if (oldCeiling) *oldCeiling = previous;
     return 0;
 }
 
