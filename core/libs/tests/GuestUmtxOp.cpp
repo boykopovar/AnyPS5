@@ -50,6 +50,11 @@ static constexpr std::uint32_t WRITE_OWNER = 0x80000000u;
 static constexpr std::uint32_t WRITE_WAITERS = 0x40000000u;
 static constexpr std::uint32_t READ_WAITERS = 0x20000000u;
 static constexpr std::uint32_t PREFER_READER = 0x2;
+static constexpr int UMTX_OP_MUTEX_WAKE2 = 22;
+static constexpr int UMTX_OP_SEM2_WAKE = 24;
+static constexpr int UMTX_OP_SHM = 25;
+static constexpr std::uint32_t ROBUST = 0x10;
+static constexpr std::uint32_t USEM_HAS_WAITERS = 0x80000000u;
 
 struct Umutex {
     std::uint32_t owner = 0;
@@ -367,6 +372,116 @@ static void SemWakeWithoutWaitersSucceeds() {
     Require(FailsWith(Umtx(nullptr, UMTX_OP_SEM_WAIT, 0), GUEST_EFAULT));
 }
 
+struct GuestSemaphore2 {
+    std::uint32_t count;
+    std::uint32_t flags;
+};
+
+static std::uint32_t LoadCount(GuestSemaphore2& sem) { return std::atomic_ref<std::uint32_t>(sem.count).load(); }
+
+static void AwaitSem2Waiters(GuestSemaphore2& sem) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (LoadCount(sem) != USEM_HAS_WAITERS) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+static void Sem2WaitReturnsAtOnceWhileTheCountIsNonzero() {
+    GuestSemaphore2 sem{2, 0};
+    Require(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0) == 0 && sem.count == 2);
+    KernelTimespec none{0, 0};
+    Require(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(none)), &none) == 0 && sem.count == 2);
+    sem.count = USEM_HAS_WAITERS | 1;
+    Require(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(none)), &none) == 0 && sem.count == (USEM_HAS_WAITERS | 1));
+}
+
+static void Sem2WaitSetsTheWaitersBitAndTimesOut() {
+    GuestSemaphore2 sem{0, 0};
+    KernelTimespec none{0, 0};
+    Require(FailsWith(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(none)), &none), GUEST_ETIMEDOUT));
+    Require(sem.count == USEM_HAS_WAITERS);
+
+    sem.count = 0;
+    KernelTimespec relative{0, 20000000};
+    auto start = std::chrono::steady_clock::now();
+    Require(FailsWith(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(relative)), &relative), GUEST_ETIMEDOUT));
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
+    Require(sem.count == USEM_HAS_WAITERS);
+
+    UmtxTime time{{0, 20000000}, 0, CLOCK_MONOTONIC_ID};
+    start = std::chrono::steady_clock::now();
+    Require(FailsWith(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(time)), &time), GUEST_ETIMEDOUT));
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
+
+    KernelTimespec now{};
+    Require(clock_gettime_nid_postfix(CLOCK_MONOTONIC_ID, &now) == 0);
+    UmtxTime absolute{{now.tv_sec, now.tv_nsec + 20000000}, UMTX_ABSTIME, CLOCK_MONOTONIC_ID};
+    if (absolute.timeout.tv_nsec >= 1000000000) {
+        absolute.timeout.tv_sec += 1;
+        absolute.timeout.tv_nsec -= 1000000000;
+    }
+    start = std::chrono::steady_clock::now();
+    Require(FailsWith(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(absolute)), &absolute), GUEST_ETIMEDOUT));
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
+
+    UmtxTime past{{now.tv_sec, now.tv_nsec}, UMTX_ABSTIME, CLOCK_MONOTONIC_ID};
+    start = std::chrono::steady_clock::now();
+    Require(FailsWith(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(past)), &past), GUEST_ETIMEDOUT));
+    Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
+    Require(sem.count == USEM_HAS_WAITERS);
+
+    sem.count = 0;
+    KernelTimespec tooManyNanos{0, 1000000000};
+    Require(FailsWith(Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(tooManyNanos)), &tooManyNanos), GUEST_EINVAL));
+    Require(sem.count == 0);
+}
+
+static void Sem2WakeReleasesOneWaiterAndClearsTheBitAfterTheLast() {
+    GuestSemaphore2 sem{0, 0};
+    std::atomic<int> started{0};
+    std::atomic<int> finished{0};
+    std::vector<int> results(2, -2);
+    std::vector<std::thread> waiters;
+    for (int i = 0; i < 2; ++i) {
+        waiters.emplace_back([&, i] {
+            KernelTimespec failsafe = FailsafeTimeout();
+            ++started;
+            results[i] = Umtx(&sem, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(failsafe)), &failsafe);
+            ++finished;
+        });
+    }
+    AwaitCount(started, 2);
+    AwaitSem2Waiters(sem);
+    std::this_thread::sleep_for(SETTLE);
+    Require(finished.load() == 0);
+
+    Require(Umtx(&sem, UMTX_OP_SEM2_WAKE, 0) == 0);
+    AwaitCount(finished, 1);
+    std::this_thread::sleep_for(SETTLE);
+    Require(finished.load() == 1 && LoadCount(sem) == USEM_HAS_WAITERS);
+
+    std::atomic_ref<std::uint32_t>(sem.count).store(USEM_HAS_WAITERS | 1);
+    Require(Umtx(&sem, UMTX_OP_SEM2_WAKE, 0) == 0);
+    AwaitCount(finished, 2);
+    for (auto& waiter : waiters) waiter.join();
+    for (const int result : results) Require(result == 0);
+    Require(sem.count == 1);
+
+    Require(Umtx(&sem, UMTX_OP_SEM2_WAKE, 0) == 0 && sem.count == 1);
+    sem.count = USEM_HAS_WAITERS;
+    Require(Umtx(&sem, UMTX_OP_SEM2_WAKE, 0) == 0 && sem.count == USEM_HAS_WAITERS);
+}
+
+static void Sem2RejectsABadPointer() {
+    Require(FailsWith(Umtx(nullptr, UMTX_OP_SEM2_WAIT, 0), GUEST_EFAULT));
+    Require(FailsWith(Umtx(nullptr, UMTX_OP_SEM2_WAKE, 0), GUEST_EFAULT));
+    auto* unmapped = reinterpret_cast<GuestSemaphore2*>(std::uintptr_t{0x10});
+    KernelTimespec failsafe = FailsafeTimeout();
+    Require(FailsWith(Umtx(unmapped, UMTX_OP_SEM2_WAIT, 0, SizeOf(sizeof(failsafe)), &failsafe), GUEST_EFAULT));
+    Require(FailsWith(Umtx(unmapped, UMTX_OP_SEM2_WAKE, 0), GUEST_EFAULT));
+}
+
 static void RejectsBadObjectsAndOperations() {
     Require(FailsWith(Umtx(nullptr, UMTX_OP_WAIT, 0), GUEST_EFAULT));
     Require(FailsWith(Umtx(nullptr, UMTX_OP_WAIT_UINT, 0), GUEST_EFAULT));
@@ -387,7 +502,7 @@ static void RejectsBadObjectsAndOperations() {
 
     Require(FailsWith(Umtx(&value, 7, 0), GUEST_EINVAL));
     bool threw = false;
-    try { Umtx(&value, UMTX_OP_SEM2_WAIT, 0); }
+    try { Umtx(&value, UMTX_OP_SHM, 0); }
     catch (const std::runtime_error&) { threw = true; }
     Require(threw);
 }
@@ -450,6 +565,84 @@ static void MutexLockWaitsForTheOwnerToUnlock() {
     Require(Umtx(&mutex, UMTX_OP_MUTEX_UNLOCK, 0) == 0);
     AwaitCount(state, 2);
     waiter.join();
+    Require(mutex.owner == 0);
+}
+
+static void MutexWake2LeavesAnUnwaitedMutexAlone() {
+    Umutex mutex;
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0 && mutex.owner == 0);
+    mutex.owner = 12345;
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, PRIO_INHERIT) == 0 && mutex.owner == 12345);
+    mutex.owner = CONTESTED;
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, PRIO_PROTECT) == 0 && mutex.owner == CONTESTED);
+    Require(Umtx(nullptr, UMTX_OP_MUTEX_WAKE2, 0) == 0);
+    Require(FailsWith(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, PRIO_INHERIT | PRIO_PROTECT), GUEST_EINVAL) && mutex.owner == CONTESTED);
+    bool threw = false;
+    try { Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, ROBUST); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw);
+}
+
+static void MutexWake2RepairsTheContestedBitAndWakesOneWaiter() {
+    Umutex mutex;
+    mutex.owner = 12345;
+    std::atomic<int> started{0};
+    std::atomic<int> slot{0};
+    std::atomic<int> acquired{0};
+    std::atomic<bool> release{false};
+    std::vector<std::uint32_t> owners(2, 0);
+    std::vector<std::thread> waiters;
+    for (int i = 0; i < 2; ++i) {
+        waiters.emplace_back([&] {
+            KernelTimespec failsafe = FailsafeTimeout();
+            ++started;
+            Require(Umtx(&mutex, UMTX_OP_MUTEX_LOCK, 0, SizeOf(sizeof(failsafe)), &failsafe) == 0);
+            owners[slot.fetch_add(1)] = std::atomic_ref<std::uint32_t>(mutex.owner).load();
+            ++acquired;
+            while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Require(Umtx(&mutex, UMTX_OP_MUTEX_UNLOCK, 0) == 0);
+        });
+    }
+    AwaitCount(started, 2);
+    std::this_thread::sleep_for(SETTLE);
+    std::atomic_ref<std::uint32_t> owner(mutex.owner);
+    Require(owner.load() == (CONTESTED | 12345));
+
+    owner.store(12345);
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0 && owner.load() == (CONTESTED | 12345));
+    std::this_thread::sleep_for(SETTLE);
+    Require(acquired.load() == 0);
+
+    owner.store(0);
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0);
+    AwaitCount(acquired, 1);
+    std::this_thread::sleep_for(SETTLE);
+    Require(acquired.load() == 1 && (owners[0] & CONTESTED) != 0 && (owners[0] & ~CONTESTED) != 0);
+
+    release.store(true);
+    AwaitCount(acquired, 2);
+    for (auto& waiter : waiters) waiter.join();
+    Require((owners[1] & CONTESTED) == 0 && mutex.owner == 0);
+
+    std::atomic<int> lastStarted{0};
+    std::atomic<int> lastWoken{0};
+    mutex.owner = 12345;
+    std::thread last([&] {
+        KernelTimespec failsafe = FailsafeTimeout();
+        ++lastStarted;
+        Require(Umtx(&mutex, UMTX_OP_MUTEX_WAIT, 0, SizeOf(sizeof(failsafe)), &failsafe) == 0);
+        ++lastWoken;
+    });
+    AwaitCount(lastStarted, 1);
+    std::this_thread::sleep_for(SETTLE);
+    owner.store(12345);
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0 && owner.load() == (CONTESTED | 12345));
+    std::this_thread::sleep_for(SETTLE);
+    Require(lastWoken.load() == 0);
+    owner.store(0);
+    Require(Umtx(&mutex, UMTX_OP_MUTEX_WAKE2, 0) == 0);
+    AwaitCount(lastWoken, 1);
+    last.join();
     Require(mutex.owner == 0);
 }
 
@@ -594,9 +787,15 @@ int main() {
     SemWaitTimesOutWhileTheCountIsZero();
     SemWakeReleasesTheWaiterAndClearsTheFlag();
     SemWakeWithoutWaitersSucceeds();
+    Sem2WaitReturnsAtOnceWhileTheCountIsNonzero();
+    Sem2WaitSetsTheWaitersBitAndTimesOut();
+    Sem2WakeReleasesOneWaiterAndClearsTheBitAfterTheLast();
+    Sem2RejectsABadPointer();
     RejectsBadObjectsAndOperations();
     MutexOwnershipFollowsTheConsole();
     MutexLockWaitsForTheOwnerToUnlock();
+    MutexWake2LeavesAnUnwaitedMutexAlone();
+    MutexWake2RepairsTheContestedBitAndWakesOneWaiter();
     ConditionWaitReleasesTheMutexAndWakes();
     RwlockStateFollowsTheConsole();
     RwlockUnlockWakesTheBlockedWriter();
