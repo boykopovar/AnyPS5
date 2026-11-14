@@ -321,6 +321,43 @@ class BisectReportTests(unittest.TestCase):
 
 
 class EndToEndBisectTests(GitHistoryTests):
+    def test_bisects_with_real_measurement_directories_and_build_commands(self):
+        root = Path(self.directory.name)
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "title_run.py").write_text("""import json, pathlib, sys
+args = sys.argv[1:]
+out = pathlib.Path(args[args.index('--out') + 1])
+build = pathlib.Path(args[args.index('--build') + 1])
+commit = (build / 'commit').read_text(encoding='utf-8')
+state = (build.parent / 'state').read_text(encoding='utf-8')
+fps = 54.0 if state in ('step-5', 'step-6', 'step-7') else 60.0
+target = out / 'run' / 'summary.json'
+target.parent.mkdir(parents=True)
+target.write_text(json.dumps({'build': {'commit': commit, 'dirty': False}, 'machine': {'os': 'Linux', 'gpu': 'GPU', 'driver': 'Driver', 'cpu': 'CPU'}, 'titles': {'PPSA00000': {'name': 'Example', 'version': '01.00', 'runs': [{'outcome': 'rendering', 'fps': fps}]}}}), encoding='utf-8')
+""", encoding="utf-8")
+        recipe = {"title_id": "PPSA00000", "games": [], "titles": str(root / "titles.json"),
+                  "seconds": 20, "content": None, "build_dir": "build", "repetitions": 3,
+                  "regression_pct": 5.0, "max_spread_pct": 3.0,
+                  "build_commands": [[sys.executable, "-c",
+                      "from pathlib import Path; import sys; "
+                      "build = Path(sys.argv[1]); build.mkdir(); "
+                      "(build / 'commit').write_text(sys.argv[3], encoding='utf-8'); "
+                      "(Path(sys.argv[2]) / 'built').write_text(sys.argv[3], encoding='utf-8')",
+                      "{build_dir}", "{result_dir}", "{commit}"]]}
+        output = root / "report.json"
+        original_worktrees = performance_bisect.git(self.repo, "worktree", "list", "--porcelain")
+        with patch.object(performance_bisect, "TOOLS_DIR", tools):
+            report = performance_bisect.bisect(self.repo, self.good, self.commits[-1], recipe, output, root)
+        self.assertEqual(report["first_bad"]["commit"], self.commits[4])
+        self.assertEqual(report["previous_good"]["commit"], self.commits[3])
+        self.assertEqual(report["tested_commits"], 5)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), report)
+        for endpoint in ("good", "bad", "first_bad", "previous_good"):
+            self.assertEqual(len(report[endpoint]["samples"]), recipe["repetitions"])
+        self.assertEqual(performance_bisect.git(self.repo, "worktree", "list", "--porcelain"), original_worktrees)
+        self.assertEqual(list(root.glob("anyps5-performance-bisect-*")), [])
+
     def test_bisects_to_first_commit_over_threshold_and_removes_worktree(self):
         values = {commit: 60.0 for commit in [self.good, *self.commits]}
         values.update({commit: 54.0 for commit in self.commits[4:]})
@@ -791,3 +828,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     performance_bisect.bisect(directory, "good", "bad", {}, output)
             history.assert_not_called()
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
+
+
+if __name__ == "__main__":
+    unittest.main()
