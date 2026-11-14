@@ -430,7 +430,7 @@ int Disconnect(Socket& socket) {
     socket.localAddressCleared = true;
     return 0;
 }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 void LoopbackForUnspecifiedInet(sockaddr_storage& native) {
     if (native.ss_family == AF_INET) {
         auto& inet = reinterpret_cast<sockaddr_in&>(native);
@@ -2088,6 +2088,8 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
 #ifdef _WIN32
         LoopbackForUnspecifiedInet(native);
         if (SourceFaults(buffer, length)) return Fail(14);
+#elif defined(__APPLE__)
+        LoopbackForUnspecifiedInet(native);
 #endif
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
             reinterpret_cast<sockaddr*>(&native), size));
