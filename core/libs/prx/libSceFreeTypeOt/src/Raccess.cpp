@@ -236,6 +236,7 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
         if (error) return error;
         if (typeTag != tag) continue;
         if (!count) NotImplemented_nid_no_patch(function);
+        if (!offsets) NotImplemented_nid_no_patch(function);
         const std::int64_t refs = subCount + 1;
         *count = refs;
         error = FT_Stream_Seek_nid_postfix(stream, static_cast<std::uint64_t>(Add(refList, mapOffset, function)));
@@ -264,10 +265,15 @@ int APS5_VABI FT_Raccess_Get_DataOffsets_nid_postfix(GuestRaccessLibrary* librar
         }
         auto* result = static_cast<std::int64_t*>(ft_mem_realloc_nid_postfix(memory, sizeof(std::int64_t), 0, refs, nullptr, &error));
         if (!error) {
-            for (std::int64_t index = 0; index < refs; ++index) {
-                result[index] = Add(rdataPos, static_cast<std::int64_t>(ref[index].offset), function);
+            try {
+                for (std::int64_t index = 0; index < refs; ++index) {
+                    result[index] = Add(rdataPos, static_cast<std::int64_t>(ref[index].offset), function);
+                }
+            } catch (...) {
+                ft_mem_free_nid_postfix(memory, result);
+                ft_mem_free_nid_postfix(memory, ref);
+                throw;
             }
-            if (!offsets) NotImplemented_nid_no_patch(function);
             *offsets = result;
         }
         ft_mem_free_nid_postfix(memory, ref);
