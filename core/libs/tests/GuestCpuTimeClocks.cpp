@@ -24,6 +24,7 @@ static constexpr int SCE_OK = 0;
 
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
+static constexpr int GUEST_CLOCK_PROF = 2;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
 
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000LL;
@@ -91,10 +92,10 @@ static void SleepingThreadAccumulatesNone() {
 static void ProcessClockCountsOtherThreads() {
     const std::int64_t wallStart = Nanos(GUEST_CLOCK_MONOTONIC);
     const std::int64_t threadStart = Nanos(GUEST_CLOCK_THREAD_CPUTIME_ID);
-    const std::int64_t processStart = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const std::int64_t processStart = Nanos(GUEST_CLOCK_PROF);
     Pthread burner = nullptr;
     Require(scePthreadCreate(&burner, nullptr, Burn, nullptr, nullptr) == SCE_OK);
-    while (Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID) - processStart < BURN_NANOS) {
+    while (Nanos(GUEST_CLOCK_PROF) - processStart < BURN_NANOS) {
         Require(Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < GIVE_UP_NANOS);
         Require(sceKernelUsleep_nid_postfix(50000) == SCE_OK);
     }

@@ -14,7 +14,7 @@ static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
-static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
+static constexpr int GUEST_CLOCK_PROF = 2;
 static constexpr std::uint32_t PROCESS_CPU_CLOCK = 0xC0000000u;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000LL;
 static constexpr std::int64_t NANOS_PER_MILLISECOND = 1000000LL;
@@ -109,7 +109,7 @@ static void ProcessClocksNameOnlyTheGuest() {
     const std::int64_t start = Nanos(own);
     BurnOwnCpu(BURN_NANOS);
     const std::int64_t before = Nanos(own);
-    const std::int64_t reference = Nanos(GUEST_CLOCK_PROCESS_CPUTIME_ID);
+    const std::int64_t reference = Nanos(GUEST_CLOCK_PROF);
     const std::int64_t after = Nanos(own);
     Require(before - start >= BURN_NANOS - TICK_MARGIN_NANOS);
     Require(before <= reference + TICK_MARGIN_NANOS && reference <= after + TICK_MARGIN_NANOS);
