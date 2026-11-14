@@ -14,6 +14,9 @@ enum class LaneSplitShape : std::uint8_t {
     ShiftCount,
     Unary,
     UnaryImmediate,
+    LaneImmediate,
+    Blend,
+    MoveMask,
 };
 
 struct LaneSplitOperands {
