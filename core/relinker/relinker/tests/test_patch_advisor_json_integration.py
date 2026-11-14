@@ -38,6 +38,8 @@ def main():
         record = report["entries"][0]
         assert record["status"] == "verified" and record["verification"]["summary"] == [1, 1, 0, 0], record
         assert record["targets"] == {"eboot.bin": digest}
+        assert report["schemaVersion"] == 1, report
+        assert record["conversion_options"] == ["--patches", str(patch), "--skip-sce-module"], record
         status, report = advise(2)
         assert status == 1 and report["status"] == "multiple_matches", report
         status, report = advise(2, "--list-verified")
@@ -46,6 +48,7 @@ def main():
         status, report = advise()
         assert status == 1 and report["status"] == "rejected", report
         assert report["entries"][0]["verification"]["exit_code"] == 1, report
+        assert "conversion_options" not in report["entries"][0], report
         assert source.read_bytes() == image
 
 
