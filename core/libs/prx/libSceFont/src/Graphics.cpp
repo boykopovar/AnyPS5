@@ -327,7 +327,7 @@ int OutlineVertexesInterfaceInit(void* interface, const void* first, const void*
     static_assert(sizeof(OutlineInterface) == 0x30);
     const bool valid = first != nullptr && count >= 1 && count <= 3;
     const OutlineInterface value = valid ? OutlineInterface{0xf08, first, second, count, {}} : OutlineInterface{};
-    std::memcpy(interface, &value, sizeof(value));
+    if (!CopyOutGuest(static_cast<OutlineInterface*>(interface), value)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return valid ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
 }
 
