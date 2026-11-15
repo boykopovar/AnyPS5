@@ -14304,11 +14304,13 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         replayedComputeIdentityLow = received.Identity().low;
         const auto storeReplayed = PipelineStoreTotals();
         Require(storeReplayed.misses == storeBefore.misses + 1 && storeReplayed.cached == storeBefore.cached + 1, "the replayed graphics pipeline did not enter the store");
+        Require(storeReplayed.replayBuilds == storeBefore.replayBuilds + 1 && storeReplayed.replayBuildNanoseconds > storeBefore.replayBuildNanoseconds && storeReplayed.drawBuilds == storeBefore.drawBuilds, "the replayed graphics pipeline was not counted as one replay build");
         const auto created = mock.pipelineCreateCount;
         bool built = true;
         const auto pipeline = CachedPipeline(context, state, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL, &built);
         const auto storeHit = PipelineStoreTotals();
         Require(pipeline != nullptr && !built && mock.pipelineCreateCount == created && storeHit.hits == storeReplayed.hits + 1 && storeHit.misses == storeReplayed.misses, "the draw's configuration did not find the replayed pipeline");
+        Require(storeHit.drawBuilds == storeReplayed.drawBuilds && storeHit.replayBuilds == storeReplayed.replayBuilds, "the draw's configuration counted a build although the replay had built its pipeline");
         {
             const auto& journalPath = journalFile;
             const auto whole = std::filesystem::file_size(journalPath);

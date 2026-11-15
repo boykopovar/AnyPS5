@@ -128,6 +128,10 @@ struct PipelineStoreCounters {
     std::uint64_t evicted = 0;
     std::uint64_t cached = 0;
     std::uint64_t bound = 0;
+    std::uint64_t drawBuilds = 0;
+    std::uint64_t drawBuildNanoseconds = 0;
+    std::uint64_t replayBuilds = 0;
+    std::uint64_t replayBuildNanoseconds = 0;
 };
 PipelineStoreCounters PipelineStoreTotals();
 // Whether the store may still raise its bound (not fixed by APS5_PIPELINE_STORE_ENTRIES, below 4096).

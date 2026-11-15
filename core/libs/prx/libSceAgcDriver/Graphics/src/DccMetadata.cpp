@@ -827,12 +827,57 @@ bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte
     return true;
 }
 
+bool SingleProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, const DccSingleProof& proof) {
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    if (proof.generation == 0 || proof.address != resource.baseAddress || proof.bytes != guestBytes || proof.format != resource.format || collected == 0) return false;
+    if (!GuestMemory::UnchangedSince(resource.baseAddress, bytes, proof.generation)) return false;
+    if (proof.pendingNote == 0) return true;
+    if (!GuestMemory::GpuMutex().HeldByThisThread() || AnyShadowedOverlaps(resource.baseAddress, bytes)) return false;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || recorder->Id() != proof.pendingRecorder || recorder->NewestWriteNote(resource.baseAddress, bytes) != proof.pendingNote) return false;
+    const auto info = recorder->DescribePendingWrite(resource.baseAddress, bytes);
+    return info.has_value() && !info->signaled;
+}
+
+bool SingleTexelsPending(const GuestTextureResource& resource, std::uint64_t guestBytes) {
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    if (bytes == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return false;
+    if (AnyShadowedOverlaps(resource.baseAddress, bytes)) return true;
+    const auto info = recorder->DescribePendingWrite(resource.baseAddress, bytes);
+    return info.has_value() && !info->signaled;
+}
+
+bool PendingSingleFill(const GuestTextureResource& resource, std::uint64_t guestBytes, DccSingleProof& proof) {
+    if (!SingleKeysReadable(resource) || guestBytes < KeyBytes) return false;
+    const auto elementBytes = BytesPerElement(resource.format);
+    if (elementBytes == 0 || elementBytes > 16) return false;
+    const auto begin = resource.baseAddress;
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    if (!GuestMemory::GpuMutex().HeldByThisThread() || AnyShadowedOverlaps(begin, bytes)) return false;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || recorder->QueuedStoreOverlaps(begin, bytes) || recorder->QueuedKeyStoreOverlaps(begin, bytes)) return false;
+    const auto info = recorder->DescribePendingWrite(begin, bytes);
+    if (!info.has_value() || info->signaled) return false;
+    const auto writes = recorder->PendingWritesOver(begin, bytes);
+    const auto newest = std::max_element(writes.begin(), writes.end(), [](const Recorder::PendingWrite& a, const Recorder::PendingWrite& b) { return a.note < b.note; });
+    if (newest == writes.end() || newest->word < 0 || newest->begin > begin || newest->end < begin + guestBytes || newest->note != recorder->NewestWriteNote(begin, bytes)) return false;
+    const auto collected = GuestMemory::CollectWrites(begin, bytes);
+    if (collected == 0) return false;
+    DccSingleProof filled{begin, guestBytes, collected, resource.format, true, newest->note, recorder->Id(), {}};
+    const auto word = static_cast<std::uint32_t>(newest->word);
+    for (std::uint32_t index = 0; index < elementBytes; ++index) filled.element[index] = static_cast<std::byte>((word >> (8u * ((begin - newest->begin + index) % 4u))) & 0xffu);
+    proof = filled;
+    return true;
+}
+
 bool ProvedSingleUniform(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, DccSingleProof& proof) {
     if (!SingleKeysReadable(resource) || guestBytes < KeyBytes) return false;
     const auto bytes = BytesPerElement(resource.format);
     if (bytes == 0 || bytes > 16) return false;
     const auto blocks = static_cast<std::size_t>(guestBytes / KeyBytes);
-    if (proof.generation != 0 && proof.address == resource.baseAddress && proof.bytes == guestBytes && proof.format == resource.format && collected != 0 && GuestMemory::UnchangedSince(resource.baseAddress, static_cast<std::size_t>(guestBytes), proof.generation)) return proof.uniform;
+    if (SingleProofHolds(resource, guestBytes, collected, proof)) return proof.uniform;
     std::byte first[16]{};
     bool uniform = true;
     std::vector<std::byte> buffer(std::min<std::uint64_t>(guestBytes, std::uint64_t(1) << 20));

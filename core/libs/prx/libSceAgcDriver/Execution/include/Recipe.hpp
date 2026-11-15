@@ -85,6 +85,7 @@ struct DrawRecipe {
     std::uint32_t fragmentOutputs = 0;
     VkPipelineStageFlags shaderStages = 0;
     bool hasDepth = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> surfaces;
 };
 
 }

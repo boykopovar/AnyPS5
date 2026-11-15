@@ -224,6 +224,21 @@ void parseRefusedTests() {
     }
 }
 
+void unpacedFlipsTests() {
+    require(AgcDriver::ParseUnpacedFlips("1"), "APS5_UNPACED_FLIPS=1 leaves the flips paced");
+    for (const char* text : {static_cast<const char*>(nullptr), "", "0"}) require(!AgcDriver::ParseUnpacedFlips(text), std::string("APS5_UNPACED_FLIPS='") + (text != nullptr ? text : "<unset>") + "' unpaces the flips");
+    for (const char* text : {"2", "true", "yes", "on", "01", " 1", "1 ", "-1", "1.0"}) {
+        std::string message;
+        try {
+            AgcDriver::ParseUnpacedFlips(text);
+        } catch (const std::runtime_error& error) {
+            message = error.what();
+        }
+        require(!message.empty(), std::string("APS5_UNPACED_FLIPS='") + text + "' was accepted");
+        require(message.find("APS5_UNPACED_FLIPS") != std::string::npos && message.find(std::string("'") + text + "'") != std::string::npos, std::string("the error for '") + text + "' does not name the variable and quote the value: " + message);
+    }
+}
+
 void zeroLimitTests() {
     bool refused = false;
     try {
@@ -247,6 +262,7 @@ int main() {
         parseAcceptedTests();
         parseDisabledTests();
         parseRefusedTests();
+        unpacedFlipsTests();
         paceTests();
         paceOvershootTests();
         paceAbandonTests();

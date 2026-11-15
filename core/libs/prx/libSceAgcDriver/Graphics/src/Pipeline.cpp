@@ -1256,6 +1256,16 @@ struct PipelineStore {
     std::uint64_t misses = 0;
     std::uint64_t uncached = 0;
     std::uint64_t evicted = 0;
+    struct BuildWindow {
+        std::uint64_t hits = 0;
+        std::uint64_t built = 0;
+        std::uint64_t builtNs = 0;
+        std::uint64_t privateBuilt = 0;
+        std::uint64_t privateNs = 0;
+        std::uint64_t longestNs = 0;
+        std::uint64_t replayBuilt = 0;
+        std::uint64_t replayNs = 0;
+    } window;
     PipelineStoreCounters totals;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
     std::size_t capacity = 0;
@@ -1331,15 +1341,58 @@ void noteStoreReturn(PipelineStore& store, std::uint64_t hash) {
     ++store.returnsSinceCheck;
 }
 
+void noteBuild(PipelineStore& store, bool replaying, bool privateBuild, std::uint64_t nanoseconds) {
+    if (replaying) {
+        ++store.window.replayBuilt;
+        store.window.replayNs += nanoseconds;
+        ++store.totals.replayBuilds;
+        store.totals.replayBuildNanoseconds += nanoseconds;
+        return;
+    }
+    if (privateBuild) {
+        ++store.window.privateBuilt;
+        store.window.privateNs += nanoseconds;
+    } else {
+        ++store.window.built;
+        store.window.builtNs += nanoseconds;
+    }
+    store.window.longestNs = std::max(store.window.longestNs, nanoseconds);
+    ++store.totals.drawBuilds;
+    store.totals.drawBuildNanoseconds += nanoseconds;
+}
+
+std::string journalState() {
+    if (!PipelineJournalEnabled()) return "journal off";
+    const auto journal = PipelineJournalTotals();
+    char text[256];
+    if (journal.replayThreads == 0) {
+        std::snprintf(text, sizeof(text), "journal: %llu pipelines loaded, no replay", static_cast<unsigned long long>(journal.loadedRecipes));
+    } else if (journal.replayMs == 0.0) {
+        std::snprintf(text, sizeof(text), "journal: %llu pipelines loaded, replay running on %u threads", static_cast<unsigned long long>(journal.loadedRecipes), journal.replayThreads);
+    } else {
+        std::snprintf(text, sizeof(text), "journal: %llu pipelines loaded, replay finished in %.0f ms (%llu graphics and %llu compute built, %llu present, %llu rejected, %llu failed)", static_cast<unsigned long long>(journal.loadedRecipes), journal.replayMs, static_cast<unsigned long long>(journal.replayedGraphics), static_cast<unsigned long long>(journal.replayedCompute), static_cast<unsigned long long>(journal.replayPresent), static_cast<unsigned long long>(journal.replayRejected), static_cast<unsigned long long>(journal.replayFailed));
+    }
+    return text;
+}
+
 void reportPipelines(PipelineStore& store) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (!profile) return;
+    static const bool stats = std::getenv("APS5_PIPELINE_STATS") != nullptr;
+    if (!profile && !stats) return;
     const auto now = std::chrono::steady_clock::now();
     if (now - store.lastReport < std::chrono::seconds(10)) return;
     store.lastReport = now;
-    const auto lookups = store.hits + store.misses + store.uncached;
-    AgcDriver::ProfilePrint_nid_no_patch( "[pipecache] %llu lookups over 10 s: %llu hits (%.0f%%), %llu misses, %llu private (no variant id), %llu evicted, %zu cached\n", static_cast<unsigned long long>(lookups), static_cast<unsigned long long>(store.hits), lookups != 0 ? 100.0 * static_cast<double>(store.hits) / static_cast<double>(lookups) : 0.0, static_cast<unsigned long long>(store.misses), static_cast<unsigned long long>(store.uncached), static_cast<unsigned long long>(store.evicted), store.entries.size());
+    if (profile) {
+        const auto lookups = store.hits + store.misses + store.uncached;
+        AgcDriver::ProfilePrint_nid_no_patch( "[pipecache] %llu lookups over 10 s: %llu hits (%.0f%%), %llu misses, %llu private (no variant id), %llu evicted, %zu cached\n", static_cast<unsigned long long>(lookups), static_cast<unsigned long long>(store.hits), lookups != 0 ? 100.0 * static_cast<double>(store.hits) / static_cast<double>(lookups) : 0.0, static_cast<unsigned long long>(store.misses), static_cast<unsigned long long>(store.uncached), static_cast<unsigned long long>(store.evicted), store.entries.size());
+    }
     store.hits = store.misses = store.uncached = store.evicted = 0;
+    const auto& window = store.window;
+    const auto ms = [](std::uint64_t nanoseconds) { return static_cast<double>(nanoseconds) / 1e6; };
+    AgcDriver::ProfilePrint_nid_no_patch("[pipelines] (10 s): %llu draw lookups, %llu hits, %llu built at the draw in %.1f ms, %llu private built in %.1f ms (longest draw build %.1f ms), %llu built by the journal replay in %.1f ms; cumulative: %llu built at draws in %.1f ms, %llu by the replay in %.1f ms; %s\n",
+                                         static_cast<unsigned long long>(window.hits + window.built + window.privateBuilt), static_cast<unsigned long long>(window.hits), static_cast<unsigned long long>(window.built), ms(window.builtNs), static_cast<unsigned long long>(window.privateBuilt), ms(window.privateNs), ms(window.longestNs), static_cast<unsigned long long>(window.replayBuilt), ms(window.replayNs),
+                                         static_cast<unsigned long long>(store.totals.drawBuilds), ms(store.totals.drawBuildNanoseconds), static_cast<unsigned long long>(store.totals.replayBuilds), ms(store.totals.replayBuildNanoseconds), journalState().c_str());
+    store.window = {};
 }
 
 }
@@ -1352,17 +1405,35 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (created != nullptr) *created = false;
     if (storeHash != nullptr) *storeHash = 0;
-    if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
+    const bool replaying = PipelineJournalReplaying();
+    std::uint64_t builtNs = 0;
+    const auto build = [&] {
+        const auto started = std::chrono::steady_clock::now();
+        auto built = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        builtNs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
+        return built;
+    };
+    if (disabled) {
+        auto pipeline = build();
+        std::lock_guard lock(store.mutex);
+        noteBuild(store, replaying, true, builtNs);
+        return pipeline;
+    }
     struct PipelineKeyStorage {};
     auto& storage = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
     const auto length = pipelineKey(storage, context, state, vertexInput, resources, shaders, attachmentLayout);
     const std::span<const std::byte> key(storage.data(), length);
     if (key.empty()) {
+        {
+            std::lock_guard lock(store.mutex);
+            ++store.uncached;
+            ++store.totals.uncached;
+        }
+        auto pipeline = build();
         std::lock_guard lock(store.mutex);
-        ++store.uncached;
-        ++store.totals.uncached;
-        return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        noteBuild(store, replaying, true, builtNs);
+        return pipeline;
     }
     const auto hash = hashKey(key);
     // The store's entry of the key, or nullptr with `found` telling a miss (the key is new) from a
@@ -1392,6 +1463,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         if (auto pipeline = lookup(collision)) {
             ++store.hits;
             ++store.totals.hits;
+            if (!replaying) ++store.window.hits;
             if (storeHash != nullptr) *storeHash = hash;
             return pipeline;
         }
@@ -1399,7 +1471,9 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             // A different configuration with the same hash keeps the resident entry; this one stays private.
             ++store.uncached;
             ++store.totals.uncached;
-            return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+            auto pipeline = build();
+            noteBuild(store, replaying, true, builtNs);
+            return pipeline;
         }
         ++store.misses;
         ++store.totals.misses;
@@ -1408,12 +1482,13 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     // Built outside the mutex: a draw that finds its pipeline resident is not held behind another
     // thread's build (the journal replay builds here too), and a device's driver compiles in
     // parallel when several threads build at once.
-    auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    const bool replaying = PipelineJournalReplaying();
+    auto pipeline = build();
     {
         std::lock_guard lock(store.mutex);
         bool collision = false;
-        if (auto raced = lookup(collision)) {
+        auto raced = lookup(collision);
+        noteBuild(store, replaying, collision, builtNs);
+        if (raced) {
             if (storeHash != nullptr) *storeHash = hash;
             return raced;
         }
@@ -1469,6 +1544,7 @@ std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint6
     store.entries.splice(store.entries.end(), store.entries, it);
     ++store.hits;
     ++store.totals.hits;
+    ++store.window.hits;
     return it->pipeline;
 }
 

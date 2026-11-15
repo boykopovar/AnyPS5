@@ -528,6 +528,14 @@ void testPresentMode() {
     check(expectFailure([&] { SelectPresentMode("", all); }).find("must be fifo, fifo_latest_ready, mailbox or immediate") != std::string::npos, "an empty present mode name was accepted");
     const std::array<VkPresentModeKHR, 0> none{};
     check(expectFailure([&] { SelectPresentMode(nullptr, none); }).find("does not support") != std::string::npos, "FIFO was selected on a surface without it");
+    const std::array mailboxOnly{VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_MAILBOX_KHR};
+    check(SelectPresentMode(nullptr, wayland, false) == VK_PRESENT_MODE_FIFO_KHR && SelectPresentMode(nullptr, all, false) == VK_PRESENT_MODE_FIFO_KHR, "the default present mode changed with the flips paced");
+    check(SelectPresentMode(nullptr, all, true) == VK_PRESENT_MODE_IMMEDIATE_KHR && SelectPresentMode(nullptr, wayland, true) == VK_PRESENT_MODE_IMMEDIATE_KHR, "unpaced flips do not default to immediate where the surface offers it");
+    check(SelectPresentMode(nullptr, mailboxOnly, true) == VK_PRESENT_MODE_MAILBOX_KHR, "unpaced flips do not default to mailbox on a surface without immediate");
+    check(SelectPresentMode(nullptr, latest, true) == VK_PRESENT_MODE_FIFO_KHR, "unpaced flips did not fall back to FIFO on a surface without immediate or mailbox");
+    check(SelectPresentMode("fifo", all, true) == VK_PRESENT_MODE_FIFO_KHR && SelectPresentMode("mailbox", all, true) == VK_PRESENT_MODE_MAILBOX_KHR, "ANYPS5_PRESENT_MODE does not win over the unpaced default");
+    check(expectFailure([&] { SelectPresentMode("mailbox", wayland, true); }).find("does not support") != std::string::npos, "an unsupported requested present mode was replaced under unpaced flips");
+    check(expectFailure([&] { SelectPresentMode(nullptr, none, true); }).find("does not support") != std::string::npos, "unpaced flips selected a present mode on a surface without any");
     using AgcDriver::SelectPresentQueue;
     check(SelectPresentQueue(16, 2) == 2u, "the presentation queue does not follow the main and settle queues");
     check(SelectPresentQueue(16, 1) == 1u, "the presentation queue does not follow the main queue alone");

@@ -26,6 +26,7 @@ extern "C" int KeepHostStandardOutput_nid_no_patch();
 extern "C" int HostStandardError_nid_no_patch();
 #else
 extern "C" bool AdoptHostStandardStream_nid_no_patch(int standard, int saved);
+extern "C" void WriteUnbufferedStreamWhole_nid_no_patch(std::FILE* stream);
 extern "C" std::FILE* HostStandardOutputFile_nid_no_patch();
 extern "C" std::FILE* HostStandardErrorFile_nid_no_patch();
 #endif

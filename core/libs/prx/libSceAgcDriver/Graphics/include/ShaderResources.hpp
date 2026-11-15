@@ -98,6 +98,37 @@ std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, con
 // a storage image other than `except` has results pending in [address, address + bytes).
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except);
 
+struct DrawProofStamp {
+    std::uint64_t epoch = 0;
+    std::uint64_t proof = 0;
+    std::uint64_t pending = 0;
+    std::uint64_t depthSurfaces = 0;
+    std::uint64_t unwatch = 0;
+    static DrawProofStamp Now();
+    bool operator==(const DrawProofStamp&) const = default;
+};
+enum class DrawProofKind : std::size_t { Resources, Targets, Count };
+enum class DrawProofMiss : std::size_t { None, Epoch, Serial, Registry, DepthSurfaces, Unwatch, Images, DepthPlanes, Imports, Staging, Target, Evicted, InputTwins, Count };
+struct DrawProofKindCounts {
+    std::uint64_t reused = 0;
+    std::uint64_t proved = 0;
+    std::uint64_t verified = 0;
+    std::uint64_t differing = 0;
+    std::uint64_t stored = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(DrawProofMiss::Count)> missed{};
+};
+using DrawProofCounts = std::array<DrawProofKindCounts, static_cast<std::size_t>(DrawProofKind::Count)>;
+bool DrawProofsEnabled();
+bool DrawProofVerifyDue();
+DrawProofMiss DrawProofStampMiss(const DrawProofStamp& proved, const DrawProofStamp& now);
+const char* DrawProofMissName(DrawProofMiss miss);
+void NoteDrawProofReused(DrawProofKind kind);
+void NoteDrawProofProved(DrawProofKind kind);
+void NoteDrawProofMissed(DrawProofKind kind, DrawProofMiss miss);
+void NoteDrawProofVerified(DrawProofKind kind, bool differing, bool stored, const char* what);
+DrawProofCounts DrawProofCounted();
+std::string DrawProofText(const DrawProofCounts& now, const DrawProofCounts& seen);
+
 struct PipelineSetLayouts {
     VkDescriptorSetLayout main = VK_NULL_HANDLE;
     VkDescriptorSetLayout fragment = VK_NULL_HANDLE;
@@ -289,6 +320,7 @@ public:
     bool HasHostGpuCopies() const { return guestMemory.HasHostGpuCopies(); }
     bool HasStagedCopies() const { return guestMemory.HasStagedCopies(); }
     const void* MemoryOwner() const { return &guestMemory; }
+    std::uint64_t HandoverToken() const { return guestMemory.HandoverToken(); }
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
@@ -305,6 +337,8 @@ public:
     std::span<const std::byte> AddressTableBytes() const;
     bool AddressTableGuardCurrent();
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
+    void KeepCopiedBytes(Recorder& recorder) const { guestMemory.KeepCopiedBytes(recorder, this); }
+    bool CopyBackReach(std::vector<std::pair<std::uint64_t, std::uint64_t>>& touched) const { return guestMemory.CopyBackReach(touched); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
     // Whether a region the recorded work reads in place through a host import overlaps the range.
@@ -322,6 +356,9 @@ public:
     bool HasCachedStorageImages() const;
     bool HoldsReleasedTexture() const;
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }
+    std::uint64_t StagedBytes() const { return stagedBytes; }
+    const std::vector<std::pair<const void*, std::uint64_t>>& StagedShadows() const { return stagedShadows; }
+    const std::vector<std::pair<const void*, std::uint64_t>>& InputTwins() const { return inputTwins; }
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
@@ -349,6 +386,7 @@ public:
     // Walks the write watch over every image surface of a completed object (no device lock: the
     // ranges are fixed by the build), so a Revalidate's collects on the same worker are memo hits.
     void PrecollectSurfaces() const;
+    void AppendSurfaceRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const;
     bool Reusable() const { return reusable; }
     void KeepStorageImageBytes(Recorder& recorder) const;
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
@@ -516,6 +554,9 @@ private:
     std::vector<TableStage> tableStages;
     std::array<std::size_t, 2> tableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     std::array<std::uint32_t, 2> tableElements{};
+    std::uint64_t stagedBytes = 0;
+    std::vector<std::pair<const void*, std::uint64_t>> stagedShadows;
+    std::vector<std::pair<const void*, std::uint64_t>> inputTwins;
     std::array<std::size_t, 2> storageTableBindings{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
@@ -794,9 +835,14 @@ private:
     // no image other than the object's own sources has results pending over its surfaces and
     // regions, so those checks are skipped (see fastRevalidate).
     std::uint64_t pendingSerialSeen = 0;
-    std::uint64_t provedEpoch = 0;
-    std::uint64_t provedProof = 0;
-    std::uint64_t provedPending = 0;
+    DrawProofStamp provedStamp;
+    bool proofHeld = false;
+    std::vector<std::pair<const StorageTexture*, std::uint64_t>> provedImages;
+    std::vector<std::uint64_t> provedTwins;
+    bool proofEligible() const;
+    DrawProofMiss proofMiss(const DrawProofStamp& now) const;
+    bool takeProof(const DrawProofStamp& stamp);
+    bool verifyProof(std::span<const CompiledShader> shaders, ProofReport* report);
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
@@ -865,6 +911,7 @@ public:
     void Remove(const Key& key, const ShaderResources* object = nullptr);
     void RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     bool TryRemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
+    std::uint64_t TryReleaseInputTwins(std::uint64_t bytes, std::vector<std::shared_ptr<ShaderResources>>* evicted);
     // Moves the entry to the front of the LRU (a recipe hit uses its template without Find, and a
     // hot template must not age out under the recipes that depend on it); false when no entry.
     bool Touch(const Key& key);
@@ -877,6 +924,8 @@ public:
     void SetBase(std::size_t entries, std::size_t shrinkWindow);
     std::uint64_t TableElements() const;
     static std::uint64_t TableElementBudget();
+    static std::uint64_t StagedByteBudget();
+    static std::uint64_t InputTwinByteBudget();
     static constexpr std::size_t InitialEntries = 1024;
     static constexpr std::size_t MaximumEntries = 16384;
 

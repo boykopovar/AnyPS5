@@ -323,6 +323,8 @@ void raiseForgetSlot(std::atomic<std::uint64_t>& slot, std::uint64_t serial) {
 std::atomic<std::uint64_t> forgetBytes{0};
 std::atomic<std::uint64_t> collectMemoHits{0};
 std::atomic<std::uint64_t> collectEpochBumps{0};
+std::atomic<std::uint64_t> committerWatchCalls{0};
+thread_local bool proofThread = false;
 std::atomic<std::uint64_t> unwatchSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
 // tracker mutex acquisitions that had to wait (APS5_PROFILE_DRAW; see lockTracker).
@@ -571,6 +573,8 @@ public:
             AgcDriver::ProfilePrint_nid_no_patch(" %s %llu calls %.0f MiB %.1f s", MemoryCounterNames[i], static_cast<unsigned long long>(totals[i][0]), totals[i][1] / 1048576.0, totals[i][2] / 1e9);
         }
         AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu, collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
+        const auto collects = CollectCounted();
+        AgcDriver::ProfilePrint_nid_no_patch(" GetWriteWatch calls %llu (committer %llu)", static_cast<unsigned long long>(collects.watchCalls), static_cast<unsigned long long>(collects.committerWatchCalls));
         AgcDriver::ProfilePrint_nid_no_patch(" collect-dirty %llu tracker waits %llu / %llu", static_cast<unsigned long long>(collectDirty.load()), static_cast<unsigned long long>(trackerWaits.load()), static_cast<unsigned long long>(trackerAcquisitions.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
         {
@@ -2002,6 +2006,19 @@ void stampWindowRuns(StampRuns& runs) {
 #ifdef _WIN32
 std::atomic<FreshCollectHook> freshCollectHook{nullptr};
 
+class CommitterWatchCalls {
+public:
+    CommitterWatchCalls() : before(proofThread ? GuestArena::GuestArenaCollectWatchCalls_nid_no_patch() : 0) {}
+    ~CommitterWatchCalls() {
+        if (proofThread) committerWatchCalls.fetch_add(GuestArena::GuestArenaCollectWatchCalls_nid_no_patch() - before, std::memory_order_relaxed);
+    }
+    CommitterWatchCalls(const CommitterWatchCalls&) = delete;
+    CommitterWatchCalls& operator=(const CommitterWatchCalls&) = delete;
+
+private:
+    std::uint64_t before;
+};
+
 bool collectWindowsWrites(StampRuns& runs, std::uint64_t first, std::uint64_t stop, bool armedOnly) {
     auto& tracker = runs.tracker;
     const bool fresh = runs.kind == StampKind::Fresh;
@@ -2052,7 +2069,11 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
     observationPoint(1);
     StampRuns runs{tracker, kind, 0, window, {}};
 #ifdef _WIN32
-    const bool complete = collectWindowsWrites(runs, first, stop, armedOnly);
+    bool complete = false;
+    {
+        const CommitterWatchCalls counted;
+        complete = collectWindowsWrites(runs, first, stop, armedOnly);
+    }
 #else
     const auto dirtyRuns = collectDirtyRuns.load(std::memory_order_relaxed);
     const auto collect = armedOnly ? &GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix : &GuestWriteWatch::GuestWriteWatchCollect_nid_postfix;
@@ -2258,17 +2279,41 @@ std::uint64_t UnwatchSerial() {
 }
 
 void AdoptLatestCollectEpoch() {
-    const auto latest = lastBumpedEpoch.load(std::memory_order_acquire);
-    if (latest > HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get()) HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(latest);
+    AdoptCollectEpoch(lastBumpedEpoch.load(std::memory_order_acquire));
+}
+
+void AdoptCollectEpoch(std::uint64_t epoch) {
+    if (epoch > HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get()) HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(epoch);
+}
+
+std::uint64_t HeldCollectEpoch() {
+    return HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get();
 }
 
 std::uint64_t CollectEpochBumps() {
     return collectEpochBumps.load(std::memory_order_relaxed);
 }
 
+CollectCounts CollectCounted() {
+#ifdef _WIN32
+    const auto watchCalls = GuestArena::GuestArenaCollectWatchCalls_nid_no_patch();
+#else
+    const std::uint64_t watchCalls = 0;
+#endif
+    return {watchCalls, committerWatchCalls.load(std::memory_order_relaxed), collectEpochBumps.load(std::memory_order_relaxed), collectMemoHits.load(std::memory_order_relaxed)};
+}
+
 namespace {
 std::atomic<std::uint64_t> proofSerial{1};
-thread_local bool proofThread = false;
+std::atomic<void (*)(std::uint64_t, std::size_t)> storeHook{nullptr};
+
+void noteDriverStore(std::uint64_t address, std::size_t bytes) {
+    if (const auto hook = storeHook.load(std::memory_order_acquire)) hook(address, bytes);
+}
+}
+
+void SetStoreHook(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    storeHook.store(hook, std::memory_order_release);
 }
 
 std::uint64_t ProofSerial() {
@@ -2645,6 +2690,7 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, co
     if (bytes == 0) return 0;
     const auto pinned = pinStoreRanges(address, bytes);
     BreakProofs();
+    noteDriverStore(address, bytes);
     const auto stampStored = [complete](WriteTracker& tracker, std::pair<std::uint64_t, std::uint64_t> stored) -> std::uint64_t {
         if (stored.second <= stored.first) return 0;
         ++tracker.generation;
@@ -2712,6 +2758,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 
 static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, std::uint64_t* order = nullptr) {
     BreakProofs();
+    noteDriverStore(address, bytes);
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
     if (order != nullptr) *order = 0;
@@ -2837,6 +2884,7 @@ namespace {
 thread_local ThreadCollectMemo threadHintMemo;
 
 bool walkHints(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop) {
+    const CommitterWatchCalls counted;
     auto cursor = first;
     bool marked = false;
     StampRuns runs{tracker, StampKind::Cpu};

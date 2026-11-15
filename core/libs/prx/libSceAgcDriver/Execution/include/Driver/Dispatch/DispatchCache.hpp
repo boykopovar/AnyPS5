@@ -65,6 +65,10 @@ struct DispatchVariant {
     std::vector<std::int8_t> runBases;
     std::uint64_t relocatableWords = 0;
     std::uint64_t userWordsWalked = 0;
+    std::uint64_t userWordsAsValue = 0;
+    std::uint64_t vertexTableWords = 0;
+    std::uint32_t decodeRuns = 0;
+    std::vector<std::pair<std::uint32_t, ShaderRecompiler::ShaderVertexBufferResource>> vertexPatches;
     std::uint64_t valueWords = 0;
     std::vector<std::array<std::uint32_t, 3>> valueSlots;
     std::vector<std::array<std::uint32_t, 3>> descriptorPatches;
@@ -73,6 +77,7 @@ struct DispatchVariant {
     std::shared_ptr<DispatchVariant> donor;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
     std::uint64_t userDataMask = ~std::uint64_t{0};
+    std::uint64_t forwardedWords = 0;
     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;
 
     std::shared_ptr<ShaderMemory> memory;

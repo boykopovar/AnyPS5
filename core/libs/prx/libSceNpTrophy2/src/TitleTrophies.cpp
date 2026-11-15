@@ -46,23 +46,44 @@ std::optional<std::string> readTitleFile(const std::string& guestPath) {
     return bytes;
 }
 
+struct LoadReport {
+    std::string text;
+
+    ~LoadReport() {
+        if (text.empty()) return;
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        std::fflush(stderr);
+    }
+
+    template <typename... TArgs>
+    void Line(const char* format, TArgs... args) {
+        const int size = std::snprintf(nullptr, 0, format, args...);
+        if (size <= 0) return;
+        const auto length = static_cast<std::size_t>(size);
+        const auto start = text.size();
+        text.resize(start + length + 1);
+        std::snprintf(text.data() + start, length + 1, format, args...);
+        text.resize(start + length);
+    }
+};
+
 template <typename TParsed, typename TParse>
-std::optional<TParsed> loadTitleFile(const std::string& guestPath, const char* without, TParse parse) {
+std::optional<TParsed> loadTitleFile(const std::string& guestPath, const char* without, TParse parse, LoadReport& report) {
     std::optional<std::string> bytes;
     try {
         bytes = readTitleFile(guestPath);
     } catch (const std::runtime_error& error) {
-        std::fprintf(stderr, "[trophy] %s is not used, so %s: %s\n", guestPath.c_str(), without, error.what());
+        report.Line("[trophy] %s is not used, so %s: %s\n", guestPath.c_str(), without, error.what());
         return std::nullopt;
     }
     if (!bytes) {
-        if (tracing()) std::fprintf(stderr, "[uds] %s does not exist, so %s\n", guestPath.c_str(), without);
+        if (tracing()) report.Line("[uds] %s does not exist, so %s\n", guestPath.c_str(), without);
         return std::nullopt;
     }
     try {
         return parse(*bytes);
     } catch (const std::runtime_error& error) {
-        std::fprintf(stderr, "[trophy] %s is malformed, so %s: %s\n", guestPath.c_str(), without, error.what());
+        report.Line("[trophy] %s is malformed, so %s: %s\n", guestPath.c_str(), without, error.what());
         return std::nullopt;
     }
 }
@@ -90,22 +111,23 @@ std::string StatRulesPath(std::uint32_t serviceLabel) {
 
 TitleTrophies LoadTitleTrophies(std::uint32_t serviceLabel, std::string_view language) {
     TitleTrophies title;
+    LoadReport report;
     const auto packagePath = PackagePath(serviceLabel);
     title.package = loadTitleFile<TrophyPackage>(packagePath, "trophy queries report placeholders and stats unlock no trophies",
-                                                 [language](std::string_view bytes) { return ParseTrophyPackage(bytes, language); });
+                                                 [language](std::string_view bytes) { return ParseTrophyPackage(bytes, language); }, report);
     if (title.package) {
-        std::fprintf(stderr, "[trophy] %s: %s, %s, texts in %s\n", packagePath.c_str(), counted(title.package->trophies.size(), "trophy", "trophies").c_str(),
-                     counted(title.package->groups.size(), "group", "groups").c_str(), title.package->language.c_str());
-        for (const auto& skipped : title.package->skipped) std::fprintf(stderr, "[trophy] %s: %s\n", packagePath.c_str(), skipped.c_str());
+        report.Line("[trophy] %s: %s, %s, texts in %s\n", packagePath.c_str(), counted(title.package->trophies.size(), "trophy", "trophies").c_str(),
+                    counted(title.package->groups.size(), "group", "groups").c_str(), title.package->language.c_str());
+        for (const auto& skipped : title.package->skipped) report.Line("[trophy] %s: %s\n", packagePath.c_str(), skipped.c_str());
     }
     const auto rulesPath = StatRulesPath(serviceLabel);
-    title.rules = loadTitleFile<StatRules>(rulesPath, "posted events update no stats", [](std::string_view bytes) { return ParseStatRules(bytes); });
+    title.rules = loadTitleFile<StatRules>(rulesPath, "posted events update no stats", [](std::string_view bytes) { return ParseStatRules(bytes); }, report);
     if (title.rules) {
         std::size_t count = 0;
         for (const auto& [name, rules] : title.rules->events) count += rules.size();
-        std::fprintf(stderr, "[trophy] %s: %s, %s for %s\n", rulesPath.c_str(), counted(title.rules->stats.size(), "stat", "stats").c_str(), counted(count, "rule", "rules").c_str(),
-                     counted(title.rules->events.size(), "event", "events").c_str());
-        for (const auto& skipped : title.rules->skipped) std::fprintf(stderr, "[trophy] %s: %s\n", rulesPath.c_str(), skipped.c_str());
+        report.Line("[trophy] %s: %s, %s for %s\n", rulesPath.c_str(), counted(title.rules->stats.size(), "stat", "stats").c_str(), counted(count, "rule", "rules").c_str(),
+                    counted(title.rules->events.size(), "event", "events").c_str());
+        for (const auto& skipped : title.rules->skipped) report.Line("[trophy] %s: %s\n", rulesPath.c_str(), skipped.c_str());
     }
     return title;
 }

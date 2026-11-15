@@ -168,6 +168,20 @@ private:
     std::int64_t windowStartMs = 0;
 };
 
+class AdaptiveStagingReport {
+public:
+    void Attach(AdaptiveStaging& policy) {
+        policy.report = [this](const std::string& line) { lines.push_back(line); };
+    }
+
+    std::vector<std::string> Take() {
+        return std::exchange(lines, {});
+    }
+
+private:
+    std::vector<std::string> lines;
+};
+
 }
 
 #endif

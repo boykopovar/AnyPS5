@@ -69,6 +69,7 @@ void Unwatch(std::uint64_t address, std::size_t bytes);
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
 bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched = true, bool importMayWriteGuest = true);
 void SetUnwatchHook(void (*hook)(std::uint64_t address, std::size_t bytes));
+void SetStoreHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 bool UnwatchWritesProven();
 void SetImportWalkFailureForTest(int walk, std::uint64_t span = 0);
 #ifdef _WIN32
@@ -148,11 +149,20 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
 // workers bump before every packet as before. CollectEpochBumps counts the bumps ([guestmem] line).
 void BumpCollectEpoch();
 void AdoptLatestCollectEpoch();
+void AdoptCollectEpoch(std::uint64_t epoch);
+std::uint64_t HeldCollectEpoch();
 std::uint64_t ProofSerial();
 void BreakProofs();
 void MarkProofThread();
 std::uint64_t CollectEpoch();
 std::uint64_t CollectEpochBumps();
+struct CollectCounts {
+    std::uint64_t watchCalls = 0;
+    std::uint64_t committerWatchCalls = 0;
+    std::uint64_t epochBumps = 0;
+    std::uint64_t memoHits = 0;
+};
+CollectCounts CollectCounted();
 std::uint64_t ThreadCollectEpoch();
 std::uint64_t UnwatchSerial();
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);

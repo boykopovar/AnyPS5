@@ -818,7 +818,7 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
             std::snprintf(was, sizeof(was), " (was %llu MiB)", static_cast<unsigned long long>(cache.reportedBudget >> 20u));
             std::snprintf(wasStorage, sizeof(wasStorage), " (was %llu MiB)", static_cast<unsigned long long>(cache.reportedStorage >> 20u));
         }
-        std::fprintf(stderr, "[gpu] sampled texture cache budget %llu MiB%s: device-local heap %u has a VK_EXT_memory_budget budget of %llu MiB and uses %llu MiB, %llu MiB of it sampled textures (%llu MiB in the cache) and %llu MiB cached storage images; active storage image cache budget %llu MiB%s; storage_limit_age_ms=%s\n", static_cast<unsigned long long>(budget >> 20u), was, *heap, static_cast<unsigned long long>(reported.heapBudget[*heap] >> 20u), static_cast<unsigned long long>(reported.heapUsage[*heap] >> 20u), static_cast<unsigned long long>(sampled >> 20u), static_cast<unsigned long long>(cache.bytes >> 20u), static_cast<unsigned long long>(storage >> 20u), static_cast<unsigned long long>(storageLimit >> 20u), wasStorage, storageLimitAge);
+        AgcDriver::ProfilePrint_nid_no_patch("[gpu] sampled texture cache budget %llu MiB%s: device-local heap %u has a VK_EXT_memory_budget budget of %llu MiB and uses %llu MiB, %llu MiB of it sampled textures (%llu MiB in the cache) and %llu MiB cached storage images; active storage image cache budget %llu MiB%s; storage_limit_age_ms=%s\n", static_cast<unsigned long long>(budget >> 20u), was, *heap, static_cast<unsigned long long>(reported.heapBudget[*heap] >> 20u), static_cast<unsigned long long>(reported.heapUsage[*heap] >> 20u), static_cast<unsigned long long>(sampled >> 20u), static_cast<unsigned long long>(cache.bytes >> 20u), static_cast<unsigned long long>(storage >> 20u), static_cast<unsigned long long>(storageLimit >> 20u), wasStorage, storageLimitAge);
         cache.reportedBudget = budget;
         cache.reportedStorage = storageLimit;
         cache.reportedAt = now;
@@ -1777,6 +1777,11 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         ~Done() { flag = false; }
     } done{releasing};
     const auto releasedBefore = ImageMemoryReleasedBytes();
+    const auto twinsBefore = InputTwinCounters().residentBytes;
+    ReleaseInputTwins(bytes);
+    const auto twinsAfter = InputTwinCounters().residentBytes;
+    const auto twinsReleased = twinsBefore > twinsAfter ? twinsBefore - twinsAfter : 0;
+    if (twinsReleased >= bytes) return twinsReleased;
     std::uint64_t freed = 0;
     std::size_t sampledEntries = 0;
     std::size_t storageEntries = 0;
@@ -1850,8 +1855,18 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         }
     }
     freed = ImageMemoryReleasedBytes() - releasedBefore;
-    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept);
-    return freed;
+    std::size_t twinBuilds = 0;
+    std::uint64_t twinBytesEvicted = 0;
+    if (std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock); freed + twinsReleased < bytes && gpu.try_lock()) {
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) {
+            std::vector<std::shared_ptr<ShaderResources>> resources;
+            twinBytesEvicted = SharedResourceCache().TryReleaseInputTwins(bytes - freed - twinsReleased, &resources);
+            twinBuilds = resources.size();
+            for (auto& resource : resources) recorder->Keep(std::move(resource));
+        }
+    }
+    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept; input twins: %llu MiB released, %zu cached builds holding %llu MiB evicted\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept, static_cast<unsigned long long>(twinsReleased >> 20u), twinBuilds, static_cast<unsigned long long>(twinBytesEvicted >> 20u));
+    return freed + twinsReleased;
 }
 
 bool StorageImageCached(const Context& context, const StorageTexture* image) {
@@ -2000,6 +2015,13 @@ bool UsesAddressTables(const CompiledShader& compute) {
     return std::any_of(compute.program->bindings.begin(), compute.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
 }
 
+bool BindsGuestRangesOnly(const CompiledShader& compute) {
+    Require(compute.program != nullptr, "missing compiled shader");
+    return std::all_of(compute.program->bindings.begin(), compute.program->bindings.end(), [](const auto& binding) {
+        return binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
+    });
+}
+
 }
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), htileClear(htileClear), deferredCompute(compute), deferredSnapshots(snapshots) {
@@ -2007,6 +2029,9 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     // Every use of a compute build is a recorded dispatch that calls MarkGpuWrites, which staged
     // buffers need (a synchronous draw's use would not).
     guestMemory.AllowDeviceStaging();
+    guestMemory.AllowCopyBackDeferral();
+    if (BindsGuestRangesOnly(compute) && !htileClear.has_value()) guestMemory.AllowKeptCopyBacks();
+    guestMemory.AllowInputTwins();
     static const std::uint64_t addressStagingMinThreads = [] {
         const char* value = std::getenv("APS5_BDA_STAGING_MIN_THREADS");
         return value != nullptr ? std::strtoull(value, nullptr, 10) : 512ull;
@@ -3058,6 +3083,9 @@ bool LoopGuardEnabled() {
 void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
+    stagedBytes = guestMemory.StagedBytes();
+    guestMemory.StagedShadows(stagedShadows);
+    guestMemory.InputTwinBuffers(inputTwins);
     reusable = false;
     importsReconcilable = false;
     spaceReuse = false;
@@ -4111,15 +4139,125 @@ bool ShaderResources::EpochProofs() {
 }
 
 namespace {
-void noteEpochProof(bool reused, bool verified, bool failed) {
-    static std::atomic<std::uint64_t> reuses{0}, proofs{0}, checks{0}, failures{0};
-    if (verified) checks.fetch_add(1, std::memory_order_relaxed);
-    if (failed) failures.fetch_add(1, std::memory_order_relaxed);
-    const auto count = (reused ? reuses : proofs).fetch_add(1, std::memory_order_relaxed) + 1u;
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-    if (!report) return;
-    if (count % 262144u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] resource proofs: %llu reused the epoch's, %llu proved; verify: %llu checked, %llu failed; storage refreshes reused %llu\n", static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(proofs.load()), static_cast<unsigned long long>(checks.load()), static_cast<unsigned long long>(failures.load()), static_cast<unsigned long long>(StorageTexture::epochRefreshes.load()));
+
+struct DrawProofCounters {
+    std::atomic<std::uint64_t> reused{0};
+    std::atomic<std::uint64_t> proved{0};
+    std::atomic<std::uint64_t> verified{0};
+    std::atomic<std::uint64_t> differing{0};
+    std::atomic<std::uint64_t> stored{0};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrawProofMiss::Count)> missed{};
+};
+
+DrawProofCounters& drawProofCounters(DrawProofKind kind) {
+    static std::array<DrawProofCounters, static_cast<std::size_t>(DrawProofKind::Count)> counters;
+    return counters[static_cast<std::size_t>(kind)];
 }
+
+constexpr std::array<const char*, static_cast<std::size_t>(DrawProofMiss::Count)> DrawProofMissNames{"unproved", "epoch", "serial", "registry", "depth surfaces", "unwatch", "images", "depth planes", "imports", "staging", "target", "evicted", "input twins"};
+constexpr std::array<const char*, static_cast<std::size_t>(DrawProofKind::Count)> DrawProofKindNames{"resource", "target"};
+
+void reportEpochProofs() {
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr || std::getenv("APS5_VERIFY_DRAW_PROOFS") != nullptr;
+    if (!report) return;
+    auto& resources = drawProofCounters(DrawProofKind::Resources);
+    auto& targets = drawProofCounters(DrawProofKind::Targets);
+    const auto count = resources.reused.load(std::memory_order_relaxed) + resources.proved.load(std::memory_order_relaxed) + targets.reused.load(std::memory_order_relaxed) + targets.proved.load(std::memory_order_relaxed);
+    if (count == 0 || (count % 262144u != 0u && (count & (count - 1u)) != 0u)) return;
+    std::fprintf(stderr, "[epoch-proofs] resource proofs: %llu reused the epoch's, %llu proved; verify: %llu checked, %llu failed, %llu stored; target proofs: %llu reused, %llu proved; verify: %llu checked, %llu failed, %llu stored; storage refreshes reused %llu\n", static_cast<unsigned long long>(resources.reused.load()), static_cast<unsigned long long>(resources.proved.load()), static_cast<unsigned long long>(resources.verified.load()), static_cast<unsigned long long>(resources.differing.load()), static_cast<unsigned long long>(resources.stored.load()), static_cast<unsigned long long>(targets.reused.load()), static_cast<unsigned long long>(targets.proved.load()), static_cast<unsigned long long>(targets.verified.load()), static_cast<unsigned long long>(targets.differing.load()), static_cast<unsigned long long>(targets.stored.load()), static_cast<unsigned long long>(StorageTexture::epochRefreshes.load()));
+}
+
+}
+
+DrawProofStamp DrawProofStamp::Now() {
+    return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), DepthSurfacesSerial(), GuestMemory::UnwatchSerial()};
+}
+
+bool DrawProofsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_DRAW_PROOFS") == nullptr && EpochRevalidate();
+    return enabled;
+}
+
+bool DrawProofVerifyDue() {
+    static const bool every = std::getenv("APS5_VERIFY_DRAW_PROOFS") != nullptr;
+    static const bool sampled = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    if (every) return true;
+    if (!sampled) return false;
+    thread_local std::uint64_t reuses = 0;
+    return ++reuses % 64u == 0u;
+}
+
+DrawProofMiss DrawProofStampMiss(const DrawProofStamp& proved, const DrawProofStamp& now) {
+    if (now.epoch == 0 || now.epoch != proved.epoch) return DrawProofMiss::Epoch;
+    if (now.proof != proved.proof) return DrawProofMiss::Serial;
+    if (now.pending != proved.pending) return DrawProofMiss::Registry;
+    if (now.depthSurfaces != proved.depthSurfaces) return DrawProofMiss::DepthSurfaces;
+    if (now.unwatch != proved.unwatch) return DrawProofMiss::Unwatch;
+    return DrawProofMiss::None;
+}
+
+const char* DrawProofMissName(DrawProofMiss miss) {
+    return static_cast<std::size_t>(miss) < DrawProofMissNames.size() ? DrawProofMissNames[static_cast<std::size_t>(miss)] : "?";
+}
+
+void NoteDrawProofReused(DrawProofKind kind) {
+    drawProofCounters(kind).reused.fetch_add(1, std::memory_order_relaxed);
+    reportEpochProofs();
+}
+
+void NoteDrawProofProved(DrawProofKind kind) {
+    drawProofCounters(kind).proved.fetch_add(1, std::memory_order_relaxed);
+    reportEpochProofs();
+}
+
+void NoteDrawProofMissed(DrawProofKind kind, DrawProofMiss miss) {
+    drawProofCounters(kind).missed[static_cast<std::size_t>(miss)].fetch_add(1, std::memory_order_relaxed);
+}
+
+void NoteDrawProofVerified(DrawProofKind kind, bool differing, bool stored, const char* what) {
+    auto& counters = drawProofCounters(kind);
+    counters.verified.fetch_add(1, std::memory_order_relaxed);
+    if (differing) counters.differing.fetch_add(1, std::memory_order_relaxed);
+    if (stored) counters.stored.fetch_add(1, std::memory_order_relaxed);
+    if (differing || stored) {
+        static std::atomic<int> reports{0};
+        if (reports.fetch_add(1, std::memory_order_relaxed) < 32) std::fprintf(stderr, "[draw-proofs] verify: a reused %s proof %s the full check (%s)\n", DrawProofKindNames[static_cast<std::size_t>(kind)], differing ? "differs from" : "skipped a store made by", what);
+    }
+}
+
+DrawProofCounts DrawProofCounted() {
+    DrawProofCounts counts{};
+    for (std::size_t kind = 0; kind < counts.size(); ++kind) {
+        const auto& counters = drawProofCounters(static_cast<DrawProofKind>(kind));
+        auto& count = counts[kind];
+        count.reused = counters.reused.load(std::memory_order_relaxed);
+        count.proved = counters.proved.load(std::memory_order_relaxed);
+        count.verified = counters.verified.load(std::memory_order_relaxed);
+        count.differing = counters.differing.load(std::memory_order_relaxed);
+        count.stored = counters.stored.load(std::memory_order_relaxed);
+        for (std::size_t miss = 0; miss < count.missed.size(); ++miss) count.missed[miss] = counters.missed[miss].load(std::memory_order_relaxed);
+    }
+    return counts;
+}
+
+std::string DrawProofText(const DrawProofCounts& now, const DrawProofCounts& seen) {
+    std::string text;
+    for (std::size_t kind = 0; kind < now.size(); ++kind) {
+        const auto& current = now[kind];
+        const auto& before = seen[kind];
+        const auto delta = [](std::uint64_t value, std::uint64_t base) { return static_cast<unsigned long long>(value - base); };
+        char part[160];
+        std::snprintf(part, sizeof(part), "%s%s proofs reused %llu, proved %llu, not reused:", kind == 0 ? "" : "; ", DrawProofKindNames[kind], delta(current.reused, before.reused), delta(current.proved, before.proved));
+        text += part;
+        for (std::size_t miss = 0; miss < current.missed.size(); ++miss) {
+            if (current.missed[miss] == before.missed[miss]) continue;
+            std::snprintf(part, sizeof(part), " %s %llu", DrawProofMissNames[miss], delta(current.missed[miss], before.missed[miss]));
+            text += part;
+        }
+        std::snprintf(part, sizeof(part), ", verified %llu, differing %llu, stored %llu", delta(current.verified, before.verified), delta(current.differing, before.differing), delta(current.stored, before.stored));
+        text += part;
+    }
+    return text;
 }
 
 namespace {
@@ -4440,40 +4578,107 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
     return outcome(partial || !replaced.empty() ? IndexOutcome::Partial : IndexOutcome::Accepted);
 }
 
+bool ShaderResources::proofEligible() const {
+    if (!reusable || usesBda || bda != nullptr || spaceReuse || guestMemory.HoldsLease() || guestMemory.HasStagedCopies() || !comparedTextures.empty() || !comparedTableSpans.empty() || validatedTextures.size() != textures.size()) return false;
+    for (std::size_t i = 0; i < textures.size(); ++i) {
+        if (textures[i] == nullptr) continue;
+        const auto& surface = validatedTextures[i];
+        if (textures[i]->IsDepthCopy() || textures[i]->HasReuseLookup() || !surface.valid || surface.committedProved || (surface.generation == 0 && surface.committedGeneration != 0)) return false;
+    }
+    return std::none_of(storageTextures.begin(), storageTextures.end(), [](const std::shared_ptr<StorageTexture>& image) { return image == nullptr; });
+}
+
+bool ShaderResources::takeProof(const DrawProofStamp& stamp) {
+    if (!guestMemory.InputTwinProof(provedTwins)) return false;
+    provedImages.clear();
+    for (const auto& image : storageTextures) provedImages.emplace_back(image.get(), image->Version());
+    for (const auto& surface : validatedTextures) {
+        if (surface.source != nullptr) provedImages.emplace_back(surface.source, surface.source->Version());
+    }
+    provedStamp = stamp;
+    proofHeld = true;
+    return true;
+}
+
+DrawProofMiss ShaderResources::proofMiss(const DrawProofStamp& now) const {
+    if (const auto miss = DrawProofStampMiss(provedStamp, now); miss != DrawProofMiss::None) return miss;
+    for (const auto& texture : textures) {
+        if (texture != nullptr && texture->Released()) return DrawProofMiss::Images;
+    }
+    for (const auto& [image, version] : provedImages) {
+        if (image->Version() != version || !image->Cached()) return DrawProofMiss::Images;
+    }
+    for (std::size_t i = 0; i < textures.size(); ++i) {
+        if (textures[i] != nullptr && validatedTextures[i].depth && !DepthSurfaceHolds(context, validatedTextures[i].resource, textures[i].get())) return DrawProofMiss::DepthSurfaces;
+    }
+    if (DepthPlanesStale()) {
+        for (std::size_t i = 0; i < textures.size(); ++i) {
+            if (textures[i] != nullptr && !validatedTextures[i].depth && DepthPlanesOverlap(validatedTextures[i].resource.baseAddress, static_cast<std::size_t>(validatedTextures[i].bytes))) return DrawProofMiss::DepthPlanes;
+        }
+        for (const auto& image : storageTextures) {
+            if (DepthPlanesOverlap(image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()))) return DrawProofMiss::DepthPlanes;
+        }
+        for (const auto& region : directRegions) {
+            if (DepthPlanesOverlap(region.begin, static_cast<std::size_t>(region.end - region.begin))) return DrawProofMiss::DepthPlanes;
+        }
+    }
+    if (!directRegions.empty() && !(importsReconcilable ? HostImportsReconciledUnchanged(context, importsProof) : HostImportsUnchanged(context, importsProof))) return DrawProofMiss::Imports;
+    if (!guestMemory.InputTwinProofHolds(provedTwins)) return DrawProofMiss::InputTwins;
+    if (!guestMemory.StagingDecisionsCurrent()) return DrawProofMiss::Staging;
+    return DrawProofMiss::None;
+}
+
+bool ShaderResources::verifyProof(std::span<const CompiledShader> shaders, ProofReport* report) {
+    const auto keptTextures = textures;
+    const auto keptImages = storageTextures;
+    const auto images = provedImages;
+    const auto twins = provedTwins;
+    const auto pendingBefore = StorageTexture::PendingSerial();
+    const auto proofBefore = GuestMemory::ProofSerial();
+    ProofReport local;
+    auto* out = report != nullptr ? report : &local;
+    const bool ok = revalidateFull(shaders, out);
+    const bool sameObjects = keptTextures == textures && keptImages == storageTextures;
+    const bool uploaded = std::any_of(images.begin(), images.end(), [](const auto& entry) { return entry.first->Version() != entry.second; });
+    const bool registry = StorageTexture::PendingSerial() != pendingBefore;
+    const bool refreshed = !guestMemory.InputTwinProofHolds(twins);
+    const bool stored = GuestMemory::ProofSerial() != proofBefore;
+    const char* what = !ok ? "it refused the object" : !sameObjects ? "it bound another texture or storage image" : uploaded ? "it uploaded or wrote an image the object reads" : registry ? "it changed the pending registry" : refreshed ? "it refreshed or outdated an input twin the object reads" : stored ? "a store or write-back during the check" : "none";
+    const bool differing = !ok || !sameObjects || uploaded || registry || refreshed;
+    NoteDrawProofVerified(DrawProofKind::Resources, differing, stored, what);
+    if (differing || stored) proofHeld = false;
+    return ok;
+}
+
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (!registeredImageViewsCurrent(registeredImageViews)) {
         if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
-        provedEpoch = 0;
+        proofHeld = false;
         return false;
     }
-    if (EpochProofs()) {
-        const auto epoch = GuestMemory::CollectEpoch();
-        const auto proof = GuestMemory::ProofSerial();
-        const auto pending = StorageTexture::PendingSerial();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending) {
-            static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-            thread_local std::uint64_t reuses = 0;
-            if (verify && ++reuses % 64u == 0u) {
-                const bool ok = revalidateFull(shaders, report);
-                noteEpochProof(true, true, !ok);
-                return ok;
-            }
-            if (report != nullptr) *report = {ProofPath::Full, ProofFailure::None};
-            noteEpochProof(true, false, false);
+    if (!DrawProofsEnabled() && !EpochProofs()) {
+        NoteDrawProofMissed(DrawProofKind::Resources, DrawProofMiss::None);
+        return revalidateFull(shaders, report);
+    }
+    const auto now = DrawProofStamp::Now();
+    if (proofHeld) {
+        const auto miss = proofMiss(now);
+        if (miss == DrawProofMiss::None) {
+            if (DrawProofVerifyDue()) return verifyProof(shaders, report);
+            if (report != nullptr) *report = {ProofPath::Fast, ProofFailure::None};
+            NoteDrawProofReused(DrawProofKind::Resources);
             return true;
         }
-        const bool ok = revalidateFull(shaders, report);
-        noteEpochProof(false, false, false);
-        if (ok) {
-            provedEpoch = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); }) ? 0 : epoch;
-            provedProof = proof;
-            provedPending = pending;
-        } else {
-            provedEpoch = 0;
-        }
-        return ok;
+        NoteDrawProofMissed(DrawProofKind::Resources, miss);
+        proofHeld = false;
+    } else {
+        NoteDrawProofMissed(DrawProofKind::Resources, DrawProofMiss::None);
     }
-    return revalidateFull(shaders, report);
+    ProofReport local;
+    auto* out = report != nullptr ? report : &local;
+    const bool ok = revalidateFull(shaders, out);
+    if (ok && now.epoch != 0 && out->path != ProofPath::Full && proofEligible() && takeProof(now)) NoteDrawProofProved(DrawProofKind::Resources);
+    return ok;
 }
 
 bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report) {
@@ -5102,6 +5307,44 @@ void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> reso
         index.erase(entries.back().first);
         entries.pop_back();
     }
+    if (entries.front().second->StagedBytes() != 0) {
+        std::unordered_set<const void*> counted;
+        std::uint64_t staged = 0;
+        for (auto it = entries.begin(); it != entries.end();) {
+            std::uint64_t added = 0;
+            for (const auto& [shadow, bytes] : it->second->StagedShadows()) {
+                if (!counted.contains(shadow)) added += bytes;
+            }
+            if (it != entries.begin() && added != 0 && staged + added > StagedByteBudget()) {
+                if (evicted != nullptr) evicted->push_back(std::move(it->second));
+                index.erase(it->first);
+                it = entries.erase(it);
+                continue;
+            }
+            for (const auto& [shadow, bytes] : it->second->StagedShadows()) counted.insert(shadow);
+            staged += added;
+            ++it;
+        }
+    }
+    if (!entries.front().second->InputTwins().empty()) {
+        std::unordered_set<const void*> counted;
+        std::uint64_t resident = 0;
+        for (auto it = entries.begin(); it != entries.end();) {
+            std::uint64_t added = 0;
+            for (const auto& [twin, bytes] : it->second->InputTwins()) {
+                if (!counted.contains(twin)) added += bytes;
+            }
+            if (it != entries.begin() && added != 0 && resident + added > InputTwinByteBudget()) {
+                if (evicted != nullptr) evicted->push_back(std::move(it->second));
+                index.erase(it->first);
+                it = entries.erase(it);
+                continue;
+            }
+            for (const auto& [twin, bytes] : it->second->InputTwins()) counted.insert(twin);
+            resident += added;
+            ++it;
+        }
+    }
     if (entries.front().second->TableElements() == 0) return;
     std::uint64_t tables = 0;
     for (const auto& entry : entries) tables += entry.second->TableElements();
@@ -5137,6 +5380,24 @@ bool ResourceCache::TryRemoveImage(const StorageTexture* image, std::vector<std:
     if (!lock.owns_lock()) return false;
     removeImage(image, evicted);
     return true;
+}
+
+std::uint64_t ResourceCache::TryReleaseInputTwins(std::uint64_t bytes, std::vector<std::shared_ptr<ShaderResources>>* evicted) {
+    std::unique_lock lock(mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return 0;
+    std::unordered_set<const void*> counted;
+    std::uint64_t held = 0;
+    for (auto it = entries.end(); it != entries.begin() && held < bytes;) {
+        --it;
+        if (it->second->InputTwins().empty()) continue;
+        for (const auto& [twin, twinBytes] : it->second->InputTwins()) {
+            if (counted.insert(twin).second) held += twinBytes;
+        }
+        if (evicted != nullptr) evicted->push_back(std::move(it->second));
+        index.erase(it->first);
+        it = entries.erase(it);
+    }
+    return held;
 }
 
 void ResourceCache::removeImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted) {
@@ -5220,6 +5481,14 @@ std::uint64_t ResourceCache::TableElementBudget() {
         return static_cast<std::uint64_t>(parsed != 0 ? parsed : 65536ull);
     }();
     return elements;
+}
+
+std::uint64_t ResourceCache::StagedByteBudget() {
+    return StagingShadowLimit() / 2u;
+}
+
+std::uint64_t ResourceCache::InputTwinByteBudget() {
+    return InputTwinLimit() / 4u * 3u;
 }
 
 std::uint64_t ResourceCache::TableElements() const {
@@ -5530,7 +5799,8 @@ std::string ShaderResources::Describe() const {
         std::snprintf(line, sizeof(line), " %s 0x%llx+0x%llx(%ux%u f%u t%d) nz=%.2f", range.kind, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.width, range.height, range.format, range.tileMode, sample(range.address, range.bytes));
         text += line;
         if (range.dccAddress != 0) {
-            const auto keys = ReadDccKeys(range.dccAddress, range.bytes);
+            const bool readable = GuestMemory::Accessible(reinterpret_cast<const void*>(range.dccAddress), DccKeyBytes(range.bytes));
+            const auto keys = readable ? ReadDccKeys(range.dccAddress, range.bytes) : DccKeys::Unreadable;
             std::snprintf(line, sizeof(line), " dcc=%s@0x%llx", DccKeysName(keys), static_cast<unsigned long long>(range.dccAddress));
             text += line;
             if (keys == DccKeys::Mixed) {
@@ -5692,6 +5962,10 @@ void ShaderResources::writeDataWords(VkCommandBuffer commands, std::size_t alloc
 
 void ShaderResources::PrecollectSurfaces() const {
     for (const auto& range : describedRanges) GuestMemory::CollectWrites(range.address, static_cast<std::size_t>(range.bytes));
+}
+
+void ShaderResources::AppendSurfaceRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const {
+    for (const auto& range : describedRanges) ranges.emplace_back(range.address, range.bytes);
 }
 
 void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags) {

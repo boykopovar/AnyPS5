@@ -541,6 +541,7 @@ OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
     joined("REFUSED SHADERS:", {shown(sample.refusedShaders, [&](std::uint64_t refused) { return count(static_cast<double>(refused)); })});
     joined("", {sample.title.empty() ? std::nullopt : std::optional<std::string>("TITLE: " + OverlayText(sample.title)), sample.presentMode.empty() ? std::nullopt : std::optional<std::string>("PRESENT: " + OverlayText(sample.presentMode))});
     joined("FPS LIMIT:", {shown(sample.fpsLimit, [&](double limit) { return limit < 10000.0 ? rate(limit) : count(limit); })});
+    if (sample.unpacedFlips) add("UNPACED FLIPS");
     return content;
 }
 
@@ -990,6 +991,7 @@ void PerformanceOverlay::sampleDetails(OverlayStatistics::Clock::time_point at, 
     detailSample.presentMode = std::string(OverlayPresentModeName(info.presentMode));
     if (info.fpsLimit > 0.0) detailSample.fpsLimit = info.fpsLimit;
     else detailSample.fpsLimit.reset();
+    detailSample.unpacedFlips = info.unpacedFlips;
     sampleTrace(at);
     detail.base = std::move(now);
     detail.repeats = 0;

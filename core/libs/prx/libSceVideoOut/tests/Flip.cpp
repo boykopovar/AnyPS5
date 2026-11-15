@@ -1021,6 +1021,87 @@ void testFrameLimit() {
     LibcRunShutdown_nid_postfix();
 }
 
+void testUnpacedFlips(bool unpaced) {
+    const char* setting = std::getenv("APS5_UNPACED_FLIPS");
+    check(unpaced == (setting != nullptr && std::string(setting) == "1"), unpaced ? "the unpaced flip test runs with APS5_UNPACED_FLIPS=1" : "the paced flip test runs without APS5_UNPACED_FLIPS");
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::array<std::vector<std::byte>, 2> allocations{std::vector<std::byte>(6 * 65536 + 65535), std::vector<std::byte>(6 * 65536 + 65535)};
+    std::array<VideoOutBuffers, 2> buffers{};
+    for (std::size_t i = 0; i < buffers.size(); ++i) {
+        const auto storage = alignedBuffer(allocations[i]);
+        fillBuffer(storage, 259, 137);
+        buffers[i] = {storage.data(), nullptr, {nullptr, nullptr}};
+    }
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, buffers.data(), 2, &attribute, 0, nullptr);
+    KernelEqueue queue = 0;
+    check(sceKernelCreateEqueue(&queue, "unpaced flips") == 0, "event queue creation failed");
+    auto owner = EqueuePin_nid_postfix(queue);
+    check(sceVideoOutAddFlipEvent(queue, handle, nullptr) == 0, "flip event subscription failed");
+    std::int64_t argument = 0;
+    std::uint64_t flippedAt = 0;
+    const auto flip = [&] {
+        const int index = static_cast<int>(argument % 2);
+        check(sceVideoOutSubmitFlip(handle, index, VIDEO_OUT_FLIP_MODE_VSYNC, ++argument) == 0, "a flip was not accepted");
+        std::unique_lock lock(cfg->mutex);
+        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == static_cast<std::uint64_t>(argument); }), "a flip did not complete");
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(cfg->flipStatus.flipArg == argument && cfg->flipStatus.currentBuffer == index && cfg->flipStatus.flipPendingNum == 0 && cfg->bufferPending[0] == 0 && cfg->bufferPending[1] == 0, "the flip status is wrong after a flip");
+        check(cfg->lastFlipVblank >= flippedAt && cfg->lastFlipVblank <= cfg->vblankStatus.count, "a flip was recorded at an earlier vblank than the flip before it, or at one still to come");
+        flippedAt = cfg->lastFlipVblank;
+    };
+    const auto vblanks = [&] {
+        std::lock_guard lock(cfg->mutex);
+        return cfg->vblankStatus.count;
+    };
+    flip();
+    flip();
+    constexpr std::uint64_t flips = 24;
+    constexpr double vblankMs = 1001.0 / 60.0;
+    const auto presentsBefore = AgcDriver::VulkanDevice::PresentCounts();
+    const auto flippedBefore = flippedAt;
+    const auto vblanksBefore = vblanks();
+    const auto begin = std::chrono::steady_clock::now();
+    for (std::uint64_t count = 0; count < flips; ++count) flip();
+    const double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    const auto vblanksDuring = vblanks() - vblanksBefore;
+    const auto presentsAfter = AgcDriver::VulkanDevice::PresentCounts();
+    std::printf("%llu flips in %.1f ms over %llu vblanks (flips at vblanks %llu to %llu); presented %llu, dropped at acquire %llu\n", static_cast<unsigned long long>(flips), elapsedMs, static_cast<unsigned long long>(vblanksDuring), static_cast<unsigned long long>(flippedBefore), static_cast<unsigned long long>(flippedAt), static_cast<unsigned long long>(presentsAfter.presents - presentsBefore.presents), static_cast<unsigned long long>(presentsAfter.acquireDrops - presentsBefore.acquireDrops));
+    if (unpaced) {
+        check(vblanksDuring < flips / 2 && flippedAt - flippedBefore < flips / 2 && elapsedMs < static_cast<double>(flips / 2) * vblankMs, "unpaced flips still completed about once per vblank");
+    } else {
+        check(flippedAt - flippedBefore >= flips, "paced flips completed more than once per vblank");
+        check(elapsedMs >= static_cast<double>(flips - 2) * vblankMs - 5.0, "paced flips completed faster than the 59.94 Hz vblank");
+    }
+    std::vector<std::int64_t> delivered;
+    std::array<KernelEvent, 16> events{};
+    for (int collected; (collected = owner->GetTriggeredEvents(events.data(), static_cast<int>(events.size()))) > 0;) {
+        for (int index = 0; index < collected; ++index) {
+            std::int64_t data = 0;
+            check(sceVideoOutGetEventId(&events[index]) == VIDEO_OUT_EVENT_FLIP && sceVideoOutGetEventData(&events[index], &data) == 0, "a flip event could not be read");
+            delivered.push_back(data);
+        }
+    }
+    check(static_cast<std::int64_t>(delivered.size()) == argument, "a flip event was lost or added");
+    for (std::size_t index = 0; index < delivered.size(); ++index) check(delivered[index] == static_cast<std::int64_t>(index) + 1, "the flip events do not carry each flip's argument in order");
+    const auto waitBegin = std::chrono::steady_clock::now();
+    const auto vblankBefore = vblanks();
+    check(sceVideoOutWaitVblank(handle) == 0, "the vblank wait failed");
+    const auto waitFirst = std::chrono::steady_clock::now();
+    for (int count = 0; count < 6; ++count) check(sceVideoOutWaitVblank(handle) == 0, "the vblank wait failed");
+    const double waitedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitFirst).count();
+    check(vblanks() - vblankBefore >= 7, "a vblank wait returned before the next vblank");
+    check(waitedMs >= 80.0, "six vblank waits took less than six periods of 59.94 Hz");
+    std::printf("seven vblank waits took %.1f ms, six of them %.1f ms\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitBegin).count(), waitedMs);
+    check(sceVideoOutDeleteFlipEvent(queue, handle) == 0, "flip event unsubscription failed");
+    check(sceKernelDeleteEqueue(queue) == 0, "the event queue was not deleted");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 std::uint32_t busyLoopResult(std::uint32_t iterations) {
     std::uint32_t value = 1;
     for (std::uint32_t i = 0; i < iterations; ++i) value = value * value + 1u;
@@ -1579,6 +1660,8 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "present") testPresentation();
         else if (argc == 2 && std::string(argv[1]) == "backtoback") testBackToBack();
         else if (argc == 2 && std::string(argv[1]) == "fps_limit") testFrameLimit();
+        else if (argc == 2 && std::string(argv[1]) == "unpaced") testUnpacedFlips(true);
+        else if (argc == 2 && std::string(argv[1]) == "paced") testUnpacedFlips(false);
         else if (argc == 2 && std::string(argv[1]) == "dcc") testCompressedPresentation();
         else if (argc == 2 && std::string(argv[1]) == "pacing") testReleaseVblank();
         else if (argc == 2 && std::string(argv[1]) == "aftergpu") testFlipAfterGpuWork();

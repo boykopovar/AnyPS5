@@ -1,4 +1,5 @@
 #include "prx/libc/include/LogFile.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/LogMacros.hpp"
 #include <algorithm>
@@ -236,6 +237,7 @@ public:
         if (interactive) {
 #ifdef _WIN32
             std::setvbuf(stdout, nullptr, _IONBF, 0);
+            WriteUnbufferedStreamWhole_nid_no_patch(stdout);
 #else
             std::setvbuf(stdout, nullptr, _IOLBF, 0);
 #endif

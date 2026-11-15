@@ -1,0 +1,13 @@
+add_test_executable(agc_dispatch_io_trace_tests EXCLUDE_FROM_ALL tests/DispatchIoTrace.cpp)
+target_include_directories(agc_dispatch_io_trace_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_dispatch_io_trace_tests PRIVATE libc)
+configure_windows_unwind(agc_dispatch_io_trace_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_dispatch_io_trace_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_dispatch_io_trace COMMAND agc_dispatch_io_trace_tests)
+    set_tests_properties(agc_dispatch_io_trace PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_dispatch_io_trace PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

@@ -538,6 +538,13 @@ public:
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
     static std::uint64_t GuestSnapshots();
+    enum class SingleKeyFallback : std::uint8_t { Switch, Proved, Settled, Unwatched, Import, Layout, Count };
+    struct SingleKeyUploadCounts {
+        std::uint64_t gpu = 0;
+        std::uint64_t fill = 0;
+        std::array<std::uint64_t, static_cast<std::size_t>(SingleKeyFallback::Count)> cpu{};
+    };
+    static SingleKeyUploadCounts SingleKeyUploads();
     static std::uint64_t OccasionalLabelStores();
     std::uint64_t GuestBytes() const;
     std::uint64_t BudgetBytes() const;
@@ -553,6 +560,9 @@ private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     void upload(const std::vector<bool>* layers = nullptr);
+    enum class SingleRoute : std::uint8_t { Read, Clear, Gpu };
+    SingleRoute singleKeyRoute(std::uint64_t collected, VkClearColorValue& clear);
+    bool singleBlocksFit(const HostImport& import);
     void clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range);
     std::vector<bool> cpuUploadLayers(const std::vector<bool>& units) const;
     void captureGuestBytes(const std::vector<bool>* layers, bool keepWritten = false);
