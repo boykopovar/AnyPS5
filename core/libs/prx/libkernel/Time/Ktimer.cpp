@@ -51,10 +51,17 @@ struct Ktimer {
 static_assert(TimerMax == TimerSignalSlots);
 static_assert(sizeof(GuestSigevent) == 80);
 
-std::mutex& g_ktimerLock = *new std::mutex();
-Ktimer g_ktimers[TimerMax];
-TimedWait::Condition& g_ktimerChanged = *new TimedWait::Condition();
-bool g_ktimerThreadStarted = false;
+struct KtimerState {
+    std::mutex lock;
+    TimedWait::Condition changed;
+    Ktimer timers[TimerMax];
+    bool threadStarted = false;
+};
+
+KtimerState& Ktimers() {
+    static auto* state = new KtimerState();
+    return *state;
+}
 
 Nanoseconds ToNanoseconds(const KernelTimespec& time) {
     return static_cast<Nanoseconds>(time.tv_sec) * NanosecondsPerSecond + time.tv_nsec;
@@ -79,8 +86,9 @@ bool FixTimespec(KernelTimespec& time) {
 }
 
 Ktimer* FindTimer(int id) {
-    if (id < FirstTimer || id >= TimerMax || !g_ktimers[id].live) return nullptr;
-    return &g_ktimers[id];
+    if (id < FirstTimer || id >= TimerMax) return nullptr;
+    Ktimer& timer = Ktimers().timers[id];
+    return timer.live ? &timer : nullptr;
 }
 
 void Expire(Ktimer& timer, Nanoseconds now) {
@@ -119,11 +127,12 @@ void Fire(int id, Ktimer& timer, Nanoseconds now) {
 
 void RunKtimers() {
     constexpr Nanoseconds LongestWait = 3600 * NanosecondsPerSecond;
-    std::unique_lock lock(g_ktimerLock);
+    auto& state = Ktimers();
+    std::unique_lock lock(state.lock);
     for (;;) {
         std::optional<std::uint64_t> wake;
         for (int id = FirstTimer; id < TimerMax; ++id) {
-            Ktimer& timer = g_ktimers[id];
+            Ktimer& timer = state.timers[id];
             if (!timer.live || timer.notify == SigevNone || timer.value == 0) continue;
             const Nanoseconds now = ClockNow(timer.clock);
             if (now >= timer.value) Fire(id, timer, now);
@@ -132,17 +141,17 @@ void RunKtimers() {
             const std::uint64_t at = TimedWait::NowNanos() + static_cast<std::uint64_t>(left);
             wake = wake ? std::min(*wake, at) : at;
         }
-        if (wake) g_ktimerChanged.WaitUntil(lock, *wake);
-        else g_ktimerChanged.Wait(lock);
+        if (wake) state.changed.WaitUntil(lock, *wake);
+        else state.changed.Wait(lock);
     }
 }
 
-void NotifyKtimers() {
-    if (!g_ktimerThreadStarted) {
+void NotifyKtimers(KtimerState& state) {
+    if (!state.threadStarted) {
         Libc::StartHostThread(RunKtimers).detach();
-        g_ktimerThreadStarted = true;
+        state.threadStarted = true;
     }
-    g_ktimerChanged.NotifyAll();
+    state.changed.NotifyAll();
 }
 
 }
@@ -160,25 +169,26 @@ int APS5_VABI ktimer_create_nid_postfix(int clock, const GuestSigevent* event, i
             return static_cast<int>(Fail(GuestEinval));
     }
     int id = FirstTimer;
+    auto& state = Ktimers();
     {
-        std::lock_guard lock(g_ktimerLock);
-        while (id < TimerMax && g_ktimers[id].live) ++id;
+        std::lock_guard lock(state.lock);
+        while (id < TimerMax && state.timers[id].live) ++id;
         if (id == TimerMax) return static_cast<int>(Fail(GuestEagain));
         if (timerid == nullptr) return static_cast<int>(Fail(GuestEfault));
         if (event == nullptr) request.value = id;
         const std::int64_t thread = request.notify == SigevThreadId ? static_cast<std::int32_t>(request.extra[0]) : 0;
-        g_ktimers[id] = {true, clock, 0, 0, request.notify, request.signo, request.value, thread};
+        state.timers[id] = {true, clock, 0, 0, request.notify, request.signo, request.value, thread};
     }
     if (!GuestCopyOut_nid_no_patch(timerid, &id, sizeof(id))) {
-        std::lock_guard lock(g_ktimerLock);
-        g_ktimers[id] = {};
+        std::lock_guard lock(state.lock);
+        state.timers[id] = {};
         return static_cast<int>(Fail(GuestEfault));
     }
     return 0;
 }
 
 int APS5_VABI ktimer_delete_nid_postfix(int id) {
-    std::lock_guard lock(g_ktimerLock);
+    std::lock_guard lock(Ktimers().lock);
     Ktimer* timer = FindTimer(id);
     if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
     *timer = {};
@@ -192,7 +202,7 @@ int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspe
     GuestItimerspec previous{};
     const std::int64_t armer = scePthreadGetthreadid();
     {
-        std::lock_guard lock(g_ktimerLock);
+        std::lock_guard lock(Ktimers().lock);
         Ktimer* timer = FindTimer(id);
         if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
         if (!FixTimespec(next.it_value)) return static_cast<int>(Fail(GuestEinval));
@@ -204,7 +214,7 @@ int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspe
         timer->value = ToNanoseconds(next.it_value);
         if (armed && (flags & TimerAbstime) == 0) timer->value += ClockNow(timer->clock);
         if (timer->notify == SigevSignal) timer->thread = armer;
-        if (timer->notify != SigevNone) NotifyKtimers();
+        if (timer->notify != SigevNone) NotifyKtimers(Ktimers());
     }
     if (oldValue != nullptr && !GuestCopyOut_nid_no_patch(oldValue, &previous, sizeof(previous)))
         return static_cast<int>(Fail(GuestEfault));
@@ -214,7 +224,7 @@ int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspe
 int APS5_VABI ktimer_gettime_nid_postfix(int id, GuestItimerspec* value) {
     GuestItimerspec remaining{};
     {
-        std::lock_guard lock(g_ktimerLock);
+        std::lock_guard lock(Ktimers().lock);
         Ktimer* timer = FindTimer(id);
         if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
         if (value == nullptr) return static_cast<int>(Fail(GuestEfault));
@@ -225,7 +235,7 @@ int APS5_VABI ktimer_gettime_nid_postfix(int id, GuestItimerspec* value) {
 }
 
 int APS5_VABI ktimer_getoverrun_nid_postfix(int id) {
-    std::lock_guard lock(g_ktimerLock);
+    std::lock_guard lock(Ktimers().lock);
     if (FindTimer(id) == nullptr) return static_cast<int>(Fail(GuestEinval));
     return TimerSignalOverrun(id);
 }
