@@ -5,6 +5,7 @@
 // or distribute this file you indicate that you have read the license and understand and accept it fully.
 
 #include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -13,6 +14,9 @@
 using namespace FreeType;
 
 namespace {
+
+constexpr std::int32_t InvalidArgument = 0x06;
+constexpr std::int32_t InvalidFaceHandle = 0x23;
 
 GuestSlotInternalRec* Internal(GuestGlyphSlotRec* slot) {
     return static_cast<GuestSlotInternalRec*>(slot->internal);
@@ -68,6 +72,15 @@ int APS5_VABI ft_glyphslot_alloc_bitmap_nid_postfix(GuestGlyphSlotRec* slot, std
     std::int32_t error = 0;
     slot->bitmap.buffer = static_cast<unsigned char*>(ft_mem_alloc_nid_postfix(memory, bytes, &error));
     return error;
+}
+
+int APS5_VABI FT_New_GlyphSlot_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestGlyphSlotRec**) {
+    const char* function = __func__;
+    if (!face) return InvalidFaceHandle;
+    FreeType::GuestFace* owner = FreeType::FaceOf(face);
+    if (!owner) NotImplemented_nid_no_patch(function);
+    if (!owner->host->driver) return InvalidArgument;
+    NotImplemented_nid_no_patch(function);
 }
 
 }
