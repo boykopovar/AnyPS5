@@ -132,6 +132,7 @@ std::uint32_t storedFragments(const ColorTarget& target) {
 constexpr char fmaskPlane[] = "the FMASK of EQAA color target";
 
 std::uint64_t fmaskBytes(const ColorTarget& target) {
+    if (ColorTileModeIsGcn(target.tileMode)) return target.gcnFmaskBytes;
     const auto bitsPerSample = std::bit_ceil(static_cast<std::uint32_t>(std::bit_width(target.eqaaFragments)));
     return ColorTargetLayout(target.extent.width, target.extent.height, ColorTileMode::Z64KBX, std::max(1u, target.samples * bitsPerSample / 8u)).Bytes();
 }
@@ -837,7 +838,7 @@ private:
         if (nativeFmaskSamples(use.samples) && use.fmaskAddress != 0u && use.cmaskAddress != 0u) {
             const auto resource = fmaskResource(use);
             static_cast<void>(fmaskSnapshotResource(resource));
-            fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(DescribeSurface(resource).guestBytes), 0};
+            fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(SurfaceGuestBytes(resource)), 0};
             auto& range = *fmaskRange;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 65536u);
             fmaskCopy.compared = !WatchedAfterSettle(context, range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes);
@@ -1075,7 +1076,7 @@ void guard(const Context& context, const ColorTarget& target, const std::shared_
     if (target.dccAddress != 0) {
         guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid, use});
         if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid, use});
-        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid, use});
+        if (nativeFmaskSamples(target.samples) && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, SurfaceGuestBytes(fmaskResource(target)), target.samples, active, metadataValid, use});
     }
     guardedGeneration().fetch_add(1, std::memory_order_release);
     moveGuardSpans();
@@ -1147,6 +1148,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
                 moveGuardSpans();
                 target->target.fmaskAddress = use.fmaskAddress;
                 target->target.fmaskPipeBankXor = use.fmaskPipeBankXor;
+                target->target.gcnFmaskBytes = use.gcnFmaskBytes;
             }
         }
         if (target->fromTexture && use.cmaskAddress != 0) {
@@ -1765,9 +1767,25 @@ void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
     claimOverlapping(address, bytes, nullptr);
 }
 
+bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return false;
+    std::shared_lock lock(guardedMutex());
+    return std::ranges::any_of(guarded(), [&](const auto& range) { return !range.fmask && address < range.address + range.bytes && range.address < address + bytes; });
+}
+
+void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::shared_lock lock(guardedMutex());
+    for (const auto& range : guarded()) {
+        if (range.fmask || address >= range.address + range.bytes || range.address >= address + bytes || range.use->claimed.exchange(true, std::memory_order_acq_rel)) continue;
+        static std::atomic<int> reports{0};
+        if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] a single-sample storage image store to 0x%llx+0x%llx claims the memory of multisampled color target 0x%llx+0x%llx (%u samples)\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
+    }
+}
+
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
     const auto bits = static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.coverageSamples;
-    const auto bytes = std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
+    const auto bytes = ColorTileModeIsGcn(target.tileMode) ? target.gcnFmaskBytes : std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
     std::unique_lock lock(guardedMutex());
     const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
     if (!known) {
@@ -1935,6 +1953,28 @@ void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& acti
     std::unique_lock lock(guardedMutex());
     active->store(false, std::memory_order_release);
     if (std::erase_if(guarded(), [&](const auto& range) { return range.active == active; }) != 0u) guardedGeneration().fetch_add(1, std::memory_order_release);
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
+}
+
+void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::unique_lock lock(guardedMutex());
+    bool changed = false;
+    std::vector<std::shared_ptr<std::atomic<bool>>> retired;
+    for (const auto& range : guarded()) {
+        if (!range.fmask && range.plane != fmaskPlane) continue;
+        if (!range.use->hostOnly.load(std::memory_order_acquire) || range.use->claimed.load(std::memory_order_acquire)) continue;
+        if (address > range.address || range.address + range.bytes > address + bytes) continue;
+        if (std::find(retired.begin(), retired.end(), range.active) == retired.end()) retired.push_back(range.active);
+    }
+    if (retired.empty()) return;
+    for (const auto& active : retired) active->store(false, std::memory_order_release);
+    std::erase_if(guarded(), [&](const auto& range) {
+        if (std::find(retired.begin(), retired.end(), range.active) == retired.end()) return false;
+        if (range.metadataValid) range.metadataValid->store(false, std::memory_order_release);
+        return true;
+    });
+    guardedGeneration().fetch_add(1, std::memory_order_release);
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 

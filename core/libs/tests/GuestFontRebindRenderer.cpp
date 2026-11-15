@@ -39,6 +39,9 @@ int main() {
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &secondFont) == SCE_FONT_OK);
 
     Require(sceFontRebindRenderer(nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontRebindRenderer(nullptr) == static_cast<int>(0x80460005));
+    alignas(16) static unsigned char zeroedBlock[256] = {};
+    Require(sceFontRebindRenderer(reinterpret_cast<FontHandle>(zeroedBlock)) == static_cast<int>(0x80460005));
     alignas(16) static unsigned char notAFont[16384] = {};
     Require(sceFontRebindRenderer(reinterpret_cast<FontHandle>(notAFont)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
 

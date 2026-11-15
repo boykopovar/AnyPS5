@@ -52,18 +52,24 @@ std::unordered_map<int, Request> requests;
 int nextTitleContext = 1;
 int nextRequest = 1;
 
+bool AreSlotsValid(const std::int32_t* slotIds, int arrayLen) {
+    if (arrayLen <= 0) return true;
+    std::array<std::int32_t, MAX_SLOTS> localSlots{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localSlots.data(), slotIds, static_cast<std::size_t>(arrayLen) * sizeof(std::int32_t));
+    errno = savedErrno;
+    if (!copied) return false;
+    for (int index = 0; index < arrayLen; ++index) {
+        if (localSlots[index] < 0) return false;
+    }
+    return true;
+}
+
 int ValidateSlots(const std::int32_t* slotIds, int arrayLen, const void* option) {
     if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (arrayLen < 1 || option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    std::array<std::int32_t, MAX_SLOTS> localSlots{};
-    const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(localSlots.data(), slotIds, arrayLen * sizeof(std::int32_t));
-    errno = savedErrno;
-    if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    for (int index = 0; index < arrayLen; ++index) {
-        if (localSlots[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    }
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -380,16 +386,7 @@ int APS5_VABI sceNpTusDeleteMultiSlotDataVUserAsync(int reqId, const NpOnlineId*
     if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    if (arrayLen > 0) {
-        std::array<std::int32_t, MAX_SLOTS> localSlots{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyIn_nid_no_patch(localSlots.data(), slotIds, static_cast<std::size_t>(arrayLen) * sizeof(std::int32_t));
-        errno = savedErrno;
-        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-        for (int index = 0; index < arrayLen; ++index) {
-            if (localSlots[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-        }
-    }
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (!targetVirtualUserId) {
         std::lock_guard lock(tusMutex);
         if (requests.find(reqId) == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
@@ -473,8 +470,14 @@ int APS5_VABI sceNpTusGetFriendsDataStatusForCrossSave(int reqId, std::int32_t s
 int APS5_VABI sceNpTssGetDataAsync(int reqId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, const void* option) {
     (void)data;
     (void)recvSize;
-    const auto* opt = static_cast<const TssGetDataOptParam*>(option);
-    if (opt && opt->size != sizeof(TssGetDataOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
+    if (option) {
+        TssGetDataOptParam localOption{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+        errno = savedErrno;
+        if (!copied) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (localOption.size != sizeof(TssGetDataOptParam)) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
+    }
     if (dataStatus && dataStatusSize != 0x18) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
     if (slotId < 0 || slotId > TSS_MAX_SLOT_ID) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
@@ -554,7 +557,7 @@ int APS5_VABI sceNpTusDeleteMultiSlotDataAAsync(int reqId, std::uint64_t targetA
     if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
 
@@ -562,7 +565,7 @@ int APS5_VABI sceNpTusDeleteMultiSlotDataAsync(int reqId, const void* targetNpId
     if (!targetNpId || !slotIds || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
 
@@ -641,7 +644,7 @@ int APS5_VABI sceNpTusGetMultiSlotDataStatusAAsync(int reqId, std::uint64_t targ
     if (!slotIds || !statusArray) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
 
@@ -650,7 +653,7 @@ int APS5_VABI sceNpTusGetMultiSlotDataStatusAVUserAsync(int reqId, const NpOnlin
     if (!targetVirtualUserId || !slotIds || !statusArray) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (IsEmpty(targetVirtualUserId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
@@ -660,7 +663,7 @@ int APS5_VABI sceNpTusGetMultiSlotDataStatusAsync(int reqId, const void* targetN
     if (!targetNpId || !slotIds || !statusArray || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
 
@@ -670,7 +673,7 @@ int APS5_VABI sceNpTusGetMultiSlotDataStatusForCrossSaveAsync(int reqId, std::ui
     if (!slotIds || !statusArray) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
 
@@ -679,7 +682,7 @@ int APS5_VABI sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync(int reqId, co
     if (!targetVirtualUserId || !slotIds || !statusArray) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (IsEmpty(targetVirtualUserId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
@@ -689,7 +692,7 @@ int APS5_VABI sceNpTusGetMultiSlotDataStatusVUserAsync(int reqId, const NpOnline
     if (!targetVirtualUserId || !slotIds || !statusArray || arrayLen < 1) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_NPID;
-    if (std::any_of(slotIds, slotIds + arrayLen, [](std::int32_t id) { return id < 0; })) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!AreSlotsValid(slotIds, arrayLen)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (IsEmpty(targetVirtualUserId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return StartOffline(reqId);
 }
