@@ -1,10 +1,17 @@
 #include "prx/libSceSdma/libSceSdma.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -44,6 +51,30 @@ void RequireOpen() {
     Require(sceSdmaOpen(&handle, buffer.data(), 0x7fff, &param) == InvalidArgument);
     Require(sceSdmaOpen(&handle, nullptr, 0x8000, &param) == InvalidArgument);
     Require(sceSdmaOpen(nullptr, buffer.data(), 0x8000, &param) == InvalidArgument);
+    errno = 71;
+    Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, reinterpret_cast<const SdmaOpenParam*>(0x10)) == InvalidArgument);
+    Require(errno == 71);
+    Require(handle == nullptr);
+    Require(sceSdmaOpen(reinterpret_cast<void**>(0x10), buffer.data(), 0x8000, &param) == InvalidArgument);
+    Require(errno == 71);
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    void* readonlyHandle = VirtualAlloc(nullptr, sysInfo.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(readonlyHandle != nullptr);
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    void* readonlyHandle = mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readonlyHandle != MAP_FAILED);
+#endif
+    Require(sceSdmaOpen(static_cast<void**>(readonlyHandle), buffer.data(), 0x8000, &param) == InvalidArgument);
+    Require(errno == 71);
+#ifdef _WIN32
+    Require(VirtualFree(readonlyHandle, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readonlyHandle, static_cast<std::size_t>(pageSize)) == 0);
+#endif
     for (std::uint32_t engine : {0u, 11u, 20u, 0xffffffffu}) {
         param.engine = engine;
         Require(sceSdmaOpen(&handle, buffer.data(), 0x8000, &param) == InvalidArgument);
