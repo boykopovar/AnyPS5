@@ -392,6 +392,27 @@ static void RequireReported(KernelEqueue eq, int num, std::initializer_list<uint
     }
 }
 
+static void VerifyUserEventsReportInTriggerOrder() {
+    KernelEqueue eq = 0;
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    int payload = 0;
+    Require(sceKernelCreateEqueue(&eq, "fire order") == SCE_OK);
+    for (const int id : {1, 2, 3}) Require(sceKernelAddUserEvent(eq, id) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    for (const int id : {2, 1, 3}) Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    RequireReported(eq, 3, {2, 1, 3});
+    RequireReported(eq, 3, {2, 1, 3});
+    for (const int id : {1, 1}) Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    RequireReported(eq, 3, {2, 1, 3});
+    for (const int id : {3, 2}) Require(sceKernelTriggerUserEvent(eq, id, &payload) == SCE_OK);
+    RequireReported(eq, 1, {2});
+    RequireReported(eq, 1, {1});
+    RequireReported(eq, 3, {3, 2, 1});
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 static void VerifyReportedEventsMoveBehindWaitingOnes() {
     KernelEqueue eq = 0;
     KernelEvent events[4]{};
@@ -500,6 +521,7 @@ int main() {
     VerifyUndrainedTriggersStayBounded();
     VerifyAddEventTruncatesPending();
     VerifyReportedEventsMoveBehindWaitingOnes();
+    VerifyUserEventsReportInTriggerOrder();
 
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "events") == SCE_OK);

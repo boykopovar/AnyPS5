@@ -844,8 +844,8 @@ if(BUILD_TESTING)
         add_test(NAME tools_cmake_fuzzer_sanitizers COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_cmake_fuzzer_sanitizers.py)
         set_tests_properties(tools_cmake_fuzzer_sanitizers PROPERTIES TIMEOUT 120)
 
-        add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py)
+        add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE} -u
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py -v)
         set_tests_properties(title_run_paths PROPERTIES TIMEOUT 30)
         add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)
