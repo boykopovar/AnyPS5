@@ -9,6 +9,7 @@ static std::vector<int> order;
 static void APS5_VABI RecordA(void*) { order.push_back(1); }
 static void APS5_VABI RecordB(void*) { order.push_back(2); }
 static void APS5_VABI RecordC(void*) { order.push_back(3); }
+static void APS5_VABI RecordD(void*) { order.push_back(4); }
 
 int main() {
     void* const handleA = reinterpret_cast<void*>(0x10);
@@ -28,5 +29,12 @@ int main() {
 
     libc___cxa_finalize(handleB);
     Require(order.size() == 1 && order[0] == 2);
+
+    order.clear();
+    Require(__cxa_atexit_nid_postfix(RecordC, nullptr, handleA) == 0);
+    Require(__cxa_atexit_nid_postfix(RecordD, nullptr, handleB) == 0);
+    libc___cxa_finalize(nullptr);
+    Require(order.size() == 2);
+    Require(order[0] == 4 && order[1] == 3);
     return 0;
 }
