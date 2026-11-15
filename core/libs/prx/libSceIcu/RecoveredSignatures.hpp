@@ -2,6 +2,7 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIcu/Enumeration.hpp"
+#include "prx/libSceIcu/UText.hpp"
 #include <cstdint>
 
 struct UBreakIterator;

@@ -1542,6 +1542,10 @@ void TestLanguagesAndDebugIds() {
         "language strings are returned directly");
     Require(sceNpUtilGetNpLanguageCode(31, code) == NpUtilInvalid && sceNpUtilGetNpLanguageCodeStr(31) == nullptr,
         "unknown languages are refused");
+    Require(sceNpUtilGetNpLanguageCode(0, nullptr) == NpUtilInvalid, "a language code needs a buffer");
+    errno = 71;
+    Require(sceNpUtilGetNpLanguageCode(1, reinterpret_cast<char*>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable code buffer is refused and errno is kept");
     Require(sceNpUtilGetNpLanguageCode2(0, nullptr) == NpUtilInvalid, "a language code needs a buffer");
     const std::uint32_t first = sceNpDbgAssignDebugId();
     Require(first != 0 && sceNpDbgAssignDebugId() == first + 1, "debug ids count up");

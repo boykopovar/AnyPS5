@@ -3908,7 +3908,10 @@ int APS5_VABI sceNetConfigGetDefaultRoute(std::uint32_t* gateway) {
     std::uint32_t found = 0;
     if (!NetCtlHostIpv4Gateway_nid_no_patch(&found)) return NET_CONFIG_ERROR_NO_ROUTE;
     if (gateway == nullptr) throw std::invalid_argument("sceNetConfigGetDefaultRoute: null gateway");
-    *gateway = found;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(gateway, &found, sizeof(found));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 1;
 }
 
