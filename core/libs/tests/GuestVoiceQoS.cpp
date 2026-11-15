@@ -122,6 +122,15 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSGetLocalEndpointAttribute(local, 2, &volume, sizeof(volume)) == 0 && volume == halfVolume);
     Require(sceVoiceQoSSetLocalEndpointAttribute(local, 3, &enabled, sizeof(enabled)) == 0);
     Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, &mute, sizeof(mute)) == 0 && mute == 1);
+    errno = 71;
+    const void* unreadableValue = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    for (int attribute : {0, 2}) Require(sceVoiceQoSSetLocalEndpointAttribute(local, attribute, unreadableValue, sizeof(float)) == argumentInvalid);
+    for (int attribute : {1, 3}) Require(sceVoiceQoSSetLocalEndpointAttribute(local, attribute, unreadableValue, sizeof(std::uint8_t)) == argumentInvalid);
+    Require(errno == 71);
+    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 0, &volume, sizeof(volume)) == 0 && volume == halfVolume);
+    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 1, &mute, sizeof(mute)) == 0 && mute == enabled);
+    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 2, &volume, sizeof(volume)) == 0 && volume == halfVolume);
+    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 3, &mute, sizeof(mute)) == 0 && mute == enabled);
     Require(sceVoiceQoSConnect(&connection, 1, remote) == argumentInvalid);
     Require(sceVoiceQoSConnect(&connection, local, remote) == 0 && connection == 0);
     std::int32_t queriedLocal = -1;

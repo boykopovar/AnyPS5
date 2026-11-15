@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
 
@@ -146,7 +147,13 @@ extern "C" {
 
 int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* oldAttribute) {
     return AccessFontSettings(fontHandle, [&](FontState& state) {
-        if (oldAttribute) *oldAttribute = state.attribute;
+        if (oldAttribute) {
+            const int previous = state.attribute;
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(oldAttribute, &previous, sizeof(previous));
+            errno = savedErrno;
+            if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        }
         state.attribute = attribute;
         return SCE_FONT_OK;
     });
@@ -396,8 +403,10 @@ int APS5_VABI sceFontStyleFrameGetScalePixel(const FontStyleFrame* styleFrame, f
     if ((styleFrame->flags1 & STYLE_FRAME_FLAG_SCALE) == 0) return SCE_FONT_ERROR_UNSET_PARAMETER;
     if (!w && !h) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const bool points = styleFrame->scaleUnit != 0;
-    if (w) *w = points && styleFrame->hDpi != 0 ? styleFrame->scalePixelW * (static_cast<float>(styleFrame->hDpi) / POINTS_PER_INCH) : styleFrame->scalePixelW;
-    if (h) *h = points && styleFrame->vDpi != 0 ? styleFrame->scalePixelH * (static_cast<float>(styleFrame->vDpi) / POINTS_PER_INCH) : styleFrame->scalePixelH;
+    const float outW = points && styleFrame->hDpi != 0 ? styleFrame->scalePixelW * (static_cast<float>(styleFrame->hDpi) / POINTS_PER_INCH) : styleFrame->scalePixelW;
+    const float outH = points && styleFrame->vDpi != 0 ? styleFrame->scalePixelH * (static_cast<float>(styleFrame->vDpi) / POINTS_PER_INCH) : styleFrame->scalePixelH;
+    if (w && !CopyOutGuest(w, outW)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, outH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -415,16 +424,15 @@ int APS5_VABI sceFontStyleFrameGetScalePoint(const FontStyleFrame* styleFrame, f
 
 int APS5_VABI sceFontStyleFrameGetResolutionDpi(const FontStyleFrame* styleFrame, std::uint32_t* hDpi, std::uint32_t* vDpi) {
     if (!ValidStyleFrame(styleFrame) || (!hDpi && !vDpi)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (hDpi) *hDpi = styleFrame->hDpi;
-    if (vDpi) *vDpi = styleFrame->vDpi;
+    if (hDpi && !CopyOutGuest(hDpi, styleFrame->hDpi)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (vDpi && !CopyOutGuest(vDpi, styleFrame->vDpi)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontStyleFrameGetEffectSlant(const FontStyleFrame* styleFrame, float* slantRatio) {
     if (!ValidStyleFrame(styleFrame)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if ((styleFrame->flags1 & STYLE_FRAME_FLAG_SLANT) == 0) return SCE_FONT_ERROR_UNSET_PARAMETER;
-    if (!slantRatio) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *slantRatio = styleFrame->slantRatio;
+    if (!slantRatio || !CopyOutGuest(slantRatio, styleFrame->slantRatio)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -432,9 +440,9 @@ int APS5_VABI sceFontStyleFrameGetEffectWeight(const FontStyleFrame* styleFrame,
     if (!ValidStyleFrame(styleFrame)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if ((styleFrame->flags1 & STYLE_FRAME_FLAG_WEIGHT) == 0) return SCE_FONT_ERROR_UNSET_PARAMETER;
     if (!weightXScale && !weightYScale && !mode) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (weightXScale) *weightXScale = styleFrame->effectWeightX + 1.0f;
-    if (weightYScale) *weightYScale = styleFrame->effectWeightY + 1.0f;
-    if (mode) *mode = 0;
+    if (weightXScale && !CopyOutGuest(weightXScale, styleFrame->effectWeightX + 1.0f)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (weightYScale && !CopyOutGuest(weightYScale, styleFrame->effectWeightY + 1.0f)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (mode && !CopyOutGuest(mode, std::uint32_t{0})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 

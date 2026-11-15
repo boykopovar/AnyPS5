@@ -2054,9 +2054,14 @@ int APS5_VABI sceAjmDecMp3ParseFrame(const uint8_t* stream, uint32_t streamSize,
 
 int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* info) {
     if (!buffer || !info) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    info->p_buffer = buffer;
-    info->offset = 0;
-    info->size = size;
+    AjmBatchInfo local{};
+    local.p_buffer = buffer;
+    local.offset = 0;
+    local.size = size;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 

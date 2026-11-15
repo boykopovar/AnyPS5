@@ -88,10 +88,27 @@ int APS5_VABI sceCameraGetAttribute(std::int32_t handle, CameraAttribute* attrib
 
 int APS5_VABI sceCameraGetAutoExposureGain(std::int32_t handle, std::uint32_t channel, std::uint32_t* enable, CameraAutoExposureGainTarget* option) {
     if (handle < 1 || !Readable(channel) || !enable) return SCE_CAMERA_ERROR_PARAM;
-    if (option && option->sizeThis != sizeof(CameraAutoExposureGainTarget)) return SCE_CAMERA_ERROR_PARAM;
+    const int savedErrno = errno;
+    if (option) {
+        std::uint32_t size = 0;
+        const bool copiedIn = GuestCopyIn_nid_no_patch(&size, &option->sizeThis, sizeof(size));
+        errno = savedErrno;
+        if (!copiedIn || size != sizeof(CameraAutoExposureGainTarget)) return SCE_CAMERA_ERROR_PARAM;
+    }
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
-    *enable = 0;
-    if (option) *option = {};
+    const std::uint32_t localEnable = 0;
+    if (!GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable))) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    if (option) {
+        const CameraAutoExposureGainTarget localOption{};
+        if (!GuestCopyOut_nid_no_patch(option, &localOption, sizeof(localOption))) {
+            errno = savedErrno;
+            return SCE_CAMERA_ERROR_PARAM;
+        }
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -144,8 +161,13 @@ int APS5_VABI sceCameraGetGamma(std::int32_t handle, std::uint32_t channel, Came
 }
 
 int APS5_VABI sceCameraSetAttribute(std::int32_t handle, const CameraAttribute* attribute) {
-    if (!attribute || attribute->sizeThis != sizeof(CameraAttribute)) return SCE_CAMERA_ERROR_PARAM;
-    return RefuseSet(handle, attribute->channel, true);
+    if (!attribute) return SCE_CAMERA_ERROR_PARAM;
+    CameraAttribute localAttr{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attribute, sizeof(localAttr));
+    errno = savedErrno;
+    if (!copied || localAttr.sizeThis != sizeof(CameraAttribute)) return SCE_CAMERA_ERROR_PARAM;
+    return RefuseSet(handle, localAttr.channel, true);
 }
 
 int APS5_VABI sceCameraSetAutoExposureGain(std::int32_t handle, std::uint32_t channel, std::uint32_t, const CameraAutoExposureGainTarget* option) {

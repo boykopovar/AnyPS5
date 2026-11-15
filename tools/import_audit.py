@@ -1080,7 +1080,10 @@ def current_stop(imports, records):
 def load_names(path):
     if not Path(path).is_file():
         raise AuditError(f"{path}: names file not found; the audit never downloads one (see tools/nid_names.py for the source)")
-    return nid_names.load_db(Path(path))
+    try:
+        return nid_names.load_db(Path(path))
+    except ValueError as error:
+        raise AuditError(str(error)) from error
 
 
 def attach_names(records, names):

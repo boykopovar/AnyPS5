@@ -54,6 +54,7 @@ static int testIds() {
     bool ok = expect(sceNpCmpOnlineId(nullptr, &kestrel) == INVALID_ARGUMENT, "a null online ID was compared");
     ok &= expect(sceNpCmpOnlineId(&kestrel, nullptr) == INVALID_ARGUMENT, "a null second online ID was compared");
     ok &= expect(sceNpCmpOnlineId(nullptr, nullptr) == INVALID_ARGUMENT, "null online IDs were compared");
+    constexpr int UTIL_INVALID_ARGUMENT = static_cast<int>(0x80550601);
     errno = 71;
     ok &= expect(sceNpCmpOnlineId(reinterpret_cast<const NpOnlineId*>(0x10), &kestrel) == INVALID_ARGUMENT, "unmapped first online ID was accepted");
     ok &= expect(errno == 71, "errno was not preserved for unmapped first online ID");
@@ -113,8 +114,13 @@ static int testIds() {
     ok &= expect(sceNpIntSetPlatformType(&tagged, 2) == 0 && sceNpGetPlatformType(&tagged) == 2, "the internal setter did not write psp2");
     ok &= expect(sceNpIntSetPlatformType(&tagged, 5) == INVALID_PLATFORM_TYPE && sceNpIntSetPlatformType(nullptr, 1) == INVALID_ARGUMENT,
         "the internal setter accepted type 5 or a null NpId");
+    errno = 71;
+    ok &= expect(sceNpSetPlatformType(reinterpret_cast<NpIdFull*>(0x10), 3) == INVALID_ARGUMENT, "unwritable platform NpId was accepted");
+    ok &= expect(sceNpIntSetPlatformType(reinterpret_cast<NpIdFull*>(0x10), 4) == INVALID_ARGUMENT, "unwritable companion NpId was accepted");
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(reinterpret_cast<NpIdFull*>(0x10), 1) == UTIL_INVALID_ARGUMENT, "unreadable canonicalization NpId was accepted");
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPsp2(reinterpret_cast<NpIdFull*>(0x10), 0) == UTIL_INVALID_ARGUMENT, "unreadable PSP2 canonicalization NpId was accepted");
+    ok &= expect(errno == 71, "platform NpId operations altered errno on inaccessible guest memory");
 
-    constexpr int UTIL_INVALID_ARGUMENT = static_cast<int>(0x80550601);
     constexpr int UTIL_INVALID_NP_ID = static_cast<int>(0x80550605);
     NpIdFull canonical = npIdWithTag("heron-4", 0);
     canonical.reserved[0] = 1;
@@ -317,6 +323,12 @@ static int testClock() {
     bool ok = expect(sceNpGetSystemClockUsec(&usec) == 0, "the clock was not read");
     sceKernelClockGettime(4, &after);
     ok &= expect(sceNpGetSystemClockUsec(nullptr) == INVALID_ARGUMENT, "a null destination was not rejected");
+    errno = 71;
+    ok &= expect(sceNpGetSystemClockUsec(reinterpret_cast<std::int64_t*>(0x10)) == INVALID_ARGUMENT, "an unwritable destination was not rejected");
+    ok &= expect(errno == 71, "errno was altered on unwritable destination");
+    alignas(16) std::int64_t clockBuffer[3] = {-1, -1, -1};
+    ok &= expect(sceNpGetSystemClockUsec(&clockBuffer[1]) == 0, "a valid destination buffer write failed");
+    ok &= expect(clockBuffer[0] == -1 && clockBuffer[1] >= 0 && clockBuffer[2] == -1, "adjacent memory was corrupted");
     std::int64_t later = -1;
     ok &= expect(sceNpGetSystemClockUsec(&later) == 0 && later >= usec && usec >= 0, "the clock went backwards");
 

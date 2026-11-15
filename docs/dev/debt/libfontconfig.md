@@ -32,9 +32,10 @@
 
 - [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 4 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
+- [FcInit](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig, NID `AwGzFwnaitQ`) - returns `FcInitBringUptoDate`'s result, 1, and creates no current configuration, as the firmware-disassembled sibling above does. Fontconfig 2.15.0's `FcInit` returns `FcConfigInit`'s result, so success follows the public source. The console's own return value is unverified.
+
 | Name | NID |
 | --- | --- |
-| `FcInit` | `AwGzFwnaitQ` |
 | `FcFontRenderPrepare` | `CvqQqWqcO-0` |
 | `FcDefaultSubstitute` | `sqEJZ2yMVNw` |
 | `FcPatternFormat` | `zqe0Dw9BCpc` |

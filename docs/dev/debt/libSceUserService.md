@@ -2,6 +2,8 @@
 
 ### Functional
 
+- [sceUserServiceGetSecureHomeDirectory guest output](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - returning USER_SERVICE_ERROR_INVALID_ARGUMENT with caller errno preserved for an unwritable path pointer via GuestCopyOut_nid_no_patch is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
+
 - [sceUserServiceGetNpAccountId guest output](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - returning USER_SERVICE_ERROR_INVALID_ARGUMENT for an unwritable account ID pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceUserServiceGetIsSpartacusEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - returning `0x80960005` (`USER_SERVICE_ERROR_INVALID_ARGUMENT`) when the `enabled` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 

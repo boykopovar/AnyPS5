@@ -278,6 +278,25 @@ class Main(unittest.TestCase):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 0)
         self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
 
+    def test_a_changed_list_with_a_bom_keeps_the_first_path(self):
+        build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "public_headers", "command": ["C:/python.exe", "test_public_headers.py"]},
+        ]})
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(b"\xef\xbb\xbfcore/libs/include/Changed.hpp\r\n")
+        selections = []
+
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(build_changed_guest_tests.main([str(build), str(changed)]), 0)
+        self.assertEqual(selections, ["0,0,0,1,2\n"])
+
     def test_a_production_source_change_does_not_run_the_public_header_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
         listing = json.dumps({"tests": [{"name": "public_headers", "command": ["C:/python.exe", "x.py"]}]})
@@ -352,6 +371,13 @@ class Main(unittest.TestCase):
             '  add_test([=[nid_one]=] "/x/nid_one_tests")\nset_tests_properties("nid_one" PROPERTIES TIMEOUT "5")\n', encoding="utf-8")
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
+
+    def test_registered_commands_preserve_empty_arguments(self):
+        build = Path(self.temporary.name)
+        (build / "CTestTestfile.cmake").write_text(
+            'add_test([=[fixture]=] "/x/fixture" "" [=[]=] tail "")\n', encoding="utf-8")
+        self.assertEqual(build_changed_guest_tests.registered_test_commands(build),
+                         {"fixture": ["/x/fixture", "", "", "tail", ""]})
 
     def test_a_change_outside_nid_does_not_run_the_nid_script_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])

@@ -874,6 +874,11 @@ void TestBatchBounds(std::uint32_t context) {
     std::vector<std::uint8_t> storage(128);
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    Require(sceAjmBatchInitialize(nullptr, storage.size(), &info) == invalidParameter);
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), nullptr) == invalidParameter);
+    errno = 71;
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), reinterpret_cast<AjmBatchInfo*>(0x10)) == invalidParameter);
+    Require(errno == 71);
     const std::uint32_t parameters[3] = {2, 48000, 0};
     std::int32_t result[2] = {-1, -1};
     Require(sceAjmBatchJobInitialize(&info, 0, parameters, sizeof(parameters), result) == 0);
