@@ -586,7 +586,10 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
             NoteDroppedPendingEvents(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents, *it);
             it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents));
         }
-        if (!was && it->triggered) ++m_activations;
+        if (!was && it->triggered) {
+            ++m_activations;
+            if (filter == EVFILT_USER) m_events.splice(m_events.end(), m_events, it);
+        }
     }
     m_cond.NotifyAll();
     WakePollers();
