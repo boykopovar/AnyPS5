@@ -82,19 +82,19 @@ static std::mutex g_expandedCommandBuffersMutex;
 static std::unordered_map<Apr::CommandBufferObject*, ExpandedCommandBuffer> g_expandedCommandBuffers;
 static constexpr std::uint32_t MAX_EXPANDED_BUFFER_CAPACITY = 32u * 1024u * 1024u;
 
-static int EnsureCommandCapacity(Apr::CommandBufferObject* buffer, std::uint32_t bytes) {
-    RemainingCommandBytes(*buffer);
-    const std::uint64_t required = static_cast<std::uint64_t>(buffer->offset) + bytes;
-    if (required <= buffer->size) return 0;
+static int EnsureCommandCapacity(Apr::CommandBufferObject* key, Apr::CommandBufferObject& local, std::uint32_t bytes) {
+    RemainingCommandBytes(local);
+    const std::uint64_t required = static_cast<std::uint64_t>(local.offset) + bytes;
+    if (required <= local.size) return 0;
     if (required > MAX_EXPANDED_BUFFER_CAPACITY) return SCE_KERNEL_ERROR_EBUSY;
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     const std::uint64_t capacity = std::min<std::uint64_t>(
         MAX_EXPANDED_BUFFER_CAPACITY,
-        std::max(static_cast<std::uint64_t>(buffer->size) * 2u, required + 256u));
+        std::max(static_cast<std::uint64_t>(local.size) * 2u, required + 256u));
     if (required > capacity) return SCE_KERNEL_ERROR_EBUSY;
     const auto newSize = static_cast<std::uint32_t>(capacity);
     const std::lock_guard lock(g_expandedCommandBuffersMutex);
-    auto expanded = g_expandedCommandBuffers.find(buffer);
+    auto expanded = g_expandedCommandBuffers.find(key);
     if (expanded == g_expandedCommandBuffers.end()) {
         void* raw = nullptr;
         try {
@@ -106,12 +106,12 @@ static int EnsureCommandCapacity(Apr::CommandBufferObject* buffer, std::uint32_t
         std::unique_ptr<std::uint8_t, decltype(&GuestHeap::GuestHeapFree_nid_postfix)> allocation(
             static_cast<std::uint8_t*>(raw),
             GuestHeap::GuestHeapFree_nid_postfix);
-        std::memcpy(allocation.get(), buffer->base, buffer->offset);
+        if (!CopyGuestInBytes(allocation.get(), local.base, local.offset)) return SCE_KERNEL_ERROR_EFAULT;
         const auto [inserted, created] = g_expandedCommandBuffers.emplace(
-            buffer, ExpandedCommandBuffer{buffer->base, buffer->size, allocation.get()});
+            key, ExpandedCommandBuffer{local.base, local.size, allocation.get()});
         if (!created) throw std::logic_error("AMPR: command buffer expansion state already exists");
-        buffer->base = inserted->second.allocation;
-        buffer->size = newSize;
+        local.base = inserted->second.allocation;
+        local.size = newSize;
         allocation.release();
         return 0;
     }
@@ -124,8 +124,8 @@ static int EnsureCommandCapacity(Apr::CommandBufferObject* buffer, std::uint32_t
     if (!raw) return SCE_KERNEL_ERROR_ENOMEM;
     auto* allocation = static_cast<std::uint8_t*>(raw);
     expanded->second.allocation = allocation;
-    buffer->base = allocation;
-    buffer->size = newSize;
+    local.base = allocation;
+    local.size = newSize;
     return 0;
 }
 
@@ -169,14 +169,37 @@ static void* ResolveBufferBase(void* base) {
     return base;
 }
 
-static int Append(Apr::CommandBufferObject* buffer, const void* command, uint32_t bytes) {
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    const int capacity = EnsureCommandCapacity(buffer, bytes);
+static int LoadBuffer(Apr::CommandBufferObject* buffer, Apr::CommandBufferObject& local) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    return CopyGuestIn(local, buffer) ? 0 : SCE_KERNEL_ERROR_EFAULT;
+}
+
+static int Append(Apr::CommandBufferObject* key, Apr::CommandBufferObject& local, const void* command, uint32_t bytes) {
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
+    const int capacity = EnsureCommandCapacity(key, local, bytes);
     if (capacity != 0) return capacity;
-    std::memcpy(buffer->base + buffer->offset, command, bytes);
-    buffer->offset += bytes;
-    ++buffer->numCommands;
+    if (!CopyGuestOutBytes(local.base + local.offset, command, bytes)) return SCE_KERNEL_ERROR_EFAULT;
+    local.offset += bytes;
+    ++local.numCommands;
     return 0;
+}
+
+static int AppendAndSync(Apr::CommandBufferObject* buffer, Apr::CommandBufferObject& local, const void* command, uint32_t bytes) {
+    const int result = Append(buffer, local, command, bytes);
+    if (result == 0 && !CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
+    return result;
+}
+
+static int Append(Apr::CommandBufferObject* buffer, const void* command, uint32_t bytes) {
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    return AppendAndSync(buffer, local, command, bytes);
+}
+
+template<class TCommand>
+static int AppendCommand(Apr::CommandBufferObject* key, Apr::CommandBufferObject& local, Apr::Opcode opcode, TCommand command) {
+    command.header = {opcode, sizeof(command)};
+    return Append(key, local, &command, sizeof(command));
 }
 
 template<class TCommand>
@@ -235,20 +258,22 @@ static std::uint64_t NopBytes(std::uint32_t dwords) {
     return std::uint64_t{dwords} * 4u;
 }
 
-static int AppendNop(Apr::CommandBufferObject& buffer, std::uint32_t header, const std::uint32_t* data) {
+static int AppendNop(Apr::CommandBufferObject* key, Apr::CommandBufferObject& local, std::uint32_t header, const std::uint32_t* data) {
     const std::uint64_t bytes = NopBytes(Apr::NopDwords(header));
-    if (!buffer.base) return SCE_KERNEL_ERROR_EPERM;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     if (bytes > std::numeric_limits<std::uint32_t>::max()) return SCE_KERNEL_ERROR_EBUSY;
     const auto payloadBytes = static_cast<std::uint32_t>(bytes - sizeof(std::uint32_t));
     std::array<std::uint8_t, MaxNopPayloadBytes> staged{};
     if (data && payloadBytes != 0u && !CopyGuestInBytes(staged.data(), data, payloadBytes)) return SCE_KERNEL_ERROR_EFAULT;
-    const int capacity = EnsureCommandCapacity(&buffer, static_cast<std::uint32_t>(bytes));
+    const int capacity = EnsureCommandCapacity(key, local, static_cast<std::uint32_t>(bytes));
     if (capacity != 0) return capacity;
-    std::uint8_t* destination = buffer.base + buffer.offset;
-    std::memcpy(destination, &header, sizeof(header));
-    if (data) std::memcpy(destination + sizeof(header), staged.data(), payloadBytes);
-    buffer.offset += static_cast<std::uint32_t>(bytes);
-    ++buffer.numCommands;
+    std::array<std::uint8_t, sizeof(header) + MaxNopPayloadBytes> commandBytes{};
+    std::memcpy(commandBytes.data(), &header, sizeof(header));
+    if (data) std::memcpy(commandBytes.data() + sizeof(header), staged.data(), payloadBytes);
+    const std::size_t writeBytes = data ? static_cast<std::size_t>(bytes) : sizeof(header);
+    if (!CopyGuestOutBytes(local.base + local.offset, commandBytes.data(), writeBytes)) return SCE_KERNEL_ERROR_EFAULT;
+    local.offset += static_cast<std::uint32_t>(bytes);
+    ++local.numCommands;
     return 0;
 }
 
@@ -265,20 +290,23 @@ static std::uint64_t MeasureMarker(const char* text) {
 
 static int AppendMarker(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, const char* text) {
     if (!buffer || !text) return SCE_KERNEL_ERROR_EINVAL;
+    Apr::CommandBufferObject local{};
+    if (!CopyGuestIn(local, buffer)) return SCE_KERNEL_ERROR_EFAULT;
     std::string staged;
     if (!CopyGuestCString(staged, text, MAX_EXPANDED_BUFFER_CAPACITY)) return SCE_KERNEL_ERROR_EFAULT;
     const std::uint64_t bytes = MarkerBytesFromLength(staged.size());
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     if (bytes > std::numeric_limits<std::uint32_t>::max()) return SCE_KERNEL_ERROR_EBUSY;
-    const int capacity = EnsureCommandCapacity(buffer, static_cast<std::uint32_t>(bytes));
+    const int capacity = EnsureCommandCapacity(buffer, local, static_cast<std::uint32_t>(bytes));
     if (capacity != 0) return capacity;
     const Apr::MarkerCommand command{{opcode, static_cast<std::uint32_t>(bytes)}};
-    std::uint8_t* destination = buffer->base + buffer->offset;
-    std::memset(destination, 0, bytes);
-    std::memcpy(destination, &command, sizeof(command));
-    std::memcpy(destination + sizeof(command), staged.c_str(), staged.size());
-    buffer->offset += static_cast<std::uint32_t>(bytes);
-    ++buffer->numCommands;
+    std::string commandBytes(static_cast<std::size_t>(bytes), '\0');
+    std::memcpy(commandBytes.data(), &command, sizeof(command));
+    std::memcpy(commandBytes.data() + sizeof(command), staged.c_str(), staged.size());
+    if (!CopyGuestOutBytes(local.base + local.offset, commandBytes.data(), commandBytes.size())) return SCE_KERNEL_ERROR_EFAULT;
+    local.offset += static_cast<std::uint32_t>(bytes);
+    ++local.numCommands;
+    if (!CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -433,8 +461,11 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompleti
 
 int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject* buffer, uint64_t* gatherState, uint64_t* scatterState) {
     if (!buffer || !gatherState || !scatterState) return SCE_KERNEL_ERROR_EINVAL;
-    ReleaseExpandedCommandBuffer(buffer);
-    buffer->type = Apr::BufferType::Apr;
+    Apr::CommandBufferObject local{};
+    if (!CopyGuestIn(local, buffer)) return SCE_KERNEL_ERROR_EFAULT;
+    if (ReleaseExpandedCommandBuffer(buffer) && !CopyGuestIn(local, buffer)) return SCE_KERNEL_ERROR_EFAULT;
+    local.type = Apr::BufferType::Apr;
+    if (!CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
     const std::uint64_t zero = 0;
     if (!CopyGuestOut(gatherState, zero) || !CopyGuestOut(scatterState, zero)) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
@@ -456,10 +487,14 @@ int APS5_VABI sceAmprAprCommandBufferMapDirectBegin(Apr::CommandBufferObject* bu
 }
 
 int APS5_VABI sceAmprAprCommandBufferMapEnd(Apr::CommandBufferObject* buffer) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (!InMap(buffer)) return SCE_KERNEL_ERROR_EPERM;
-    const int result = AppendCommand(buffer, Apr::Opcode::MapEnd, Apr::MapEndCommand{});
-    if (result == 0) buffer->recording &= static_cast<std::uint16_t>(~Apr::MapActive);
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if (!InMap(&local)) return SCE_KERNEL_ERROR_EPERM;
+    const int result = AppendCommand(buffer, local, Apr::Opcode::MapEnd, Apr::MapEndCommand{});
+    if (result == 0) {
+        local.recording &= static_cast<std::uint16_t>(~Apr::MapActive);
+        if (!CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
+    }
     return result;
 }
 
@@ -474,11 +509,13 @@ int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject* bu
     (void)mapState;
     (void)scatterGatherState;
     if (!ValidReadLength(size) || !ValidReadOffset(offset)) return SCE_KERNEL_ERROR_EINVAL;
-    if (!buffer || (buffer->recording & Apr::ScatterGatherValid) == 0u) return SCE_KERNEL_ERROR_EINVAL;
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if ((local.recording & Apr::ScatterGatherValid) == 0u) return SCE_KERNEL_ERROR_EINVAL;
     const Apr::CompactReadFileGatherCommand command{
         static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather) | static_cast<std::uint32_t>(offset >> 32u) << 8u,
         static_cast<std::uint32_t>(size - 1u), static_cast<std::uint32_t>(offset)};
-    return Append(buffer, &command, sizeof(command));
+    return AppendAndSync(buffer, local, &command, sizeof(command));
 }
 
 int APS5_VABI sceAmprAprCommandBufferReadFileGatherScatter(Apr::CommandBufferObject* buffer, std::uint64_t* mapState, std::uint64_t* scatterGatherState, void* destination, std::uint64_t size, std::uint64_t offset) {
@@ -496,8 +533,13 @@ int APS5_VABI sceAmprAprCommandBufferReadFileScatter(Apr::CommandBufferObject* b
 }
 
 int APS5_VABI sceAmprAprCommandBufferResetGatherScatterState(Apr::CommandBufferObject* buffer) {
-    const int result = AppendCommand(buffer, Apr::Opcode::ResetGatherScatterState, Apr::ResetGatherScatterStateCommand{});
-    if (result == 0) buffer->recording &= static_cast<std::uint16_t>(~Apr::ScatterGatherValid);
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    const int result = AppendCommand(buffer, local, Apr::Opcode::ResetGatherScatterState, Apr::ResetGatherScatterStateCommand{});
+    if (result == 0) {
+        local.recording &= static_cast<std::uint16_t>(~Apr::ScatterGatherValid);
+        if (!CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
+    }
     return result;
 }
 
@@ -540,8 +582,9 @@ int APS5_VABI sceAmprCommandBufferConstructMarker(Apr::CommandBufferObject* buff
 }
 
 int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer, std::int16_t type, const void* payload, std::uint32_t payloadBytes, const std::uint32_t* word) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     if (payloadBytes > (word ? 56u : 60u)) return SCE_KERNEL_ERROR_EINVAL;
     if (payloadBytes != 0u && !payload) throw std::invalid_argument("sceAmprCommandBufferConstructNop: null payload");
     const std::uint32_t dwords = (payloadBytes + 3u) / 4u + (word ? 1u : 0u);
@@ -549,16 +592,22 @@ int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer,
     std::uint32_t stagedWord = 0;
     if (word && !CopyGuestIn(stagedWord, word)) return SCE_KERNEL_ERROR_EFAULT;
     if (payloadBytes != 0u && !CopyGuestInBytes(staged.data(), payload, payloadBytes)) return SCE_KERNEL_ERROR_EFAULT;
-    const std::uint32_t offset = buffer->offset;
-    const int result = AppendNop(*buffer, Apr::NopHeader(dwords, static_cast<std::uint32_t>(type)), nullptr);
+    const std::uint32_t offset = local.offset;
+    const int result = AppendNop(buffer, local, Apr::NopHeader(dwords, static_cast<std::uint32_t>(type)), nullptr);
     if (result != 0) return result;
-    std::uint8_t* data = buffer->base + offset + Apr::NopHeaderBytes;
+    std::array<std::uint8_t, MaxNopPayloadBytes> trailing{};
+    std::size_t pos = 0;
     if (word) {
-        std::memcpy(data, &stagedWord, sizeof(stagedWord));
-        data += sizeof(stagedWord);
+        std::memcpy(trailing.data(), &stagedWord, sizeof(stagedWord));
+        pos += sizeof(stagedWord);
     }
-    if (payloadBytes != 0u) std::memcpy(data, staged.data(), payloadBytes);
-    std::memset(data + payloadBytes, 0, (4u - payloadBytes % 4u) % 4u);
+    if (payloadBytes != 0u) {
+        std::memcpy(trailing.data() + pos, staged.data(), payloadBytes);
+        pos += payloadBytes;
+    }
+    pos += (4u - payloadBytes % 4u) % 4u;
+    if (pos != 0u && !CopyGuestOutBytes(local.base + offset + Apr::NopHeaderBytes, trailing.data(), pos)) return SCE_KERNEL_ERROR_EFAULT;
+    if (!CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -606,17 +655,23 @@ uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* b
 }
 
 int APS5_VABI sceAmprCommandBufferNop(Apr::CommandBufferObject* buffer, std::uint32_t dwords) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     if (dwords == 0u || dwords > 16u) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendNop(*buffer, Apr::NopHeader(dwords - 1u), nullptr);
+    const int result = AppendNop(buffer, local, Apr::NopHeader(dwords - 1u), nullptr);
+    if (result == 0 && !CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
+    return result;
 }
 
 int APS5_VABI sceAmprCommandBufferNopWithData(Apr::CommandBufferObject* buffer, std::uint32_t dwords, const std::uint32_t* data) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     if (dwords > 15u) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendNop(*buffer, Apr::NopHeader(dwords), data);
+    const int result = AppendNop(buffer, local, Apr::NopHeader(dwords), data);
+    if (result == 0 && !CopyGuestOut(buffer, local)) return SCE_KERNEL_ERROR_EFAULT;
+    return result;
 }
 
 int APS5_VABI sceAmprCommandBufferPopMarker(Apr::CommandBufferObject* buffer) {
@@ -633,12 +688,11 @@ int APS5_VABI sceAmprCommandBufferPushMarkerWithColor(Apr::CommandBufferObject* 
 }
 
 int APS5_VABI sceAmprCommandBufferReset(Apr::CommandBufferObject* buffer) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     Apr::CommandBufferObject localBuffer{};
-    if (!CopyGuestIn(localBuffer, buffer)) return SCE_KERNEL_ERROR_EFAULT;
+    if (const int loadError = LoadBuffer(buffer, localBuffer); loadError != 0) return loadError;
     localBuffer.offset = 0;
     localBuffer.numCommands = 0;
-    if (!CopyGuestOutBytes(&buffer->offset, &localBuffer.offset, sizeof(std::uint32_t) * 2)) return SCE_KERNEL_ERROR_EFAULT;
+    if (!CopyGuestOut(buffer, localBuffer)) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -852,11 +906,12 @@ int APS5_VABI sceAmprAmmCommandBufferMapDirectWithGpuMaskId(Apr::CommandBufferOb
 }
 
 int APS5_VABI sceAmprAmmCommandBufferUnmap(Apr::CommandBufferObject* buffer, std::uint64_t address, std::uint64_t size) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     const auto command = Apr::EncodeAmmUnmap(address, size);
     if (!command) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendAmm(buffer, &*command, sizeof(*command));
+    return AppendAndSync(buffer, local, &*command, sizeof(*command));
 }
 
 std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMap(std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection) {
@@ -972,19 +1027,21 @@ int APS5_VABI sceAmprAmmCommandBufferAllocatePaForPrt(Apr::CommandBufferObject* 
 }
 
 int APS5_VABI sceAmprAmmCommandBufferRemapIntoPrt(Apr::CommandBufferObject* buffer, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection, std::uint32_t opcode) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     if (!ValidRemap(address, source, size, protection)) return SCE_KERNEL_ERROR_EINVAL;
     const Apr::AmmRemapCommand command{{Apr::Opcode::AmmRemapIntoPrt, sizeof(command)}, address, source, size, protection, static_cast<std::int32_t>(opcode ? opcode : 1011u)};
-    return AppendAmm(buffer, &command, sizeof(command));
+    return AppendAndSync(buffer, local, &command, sizeof(command));
 }
 
 int APS5_VABI sceAmprAmmCommandBufferUnmapToPrt(Apr::CommandBufferObject* buffer, std::uint64_t address, std::uint64_t size) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    Apr::CommandBufferObject local{};
+    if (const int loadError = LoadBuffer(buffer, local); loadError != 0) return loadError;
+    if (!local.base) return SCE_KERNEL_ERROR_EPERM;
     if (!ValidMapRange(address, size)) return SCE_KERNEL_ERROR_EINVAL;
     const Apr::AmmUnmapCommand command{{Apr::Opcode::AmmUnmapToPrt, sizeof(command)}, address, size};
-    return AppendAmm(buffer, &command, sizeof(command));
+    return AppendAndSync(buffer, local, &command, sizeof(command));
 }
 
 std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMapAsPrt(std::uint64_t address, std::uint64_t size) {
@@ -1056,10 +1113,18 @@ void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void) {
 int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
     constexpr std::size_t objectNameLimit = 32;
     constexpr int guestNameTooLong = 63;
+    constexpr int guestFault = 14;
     constexpr int threadError = 4;
-    if (name != nullptr && std::strlen(name) >= objectNameLimit) {
-        errno = guestNameTooLong;
-        return threadError;
+    if (name != nullptr) {
+        std::string stagedName;
+        const int copyError = [&]() {
+            const ErrnoGuard guard;
+            return CopyGuestString_nid_no_patch(name, objectNameLimit, stagedName);
+        }();
+        if (copyError != 0) {
+            errno = (copyError == guestNameTooLong) ? guestNameTooLong : guestFault;
+            return threadError;
+        }
     }
     return _Cnd_init_nid_postfix(handle);
 }
