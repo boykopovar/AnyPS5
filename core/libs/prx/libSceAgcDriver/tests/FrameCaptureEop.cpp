@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -11,11 +12,17 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <functional>
+#include <future>
 #include <memory>
+#include <mutex>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -27,6 +34,8 @@ namespace {
 
 using AgcDriver::FrameCallKind;
 using AgcDriver::FrameCaptureReader;
+using AgcDriver::FrameCaptureWriter;
+using AgcDriver::FrameMemoryKind;
 
 constexpr std::uint32_t Handle = 7;
 constexpr std::size_t BlockBytes = 1u << 20;
@@ -56,6 +65,38 @@ public:
         if (!error) std::terminate();
     }
     std::atomic<int> ready = 0;
+};
+
+class HeldOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return std::make_shared<Request>(ready); }
+    void WaitForFlipRoom() override {
+        std::unique_lock lock(mutex);
+        waiting = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return room; });
+    }
+    void Fail(std::exception_ptr error) noexcept override {
+        if (!error) std::terminate();
+    }
+    bool WaitUntilHeld() {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(10), [&] { return waiting; });
+    }
+    void Open() {
+        {
+            std::lock_guard lock(mutex);
+            room = true;
+        }
+        changed.notify_all();
+    }
+    std::atomic<int> ready = 0;
+
+private:
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool waiting = false;
+    bool room = false;
 };
 
 std::byte* allocate() {
@@ -231,6 +272,176 @@ void testSettledHoldsAdmissions() {
     check(held, "the driver admitted a submission while a settled hold was taken on an idle driver");
 }
 
+void submitWords(std::span<const std::uint32_t> words, std::byte* at) {
+    std::memcpy(at, words.data(), words.size_bytes());
+    Packet packet{reinterpret_cast<std::uint32_t*>(at), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "a submission was refused");
+}
+
+void testWaitingRecorderAdmitsBesideBlockedFlip() {
+    auto* const block = allocate();
+    auto output = std::make_shared<HeldOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    auto* const done = reinterpret_cast<std::uint32_t*>(block + BlockBytes / 2);
+    auto* const registers = reinterpret_cast<std::uint32_t*>(block + BlockBytes / 2 + 256);
+    registers[0] = 0x10;
+    registers[1] = 74;
+    const auto at = [](const void* pointer) { return reinterpret_cast<std::uintptr_t>(pointer); };
+    const std::array<std::uint32_t, 10> listed{
+        0xc0039f00u, static_cast<std::uint32_t>(at(registers)), static_cast<std::uint32_t>(at(registers) >> 32u), 0x80000000u, 1u,
+        0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(at(done)), static_cast<std::uint32_t>(at(done) >> 32u), 1u};
+    submitWords(listed, block);
+    std::exception_ptr flipFailure;
+    std::thread flipper([&] {
+        try {
+            const std::array<std::uint32_t, 6> flip{AgcDriver::FlipPacketHeader, Handle, 0, 1, 0, 0};
+            submitWords(flip, block + 1024);
+        } catch (...) {
+            flipFailure = std::current_exception();
+        }
+    });
+    const bool held = output->WaitUntilHeld();
+    std::promise<void> admitted;
+    auto admission = admitted.get_future();
+    std::thread writer([&] {
+        const std::array<std::uint32_t, 2> nop{0xc0001000u, 0};
+        submitWords(nop, block + 2048);
+        admitted.set_value();
+    });
+    const bool besideFlip = admission.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    output->Open();
+    writer.join();
+    flipper.join();
+    if (flipFailure) std::rethrow_exception(flipFailure);
+    AgcDriverWaitIdle_nid_postfix();
+    check(held, "the flip submission did not wait for flip room");
+    check(besideFlip, "with the frame recorder waiting for its trigger, a submission waited for another thread's submission that was waiting for flip room");
+    check(std::atomic_ref<std::uint32_t>(*done).load() == 1, "the register list submitted before the flip was not executed");
+    check(!std::filesystem::exists(captureDirectory()) || std::filesystem::is_empty(captureDirectory()), "the frame recorder started without its trigger");
+}
+
+class Latch {
+public:
+    void Open() {
+        {
+            std::lock_guard lock(mutex);
+            open = true;
+        }
+        changed.notify_all();
+    }
+    bool Wait() {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(10), [&] { return open; });
+    }
+
+private:
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool open = false;
+};
+
+void finishedWithin(const std::function<void()>& call, const char* what) {
+    auto done = std::make_shared<std::promise<void>>();
+    auto finished = done->get_future();
+    std::thread([call, done] {
+        try {
+            call();
+            done->set_value();
+        } catch (...) {
+            done->set_exception(std::current_exception());
+        }
+    }).detach();
+    if (finished.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+        std::fprintf(stderr, "FAILED: %s did not return within 10 s\n", what);
+        std::fflush(stderr);
+        std::_Exit(1);
+    }
+    finished.get();
+}
+
+void testRecorderStartsAfterAdmittedCalls() {
+    auto* const recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "the frame recorder is not active");
+    const std::filesystem::path directory(captureDirectory());
+    const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
+    check(trigger != nullptr && *trigger != '\0', "the startup test needs APS5_FRAME_CAPTURE_TRIGGER");
+    std::filesystem::remove(trigger);
+    std::filesystem::remove_all(directory);
+    const auto started = [&] { return std::filesystem::exists(directory / FrameCaptureWriter::MemoryName); };
+    std::atomic<bool> holding{false};
+    std::atomic<std::uint64_t> waits{0};
+    std::atomic<std::uint64_t> waitsWhileHeld{0};
+    AgcDriver::FrameRecorder::SetStartIdleWaitForTest([&] {
+        waits.fetch_add(1);
+        if (holding.load()) waitsWhileHeld.fetch_add(1);
+        return AgcDriver::DriverDetail::Driver::Get().WaitIdleUnlessTitleWaitsFor(std::chrono::seconds(10));
+    });
+    struct Restore {
+        ~Restore() { AgcDriver::FrameRecorder::SetStartIdleWaitForTest({}); }
+    } restore;
+    auto* const block = allocate();
+    const std::array<std::uint32_t, 2> nop{0xc0001000u, 0};
+    std::memcpy(block, nop.data(), sizeof(nop));
+    const Packet idle{reinterpret_cast<std::uint32_t*>(block), static_cast<std::uint32_t>(nop.size()), 0, {}};
+
+    bool inner = false;
+    finishedWithin([&] { recorder->Submit(idle, 0, [&] { recorder->Submit(idle, 0, [&] { inner = true; }); }); }, "a call accepted from inside another call's acceptance");
+    check(inner, "the call accepted from inside another call's acceptance did not run");
+
+    bool thrown = false;
+    try {
+        recorder->Submit(idle, 0, [] { throw std::runtime_error("refused by the test"); });
+    } catch (const std::runtime_error&) {
+        thrown = true;
+    }
+    check(thrown, "a call whose acceptance threw did not pass the exception on");
+
+    auto* const label = reinterpret_cast<std::uint32_t*>(block + BlockBytes / 2);
+    const auto address = reinterpret_cast<std::uintptr_t>(label);
+    const std::array<std::uint32_t, 5> write{0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 1u};
+    std::memcpy(block + 1024, write.data(), sizeof(write));
+    const Packet labelled{reinterpret_cast<std::uint32_t*>(block + 1024), static_cast<std::uint32_t>(write.size()), 0, {}};
+    Latch entered;
+    Latch release;
+    std::exception_ptr failure;
+    std::thread admitted([&] {
+        try {
+            recorder->Submit(labelled, 0, [&] {
+                holding.store(true);
+                entered.Open();
+                check(release.Wait(), "the test did not release the call held in its acceptance");
+                check(sceAgcDriverSubmitDcb(const_cast<Packet*>(&labelled)) == 0, "the held call's submission was refused");
+            });
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    check(entered.Wait(), "the held call did not reach its acceptance");
+    { std::ofstream(trigger) << 1; }
+    finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary while a call was being accepted");
+    const bool deferred = !started();
+    holding.store(false);
+    release.Open();
+    admitted.join();
+    if (failure) std::rethrow_exception(failure);
+    check(deferred, "the frame recorder started while a call it does not record was still being accepted");
+    check(waitsWhileHeld.load() == 0, "the frame recorder waited for the driver to go idle while a call it does not record was still being accepted");
+    finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary after the held call");
+    check(started(), "the frame recorder did not start once no call was being accepted, so a call whose acceptance threw or re-entered is still counted");
+    check(waits.load() == 1, "the frame recorder did not wait for the driver to go idle exactly once, at the start");
+    finishedWithin([&] { recorder->FrameBoundary(); }, "the frame boundary that ends the capture");
+    AgcDriverWaitIdle_nid_postfix();
+    const FrameCaptureReader reader(directory);
+    const bool snapshotted = std::ranges::any_of(reader.Chunks(), [&](const auto& chunk) {
+        if (chunk.kind != FrameMemoryKind::Snapshot || chunk.address > address || address + 4 > chunk.address + chunk.bytes) return false;
+        const auto bytes = reader.Read(chunk);
+        std::uint32_t value = 0;
+        std::memcpy(&value, bytes.data() + (address - chunk.address), sizeof(value));
+        return value == 1;
+    });
+    check(snapshotted, "the snapshot does not hold the label written by the GPU work of a call accepted before the start");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -238,6 +449,16 @@ int main(int argc, char** argv) {
         if (argc > 1 && std::string(argv[1]) == "rewind") {
             testRewindTailFramesCount();
             std::puts("frame capture rewind tail tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "startup") {
+            testRecorderStartsAfterAdmittedCalls();
+            std::puts("frame capture startup tests passed");
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "waiting") {
+            testWaitingRecorderAdmitsBesideBlockedFlip();
+            std::puts("frame capture waiting recorder tests passed");
             return 0;
         }
         if (argc > 1 && std::string(argv[1]) == "rewind_held") {

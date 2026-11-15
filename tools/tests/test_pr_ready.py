@@ -178,6 +178,10 @@ class QueueTests(unittest.TestCase):
 
     def test_long_titles_are_cut(self):
         self.assertEqual(len(pr_ready.clean("a" * 500)), 100)
+        self.assertEqual(pr_ready.clean("a" * 99 + "*b"), "a" * 99 + "\\*")
+
+    def test_backslashes_in_titles_do_not_unescape_markdown(self):
+        self.assertEqual(pr_ready.clean(r"fix: \[click\](https://example.invalid) \*bold\*"), r"fix: \\\[click\\\](https://example.invalid) \\\*bold\\\*")
 
 
 class MainTests(unittest.TestCase):
@@ -187,7 +191,9 @@ class MainTests(unittest.TestCase):
         def fake(*args):
             if args[:2] == ("api", "graphql"):
                 if any("CLOSED" in arg for arg in args):
-                    return json.dumps({"data": {"repository": {"pullRequests": {"nodes": [{"number": n} for n in closed]}}}})
+                    return json.dumps({"data": {"repository": {"pullRequests": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"number": n} for n in closed]}}}})
                 return json.dumps(pages.pop(0))
             if args[:2] == ("issue", "view"):
                 return current
@@ -275,6 +281,37 @@ class MainTests(unittest.TestCase):
                 pr_ready.main([])
         self.assertIn("boom", err.getvalue())
 
+    def test_open_pages_reject_invalid_next_cursors_without_restarting(self):
+        for cursor in (None, "", 17, []):
+            with self.subTest(cursor=cursor):
+                page = {"data": {"repository": {"pullRequests": {"nodes": [node()],
+                        "pageInfo": {"hasNextPage": True, "endCursor": cursor}}}}}
+                calls = []
+                def fake(*args):
+                    calls.append(args)
+                    if len(calls) > 2:
+                        raise ValueError("fixture read budget exceeded")
+                    return json.dumps(page)
+                with patch("pr_ready.pr_labels.gh", fake), self.assertRaisesRegex(ValueError, "no cursor"):
+                    pr_ready.fetch("o/r")
+                self.assertEqual(len(calls), 1)
+
+    def test_open_and_closed_page_cursors_must_advance(self):
+        for closed in (False, True):
+            for cursors in (("repeat", "repeat"), ("first", "second", "first")):
+                with self.subTest(closed=closed, cursors=cursors):
+                    calls = []
+                    def fake(*args):
+                        calls.append(args)
+                        if len(calls) > len(cursors):
+                            raise ValueError("fixture read budget exceeded")
+                        return json.dumps({"data": {"repository": {"pullRequests": {"nodes": [node()],
+                            "pageInfo": {"hasNextPage": True, "endCursor": cursors[len(calls) - 1]}}}}})
+                    action = pr_ready.closed_with_label if closed else pr_ready.fetch
+                    with patch("pr_ready.pr_labels.gh", fake), self.assertRaisesRegex(ValueError, "did not advance"):
+                        action("o/r")
+                    self.assertEqual(len(calls), len(cursors))
+
     def test_pages_are_followed(self):
         first = {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "c1"}, "nodes": [node(number=1)]}}}}
         second = {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node(number=2)]}}}}
@@ -287,6 +324,31 @@ class MainTests(unittest.TestCase):
             prs = pr_ready.fetch("o/r")
         self.assertEqual([pr["number"] for pr in prs], [1, 2])
         self.assertIn("after=c1", seen[1])
+
+    def test_closed_labels_follow_all_pages_before_cleanup(self):
+        pages = [
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                                                     "nodes": [{"number": number} for number in range(1, 101)]}}}},
+            {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+                                                     "nodes": [{"number": 101}]}}}},
+        ]
+        seen = []
+
+        def fake(*args):
+            seen.append(args)
+            return json.dumps(pages.pop(0))
+
+        with patch("pr_ready.pr_labels.gh", fake):
+            closed = pr_ready.closed_with_label("o/r")
+        self.assertEqual(closed, list(range(1, 102)))
+        self.assertEqual(len(seen), 2)
+        self.assertIn("after=c1", seen[1])
+
+    def test_closed_label_page_without_next_cursor_fails_closed(self):
+        page = {"data": {"repository": {"pullRequests": {
+            "pageInfo": {"hasNextPage": True, "endCursor": None}, "nodes": [{"number": 5}]}}}}
+        with patch("pr_ready.pr_labels.gh", return_value=json.dumps(page)), self.assertRaisesRegex(ValueError, "no cursor"):
+            pr_ready.closed_with_label("o/r")
 
 
 if __name__ == "__main__":

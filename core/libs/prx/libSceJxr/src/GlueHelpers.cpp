@@ -1,5 +1,7 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include "DecodeCallbacks.h"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -13,6 +15,10 @@ std::int64_t JxrDecodeIid_nid_no_patch(const char* extension, std::uint32_t* val
 std::int64_t JxrAllocAligned_nid_no_patch(void** memory, std::size_t size, std::size_t alignment);
 std::int64_t JxrFreeAligned_nid_no_patch(void** memory);
 std::int32_t JxrIdpEmpty_nid_no_patch(void* codec);
+std::int32_t JxrAllocateTileInfo_nid_no_patch(void* codec);
+std::int32_t JxrFreeTileInfo_nid_no_patch(void* codec);
+std::int32_t JxrAllocateBitIOInfo_nid_no_patch(void* codec);
+std::int32_t JxrSetBitIOPointers_nid_no_patch(void* codec);
 std::int32_t JxrDecodeStreamHasGetPos_nid_no_patch(void* stream);
 std::int32_t JxrDecodeHasClose_nid_no_patch(void* decoder);
 std::int64_t JxrDecodeInitialize_nid_no_patch(void* decoder, void* stream);
@@ -23,9 +29,16 @@ std::int64_t JxrDecodeGetFrameCount_nid_no_patch(void* decoder, std::uint32_t* c
 std::int64_t JxrDecodeGetColorContext_nid_no_patch(void* decoder, std::uint8_t* buffer, std::uint32_t* size);
 std::int64_t JxrDecodeGetDescriptiveMetadata_nid_no_patch(void* decoder, void* metadata);
 std::int64_t JxrDecodeRelease_nid_no_patch(void** decoder);
+std::int64_t JxrDecodeCreateGuest_nid_no_patch(void** decoder, const JxrDecodeCallbacks* callbacks);
+std::int64_t JxrDecodeCopy_nid_no_patch(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride);
+std::int64_t JxrDecodeSelectFrame_nid_no_patch(void* decoder, std::uint32_t frame);
 
 void* JxrGuestCalloc_nid_no_patch(std::size_t count, std::size_t size) {
     return calloc_nid_postfix(count, size);
+}
+
+void* JxrGuestMalloc_nid_no_patch(std::size_t size) {
+    return malloc_nid_postfix(size);
 }
 
 void JxrGuestFree_nid_no_patch(void* memory) {
@@ -51,6 +64,22 @@ std::int64_t StoreIid(std::int64_t (*lookup)(const char*, std::uint32_t*), const
     default: throw std::logic_error(std::string(function) + ": jxrlib returned an unknown IID " + std::to_string(value) + " for " + extension);
     }
     return result;
+}
+
+std::int64_t APS5_VABI DecodeInitializeGuest(void* decoder, void* stream) {
+    return PKImageDecode_Initialize_nid_postfix(decoder, static_cast<Jxr::Stream*>(stream));
+}
+
+std::int64_t APS5_VABI DecodeGetPixelFormatGuest(void* decoder, void* format) {
+    return PKImageDecode_GetPixelFormat_nid_postfix(decoder, static_cast<JxrGuestGuid*>(format));
+}
+
+std::int64_t APS5_VABI DecodeCopyGuest(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    return JxrDecodeCopy_nid_no_patch(decoder, rectangle, buffer, stride);
+}
+
+std::int64_t APS5_VABI DecodeSelectFrameGuest(void* decoder, std::uint32_t frame) {
+    return JxrDecodeSelectFrame_nid_no_patch(decoder, frame);
 }
 
 } // namespace
@@ -86,6 +115,26 @@ std::int64_t APS5_VABI PKFreeAligned_nid_postfix(void** memory) {
 
 std::int32_t APS5_VABI IDPEmpty_nid_postfix(void* codec) {
     return JxrIdpEmpty_nid_no_patch(codec);
+}
+
+std::int32_t APS5_VABI allocateTileInfo_nid_postfix(void* codec) {
+    if (!codec) throw std::invalid_argument("allocateTileInfo requires a codec");
+    return JxrAllocateTileInfo_nid_no_patch(codec);
+}
+
+void APS5_VABI freeTileInfo_nid_postfix(void* codec) {
+    if (!codec) throw std::invalid_argument("freeTileInfo requires a codec");
+    if (!JxrFreeTileInfo_nid_no_patch(codec)) NotImplemented_nid_no_patch(__func__);
+}
+
+std::int32_t APS5_VABI allocateBitIOInfo_nid_postfix(void* codec) {
+    if (!codec) throw std::invalid_argument("allocateBitIOInfo requires a codec");
+    return JxrAllocateBitIOInfo_nid_no_patch(codec);
+}
+
+std::int32_t APS5_VABI setBitIOPointers_nid_postfix(void* codec) {
+    if (!codec) throw std::invalid_argument("setBitIOPointers requires a codec");
+    return JxrSetBitIOPointers_nid_no_patch(codec);
 }
 
 std::int64_t APS5_VABI PKImageDecode_Initialize_nid_postfix(void* decoder, Jxr::Stream* stream) {
@@ -126,6 +175,22 @@ std::int64_t APS5_VABI PKImageDecode_Release_nid_postfix(void** decoder) {
     if (!decoder || !*decoder) throw std::invalid_argument("PKImageDecode_Release requires a decoder");
     if (!JxrDecodeHasClose_nid_no_patch(*decoder)) throw std::invalid_argument("PKImageDecode_Release requires a stream Close callback when the decoder owns its stream");
     return JxrDecodeRelease_nid_no_patch(decoder);
+}
+
+std::int64_t APS5_VABI PKImageDecode_Create_nid_postfix(void** decoder) {
+    static const JxrDecodeCallbacks callbacks{
+        DecodeInitializeGuest,
+        DecodeGetPixelFormatGuest,
+        PKImageDecode_GetSize_nid_postfix,
+        PKImageDecode_GetResolution_nid_postfix,
+        PKImageDecode_GetColorContext_nid_postfix,
+        PKImageDecode_GetDescriptiveMetadata_nid_postfix,
+        DecodeCopyGuest,
+        PKImageDecode_GetFrameCount_nid_postfix,
+        DecodeSelectFrameGuest,
+        PKImageDecode_Release_nid_postfix};
+    if (!decoder) throw std::invalid_argument("PKImageDecode_Create requires an output");
+    return JxrDecodeCreateGuest_nid_no_patch(decoder, &callbacks);
 }
 
 }

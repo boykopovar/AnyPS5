@@ -40,7 +40,7 @@ int main() {
     const char16_t alphabet[] = {1, 0x41, 0xff, 0x100, 0x7fff, 0x8000, 0xd800, 0xffff};
     std::vector<unsigned char> storage(1024 + 64);
     for (int round = 0; round < 20000; ++round) {
-        const std::size_t offset = random() % 33;
+        const std::size_t offset = random() % 33 / 2 * 2;
         auto* base = storage.data() + (32 - reinterpret_cast<std::uintptr_t>(storage.data()) % 32);
         auto* s = reinterpret_cast<char16_t*>(base + offset);
         const std::size_t capacity = (storage.size() - 64 - offset) / sizeof(char16_t);
