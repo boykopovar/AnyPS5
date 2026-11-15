@@ -113,7 +113,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WKImeEvent helpers](../../../core/libs/prx/libSceNKWebKit/src/ImeEvent.cpp) (libSceNKWebKit) - `WKImeEventMake`, `WKImeEventRelease` and `WKImeEventGetInputLanguage` follow [WKImeEvent.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/neko/WKImeEvent.h) and [WKImeEvent.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/neko/WKImeEvent.cpp) at revision `80f77e94c6`. Because `libSceIcu` lacks `uloc_addLikelySubtags`, `WKImeEventGetInputLanguage` expands language/script/region likely subtags locally before matching the 33-entry table (outside-table tags still return undefined); `WKImeEventMake` sets `caretIndex` using the UTF-8 character count rather than calling `mbstowcs_s`. Console ABI and runtime behavior have not been measured. Closes when: compared with a console module and backed by `uloc_addLikelySubtags`.
 - [WKPage zoom factor controls](../../../core/libs/prx/libSceNKWebKit/src/PageZoom.cpp) (libSceNKWebKit) - `WKPageGetPageZoomFactor`, `WKPageSetPageZoomFactor`, `WKPageGetTextZoomFactor`, `WKPageSetTextZoomFactor`, `WKPageSetPageAndTextZoomFactors` and `WKPageSupportsTextZoom` configure and query page and text zoom multipliers on the page in host memory following [WebPageProxy.cpp:1894-1914](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/WebPageProxy.cpp#L1894-L1914); non-positive or non-finite zoom factors are rejected, and layout viewport zoom rendering and text reflow are unmodeled.
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
-- [WebCore user-gesture and worker-count queries](../../../core/libs/prx/libSceNKWebKit/src/UserGestureIndicator.cpp) (libSceNKWebKit) - a non-null current `UserGestureToken` throws, because its layout (`RefCounted`, `CanMakeWeakPtr`, `m_state`, `m_scope`) is not modelled; only the unimplemented indicator constructors set it, so today the gesture and [typing](../../../core/libs/prx/libSceNKWebKit/src/UserTypingGestureIndicator.cpp) queries report no gesture and [workerThreadCount](../../../core/libs/prx/libSceNKWebKit/src/WorkerThread.cpp) reports 0. Behaviour follows Safari-610.1.28 [UserGestureIndicator.cpp](https://github.com/WebKit/WebKit/blob/Safari-610.1.28/Source/WebCore/dom/UserGestureIndicator.cpp#L39-L140) and [WorkerThread.cpp](https://github.com/WebKit/WebKit/blob/Safari-610.1.28/Source/WebCore/workers/WorkerThread.cpp#L66-L70), whose export names match the console; console runs are unverified. Closes when: the constructors and token layout exist and match a console module.
 - [WTF callOnMainThread and callOnMainRunLoop](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - console execution is unverified. The 8-byte `Function` and `[D1, D0, call]` vtable follow the pinned [Function.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Function.h#L37-L121). A null or empty `Function` throws. A cross-thread `AndWait` rethrows the callable's exception after destroying it. An `AndWait` blocks forever if the WKRunLoop stops or is reinitialised first, or if called from the `WKRunLoopInitializeMain` thread when `initializeMainThread` ran on another thread or never ran, which upstream's single main thread rules out. Otherwise follows [MainThread.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/MainThread.cpp#L66-L145) without `USE(WEB_THREAD)`. Closes when: compared with a console module.
 - [WKApplicationCacheManager](../../../core/libs/prx/libSceNKWebKit/src/ApplicationCacheManager.cpp) (libSceNKWebKit) - `WKApplicationCacheManagerDeleteAllEntries`, `WKApplicationCacheManagerDeleteEntriesForOrigin` and `WKApplicationCacheManagerGetApplicationCacheOrigins` are empty no-ops following [WKApplicationCacheManager.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKApplicationCacheManager.cpp) at revision `80f77e94c6`; console runtime binaries have not been measured. Closes when: compared with a console module.
 - [WebCore::registerMemoryReleaseNotifyCallbacks](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - empty no-op whose console body was not checked. It follows the non-Cocoa definition `void registerMemoryReleaseNotifyCallbacks() { }` in [MemoryRelease.cpp L239-L244](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/MemoryRelease.cpp#L239-L244), declared `void` in [MemoryRelease.h L46](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/MemoryRelease.h#L46); [WebKit e12a212a531a](https://github.com/WebKit/WebKit/blob/e12a212a531a/Source/WebCore/page/MemoryRelease.cpp#L226-L231) has the same body. Closes when: compared with a console module.
@@ -285,6 +284,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleInspectorSetPageProfilingEnabled` | `-r23ePSw30o` |
 | `WKBundleInspectorShow` | `KVehJeKp2gE` |
 | `WKBundleIsPageBoxVisible` | `ysYpNHM+f2U` |
+| `WKBundleIsProcessingUserGesture` | `flLt+xWYloc` |
 | `WKBundleNodeHandleCopySnapshotWithOptions` | `splXjoRt+jY` |
 | `WKBundleNodeHandleCreate` | `QJxnRATldPc` |
 | `WKBundleNodeHandleGetElementBounds` | `eQyyR4yPFKQ` |
@@ -2037,6 +2037,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore12TextIteratorD1Ev` | `uAQuprnfbIo` |
 | `_ZN7WebCore12TextIteratorD2Ev` | `ONHCFGvD0vw` |
 | `_ZN7WebCore12WebAnimation9instancesEv` | `TPldTG849XM` |
+| `_ZN7WebCore12WorkerThread17workerThreadCountEv` | `FdVPEWL8spY` |
 | `_ZN7WebCore12blobRegistryEv` | `sdYVzaZgFbY` |
 | `_ZN7WebCore12commonVMSlowEv` | `FR4wjgGyss4` |
 | `_ZN7WebCore13AXObjectCache10rootObjectEv` | `beHxaK7HT5s` |
@@ -2634,6 +2635,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore16TrackPrivateBase13willBeRemovedEv` | `bRuD-8BJ4nI` |
 | `_ZN7WebCore16TrackPrivateBaseD0Ev` | `s1DS0Vvz-18` |
 | `_ZN7WebCore16TrackPrivateBaseD1Ev` | `tXwdR3KKGTY` |
+| `_ZN7WebCore16UserGestureToken60setMaximumIntervalForUserGestureForwardingForFetchForTestingEN3WTF7SecondsE` | `8hZJK-1l7VY` |
 | `_ZN7WebCore16UserGestureTokenD1Ev` | `X62s7-3mQYs` |
 | `_ZN7WebCore16UserGestureTokenD2Ev` | `gLb38-yOLMw` |
 | `_ZN7WebCore16VisibleSelection20adjustPositionForEndERKNS_8PositionEPNS_4NodeE` | `hGKVouD1cSI` |
@@ -3091,6 +3093,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore20SVGPathStringBuilderD2Ev` | `kNMZlFmxBH8` |
 | `_ZN7WebCore20ScrollingCoordinator13pageDestroyedEv` | `2Nlpj99LvVo` |
 | `_ZN7WebCore20ScrollingCoordinator45setForceSynchronousScrollLayerPositionUpdatesEb` | `Rf1XDVI64Ck` |
+| `_ZN7WebCore20UserGestureIndicator18currentUserGestureEv` | `FB9S-dovCx0` |
+| `_ZN7WebCore20UserGestureIndicator29processingUserGestureForMediaEv` | `UU20U-U-Nmk` |
 | `_ZN7WebCore20UserGestureIndicatorD1Ev` | `G-+SmxcuaMA` |
 | `_ZN7WebCore20UserGestureIndicatorD2Ev` | `y8w4lDQtlAo` |
 | `_ZN7WebCore20endOfEditableContentERKNS_15VisiblePositionE` | `c9gkeiGoRPU` |
@@ -3447,6 +3451,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore26MessagePortChannelRegistry29existingChannelContainingPortERKNS_21MessagePortIdentifierE` | `JQTLT4u+1Go` |
 | `_ZN7WebCore26MessagePortChannelRegistryD1Ev` | `MBvOb2GxOPg` |
 | `_ZN7WebCore26MessagePortChannelRegistryD2Ev` | `fsMou-R4zfM` |
+| `_ZN7WebCore26UserTypingGestureIndicator27processingUserTypingGestureEv` | `wX+icr0jCqo` |
+| `_ZN7WebCore26UserTypingGestureIndicator28focusedElementAtGestureStartEv` | `fEl7vm4p-tI` |
 | `_ZN7WebCore26UserTypingGestureIndicatorD1Ev` | `aKDkxJobGsk` |
 | `_ZN7WebCore26UserTypingGestureIndicatorD2Ev` | `0cS888QfmWg` |
 | `_ZN7WebCore26propagateExceptionSlowPathERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEONS_9ExceptionE` | `Qsw5iOv5DiE` |
