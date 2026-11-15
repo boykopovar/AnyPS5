@@ -423,6 +423,5 @@ public:
         std::erase(origins, origin);
     }
 };
-};
 
 }  // namespace NKWebKit
