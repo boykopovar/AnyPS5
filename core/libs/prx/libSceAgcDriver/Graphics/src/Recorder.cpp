@@ -4730,7 +4730,6 @@ void Recorder::Submit() {
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submission.commandBufferCount = 1;
     submission.pCommandBuffers = &batch->commands;
-    if (auto* heap = DescriptorHeapEnabled() ? BindlessHeap::Existing(context) : nullptr; heap != nullptr) heap->Submitted(*this, submissions + 1);
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
     if (CheckpointMarkersEnabled() && batch->queue == 0 && batch->predictedSerial != 0) {
@@ -4777,6 +4776,7 @@ void Recorder::Submit() {
     if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
+    if (auto* heap = DescriptorHeapEnabled() ? BindlessHeap::Existing(context) : nullptr; heap != nullptr) heap->Submitted(*this, batch->serial);
     batch->submittedAt = std::chrono::steady_clock::now();
     CaptureTrace::Log("submit-confirmed batch=%llu tokens=%s", static_cast<unsigned long long>(batch->serial), tokensStr.c_str());
     if (DrawProfiled()) {
