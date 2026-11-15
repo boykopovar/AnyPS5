@@ -332,7 +332,7 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
     recorder->MarkCovered(publishedAccess);
     for (const auto& entry : copies) recorder->Keep(entry.slab);
     // CPU readers reach the import's bytes only after the hook's SyncThrough waits by this note.
-    recorder->NotePendingWrites(ranges);
+    recorder->NoteStampedWrites(ranges);
 }
 
 // APS5_SHADOW_VERIFY=1: the published bytes read back from the slabs equal the guest bytes.
@@ -361,8 +361,19 @@ void verifyPublished(const UnitShadow& shadow, const std::vector<SlabCopies>& co
     }
 }
 
+std::atomic<std::uint64_t> publishesInProgress{0};
+
+class PublishInProgress {
+public:
+    PublishInProgress() { publishesInProgress.fetch_add(1, std::memory_order_seq_cst); }
+    ~PublishInProgress() { publishesInProgress.fetch_sub(1, std::memory_order_seq_cst); }
+    PublishInProgress(const PublishInProgress&) = delete;
+    PublishInProgress& operator=(const PublishInProgress&) = delete;
+};
+
 // The publish of one shadow: `selected[k]` (k = unit - first) names the units the scope chose.
 std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_t first, std::uint64_t last, const std::vector<std::uint8_t>& selected, PublishReason reason) {
+    const PublishInProgress inProgress;
     auto& registry = Registry();
     std::vector<SlabCopies> copies;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
@@ -602,6 +613,10 @@ bool anyShadowedLocked(const Shadows& registry, std::uint64_t address, std::size
     });
 }
 
+}
+
+bool AnyPublishInProgress() {
+    return publishesInProgress.load(std::memory_order_seq_cst) != 0;
 }
 
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {

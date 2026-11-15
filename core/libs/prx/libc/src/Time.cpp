@@ -1,4 +1,6 @@
 #include "prx/libc/include/Api.hpp"
+#include <atomic>
+#include <chrono>
 #include <array>
 #include <cstdint>
 #include <cstddef>
@@ -736,11 +738,16 @@ int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
         GuestTm early{};
         GuestTm late{};
         constexpr std::int64_t searchSeconds = 12 * 2629746 + SECONDS_PER_DAY;
-        if (utcCalendarFields(local - searchSeconds, early) && utcCalendarFields(local + searchSeconds, late)) {
+        constexpr std::int64_t cycleSeconds = 146097 * SECONDS_PER_DAY;
+        const auto searchable = [&](std::int64_t time) {
+            return utcCalendarFields(time - searchSeconds, early) && utcCalendarFields(time + searchSeconds, late);
+        };
+        const std::int64_t probe = searchable(local) ? local : local + (local < 0 ? cycleSeconds : -cycleSeconds);
+        if (searchable(probe)) {
             const int saved = *__error_nid_postfix();
-            const auto guess = SonyHostZoneAt_nid_no_patch(local);
-            const auto zone = SonyHostZoneAt_nid_no_patch(local - guess.standardEast - guess.daylight);
-            const auto daylight = SonyHostDaylightAmount_nid_no_patch(local - zone.standardEast - zone.daylight);
+            const auto guess = SonyHostZoneAt_nid_no_patch(probe);
+            const auto zone = SonyHostZoneAt_nid_no_patch(probe - guess.standardEast - guess.daylight);
+            const auto daylight = SonyHostDaylightAmount_nid_no_patch(probe - zone.standardEast - zone.daylight);
             *__error_nid_postfix() = saved;
             if (daylight == 0) host.tm_isdst = -1;
         }
@@ -799,14 +806,24 @@ size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* 
 
 char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer) {
     if (buffer == nullptr) throw std::invalid_argument("asctime_r: null buffer");
+    std::array<char, 26> output{};
     if (timeptr == nullptr) {
         errno = EINVAL;
-        std::memcpy(buffer, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
-        return buffer;
+        std::memcpy(output.data(), "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
+    } else {
+        GuestTm time{};
+        if (!GuestCopyIn_nid_no_patch(&time, timeptr, offsetof(GuestTm, tm_yday))) {
+            errno = EFAULT;
+            return nullptr;
+        }
+        const std::int64_t year = static_cast<std::int64_t>(time.tm_year) + YEAR_BASE;
+        std::snprintf(output.data(), output.size(), "%s %s%3d %02d:%02d:%02d %04d\n", tableName(time.tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(time.tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
+            clampedField(time.tm_mday, 100), clampedField(time.tm_hour, 100), clampedField(time.tm_min, 100), clampedField(time.tm_sec, 100), clampedField(year, 10000));
     }
-    const std::int64_t year = static_cast<std::int64_t>(timeptr->tm_year) + YEAR_BASE;
-    std::snprintf(buffer, 26, "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
-        clampedField(timeptr->tm_mday, 100), clampedField(timeptr->tm_hour, 100), clampedField(timeptr->tm_min, 100), clampedField(timeptr->tm_sec, 100), clampedField(year, 10000));
+    if (!GuestCopyOut_nid_no_patch(buffer, output.data(), std::strlen(output.data()) + 1)) {
+        errno = EFAULT;
+        return nullptr;
+    }
     return buffer;
 }
 
@@ -828,15 +845,9 @@ size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* forma
 }
 
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr) {
-    constexpr int GuestEinval = 22;
     if (format == nullptr) throw std::invalid_argument("wcsftime: null format");
     if (timeptr == nullptr) throw std::invalid_argument("wcsftime: null time");
     if (str == nullptr) return 0;
-    const auto maxCharacterBytes = static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
-    if (std::numeric_limits<std::size_t>::max() / maxCharacterBytes <= count) {
-        errno = GuestEinval;
-        return 0;
-    }
     const int callerError = errno;
     const ZoneScope zone;
     tzset_nid_postfix();
@@ -849,16 +860,16 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
     return count - buffer.remaining;
 }
 
-// The guest's CLOCKS_PER_SEC is 1000000: clock() reports process CPU time in microseconds.
+static std::atomic<std::uint64_t (APS5_VABI*)()> g_processTimeSource{nullptr};
+static const auto g_libcLoad = std::chrono::steady_clock::now();
+
+void LibcSetProcessTimeSource_nid_no_patch(std::uint64_t (APS5_VABI* source)()) {
+    g_processTimeSource.store(source);
+}
+
 int64_t APS5_VABI clock_nid_postfix() {
-#ifdef _WIN32
-    FILETIME creation, exit, kernel, user;
-    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) return -1;
-    const auto toTicks = [](const FILETIME& time) { return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; };
-    return static_cast<int64_t>((toTicks(kernel) + toTicks(user)) / 10);
-#else
-    return static_cast<int64_t>(static_cast<double>(std::clock()) * 1000000.0 / CLOCKS_PER_SEC);
-#endif
+    if (const auto source = g_processTimeSource.load()) return static_cast<int64_t>(source());
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - g_libcLoad).count();
 }
 
 int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time) {

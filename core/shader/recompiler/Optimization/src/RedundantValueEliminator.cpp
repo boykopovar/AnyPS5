@@ -1,4 +1,5 @@
 #include "Optimization/RedundantValueEliminator.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -273,6 +274,61 @@ struct ValueKeyHash {
     }
 };
 
+class AvailableValues {
+public:
+    [[nodiscard]] std::pair<IrValue*, bool> TryEmplace(const ValueKey& key, IrValue* value) {
+        const std::size_t hash = ValueKeyHash{}(key);
+        if (!slots.empty()) {
+            for (std::size_t slot = hash & mask;; slot = (slot + 1u) & mask) {
+                const std::uint32_t at = slots[slot];
+                if (at == 0u) break;
+                const Entry& entry = entries[at - 1u];
+                if (entry.hash == hash && entry.key == key) return {entry.value, false};
+            }
+        }
+        if ((entries.size() + 1u) * 2u > slots.size()) Grow();
+        entries.push_back(Entry{key, value, hash});
+        Place(entries.size() - 1u);
+        return {value, true};
+    }
+
+    [[nodiscard]] std::size_t Size() const {
+        return entries.size();
+    }
+
+    void Truncate(std::size_t size) {
+        while (entries.size() > size) {
+            std::size_t slot = entries.back().hash & mask;
+            while (slots[slot] != entries.size()) slot = (slot + 1u) & mask;
+            slots[slot] = 0u;
+            entries.pop_back();
+        }
+    }
+
+private:
+    struct Entry {
+        ValueKey key;
+        IrValue* value;
+        std::size_t hash;
+    };
+
+    void Place(std::size_t index) {
+        std::size_t slot = entries[index].hash & mask;
+        while (slots[slot] != 0u) slot = (slot + 1u) & mask;
+        slots[slot] = static_cast<std::uint32_t>(index + 1u);
+    }
+
+    void Grow() {
+        slots.assign(std::max<std::size_t>(64u, slots.size() * 2u), 0u);
+        mask = slots.size() - 1u;
+        for (std::size_t index = 0; index < entries.size(); ++index) Place(index);
+    }
+
+    std::vector<Entry> entries;
+    std::vector<std::uint32_t> slots;
+    std::size_t mask = 0;
+};
+
 std::vector<IrBlock*> ReversePostOrder(IrBlock& entry) {
     std::vector<IrBlock*> order;
     std::unordered_map<const IrBlock*, bool> visited;
@@ -389,8 +445,7 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
             }
         }
     }
-    std::unordered_map<ValueKey, IrValue*, ValueKeyHash> available;
-    std::vector<const ValueKey*> added;
+    AvailableValues available;
     const auto visit = [&](std::size_t position) {
         std::uint64_t epoch = entryEpoch[position];
         std::uint64_t nextClobber = firstClobber[position];
@@ -410,32 +465,26 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
             key.operandCount = inst->ArgumentCount();
             if (key.operandCount > key.operands.size()) continue;
             for (std::size_t index = 0; index < key.operandCount; ++index) key.operands[index] = inst->Argument(index)->Resolve();
-            const auto [found, inserted] = available.try_emplace(key, inst);
-            if (inserted) {
-                added.push_back(&found->first);
-                continue;
-            }
-            inst->ReplaceAllUsesWith(found->second);
-            replacements.emplace(inst, found->second);
+            const auto [existing, inserted] = available.TryEmplace(key, inst);
+            if (inserted) continue;
+            inst->ReplaceAllUsesWith(existing);
+            replacements.emplace(inst, existing);
             ++stats.replacedValues;
         }
     };
     std::vector<std::pair<std::size_t, std::size_t>> stack{{0u, 0u}};
-    std::vector<std::size_t> scopes{added.size()};
+    std::vector<std::size_t> scopes{available.Size()};
     visit(0u);
     while (!stack.empty()) {
         auto& [position, next] = stack.back();
         if (next < children[position].size()) {
             const auto child = index.at(children[position][next++]);
-            scopes.push_back(added.size());
+            scopes.push_back(available.Size());
             visit(child);
             stack.emplace_back(child, 0u);
             continue;
         }
-        while (added.size() > scopes.back()) {
-            available.erase(available.find(*added.back()));
-            added.pop_back();
-        }
+        available.Truncate(scopes.back());
         scopes.pop_back();
         stack.pop_back();
     }

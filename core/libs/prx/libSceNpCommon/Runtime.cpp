@@ -686,7 +686,11 @@ int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, 
 
 int APS5_VABI sceNpThreadGetId(Pthread* thread) {
     if (thread == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    *thread = scePthreadSelf();
+    const Pthread self = scePthreadSelf();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(thread, &self, sizeof(self));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1298,12 +1302,21 @@ std::uint32_t APS5_VABI sceNpDbgAssignDebugId(void) {
 int APS5_VABI sceNpUtilBuildTitleId(const NpTitleIdParts* parts, char* titleId, std::size_t size) {
     if (parts == nullptr || titleId == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     if (size < NP_TITLE_ID_SIZE) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (parts->index > NP_TITLE_ID_INDEX_MAX) return NP_UTIL_ERROR_OUT_OF_RANGE;
-    std::memcpy(titleId, parts->id, sizeof(parts->id));
-    titleId[9] = '_';
-    titleId[10] = static_cast<char>('0' + parts->index / 10);
-    titleId[11] = static_cast<char>('0' + parts->index % 10);
-    titleId[12] = '\0';
+    NpTitleIdParts localParts{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localParts, parts, sizeof(localParts));
+    errno = savedErrno;
+    if (!read) return NP_ERROR_INVALID_ARGUMENT_UTIL;
+    if (localParts.index > NP_TITLE_ID_INDEX_MAX) return NP_UTIL_ERROR_OUT_OF_RANGE;
+    char localTitleId[NP_TITLE_ID_SIZE] = {};
+    std::memcpy(localTitleId, localParts.id, sizeof(localParts.id));
+    localTitleId[9] = '_';
+    localTitleId[10] = static_cast<char>('0' + localParts.index / 10);
+    localTitleId[11] = static_cast<char>('0' + localParts.index % 10);
+    localTitleId[12] = '\0';
+    const bool written = GuestCopyOut_nid_no_patch(titleId, localTitleId, sizeof(localTitleId));
+    errno = savedErrno;
+    if (!written) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
