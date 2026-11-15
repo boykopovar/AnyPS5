@@ -7,10 +7,12 @@
 #include <io.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #else
 #include <cerrno>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -3479,6 +3481,41 @@ int main(int argc, char** argv) {
         Require(sceNetCtlRegisterCallbackForNpToolkit(RecordNetCtlEvent, &toolkit, &cid) == 0);
         Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && toolkit.calls == 2);
         Require(sceNetCtlUnregisterCallbackForNpToolkit(cid) == 0);
+    }
+    {
+        auto* unmapped = reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceNetConfigGetIfFlags(0, unmapped) == static_cast<int>(0x8041130Eu) && errno == 71);
+        std::uint32_t probeGateway = 0;
+        const int routeStatus = sceNetConfigGetDefaultRoute(&probeGateway);
+        errno = 71;
+        if (routeStatus == 1) {
+            Require(Failed(sceNetConfigGetDefaultRoute(unmapped), 14));
+        } else {
+            Require(routeStatus == static_cast<int>(0x8041130Cu));
+            Require(sceNetConfigGetDefaultRoute(unmapped) == static_cast<int>(0x8041130Cu) && errno == 71);
+        }
+#ifdef _WIN32
+        void* readOnlyPage = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READONLY);
+        Require(readOnlyPage != nullptr);
+#else
+        void* readOnlyPage = mmap(nullptr, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(readOnlyPage != MAP_FAILED);
+#endif
+        auto* readOnlyUint32 = static_cast<std::uint32_t*>(readOnlyPage);
+        errno = 71;
+        Require(sceNetConfigGetIfFlags(0, readOnlyUint32) == static_cast<int>(0x8041130Eu) && errno == 71);
+        errno = 71;
+        if (routeStatus == 1) {
+            Require(Failed(sceNetConfigGetDefaultRoute(readOnlyUint32), 14));
+        } else {
+            Require(sceNetConfigGetDefaultRoute(readOnlyUint32) == static_cast<int>(0x8041130Cu) && errno == 71);
+        }
+#ifdef _WIN32
+        Require(VirtualFree(readOnlyPage, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(readOnlyPage, 4096) == 0);
+#endif
     }
     if (ipv6Unavailable) {
         std::puts("skipped the IPv6 socket checks, the host has no usable IPv6 loopback");

@@ -476,6 +476,13 @@ int fail(int err) {
     return NET_ERROR_BASE | err;
 }
 
+bool WriteNetUint32(std::uint32_t* destination, std::uint32_t value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 int fail_with_status(int result) {
     set_errno((result & 0xFF00) == 0x100 ? result & 0xFF : 205);
     return result;
@@ -3761,8 +3768,8 @@ int APS5_VABI sceNetConfigGetIfFlags(std::uint32_t interfaceId, std::uint32_t* f
     if (flags == nullptr) return NET_CONFIG_ERROR_NULL_FLAGS;
     if (interfaceId >= 10) return -1;
     if (interfaceId != NET_IF_LO0) throw std::runtime_error("sceNetConfigGetIfFlags: interface " + std::to_string(interfaceId) + " is not implemented");
-    *flags = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
-    return 0;
+    constexpr std::uint32_t value = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
+    return WriteNetUint32(flags, value) ? 0 : NET_CONFIG_ERROR_NULL_FLAGS;
 }
 
 int APS5_VABI sceNetConfigSetIfFlags(std::uint32_t interfaceId, std::uint32_t flags) {
@@ -3905,8 +3912,7 @@ int APS5_VABI sceNetConfigGetDefaultRoute(std::uint32_t* gateway) {
     std::uint32_t found = 0;
     if (!NetCtlHostIpv4Gateway_nid_no_patch(&found)) return NET_CONFIG_ERROR_NO_ROUTE;
     if (gateway == nullptr) throw std::invalid_argument("sceNetConfigGetDefaultRoute: null gateway");
-    *gateway = found;
-    return 1;
+    return WriteNetUint32(gateway, found) ? 1 : fail(NET_EFAULT);
 }
 
 int APS5_VABI sceNetDhcpGetAutoipInfo(std::int32_t interfaceId, NetAutoIpInfo* parameter) {
