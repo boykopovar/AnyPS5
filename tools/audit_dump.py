@@ -95,7 +95,7 @@ def comparison_path(path, links=frozenset()):
     for prefix in (*reversed(path.parents), path):
         if not prefix.is_symlink():
             continue
-        identity = prefix.parent.resolve() / prefix.name
+        identity = (prefix.parent.resolve() / prefix.name).parts
         if identity in links:
             raise RuntimeError("symbolic link cycle")
         target = prefix.readlink()
