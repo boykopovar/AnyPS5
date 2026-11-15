@@ -8,4 +8,10 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "SceTypes.hpp"
 
+namespace NpTrophy2 {
+
+void ClearIconSize(size_t* size);
+
+}
+
 #endif

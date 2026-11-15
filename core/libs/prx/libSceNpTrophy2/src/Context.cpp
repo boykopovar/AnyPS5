@@ -1,4 +1,5 @@
 #include "prx/libSceNpTrophy2/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -41,6 +42,19 @@ void DestroyContext(int context) {
     auto& table = contexts();
     std::lock_guard lock(table.mutex);
     table.owners.erase(context);
+}
+
+void ClearIconSize(size_t* size) {
+    if (size == nullptr) {
+        return;
+    }
+    const size_t none = NP_TROPHY2_ICON_SIZE_NONE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(size, &none, sizeof(none));
+    errno = savedErrno;
+    if (!copied) {
+        APS5_INVALID_ARG_EX;
+    }
 }
 
 std::optional<ContextOwner> FindContext(int context) {
@@ -87,9 +101,7 @@ int APS5_VABI sceNpTrophy2GetRewardIcon(int context, int handle, int reward_id, 
     (void)handle;
     (void)reward_id;
     (void)buffer;
-    if (size != nullptr) {
-        *size = NP_TROPHY2_ICON_SIZE_NONE;
-    }
+    NpTrophy2::ClearIconSize(size);
     return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
 }
 

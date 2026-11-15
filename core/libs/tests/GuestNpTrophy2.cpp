@@ -8,6 +8,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -136,4 +142,29 @@ int main(int argc, char** argv) {
     Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, nullptr, nullptr, static_cast<std::uint32_t*>(bad)); }));
     Require(count == 99);
     Require(sceNpTrophy2GetTrophyInfoArray(1, 1, 0, 1, nullptr, nullptr, &count) == SCE_NP_TROPHY2_OK && count == 1);
+
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, static_cast<size_t*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGameIcon(1, 1, nullptr, static_cast<size_t*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetGroupIcon(1, 1, 2, nullptr, static_cast<size_t*>(bad)); }));
+    Require(RefusesKeepingErrno([bad] { sceNpTrophy2GetTrophyIcon(1, 1, 3, nullptr, static_cast<size_t*>(bad)); }));
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    void* readonlySize = VirtualAlloc(nullptr, sysInfo.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(readonlySize != nullptr);
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    void* readonlySize = mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readonlySize != MAP_FAILED);
+#endif
+    Require(RefusesKeepingErrno([readonlySize] { sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, static_cast<size_t*>(readonlySize)); }));
+    Require(RefusesKeepingErrno([readonlySize] { sceNpTrophy2GetGameIcon(1, 1, nullptr, static_cast<size_t*>(readonlySize)); }));
+    Require(RefusesKeepingErrno([readonlySize] { sceNpTrophy2GetGroupIcon(1, 1, 2, nullptr, static_cast<size_t*>(readonlySize)); }));
+    Require(RefusesKeepingErrno([readonlySize] { sceNpTrophy2GetTrophyIcon(1, 1, 3, nullptr, static_cast<size_t*>(readonlySize)); }));
+#ifdef _WIN32
+    Require(VirtualFree(readonlySize, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readonlySize, static_cast<std::size_t>(pageSize)) == 0);
+#endif
 }
