@@ -78,7 +78,7 @@ def load_known(path, sanitizers):
                 raise ValueError(f"{location}: {test} is already listed for {name}")
             seen.add((test, name))
         if set(names) & set(sanitizers):
-            known[test] = reason
+            known[test] = f"{known[test]}; {reason}" if test in known else reason
     return known
 
 

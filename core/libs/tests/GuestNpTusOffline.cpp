@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
 #include <cstring>
 #include <functional>
 
@@ -135,6 +136,9 @@ void CheckTss(const char* name, int accepted, const std::function<int(int, int, 
     std::uint64_t offset = 4;
     option = TssOption{sizeof(TssOption), &offset, &offset, nullptr};
     Require(call(req, 15, buffer, 0x18, &option) == accepted, name, "a valid option was refused");
+    errno = 71;
+    Require(call(req, 15, buffer, 0x18, reinterpret_cast<const TssOption*>(0x10)) == InvalidArgument, name, "an unreadable option was taken");
+    Require(errno == 71, name, "errno was changed");
     Require(call(req, 0, buffer, 0x18, nullptr) == accepted, name, "slot id 0 without an option was refused");
     Require(call(9999, 0, buffer, 0x18, nullptr) == InvalidId, name, "an unknown request was not refused with INVALID_ID");
     int result = 0;
@@ -299,6 +303,22 @@ int main() {
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, nullptr, slots, 2, nullptr) == InsufficientArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "a null virtual user was taken");
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(9999, nullptr, slots, 2, nullptr) == InvalidId, "sceNpTusDeleteMultiSlotDataVUserAsync", "the request was not looked up before the null virtual user");
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &emptyUser, slots, 2, nullptr) == 0, "sceNpTusDeleteMultiSlotDataVUserAsync", "an empty virtual user was refused");
+        const auto* unreadableSlots = reinterpret_cast<const std::int32_t*>(0x10);
+        const auto* unreadableUser = reinterpret_cast<const NpOnlineId*>(0x10);
+        errno = 71;
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, unreadableSlots, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "unreadable slot ids were taken");
+        Require(sceNpTusDeleteMultiSlotDataAAsync(req, 1, unreadableSlots, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataAAsync", "unreadable slot ids were taken");
+        Require(sceNpTusDeleteMultiSlotDataAsync(req, npId, unreadableSlots, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusAAsync(req, 1, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusAAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusAVUserAsync(req, &virtualUser, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusAVUserAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusAsync(req, npId, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusForCrossSaveAsync(req, 1, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusForCrossSaveAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync(req, &virtualUser, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiSlotDataStatusVUserAsync(req, &virtualUser, unreadableSlots, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiSlotDataStatusVUserAsync", "unreadable slot ids were taken");
+        Require(sceNpTusGetMultiUserVariableVUserAsync(req, unreadableUser, 1, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiUserVariableVUserAsync", "an unreadable virtual user array was taken");
+        Require(sceNpTusGetMultiUserDataStatusAVUserAsync(req, unreadableUser, 1, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetMultiUserDataStatusAVUserAsync", "an unreadable virtual user array was taken");
+        Require(sceNpTusAddAndGetVariableVUserAsync(req, unreadableUser, 1, 5, nullptr, nullptr, buffer, sizeof(buffer), nullptr) == InvalidArgument, "sceNpTusAddAndGetVariableVUserAsync", "an unreadable virtual user was taken");
+        Require(errno == 71, "sceNpTusGetMultiUserVariableVUserAsync", "errno was changed");
         sceNpTusDeleteRequest(req);
 
     }

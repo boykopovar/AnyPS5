@@ -53,6 +53,7 @@ struct Settings {
     std::uint32_t verifyFlags = 0x3d;
     std::uint32_t timeout = 120000000;
     std::uint32_t connectTimeout = 30000000;
+    std::uint32_t connectionWaitTimeout = 30000000;
     std::int32_t resolveRetry = 0;
     std::uint32_t sendTimeout = 120000000;
     std::uint32_t recvTimeout = 120000000;

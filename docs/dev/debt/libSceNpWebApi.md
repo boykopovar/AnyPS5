@@ -3,6 +3,8 @@
 ### Functional
 
 - [sceNpWebApiGetMemoryPoolStats](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - returning `0x80552902` (`SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT`) when the `stats` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceNpWebApiCreateRequest, sceNpWebApiIntCreateRequest, sceNpWebApiIntInitialize](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi) - returning `0x80552902` (`SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT`) when `contentParameter`, `internalArgs`, or `args` are unreadable via `GuestCopyIn_nid_no_patch`, or when `requestId` is unwritable via `GuestCopyOut_nid_no_patch`, is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceNpWebApiAddMultipartPart](../../../core/libs/prx/libSceNpWebApi/Export.cpp) and [sceNpWebApiUtilityParseNpId](../../../core/libs/prx/libSceNpWebApi/ParseNpId.cpp) (libSceNpWebApi) - returning `0x80552902` for an unreadable multipart parameter or an unwritable part index and `0x80550003` for an unwritable `NpId`, through `GuestCopyIn_nid_no_patch`/`GuestCopyOut_nid_no_patch` while preserving host errno, is a host-safety fallback with console behavior on unmapped pointers unmeasured. A part whose index cannot be reported is removed again, so the part list keeps the confirmed 1-based indexing.
 
 ### Additional callable exports
 

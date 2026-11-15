@@ -269,6 +269,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
+    add_test_executable(audio_out2_ambisonics_encode_tests tests/AudioOut2AmbisonicsEncode.cpp)
+    target_include_directories(audio_out2_ambisonics_encode_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out2_ambisonics_encode_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out2_ambisonics_encode_tests)
+    add_test(NAME audio_out2_ambisonics_encode COMMAND audio_out2_ambisonics_encode_tests)
+    if(WIN32)
+        set_tests_properties(audio_out2_ambisonics_encode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
     add_test_executable(audio_out_info_tests tests/AudioOutInfo.cpp)
     target_include_directories(audio_out_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out_info_tests PRIVATE libSceAudioOut libc)
