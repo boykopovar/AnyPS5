@@ -4451,26 +4451,24 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
     return outcome(partial || !replaced.empty() ? IndexOutcome::Partial : IndexOutcome::Accepted);
 }
 
+ShaderResources::ExitStamp ShaderResources::currentExitStamp() const {
+    const bool imported = !directRegions.empty();
+    return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), textureReleases.load(std::memory_order_acquire), GuestMemory::UnwatchSerial(), imported ? HostImportSetGeneration() : 0, imported ? GuestAllocations::GuestAllocationsGeneration_nid_postfix() : 0, DepthSurfacesSerial()};
+}
+
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (!registeredImageViewsCurrent(registeredImageViews)) {
         if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
-        provedEpoch = 0;
+        proved.epoch = 0;
         return false;
     }
     if (EpochProofs()) {
-        const auto epoch = GuestMemory::CollectEpoch();
-        const auto proof = GuestMemory::ProofSerial();
-        const auto pending = StorageTexture::PendingSerial();
-        const auto releases = textureReleases.load(std::memory_order_acquire);
-        const auto unwatch = GuestMemory::UnwatchSerial();
-        const auto importSet = directRegions.empty() ? 0 : HostImportSetGeneration();
-        const auto allocations = directRegions.empty() ? 0 : GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        const auto surfaces = DepthSurfacesSerial();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases && provedUnwatch == unwatch && provedImportSet == importSet && provedAllocations == allocations && provedSurfaces == surfaces && !DepthPlanesStale() && refreshPerUseCopies()) {
+        const auto stamp = currentExitStamp();
+        if (stamp.epoch != 0 && proved == stamp && !DepthPlanesStale() && refreshPerUseCopies()) {
             static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
             if (verify) {
                 const bool ok = revalidateFull(shaders, report);
-                noteEpochProof(true, true, !ok, GuestMemory::ProofSerial() != proof);
+                noteEpochProof(true, true, !ok, GuestMemory::ProofSerial() != stamp.proof);
                 return ok;
             }
             if (report != nullptr) *report = {ProofPath::Full, ProofFailure::None};
@@ -4479,18 +4477,8 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         }
         const bool ok = revalidateFull(shaders, report);
         noteEpochProof(false, false, false);
-        if (ok) {
-            provedEpoch = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); }) ? 0 : epoch;
-            provedProof = proof;
-            provedPending = pending;
-            provedReleases = releases;
-            provedUnwatch = unwatch;
-            provedImportSet = importSet;
-            provedAllocations = allocations;
-            provedSurfaces = surfaces;
-        } else {
-            provedEpoch = 0;
-        }
+        proved = stamp;
+        if (!ok || std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); })) proved.epoch = 0;
         return ok;
     }
     return revalidateFull(shaders, report);

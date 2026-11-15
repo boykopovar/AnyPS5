@@ -776,14 +776,19 @@ private:
     // no image other than the object's own sources has results pending over its surfaces and
     // regions, so those checks are skipped (see fastRevalidate).
     std::uint64_t pendingSerialSeen = 0;
-    std::uint64_t provedEpoch = 0;
-    std::uint64_t provedProof = 0;
-    std::uint64_t provedPending = 0;
-    std::uint64_t provedReleases = 0;
-    std::uint64_t provedUnwatch = 0;
-    std::uint64_t provedImportSet = 0;
-    std::uint64_t provedAllocations = 0;
-    std::uint64_t provedSurfaces = 0;
+    struct ExitStamp {
+        std::uint64_t epoch = 0;
+        std::uint64_t proof = 0;
+        std::uint64_t pending = 0;
+        std::uint64_t releases = 0;
+        std::uint64_t unwatch = 0;
+        std::uint64_t importSet = 0;
+        std::uint64_t allocations = 0;
+        std::uint64_t surfaces = 0;
+        bool operator==(const ExitStamp&) const = default;
+    };
+    ExitStamp currentExitStamp() const;
+    ExitStamp proved;
     bool refreshPerUseCopies();
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
