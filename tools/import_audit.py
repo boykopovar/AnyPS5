@@ -620,6 +620,15 @@ def read_modules(directories):
     return imports, {name: sorted(files) for name, files in exports.items()}
 
 
+def module_registry_name(module):
+    return module if module.endswith(".guest.prx") else module + ".guest.prx"
+
+
+def modules_with_registries(registries, modules):
+    stems = {path.name.removesuffix(".registry.json") for path in registries}
+    return {module for module in modules if any(stem + "." + module_registry_name(module) in stems for stem in stems)}
+
+
 def nids_of(name, aliases):
     if name in aliases:
         return aliases[name]
@@ -1257,7 +1266,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="classify the imports of a converted game against the built system libraries")
     parser.add_argument("registries", nargs="+", type=Path, help="JSON written by 'relinker --registry'")
     parser.add_argument("--libs", action="append", required=True, help="directory of built .prx files; repeat for several")
-    parser.add_argument("--modules", action="append", default=[], help="directory of the title's own modules; each module's own imports are audited")
+    parser.add_argument("--modules", action="append", default=[], help="directory of the title's own modules; each module's own imports are audited, from its registry when that is passed")
     parser.add_argument("--source", default=str(PRX), help="core/libs/prx tree used to find throwing stubs (default: this repository's)")
     parser.add_argument("--names", help="aerolib.csv style file (NID, name per line) used to name absent imports")
     parser.add_argument("--json", type=Path, help="write the full result to this file")
@@ -1284,6 +1293,8 @@ def main(argv=None):
         exports, libraries = built_libraries(args.libs)
         host_dependencies, windows = built_host_dependencies(args.libs)
         module_imports, module_exports = read_modules(args.modules)
+        for module in modules_with_registries(args.registries, module_imports):
+            module_imports[module] = ([], module_imports[module][1])
         modules = set(module_imports)
         modules |= {name.removesuffix(".guest.prx") for name in modules if name.endswith(".guest.prx")}
         modules = ModuleNames(modules, fold=bool(windows))
