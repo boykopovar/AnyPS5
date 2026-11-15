@@ -59,6 +59,13 @@ alignas(256) constexpr std::array<std::uint32_t, 27> GradientCode{
     0xe070102c, 0x80000f01, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 27> PlainGradientCode{
+    0x34020087, 0xe0301000, 0x80000501, 0xe0301004, 0x80000601, 0xe0301008, 0x80000701, 0xe030100c,
+    0x80000801, 0xe0301010, 0x80000901, 0xe0301014, 0x80000a01, 0xe0301018, 0x80000b01, 0xbf8c3f70,
+    0xf0880f08, 0x00610c05, 0xe0701020, 0x80000c01, 0xe0701024, 0x80000d01, 0xe0701028, 0x80000e01,
+    0xe070102c, 0x80000f01, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 55> PairedCode{
     0x34020087u, 0xe0301000u, 0x80000501u, 0xe0301004u, 0x80000601u, 0xe0301008u, 0x80000701u, 0xe030100cu,
     0x80000801u, 0xe0301010u, 0x80000901u, 0xe0301014u, 0x80000a01u, 0xbf8c3f70u, 0xf0880f08u, 0x00610c05u,
@@ -348,7 +355,49 @@ std::set<std::uint32_t> MinLodSpecIds(std::span<const std::uint32_t> spirv) {
     return ids;
 }
 
+std::multiset<std::uint32_t> GradientSampleOperands(std::span<const std::uint32_t> spirv) {
+    std::multiset<std::uint32_t> masks;
+    for (std::size_t word = 5; word < spirv.size();) {
+        const auto count = spirv[word] >> 16u;
+        if (count == 0u) break;
+        const auto opcode = spirv[word] & 0xffffu;
+        const bool dref = opcode == spv::OpImageSampleDrefImplicitLod || opcode == spv::OpImageSampleDrefExplicitLod;
+        if ((opcode == spv::OpImageSampleImplicitLod || opcode == spv::OpImageSampleExplicitLod || dref) && count > (dref ? 6u : 5u)) {
+            const auto mask = spirv[word + (dref ? 6u : 5u)];
+            if ((mask & spv::ImageOperandsGradMask) != 0u) masks.insert(mask);
+        }
+        word += count;
+    }
+    return masks;
+}
+
+void CheckGradientSampleLanes(const ShaderRecompiler::SpirvTarget& deviceTarget) {
+    constexpr auto grad = static_cast<std::uint32_t>(spv::ImageOperandsGradMask);
+    constexpr auto gradMinLod = grad | static_cast<std::uint32_t>(spv::ImageOperandsMinLodMask);
+    const Case item{0x200u, 0u};
+    const auto userData = UserData(item);
+    for (const bool registrationModules : {false, true}) {
+        for (const bool shaderLane : {false, true}) {
+            auto target = deviceTarget;
+            target.registrationModules = registrationModules;
+            target.shaderImageMinLod = shaderLane;
+            const auto lane = std::string(shaderLane ? "the shader clamp" : "the view clamp") + (registrationModules ? " with registration modules" : "");
+            const auto masks = [&](std::span<const std::uint32_t> code) {
+                const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+                const auto shader = ShaderRecompiler::PrepareShader(Request(code, target, userData, memory, true));
+                return GradientSampleOperands(ShaderRecompiler::GetPreparedArtifact(*shader).spirv.Words());
+            };
+            const auto plain = masks(PlainGradientCode);
+            Require(plain.count(grad) != 0u, "image_sample_d without a clamp has no plain Grad sample under " + lane + ", which keeps the gradient LOD on a device that lowers Grad with MinLod to an explicit LOD");
+            Require((plain.count(gradMinLod) != 0u) == shaderLane && plain.size() == plain.count(grad) + plain.count(gradMinLod), "image_sample_d without a clamp emits the MinLod operand " + std::to_string(plain.count(gradMinLod)) + " times under " + lane + ", expected " + (shaderLane ? "only in the branch of a clamp above 0" : "never"));
+            const auto clamped = masks(GradientCode);
+            Require(clamped.count(grad) == 0u && clamped.count(gradMinLod) != 0u, "image_sample_d_cl does not take the MinLod operand alone under " + lane);
+        }
+    }
+}
+
 void CheckSpirvLanes(const ShaderRecompiler::SpirvTarget& deviceTarget) {
+    CheckGradientSampleLanes(deviceTarget);
     const Case item{0x200u, 0u};
     const auto userData = UserData(item);
     const std::span<const std::uint32_t> code(Code);
@@ -392,7 +441,7 @@ int main(int argc, char** argv) {
         if (!shaderClamp) RunAndCheck(*device, Code, 6u, Case{0u, 0u, 0xfffu, 1u, 256}, false);
         RunAndCheck(*device, Code, 6u, Case{0x100u, 1u, 0xfffu, 1u, -96}, false);
         for (const auto& item : {Case{0x200u, 0u}, Case{0u, 0u}, Case{0x300u, 0u}, Case{0x200u, 1u}, Case{0x100u, 0u}}) RunAndCheck(*device, Code, 6u, item, true);
-        for (const auto& item : {Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}}, Pairing{0x300u, 1u, {0u, 0u, 1u << 26u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, (1u << 20u) | (1u << 22u), 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0x3f00u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}, 0x300u, 4u}}) {
+        for (const auto& item : {Pairing{0u, 0u, {0u, 0u, 0u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}}, Pairing{0x300u, 1u, {0u, 0u, 1u << 26u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, (1u << 20u) | (1u << 22u), 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0x3f00u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}, 0x300u, 4u}}) {
             RunPairing(*device, item);
             CheckPairing(item);
         }

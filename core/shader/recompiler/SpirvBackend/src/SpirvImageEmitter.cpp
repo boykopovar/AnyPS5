@@ -1875,6 +1875,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     const auto unclampedLod = (operandMask & spv::ImageOperandsLodMask) != 0u ? operands.back() : 0u;
     std::uint32_t lodClamp = 0;
     std::uint32_t lodViewClamp = 0;
+    std::uint32_t optionalMinLod = 0;
     const auto fmax = [&](std::uint32_t left, std::uint32_t right) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpExtInst, TypeF32(state), value, GlslStd450(state), GLSLstd450FMax, left, right);
@@ -1897,6 +1898,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
             state.module.EmitCapability(spv::CapabilityMinLod);
             operandMask |= spv::ImageOperandsMinLodMask;
             operands.push_back(lodClamp == 0u ? lodViewClamp : lodViewClamp == 0u ? lodClamp : fmax(lodClamp, lodViewClamp));
+            if (lodClamp == 0u) optionalMinLod = lodViewClamp;
         }
     }
     const auto constantOffset = [&]() -> const IrValue* {
@@ -1937,7 +1939,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         operands.insert(operands.end() - ((operandMask & spv::ImageOperandsMinLodMask) != 0u ? 1 : 0), offset);
 
     }
-    const auto emitDirectSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+    const auto emitPlainSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
         const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler);
         const auto sample = state.module.AllocateId();
         std::vector<std::uint32_t> words = {sampleOpcode, resultType, sample, sampled, coord};
@@ -1950,6 +1952,15 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         }
         state.module.AddFunction(words);
         return sample;
+    };
+    const auto emitDirectSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+        if (optionalMinLod == 0u || (mask & spv::ImageOperandsMinLodMask) == 0u) return emitPlainSample(coord, mask, arguments, sampleOpcode);
+        const auto clamped = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), optionalMinLod, ZeroF32(state));
+        return EmitValueIfElse(state, clamped, resultType, [&] {
+            return emitPlainSample(coord, mask, arguments, sampleOpcode);
+        }, [&] {
+            return emitPlainSample(coord, mask & ~static_cast<std::uint32_t>(spv::ImageOperandsMinLodMask), std::vector<std::uint32_t>(arguments.begin(), arguments.end() - 1), sampleOpcode);
+        });
     };
     const bool mirrors = MirrorsSampleIfUnnormalized(ctx, access, setup);
     const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
