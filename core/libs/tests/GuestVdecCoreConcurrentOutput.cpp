@@ -63,6 +63,7 @@ void RunRound() {
     const VdecCoreConfigInfo config = Config();
     void* decoder = nullptr;
     Require(sceVdecCoreCreateDecoder(&config, nullptr, nullptr, &decoder) == 0 && decoder != nullptr, "create an AVC decoder");
+    Require(sceVdecCoreGetDecodeOutput(decoder, nullptr, 0, reinterpret_cast<VdecCoreOutputInfo*>(0x10), nullptr) == static_cast<int>(0x80C00001), "unwritable output rejected");
     FeedAndFlush(decoder);
 
     std::atomic<bool> start{false};
