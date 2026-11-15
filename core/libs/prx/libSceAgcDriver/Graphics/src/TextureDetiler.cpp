@@ -560,7 +560,8 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
             heapInfo.stage.pNext = &mappingInfo;
             heapInfo.layout = VK_NULL_HANDLE;
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
-            created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &heapInfo, nullptr, &cmaskHeapPipeline);
+            if (context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &heapInfo, nullptr, &cmaskHeapPipeline) != VK_SUCCESS)
+                cmaskHeapPipeline = VK_NULL_HANDLE;
         }
         context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, cmaskModule, nullptr);
         Check(created, "vkCreateComputePipelines CMASK clear");
