@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -166,6 +172,38 @@ int main() {
     StoreU32(record, kCountOffset, 0);
     Require(errno == 71);
     Require(sceSystemLogger2SetEventAsyncEx(record) == kNotAvailable);
+
+    Require(sceSystemLogger2GetTimestamp(reinterpret_cast<SceSystemLogger2Timestamp*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    eventState = 0xDEADBEEFDEADBEEFull;
+    Require(sceSystemLogger2GetEventStatus(reinterpret_cast<const char*>(unreadable), &eventState) == kInvalidArgument);
+    Require(errno == 71 && eventState == 0xDEADBEEFDEADBEEFull);
+    Require(sceSystemLogger2GetEventStatus("name", reinterpret_cast<std::uint64_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    Require(sceSystemLogger2SetEventAsyncInternal(record, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    void* readonlyOutput = VirtualAlloc(nullptr, sysInfo.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(readonlyOutput != nullptr);
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    void* readonlyOutput = mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readonlyOutput != MAP_FAILED);
+#endif
+    Require(sceSystemLogger2GetTimestamp(static_cast<SceSystemLogger2Timestamp*>(readonlyOutput)) == kInvalidArgument);
+    Require(errno == 71);
+    Require(sceSystemLogger2GetEventStatus("name", static_cast<std::uint64_t*>(readonlyOutput)) == kInvalidArgument);
+    Require(errno == 71);
+    Require(sceSystemLogger2SetEventAsyncInternal(record, static_cast<std::uint32_t*>(readonlyOutput)) == kInvalidArgument);
+    Require(errno == 71);
+#ifdef _WIN32
+    Require(VirtualFree(readonlyOutput, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readonlyOutput, static_cast<std::size_t>(pageSize)) == 0);
+#endif
 
     Require(sceSystemLogger2Terminate() == 0);
     Require(sceSystemLogger2GetTimestamp(&timestamp) == 0);

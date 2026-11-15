@@ -51,13 +51,21 @@ std::uint64_t currentNetworkTick() {
     return UNIX_EPOCH_TICK + static_cast<std::uint64_t>(now);
 }
 
-bool fitsName(const char* name, std::size_t limit) {
+bool fitsName(const char* name, std::size_t limit, bool requireNonEmpty = false) {
     if (!name) return false;
     std::string text;
     const int savedErrno = errno;
     const int result = CopyGuestString_nid_no_patch(name, limit + 1, text);
     errno = savedErrno;
-    return result == 0 && text.size() <= limit;
+    return result == 0 && (!requireNonEmpty || !text.empty()) && text.size() <= limit;
+}
+
+template <typename T>
+bool store(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return ok;
 }
 
 bool validClockSource(const char* source) {
@@ -152,9 +160,10 @@ int APS5_VABI sceSystemLogger2GetTimestamp(SceSystemLogger2Timestamp* timestamp)
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return NOT_INITIALIZED;
     if (!timestamp) return INVALID_ARGUMENT;
-    std::memset(timestamp, 0, sizeof(*timestamp));
-    timestamp->tick = currentNetworkTick();
-    std::memcpy(timestamp->clockSource, "networkClock", sizeof("networkClock"));
+    SceSystemLogger2Timestamp value{};
+    value.tick = currentNetworkTick();
+    std::memcpy(value.clockSource, "networkClock", sizeof("networkClock"));
+    if (!store(timestamp, value)) return INVALID_ARGUMENT;
     return 0;
 }
 
@@ -166,9 +175,9 @@ int APS5_VABI sceSystemLogger2IsAvailableMonitor(void) {
 int APS5_VABI sceSystemLogger2GetEventStatus(const char* eventName, std::uint64_t* status) {
     std::lock_guard lock(loggerMutex);
     if (!eventName || !status) return INVALID_ARGUMENT;
-    const std::size_t length = strnlen(eventName, EVENT_STATUS_NAME_LIMIT + 1);
-    if (length == 0 || length > EVENT_STATUS_NAME_LIMIT) return INVALID_ARGUMENT;
-    *status = 0;
+    if (!fitsName(eventName, EVENT_STATUS_NAME_LIMIT, true)) return INVALID_ARGUMENT;
+    const std::uint64_t zero = 0;
+    if (!store(status, zero)) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
@@ -178,7 +187,8 @@ int APS5_VABI sceSystemLogger2SetEventAsyncInternal(const void* event, std::uint
     if (!event || !status) return INVALID_ARGUMENT;
     const int result = validateEvent(static_cast<const std::uint8_t*>(event));
     if (result != 0) return result;
-    *status = 0;
+    const std::uint32_t zero = 0;
+    if (!store(status, zero)) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
