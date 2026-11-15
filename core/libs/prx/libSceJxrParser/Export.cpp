@@ -13,25 +13,21 @@ APS5_DUMMY_FUN
 
 extern "C" {
 
-int APS5_VABI libSceJxrParserUnknown_AtKk9raT6RY_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9JxrParser8finalizeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("AtKk9raT6RY", libSceJxrParserUnknown_AtKk9raT6RY_nid_no_patch);
 
-int APS5_VABI libSceJxrParserUnknown_49M11VyJ5yY_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9JxrParser10initializeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("49M11VyJ5yY", libSceJxrParserUnknown_49M11VyJ5yY_nid_no_patch);
 
-int APS5_VABI libSceJxrParserUnknown_6hIumDu08nU_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9JxrParser12readMetadataERKSsRKNS_8MetadataERS3_() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("6hIumDu08nU", libSceJxrParserUnknown_6hIumDu08nU_nid_no_patch);
 
-int APS5_VABI libSceJxrParserUnknown_kLMZZCRRYTk_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9JxrParser13writeMetadataERKSsRKNS_8MetadataE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("kLMZZCRRYTk", libSceJxrParserUnknown_kLMZZCRRYTk_nid_no_patch);
 
 int APS5_VABI libSceJxrParserUnknown_COdxsPL_minus_o10_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -43,9 +39,8 @@ int APS5_VABI libSceJxrParserUnknown_MHKqYjFGm4I_nid_no_patch() {
 }
 APS5_EXPORT("MHKqYjFGm4I", libSceJxrParserUnknown_MHKqYjFGm4I_nid_no_patch);
 
-int APS5_VABI libSceJxrParserUnknown_mPgrnwDKe8I_nid_no_patch() {
+int APS5_VABI _ZN23sceMetadataReaderWriter9JxrParser16extractThumbnailERKSsRNS_9ThumbnailE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("mPgrnwDKe8I", libSceJxrParserUnknown_mPgrnwDKe8I_nid_no_patch);
 
 }
