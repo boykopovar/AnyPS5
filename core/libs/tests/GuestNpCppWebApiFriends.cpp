@@ -220,7 +220,86 @@ static void TestResponseAndFriendVectors() {
             "the last vector reference did not run the deleter");
 }
 
+
+static constexpr int kTransactionNotStarted = static_cast<int>(0x80553508);
+
+static void TestUserProfileBookkeeping() {
+    alignas(8) unsigned char avatar[0x40]{};
+    *reinterpret_cast<std::uint32_t*>(avatar + 0x10) = 0x40;
+    avatar[0x14] = 1;
+    avatar[0x38] = 1;
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V16Avatar7getSizeEv(avatar) == 0x40, "avatar size");
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V16Avatar6getUrlEv(avatar) == avatar + 0x18, "avatar url");
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V16Avatar9sizeIsSetEv(avatar), "avatar size flag");
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V16Avatar8urlIsSetEv(avatar), "avatar url flag");
+
+    alignas(8) unsigned char profile[0x100]{};
+    profile[0x68] = 1;
+    profile[0x88] = 1;
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile10getAboutMeEv(profile) == profile + 0x48, "about me");
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile12aboutMeIsSetEv(profile), "about me flag");
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile12avatarsIsSetEv(profile), "avatars flag");
+    IntrusivePtr avatars{};
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile10getAvatarsEv(&avatars, profile) == &avatars && avatars.object == nullptr, "empty avatars");
+
+    alignas(8) unsigned char detail[0xd0]{};
+    detail[0xc8] = 1;
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail20profilePicturesIsSetEv(detail), "profile pictures flag");
+    IntrusivePtr pictures{};
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V114PersonalDetail18getProfilePicturesEv(&pictures, detail) == &pictures && pictures.object == nullptr, "empty pictures");
+
+    alignas(8) unsigned char friends[0x58]{};
+    *reinterpret_cast<std::uint32_t*>(friends + 0x48) = 11;
+    *reinterpret_cast<std::uint32_t*>(friends + 0x50) = 7;
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V118GetFriendsResponse17getTotalItemCountEv(friends) == 11, "friend total");
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V118GetFriendsResponse13getNextOffsetEv(friends) == 7, "friend offset");
+
+    alignas(8) unsigned char publicProfile[0x68]{};
+    publicProfile[0x60] = 1;
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V124GetPublicProfileResponse19personalDetailIsSetEv(publicProfile), "personal detail flag");
+    IntrusivePtr personalDetail{};
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V124GetPublicProfileResponse17getPersonalDetailEv(&personalDetail, publicProfile) == &personalDetail && personalDetail.object == nullptr, "empty personal detail");
+
+    IntrusivePtr avatarHandle{};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V16AvatarEEC1ERS7_(&avatarHandle, &avatarHandle);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V16AvatarEED1Ev(&avatarHandle);
+
+    IntrusivePtr emptyVector{};
+    alignas(8) unsigned char beginStorage[0x10]{};
+    alignas(8) unsigned char endStorage[0x10]{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEE5beginEv(beginStorage, &emptyVector);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEE3endEv(endStorage, &emptyVector);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEE4sizeEv(&emptyVector) == 0, "empty avatar vector");
+
+    alignas(8) unsigned char elements[0x30]{};
+    CommonIterator cursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEEppEv(&cursor) == &cursor, "avatar iterator advance");
+    Require(cursor.element == elements + sizeof(IntrusivePtr), "avatar iterator element");
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEEdeEv(&cursor) == elements + sizeof(IntrusivePtr), "avatar iterator dereference");
+    CommonIterator other{0, elements};
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEEneERKS9_(&cursor, &other), "avatar iterator compare");
+
+    CommonConstIterator constCursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEEppEv(&constCursor) == &constCursor, "presence iterator advance");
+    Require(_ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEEdeEv(&constCursor) == elements + sizeof(IntrusivePtr), "presence iterator dereference");
+    CommonConstIterator constOther{0, elements};
+    Require(_ZNK3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEEneERKS9_(&constCursor, &constOther), "presence iterator compare");
+    _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEED1Ev(&constCursor);
+    CommonConstIterator zeroConst{};
+    _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_11UserProfile2V16AvatarEEEED2Ev(&zeroConst);
+
+    CommonConstIterator profileBegin = _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE5beginEv(&emptyVector);
+    CommonConstIterator profileEnd = _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE3endEv(&emptyVector);
+    Require(profileBegin.element == nullptr && profileEnd.element == nullptr, "empty presence vector");
+
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv() == kTransactionNotStarted, "personal profile finish");
+
+    _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends8setorderENS5_5OrderE(nullptr, 1);
+    _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends9setfilterENS5_6FilterE(nullptr, 1);
+}
+
 int main() {
+    TestUserProfileBookkeeping();
     TestParameterLifecycle();
     TestOfflineCalls();
     TestFriendModel();

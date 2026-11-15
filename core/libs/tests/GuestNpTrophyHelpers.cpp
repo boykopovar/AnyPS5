@@ -1,9 +1,14 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
+#include "prx/libSceNpTrophy/include/InventoryExports.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -77,13 +82,41 @@ int main() {
     Require(setInfoGetTrophyFlagArray(setInfo, flags) == 0 && flags[0] == 0, "an empty set did not return 0");
     setInfo[0] = 0x01;
     Require(setInfoGetTrophyFlagArray(setInfo, flags) == 1, "a single trophy did not return 1");
+    errno = 71;
+    bool threw = false;
+    try { setInfoGetTrophyFlagArray(reinterpret_cast<const std::uint8_t*>(0x10), flags); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw && errno == 71, "unreadable trophy flag input was accepted");
+    threw = false;
+    try { setInfoGetTrophyFlagArray(setInfo, reinterpret_cast<std::uint8_t*>(0x10)); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw && errno == 71, "unwritable trophy flag output was accepted");
 
     std::uint8_t config[0x100] = {};
     Require(configHasGroupFeature(nullptr) == 0, "a null config did not answer 0");
+    Require(configHasGroupFeature(reinterpret_cast<const std::uint8_t*>(0x10)) == 0, "an unreadable config did not answer 0");
     config[0x90] = 0x03;
     Require(configHasGroupFeature(config) == 1, "bit 0 of the feature byte was not reported");
     config[0x90] = 0x02;
     Require(configHasGroupFeature(config) == 0, "a bit other than bit 0 was reported");
+
+    const std::array<std::uint32_t, 20> shared = {
+        0x8002002du, 0x80020060u, 0x80551611u, 0x80551615u, 0x80551616u,
+        0x80551618u, 0x80551627u, 0x8055168cu, 0x805516a2u, 0x805516a3u,
+        0x805516a7u, 0x805516aeu, 0x805516b2u, 0x805516b7u, 0x805516b8u,
+        0x805516c4u, 0x805516ceu, 0x805516e9u, 0x805516f4u, 0x805516fbu
+    };
+    const auto inShared = [&](std::uint32_t code) { return std::find(shared.begin(), shared.end(), code) != shared.end(); };
+    const auto check = [&](std::uint32_t code) {
+        const int result = static_cast<int>(code);
+        Require(libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch(result) == (code == 0x80551612u), "FJZW2oHUHFk is true only for 0x80551612");
+        Require(libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch(result) == (code == 0x8055169bu || code == 0x805516d1u), "+O9vU1CpGZA is true only for 0x8055169b and 0x805516d1");
+        Require(libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch(result) == (inShared(code) || code == 0x805516b4u), "+not13BEdVI is true only for its 21 codes");
+        Require(libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch(result) == inShared(code), "n4AHGHb-pfY is true only for its 20 codes");
+    };
+    for (std::uint32_t code = 0x80550000u; code <= 0x8055ffffu; ++code) check(code);
+    for (std::uint32_t code = 0x80020000u; code <= 0x8002ffffu; ++code) check(code);
+    for (std::uint32_t code : {0u, 1u, 0x7fffffffu, 0x80000000u, 0xffffffffu, 0x00551612u, 0x80561612u}) check(code);
 
     std::puts("NpTrophy helper tests passed");
     return 0;

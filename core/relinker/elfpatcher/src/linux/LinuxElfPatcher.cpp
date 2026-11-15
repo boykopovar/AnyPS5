@@ -75,8 +75,6 @@ std::vector<std::uint8_t> RebasedSymbols(const std::vector<std::uint8_t>& table,
         const auto section = Io::ReadU16(rebased, entry + 6);
         if (section == SHN_UNDEF || section == SHN_ABS || (rebased[entry + 4] & 0xf) == STT_TLS)
             continue;
-        if (section >= SHN_LORESERVE)
-            throw Domain::RelinkerException("Symbol section index " + Hex(section) + " cannot be placed at a fixed Linux base");
         Io::WriteU64(rebased, entry + 8, Rebased(base, Io::ReadU64(rebased, entry + 8), "Symbol"));
     }
     return rebased;

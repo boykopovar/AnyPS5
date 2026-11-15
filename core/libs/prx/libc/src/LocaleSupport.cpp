@@ -30,6 +30,7 @@
 
 extern "C" {
 extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
@@ -316,6 +317,28 @@ void PutCharacter(GuestLocale::OutputIterator& out, char character) {
     if (buffer->vtable->overflow(buffer, static_cast<unsigned char>(character)) == -1) out.failed = true;
 }
 
+void PutWideElement(GuestLocale::OutputIterator& out, std::uint16_t element) {
+    GuestLocale::Streambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    char* next = *buffer->putNext;
+    const auto bytes = static_cast<std::intptr_t>(reinterpret_cast<std::uintptr_t>(*buffer->putEnd) - reinterpret_cast<std::uintptr_t>(next));
+    if (next != nullptr && static_cast<std::int32_t>(static_cast<std::uint32_t>(bytes / static_cast<std::intptr_t>(GuestWideCharacterSize))) > 0) {
+        *buffer->putNext = next + GuestWideCharacterSize;
+        std::memcpy(next, &element, GuestWideCharacterSize);
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, element) == -1) out.failed = true;
+}
+
+char NarrowWideElement(const GuestLocale::Facet* ctype, std::uint16_t element) {
+    if (ctype != nullptr) return reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable)->narrow(ctype, element, '\0');
+    const int narrowed = _Wctob_nid_postfix(element);
+    return narrowed == -1 ? '\0' : static_cast<char>(narrowed);
+}
+
 GuestLocale::OutputIterator APS5_VABI TimePutDoPut(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase*, char, const GuestTm* time, char format, char modifier) {
     const char pattern[] = {'!', '%', modifier != 0 ? modifier : format, modifier != 0 ? format : '\0', '\0'};
     std::string text;
@@ -580,11 +603,64 @@ int ClassifyCharacter(int value, short mask) {
 int ConvertCharacter(int value, bool upper) {
     ValidateCharacter(value);
     if (value < 0) return value;
-    const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
-    const auto character = static_cast<char>(value);
-    return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
+    return (upper ? g_upperTable : g_lowerTable)[static_cast<std::size_t>(value) + 1];
 }
 
+}
+
+extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source) {
+    return AssignCString(result, source);
+}
+
+extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source) {
+    return AssignWideCString(result, source);
+}
+
+extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last) {
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix);
+    const auto put = reinterpret_cast<const GuestLocale::WideTimePutVtable*>(self->vtable)->put;
+    for (; first != last; ++first) {
+        if (NarrowWideElement(ctype, *first) != '%') {
+            PutWideElement(out, *first);
+        } else if (++first == last) {
+            PutWideElement(out, first[-1]);
+            break;
+        } else {
+            const std::uint16_t raw = *first;
+            char specifier = NarrowWideElement(ctype, raw);
+            char modifier = '\0';
+            const std::uint16_t percent = first[-1];
+            if (specifier == 'E' || specifier == 'O' || specifier == 'Q' || specifier == '#') {
+                if (++first == last) {
+                    PutWideElement(out, percent);
+                    PutWideElement(out, raw);
+                    break;
+                }
+                modifier = specifier;
+                specifier = NarrowWideElement(ctype, *first);
+            }
+            out = put(self, out, stream, fill, time, specifier, modifier);
+        }
+    }
+    return out;
+}
+
+extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase*, std::uint16_t, const GuestTm* time, char format, char modifier) {
+    const auto specifier = static_cast<unsigned char>(format);
+    const auto prefix = static_cast<unsigned char>(modifier);
+    if (specifier > 0x7f || prefix > 0x7f) NotImplemented_nid_no_patch(__func__);
+    const std::uint16_t conversion = prefix != 0 ? prefix : specifier;
+    const std::uint16_t modified = prefix != 0 ? specifier : 0;
+    const std::uint16_t pattern[] = {'!', '%', conversion, modified, 0};
+    std::vector<std::uint16_t> text;
+    std::size_t length = 0;
+    for (std::size_t grow = 16; length == 0; grow *= 2) {
+        text.resize(text.size() + grow);
+        length = wcsftime_nid_postfix(text.data(), text.size(), pattern, time);
+    }
+    if (length == 1) NotImplemented_nid_no_patch(__func__);
+    for (std::size_t index = 1; index < length; ++index) PutWideElement(out, text[index]);
+    return out;
 }
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last) {
@@ -688,10 +764,12 @@ std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots] {};
+std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots] {};
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
 std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots] {};
+std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots] {};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};
@@ -867,6 +945,35 @@ std::uint64_t _ZNSt8__sce_v25ctypeIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v28numpunctIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v25ctypeItE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtItc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28numpunctIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27collateIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27collateIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28messagesIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28messagesIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIcLb1EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v210moneypunctIwLb1EE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDsDu9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDiDu9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDsc9_MbstatetE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIDic9_MbstatetE2idE_nid_postfix = 0;
+bool _ZNSt8__sce_v28ios_base5_SyncE_nid_postfix = true;
+std::int32_t _ZNSt8__sce_v28ios_base6_IndexE_nid_postfix = 0;
 std::int32_t _ZNSt8__sce_v26locale2id7_Id_cntE_nid_postfix = 0;
 GuestLocale::Implementation* _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix = &g_classicLocale;
 alignas(16) unsigned char _ZNSt8__sce_v24coutE_nid_postfix[0x400] {};
@@ -1101,6 +1208,10 @@ GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 
 GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix() {
     return &g_classicLocaleFacade;
+}
+
+const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
+    return &g_wideCollateVtable;
 }
 
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
@@ -1383,7 +1494,7 @@ void APS5_VABI init_env_nid_postfix(const InitEnvParams* params) {
 }
 
 SonyLconv* APS5_VABI localeconv_nid_postfix(void) {
-    return SonyLocaleconv();
+    return SonyLocaleconv_nid_no_patch();
 }
 
 }

@@ -24,6 +24,7 @@ struct FakeDevice {
     bool anisotropy = true;
     bool bc = true;
     VkPhysicalDeviceType type = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    VkDriverId driver = VK_DRIVER_ID_MESA_RADV;
     std::vector<VkPresentModeKHR> modes{VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_MAILBOX_KHR};
 };
 
@@ -46,6 +47,7 @@ void VKAPI_CALL Properties2(VkPhysicalDevice, VkPhysicalDeviceProperties2* prope
     if (auto* driver = Find<VkPhysicalDeviceDriverProperties>(properties->pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES)) {
         std::strcpy(driver->driverName, "fake-driver");
         std::strcpy(driver->driverInfo, "Fake 24.1.2");
+        driver->driverID = device.driver;
     }
     if (auto* controls = Find<VkPhysicalDeviceFloatControlsProperties>(properties->pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES))
         controls->shaderSignedZeroInfNanPreserveFloat32 = device.signedZero ? VK_TRUE : VK_FALSE;
@@ -144,10 +146,26 @@ void NoDriverPropertiesLeavesDriverEmpty() {
     const auto extensions = Extensions({VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME});
     const auto gpu = AgcDriver::CollectHostGpuFacts(Query(extensions));
     Check(gpu.driverName.empty() && gpu.driverInfo.empty(), "a driver was named without VK_KHR_driver_properties");
+    Check(gpu.driverVersionScheme == AgcDriver::HostDriverVersionScheme::Unknown, "a driver version encoding was chosen without VK_KHR_driver_properties");
     const auto* optional = Find(gpu, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME);
     Check(optional != nullptr && !optional->required && !optional->present, "the absent driver properties extension is not listed as optional and missing");
     const auto* budget = Find(gpu, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     Check(budget != nullptr && !budget->present, "the absent memory budget extension is not listed as missing");
+}
+
+void DriverVersionSchemeFollowsTheDriver() {
+    using Scheme = AgcDriver::HostDriverVersionScheme;
+    const auto extensions = AllRequired();
+    const auto scheme = [&](VkDriverId driver) {
+        device = {};
+        device.driver = driver;
+        return AgcDriver::CollectHostGpuFacts(Query(extensions)).driverVersionScheme;
+    };
+    Check(scheme(VK_DRIVER_ID_NVIDIA_PROPRIETARY) == Scheme::Nvidia, "NVIDIA's driver did not get its version encoding");
+    Check(scheme(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) == Scheme::IntelWindows, "Intel's Windows driver did not get its version encoding");
+    Check(scheme(VK_DRIVER_ID_MOLTENVK) == Scheme::Unknown, "MoltenVK's version was given an encoding");
+    for (const auto driver : {VK_DRIVER_ID_MESA_RADV, VK_DRIVER_ID_AMD_PROPRIETARY, VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, VK_DRIVER_ID_MESA_LLVMPIPE, VK_DRIVER_ID_MESA_NVK})
+        Check(scheme(driver) == Scheme::Vulkan, "a driver did not get the Vulkan version encoding");
 }
 
 void MissingExtensionsAreFound() {
@@ -217,6 +235,7 @@ void MissingEntryPointIsAnError() {
 int main() {
     IdentityIsRead();
     NoDriverPropertiesLeavesDriverEmpty();
+    DriverVersionSchemeFollowsTheDriver();
     MissingExtensionsAreFound();
     MissingFeaturesAreFound();
     SwapchainIsRequiredOnlyWithAWindow();

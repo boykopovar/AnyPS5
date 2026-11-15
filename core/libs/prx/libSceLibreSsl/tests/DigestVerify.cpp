@@ -380,15 +380,18 @@ void Allocator() {
             break;
         case 3:
             Require(attempt.initialized == 0 && attempt.verified == 0, "a failed digest data allocation fails the initialization");
+            RequireErrors({MallocFailure}, "a failed digest data allocation queues the malloc failure");
             break;
         case 4:
             Require(attempt.initialized == 1 && attempt.updated == 1 && attempt.verified == -1,
                 "a failed copy of the digest data fails the verification");
+            RequireErrors({MallocFailure}, "a failed copy of the digest data queues the malloc failure");
             break;
         case 5:
         case 6:
             Require(attempt.initialized == 1 && attempt.updated == 1 && attempt.verified == -1,
                 "a failed copy of the key context fails the verification");
+            RequireErrors({}, "a failed copy of the key context queues no error");
             break;
         default:
             Require(false, "the failing allocation index is one to six");

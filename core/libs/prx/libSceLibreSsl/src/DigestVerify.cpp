@@ -31,7 +31,6 @@ constexpr int NoOperationSet = 149;
 constexpr int OperationNotSupported = 150;
 constexpr int OperationNotInitialized = 151;
 constexpr int NoDefaultDigest = 158;
-constexpr int InputNotInitialized = 111;
 
 constexpr std::int32_t PkeyRsa = 6;
 constexpr std::int32_t PkeyRsa2 = 19;
@@ -398,10 +397,7 @@ int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(EvpMdContext* context, unsigned 
     auto* pkeyContext = static_cast<PkeyContext*>(context->pkeyContext);
     RequireOurMethod(*pkeyContext, __func__);
     EvpMdContext copy {};
-    if (!CopyContext_nid_no_patch(copy, *context, __func__)) {
-        if (!context->digest) QueueEvp(InputNotInitialized);
-        return -1;
-    }
+    if (!CopyContext_nid_no_patch(copy, *context, __func__)) return -1;
     unsigned char digest[MaxDigestSize];
     std::uint32_t digestLength = 0;
     const int finalized = EVP_DigestFinal_ex_nid_postfix(&copy, digest, &digestLength);
