@@ -371,8 +371,11 @@ int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationModeByAppId(std::int32_t appId)
     return GetGpuLoadEmulationModeOfApp("sceShellCoreUtilGetGpuLoadEmulationModeByAppId", appId);
 }
 
-int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
-    if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
+int APS5_VABI sceSystemServiceLoadExec(const char* guestPath, const char* const* arguments) {
+    std::string copiedPath;
+    if (!guestPath || CopyGuestPath_nid_no_patch(guestPath, copiedPath) != 0) return SYSTEM_SERVICE_ERROR_PARAMETER;
+    const char* const path = copiedPath.c_str();
+    if (!*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
     if (std::strcmp(path, "exit") == 0) LibcExitWithoutHandlers_nid_no_patch(0);
     auto launch = PrepareLaunch(path, arguments);
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
@@ -791,8 +794,10 @@ int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended
 
 int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
  if (path == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- if (path[0] == '\0') throw std::runtime_error("sceLncUtilLoadExec: empty path");
- return sceSystemServiceLoadExec(path, argv);
+ std::string copiedPath;
+ if (CopyGuestPath_nid_no_patch(path, copiedPath) != 0) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ if (copiedPath.empty()) throw std::runtime_error("sceLncUtilLoadExec: empty path");
+ return sceSystemServiceLoadExec(copiedPath.c_str(), argv);
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
