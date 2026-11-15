@@ -12,7 +12,7 @@ SANITIZERS = ("address", "undefined", "thread")
 REPORT_LINES = (
     re.compile(r"SUMMARY: \w+Sanitizer: .*"),
     re.compile(r"(?:ERROR|WARNING): \w+Sanitizer: .*"),
-    re.compile(r"(?:\S+ )?runtime error: .*"),
+    re.compile(r"^.*runtime error: .*", re.MULTILINE),
 )
 REPORT_LENGTH = 200
 
@@ -78,7 +78,7 @@ def load_known(path, sanitizers):
                 raise ValueError(f"{location}: {test} is already listed for {name}")
             seen.add((test, name))
         if set(names) & set(sanitizers):
-            known[test] = reason
+            known[test] = f"{known[test]}; {reason}" if test in known else reason
     return known
 
 
