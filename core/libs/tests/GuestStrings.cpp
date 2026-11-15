@@ -850,5 +850,12 @@ int main() {
     Require(modeBuffer[0] == 'w');
     strmode_nid_postfix(0, modeBuffer);
     Require(std::memcmp(modeBuffer, "?--------- ", 11) == 0);
+    *__error_nid_postfix() = 71;
+    strmode_nid_postfix(0100644, reinterpret_cast<char*>(std::uintptr_t{0x10}));
+    Require(*__error_nid_postfix() == 71);
+    char modeRow[16];
+    std::memset(modeRow, '!', sizeof(modeRow));
+    strmode_nid_postfix(0106755, modeRow + 1);
+    Require(modeRow[0] == '!' && std::memcmp(modeRow + 1, "-rwsr-sr-x ", 12) == 0 && modeRow[13] == '!');
     return CheckMemcpyOverlap() ? 0 : 1;
 }

@@ -109,10 +109,6 @@ bool Alpha(char value) {
     return lower >= 'a' && lower <= 'z';
 }
 
-bool Digit(char value) {
-    return value >= '0' && value <= '9';
-}
-
 std::string ChangeCase(std::string_view value, bool upper) {
     std::string result(value);
     for (char& part : result) part = upper ? Upper(part) : Lower(part);
@@ -136,10 +132,7 @@ std::string Region(std::string_view value) {
 }
 
 bool IsRegion(std::string_view value) {
-    if (value.size() == 2 || value.size() == 3)
-        return std::all_of(value.begin(), value.end(), Alpha) ||
-               (value.size() == 3 && std::all_of(value.begin(), value.end(), Digit));
-    return false;
+    return value.size() == 2 || value.size() == 3;
 }
 
 struct Parts {
@@ -190,12 +183,7 @@ Parts Parse(const char* locale) {
         ++index;
     } else if (index < tokens.size() && tokens[index].empty()) {
         ++index;
-        if (index < tokens.size() && IsRegion(tokens[index])) {
-            parts.country = Region(tokens[index]);
-            ++index;
-        } else if (index < tokens.size()) {
-            parts.variant += "_";
-        }
+        if (index < tokens.size()) parts.variant += "_";
     }
     for (; index < tokens.size(); ++index) {
         if (tokens[index].empty()) continue;

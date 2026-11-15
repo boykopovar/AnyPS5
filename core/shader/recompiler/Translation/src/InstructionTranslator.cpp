@@ -691,7 +691,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
-        context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma);
+        context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma, options.float16HostNans);
         context.SetNativeInteger16(options.nativeInteger16);
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
