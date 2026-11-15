@@ -38,6 +38,10 @@ alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
 alignas(8) Header DataOnlyPixelHeader{};
 
+std::string PixelText(const std::array<std::uint8_t, 4>& pixel) {
+    return std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," + std::to_string(pixel[3]);
+}
+
 const Shader* Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18u;
@@ -117,7 +121,7 @@ void MovedBufferHitsTheCache(bool libraries) {
         for (std::size_t at = 0; at < ColorMemory.size(); at += 4u) {
             const std::array<std::uint8_t, 4> pixel{static_cast<std::uint8_t>(ColorMemory[at]), static_cast<std::uint8_t>(ColorMemory[at + 1]), static_cast<std::uint8_t>(ColorMemory[at + 2]), static_cast<std::uint8_t>(ColorMemory[at + 3])};
             if (pixel == std::array<std::uint8_t, 4>{0x40u, 0x40u, 0x40u, 0x40u}) continue;
-            Require(pixel == expected, mode + ": a moved-buffer draw produced a stale or incorrect pixel at " + std::to_string(at / 4u));
+            Require(pixel == expected, mode + ": a moved-buffer draw produced a stale or incorrect pixel at " + std::to_string(at / 4u) + " (" + PixelText(pixel) + ", expected " + PixelText(expected) + ")");
             ++drawn;
         }
         Require(drawn != 0u, mode + ": a moved-buffer draw wrote no pixels");
@@ -157,7 +161,7 @@ void DataOnlyMovedTableAndBufferHitTheCache(bool libraries) {
         for (std::size_t at = 0; at < ColorMemory.size(); at += 4u) {
             const std::array<std::uint8_t, 4> pixel{static_cast<std::uint8_t>(ColorMemory[at]), static_cast<std::uint8_t>(ColorMemory[at + 1]), static_cast<std::uint8_t>(ColorMemory[at + 2]), static_cast<std::uint8_t>(ColorMemory[at + 3])};
             if (pixel == std::array<std::uint8_t, 4>{0x40u, 0x40u, 0x40u, 0x40u}) continue;
-            Require(pixel == expected, mode + ": a data-only hit through the moved table and buffer produced a stale or incorrect pixel at " + std::to_string(at / 4u));
+            Require(pixel == expected, mode + ": a data-only hit through the moved table and buffer produced a stale or incorrect pixel at " + std::to_string(at / 4u) + " (" + PixelText(pixel) + ", expected " + PixelText(expected) + ")");
             ++drawn;
         }
         Require(drawn != 0u, mode + ": a data-only hit through the moved table and buffer wrote no pixels");
