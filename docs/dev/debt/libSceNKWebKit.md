@@ -194,6 +194,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - 2159 of these [older callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are named after the symbols the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for their NIDs, and the NID of each name matches. Their prototypes and behavior stay unverified, and each still throws through `NotImplemented_nid_no_patch`.
 
+- [Page selection and caret visibility](../../../core/libs/prx/libSceNKWebKit/src/PageSelectionCaret.cpp) (libSceNKWebKit) - `WKPageSetMaintainsInactiveSelection`, `WKPageSetCaretVisible`, `WKPageHasSelectedRange` and `WKPageClearSelection` manage text selection state and caret visibility on host `Page` instances following [WKPage.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKPage.cpp#L435-L450); live frame selection rendering is unmodeled.
+
 ### Additional callable exports
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
@@ -493,7 +495,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageCallAfterNextPresentationUpdate` | `yIrZrdWAxtc` |
 | `WKPageCenterSelectionInVisibleArea` | `Cc6pT9g-ZIk` |
 | `WKPageClearLoadedSubresourceDomains` | `fikio+oFpEs` |
-| `WKPageClearSelection` | `Wl0OUqhLPnk` |
 | `WKPageClearUserMediaState` | `SLmN+1BEUig` |
 | `WKPageClearWheelEventTestMonitor` | `XJLGUoS-3wI` |
 | `WKPageClose` | `h2cIHUQsu9w` |
@@ -553,7 +554,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageHandleMouseEvent` | `zf4+IDdC57s` |
 | `WKPageHandleWheelEvent` | `9HtGt7M9cMs` |
 | `WKPageHasHorizontalScrollbar` | `gqkmh6zYT9U` |
-| `WKPageHasSelectedRange` | `pY1NNqZbJ+4` |
 | `WKPageHasVerticalScrollbar` | `gmh9dPLZ8rE` |
 | `WKPageHideFindUI` | `BSE1GBeHulw` |
 | `WKPageHorizontalRubberBandingIsEnabled` | `2S-hLekYP7g` |
@@ -603,7 +603,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetAllowsRemoteInspection` | `NPIf8oAxOuM` |
 | `WKPageSetApplicationNameForUserAgent` | `x+PBjiexUWI` |
 | `WKPageSetBackgroundExtendsBeyondPage` | `iT5rGSq18GI` |
-| `WKPageSetCaretVisible` | `9BHilYtCbmo` |
 | `WKPageSetControlledByAutomation` | `EgErBK3HZNc` |
 | `WKPageSetCustomBackingScaleFactor` | `iot3o+WKLVI` |
 | `WKPageSetCustomUserAgent` | `wyOUIvHW0EE` |
@@ -612,7 +611,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetFixedLayoutSize` | `hwMqSlpTWCk` |
 | `WKPageSetGapBetweenPages` | `1UKzOMAA3bM` |
 | `WKPageSetIgnoresViewportScaleLimits` | `B0VJOvGWnWk` |
-| `WKPageSetMaintainsInactiveSelection` | `Iqpp9WOrXeE` |
 | `WKPageSetMayStartMediaWhenInWindow` | `5acW3MSCndw` |
 | `WKPageSetMediaCaptureEnabled` | `QoItjQ1VB1E` |
 | `WKPageSetMediaVolume` | `UC703hx3DrM` |

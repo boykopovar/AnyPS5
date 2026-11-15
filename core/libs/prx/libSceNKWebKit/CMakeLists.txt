@@ -94,3 +94,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>")
     endif()
 endif()
+
+    add_executable(nkwebkit_pageselectioncaret_tests tests/PageSelectionCaret.cpp)
+    target_link_libraries(nkwebkit_pageselectioncaret_tests PRIVATE libSceNKWebKit_tests_common)
+    add_test(NAME nkwebkit_pageselectioncaret COMMAND nkwebkit_pageselectioncaret_tests)

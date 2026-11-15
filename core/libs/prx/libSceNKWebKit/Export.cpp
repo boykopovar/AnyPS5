@@ -10892,10 +10892,6 @@ int APS5_VABI WKPageClearLoadedSubresourceDomains() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageClearSelection() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageClearUserMediaState() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11138,10 +11134,6 @@ int APS5_VABI WKPageHasHorizontalScrollbar() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageHasSelectedRange() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageHasVerticalScrollbar() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11338,10 +11330,6 @@ int APS5_VABI WKPageSetBackgroundExtendsBeyondPage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetCaretVisible() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageSetControlledByAutomation() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11371,10 +11359,6 @@ int APS5_VABI WKPageSetGapBetweenPages() {
 }
 
 int APS5_VABI WKPageSetIgnoresViewportScaleLimits() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetMaintainsInactiveSelection() {
     NotImplemented_nid_no_patch(__func__);
 }
 

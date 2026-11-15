@@ -13,6 +13,11 @@ struct OpaqueJSContext;
 struct OpaqueJSValue;
 using JSContextRef = const OpaqueJSContext*;
 using JSValueRef = const OpaqueJSValue*;
+void APS5_VABI WKPageSetMaintainsInactiveSelection(const void* page, bool maintainsInactiveSelection);
+void APS5_VABI WKPageSetCaretVisible(const void* page, bool caretVisible);
+bool APS5_VABI WKPageHasSelectedRange(const void* page);
+void APS5_VABI WKPageClearSelection(const void* page);
+
 }
 
 extern "C" {
@@ -389,5 +394,10 @@ void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const 
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
+
+void APS5_VABI WKPageSetMaintainsInactiveSelection(const void* page, bool maintainsInactiveSelection);
+void APS5_VABI WKPageSetCaretVisible(const void* page, bool caretVisible);
+bool APS5_VABI WKPageHasSelectedRange(const void* page);
+void APS5_VABI WKPageClearSelection(const void* page);
 
 }
