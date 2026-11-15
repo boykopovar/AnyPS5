@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace {
 // Guest FreeBSD errno numbering, not the host CRT's numbering.
@@ -102,7 +103,8 @@ void APS5_VABI perror_nid_postfix(const char* prefix) {
     strerror_r_nid_postfix(saved, message, sizeof(message));
     _Stderr_nid_postfix.Orientation(-1);
     auto* stream = GetNativeStream(&_Stderr_nid_postfix);
-    if (prefix && *prefix) std::fprintf(stream, "%s: %s\n", prefix, message);
+    std::string copied;
+    if (prefix && CopyGuestString_nid_no_patch(prefix, 65536, copied) == 0 && !copied.empty()) std::fprintf(stream, "%s: %s\n", copied.c_str(), message);
     else std::fprintf(stream, "%s\n", message);
     *__error_nid_postfix() = saved;
 }
