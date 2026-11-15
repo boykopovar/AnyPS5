@@ -35,16 +35,13 @@ int main() {
     Require(sceNpAuthGetAuthorizedAppCode(0, &parameter, code.data(), nullptr, &authorizationRequired) == invalidArgument);
     parameter.userId = 1;
     Require(sceNpAuthGetAuthorizedAppCode(0, &parameter, code.data(), nullptr, &authorizationRequired) == requestNotFound);
+    constexpr auto aborted = static_cast<int>(0x80550304u);
+    constexpr auto signedOut = static_cast<int>(0x80550006u);
     const auto requestId = sceNpAuthCreateRequest();
     Require(requestId > 0);
-    bool threw = false;
-    try {
-        sceNpAuthGetAuthorizedAppCode(requestId, &parameter, code.data(), nullptr, &authorizationRequired);
-
-    } catch (const std::logic_error&) {
-        threw = true;
-    }
-    Require(threw && code == original && authorizationRequired);
+    Require(sceNpAuthGetAuthorizedAppCode(requestId, &parameter, code.data(), nullptr, &authorizationRequired) == signedOut);
+    Require(code == original && authorizationRequired);
+    Require(sceNpAuthGetAuthorizedAppCode(requestId, &parameter, code.data(), nullptr, &authorizationRequired) == invalidArgument);
     parameter.clientId = nullptr;
     Require(sceNpAuthGetAuthorizedAppCode(0, &parameter, code.data(), nullptr, &authorizationRequired) == invalidArgument);
     parameter.clientId = reinterpret_cast<const NpAuthClientId*>(client.data());
@@ -56,12 +53,20 @@ int main() {
     Require(sceNpAuthDeleteRequest(requestId) == 0);
     Require(sceNpAuthDeleteRequest(-1) == 0);
 
-#ifdef _WIN32
-    Require(_putenv("APS5_NET_DISCONNECTED=1") == 0);
-#else
-    Require(setenv("APS5_NET_DISCONNECTED", "1", 1) == 0);
-#endif
-    constexpr auto signedOut = static_cast<int>(0x80550006u);
+    const auto abortRequestId = sceNpAuthCreateRequest();
+    Require(abortRequestId > 0);
+    Require(sceNpAuthAbortRequest(abortRequestId) == 0);
+    Require(sceNpAuthGetAuthorizedAppCode(abortRequestId, &parameter, code.data(), nullptr, &authorizationRequired) == aborted);
+    Require(sceNpAuthDeleteRequest(abortRequestId) == 0);
+
+    const auto asyncRequestId = sceNpAuthCreateAsyncRequest(nullptr);
+    Require(asyncRequestId > 0);
+    Require(sceNpAuthGetAuthorizedAppCode(asyncRequestId, &parameter, code.data(), nullptr, &authorizationRequired) == 0);
+    int pollResult = 0;
+    Require(sceNpAuthPollAsync(asyncRequestId, &pollResult) == 1);
+    Require(sceNpAuthPollAsync(asyncRequestId, &pollResult) == 0 && pollResult == signedOut);
+    Require(sceNpAuthDeleteRequest(asyncRequestId) == 0);
+
     const auto offlineRequest = sceNpAuthCreateRequest();
     Require(offlineRequest > 0);
     int issuerId = -1;

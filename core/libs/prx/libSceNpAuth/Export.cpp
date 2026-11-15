@@ -87,9 +87,18 @@ int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t requestId, const NpAuth
  if (localParameter.size != sizeof(NpAuthAuthorizedAppCodeParameter)) return static_cast<int>(0x80550302u);
  if (localParameter.userId == -1 || localParameter.clientId == nullptr || localParameter.scope == nullptr || localParameter.option > 1) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
- if (!g_requests.contains(requestId)) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
- if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return SCE_NP_ERROR_SIGNED_OUT;
- throw std::logic_error("sceNpAuthGetAuthorizedAppCode: authorization backend is not implemented");
+ auto it = g_requests.find(requestId);
+ if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
+ if (it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (it->second.aborted) {
+  return ORBIS_NP_AUTH_ERROR_ABORTED;
+ }
+ it->second.processed = true;
+ if (it->second.isAsync) {
+  it->second.result = SCE_NP_ERROR_SIGNED_OUT;
+  return 0;
+ }
+ return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpAuthGetAuthorizationCodeV3(int req_id, const void* param, void* auth_code, int* issuer_id) {
