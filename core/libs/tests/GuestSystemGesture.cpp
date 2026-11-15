@@ -58,6 +58,8 @@ static void TestTouchRecognizerInformation(std::int32_t handle, int invalidArgum
     Require(sceSystemGestureGetTouchRecognizerInformation(handle, nullptr, &information) == invalidArgument);
     Require(sceSystemGestureGetTouchRecognizerInformation(handle, &recognizer, nullptr) == invalidArgument);
     Require(sceSystemGestureGetTouchRecognizerInformation(handle, &recognizer, reinterpret_cast<SystemGestureTouchRecognizerInformation*>(0x10)) == invalidArgument);
+    errno = EDOM;
+    Require(sceSystemGestureGetTouchRecognizerInformation(handle, reinterpret_cast<const SystemGestureTouchRecognizer*>(0x10), &information) == invalidArgument && errno == EDOM);
 
     SystemGestureTouchRecognizer uncreated{};
     Require(Throws([&] { sceSystemGestureGetTouchRecognizerInformation(handle, &uncreated, &information); }));
@@ -130,6 +132,8 @@ static void TestRectangleGuestMemory(std::int32_t handle, int invalidArgument, i
     for (const auto offset : {page, page - sizeof(std::uint64_t)}) {
         errno = EDOM;
         Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, reinterpret_cast<SystemGestureTouchRecognizer*>(memory + offset), &moved) == invalidArgument && errno == EDOM);
+        errno = EDOM;
+        Require(sceSystemGestureGetTouchRecognizerInformation(handle, reinterpret_cast<const SystemGestureTouchRecognizer*>(memory + offset), &information) == invalidArgument && errno == EDOM);
     }
 #ifdef _WIN32
     Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0);
