@@ -586,6 +586,8 @@ bool retireFreesAtOnce(bool hold) {
     return recorder == nullptr || (!hold && recorder->Idle());
 }
 
+std::atomic<std::uint64_t> retiredImports{0};
+
 void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, HostImport>::iterator it, const GuestAllocations::Lease& lease, bool hold = true) {
 #ifdef _WIN32
     auto* reading = forgetSettle(state, it->first);
@@ -596,6 +598,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     // size); the holder below outlives the batch that copies them.
     RetireShadow(device, it->second, [&lease, joined = it->second.joined](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end) || (joined && joinedCovers(lease, begin, end)); });
     bumpEpoch(state);
+    retiredImports.fetch_add(1, std::memory_order_release);
     state.liveBytes -= it->second.pinnedBytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
 #ifdef _WIN32
@@ -752,6 +755,10 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
 }
 
 const char* createHostPointerImport(const Context& context, HostImport& entry, VkResult& failure) {
+    if (!context.hostPointerImport) {
+        failure = VK_ERROR_EXTENSION_NOT_PRESENT;
+        return "VK_EXT_external_memory_host";
+    }
     void* const host = entry.alias != nullptr ? entry.alias : reinterpret_cast<void*>(entry.base);
     VkMemoryHostPointerPropertiesEXT pointer{VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
     if (const auto result = context.Function<PFN_vkGetMemoryHostPointerPropertiesEXT>("vkGetMemoryHostPointerPropertiesEXT")(context.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host, &pointer); result != VK_SUCCESS) {
@@ -1549,8 +1556,11 @@ void decideImportWatch(const Context& context, HostImports& state) {
         std::fprintf(stderr, "[write-watch] host imports are compared, not watched (APS5_WRITE_WATCH_IMPORTS=unwatch)\n");
         return;
     }
-    const auto probe = ProbeImportWriteProtection(context);
-    if (probe.failure != nullptr) {
+    const auto probe = context.hostPointerImport ? ProbeImportWriteProtection(context) : ImportProbe{};
+    if (!context.hostPointerImport) {
+        state.unwatchImports = true;
+        std::fprintf(stderr, "[write-watch] no host pointer imports (the device has no VK_EXT_external_memory_host); only dma-buf imports are probed\n");
+    } else if (probe.failure != nullptr) {
         state.unwatchImports = true;
         std::fprintf(stderr, "[write-watch] host imports resolve write protection: unknown (probe failed at %s, %d); imported ranges are compared\n", probe.failure, static_cast<int>(probe.result));
     } else {
@@ -8003,6 +8013,10 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
     if (state.device != proof.device) return false;
     if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
     return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
+}
+
+std::uint64_t RetiredImportSerial() {
+    return retiredImports.load(std::memory_order_acquire);
 }
 
 void SetDeviceLocalFullForTests(bool full) {

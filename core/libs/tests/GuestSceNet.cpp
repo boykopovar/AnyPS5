@@ -562,6 +562,9 @@ static void CheckDefaultRoute() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    Require(Failed(sceNetConfigGetDefaultRoute(reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    Require(errno == 14);
 }
 
 static void CheckIfNameIndex() {

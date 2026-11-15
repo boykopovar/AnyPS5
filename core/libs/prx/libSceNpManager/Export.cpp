@@ -1255,10 +1255,13 @@ int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {
     if (!sandbox_info) return SCE_NP_ERROR_INVALID_ARGUMENT;
     static constexpr char Platform[] = "RETAIL";
     static constexpr char Environment[] = "LIVE";
-    auto* info = static_cast<char*>(sandbox_info);
-    std::memset(info, 0, 0x50);
-    std::memcpy(info, Platform, sizeof(Platform));
-    std::memcpy(info + 0x28, Environment, sizeof(Environment));
+    std::array<char, 0x50> localInfo{};
+    std::memcpy(localInfo.data(), Platform, sizeof(Platform));
+    std::memcpy(localInfo.data() + 0x28, Environment, sizeof(Environment));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(sandbox_info, localInfo.data(), localInfo.size());
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

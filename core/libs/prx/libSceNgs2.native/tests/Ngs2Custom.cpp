@@ -1267,6 +1267,7 @@ static void TestCustomMastering() {
     uintptr_t rack = 0;
     Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &good.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
     const auto voice = Voice(rack);
+    Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2VoiceState)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
 
     Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 2, 0});
     Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 1.0f, 1.0f});

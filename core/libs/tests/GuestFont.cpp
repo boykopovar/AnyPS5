@@ -323,6 +323,9 @@ static void CheckWritingAfterStringDestroyed(FontHandle font) {
     const std::size_t blocksBefore = heldBlocks.size();
     heldBlockLimit = blocksBefore + 1;
     Require(sceFontCreateString(&memory, &source, nullptr, &string) == SCE_FONT_ERROR_ALLOCATION_FAILED && string == nullptr);
+    errno = 71;
+    Require(sceFontCreateString(&memory, &source, nullptr, reinterpret_cast<FontString*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     heldBlockLimit = SIZE_MAX;
     Require(heldBlocks.size() == blocksBefore + 1 && heldBlocks.back().released);
     FontString failedString = static_cast<FontString>(heldBlocks.back().pointer);

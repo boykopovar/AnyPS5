@@ -216,6 +216,7 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+std::uint64_t RetiredImportSerial();
 void SetDeviceLocalFullForTests(bool full);
 std::uint64_t StagingShadowsRefused();
 
