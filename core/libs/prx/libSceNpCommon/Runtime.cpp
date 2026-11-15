@@ -1889,9 +1889,13 @@ int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleI
     if (titleId == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     const std::size_t length = std::strlen(titleId);
     if (length < 10 || length >= NP_TITLE_ID_SIZE || titleId[9] != '_') return NP_UTIL_ERROR_OUT_OF_RANGE;
-    *parts = {};
-    std::memcpy(parts->data, titleId, sizeof(parts->data));
-    parts->num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    NpCommunicationId value{};
+    std::memcpy(value.data, titleId, sizeof(value.data));
+    value.num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(parts, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
