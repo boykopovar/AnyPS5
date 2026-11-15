@@ -156,12 +156,14 @@ private:
     static void readRegisterLists(Submission& submission);
     bool refreshIndirectSegment(Submission& submission, std::size_t index);
     void waitForFlipRoom(const Submission& submission);
-    void holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
+    bool holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
+    void holdFlipBehindWork(const std::shared_ptr<FlipWork>& earlier);
+    static bool flipWorkDone(const std::shared_ptr<FlipWork>& work);
     bool awaitsTitle(std::uint64_t awaited) const;
     bool parkedOnTitle() const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
     void releaseFlipHold();
-    void finishFlipWork(std::uint64_t workSerial);
+    void finishFlipWork(const std::shared_ptr<FlipWork>& work, std::uint64_t workSerial);
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
     void reserveOutputs(Submission& submission);
@@ -174,7 +176,7 @@ private:
     void deferCompletion(const Submission& submission);
     void submitOpenWork(const std::shared_ptr<SubmissionProgress>& progress = {});
     void wakeQueueZeroForCompletions();
-    void completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, bool holdsFlip);
+    void completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, const std::shared_ptr<FlipWork>& flipWork);
     static bool waitFree(const Submission& submission);
     bool queue0Before(std::uint64_t received) const;
     bool waitFreeBefore(std::uint64_t received) const;
@@ -529,8 +531,7 @@ private:
     std::atomic<std::uint64_t> queue0Awaited{0};
     std::atomic<std::uint32_t> flipsAhead{0};
     std::atomic<std::uint32_t> flipHolders{0};
-    std::atomic<std::uint32_t> flipWorkOpen{0};
-    std::atomic<std::uint64_t> flipWorkSerial{0};
+    std::shared_ptr<FlipWork> lastFlipWork;
     std::atomic<bool> queue0AwaitsTitle{false};
 
     std::atomic<std::uint64_t> evidenceReads{0};

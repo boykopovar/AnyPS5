@@ -10,10 +10,12 @@
 #include <climits>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <limits>
 #include <cstdarg>
 #include <memory>
+#include <new>
 #include <mutex>
 #include <iterator>
 #include <unordered_map>
@@ -1107,7 +1109,13 @@ CURLSH* APS5_VABI curl_share_init_nid_postfix() {
 }
 
 char* APS5_VABI curl_getenv_nid_postfix(const char* variable) {
-    return ::curl_getenv(variable);
+    std::string value;
+    try {
+        if (!CopyGuestEnvironment_nid_no_patch(variable, value)) return nullptr;
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+    return value.empty() ? nullptr : GuestCurlStrdup(value.c_str());
 }
 
 std::int32_t APS5_VABI curl_mime_type_nid_postfix(curl_mimepart* part, const char* mimetype) {
@@ -1326,9 +1334,8 @@ std::int32_t APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64
     if (!milliseconds) return CURLM_BAD_FUNCTION_ARGUMENT;
     long host_ms = 0;
     const CURLMcode res = ::curl_multi_timeout(multi_handle, &host_ms);
-    if (res == CURLM_OK) {
-        *milliseconds = host_ms;
-    }
+    const std::int64_t value = host_ms;
+    if (res == CURLM_OK && !GuestCopyOut_nid_no_patch(milliseconds, &value, sizeof(value))) return CURLM_BAD_FUNCTION_ARGUMENT;
     return res;
 }
 

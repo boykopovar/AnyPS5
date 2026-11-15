@@ -200,6 +200,38 @@ class PerfTests(unittest.TestCase):
 
 
 class NumbersTests(unittest.TestCase):
+    def test_different_capture_contexts_do_not_satisfy_a_perf_report(self):
+        first = json.loads(summary("a"))
+        changes = (
+            ("gpu", "other GPU"),
+            ("driver", "other driver"),
+            ("os", "other OS"),
+            ("resolution", "2560x1440"),
+            ("cpu", "other CPU"),
+            ("title_id", "PPSA00001"),
+            ("window", {"spec": "frames 601:4", "first_present": 601, "ms": 80.0}),
+            ("env", {"APS5_TRACE_FRAMES": "601:4"}),
+        )
+        for field, value in changes:
+            with self.subTest(field=field):
+                second = json.loads(summary("b"))
+                second[field] = value
+                body = json.dumps(first) + "\n" + json.dumps(second)
+                self.assertFalse(pr_labels.has_numbers(body))
+                self.assertEqual(pr_labels.labels_for(pr("perf(agc): compare", body)),
+                                 ({"perf", "perf numbers missing"}, set()))
+
+    def test_matching_context_from_distinct_commits_still_counts(self):
+        first = json.loads(summary("a"))
+        second = json.loads(summary("b"))
+        first["title_id"] = second["title_id"] = "PPSA00001"
+        first["cpu"] = second["cpu"] = "CPU"
+        body = json.dumps(first) + "\n" + json.dumps(second)
+        self.assertTrue(pr_labels.has_numbers(body))
+        self.assertEqual(pr_labels.labels_for(pr("perf(agc): compare", body,
+                                                  ["perf", "perf numbers missing"])),
+                         (set(), {"perf numbers missing"}))
+
     def test_counts(self):
         cases = [
             ("", False),
@@ -225,6 +257,16 @@ class NumbersTests(unittest.TestCase):
         broken = json.loads(summary("b"))
         broken["presents"] = 0
         self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + json.dumps(broken)))
+
+    def test_a_graphics_track_count_beyond_the_float_range_is_not_counted(self):
+        for name in ("Graphics.RenderPass", "Graphics.Barrier.Layout", "Graphics.Copy.bytes"):
+            with self.subTest(name=name):
+                first, second = json.loads(summary("a")), json.loads(summary("b"))
+                first["graphics_track"] = {name: 1}
+                second["graphics_track"] = {name: 10 ** 400}
+                self.assertFalse(pr_labels.has_numbers(json.dumps(first) + "\n" + json.dumps(second)))
+                second["graphics_track"] = {name: 2}
+                self.assertTrue(pr_labels.has_numbers(json.dumps(first) + "\n" + json.dumps(second)))
 
 
 class LabelTests(unittest.TestCase):
@@ -453,7 +495,27 @@ class MainTests(unittest.TestCase):
         self.assertEqual(sleep_mock.call_count, 2)
 
 
+class AmbiguousSummaryTests(unittest.TestCase):
+    def test_duplicate_summary_fields_do_not_count_as_capture_evidence(self):
+        for needle, replacement in (
+            ('"commit": "b"', '"commit": "a", "commit": "b"'),
+            ('"p50": 20.0', '"p50": 999.0, "p50": 20.0'),
+            ('"trace_dropped": false', '"trace_dropped": true, "trace_dropped": false'),
+        ):
+            with self.subTest(field=needle):
+                ambiguous = summary("b").replace(needle, replacement)
+                self.assertNotEqual(ambiguous, summary("b"))
+                body = summary("a") + "\n" + ambiguous
+                self.assertFalse(pr_labels.has_numbers(body))
+                add, remove = pr_labels.labels_for(pr("perf(core): example", body))
+                self.assertIn(pr_labels.MISSING_LABEL, add)
+                self.assertNotIn(pr_labels.MISSING_LABEL, remove)
 
+    def test_unique_fields_and_independent_valid_records_still_count(self):
+        self.assertTrue(pr_labels.has_numbers(summary("a") + "\n" + summary("b")))
+        self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + summary("a")))
+        ambiguous = summary("c").replace('"p50": 20.0', '"p50": 999.0, "p50": 20.0')
+        self.assertTrue(pr_labels.has_numbers(summary("a") + "\n" + ambiguous + "\n" + summary("b")))
 
 
 if __name__ == "__main__":

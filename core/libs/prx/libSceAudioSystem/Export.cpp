@@ -2,6 +2,7 @@
 #include "prx/libSceAudioSystem/include/InventoryExports.hpp"
 #include "prx/libSceAudioSystem/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -11,6 +12,13 @@ namespace {
 
 std::atomic<std::int32_t> storedValue{-1};
 std::atomic<std::int32_t> pendingValue{0};
+
+bool CopyOutValue(std::int32_t* dst, std::int32_t value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
 
 }
 
@@ -114,7 +122,7 @@ APS5_EXPORT("Fd9u7-OKW+Q", libSceAudioSystemUnknown_Fd9u7_minus_OKW_plus_Q_nid_n
 
 int APS5_VABI libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(std::int32_t* value) {
     const std::int32_t current = pendingValue.load(std::memory_order_relaxed);
-    if (!GuestCopyOut_nid_no_patch(value, &current, sizeof(current))) NotImplemented_nid_no_patch(__func__);
+    if (!CopyOutValue(value, current)) NotImplemented_nid_no_patch(__func__);
     pendingValue.store(0, std::memory_order_relaxed);
     return 0;
 }
@@ -188,7 +196,7 @@ APS5_EXPORT("ltR0PMUM270", libSceAudioSystemUnknown_ltR0PMUM270_nid_no_patch);
 
 int APS5_VABI libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch(std::int32_t* value) {
     const std::int32_t current = storedValue.load(std::memory_order_relaxed);
-    if (!GuestCopyOut_nid_no_patch(value, &current, sizeof(current))) NotImplemented_nid_no_patch(__func__);
+    if (!CopyOutValue(value, current)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("mS9gpe47Eio", libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch);

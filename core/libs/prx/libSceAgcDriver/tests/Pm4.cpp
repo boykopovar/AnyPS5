@@ -87,7 +87,7 @@ void testCatalog() {
         const auto reason = AgcDriver::Pm4::UnsupportedReason(packet[0]);
         if (!reason.empty()) expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, std::string(reason).c_str());
     }
-    check(values.size() == 56, "reference opcode catalog is incomplete");
+    check(values.size() == 57, "reference opcode catalog is incomplete");
     check(AgcDriver::Pm4::Name(makePacket(0x3a, {0})[0]) == "DRAW_INDEX_MULTI_INST", "opcode 0x3a is not DRAW_INDEX_MULTI_INST");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0xff, {0}), 0); }, "not known");
     check(AgcDriver::Pm4::KnownName(makePacket(0xff, {0})[0]).empty() && AgcDriver::Pm4::Name(makePacket(0xff, {0})[0]) == "UNKNOWN_0xff", "an unknown opcode is named");
@@ -174,6 +174,36 @@ void testRegisters() {
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000}), 0); }, "packet size");
     expectFailure([&] { execute(state, makePacket(0x69, {0xffff, 1, 2})); }, "overflow");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x9f, {0, 0, 0x80000000, 0}), 0x20); }, "compute");
+}
+
+void testContextRegRmw() {
+    AgcDriver::QueueState state;
+    execute(state, makePacket(0x69, {0x202, 0x12345678}));
+    const auto before = AgcDriver::DriverDetail::RegisterStateKey(state);
+    execute(state, {0xc0025100, 0x202, 0x00ff00ff, 0x005500aa});
+    check(state.context.at(0x202) == 0x125556aa, "CONTEXT_REG_RMW lost preserved or replaced bits");
+    check(AgcDriver::DriverDetail::RegisterStateKey(state) != before, "CONTEXT_REG_RMW did not change the fingerprint");
+    execute(state, makePacket(0x69, {0x202, 0x12345678}));
+    execute(state, makePacket(0x51, {0x202, 0x00ff00ff, 0xff55ffaa}));
+    check(state.context.at(0x202) == 0x125556aa, "CONTEXT_REG_RMW used data outside the mask");
+    alignas(4) std::uint32_t readback = 0;
+    execute(state, makePacket(0x40, {0x00100200, 0xa202, 0, low(&readback), high(&readback)}));
+    check(readback == 0x125556aa, "COPY_DATA did not read the CONTEXT_REG_RMW value");
+    execute(state, makePacket(0x51, {0x202, 0, 0xffffffffu}));
+    check(state.context.at(0x202) == 0x125556aa, "zero-mask CONTEXT_REG_RMW changed the register");
+    execute(state, makePacket(0x51, {0x202, 0xffffffffu, 0xabcdef01}));
+    check(state.context.at(0x202) == 0xabcdef01, "full-mask CONTEXT_REG_RMW did not replace the register");
+    for (const auto& packet : {makePacket(0x51, {0x202, 0}), makePacket(0x51, {0x202, 0, 0, 0})})
+        expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, "packet size");
+    expectFailure([&] { execute(state, makePacket(0x51, {0xffff, 0, 0})); }, "no known value");
+    expectFailure([&] { execute(state, makePacket(0x51, {0xffff, 0xffffffffu, 1})); }, "no known value");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x51, {0x202, 0, 0}), 0x20); }, "compute queue");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x51, {0x10000, 0, 0}), 0); }, "reserved offset");
+    AgcDriver::QueueState reset;
+    check(!reset.context.empty(), "context reset state is empty");
+    const auto [offset, value] = *reset.context.begin();
+    execute(reset, makePacket(0x51, {offset, 0xff, 0x5a}));
+    check(reset.context.at(offset) == ((value & ~0xffu) | 0x5au), "CONTEXT_REG_RMW did not read a defined reset value");
 }
 
 void testRegisterFile() {
@@ -2632,6 +2662,11 @@ void testPredicatedIndirectBufferKeepsBusyPipeline() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "context-reg-rmw") {
+            testContextRegRmw();
+            std::puts("PM4 CONTEXT_REG_RMW test passed");
+            return 0;
+        }
         if (argc == 2 && std::string(argv[1]) == "failure") {
             testAsyncMemoryFailure();
             std::puts("PM4 asynchronous memory failure propagated to idle, suspend, submit and shutdown");
@@ -2673,6 +2708,7 @@ int main(int argc, char** argv) {
         testWriteChangedStoresExactlyTheChangedRuns();
         testWriteChangedKeepingGuestKeepsCpuWrites();
         testRegisters();
+        testContextRegRmw();
         testRegisterFile();
         testContextAndBases();
         testIndexedDraw();

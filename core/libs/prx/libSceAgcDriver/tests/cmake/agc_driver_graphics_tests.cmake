@@ -57,8 +57,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_graphics_profile_draw PROPERTIES
         ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PROFILE_DRAW=1"
         SKIP_RETURN_CODE 77 TIMEOUT 300 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_push_constant_assembly COMMAND agc_driver_graphics_tests --push-constant-assembly)
+    set_tests_properties(agc_driver_push_constant_assembly PROPERTIES TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(agc_command_batch_fence_failure agc_graphics_profile_draw PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_command_batch_fence_failure agc_graphics_profile_draw agc_driver_push_constant_assembly PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -91,6 +93,12 @@ endif()
 
 if(BUILD_TESTING)
     agc_add_default_test(agc_driver_pm4_tests)
+    add_test(NAME agc_driver_pm4_context_reg_rmw COMMAND agc_driver_pm4_tests context-reg-rmw)
+    set_tests_properties(agc_driver_pm4_context_reg_rmw PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_pm4_context_reg_rmw PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     agc_add_default_test(agc_driver_graphics_tests)
     add_test(NAME agc_sparse_buffer_holes COMMAND agc_driver_graphics_tests --sparse-buffer-holes)
     add_test(NAME agc_command_state COMMAND agc_driver_graphics_tests --command-state)

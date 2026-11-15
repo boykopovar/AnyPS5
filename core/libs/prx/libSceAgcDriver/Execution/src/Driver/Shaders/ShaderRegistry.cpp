@@ -201,6 +201,11 @@ void AwaitRegisteredPreparation(PreparedShaders& prepared, std::unique_lock<std:
     if (prepared.failure != nullptr) std::rethrow_exception(prepared.failure);
 }
 
+bool RegisteredPreparationFailed(const ShaderSnapshot& snapshot) {
+    std::lock_guard lock(snapshot.prepared->mutex);
+    return snapshot.prepared->failure != nullptr;
+}
+
 bool CommittedAbi(const ShaderSnapshot& snapshot, std::span<const std::uint64_t> key) {
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
@@ -797,7 +802,7 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
         const auto found = registry->find(snapshot->codeAddress);
         if (found != registry->end()) {
             for (const auto& current : found->second) {
-                if (current->headerAddress == snapshot->headerAddress && current->type == snapshot->type && current->code == snapshot->code && current->header == snapshot->header) {
+                if (current->headerAddress == snapshot->headerAddress && current->type == snapshot->type && current->code == snapshot->code && current->header == snapshot->header && !RegisteredPreparationFailed(*current)) {
                     if (current == found->second.back()) {
                         transaction.Commit();
                         return;
@@ -1141,6 +1146,14 @@ std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const S
     return linked;
 }
 
+}
+
+bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+    if (!snapshot.prepared) return false;
+    std::lock_guard lock(snapshot.prepared->mutex);
+    return std::any_of(snapshot.prepared->userDataLinks.begin(), snapshot.prepared->userDataLinks.end(), [&](const auto& link) {
+        return link.codeOffset == codeOffset && ((link.linked != nullptr && !link.linked->code.empty()) || !link.callees.empty() || (link.sites != nullptr && (!link.sites->calls.empty() || !link.sites->tableCalls.empty())));
+    });
 }
 
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
@@ -2432,6 +2445,20 @@ std::uint64_t NullPixelProgramAddress() {
 
 alignas(256) static const std::uint32_t DepthCopyMultisamplePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0x7e0a0208u, 0xf0000130u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
 alignas(256) static const std::uint32_t DepthCopySinglePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0xf0000108u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
+alignas(256) static const std::uint32_t StencilCopyMultisamplePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0x7e0a0208u, 0xf0000130u, 0x00000603u, 0xbf8c3f70u, 0xf8001803u, 0x00000606u, 0xbf810000u};
+alignas(256) static const std::uint32_t StencilCopySinglePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0xf0000108u, 0x00000603u, 0xbf8c3f70u, 0xf8001803u, 0x00000606u, 0xbf810000u};
+static Shader StencilCopyPixelHeader(const std::uint32_t* code) {
+    Shader shader{};
+    shader.file_header = 0x34333231u;
+    shader.version = 0x18u;
+    shader.code = code;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = 64u * sizeof(std::uint32_t);
+    shader.type = 1;
+    return shader;
+}
+static const Shader StencilCopyMultisamplePixelShader = StencilCopyPixelHeader(StencilCopyMultisamplePixelCode);
+static const Shader StencilCopySinglePixelShader = StencilCopyPixelHeader(StencilCopySinglePixelCode);
 static const Shader DepthCopyMultisamplePixelShader = [] {
     Shader shader{};
     shader.file_header = 0x34333231u;
@@ -2457,12 +2484,16 @@ std::uint64_t DepthCopyPixelProgramAddress(bool multisampled) {
     return reinterpret_cast<std::uintptr_t>(multisampled ? DepthCopyMultisamplePixelCode : DepthCopySinglePixelCode);
 }
 
+std::uint64_t StencilCopyPixelProgramAddress(bool multisampled) {
+    return reinterpret_cast<std::uintptr_t>(multisampled ? StencilCopyMultisamplePixelCode : StencilCopySinglePixelCode);
+}
+
 std::uint32_t DepthCopyPixelUserWords(bool multisampled) {
     return multisampled ? 9u : 8u;
 }
 
 bool DriverOwnedProgram(std::uint64_t codeAddress) {
-    return codeAddress == NullPixelProgramAddress() || codeAddress == DepthCopyPixelProgramAddress(false) || codeAddress == DepthCopyPixelProgramAddress(true);
+    return codeAddress == NullPixelProgramAddress() || codeAddress == DepthCopyPixelProgramAddress(false) || codeAddress == DepthCopyPixelProgramAddress(true) || codeAddress == StencilCopyPixelProgramAddress(false) || codeAddress == StencilCopyPixelProgramAddress(true);
 }
 
 void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
@@ -2624,6 +2655,25 @@ ShaderSnapshot PrepareDepthCopyPixelProgram(bool multisampled) {
     return copy;
 }
 
+ShaderSnapshot PrepareStencilCopyPixelProgram(bool multisampled) {
+    const auto& shader = multisampled ? StencilCopyMultisamplePixelShader : StencilCopySinglePixelShader;
+    const auto* code = multisampled ? StencilCopyMultisamplePixelCode : StencilCopySinglePixelCode;
+    ShaderSnapshot copy{StencilCopyPixelProgramAddress(multisampled), reinterpret_cast<std::uintptr_t>(&shader), shader.type, {}, {}};
+    copy.code.assign(code, code + 64);
+    copy.header.resize(sizeof(Shader));
+    std::memcpy(copy.header.data(), &shader, sizeof(Shader));
+    auto state = DecodeRegisteredState(copy);
+    state.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(copy.codeAddress >> 8u));
+    state.shader.insert_or_assign(0x009u, static_cast<std::uint32_t>(copy.codeAddress >> 40u));
+    state.shader.insert_or_assign(0x00bu, DepthCopyPixelUserWords(multisampled) << 1u);
+    state.context.insert_or_assign(0x1b3u, 0x8002u);
+    state.context.insert_or_assign(0x1b4u, 0x8002u);
+    state.context.insert_or_assign(0x1c5u, 2u);
+    copy.registeredState = std::make_shared<const RegisteredShaderState>(std::move(state));
+    copy.prepared->deferred = true;
+    return copy;
+}
+
 std::shared_ptr<const ShaderRegistry> Driver::RegisteredShaders() {
     std::lock_guard lock(mutex);
     return shaders;
@@ -2659,7 +2709,7 @@ void Driver::RegisterShader(const Shader* shader) {
             const auto found = shaders->find(snapshot.codeAddress);
             if (found != shaders->end()) {
                 for (const auto& current : found->second) {
-                    if (current->headerAddress == snapshot.headerAddress && current->type == snapshot.type && current->code == snapshot.code && current->header == snapshot.header) {
+                    if (current->headerAddress == snapshot.headerAddress && current->type == snapshot.type && current->code == snapshot.code && current->header == snapshot.header && !RegisteredPreparationFailed(*current)) {
                         const auto identical = current;
                         PublishRegisteredShader(shaders, identical);
                         transaction.Commit();
@@ -2736,6 +2786,7 @@ void Driver::RegisterShader(const Shader* shader) {
     }
     for (const bool multisampled : {false, true}) {
         if (shaders->find(DepthCopyPixelProgramAddress(multisampled)) == shaders->end()) PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareDepthCopyPixelProgram(multisampled)));
+        if (shaders->find(StencilCopyPixelProgramAddress(multisampled)) == shaders->end()) PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareStencilCopyPixelProgram(multisampled)));
     }
     transaction.Commit();
     if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));
