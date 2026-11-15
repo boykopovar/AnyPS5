@@ -8,8 +8,22 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <random>
 #include <string>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -173,6 +187,70 @@ void SystemStateIsSilentAndRejectsNull() {
     Require(errno == 73);
 }
 
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial = nullptr, std::size_t size = 0) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    std::uint32_t* U32Ptr() const { return static_cast<std::uint32_t*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
+
+void UserSupportedAttributesRollsBackOnFault() {
+    AudioOut2UserHandle user = 0;
+    Require(sceAudioOut2UserCreate(0, &user) == 0 && user != 0);
+
+    std::uint32_t ctxAttr = 0x12345678u;
+    std::uint32_t portAttr = 0x87654321u;
+    Require(sceAudioOut2UserGetSupportedAttributes(user, &ctxAttr, &portAttr) == 0);
+    Require(ctxAttr == 0u && portAttr == 3u);
+
+    const std::uint32_t roInitial = 0x11223344u;
+    ReadOnlyPage roOut(&roInitial, sizeof(roInitial));
+    ctxAttr = 0x12345678u;
+    errno = 73;
+    Require(sceAudioOut2UserGetSupportedAttributes(user, &ctxAttr, roOut.U32Ptr()) == errorInvalidParam);
+    Require(ctxAttr == 0x12345678u && errno == 73);
+
+    errno = 73;
+    Require(sceAudioOut2UserGetSupportedAttributes(user, &ctxAttr, reinterpret_cast<std::uint32_t*>(0x10)) == errorInvalidParam);
+    Require(ctxAttr == 0x12345678u && errno == 73);
+
+    Require(sceAudioOut2UserDestroy(user) == 0);
+}
+
 }
 
 int main() {
@@ -198,6 +276,7 @@ int main() {
     SpeakerInfoReportsTheFrontPair();
     SpeakerInfoRejectsBadFlags();
     SystemStateIsSilentAndRejectsNull();
+    UserSupportedAttributesRollsBackOnFault();
 
     Require(sceAudioOut2ContextDestroy(context) == 0);
     std::filesystem::remove(path);
