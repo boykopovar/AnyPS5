@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceHttpCache/include/InventoryExports.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <deque>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -119,6 +121,7 @@ struct Entry {
     bool pending = false;
     std::size_t readOffset = 0;
     StoreKey key;
+    std::string tag;
 };
 
 struct RequestData {
@@ -143,6 +146,7 @@ struct Request {
     std::shared_ptr<Entry> entry;
     std::deque<std::string> strings;
     std::deque<std::vector<HttpCacheHeader>> headerArrays;
+    std::string tag;
 };
 
 struct Cache {
@@ -190,6 +194,30 @@ bool RegisteredUser(std::int32_t userId) {
 
 bool SystemUser(std::int32_t userId) {
     return ((static_cast<std::uint32_t>(userId) + 1) & ~0x100u) == 0;
+}
+
+constexpr std::size_t TagCapacity = 32;
+
+int CopyTag(const char* tag, std::string& destination) {
+    if (tag == nullptr) return ErrorInvalidValue;
+    if (CopyGuestString_nid_no_patch(tag, TagCapacity, destination) != 0 || destination.empty()) return ErrorInvalidValue;
+    return 0;
+}
+
+int CreateRequest(std::int32_t cacheId, std::int32_t userId, std::string tag) {
+    std::lock_guard lock(Mutex);
+    Cache* cache = FindCache(cacheId);
+    if (cache == nullptr) return ErrorNotFound;
+    if (!SystemUser(userId) && !RegisteredUser(userId)) return ErrorInvalidUser;
+    const std::uint32_t sequence = cache->nextRequest;
+    cache->nextRequest = sequence + 1 < RequestCounterLimit ? sequence + 1 : 1;
+    const auto requestId = static_cast<std::int32_t>(static_cast<std::uint32_t>(cacheId) << 24 | sequence);
+    Request request;
+    request.storeUser = userId;
+    request.hasStore = !SystemUser(userId);
+    request.tag = std::move(tag);
+    cache->requests[requestId] = std::move(request);
+    return requestId;
 }
 
 std::uint64_t Now() {
@@ -572,6 +600,7 @@ void FillEntry(Request& request, Entry& entry, const ResponseData& response) {
     entry.responseTime = response.time;
     entry.lifetime = Lifetime(response);
     entry.vary = SelectVary(request.current->headers, response.headers);
+    entry.tag = request.tag;
     ApplySharing(request, entry);
 }
 
@@ -741,7 +770,15 @@ int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl() {
 
 
 int APS5_VABI sceHttpCacheClear(std::int32_t cacheId, std::int32_t userId, const char* tag) {
-    NotImplemented_nid_no_patch(__func__);
+    std::string copiedTag;
+    if (const int status = CopyTag(tag, copiedTag); status != 0) return status;
+    std::lock_guard lock(Mutex);
+    if (FindCache(cacheId) == nullptr) return ErrorNotFound;
+    if (SystemUser(userId) || !RegisteredUser(userId)) return 0;
+    for (auto it = Store.begin(); it != Store.end();) {
+        const bool matched = std::get<0>(it->first) == userId && it->second.tag == copiedTag;
+        it = matched ? Store.erase(it) : std::next(it);
+    }
     return 0;
 }
 
@@ -775,23 +812,13 @@ int APS5_VABI sceHttpCacheCompleteRequest(std::int32_t requestId) {
 }
 
 int APS5_VABI sceHttpCacheCreateRequest(std::int32_t cacheId, std::int32_t userId) {
-    std::lock_guard lock(Mutex);
-    Cache* cache = FindCache(cacheId);
-    if (cache == nullptr) return ErrorNotFound;
-    if (!SystemUser(userId) && !RegisteredUser(userId)) return ErrorInvalidUser;
-    const std::uint32_t sequence = cache->nextRequest;
-    cache->nextRequest = sequence + 1 < RequestCounterLimit ? sequence + 1 : 1;
-    const auto requestId = static_cast<std::int32_t>(static_cast<std::uint32_t>(cacheId) << 24 | sequence);
-    Request request;
-    request.storeUser = userId;
-    request.hasStore = !SystemUser(userId);
-    cache->requests[requestId] = std::move(request);
-    return requestId;
+    return CreateRequest(cacheId, userId, std::string{});
 }
 
 int APS5_VABI sceHttpCacheCreateRequestWithTag(std::int32_t cacheId, std::int32_t userId, const char* tag) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::string copiedTag;
+    if (const int status = CopyTag(tag, copiedTag); status != 0) return status;
+    return CreateRequest(cacheId, userId, std::move(copiedTag));
 }
 
 int APS5_VABI sceHttpCacheDeleteRequest(std::int32_t requestId) {
@@ -833,7 +860,7 @@ int APS5_VABI sceHttpCacheReadData(std::int32_t requestId, std::size_t size, voi
     Entry& entry = *request->entry;
     if (entry.pending) return 0;
     const std::size_t remaining = entry.body.size() - entry.readOffset;
-    const std::size_t count = size < remaining ? size : remaining;
+    const std::size_t count = std::min({size, remaining, static_cast<std::size_t>(std::numeric_limits<int>::max())});
     if (count != 0) std::memcpy(data, entry.body.data() + entry.readOffset, count);
     entry.readOffset += count;
     return static_cast<int>(count);
@@ -981,12 +1008,23 @@ int APS5_VABI sceHttpCacheTerm(std::int32_t cacheId) {
 
 
 int APS5_VABI sceHttpCacheClearAllUserTags(std::int32_t cacheId, const std::int32_t* userIds, std::size_t count) {
-    {
-        std::lock_guard lock(Mutex);
-        if (FindCache(cacheId) == nullptr) return ErrorNotFound;
-    }
     if (count > 20 || (userIds == nullptr && count != 0)) return ErrorInvalidValue;
-    NotImplemented_nid_no_patch(__func__);
+    std::array<std::int32_t, 20> users{};
+    if (count != 0) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(users.data(), userIds, count * sizeof(std::int32_t));
+        errno = savedErrno;
+        if (!copied) return ErrorInvalidValue;
+    }
+    std::lock_guard lock(Mutex);
+    if (FindCache(cacheId) == nullptr) return ErrorNotFound;
+    const auto listed = [&](std::int32_t userId) {
+        return std::find(users.begin(), users.begin() + static_cast<std::ptrdiff_t>(count), userId) != users.begin() + static_cast<std::ptrdiff_t>(count);
+    };
+    for (auto it = Store.begin(); it != Store.end();) {
+        const bool matched = listed(std::get<0>(it->first)) && !it->second.tag.empty();
+        it = matched ? Store.erase(it) : std::next(it);
+    }
     return 0;
 }
 

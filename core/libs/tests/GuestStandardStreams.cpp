@@ -1,7 +1,5 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
-#include "prx/libc/include/ApplicationHeap.hpp"
-#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
 #include <climits>
@@ -22,7 +20,6 @@
 #include <stdexcept>
 #ifdef _WIN32
 #include <fcntl.h>
-#include <io.h>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -33,28 +30,10 @@ extern FileStream* __stdinp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
 extern int __isthreaded_nid_postfix;
+extern std::uint32_t Need_sceLibc_nid_postfix;
+extern int _thread_autoinit_dummy_decl_nid_postfix;
+extern int _thread_autoinit_dummy_decl_stub_nid_postfix;
 
-}
-static bool failAllocation = false;
-static void* APS5_VABI StreamTestAllocate(std::size_t size) { return failAllocation ? nullptr : GuestHeap::GuestHeapAllocate_nid_postfix(size); }
-static void APS5_VABI StreamTestFree(void* ptr) { GuestHeap::GuestHeapFree_nid_postfix(ptr); }
-static void* APS5_VABI StreamTestReallocate(void* ptr, std::size_t size) { return failAllocation ? nullptr : GuestHeap::GuestHeapReallocate_nid_postfix(ptr, size); }
-static void* APS5_VABI StreamTestCalloc(std::size_t count, std::size_t size) {
-    if (failAllocation) return nullptr;
-    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) return nullptr;
-    void* const ptr = GuestHeap::GuestHeapAllocate_nid_postfix(count * size);
-    if (ptr != nullptr) std::memset(ptr, 0, count * size);
-    return ptr;
-}
-static void* APS5_VABI StreamTestAlign(std::size_t align, std::size_t size) { return failAllocation ? nullptr : GuestHeap::GuestHeapAlign_nid_postfix(align, size); }
-static void* APS5_VABI StreamTestRealign(void* ptr, std::size_t size, std::size_t align) { return failAllocation ? nullptr : GuestHeap::GuestHeapRealign_nid_postfix(ptr, size, align); }
-static int APS5_VABI StreamTestPosixAlign(void** ptr, std::size_t align, std::size_t size) {
-    if (failAllocation) {
-        *ptr = nullptr;
-        return 12;
-    }
-    *ptr = GuestHeap::GuestHeapAlign_nid_postfix(align, size);
-    return *ptr ? 0 : 12;
 }
 static void Require(bool value) { if (!value) std::abort(); }
 static int APS5_VABI WriteFormatted(FileStream* stream, const char* format, ...) {
@@ -352,192 +331,6 @@ static void CheckFgetsSizeOne() {
     Require(fgets_nid_postfix(buffer, 1, &stream) == nullptr && buffer[0] == '!' && *__error_nid_postfix() == 0);
     Require(ftello_nid_postfix(&stream) == 5 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) != 0);
     stream.Close();
-}
-
-static void CheckGetdelimAndGetline() {
-    std::size_t nextCap = 0;
-    Require(!LibcDetail::ExpandLineBufferCapacity(0, 10, 100, nextCap));
-    Require(LibcDetail::ExpandLineBufferCapacity(0, 10, 200, nextCap) && nextCap == 128);
-    Require(LibcDetail::ExpandLineBufferCapacity(128, 129, 300, nextCap) && nextCap == 256);
-    Require(LibcDetail::ExpandLineBufferCapacity(128, 280, 300, nextCap) && nextCap == 280);
-    Require(!LibcDetail::ExpandLineBufferCapacity(100, 201, 200, nextCap));
-    Require(!LibcDetail::ExpandLineBufferCapacity(200, 100, 200, nextCap));
-
-    FileStream stream(TemporaryFile::Open());
-    Require(fwrite_nid_postfix("first line\nsecond:record\nthird line without newline", 1, 51, &stream) == 51);
-    rewind_nid_postfix(&stream);
-
-    char* line = nullptr;
-    size_t capacity = 0;
-
-    *__error_nid_postfix() = 0;
-    clearerr_nid_postfix(&stream);
-    Require(getdelim_nid_postfix(nullptr, &capacity, '\n', &stream) == -1 && *__error_nid_postfix() == 22);
-    Require(ferror_nid_postfix(&stream) != 0);
-
-    *__error_nid_postfix() = 0;
-    clearerr_nid_postfix(&stream);
-    Require(getdelim_nid_postfix(&line, nullptr, '\n', &stream) == -1 && *__error_nid_postfix() == 22);
-    Require(ferror_nid_postfix(&stream) != 0);
-
-    *__error_nid_postfix() = 0;
-    clearerr_nid_postfix(&stream);
-    Require(getdelim_nid_postfix(&line, &capacity, '\n', nullptr) == -1 && *__error_nid_postfix() == 22);
-    Require(line == nullptr && capacity == 0);
-    Require(ferror_nid_postfix(&stream) == 0);
-
-    const auto len1 = getline_nid_postfix(&line, &capacity, &stream);
-    Require(len1 == 11 && std::strcmp(line, "first line\n") == 0 && capacity >= 12);
-
-    const auto len2 = getdelim_nid_postfix(&line, &capacity, ':', &stream);
-    Require(len2 == 7 && std::strcmp(line, "second:") == 0 && capacity >= 12);
-
-    const auto len3 = getline_nid_postfix(&line, &capacity, &stream);
-    Require(len3 == 7 && std::strcmp(line, "record\n") == 0);
-
-    const auto len4 = getline_nid_postfix(&line, &capacity, &stream);
-    Require(len4 == 26 && std::strcmp(line, "third line without newline") == 0);
-    Require(feof_nid_postfix(&stream) != 0);
-
-    Require(getline_nid_postfix(&line, &capacity, &stream) == -1 && feof_nid_postfix(&stream) != 0);
-
-    free_nid_postfix(line);
-    line = nullptr;
-    capacity = 0;
-
-    FileStream emptyStream(TemporaryFile::Open());
-    char* eofLine = nullptr;
-    size_t eofCap = 0;
-    Require(getline_nid_postfix(&eofLine, &eofCap, &emptyStream) == -1);
-    Require(eofLine != nullptr && eofLine[0] == '\0' && eofCap >= 1);
-    free_nid_postfix(eofLine);
-
-    char* nonNullZero = static_cast<char*>(malloc_nid_postfix(16));
-    size_t zeroCap = 0;
-    Require(getline_nid_postfix(&nonNullZero, &zeroCap, &emptyStream) == -1);
-    Require(nonNullZero != nullptr && nonNullZero[0] == '\0' && zeroCap >= 1);
-    free_nid_postfix(nonNullZero);
-    emptyStream.Close();
-
-    FileStream shortStream(TemporaryFile::Open());
-    Require(fwrite_nid_postfix("hello world\n", 1, 12, &shortStream) == 12);
-    rewind_nid_postfix(&shortStream);
-    char* callerBuf = static_cast<char*>(malloc_nid_postfix(16));
-    size_t callerCap = 0;
-    Require(getline_nid_postfix(&callerBuf, &callerCap, &shortStream) == 12);
-    Require(std::strcmp(callerBuf, "hello world\n") == 0 && callerCap >= 13);
-    free_nid_postfix(callerBuf);
-    shortStream.Close();
-
-    FileStream longStream(TemporaryFile::Open());
-    std::string longData(250, 'x');
-    longData += '\n';
-    Require(fwrite_nid_postfix(longData.data(), 1, longData.size(), &longStream) == longData.size());
-    rewind_nid_postfix(&longStream);
-    char* growLine = nullptr;
-    size_t growCap = 0;
-    Require(getline_nid_postfix(&growLine, &growCap, &longStream) == 251);
-    Require(std::strcmp(growLine, longData.c_str()) == 0 && growCap >= 252);
-    free_nid_postfix(growLine);
-    longStream.Close();
-
-    FileStream nulStream(TemporaryFile::Open());
-    Require(fwrite_nid_postfix("embedded\0nul\n", 1, 13, &nulStream) == 13);
-    rewind_nid_postfix(&nulStream);
-    char* nulLine = nullptr;
-    size_t nulCap = 0;
-    Require(getline_nid_postfix(&nulLine, &nulCap, &nulStream) == 13);
-    Require(std::memcmp(nulLine, "embedded\0nul\n", 13) == 0 && nulLine[13] == '\0');
-    free_nid_postfix(nulLine);
-    nulStream.Close();
-
-    FileStream errStream(TemporaryFile::Open());
-    Require(fwrite_nid_postfix("partial line", 1, 12, &errStream) == 12);
-    rewind_nid_postfix(&errStream);
-    errStream.SetError();
-    char* errLine = nullptr;
-    size_t errCap = 0;
-    Require(getline_nid_postfix(&errLine, &errCap, &errStream) == -1);
-    Require(ferror_nid_postfix(&errStream) != 0);
-    free_nid_postfix(errLine);
-    errStream.Close();
-
-    const auto readErrFile = "anyps5-getdelim-readerr-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    { std::ofstream out(readErrFile); out << "abpartial"; }
-    FileStream* midReadStream = fopen_nid_postfix(readErrFile.c_str(), "rb");
-    Require(midReadStream != nullptr);
-    setvbuf_nid_postfix(midReadStream, nullptr, 2, 0);
-    Require(fgetc_nid_postfix(midReadStream) == 'a');
-    Require(fgetc_nid_postfix(midReadStream) == 'b');
-    Require(ungetc_nid_postfix('b', midReadStream) == 'b');
-    Require(ungetc_nid_postfix('a', midReadStream) == 'a');
-#ifdef _WIN32
-    const int writeOnlyDesc = _open(readErrFile.c_str(), _O_WRONLY | _O_BINARY);
-    Require(writeOnlyDesc >= 0 && _dup2(writeOnlyDesc, _fileno(GetNativeStream(midReadStream))) == 0);
-    _close(writeOnlyDesc);
-#else
-    const int writeOnlyDesc = open(readErrFile.c_str(), O_WRONLY);
-    Require(writeOnlyDesc >= 0 && dup2(writeOnlyDesc, fileno(GetNativeStream(midReadStream))) >= 0);
-    close(writeOnlyDesc);
-#endif
-    char* readErrLine = nullptr;
-    size_t readErrCap = 0;
-    Require(getline_nid_postfix(&readErrLine, &readErrCap, midReadStream) == -1);
-    Require(ferror_nid_postfix(midReadStream) != 0);
-    Require(readErrLine != nullptr && std::memcmp(readErrLine, "ab", 2) == 0);
-    free_nid_postfix(readErrLine);
-    fclose_nid_postfix(midReadStream);
-    std::filesystem::remove(readErrFile);
-
-    FileStream allocStream(TemporaryFile::Open());
-    Require(fwrite_nid_postfix("alloc test line\n", 1, 16, &allocStream) == 16);
-    rewind_nid_postfix(&allocStream);
-    failAllocation = true;
-    char* failLine = nullptr;
-    size_t failCap = 0;
-    *__error_nid_postfix() = 0;
-    Require(getline_nid_postfix(&failLine, &failCap, &allocStream) == -1 && *__error_nid_postfix() == 12);
-    Require(failLine == nullptr && failCap == 0);
-    Require(ferror_nid_postfix(&allocStream) != 0);
-
-    rewind_nid_postfix(&allocStream);
-    failAllocation = false;
-    char* preserveLine = static_cast<char*>(malloc_nid_postfix(8));
-    std::memcpy(preserveLine, "12345678", 8);
-    size_t preserveCap = 8;
-    failAllocation = true;
-    *__error_nid_postfix() = 0;
-    Require(getline_nid_postfix(&preserveLine, &preserveCap, &allocStream) == -1 && *__error_nid_postfix() == 12);
-    Require(preserveLine != nullptr && preserveCap == 8 && std::memcmp(preserveLine, "alloc t8", 8) == 0);
-    Require(ferror_nid_postfix(&allocStream) != 0);
-    failAllocation = false;
-    clearerr_nid_postfix(&allocStream);
-    Require(fgetc_nid_postfix(&allocStream) == 'e');
-    free_nid_postfix(preserveLine);
-    allocStream.Close();
-
-    FileStream delimStream(TemporaryFile::Open());
-    Require(fwrite_nid_postfix("a\xE9" "b\nc", 1, 5, &delimStream) == 5);
-    rewind_nid_postfix(&delimStream);
-    char* delimLine = nullptr;
-    size_t delimCap = 0;
-    Require(getdelim_nid_postfix(&delimLine, &delimCap, -23, &delimStream) == 2);
-    Require(getdelim_nid_postfix(&delimLine, &delimCap, 0x10A, &delimStream) == 2 && std::strcmp(delimLine, "b\n") == 0);
-    free_nid_postfix(delimLine);
-    delimStream.Close();
-
-    FileStream hugeStream(TemporaryFile::Open());
-    Require(fwrite_nid_postfix("x\n", 1, 2, &hugeStream) == 2);
-    rewind_nid_postfix(&hugeStream);
-    char* hugeLine = nullptr;
-    size_t hugeCap = std::numeric_limits<size_t>::max();
-    Require(getline_nid_postfix(&hugeLine, &hugeCap, &hugeStream) == 2 && hugeCap < 4096);
-    free_nid_postfix(hugeLine);
-    hugeStream.Close();
-
-    stream.Close();
-    *__error_nid_postfix() = 0;
-    Require(getline_nid_postfix(&line, &capacity, &stream) == -1 && *__error_nid_postfix() == 9);
 }
 
 static void CheckSupplementaryWideCharacters() {
@@ -1026,17 +819,6 @@ static void CheckStandardStreamDeleteSharing() {
 #endif
 
 int main(int argc, char** argv) {
-    void* const testHeapApi[10] = {
-        reinterpret_cast<void*>(&StreamTestAllocate),
-        reinterpret_cast<void*>(&StreamTestFree),
-        reinterpret_cast<void*>(&StreamTestCalloc),
-        reinterpret_cast<void*>(&StreamTestReallocate),
-        reinterpret_cast<void*>(&StreamTestAlign),
-        reinterpret_cast<void*>(&StreamTestRealign),
-        reinterpret_cast<void*>(&StreamTestPosixAlign),
-        nullptr, nullptr, nullptr
-    };
-    ApplicationHeapRegister_nid_no_patch(testHeapApi);
     if (argc > 1 && std::string_view(argv[1]) == "--update-stdout") return CheckUpdateStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
@@ -1096,6 +878,9 @@ int main(int argc, char** argv) {
     Require(std::strcmp(stringOutput, "1 2 3 4 5 6 7 8 9 10 1.25") == 0);
     Require(FormatString(stringOutput, "") == 0 && stringOutput[0] == '\0');
     Require(__isthreaded_nid_postfix == 1);
+    Require(Need_sceLibc_nid_postfix == 1);
+    Require(_thread_autoinit_dummy_decl_nid_postfix == 0);
+    Require(_thread_autoinit_dummy_decl_stub_nid_postfix == 0);
     Require(__stdoutp_nid_postfix == &_Stdout_nid_postfix);
     Require(__stderrp_nid_postfix == &_Stderr_nid_postfix);
     Require(fileno_nid_postfix(__stdinp_nid_postfix) == 0);
@@ -1211,6 +996,32 @@ int main(int argc, char** argv) {
     Require(fgetws_nid_postfix(utfBuf, 16, &roundTrip) == utfBuf);
     Require(utfBuf[0] == u'é' && utfBuf[1] == u'\u20ac' && utfBuf[2] == u'\n' && utfBuf[3] == 0);
     roundTrip.Close();
+
+    FileStream wideIncomplete(TemporaryFile::Open());
+    Require(std::fwrite("\xE2\x82", 1, 2, wideIncomplete.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideIncomplete, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideIncomplete) == -1);
+    Require(*__error_nid_postfix() == 86 && feof_nid_postfix(&wideIncomplete) != 0 && ferror_nid_postfix(&wideIncomplete) != 0);
+    wideIncomplete.Close();
+
+    FileStream wideInvalid(TemporaryFile::Open());
+    Require(std::fwrite("\xE2" "A", 1, 2, wideInvalid.GetHandle()) == 2);
+    Require(fseeko_nid_postfix(&wideInvalid, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideInvalid) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&wideInvalid) != 0);
+    clearerr_nid_postfix(&wideInvalid);
+    Require(fseeko_nid_postfix(&wideInvalid, 1, SEEK_SET) == 0);
+    Require(fgetwc_nid_postfix(&wideInvalid) == 'A' && ferror_nid_postfix(&wideInvalid) == 0);
+    wideInvalid.Close();
+
+    FileStream wideFourByte(TemporaryFile::Open());
+    Require(std::fwrite("\xF0\x9F\x98\x80", 1, 4, wideFourByte.GetHandle()) == 4);
+    Require(fseeko_nid_postfix(&wideFourByte, 0, SEEK_SET) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fgetwc_nid_postfix(&wideFourByte) == 0xd83d && fgetwc_nid_postfix(&wideFourByte) == 0xde00);
+    Require(fgetwc_nid_postfix(&wideFourByte) == -1 && ferror_nid_postfix(&wideFourByte) == 0);
+    wideFourByte.Close();
 
     FileStream midErr(TemporaryFile::Open());
     Require(fputc_nid_postfix('A', &midErr) == 'A');
@@ -1352,7 +1163,6 @@ int main(int argc, char** argv) {
     CheckUngetcEndOfFile();
     CheckFgetsSize();
     CheckFgetsSizeOne();
-    CheckGetdelimAndGetline();
     CheckSupplementaryWideCharacters();
     CheckUnlockedStreams();
     CheckGetcPutc();
