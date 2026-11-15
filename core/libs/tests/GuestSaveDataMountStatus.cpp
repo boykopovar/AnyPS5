@@ -211,8 +211,8 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataGetMountInfo(&unterminatedMounted, &info) == SaveDataErrorParameter, "getMountInfo unterminated point is PARAMETER on mounted save");
     Check(sceSaveDataGetParam(&unterminatedMounted, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unterminated point is PARAMETER on mounted save");
     Check(sceSaveDataSetParam(&unterminatedMounted, 1, newTitle, sizeof(newTitle)) == SaveDataErrorParameter, "setParam unterminated point is PARAMETER on mounted save");
-    std::uint32_t mounted = 0;
-    Check(MountedCountThrows(0, &mounted), "mounted count throws on an open save");
+    std::uint32_t mounted = 0x5a5a5a5a;
+    Check(sceSaveDataGetMountedSaveDataCount(0, &mounted) == 0 && mounted >= 1, "mounted count reports an open save");
 }
 
 void MountAndCheck(const char* name, std::uint32_t mode, std::uint32_t expectedStatus, const std::string& what) {
@@ -942,15 +942,16 @@ int main() {
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress pre-init is NOT_INITIALIZED");
     Check(sceSaveDataTerminate() == SaveDataErrorNotInitialized, "terminate pre-init is NOT_INITIALIZED");
     Check(sceSaveDataIsMounted() == SaveDataErrorNotInitialized, "isMounted pre-init is NOT_INITIALIZED");
-    Check(MountedCountThrows(0, nullptr), "mounted count throws before initialization");
+    Check(sceSaveDataGetMountedSaveDataCount(0, nullptr) == SaveDataErrorNotInitialized, "mounted count pre-init is NOT_INITIALIZED");
     CheckUnmountedCalls();
     Check(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000), "null param rejected in memory sync");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
     std::uint32_t mounted = 0;
-    Check(MountedCountThrows(0, nullptr), "mounted count throws for a null count");
-    Check(MountedCountThrows(0, &mounted), "mounted count throws after initialization");
+    Check(sceSaveDataGetMountedSaveDataCount(0, nullptr) == SaveDataErrorParameter, "mounted count null count is PARAMETER");
+    Check(sceSaveDataGetMountedSaveDataCount(0, &mounted) == 0 && mounted == 0, "mounted count is zero before a mount");
+    mounted = 0x5a5a5a5a;
     Check(MountedCountThrows(0x7fffffff, &mounted), "mounted count throws for a nonzero first argument");
-    Check(mounted == 0u, "mounted count writes nothing before throwing");
+    Check(mounted == 0x5a5a5a5a, "mounted count writes nothing before throwing");
     CheckHostMountFailures();
     CheckMountCapacityAndLifecycle();
     MountAndCheck("fresh", MountReadWrite | MountCreate2, 1u, "CREATE2 of a missing save");

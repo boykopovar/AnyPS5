@@ -263,6 +263,8 @@ function(agc_embedded_shader SOURCE STEM SYMBOL OUT_LIST)
 endfunction()
 set(agcDepthTransferShaderHeaders)
 agc_embedded_shader(DepthToStorage.comp DepthToStorage DEPTH_TO_STORAGE_SPV agcDepthTransferShaderHeaders)
+set(agcStagingCopyBackBoundShaderHeaders)
+agc_embedded_shader(StagingCopyBackBound.comp StagingCopyBackBound STAGING_COPY_BACK_BOUND_SPV agcStagingCopyBackBoundShaderHeaders)
 foreach(agcPresentationStage IN ITEMS Vert Frag)
     string(TOLOWER "${agcPresentationStage}" agcPresentationExtension)
     string(TOUPPER "${agcPresentationStage}" agcPresentationSymbol)
@@ -501,6 +503,7 @@ set(agcDriverSources
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
         ${agcDepthTransferShaderHeaders}
+        ${agcStagingCopyBackBoundShaderHeaders}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp
