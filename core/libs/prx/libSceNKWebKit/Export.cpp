@@ -11712,10 +11712,6 @@ int APS5_VABI WKWebsiteDataStoreGetHTTPCookieStore() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreGetResourceLoadStatisticsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreIsStatisticsEphemeral() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11797,10 +11793,6 @@ int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugModeWithCompletion
 }
 
 int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsDebugMode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 

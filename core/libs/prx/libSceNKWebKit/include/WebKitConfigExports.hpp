@@ -136,4 +136,7 @@ void APS5_VABI WKWebsitePoliciesSetCustomHeaderFields(const void* websitePolicie
 void APS5_VABI WKWebsitePoliciesSetDataStore(const void* websitePolicies, const void* websiteDataStore);
 void APS5_VABI WKWebsitePoliciesSetPopUpPolicy(const void* websitePolicies, std::uint32_t policy);
 
+bool APS5_VABI WKWebsiteDataStoreGetResourceLoadStatisticsEnabled(const void* websiteDataStore);
+void APS5_VABI WKWebsiteDataStoreSetResourceLoadStatisticsEnabled(const void* websiteDataStore, bool enabled);
+
 }

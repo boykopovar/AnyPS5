@@ -94,3 +94,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>")
     endif()
 endif()
+
+    add_executable(nkwebkit_websitedatastorestatistics_tests tests/WebsiteDataStoreStatistics.cpp)
+    target_link_libraries(nkwebkit_websitedatastorestatistics_tests PRIVATE libSceNKWebKit_tests_common)
+    add_test(NAME nkwebkit_websitedatastorestatistics COMMAND nkwebkit_websitedatastorestatistics_tests)
