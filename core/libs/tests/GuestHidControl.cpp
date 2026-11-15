@@ -225,7 +225,13 @@ void CheckGuestPointerFaults() {
     std::uint16_t second = 0x5a5a;
     const auto unmapped16 = reinterpret_cast<std::uint16_t*>(0x10);
     const auto unmappedVersion = reinterpret_cast<const std::uint16_t*>(0x10);
+    const auto unmapped8 = reinterpret_cast<std::uint8_t*>(0x10);
+    std::array<std::uint8_t, 0x40> image{};
     errno = 71;
+    Require(sceHidControlIsForceUpdateNeeded(0, 1, unmapped8) == ErrorInvalidArgument && errno == 71,
+            "IsForceUpdateNeeded unmapped result");
+    Require(sceHidControlPswUpdateIsUpdateNeeded(0, image.data(), unmapped16) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeeded unmapped result");
     Require(sceHidControlGetAuthInformation(1, 0, 1, reinterpret_cast<void*>(0x10)) == ErrorInvalidArgument && errno == 71,
             "GetAuthInformation unmapped output");
     Require(sceHidControlPswUpdateSendData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,

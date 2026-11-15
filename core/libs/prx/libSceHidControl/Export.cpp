@@ -592,11 +592,11 @@ int APS5_VABI sceHidControlSetRevokeList2(std::uint32_t first, std::uint32_t cou
 int APS5_VABI sceHidControlIsForceUpdateNeeded(std::uint32_t device, std::uint32_t value, std::uint8_t* needed) {
     if (!Initialized()) return ErrorNotInitialized;
     if (value == 0 || needed == nullptr) return ErrorInvalidArgument;
-    *needed = 0;
+    if (!StoreGuest(needed, std::uint8_t{0})) return ErrorInvalidArgument;
     std::uint8_t reply = 0;
     Transfer request{device, value, &reply};
     const int result = Control<0x8010486b>(request);
-    if (result == 0 && reply == 1) *needed = 1;
+    if (result == 0 && reply == 1 && !StoreGuest(needed, std::uint8_t{1})) return ErrorInvalidArgument;
     return result;
 }
 
@@ -617,12 +617,12 @@ int APS5_VABI sceHidControlSetForceAdvancedVibrationMode(std::uint8_t enable) {
 int APS5_VABI sceHidControlPswUpdateIsUpdateNeeded(std::uint32_t device, const void* image, std::uint16_t* result) {
     if (!Initialized()) return ErrorNotInitialized;
     if (result == nullptr) return ErrorInvalidArgument;
-    *result = 0;
+    if (!StoreGuest(result, std::uint16_t{0})) return ErrorInvalidArgument;
     if (image == nullptr) return ErrorInvalidArgument;
     std::uint16_t reply = 0;
     UpdateCheck request{device, 0, image, UpdateImageSize, &reply, nullptr};
     const int status = Control<UpdateCheckCommand>(request);
-    if (status == 0) *result = reply;
+    if (status == 0 && !StoreGuest(result, reply)) return ErrorInvalidArgument;
     return status;
 }
 
