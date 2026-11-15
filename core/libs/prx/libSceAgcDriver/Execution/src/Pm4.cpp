@@ -5,6 +5,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <thread>
 #include <chrono>
@@ -370,8 +371,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             graphics();
             size(4);
             const auto operation = (packet[1] >> 16u) & 7u;
-            require(operation != 1 && operation != 2, "GPU query predication is not implemented");
-            require(operation == 0 || operation == 3 || operation == 4, "invalid predication operation");
+            require(operation != 2, "GPU primitive-count predication is not implemented");
+            require(operation == 0 || operation == 1 || operation == 3 || operation == 4, "invalid predication operation");
             require((packet[1] & ~0x71100u) == 0, "unsupported SET_PREDICATION bits");
             if (operation != 0) require(address(packet[2], packet[3]) != 0 && (packet[2] & 0xfu) == 0, "unaligned predication address");
             break;
@@ -670,12 +671,33 @@ std::size_t ConditionalWords(std::span<const std::uint32_t> packet) {
     return packet[4] & ConditionalWordsMask;
 }
 
+std::size_t PredicationBytes(const Predication& predication) {
+    if (predication.operation == 1) return SampleDumpBytes + SampleDumpBlockBytes;
+    return predication.operation == 3 ? 8 : 4;
+}
+
 bool PredicationPasses(const QueueState& queue) {
     const auto& predication = queue.predication;
     if (predication.operation == 0) return true;
-    const std::size_t bytes = predication.operation == 3 ? 8 : 4;
-    std::uint64_t value = 0;
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
+    if (predication.operation == 1) {
+        constexpr std::uint64_t ready = 1ull << 63u;
+        std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
+        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(PredicationBytes(predication)), 8);
+        std::uint64_t samples = 0;
+        for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
+            const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
+            const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
+            if ((begin & ready) == 0 || (end & ready) == 0) {
+                require(predication.runWhenUnwritten, "Z-pass predication waits for a counter pair that was never written");
+                return true;
+            }
+            samples += (end & ~ready) - (begin & ~ready);
+        }
+        return (samples != 0) == predication.executeWhenSet;
+    }
+    const std::size_t bytes = PredicationBytes(predication);
+    std::uint64_t value = 0;
     GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(&value, 1)).first(bytes), bytes);
     return (value != 0) == predication.executeWhenSet;
 }
@@ -1146,7 +1168,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x13: queue.indexBufferSize = packet[1]; return;
         case 0x20: {
             const auto operation = (packet[1] >> 16u) & 7u;
-            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0};
+            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0, (packet[1] & 0x1000u) != 0};
             return;
         }
         case 0x3f: throw std::runtime_error(std::string(UnsupportedReason(packet[0])));

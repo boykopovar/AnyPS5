@@ -1,6 +1,7 @@
 #include "prx/libSceErrorDialog/include/Api.hpp"
 #include "prx/libSceErrorDialog/include/ErrorDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -48,8 +49,12 @@ int APS5_VABI sceErrorDialogInitialize(void) {
 int APS5_VABI sceErrorDialogOpen(const void* param) {
  std::lock_guard g(g_lock);
  if (g_status != kStatusInitialized && g_status != kStatusFinished) return kErrInvalidState;
+ if (param == nullptr) return kErrParam;
  std::uint8_t buffer[kParamSize];
- if (param == nullptr || !GuestCopyIn_nid_no_patch(buffer, param, kParamSize)) return kErrParam;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(buffer, param, kParamSize);
+ errno = savedErrno;
+ if (!copied) return kErrParam;
  std::int32_t size = 0;
  std::memcpy(&size, buffer, sizeof(size));
  if (static_cast<std::size_t>(size) != kParamSize) return kErrParam;

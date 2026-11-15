@@ -312,6 +312,8 @@ constexpr TagVector kTagVectors[] = {
     {"@x=abcdefghij", "und", nullptr},
     {"de_DD", "de-DE", "de-DE"},
     {"mo_ZR", "ro-CD", "ro-CD"},
+    {"eng_USA", "en-US", "en-US"},
+    {"deu_DEU_1901", "de-DE-1901", "de-DE-1901"},
     {"x-elmer", "x-elmer", "x-elmer"},
     {"en-x-elmer", "en-x-elmer", "en-x-elmer"},
     {"en-a-bar-u-baz", "en-a-bar-u-baz", "en-a-bar-u-baz"},

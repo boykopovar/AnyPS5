@@ -322,6 +322,17 @@ static void CheckNetstat() {
     CheckDiagnostics();
     Require(sceNetShowPolicy() == 0);
     Require(sceNetShowNetstatEx(0) == 0);
+    for (unsigned bit = 0; bit < 32; ++bit) {
+        const std::uint32_t flags = std::uint32_t{1} << bit;
+        *sceNetErrnoLoc() = 123;
+        if (bit == 16) Require(Failed(sceNetShowNetstatEx(flags), 22));
+        else Require(sceNetShowNetstatEx(flags) == 0 && *sceNetErrnoLoc() == 123);
+    }
+    for (const std::uint32_t flags : {0xfffeffffu, 0xffff0000u, 0x10001u, 0x1ffffu, 0x20001u, 0x7fffffffu, 0x8000ffffu}) {
+        *sceNetErrnoLoc() = 123;
+        if ((flags & 0x10000) != 0) Require(Failed(sceNetShowNetstatEx(flags), 22));
+        else Require(sceNetShowNetstatEx(flags) == 0 && *sceNetErrnoLoc() == 123);
+    }
     Require(sceNetShowRoute() == 0);
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));
@@ -551,6 +562,9 @@ static void CheckDefaultRoute() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    Require(Failed(sceNetConfigGetDefaultRoute(reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    Require(errno == 14);
 }
 
 static void CheckIfNameIndex() {
@@ -1842,6 +1856,9 @@ static void CheckSystemTime() {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     sceNetGetSystemTime(&output[1]);
     Require(output[1] > previous);
+    errno = 71;
+    sceNetGetSystemTime(reinterpret_cast<std::uint64_t*>(0x10));
+    Require(*sceNetErrnoLoc() == 22 && errno == 71);
 }
 
 static void CheckUsleep() {

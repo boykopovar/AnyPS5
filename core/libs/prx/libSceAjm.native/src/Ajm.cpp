@@ -1998,8 +1998,11 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
     for (std::uint32_t attempt = 0; attempt < 0x4000; ++attempt) {
         const std::uint32_t id = (codec << 14) | (g_nextInstance.fetch_add(1, std::memory_order_relaxed) & 0x3FFF);
         if (g_instances.contains(id)) continue;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(instance, &id, sizeof(id));
+        errno = savedErrno;
+        if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
         g_instances.emplace(id, std::move(created));
-        *instance = id;
         AJM_TRACE("[ajm] instance create: context %u, codec %u, flags 0x%llx -> instance %u\n", context, codec, static_cast<unsigned long long>(flags), id);
         return 0;
     }
@@ -2051,9 +2054,14 @@ int APS5_VABI sceAjmDecMp3ParseFrame(const uint8_t* stream, uint32_t streamSize,
 
 int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* info) {
     if (!buffer || !info) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    info->p_buffer = buffer;
-    info->offset = 0;
-    info->size = size;
+    AjmBatchInfo local{};
+    local.p_buffer = buffer;
+    local.offset = 0;
+    local.size = size;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 

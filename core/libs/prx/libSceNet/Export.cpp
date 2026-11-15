@@ -2895,9 +2895,12 @@ int APS5_VABI sceNetEtherNtostr(const NetEtherAddr* n, char* str, size_t len) {
 int APS5_VABI sceNetEtherStrton(const char* text, NetEtherAddr* address) {
     if (text == nullptr || address == nullptr) return fail(NET_EINVAL);
     std::array<char, 17> input{};
-    for (std::size_t index = 0; index < input.size(); ++index) {
-        if (!GuestCopyIn_nid_no_patch(&input[index], text + index, 1)) return fail(NET_EFAULT);
-        if (input[index] == '\0') return fail(NET_EINVAL);
+    for (std::size_t copied = 0; copied < input.size();) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + copied;
+        const std::size_t count = std::min<std::size_t>(input.size() - copied, 4096 - address % 4096);
+        if (!GuestCopyIn_nid_no_patch(input.data() + copied, text + copied, count)) return fail(NET_EFAULT);
+        if (std::memchr(input.data() + copied, '\0', count) != nullptr) return fail(NET_EINVAL);
+        copied += count;
     }
     const auto hexDigit = [](char character) {
         if (character >= '0' && character <= '9') return character - '0';
@@ -3460,7 +3463,9 @@ int APS5_VABI sceNetGetsockoptEx(int socketId, int level, int option, void* valu
 }
 
 void APS5_VABI sceNetGetSystemTime(std::uint64_t* output) {
-    if (output != nullptr) *output = sceKernelGetProcessTime();
+    if (output == nullptr) return;
+    const std::uint64_t time = sceKernelGetProcessTime();
+    GuestCopyOut_nid_no_patch(output, &time, sizeof(time));
 }
 
 int APS5_VABI sceNetGetSystemMemInfo(NetSystemMemoryInfo* info, std::uint32_t flags) {
@@ -3671,8 +3676,7 @@ int APS5_VABI sceNetShowNetstatForBuffer(char* buffer, std::int32_t bufferSize, 
 }
 
 int APS5_VABI sceNetShowNetstatEx(std::uint32_t flags) {
-    (void)flags;
-    return 0;
+    return (flags & 0x10000) != 0 ? fail(NET_EINVAL) : 0;
 }
 
 int APS5_VABI sceNetShowNetstatExForBuffer(char* buffer, std::int32_t bufferSize, std::int32_t poolId, std::uint32_t flags) {
@@ -3904,7 +3908,10 @@ int APS5_VABI sceNetConfigGetDefaultRoute(std::uint32_t* gateway) {
     std::uint32_t found = 0;
     if (!NetCtlHostIpv4Gateway_nid_no_patch(&found)) return NET_CONFIG_ERROR_NO_ROUTE;
     if (gateway == nullptr) throw std::invalid_argument("sceNetConfigGetDefaultRoute: null gateway");
-    *gateway = found;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(gateway, &found, sizeof(found));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 1;
 }
 

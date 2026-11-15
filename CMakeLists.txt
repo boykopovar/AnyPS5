@@ -333,6 +333,8 @@ if(BUILD_TESTING)
         add_test(NAME tools_progress_diff_json COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff_json.py)
         set_tests_properties(tools_progress_diff_json PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_progress_diff COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff.py)
         add_test(NAME progress_wrappers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
@@ -502,8 +504,18 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
         set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
-        set_tests_properties(check_skips PROPERTIES TIMEOUT 20)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py
+            SkipJsonTests RequiredTestsTests SkipReportTests NotRunTests)
+        add_test(NAME check_skips_privilege COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CheckSkipsTests)
+        add_test(NAME check_skips_ctest_policy COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CtestSkipPolicyTests)
+        add_test(NAME check_skips_device_policy COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests)
+        add_test(NAME check_skips_cli_output COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py SkipCliOutputTests)
+        set_tests_properties(check_skips check_skips_privilege check_skips_ctest_policy
+            check_skips_device_policy check_skips_cli_output PROPERTIES TIMEOUT 20)
         add_test(NAME relinker_seed_manifest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_seed_manifest.py)
         set_tests_properties(relinker_seed_manifest PROPERTIES TIMEOUT 20)
@@ -675,6 +687,9 @@ if(BUILD_TESTING)
         add_test(NAME pad_input COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_input.py)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
+        add_test(NAME harfbuzz_icu_script_names COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_harfbuzz_icu_script_names.py)
+        set_tests_properties(harfbuzz_icu_script_names PROPERTIES TIMEOUT 20)
         add_test(NAME stale_conflicts_workflow COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stale_conflicts_workflow.py)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
@@ -828,6 +843,13 @@ if(BUILD_TESTING)
         set_tests_properties(tools_seed_check PROPERTIES TIMEOUT 20)
         add_test(NAME tools_cmake_fuzzer_sanitizers COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_cmake_fuzzer_sanitizers.py)
         set_tests_properties(tools_cmake_fuzzer_sanitizers PROPERTIES TIMEOUT 120)
+
+        add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py)
+        set_tests_properties(title_run_paths PROPERTIES TIMEOUT 30)
+        add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)
+        set_tests_properties(title_run_identity PROPERTIES TIMEOUT 30)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
@@ -942,6 +964,9 @@ set(LIBUSB_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)
 set(LIBUSB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(LIBUSB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LIBUSB_ENABLE_UDEV OFF CACHE BOOL "" FORCE)
+if(APPLE)
+    set(HAVE_PIPE2 "" CACHE INTERNAL "")
+endif()
 add_subdirectory(3rdparty/libusb-cmake EXCLUDE_FROM_ALL)
 set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
