@@ -995,9 +995,14 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, &onlineIdOut) == SignedOut, "GetNpOnlineId must report a signed-out user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, nullptr) == InvalidArgument, "GetNpOnlineId must refuse a null SDK output");
+    errno = 71;
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(reinterpret_cast<const UserObject*>(0x10), &onlineIdOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, reinterpret_cast<SceNpOnlineId*>(0x10)) == InvalidArgument && errno == 71, "an unwritable SDK output must be refused");
     NpOnlineIdObject onlineIdObjectOut;
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, &onlineIdObjectOut) == SignedOut, "GetNpOnlineId must report a signed-out object output");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(nullptr, &onlineIdObjectOut) == InvalidArgument, "GetNpOnlineId must refuse a null user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(reinterpret_cast<const UserObject*>(0x10), &onlineIdObjectOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, reinterpret_cast<NpOnlineIdObject*>(0x10)) == InvalidArgument && errno == 71, "an unwritable object output must be refused");
 
     NpTitleTokenObject titleToken;
     _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
