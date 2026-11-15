@@ -941,6 +941,7 @@ void hitTargetKeepsItsResidency(AgcDriver::VulkanDevice& device) {
     reset(device, color);
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        StorageTexture::FlushAllPending("test", device.Device());
         ClearCachedTextures(device.Device());
     }
     arm(device, color);
