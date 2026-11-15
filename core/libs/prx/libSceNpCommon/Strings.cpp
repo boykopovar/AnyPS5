@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -235,9 +236,9 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
 
 int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t length) {
     if (size < length + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-    std::memcpy(dst, src, length);
-    std::memset(dst + length, 0, size - length);
-    return 0;
+    std::string padded(size, '\0');
+    std::memcpy(padded.data(), src, length);
+    return GuestCopyOut_nid_no_patch(dst, padded.data(), size) ? 0 : NP_ERROR_INVALID_ARGUMENT;
 }
 
 constexpr int NP_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550601);
@@ -499,13 +500,28 @@ int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, 
 
 int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
     if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    return CopyToBuffer(dst, size, src, std::strlen(src));
+    std::string text;
+    const int error = CopyGuestString_nid_no_patch(src, size, text);
+    if (error == 63) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (error != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    return CopyToBuffer(dst, size, text.data(), text.size());
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
     if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
     if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
+    if (size == 0) return NP_ERROR_BUFFER_TOO_SMALL;
+    const std::size_t window = std::min(maxLength, size);
+    std::string text;
+    const int error = CopyGuestString_nid_no_patch(src, window, text);
+    if (error == 63 && window == size) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (error == 63) {
+        text.resize(maxLength);
+        if (!GuestCopyIn_nid_no_patch(text.data(), src, maxLength)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    } else if (error != 0) {
+        return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    return CopyToBuffer(dst, size, text.data(), text.size());
 }
 
 int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength) {
