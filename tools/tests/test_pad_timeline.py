@@ -256,10 +256,10 @@ class TimelineTests(unittest.TestCase):
 
     def test_excessively_nested_timelines_are_usage_errors(self):
         depth = sys.getrecursionlimit() + 64
+        probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
         for _ in range(8):
-            try:
-                json.loads("[" * depth + "]" * depth)
-            except RecursionError:
+            if subprocess.run([sys.executable, "-c", probe], input="[" * depth + "]" * depth, text=True,
+                              encoding="utf-8", capture_output=True).returncode == 3:
                 break
             depth *= 2
         else:

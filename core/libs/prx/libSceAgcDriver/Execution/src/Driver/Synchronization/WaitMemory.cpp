@@ -147,7 +147,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         std::uint64_t since = 0;
         ~EpochPoint() {
             if (bump && since == 0 && inherit) since = driver->storeOrderingSince(packet, address, bytes, received, queue);
-            if (bump) bumpEpochSince(&EpochBumps::waits, since);
+            if (bump) bumpWaitEpoch(address, bytes, since);
         }
     } epochPoint{this, queue, awaited, awaitedBytes, packet, received, !requireMemory};
     const auto orderedBy = [&](std::uint32_t writer) {

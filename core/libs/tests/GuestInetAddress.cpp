@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -48,6 +49,8 @@ int main() {
     Require(Rejects("1.2.3.4.5") && Rejects("08") && Rejects("0x") && Rejects("1.2.3.4x"), "malformed");
     Require(Rejects("") && Rejects(".1") && Rejects("1..2") && Rejects("-1"), "missing digits");
     Require(inet_aton_nid_postfix("1.2.3.4", nullptr) == 1 && inet_aton_nid_postfix("x", nullptr) == 0, "null destination");
+    errno = 71;
+    Require(inet_aton_nid_postfix("1.2.3.4", reinterpret_cast<std::uint32_t*>(0x10)) == 0 && errno == 71, "unwritable destination");
 
     Require(inet_addr_nid_postfix("127.0.0.1") == Network(127, 0, 0, 1), "inet_addr");
     Require(inet_addr_nid_postfix("bad") == 0xffffffffu && inet_addr_nid_postfix("255.255.255.255") == 0xffffffffu, "inet_addr none");

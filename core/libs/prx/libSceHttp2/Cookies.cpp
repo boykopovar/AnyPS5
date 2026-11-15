@@ -10,6 +10,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include "GuestAccess.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
 #include "Cookies.hpp"
@@ -406,31 +407,31 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
     std::string header;
     for (const Cookie* match : matches) AppendCookie(header, *match);
     const std::size_t size = header.size() + HEADER_SLACK;
-    if (!cookie) {
-        *required = size;
-        return 0;
-    }
+    if (!cookie) return Http2Guest::Store(required, size) ? 0 : ERROR_INVALID_VALUE;
     if (prepared < size) {
-        if (prepared != 0) cookie[0] = '\0';
+        if (prepared != 0 && !Http2Guest::Store(cookie, '\0')) return ERROR_INVALID_VALUE;
         return ERROR_OUT_OF_SIZE;
     }
     header.append({'\0', ' ', '\0'});
-    std::memcpy(cookie, header.data(), size);
-    if (required) *required = size;
+    if (!Http2Guest::CopyOut(cookie, header.data(), size)) return ERROR_INVALID_VALUE;
+    if (required && !Http2Guest::Store(required, size)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
 int APS5_VABI sceHttp2GetCookieStats(int cookieBoxId, Http2CookieStats* stats) {
     std::lock_guard lock(g_cookiesMutex);
     if (!stats) return ERROR_INVALID_VALUE;
+    Http2CookieStats out{};
+    if (!Http2Guest::CopyIn(&out, stats, sizeof(out))) return ERROR_INVALID_VALUE;
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     RemoveExpired(*box, Now());
-    stats->currentInuseSize = InuseSize(*box);
-    stats->currentInuseNum = static_cast<std::uint32_t>(box->cookies.size());
-    stats->maxInuseSize = box->maxInuseSize;
-    stats->maxInuseNum = box->maxInuseNum;
-    stats->removedNum = box->removedNum;
+    out.currentInuseSize = InuseSize(*box);
+    out.currentInuseNum = static_cast<std::uint32_t>(box->cookies.size());
+    out.maxInuseSize = box->maxInuseSize;
+    out.maxInuseNum = box->maxInuseNum;
+    out.removedNum = box->removedNum;
+    if (!Http2Guest::CopyOut(stats, &out, sizeof(out))) return ERROR_INVALID_VALUE;
     return 0;
 }
 

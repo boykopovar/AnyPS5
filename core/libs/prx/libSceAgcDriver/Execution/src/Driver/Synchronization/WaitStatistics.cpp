@@ -3,10 +3,12 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <unordered_map>
 
 namespace AgcDriver::DriverDetail {
 
@@ -105,6 +107,33 @@ void Driver::raiseEpochSince(std::uint64_t since) {
     GuestMemory::RaiseCollectSince(since);
     publishQueueSince(epochQueue());
     if (GuestMemory::CollectSince() != before && DrawPipeline::Active() && !Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::NoSharedCollectWalks)) DrawPipeline::NoteEpochSince(DrawPipeline::EpochToken().fetch_add(1, std::memory_order_relaxed) + 1, GuestMemory::CollectSince());
+}
+
+void Driver::bumpWaitEpoch(std::uint64_t address, std::size_t bytes, std::uint64_t since) {
+    struct Ordered {
+        std::uint64_t value = 0;
+        std::uint64_t generation = 0;
+    };
+    struct OrderedStorage {};
+    auto& ordered = HostThreadLocal<std::unordered_map<std::uint64_t, Ordered>, OrderedStorage>();
+    static const bool memo = std::getenv("APS5_NO_ORDERED_WAITS") == nullptr;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
+        bumpEpochSince(&EpochBumps::waits, since);
+        return;
+    }
+    const auto generation = memo ? GuestMemory::CollectWritesUncached(address, bytes) : 0;
+    const std::uint64_t value = bytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(address) : *reinterpret_cast<const volatile std::uint32_t*>(address);
+    if (generation != 0) {
+        const auto found = ordered.find(address);
+        if (found != ordered.end() && found->second.value == value && GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+            ++epochBumps().waitsOrdered;
+            return;
+        }
+    }
+    bumpEpochSince(&EpochBumps::waits, since);
+    if (generation == 0) return;
+    if (ordered.size() >= 4096) ordered.clear();
+    ordered[address] = {value, generation};
 }
 
 bool Driver::packetEpoch() {
