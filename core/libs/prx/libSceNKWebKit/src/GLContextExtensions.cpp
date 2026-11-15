@@ -1,3 +1,4 @@
+// Derived from Source/WebCore/platform/graphics/egl/GLContext.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba (lines 566-580)
 /*
  * Copyright (C) 2012,2023 Igalia, S.L.
  *
@@ -14,10 +15,6 @@
  *  You should have received a copy of the GNU Lesser General Public
  *  License along with this library; if not, write to the Free Software
  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- */
-
-/*
- * Derived from Source/WebCore/platform/graphics/egl/GLContext.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba (lines 566-580)
  */
 
 #include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
