@@ -735,7 +735,11 @@ int APS5_VABI sceNpManagerIntGetIssuerId(void) {
 }
 int APS5_VABI sceNpManagerIntGetNpEnv(void* npEnv) {
     if (!npEnv) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    std::memset(npEnv, 0, 0x18);
+    const std::byte zeroEnv[0x18]{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(npEnv, zeroEnv, sizeof(zeroEnv));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetNpId(int userId, NpId* npId) {
