@@ -73,6 +73,11 @@ static int testIds() {
     ok &= expect(sceNpCmpNpIdInOrder(&low, nullptr, &order) == INVALID_ARGUMENT, "a null second NpId was accepted");
     ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, &order) == INVALID_ARGUMENT, "null NpIds were accepted");
     ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, nullptr) == INVALID_ARGUMENT, "all null arguments were accepted");
+    errno = 71;
+    ok &= expect(sceNpCmpNpIdInOrder(reinterpret_cast<const NpIdFull*>(0x10), &high, &order) == INVALID_ARGUMENT, "an unmapped first NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(&low, reinterpret_cast<const NpIdFull*>(0x10), &order) == INVALID_ARGUMENT, "an unmapped second NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(&low, &high, reinterpret_cast<std::int32_t*>(0x10)) == INVALID_ARGUMENT, "an unmapped order was accepted");
+    ok &= expect(errno == 71, "errno was not preserved");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, &order) == 0 && order == -1, "reserved bytes did not order the NpIds");
     ok &= expect(sceNpCmpNpIdInOrder(&high, &low, &order) == 0 && order == 1, "the reverse order is not 1");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &low, &order) == 0 && order == 0, "an NpId is not equal to itself");
