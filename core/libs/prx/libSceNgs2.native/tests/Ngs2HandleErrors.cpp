@@ -490,6 +490,14 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void CheckRackCreateGuestPointers() {
+    constexpr uintptr_t sentinel = 0x5a5a;
+    const auto system = CreateSystem();
+    uintptr_t created = sentinel;
+    Returned(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), &created), static_cast<int>(0x804A8020u), "sceNgs2RackCreate", "an unreadable buffer info");
+    Require(created == sentinel);
+}
+
 int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -523,6 +531,7 @@ int main(int argc, char** argv) {
         Status(sceNgs2SystemGetUserData(system, &value), systemError, "retired system returned the wrong error");
         Require(value == sentinel);
         CheckCreateArguments();
+        CheckRackCreateGuestPointers();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();
