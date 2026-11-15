@@ -1,6 +1,7 @@
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -30,5 +31,9 @@ int main() {
     other.ident = 5;
     RequireThrows([&] { sceGnmGetEqEventType(&other); });
     RequireThrows([&] { sceGnmGetEqEventType(nullptr); });
+
+    errno = 71;
+    RequireThrows([&] { sceGnmGetEqEventType(reinterpret_cast<const KernelEvent*>(0x10)); });
+    Require(errno == 71);
     return 0;
 }
