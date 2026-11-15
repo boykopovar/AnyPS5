@@ -457,18 +457,19 @@ int APS5_VABI sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info
     const Ngs2Lock lock;
     const auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
-    *info = {};
-    std::memcpy(info->name, system->option.name, sizeof(info->name));
-    info->system_handle = system_handle;
-    info->buffer_info = system->bufferInfo;
-    info->uid = system->uid;
-    info->min_grain_samples = MIN_GRAIN_SAMPLES;
-    info->max_grain_samples = system->option.max_grain_samples;
-    info->state_flags = 1;
-    info->rack_count = static_cast<std::uint32_t>(system->racks.size());
-    info->render_count = system->renderCount;
-    info->sample_rate = system->option.sample_rate;
-    info->num_grain_samples = system->option.num_grain_samples;
+    Ngs2SystemInfo local{};
+    std::memcpy(local.name, system->option.name, sizeof(local.name));
+    local.system_handle = system_handle;
+    local.buffer_info = system->bufferInfo;
+    local.uid = system->uid;
+    local.min_grain_samples = MIN_GRAIN_SAMPLES;
+    local.max_grain_samples = system->option.max_grain_samples;
+    local.state_flags = 1;
+    local.rack_count = static_cast<std::uint32_t>(system->racks.size());
+    local.render_count = system->renderCount;
+    local.sample_rate = system->option.sample_rate;
+    local.num_grain_samples = system->option.num_grain_samples;
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -634,7 +635,7 @@ int APS5_VABI sceNgs2SystemEnumHandles(uintptr_t* out_handles, uint32_t max_hand
     const Ngs2Lock lock;
     uint32_t count = 0;
     for (const auto* system : Systems()) {
-        if (out_handles != nullptr && count < max_handles) out_handles[count] = reinterpret_cast<uintptr_t>(system);
+        if (out_handles != nullptr && count < max_handles && !WriteGuest(out_handles + count, reinterpret_cast<uintptr_t>(system))) return invalid_argument;
         ++count;
     }
     return static_cast<int>(count);
@@ -649,7 +650,7 @@ int APS5_VABI sceNgs2SystemEnumRackHandles(uintptr_t system_handle, uintptr_t* o
     if (system == nullptr) return invalid_system_handle;
     uint32_t count = 0;
     for (const auto* rack : system->racks) {
-        if (out_handles != nullptr && count < max_handles) out_handles[count] = reinterpret_cast<uintptr_t>(rack);
+        if (out_handles != nullptr && count < max_handles && !WriteGuest(out_handles + count, reinterpret_cast<uintptr_t>(rack))) return invalid_argument;
         ++count;
     }
     return static_cast<int>(count);

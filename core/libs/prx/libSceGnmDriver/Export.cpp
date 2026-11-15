@@ -514,18 +514,16 @@ int APS5_VABI sceGnmSetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint
     const bool neo = sceKernelIsNeoMode() != 0;
     std::uint32_t value = primGroupSizeMinusOne | (partialVsWaveMode << 16u);
     if (neo) value = switchOnlyOnEop != 0u ? value | 0x740000u : primGroupSizeMinusOne | 0x6d0000u;
-    cmdbuf[0] = neo ? 0xc0017900u : 0xc0016900u;
-    cmdbuf[1] = neo ? 0x40000258u : 0x2aau;
-    cmdbuf[2] = value;
+    const std::array<std::uint32_t, 3> packet{neo ? 0xc0017900u : 0xc0016900u, neo ? 0x40000258u : 0x2aau, value};
+    if (!GuestCopyOut_nid_no_patch(cmdbuf, packet.data(), sizeof(packet))) return -1;
     return 0;
 }
 
 int APS5_VABI sceGnmResetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size) {
     if (!cmdbuf || size != 3u) return -1;
     const bool neo = sceKernelIsNeoMode() != 0;
-    cmdbuf[0] = neo ? 0xc0017900u : 0xc0016900u;
-    cmdbuf[1] = neo ? 0x40000258u : 0x2aau;
-    cmdbuf[2] = neo ? 0x6d007fu : 0xffu;
+    const std::array<std::uint32_t, 3> packet{neo ? 0xc0017900u : 0xc0016900u, neo ? 0x40000258u : 0x2aau, neo ? 0x6d007fu : 0xffu};
+    if (!GuestCopyOut_nid_no_patch(cmdbuf, packet.data(), sizeof(packet))) return -1;
     return 0;
 }
 
