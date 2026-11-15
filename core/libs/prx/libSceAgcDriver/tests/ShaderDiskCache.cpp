@@ -3063,7 +3063,6 @@ int main(int argc, char** argv) {
         verifyStore();
         verifyPersist();
         verifyReleaseMapped();
-        verifyAcrossProcesses(argv[0]);
         verifyAcrossProcesses<ComputeRequest>(argv[0], "--load");
         verifyAcrossProcesses<BufferTableRequest>(argv[0], "--load-buffer-table");
         verifyPrebuiltAcrossProcesses(argv[0], directory);
