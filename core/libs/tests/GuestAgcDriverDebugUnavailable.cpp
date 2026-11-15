@@ -56,4 +56,7 @@ int main() {
     Require(sceAgcDriverGetAllocatedToolMemoryForGpuReset(1, range.data()) == FeatureUnavailable);
     for (std::size_t i = 0; i < range.size(); ++i) Require(range[i] == (i < 12 ? 0 : 0x5A));
     Require(sceAgcDriverGetAllocatedToolMemoryForGpuReset(1, nullptr) == FeatureUnavailable);
+    errno = 71;
+    Require(sceAgcDriverAllocateToolMemoryForGpuReset(1, 2, 3, reinterpret_cast<void*>(0x10)) == FeatureUnavailable && errno == 71);
+    Require(sceAgcDriverGetAllocatedToolMemoryForGpuReset(1, reinterpret_cast<void*>(0x10)) == FeatureUnavailable && errno == 71);
 }
