@@ -13,7 +13,11 @@ int APS5_VABI sceGnmSetHsShader(std::uint32_t* cmd, std::uint32_t size, const st
 int APS5_VABI sceGnmSetLsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs, std::uint32_t modifier);
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState175(std::uint32_t* cmd, std::uint32_t size);
 std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState200_nid_disambig1(std::uint32_t* cmd, std::uint32_t size);
+std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState350_nid_disambig1(std::uint32_t* cmd, std::uint32_t size);
+std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState400_nid_disambig1(std::uint32_t* cmd, std::uint32_t size);
 std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size);
+int APS5_VABI sceGnmSetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t primGroupSizeMinusOne, std::uint32_t partialVsWaveMode, std::uint32_t switchOnlyOnEop);
+int APS5_VABI sceGnmResetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size);
 int APS5_VABI sceGnmInsertPushMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker);
 int APS5_VABI sceGnmInsertSetMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker);
 int APS5_VABI sceGnmInsertPushColorMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker, std::uint32_t color);
@@ -46,7 +50,7 @@ int APS5_VABI sceGnmDingDong(std::uint32_t id, std::uint32_t nextOffsetInDwords)
 int APS5_VABI sceGnmDisableMipStatsReport();
 int APS5_VABI sceGnmGetEqTimeStamp();
 std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress();
-int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex();
+int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex(std::uint32_t engine, std::uint32_t cuIndex);
 std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::uint32_t mask);
 int APS5_VABI sceGnmMapComputeQueue(std::uint32_t pipe, std::uint32_t queue, void* ring, std::uint32_t ringSizeInDwords, void* readOffset);
 int APS5_VABI sceGnmRequestFlipAndSubmitDone();
