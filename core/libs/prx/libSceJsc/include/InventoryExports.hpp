@@ -164,8 +164,6 @@ int APS5_VABI _ZN3JSC7JSProxy3putEPNS_6JSCellEPNS_14JSGlobalObjectENS_12Property
 int APS5_VABI _ZN3JSC7JSScope6toThisEPNS_6JSCellEPNS_14JSGlobalObjectENS_8ECMAModeE();
 int APS5_VABI _ZN3JSC7Options14dumpAllOptionsEP7__sFILENS0_9DumpLevelEPKc();
 int APS5_VABI _ZN3JSC7Options9setOptionEPKc();
-int APS5_VABI _ZN3JSC8FreeList14initializeBumpEPcj();
-int APS5_VABI _ZN3JSC8FreeList14initializeListEPNS_8FreeCellEmj();
 int APS5_VABI _ZN3JSC8JSObject10putByIndexEPNS_6JSCellEPNS_14JSGlobalObjectEjNS_7JSValueEb();
 int APS5_VABI _ZN3JSC8JSObject11analyzeHeapEPNS_6JSCellERNS_12HeapAnalyzerE();
 int APS5_VABI _ZN3JSC8JSObject12isExtensibleEPS0_PNS_14JSGlobalObjectE();
