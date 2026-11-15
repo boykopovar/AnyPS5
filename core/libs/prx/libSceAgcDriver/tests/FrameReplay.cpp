@@ -609,7 +609,7 @@ void testUnwatchedStoreBeforeReservation(const std::filesystem::path& tool) {
     check(replayed(tool, checkCapture(0), layout.secondTarget, DataBytes, " --no-release") == stored, "the replay copied the gated copy's bytes, not the CPU store recorded before the EOP flip reservation");
 }
 
-void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
+void copyInFlightAtDelta(const std::filesystem::path& tool, bool held) {
     constexpr std::size_t CopyBytes = 128u << 20;
     constexpr std::size_t ChunkBytes = CopyBytes / 8;
     constexpr std::size_t Stored = 64;
@@ -628,6 +628,17 @@ void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
             sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(target + Stored + offset), DmaMemory, 0, at(source + offset), bytes, 0, 1, 0);
         }
     }, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
+    if (held) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        const auto copying = [&] {
+            const auto* recorder = AgcDriver::Graphics::Recorder::Active();
+            return recorder != nullptr && recorder->PendingWriteOverlaps(at(target + Stored), 4096 - Stored);
+        };
+        while (!copying()) {
+            if (std::chrono::steady_clock::now() >= deadline) throw Inconclusive("the GPU copy into the stored page never became pending");
+            std::this_thread::yield();
+        }
+    }
     std::memset(target, 0x5a, Stored);
     const auto gpuWaits = AgcDriver::Graphics::Recorder::ThreadHookWaits();
     flip();
@@ -640,6 +651,14 @@ void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
     check(equal(target, expected), "the driver did not run the copy beside the CPU store");
     check(replayed(tool, checkCapture(1), target, DataBytes) == expected, "the memory delta was read before the copy that preceded the REWIND landed");
     if (!inFlight) throw Inconclusive("the GPU copy finished before the memory delta was read");
+}
+
+void testCopyInFlightAtDelta(const std::filesystem::path& tool) {
+    copyInFlightAtDelta(tool, false);
+}
+
+void testStoreBesideHeldCopy(const std::filesystem::path& tool) {
+    copyInFlightAtDelta(tool, true);
 }
 
 void testComputeWaitBehindRewind(const std::filesystem::path& tool) {
@@ -1208,7 +1227,7 @@ void testFillClearedBeforeRange(const std::filesystem::path& tool) {
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"section_once", testUnchangedSectionStoredOnce}, {"partly_watched_once", testPartlyWatchedBlockOnce}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_copy_held", testStoreBesideHeldCopy}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"section_once", testUnchangedSectionStoredOnce}, {"partly_watched_once", testPartlyWatchedBlockOnce}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"allocation_ranges", testRegisteredRangeBoundaries}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode)))) {
         std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|section_once|partly_watched_once|gpu_cleared|fence_reuse|busy_queue|allocation_ranges]\n");
         return 2;
