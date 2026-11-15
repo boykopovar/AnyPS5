@@ -1014,7 +1014,8 @@ bool EmitNanRegion(SpirvValueEmitContext& ctx, const std::vector<const IrValue*>
     for (const auto* output : suffix) {
         const auto result = state.module.AllocateId();
         state.module.AddFunction(spv::OpPhi, TypeId(state, output->Type()), result, ctx.Def(output), fastLabel, exact.Def(output), exactLabel);
-        ctx.definitions[output] = result;
+        ctx.definitions.Erase(output);
+        ctx.definitions.Emplace(output, result);
     }
     return true;
 }
