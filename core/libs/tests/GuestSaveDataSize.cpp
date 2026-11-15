@@ -63,13 +63,10 @@ int main() {
         Check(sceSaveDataGetAllSize(firstArgument, &size) == 0 && size == 3, "2561 bytes round up to 3 KiB");
     }
 
-    count = 7;
-    size = 7;
     auto* const inaccessibleCount = reinterpret_cast<std::uint32_t*>(0x10);
     auto* const inaccessibleSize = reinterpret_cast<std::uint64_t*>(0x10);
     Check(sceSaveDataGetSaveDataCount(0, inaccessibleCount) == SaveDataErrorParameter, "an unwritable count returns parameter error");
     Check(sceSaveDataGetAllSize(0, inaccessibleSize) == SaveDataErrorParameter, "an unwritable size returns parameter error");
-    Check(count == 7 && size == 7, "an unwritable query writes nothing");
 
     count = 7;
     size = 7;
