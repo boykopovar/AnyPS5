@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -348,6 +350,15 @@ static void TestConditionSignal() {
     Require(_Cnd_init_with_name_nid_postfix(&unnamed, nullptr) == ThrdSuccess && unnamed != nullptr);
     Require(_Cnd_signal_nid_postfix(&unnamed) == ThrdSuccess);
     _Cnd_destroy_nid_postfix(&unnamed);
+    const std::string longestName(31, 'n');
+    const std::string tooLongName(32, 'n');
+    void* limited = nullptr;
+    Require(_Cnd_init_with_name_nid_postfix(&limited, longestName.c_str()) == ThrdSuccess && limited != nullptr);
+    _Cnd_destroy_nid_postfix(&limited);
+    errno = 0;
+    Require(_Cnd_init_with_name_nid_postfix(&limited, tooLongName.c_str()) == ThrdError && errno == 63 && limited == nullptr);
+    Require(_Cnd_init_with_name_nid_postfix(&limited, "") == ThrdSuccess && limited != nullptr);
+    _Cnd_destroy_nid_postfix(&limited);
 
     void* plain = nullptr;
     Require(_Cnd_init_nid_postfix(&plain) == ThrdSuccess);

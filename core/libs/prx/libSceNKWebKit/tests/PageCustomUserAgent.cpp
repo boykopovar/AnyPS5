@@ -32,7 +32,11 @@ void RequireInvalidArgument(Function function) {
 int main() {
     auto page = NKWebKit::Make<NKWebKit::Page>();
     const void* pageRef = NKWebKit::ToRef(page);
-    Require(WKPageCopyCustomUserAgent(pageRef) == nullptr);
+    {
+        auto* empty = WKPageCopyCustomUserAgent(pageRef);
+        Require(empty != nullptr && WKStringGetLength(empty) == 0);
+        WKRelease(empty);
+    }
 
     auto testStr = NKWebKit::String::FromUtf8("TestCustomUA/1.0");
     const void* testStrRef = NKWebKit::ToRef(testStr);
@@ -44,7 +48,11 @@ int main() {
     WKRelease(copied);
 
     WKPageSetCustomUserAgent(pageRef, nullptr);
-    Require(WKPageCopyCustomUserAgent(pageRef) == nullptr);
+    {
+        auto* empty = WKPageCopyCustomUserAgent(pageRef);
+        Require(empty != nullptr && WKStringGetLength(empty) == 0);
+        WKRelease(empty);
+    }
 
     RequireInvalidArgument([] { WKPageCopyCustomUserAgent(nullptr); });
     RequireInvalidArgument([] { WKPageSetCustomUserAgent(nullptr, nullptr); });

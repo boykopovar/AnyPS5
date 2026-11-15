@@ -5,7 +5,7 @@ extern "C" {
 
 const void* APS5_VABI WKPageCopyCustomUserAgent(const void* pageRef) {
     const auto* page = NKWebKit::Cast<NKWebKit::Page>(pageRef, __func__);
-    return page->customUserAgent ? NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(*page->customUserAgent)) : nullptr;
+    return NKWebKit::ToCopiedStringRef(page->customUserAgent);
 }
 
 void APS5_VABI WKPageSetCustomUserAgent(const void* pageRef, const void* stringRef) {

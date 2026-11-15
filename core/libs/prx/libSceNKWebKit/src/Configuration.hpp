@@ -19,6 +19,7 @@ public:
     bool isPinnedToRightSide = true;
     bool isPinnedToTopSide = true;
     bool isPinnedToBottomSide = true;
+    bool addsVisitedLinks = true;
     std::optional<std::u16string> customUserAgent;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
