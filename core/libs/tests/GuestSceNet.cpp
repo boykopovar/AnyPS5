@@ -661,6 +661,9 @@ static void CheckIfFlags() {
     }
     Require(sceNetConfigGetIfFlags(0, nullptr) == static_cast<int>(0x8041130Eu));
     Require(sceNetConfigGetIfFlags(10, nullptr) == static_cast<int>(0x8041130Eu));
+    errno = 71;
+    Require(sceNetConfigGetIfFlags(0, reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8041130Eu));
+    Require(errno == 71);
 }
 
 static void CheckNetMemory() {

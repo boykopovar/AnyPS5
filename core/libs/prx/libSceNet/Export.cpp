@@ -3761,7 +3761,11 @@ int APS5_VABI sceNetConfigGetIfFlags(std::uint32_t interfaceId, std::uint32_t* f
     if (flags == nullptr) return NET_CONFIG_ERROR_NULL_FLAGS;
     if (interfaceId >= 10) return -1;
     if (interfaceId != NET_IF_LO0) throw std::runtime_error("sceNetConfigGetIfFlags: interface " + std::to_string(interfaceId) + " is not implemented");
-    *flags = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
+    const std::uint32_t value = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(flags, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NET_CONFIG_ERROR_NULL_FLAGS;
     return 0;
 }
 
