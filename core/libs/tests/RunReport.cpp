@@ -191,10 +191,10 @@ void FinishTests() {
     Require(collector.Start(), "the collector did not start");
     Require(SamePath(collector.ReportPath(), executable.path / "anyps5-report.json"), "the report is not next to the executable");
     Require(!fs::exists(collector.ReportPath()), "Start wrote a file");
-    collector.NoteQuitRequested();
+    collector.NoteQuitRequested(true);
     collector.Finish(RunReport::Exit::Clean, {RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, 3);
     const auto report = Read(collector.ReportPath());
-    Require(Contains(report, "\"exit\": \"clean\"") && Contains(report, "\"exitCode\": 3") && Contains(report, "\"reason\": \"quit-requested\"") && Contains(report, "\"recovered\": false"), "the finished report is wrong: " + report);
+    Require(Contains(report, "\"exit\": \"clean\"") && Contains(report, "\"exitCode\": 3") && Contains(report, "\"reason\": \"quit-requested\"") && Contains(report, "\"message\": \"The window was closed.\"") && Contains(report, "\"recovered\": false"), "the finished report is wrong: " + report);
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     Require(Read(collector.ReportPath()) == report, "a second finish changed the report");
     std::size_t files = 0;
@@ -203,6 +203,16 @@ void FinishTests() {
         ++files;
     }
     Require(files == 2 && fs::exists(executable.path / "anyps5-recipe.json"), "the finish must leave only the report and the recipe");
+}
+
+void SignalQuitTests() {
+    Directory executable, user;
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteQuitRequested(false);
+    collector.Finish(RunReport::Exit::Clean, {RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, 0);
+    const auto report = Read(collector.ReportPath());
+    Require(Contains(report, "\"reason\": \"quit-requested\"") && Contains(report, "without its window being closed") && !Contains(report, "The window was closed."), "a quit without a window close was reported as a closed window: " + report);
 }
 
 void ConcurrentFinishTests() {
@@ -1578,6 +1588,7 @@ int main(int argc, char** argv) {
         Run("privacy", PrivacyTests);
         Run("serialize", SerializeTests);
         Run("finish", FinishTests);
+        Run("signal-quit", SignalQuitTests);
         Run("concurrent-finish", ConcurrentFinishTests);
         Run("fallback", FallbackTests);
         Run("atomic", AtomicTests);
