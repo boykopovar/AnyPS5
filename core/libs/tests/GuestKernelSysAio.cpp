@@ -297,6 +297,10 @@ void ReadAndWrite(int file) {
     Require(aio_suspend_nid_postfix(nullptr, 1, nullptr) == -1 && Error() == Efault);
     const KernelTimespec badTime{0, 1000000000};
     Require(aio_suspend_nid_postfix(none, 1, &badTime) == -1 && Error() == Einval);
+    Require(aio_suspend_nid_postfix(none, 1, reinterpret_cast<const KernelTimespec*>(0x10)) == -1 && Error() == Efault);
+    const GuestAiocb* second[] = {nullptr, &request};
+    const KernelTimespec soon{0, 5000000};
+    Require(aio_suspend_nid_postfix(second, 2, &soon) == 0);
 }
 
 void Cancel(int file) {
@@ -309,6 +313,7 @@ void Cancel(int file) {
     const GuestAiocb* list[] = {&first};
     const KernelTimespec brief{0, 5000000};
     Require(aio_suspend_nid_postfix(list, 1, &brief) == -1 && Error() == Eagain);
+    Require(aio_suspend_nid_postfix(reinterpret_cast<const GuestAiocb* const*>(0x10), 1, &brief) == -1 && Error() == Efault);
 
     Require(aio_cancel_nid_postfix(file, &first) == AioCanceled);
     Require(aio_error_nid_postfix(&first) == Ecanceled && aio_error_nid_postfix(&second) == Einprogress);

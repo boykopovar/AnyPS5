@@ -435,7 +435,8 @@ void TestReadFields() {
     const std::array<GuestFrameField, 2> late{{{4, 0, 1}, {0, 0, 0}}};
     Require(api.ReadFields(&stream, late.data(), target.data()) == InvalidStreamOperation && stream.pos == 24, "frame start past the end");
     Require(api.ReadFields(nullptr, nullptr, nullptr) == InvalidArgument, "null fields");
-    Require(Throws([&] { api.ReadFields(nullptr, fields.data(), target.data()); }), "null stream with fields is unsupported");
+    Require(api.ReadFields(nullptr, fields.data(), target.data()) == InvalidArgument, "null stream");
+    Require(api.ReadFields(nullptr, fields.data(), nullptr) == InvalidArgument, "null stream before the structure");
     const std::array<GuestFrameField, 2> noStructure{{{8, 1, 0}, {0, 0, 0}}};
     stream.cursor = data.data();
     stream.limit = data.data() + 1;

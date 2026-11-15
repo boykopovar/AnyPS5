@@ -337,8 +337,11 @@ int APS5_VABI sceNpSessionSignalingJoinActivate(const char* sessionId, const voi
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!sessionId || !param || !groupId) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
     std::uint8_t mode = 0;
-    if (!GuestCopyIn_nid_no_patch(&mode, param, sizeof(mode)) || mode == 0) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    const bool copied = GuestCopyIn_nid_no_patch(&mode, param, sizeof(mode));
+    errno = savedErrno;
+    if (!copied || mode == 0) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
     return SCE_NP_SESSION_SIGNALING_ERROR_UNAVAILABLE;
 }
 
