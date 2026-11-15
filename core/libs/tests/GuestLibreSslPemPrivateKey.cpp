@@ -320,7 +320,12 @@ void TestCertificate() {
     const std::string text = std::string(RsaKey) + Certificate;
     LibreSslX509* certificate = nullptr;
     auto* bio = BIO_new_mem_buf_nid_postfix(text.data(), static_cast<int>(text.size()));
-    RequireThrows([&] { PEM_read_bio_X509_nid_postfix(bio, &certificate, nullptr, nullptr); });
+    Require(PEM_read_bio_X509_nid_postfix(bio, &certificate, nullptr, nullptr) != nullptr && certificate != nullptr);
+    RequireErrors({});
+    X509_free_nid_postfix(certificate);
+    certificate = nullptr;
+    Require(PEM_read_bio_X509_nid_postfix(bio, &certificate, nullptr, nullptr) == nullptr && certificate == nullptr);
+    RequireErrors({Error(9, 108)});
     BIO_free_nid_postfix(bio);
     bio = BIO_new_mem_buf_nid_postfix(RsaKey, static_cast<int>(sizeof(RsaKey) - 1));
     ERR_clear_error_nid_postfix();
