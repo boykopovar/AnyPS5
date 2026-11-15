@@ -824,6 +824,10 @@ void RegistersInterfaces() {
     differingIn("sampledOnly", true, [](ShaderRecompiler::ImageResource& other) { other.sampledOnly = !other.sampledOnly; });
     differingIn("optionalDescriptor", false, [](ShaderRecompiler::ImageResource& other) { other.optionalDescriptor = !other.optionalDescriptor; });
     differingIn("targetMerge", true, [](ShaderRecompiler::ImageResource& other) { other.targetMerge = !other.targetMerge; });
+    differingIn("layerRowsCompatible", true, [](ShaderRecompiler::ImageResource& other) { other.layerRowsCompatible = !other.layerRowsCompatible; });
+    differingIn("layerRows", true, [](ShaderRecompiler::ImageResource& other) { other.layerRows = !other.layerRows; });
+    differingIn("maxArrayLayers", true, [](ShaderRecompiler::ImageResource& other) { other.maxArrayLayers += 1u; });
+    differingIn("volumeGather", true, [](ShaderRecompiler::ImageResource& other) { other.volumeGather = !other.volumeGather; });
     auto otherModes = modes;
     otherModes.front().sampledOnly = !otherModes.front().sampledOnly;
     const auto modeId = ResourceMaterializer::DeviceImageInterfaceId(image, otherModes);
