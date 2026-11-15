@@ -84,6 +84,9 @@ constexpr int ErrorNoBuffers = 55;
 constexpr int MaximumReservation = 5592405;
 constexpr int MaximumBuffer = 524288;
 constexpr int MaximumLinger = 65535;
+#ifdef __APPLE__
+constexpr int LongestHostLinger = 327;
+#endif
 constexpr std::int64_t LongestTimeout = 0x7fffffffffffffffLL;
 
 struct GuestLingerValue {
@@ -200,7 +203,12 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         request.l_onoff = guest.enabled != 0 ? 1 : 0;
         request.l_linger = guest.seconds;
 #endif
+#ifdef __APPLE__
+        if (guest.seconds > LongestHostLinger) NotImplemented_nid_no_patch("setsockopt: SO_LINGER above 327 seconds on macOS");
+        if (::setsockopt(handle, SOL_SOCKET, SO_LINGER_SEC, &request, sizeof(request))) return HostError();
+#else
         if (::setsockopt(handle, SOL_SOCKET, SO_LINGER, reinterpret_cast<NativeOptionValue>(&request), sizeof(request))) return HostError();
+#endif
         return 0;
     }
     if (option == GuestSendTimeout || option == GuestReceiveTimeout) {
@@ -303,7 +311,11 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if (option == GuestLinger) {
         linger current{};
         socklen_t size = sizeof(current);
+#ifdef __APPLE__
+        if (::getsockopt(handle, SOL_SOCKET, SO_LINGER_SEC, &current, &size)) return HostError();
+#else
         if (::getsockopt(handle, SOL_SOCKET, SO_LINGER, reinterpret_cast<NativeOptionOutput>(&current), &size)) return HostError();
+#endif
         const GuestLingerValue guest{current.l_onoff != 0 ? GuestLinger : 0, static_cast<std::int32_t>(current.l_linger)};
         return Copy(value, length, &guest, sizeof(guest));
     }

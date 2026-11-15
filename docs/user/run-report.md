@@ -8,7 +8,7 @@ Print a readable summary of a report with:
 python3 tools/run_report_summary.py path/to/anyps5-report.json
 ```
 
-The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. It reads the local report and does not upload it.
+The summary includes the run result, the furthest observed stage, rendering counts, system details, and available missing-function and shader diagnostics. It says when a section was not collected or a list was truncated. The output is UTF-8, including when redirected. It reads the local report and does not upload it.
 
 The file stays on your machine. Nothing is uploaded unless you share it.
 
@@ -58,7 +58,7 @@ Values pass through the same text filter as the report, so a path or a user name
 
 ## Stop
 
-`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. A run that ended in `std::terminate` has `stop.reason` `runtime-stop`: `stop.kind` is `missing-function` with the function and its `source` when a function that is not implemented threw, otherwise `other` with the exception's text as the message. The schema lists the other kinds and reasons; this build writes only these.
+`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. When the host asked the game to quit first, `stop.reason` is `quit-requested`: the message is `The window was closed.` when the window was closed, and says the run was asked to quit without its window being closed when the request came another way, such as SIGTERM from `timeout`, Ctrl+C or a Quit command. A run that ended in `std::terminate` has `stop.reason` `runtime-stop`: `stop.kind` is `missing-function` with the function and its `source` when a function that is not implemented threw, otherwise `other` with the exception's text as the message. The schema lists the other kinds and reasons; this build writes only these.
 
 ## What `system` holds
 
