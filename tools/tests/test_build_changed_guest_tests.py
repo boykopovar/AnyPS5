@@ -372,6 +372,13 @@ class Main(unittest.TestCase):
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
 
+    def test_registered_commands_preserve_empty_arguments(self):
+        build = Path(self.temporary.name)
+        (build / "CTestTestfile.cmake").write_text(
+            'add_test([=[fixture]=] "/x/fixture" "" [=[]=] tail "")\n', encoding="utf-8")
+        self.assertEqual(build_changed_guest_tests.registered_test_commands(build),
+                         {"fixture": ["/x/fixture", "", "", "tail", ""]})
+
     def test_a_change_outside_nid_does_not_run_the_nid_script_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
         listing = json.dumps({"tests": [{"name": "nid_gnu_hash", "command": ["C:/python.exe", "x.py"]}]})
