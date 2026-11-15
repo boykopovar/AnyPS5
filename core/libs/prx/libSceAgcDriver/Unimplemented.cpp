@@ -1,9 +1,12 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 namespace {
 
@@ -13,6 +16,12 @@ constexpr int DRIVER_NULL_OUTPUT = static_cast<int>(0x8A6D0003);
 constexpr int GPU_RESET_UNAVAILABLE = static_cast<int>(0x8A6C0045);
 constexpr int MODULE_REGISTRATION_FAILED = static_cast<int>(0x8A6D0003);
 constexpr std::size_t TOOL_MEMORY_RANGE_SIZE = 12;
+
+void ClearToolMemoryRange(void* range) {
+    if (range == nullptr) return;
+    constexpr std::array<std::byte, TOOL_MEMORY_RANGE_SIZE> zero{};
+    GuestBytes(range).CopyOut(zero.data(), zero.size());
+}
 
 }
 
@@ -55,11 +64,16 @@ int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void* config) {
 int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes) {
     const auto alignedBytes = (static_cast<std::uint64_t>(bytes) + 3) & ~std::uint64_t{3};
     const auto totalBytes = alignedBytes + 8;
-    std::memset(destination, 0, static_cast<std::size_t>(totalBytes));
+    std::vector<std::byte> packet(static_cast<std::size_t>(totalBytes), std::byte{0});
     const auto header = (static_cast<std::uint32_t>(totalBytes) << 14) + 0x3ffe0000U | 0xc0001000U;
-    std::memcpy(destination, &header, sizeof(header));
-    std::memcpy(static_cast<std::byte*>(destination) + 4, &address, sizeof(address));
-    if (data != nullptr && bytes != 0) std::memcpy(static_cast<std::byte*>(destination) + 8, data, bytes);
+    std::memcpy(packet.data(), &header, sizeof(header));
+    std::memcpy(packet.data() + 4, &address, sizeof(address));
+    if (data != nullptr && bytes != 0 && !GuestBytes(data).CopyIn(packet.data() + 8, bytes)) {
+        return DRIVER_NULL_OUTPUT;
+    }
+    if (!GuestBytes(destination).CopyOut(packet.data(), packet.size())) {
+        return DRIVER_NULL_OUTPUT;
+    }
     return data == nullptr || bytes == 0 ? 2 : static_cast<int>(totalBytes / 4);
 }
 
@@ -142,12 +156,12 @@ int APS5_VABI sceAgcDriverGetCoredumpMode(uint32_t* mode) {
 }
 
 int APS5_VABI sceAgcDriverAllocateToolMemoryForGpuReset(uint64_t, uint64_t, uint64_t, void* range) {
-    if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
+    ClearToolMemoryRange(range);
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* range) {
-    if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
+    ClearToolMemoryRange(range);
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 

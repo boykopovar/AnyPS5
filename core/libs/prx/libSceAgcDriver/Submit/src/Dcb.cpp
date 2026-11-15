@@ -12,6 +12,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 int AgcDriver::SubmitMany(std::uint32_t* const* addresses, const std::uint32_t* sizes, std::uint32_t count, std::uint32_t queue) {
     if (count == 0) return 0;
@@ -142,11 +143,17 @@ std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t** co
     std::uint32_t capacity, std::uint32_t mode, std::uint32_t handle, int index) {
     if (!command || capacity < AgcDriver::RenderingWaitPacketWords || mode != 0 || index < 0)
         throw std::invalid_argument("AGC driver: invalid rendering wait arguments");
-    AgcDriver::GuestMemory::CheckRange(command, sizeof(*command), alignof(std::uint32_t*), true);
-    AgcDriver::GuestMemory::CheckRange(*command, AgcDriver::RenderingWaitPacketWords * sizeof(std::uint32_t), alignof(std::uint32_t), true);
+    AgcDriver::GuestMemory::CheckRange(command, sizeof(std::uint32_t*), alignof(std::uint32_t*), true);
+    std::uint32_t* target = nullptr;
+    if (!GuestPtr<std::uint32_t*>(command).CopyIn(target))
+        throw std::runtime_error("AGC driver: unreadable rendering wait command pointer");
+    AgcDriver::GuestMemory::CheckRange(target, AgcDriver::RenderingWaitPacketWords * sizeof(std::uint32_t), alignof(std::uint32_t), true);
     const std::uint32_t words[] = {AgcDriver::RenderingWaitPacketHeader, handle, static_cast<std::uint32_t>(index), mode};
-    std::copy(std::begin(words), std::end(words), *command);
-    *command += AgcDriver::RenderingWaitPacketWords;
+    if (!GuestPtr<std::uint32_t>(target).CopyOut(words, AgcDriver::RenderingWaitPacketWords))
+        throw std::runtime_error("AGC driver: unwritable rendering wait packet");
+    target += AgcDriver::RenderingWaitPacketWords;
+    if (!GuestPtr<std::uint32_t*>(command).CopyOut(target))
+        throw std::runtime_error("AGC driver: unwritable rendering wait command pointer");
     return 0;
 }
 
