@@ -1,11 +1,13 @@
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -155,6 +157,32 @@ int main() {
 
     Require(sceNpUniversalDataSystemIntRecordObjectSetString(data, "extra", "value") == 0, "set on record data");
     Require(static_cast<NpUniversalDataSystemEventPropertyObject*>(data)->Find("extra") != nullptr, "record data mutation stored");
+
+    const std::string longKey(5000, 'k');
+    const std::string longValue(10000, 'v');
+    Require(sceNpUniversalDataSystemIntRecordObjectSetString(object, longKey.c_str(), longValue.c_str()) == 0, "long key and value");
+    const auto* storedLong = static_cast<NpUniversalDataSystemEventPropertyObject*>(object)->Find(longKey);
+    Require(storedLong != nullptr && std::get<std::string>(*storedLong) == longValue, "long key and value stored");
+
+    void* unmapped = reinterpret_cast<void*>(0x10);
+    const char* unreadable = static_cast<const char*>(unmapped);
+    auto* arrayRecord = static_cast<NpUniversalDataSystemEventPropertyArray*>(array);
+    auto* objectRecord = static_cast<NpUniversalDataSystemEventPropertyObject*>(object);
+    const std::size_t arrayValues = arrayRecord->values.size();
+    const std::size_t objectProperties = objectRecord->properties.size();
+    errno = 71;
+    void* unusedData = nullptr;
+    Require(sceNpUniversalDataSystemIntCreateRecordData(unreadable, &unusedData) == kInvalidName && unusedData == nullptr, "unreadable record type");
+    Require(sceNpUniversalDataSystemIntRecordArraySetString(array, unreadable) == kNullValue, "unreadable array string");
+    Require(sceNpUniversalDataSystemIntRecordArraySetBinary(array, unmapped, 3) == kNullValue, "unreadable array binary");
+    Require(arrayRecord->values.size() == arrayValues, "failed array sets store nothing");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, unreadable, true) == kInvalidKey, "unreadable object key");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetString(object, "unread", unreadable) == kNullValue, "unreadable object string");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetBinary(object, "unread", unmapped, 3) == kNullValue, "unreadable object binary");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, unreadable, object, nullptr) == kInvalidKey, "unreadable object object key");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, unreadable, array, nullptr) == kInvalidKey, "unreadable object array key");
+    Require(objectRecord->properties.size() == objectProperties && objectRecord->Find("unread") == nullptr, "failed object sets store nothing");
+    Require(errno == 71, "errno preserved");
 
     void* destroyedChild = nullptr;
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(data, "child", object, &destroyedChild) == 0, "destroyed child setup");

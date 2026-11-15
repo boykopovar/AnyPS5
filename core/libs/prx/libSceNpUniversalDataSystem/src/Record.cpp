@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -114,8 +115,17 @@ NpUniversalDataSystemEventPropertyObject* FindObject(void* value) {
     return found ? object : nullptr;
 }
 
-bool ValidKey(const char* key) {
-    return key != nullptr && key[0] != '\0';
+int CopyText(const char* text, std::string& copied, int unreadable) {
+    if (text == nullptr) return unreadable;
+    const int result = CopyGuestString_nid_no_patch(text, std::numeric_limits<std::size_t>::max(), copied);
+    if (result == 12) return kOutOfMemory;
+    return result == 0 ? 0 : unreadable;
+}
+
+int CopyKey(const char* key, std::string& copied, int invalid) {
+    const int result = CopyText(key, copied, invalid);
+    if (result != 0) return result;
+    return copied.empty() ? invalid : 0;
 }
 
 }
@@ -183,7 +193,9 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordObject(void** record) {
 int APS5_VABI sceNpUniversalDataSystemIntCreateRecordData(const char* recordType, void** record) {
     std::lock_guard<std::recursive_mutex> recordsLock(g_recordsMutex);
     if (!g_initialized.load()) return kNotInitialized;
-    if (!ValidKey(recordType)) return kInvalidName;
+    std::string type;
+    if (const int copied = CopyKey(recordType, type, kInvalidName); copied != 0) return copied;
+    recordType = type.c_str();
     if (record == nullptr) return kInvalidArgument;
     try {
         auto* data = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
@@ -302,8 +314,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetString(void* record, cons
     if (!g_initialized.load()) return kNotInitialized;
     auto* array = FindArray(record);
     if (array == nullptr) return kNullArray;
-    if (value == nullptr) return kNullValue;
-    array->Add(std::string(value));
+    std::string text;
+    if (const int copied = CopyText(value, text, kNullValue); copied != 0) return copied;
+    array->Add(std::move(text));
     return 0;
 }
 
@@ -313,8 +326,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBinary(void* record, cons
     auto* array = FindArray(record);
     if (array == nullptr) return kNullArray;
     if (value == nullptr) return kNullValue;
-    const auto* bytes = static_cast<const std::uint8_t*>(value);
-    array->Add(Uds::Binary(bytes, bytes + size));
+    Uds::Binary bytes(size);
+    if (!GuestCopyIn_nid_no_patch(bytes.data(), value, size)) return kNullValue;
+    array->Add(std::move(bytes));
     return 0;
 }
 
@@ -351,7 +365,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBool(void* record, const
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     object->Set(key, value);
     return 0;
 }
@@ -361,7 +377,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetInt32(void* record, cons
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     object->Set(key, value);
     return 0;
 }
@@ -371,7 +389,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetInt64(void* record, cons
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     object->Set(key, value);
     return 0;
 }
@@ -381,7 +401,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetUInt32(void* record, con
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     object->Set(key, value);
     return 0;
 }
@@ -391,7 +413,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetUInt64(void* record, con
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     object->Set(key, value);
     return 0;
 }
@@ -401,7 +425,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetFloat32(void* record, co
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     object->Set(key, value);
     return 0;
 }
@@ -411,7 +437,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetFloat64(void* record, co
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     object->Set(key, value);
     return 0;
 }
@@ -421,9 +449,12 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetString(void* record, con
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
-    if (value == nullptr) return kNullValue;
-    object->Set(key, std::string(value));
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
+    std::string text;
+    if (const int copied = CopyText(value, text, kNullValue); copied != 0) return copied;
+    object->Set(key, std::move(text));
     return 0;
 }
 
@@ -432,10 +463,13 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBinary(void* record, con
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     if (value == nullptr) return kNullValue;
-    const auto* bytes = static_cast<const std::uint8_t*>(value);
-    object->Set(key, Uds::Binary(bytes, bytes + size));
+    Uds::Binary bytes(size);
+    if (!GuestCopyIn_nid_no_patch(bytes.data(), value, size)) return kNullValue;
+    object->Set(key, std::move(bytes));
     return 0;
 }
 
@@ -444,7 +478,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetObject(void* record, con
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     if (value == nullptr) return kNullValue;
     const auto* source = FindObject(const_cast<void*>(value));
     if (source == nullptr) return kNullObject;
@@ -459,7 +495,9 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetArray(void* record, cons
     if (!g_initialized.load()) return kNotInitialized;
     auto* object = FindObject(record);
     if (object == nullptr) return kNullObject;
-    if (!ValidKey(key)) return kInvalidKey;
+    std::string name;
+    if (const int copied = CopyKey(key, name, kInvalidKey); copied != 0) return copied;
+    key = name.c_str();
     if (value == nullptr) return kNullValue;
     const auto* source = FindArray(const_cast<void*>(value));
     if (source == nullptr) return kNullArray;
