@@ -59,6 +59,7 @@ struct Memory {
     alignas(256) volatile std::uint64_t releasedWide;
     alignas(256) volatile std::uint32_t afterPrefetch;
     alignas(256) volatile std::uint32_t refused;
+    alignas(256) volatile std::uint32_t predicated;
 };
 
 class GuestBlock {
@@ -263,8 +264,25 @@ void TestCalledBuffers() {
     Fill(memory.outer, {Type3(0x49, 7) | 2u, 0x62fu, 0x23000000u, Low(&memory.refused), High(&memory.refused), 3u, 0u, 0u});
     offset = Put(memory.ringA, 0, Call(memory.outer, 8));
     Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("invalid RELEASE_MEM size") != std::string::npos, "a RELEASE_MEM of eight dwords in a PS4 command buffer did not throw");
+    Fill(memory.outer, {Type3(0x59, 1), 0u});
+    offset = Put(memory.ringA, 0, Call(memory.outer, 2));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("a REWIND packet in a command buffer a compute ring calls") != std::string::npos, "a REWIND packet in a called command buffer did not throw");
+    const auto* unmapped = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x1000u});
+    offset = Put(memory.ringA, 0, Call(unmapped, 4));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("not readable") != std::string::npos, "an unreadable called command buffer did not throw");
     AgcDriverWaitIdle_nid_postfix();
     Require(memory.refused == 0, "a refused submission ran in part");
+
+    const auto nopWords = Fill(memory.inner, {Type3(OpNop, 2), 0u, 0u});
+    auto predicatedCall = Call(memory.inner, nopWords);
+    predicatedCall[0] |= 1u;
+    std::vector<std::uint32_t> ring(predicatedCall);
+    WriteData(ring, &memory.predicated, 4);
+    offset = Put(memory.ringA, 0, ring);
+    Require(sceGnmDingDong(queue, offset) == 0, "a predicated indirect buffer call failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.predicated == 4, "the packet after a predicated indirect buffer call did not run");
+    Require(memory.readA == offset, "the read offset was not moved past the predicated call");
     Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
 }
 
