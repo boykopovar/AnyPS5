@@ -4746,6 +4746,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.registrationModules = state->graphicsPipelineLibrary;
     target.robustBufferAccess2 = state->robustBufferAccess2;
     target.exactRobustLoads = state->exactRobustLoads;
+    target.wideBufferStores = limits.minStorageBufferOffsetAlignment != 0u && limits.minStorageBufferOffsetAlignment % 16u == 0u && std::getenv("APS5_NO_WIDE_BUFFER_STORES") == nullptr;
     target.waveLdsMemoryBarriers = !state->subgroupControlBarriers;
     target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;

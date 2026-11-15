@@ -369,6 +369,7 @@ struct SpirvTarget {
     bool spannedAnySubgroup = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;
+    bool wideBufferStores = false;
     bool depthRangeRemap = false;
     bool float32FlushToZero = false;
     bool waveLdsMemoryBarriers = false;

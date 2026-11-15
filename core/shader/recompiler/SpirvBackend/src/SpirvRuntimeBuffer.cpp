@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <optional>
 #include <span>
 #include <unordered_map>
 #include <utility>
@@ -335,6 +336,12 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     return (access.memoryAccess & spv::MemoryAccessVolatileMask) != 0u || (state.requirements.readOnlyStorage && access.memoryAccess == 0u) ? value : EmitValueOrZero(state, inBounds, value);
 }
 
+void markBufferAliased(SpirvEmitterState& state) {
+    if (state.requirements.bufferU64View || state.requirements.coherentBufferAlias || state.storageBufferAliasedLate) return;
+    state.module.AddAnnotation(spv::OpDecorate, state.storageBufferVariable, spv::DecorationAliased);
+    state.storageBufferAliasedLate = true;
+}
+
 std::uint32_t byteBuffers(SpirvEmitterState& state) {
     if (state.storageBufferU8Variable != 0u) return state.storageBufferU8Variable;
     if (state.program.Resources().stage != IrShaderStage::Compute) return 0u;
@@ -351,10 +358,86 @@ std::uint32_t byteBuffers(SpirvEmitterState& state) {
     state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, 0u);
     state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(state.program.Resources().stage, DescriptorBindingKind::Buffers));
     state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
-    if (state.storageBufferU64Variable == 0u && state.storageBufferCoherentVariable == 0u) state.module.AddAnnotation(spv::OpDecorate, state.storageBufferVariable, spv::DecorationAliased);
+    markBufferAliased(state);
     if (state.requirements.coherentBuffers) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationCoherent);
     state.storageBufferU8Variable = variable;
     return variable;
+}
+
+std::uint32_t wideBuffers(SpirvEmitterState& state, std::uint32_t words) {
+    auto& existing = words == 2u ? state.storageBufferU64Variable : state.storageBufferU32x4Variable;
+    if (existing != 0u) return existing;
+    if (state.program.Resources().stage != IrShaderStage::Compute) return 0u;
+    if (words == 2u && std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64)) == state.supportedCapabilities.end()) return 0u;
+    const IrBindingLayout& layout = state.program.Metadata().bindings;
+    const auto binding = std::find_if(layout.descriptors.begin(), layout.descriptors.end(), [](const IrDescriptorBinding& descriptor) { return descriptor.kind == DescriptorBindingKind::Buffers; });
+    if (binding == layout.descriptors.end() || state.storageBufferVariable == 0u) return 0u;
+    if (words == 2u) state.module.EmitCapability(spv::CapabilityInt64);
+    const auto count = ConstantU32(state, static_cast<std::uint32_t>(binding->resources.size()));
+    const auto type = state.module.Type(spv::OpTypeArray, words == 2u ? TypeStorageBufferU64Block(state) : TypeStorageBufferU32x4Block(state), count);
+    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, type), spv::StorageClassStorageBuffer);
+    state.module.AddName(variable, words == 2u ? "buffers_u64" : "buffers_u32x4");
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, 0u);
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(state.program.Resources().stage, DescriptorBindingKind::Buffers));
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
+    markBufferAliased(state);
+    if (state.requirements.coherentBuffers) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationCoherent);
+    existing = variable;
+    return variable;
+}
+
+struct WideStore {
+    MemoryResourceAccess access;
+    std::uint32_t index = 0;
+    std::uint32_t words = 0;
+    std::uint32_t condition = 0;
+};
+
+bool wideStoresAllowed(SpirvValueEmitContext& context, const IrValue& instruction) {
+    const auto& state = context.state;
+    const auto& memory = context.Memory(instruction);
+    return state.wideBufferStores && !memory.gpuDescriptor && !memory.coherent && memory.kind == ResourceKind::Buffer && state.program.Resources().stage == IrShaderStage::Compute;
+}
+
+std::optional<WideStore> wideStore(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t address, std::uint32_t words, std::uint32_t enable) {
+    auto& state = context.state;
+    if (!wideStoresAllowed(context, instruction)) return std::nullopt;
+    if (words != 1u && words != 2u && words != 4u) return std::nullopt;
+    if (words != 1u && wideBuffers(state, words) == 0u) return std::nullopt;
+    const auto u32 = TypeU32(state);
+    const auto access = directAccess(context, instruction);
+    const auto index = directWordIndex(state, access, address);
+    const auto lowBits = EmitAndConstant(state, address, 3u);
+    const auto wordBits = words == 1u ? lowBits : EmitOrU32(state, lowBits, Binary(state, spv::OpShiftLeftLogical, u32, EmitAndConstant(state, index, words - 1u), ConstantU32(state, 2u)));
+    const auto aligned = equal(state, wordBits, ConstantU32(state, 0u));
+    const auto fits = Binary(state, spv::OpULessThan, TypeBool(state), words == 1u ? index : EmitAddU32(state, index, ConstantU32(state, words - 1u)), access.length);
+    const auto contiguous = Unary(state, spv::OpLogicalNot, TypeBool(state), resource.swizzle);
+    const auto based = Unary(state, spv::OpLogicalNot, TypeBool(state), nonzero(state, baseMisalignment(context, instruction)));
+    auto condition = both(state, both(state, based, contiguous), both(state, aligned, fits));
+    if (enable != 0u) condition = both(state, enable, condition);
+    return WideStore{access, index, words, condition};
+}
+
+void emitWideStore(SpirvValueEmitContext& context, const IrValue& instruction, const WideStore& wide, const std::array<std::uint32_t, 4>& values) {
+    auto& state = context.state;
+    if (wide.words == 1u) {
+        state.module.AddFunction(spv::OpStore, EmitMemoryElementPointer(state, wide.access, wide.index), values[0]);
+        return;
+    }
+    const bool pair = wide.words == 2u;
+    const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, context.Memory(instruction).resource);
+    const auto elementIndex = Binary(state, spv::OpShiftRightLogical, TypeU32(state), wide.index, ConstantU32(state, pair ? 1u : 2u));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, pair ? TypeStorageBufferU64ElementPointer(state) : TypeStorageBufferU32x4ElementPointer(state), pointer, wideBuffers(state, wide.words), ConstantU32(state, element), ConstantU32(state, 0u), elementIndex);
+    auto value = state.module.AllocateId();
+    if (pair) {
+        const auto u64 = TypeScalarU64(state);
+        const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, values[1]), BdaConstant(state, 32u));
+        value = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, values[0]), high);
+    } else {
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), value, values[0], values[1], values[2], values[3]);
+    }
+    state.module.AddFunction(spv::OpStore, pointer, value);
 }
 
 void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t value, std::uint32_t bits = 32u) {
@@ -473,15 +556,39 @@ std::uint32_t formatted(SpirvValueEmitContext& context, const IrValue& instructi
         const auto values = storeValues(state, data, components);
         EmitIfCondition(state, inBounds, [&] {
             auto packed = ConstantU32(state, 0u);
+            std::array<std::uint32_t, 4> encoded{};
             for (std::uint32_t component = 0; component < info.componentCount; ++component) {
-                const auto encoded = component >= components ? ConstantU32(state, 0u) : memory.d16 ? EmitD16StoreComponent(state, info, component, values[component]) : EmitFormatStoreComponent(state, info, component, values[component]);
-                if (info.packedBitfield) {
-                    packed = EmitOrU32(state, packed, Binary(state, spv::OpShiftLeftLogical, u32, EmitAndConstant(state, encoded, (1u << info.componentBits[component]) - 1u), ConstantU32(state, info.componentBitOffset[component])));
-                } else {
-                    writeBuffer(context, instruction, addresses[component].guest, encoded, info.componentBits[component]);
-                }
+                encoded[component] = component >= components ? ConstantU32(state, 0u) : memory.d16 ? EmitD16StoreComponent(state, info, component, values[component]) : EmitFormatStoreComponent(state, info, component, values[component]);
+                if (info.packedBitfield) packed = EmitOrU32(state, packed, Binary(state, spv::OpShiftLeftLogical, u32, EmitAndConstant(state, encoded[component], (1u << info.componentBits[component]) - 1u), ConstantU32(state, info.componentBitOffset[component])));
             }
-            if (info.packedBitfield) writeBuffer(context, instruction, addresses[0].guest, packed);
+            if (info.packedBitfield) {
+                writeBuffer(context, instruction, addresses[0].guest, packed);
+                return;
+            }
+            const auto writeComponents = [&] {
+                for (std::uint32_t component = 0; component < info.componentCount; ++component) writeBuffer(context, instruction, addresses[component].guest, encoded[component], info.componentBits[component]);
+            };
+            const std::uint32_t words = info.byteSize / 4u;
+            const bool wideShape = info.byteSize % 4u == 0u && (words == 1u ? info.componentCount > 1u : words == 2u || words == 4u);
+            const auto wide = wideShape ? wideStore(context, instruction, resource, addresses[0].guest, words, 0u) : std::nullopt;
+            if (!wide) {
+                writeComponents();
+                return;
+            }
+            std::array<std::uint32_t, 4> wordValues{};
+            for (std::uint32_t component = 0; component < info.componentCount && component < components; ++component) {
+                const auto bits = info.componentBits[component];
+                const auto offset = info.componentBitOffset[component];
+                auto part = bits == 32u ? encoded[component] : EmitAndConstant(state, encoded[component], (1u << bits) - 1u);
+                if (offset % 32u != 0u) part = Binary(state, spv::OpShiftLeftLogical, u32, part, ConstantU32(state, offset % 32u));
+                auto& word = wordValues[offset / 32u];
+                word = word == 0u ? part : EmitOrU32(state, word, part);
+            }
+            for (std::uint32_t word = 0; word < words; ++word) {
+                if (wordValues[word] == 0u) wordValues[word] = ConstantU32(state, 0u);
+            }
+            EmitIfCondition(state, wide->condition, [&] { emitWideStore(context, instruction, *wide, wordValues); });
+            EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), wide->condition), writeComponents);
         });
         return ConstantU32(state, 0u);
     }
@@ -1100,6 +1207,23 @@ void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instr
             return;
         }
         const auto values = storeValues(state, storeData(context, instruction), components);
+        if (wideStoresAllowed(context, instruction) && (components == 2u || components == 4u) && memory.dataBits == 32u) {
+            std::array<RuntimeAddress, 4> accesses{};
+            auto allInBounds = ConstantBool(state, true);
+            for (std::uint32_t component = 0; component < components; ++component) {
+                accesses[component] = address(context, instruction, resource, component * 4u, 4u);
+                allInBounds = both(state, allInBounds, accesses[component].inBounds);
+            }
+            if (const auto wide = wideStore(context, instruction, resource, accesses[0].guest, components, allInBounds)) {
+                EmitIfCondition(state, wide->condition, [&] { emitWideStore(context, instruction, *wide, values); });
+                EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), wide->condition), [&] {
+                    for (std::uint32_t component = 0; component < components; ++component) {
+                        EmitIfCondition(state, accesses[component].inBounds, [&] { writeBuffer(context, instruction, accesses[component].guest, values[component], 32u); });
+                    }
+                });
+                return;
+            }
+        }
         const auto writeComponents = [&] {
             for (std::uint32_t component = 0; component < components; ++component) {
                 const auto access = address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
