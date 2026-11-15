@@ -3381,7 +3381,6 @@ bool Recorder::RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords resul
         boundChangedCopyState = -1;
         VkShaderModule module = VK_NULL_HANDLE;
         try {
-            cmdPushChangedCopySet = context.Function<PFN_vkCmdPushDescriptorSetKHR>("vkCmdPushDescriptorSetKHR");
             std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
             for (std::uint32_t binding = 0; binding < bindings.size(); ++binding) bindings[binding] = {binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
             VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -3441,7 +3440,7 @@ bool Recorder::RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords resul
             writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[binding].pBufferInfo = &infos[binding];
         }
-        cmdPushChangedCopySet(commands, VK_PIPELINE_BIND_POINT_COMPUTE, boundChangedCopyLayout, 0, static_cast<std::uint32_t>(writes.size()), writes.data());
+        context.Function<PFN_vkCmdPushDescriptorSetKHR>("vkCmdPushDescriptorSetKHR")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, boundChangedCopyLayout, 0, static_cast<std::uint32_t>(writes.size()), writes.data());
         const Parameters parameters{bases[0], bases[1], bases[2], count, alwaysCopy ? 1u : 0u, counter != VK_NULL_HANDLE ? 1u : 0u};
         function(cmdPushConstants, "vkCmdPushConstants")(commands, boundChangedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), &parameters);
         function(cmdDispatch, "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);

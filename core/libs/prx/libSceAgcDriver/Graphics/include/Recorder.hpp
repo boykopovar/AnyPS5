@@ -969,7 +969,6 @@ private:
     VkDescriptorSetLayout boundChangedCopySetLayout = VK_NULL_HANDLE;
     VkPipelineLayout boundChangedCopyLayout = VK_NULL_HANDLE;
     VkPipeline boundChangedCopyPipeline = VK_NULL_HANDLE;
-    PFN_vkCmdPushDescriptorSetKHR cmdPushChangedCopySet = nullptr;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
