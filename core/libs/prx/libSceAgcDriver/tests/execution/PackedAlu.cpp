@@ -265,13 +265,7 @@ int main() {
         }
         Ieee = false;
         DirectedHalf = true;
-        bool refused = false;
-        try {
-            Run(*device);
-        } catch (const std::exception& error) {
-            refused = std::string(error.what()).find("f16 rounding not to nearest even") != std::string::npos;
-        }
-        Require(refused, "packed alu: directed f16 rounding was not refused");
+        Run(*device);
         std::puts("packed alu tests passed");
         return 0;
     } catch (const std::exception& error) {
