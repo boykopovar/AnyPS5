@@ -548,7 +548,7 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         }
         context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, cmaskModule, nullptr);
         Check(created, "vkCreateComputePipelines CMASK clear");
-        cmaskErrors = std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        cmaskErrors = std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (cmaskHeapPipeline != VK_NULL_HANDLE ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
         std::memset(cmaskErrors->Bytes().data(), 0, 4);
     }
     const auto cmaskAddress = cmaskHeapPipeline != VK_NULL_HANDLE && owner != nullptr ? bufferAddress(cmask) : 0;
