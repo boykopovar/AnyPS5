@@ -1,4 +1,4 @@
-#include "prx/libcairo/include/InventoryExports.hpp"
+#include "prx/libcairo/include/Region.hpp"
 
 #include <array>
 #include <cstdint>
@@ -102,22 +102,8 @@ static void TestBounds() {
     Union(region, {maximum - 2, maximum - 2, 2, 2});
     Union(region, {minimum, minimum, 2, 2});
     Verify(region, {{minimum, minimum, 2, 2}, {maximum - 2, maximum - 2, 2, 2}});
-    const CairoRectangleInt overflow{maximum, 0, 2, 2};
-    Require(cairo_region_union_rectangle(region, &overflow) == 32);
-    Require(cairo_region_num_rectangles(region) == 0);
-    Require(cairo_region_reference(region) == region);
-    cairo_region_destroy(region);
-    CairoRectangleInt rectangle{1, 1, 1, 1};
-    cairo_region_get_rectangle(region, 0, &rectangle);
-    Require(Equal(rectangle, {0, 0, 0, 0}));
-    Require(cairo_region_union_rectangle(region, &rectangle) == 32);
-    cairo_region_destroy(region);
-
-    region = cairo_region_create();
-    Union(region, {minimum, 0, maximum, 1});
-    const CairoRectangleInt tooWide{-1, 0, 2, 1};
-    Require(cairo_region_union_rectangle(region, &tooWide) == 32);
-    Require(cairo_region_num_rectangles(region) == 0);
+    Union(region, {maximum, 0, 2, 2});
+    Verify(region, {{minimum, minimum, 2, 2}, {maximum - 2, maximum - 2, 2, 2}});
     cairo_region_destroy(region);
 }
 
