@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
