@@ -2511,8 +2511,11 @@ static void CheckIntegerConversions() {
         {"-4294967296!", 10, UINT64_MAX - UINT64_C(4294967295), 11, 0},
         {"-18446744073709551615!", 10, 1, 21, 0},
         {"-18446744073709551616!", 10, UINT64_MAX, 21, 34},
+        {"-18446744073709551616000!", 10, UINT64_MAX, 24, 34},
         {" \t+0xffffffffffffffffz", 0, UINT64_MAX, 21, 0},
         {"0x10000000000000000!", 16, UINT64_MAX, 19, 34},
+        {"-0x10000000000000000!", 0, UINT64_MAX, 20, 34},
+        {"-0x10000000000000000!", 16, UINT64_MAX, 20, 34},
         {"0100000000000!", 0, UINT64_C(8589934592), 13, 0},
         {"100000000000000000000000000000000!", 2, UINT64_C(4294967296), 33, 0},
         {"0b101", 0, 0, 1, 0},
@@ -2522,19 +2525,34 @@ static void CheckIntegerConversions() {
         {" +0Xg!", 0, 0, 0, 0},
         {"0x!", 16, 0, 0, 0},
         {"z!", 36, 35, 1, 0},
+        {"0!", 10, 0, 1, 0},
         {"", 10, 0, 0, 0},
+        {"words", 10, 0, 0, 0},
         {" \t-!", 10, 0, 0, 0},
         {"123!", 10, 123, 3, 0}
     };
-    for (const auto& test : unsignedCases) {
-        char* end = nullptr;
-        *__error_nid_postfix() = 0;
-        const auto value = strtoul_nid_postfix(test.text, &end, test.base);
-        if (value != test.value || end != test.text + test.consumed || *__error_nid_postfix() != test.error) {
-            std::fprintf(stderr, "Guest strtoul failed for '%s' in base %d\n", test.text, test.base);
-            std::abort();
+    const auto checkUnsigned = [&](auto parse, const char* name) {
+        for (const auto& test : unsignedCases) {
+            for (const int saved : {0, 13, ERANGE}) {
+                const int expectedError = test.error != 0 ? test.error : saved;
+                char* end = nullptr;
+                *__error_nid_postfix() = saved;
+                const auto value = parse(test.text, &end, test.base);
+                if (value != test.value || end != test.text + test.consumed || *__error_nid_postfix() != expectedError) {
+                    std::fprintf(stderr, "Guest %s failed for '%s' in base %d with incoming errno %d\n", name, test.text, test.base, saved);
+                    std::abort();
+                }
+                *__error_nid_postfix() = saved;
+                Require(parse(test.text, nullptr, test.base) == test.value && *__error_nid_postfix() == expectedError);
+            }
         }
-    }
+    };
+    checkUnsigned(strtoul_nid_postfix, "strtoul");
+    checkUnsigned(strtoull_nid_postfix, "strtoull");
+    checkUnsigned(strtoumax_nid_postfix, "strtoumax");
+    checkUnsigned(strtouq_nid_postfix, "strtouq");
+    checkUnsigned(_Stoul_nid_postfix, "_Stoul");
+    checkUnsigned(_Stoull_nid_postfix, "_Stoull");
     for (const int base : {0, 2}) {
         const char text[] = " -0B11";
         char* end = nullptr;
