@@ -14,6 +14,7 @@
 #include <limits>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <xmmintrin.h>
 
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32);
@@ -252,6 +253,22 @@ static void CheckFegetenv() {
     bool threw = false;
     try { fegetenv_nid_postfix(nullptr); } catch (...) { threw = true; }
     Require(threw);
+
+    auto* const unmapped = reinterpret_cast<GuestFloatingPointEnvironment*>(0x10);
+    const unsigned csrBefore = _mm_getcsr();
+    const std::uint16_t controlBefore = X87ControlWord();
+    threw = false;
+    try { fegetenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { feholdexcept_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
+    threw = false;
+    try { fesetenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
+    threw = false;
+    try { feupdateenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
 }
 
 template<typename Bits>
