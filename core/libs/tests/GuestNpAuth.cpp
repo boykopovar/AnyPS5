@@ -1,6 +1,8 @@
 #include "prx/libSceNpAuth/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -46,7 +48,13 @@ static void CheckUnstartedAborts() {
     }
 }
 
+static void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     CheckUnstartedAborts();
     constexpr int invalidArgument = static_cast<int>(0x80550301);
     constexpr int signedOut = static_cast<int>(0x80550006);
@@ -120,10 +128,16 @@ int main() {
     int asyncWait = 0;
     Require(sceNpAuthWaitAsync(asyncReq, &asyncWait) == 0);
     Require(asyncWait == signedOut);
+    errno = 71;
     Require(sceNpAuthPollAsync(asyncReq, reinterpret_cast<int*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
     Require(sceNpAuthWaitAsync(asyncReq, reinterpret_cast<int*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     asyncWait = 0;
+    errno = 71;
     Require(sceNpAuthWaitAsync(asyncReq, &asyncWait) == 0);
+    Require(errno == 71);
     Require(asyncWait == signedOut);
 
     Require(sceNpAuthGetAuthorizationCodeV3(asyncReq2, param, authCode, &issuerId) == 0);
@@ -180,7 +194,9 @@ int main() {
     Require(sceNpAuthGetIdTokenA(asyncReqA, param, token) == 0);
     int asyncPollA = 0;
     Require(sceNpAuthPollAsync(asyncReqA, &asyncPollA) == pollRunning);
+    errno = 71;
     Require(sceNpAuthPollAsync(asyncReqA, &asyncPollA) == 0);
+    Require(errno == 71);
     Require(asyncPollA == signedOut);
 
     const int asyncReqAuthA = sceNpAuthCreateAsyncRequest(nullptr);
@@ -199,5 +215,7 @@ int main() {
     Require(sceNpAuthWaitAsync(syncReq, &waitResult) == requestNotFound);
     Require(sceNpAuthSetTimeout(syncReq, 2, 5000000, 10000000, 10000000, 10000000) == requestNotFound);
 
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

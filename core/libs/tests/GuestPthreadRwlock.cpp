@@ -508,6 +508,7 @@ static void CheckBadPointers() {
         Require(scePthreadRwlockattrDestroy(attrs) == SCE_KERNEL_ERROR_EFAULT);
         Require(pthread_rwlockattr_destroy_nid_postfix(attrs) == GUEST_EFAULT);
         Require(scePthreadRwlockattrInit(attrs) == SCE_KERNEL_ERROR_EFAULT);
+        Require(scePthreadRwlockInit(static_cast<PthreadRwlock*>(pointer), nullptr, nullptr) == SCE_KERNEL_ERROR_EFAULT);
         Require(pthread_rwlockattr_init_nid_postfix(attrs) == GUEST_EFAULT);
     }
     void* const badOut[] = {nullptr, reinterpret_cast<void*>(0x10), guard.Unreadable()};

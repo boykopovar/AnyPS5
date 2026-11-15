@@ -153,6 +153,20 @@ void CheckGetters() {
     target.sizeThis = 4;
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, &target) == ErrorParam, "a target of the wrong size must be rejected");
     Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, nullptr) == 0, "automatic exposure must be readable without a target");
+    errno = 71;
+    Require(sceCameraGetAutoExposureGain(1, Channel0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == ErrorParam, "an unwritable enable pointer must report PARAM");
+    Require(errno == 71, "errno was altered on unwritable enable pointer");
+    Require(sceCameraGetAutoExposureGain(1, Channel0, &enable, reinterpret_cast<CameraAutoExposureGainTarget*>(0x10)) == ErrorParam, "an unwritable target pointer must report PARAM");
+    Require(errno == 71, "errno was altered on unwritable target pointer");
+    alignas(16) std::uint32_t enableBuffer[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    alignas(16) CameraAutoExposureGainTarget targetBuffer[3] = {
+        {0x5a5a5a5a, 0x5a5a5a5a},
+        {sizeof(CameraAutoExposureGainTarget), 0x10},
+        {0x5a5a5a5a, 0x5a5a5a5a}
+    };
+    Require(sceCameraGetAutoExposureGain(1, Channel0, &enableBuffer[1], &targetBuffer[1]) == 0, "reading auto exposure gain to buffer failed");
+    Require(enableBuffer[0] == 0x5a5a5a5a && enableBuffer[1] == 0 && enableBuffer[2] == 0x5a5a5a5a, "adjacent enable memory was corrupted");
+    Require(targetBuffer[0].sizeThis == 0x5a5a5a5a && targetBuffer[1].sizeThis == 0 && targetBuffer[1].target == 0 && targetBuffer[2].sizeThis == 0x5a5a5a5a, "adjacent target memory was corrupted");
 }
 
 void CheckAttribute() {
@@ -205,6 +219,9 @@ void CheckAttribute() {
     attribute->sizeThis = sizeof(CameraAttribute) - 4;
     Require(sceCameraGetAttribute(1, attribute) == ErrorParam && sceCameraSetAttribute(1, attribute) == ErrorParam, "an attribute of the wrong size must be rejected");
     Require(sceCameraGetAttribute(1, nullptr) == ErrorParam && sceCameraSetAttribute(1, nullptr) == ErrorParam, "a null attribute must be rejected");
+    errno = 71;
+    Require(sceCameraSetAttribute(1, reinterpret_cast<const CameraAttribute*>(0x10)) == ErrorParam, "unreadable attribute rejected");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckSetter(SetU32 set, std::uint32_t largestValue) {
@@ -250,6 +267,9 @@ void CheckSetters() {
     }
     target = {4, 0x10};
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, &target) == ErrorParam, "an exposure target of the wrong size must be rejected");
+    errno = 71;
+    Require(sceCameraSetAutoExposureGain(1, Channel0, 1, reinterpret_cast<const CameraAutoExposureGainTarget*>(0x10)) == ErrorParam, "an unmapped exposure target must be rejected");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckConfig() {
