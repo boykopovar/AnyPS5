@@ -437,7 +437,12 @@ struct HttpClientState : Aps5HttpClient {
             int status;
             for (;;) {
                 const auto line = connection.Line();
-                if (line.size() < 12 || (!line.starts_with("HTTP/1.1 ") && !line.starts_with("HTTP/1.0 "))) throw HttpFailure("invalid HTTP status line");
+                if (line.size() < 12 || (!line.starts_with("HTTP/1.1 ") && !line.starts_with("HTTP/1.0 ")) ||
+                    (line.size() > 12 && line[12] != ' ')) throw HttpFailure("invalid HTTP status line");
+                for (std::size_t index = 13; index < line.size(); ++index) {
+                    const auto byte = static_cast<unsigned char>(line[index]);
+                    if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP status line");
+                }
                 status = static_cast<int>(Number(std::string_view(line).substr(9, 3)));
                 const auto responseTime = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
                 headers.clear();
@@ -454,6 +459,8 @@ struct HttpClientState : Aps5HttpClient {
                 }
                 if (status < 100 || status >= 200) break;
                 if (status == 101) throw HttpFailure("HTTP upgrade is not a media file");
+                if (line.starts_with("HTTP/1.0 ") || headers.contains("transfer-encoding") || headers.contains("content-length"))
+                    throw HttpFailure("invalid HTTP informational response");
             }
             if (status == 203) status = 200;
             if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
@@ -479,6 +486,7 @@ struct HttpClientState : Aps5HttpClient {
             std::vector<std::uint8_t> body;
             std::optional<std::string> trailerEtag;
             if (headers.contains("transfer-encoding")) {
+                if (headers.contains("content-length")) throw HttpFailure("conflicting HTTP message framing");
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
