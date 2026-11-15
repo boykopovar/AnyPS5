@@ -119,6 +119,9 @@ static void CheckPlainScanResults() {
         unsigned int hex = 0x55555555u;
         int count = -7;
         Require(scan("0x", "%x%n", &hex, &count) == EOF && hex == 0x55555555u && count == -7);
+        Require(scan("-0x", "%x%n", &hex, &count) == 0 && hex == 0x55555555u && count == -7);
+        char rest[4] = {'?', '?', '?', '?'};
+        Require(scan("0xg", "%x%s", &hex, rest) == 0 && hex == 0x55555555u && rest[0] == '?');
         int first = -7;
         int second = -7;
         Require(scan("5 6", "%2$d %1$d", &first, &second) == 0 && first == -7 && second == -7);
