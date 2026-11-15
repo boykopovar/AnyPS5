@@ -59,6 +59,19 @@ static void Require(bool value, std::source_location location = std::source_loca
 }
 constexpr int StandardExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
 
+static void CheckUnwritableOutputs() {
+    Require(modf_nid_postfix(2.5, reinterpret_cast<double*>(0x10)) == 0.5);
+    Require(modf_nid_postfix(0.25, reinterpret_cast<double*>(0x10)) == 0.25);
+    Require(modff_nid_postfix(2.5f, reinterpret_cast<float*>(0x10)) == 0.5f);
+    Require(remquo_nid_postfix(7.0, 2.0, reinterpret_cast<int*>(0x10)) == -1.0);
+    Require(remquof_nid_postfix(7.0f, 2.0f, reinterpret_cast<int*>(0x10)) == -1.0f);
+    sincosf_nid_postfix(0.0f, reinterpret_cast<float*>(0x10), reinterpret_cast<float*>(0x10));
+    float sine = 7.0f;
+    float cosine = 7.0f;
+    sincosf_nid_postfix(0.0f, &sine, &cosine);
+    Require(sine == 0.0f && cosine == 1.0f);
+}
+
 static void CheckLdexpSpecialValues() {
     constexpr double infinity = std::numeric_limits<double>::infinity();
     Require(ldexp_nid_postfix(1., 10) == 1024. && ldexp_nid_postfix(-1.5, 3) == -12. && ldexp_nid_postfix(3., -1) == 1.5);
@@ -4281,6 +4294,7 @@ static void CheckLog1pDomainEnvironment() {
 }
 
 int main() {
+    CheckUnwritableOutputs();
     CheckFdimFlags();
     CheckRemainderConsoleBits();
     CheckFloatClassification();
