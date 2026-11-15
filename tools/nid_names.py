@@ -9,7 +9,7 @@ import sys
 import tempfile
 import urllib.request
 from base64 import b64encode
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
@@ -80,9 +80,11 @@ def load_db(path):
 
 
 def source_files(root):
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    root_flavored = flavor(str(root))
     return (path for path in sorted(root.rglob("*.cpp"))
             if not any(part.lower() in {"test", "tests"}
-                       for part in path.relative_to(root).parts[:-1]))
+                       for part in flavor(str(path)).relative_to(root_flavored).parts[:-1]))
 
 
 def source_aliases(text):
