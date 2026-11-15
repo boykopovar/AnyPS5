@@ -254,6 +254,10 @@ void CheckSetters() {
     Require(sceCameraSetExposureGain(1, Channel0, nullptr, nullptr) == ErrorParam, "a null exposure must be rejected");
     Require(sceCameraSetWhiteBalance(1, Channel0, nullptr, nullptr) == ErrorParam, "a null white balance must be rejected");
     Require(sceCameraSetGamma(1, Channel0, nullptr, nullptr) == ErrorParam, "a null gamma must be rejected");
+    errno = 71;
+    Require(sceCameraSetExposureGain(1, Channel0, reinterpret_cast<const CameraExposureGain*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped exposure must be rejected");
+    Require(sceCameraSetWhiteBalance(1, Channel0, reinterpret_cast<const CameraWhiteBalance*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped white balance must be rejected");
+    Require(sceCameraSetGamma(1, Channel0, reinterpret_cast<const CameraGamma*>(0x10), nullptr) == ErrorParam && errno == 71, "an unmapped gamma must be rejected");
     CameraAutoExposureGainTarget target{sizeof(CameraAutoExposureGainTarget), 0x20};
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, &target) == ErrorNotConnected, "the largest exposure target must be accepted");
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, nullptr) == ErrorNotConnected, "automatic exposure without a target must be accepted");
