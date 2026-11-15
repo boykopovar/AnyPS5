@@ -1,5 +1,5 @@
 add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp Png.cpp Context.cpp FontOptions.cpp Region.cpp Glyph.cpp FontFace.cpp)
-target_sources(libcairo PRIVATE ToyText.cpp)
+target_sources(libcairo PRIVATE ToyText.cpp FontPipeline.cpp Device.cpp)
 target_sources(libcairo PRIVATE Mesh.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
 include(${CMAKE_SOURCE_DIR}/cmake/Cairo.cmake)
@@ -21,6 +21,32 @@ endif()
 target_sources(libcairo PRIVATE ScaledFont.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_cairo_device_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoDevice.cpp)
+    target_include_directories(guest_cairo_device_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_device_tests PRIVATE libcairo cairo_backend)
+    configure_windows_unwind(guest_cairo_device_tests)
+    add_test(NAME guest_cairo_device COMMAND guest_cairo_device_tests)
+    set_tests_properties(guest_cairo_device PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_device PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+    endif()
+
+    add_test_executable(guest_cairo_font_pipeline_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestCairoFontPipeline.cpp
+        ${LIBS_INCLUDE_DIR}/tests/GuestCairoFontPipelineReference.cpp)
+    target_include_directories(guest_cairo_font_pipeline_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_font_pipeline_tests PRIVATE libcairo cairo_backend libc)
+    configure_windows_unwind(guest_cairo_font_pipeline_tests)
+    foreach(mode creation conversion contexts errors)
+        add_test(NAME guest_cairo_font_pipeline_${mode} COMMAND guest_cairo_font_pipeline_tests ${mode})
+        set_tests_properties(guest_cairo_font_pipeline_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_cairo_font_pipeline_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+        endif()
+    endforeach()
+
     add_test_executable(guest_cairo_scaled_font_tests
         ${LIBS_INCLUDE_DIR}/tests/GuestCairoScaledFont.cpp ScaledFont.cpp Context.cpp)
     target_include_directories(guest_cairo_scaled_font_tests PRIVATE ${LIBS_INCLUDE_DIR})

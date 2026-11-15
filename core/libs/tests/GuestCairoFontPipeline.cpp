@@ -1,0 +1,238 @@
+#include "prx/libcairo/libcairo.hpp"
+#include "CairoFontPipelineReference.hpp"
+
+#include <array>
+#include <bit>
+#include <cerrno>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string_view>
+#include <vector>
+
+namespace {
+
+namespace Reference = CairoFontPipelineReference;
+
+void Check(bool condition, const char* reason) {
+    if (!condition) {
+        std::fprintf(stderr, "cairo font pipeline: %s\n", reason);
+        std::abort();
+    }
+}
+
+constexpr CairoMatrix matrix{18, 1.5, 2, 14, 0, 0};
+constexpr CairoMatrix ctm{1.25, 0, 0, 0.75, 0, 0};
+constexpr std::array<int, 4> values{CAIRO_ANTIALIAS_GRAY, CAIRO_SUBPIXEL_ORDER_BGR,
+    CAIRO_HINT_STYLE_SLIGHT, CAIRO_HINT_METRICS_OFF};
+
+cairo_font_options_t* Options() {
+    auto* options = cairo_font_options_create();
+    cairo_font_options_set_antialias(options, static_cast<cairo_antialias_t>(values[0]));
+    cairo_font_options_set_subpixel_order(options, static_cast<cairo_subpixel_order_t>(values[1]));
+    cairo_font_options_set_hint_style(options, static_cast<cairo_hint_style_t>(values[2]));
+    cairo_font_options_set_hint_metrics(options, static_cast<cairo_hint_metrics_t>(values[3]));
+    return options;
+}
+
+using Font = std::unique_ptr<CairoScaledFont, decltype(&cairo_scaled_font_destroy)>;
+
+Font Create(const CairoMatrix& fontMatrix = matrix, const CairoMatrix& transform = ctm) {
+    auto* surface = cairo_image_surface_create(0, 96, 64);
+    auto* context = cairo_create(surface);
+    cairo_select_font_face(context, "sans", 0, 0);
+    auto* face = Reference::Face(context);
+    auto* options = Options();
+    Font font(cairo_scaled_font_create(face, &fontMatrix, &transform, options), cairo_scaled_font_destroy);
+    cairo_font_options_destroy(options);
+    cairo_destroy(context);
+    cairo_surface_destroy(surface);
+    return font;
+}
+
+template<class F>
+void Rejects(F function) {
+    errno = EDOM;
+    bool threw = false;
+    try { function(); } catch (const std::runtime_error&) { threw = true; }
+    Check(threw && errno == EDOM, "invalid guest memory throws and preserves errno");
+}
+
+void Creation() {
+    auto font = Create();
+    Check(cairo_scaled_font_status(font.get()) == 0, "created font succeeds");
+    Check(Reference::Options(font.get()) == values, "constructor preserves every public font option");
+    auto* copied = cairo_font_options_create();
+    cairo_scaled_font_get_font_options(font.get(), copied);
+    auto* face = cairo_scaled_font_get_font_face(font.get());
+    Check(face != nullptr, "font face is borrowed from scaled font");
+    Font roundtrip(cairo_scaled_font_create(face, &matrix, &ctm, copied), cairo_scaled_font_destroy);
+    Check(Reference::Options(roundtrip.get()) == values, "queried options reconstruct the font");
+    cairo_font_options_destroy(copied);
+    cairo_scaled_font_get_font_options(font.get(), nullptr);
+    auto* nil = cairo_font_options_copy(nullptr);
+    cairo_scaled_font_get_font_options(font.get(), nil);
+    Font failed(cairo_scaled_font_create(face, &matrix, &ctm, nil), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(failed.get()) == 1, "nil font options produce no-memory font");
+    cairo_font_options_destroy(nil);
+    Font nullOptions(cairo_scaled_font_create(face, &matrix, &ctm, nullptr), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(nullOptions.get()) == 7, "null options produce null-pointer font");
+    CairoMatrix invalid = matrix;
+    invalid.xx = std::numeric_limits<double>::infinity();
+    auto bad = Create(invalid);
+    Check(cairo_scaled_font_status(bad.get()) == 5, "nonfinite matrix produces invalid-matrix font");
+    auto* defaults = Options();
+    cairo_scaled_font_get_font_options(bad.get(), defaults);
+    Check(cairo_font_options_get_antialias(defaults) == CAIRO_ANTIALIAS_DEFAULT,
+        "failed font query resets options to defaults");
+    cairo_font_options_destroy(defaults);
+    const CairoMatrix zero{};
+    auto degenerate = Create(zero);
+    Check(cairo_scaled_font_status(degenerate.get()) == 0, "zero font matrix remains valid");
+    auto* options = Options();
+    Rejects([&] { cairo_scaled_font_create(face, reinterpret_cast<const CairoMatrix*>(1), &ctm, options); });
+    cairo_font_options_destroy(options);
+}
+
+void Conversion(const char* text, int length, int glyphCapacity, int clusterCapacity, bool withClusters) {
+    const auto expected = Reference::Convert(matrix, ctm, values, text, length, glyphCapacity, clusterCapacity, withClusters);
+    auto font = Create();
+    std::vector<CairoGlyph> storage(glyphCapacity > 0 ? glyphCapacity : 1);
+    std::vector<CairoTextCluster> clusterStorage(clusterCapacity > 0 ? clusterCapacity : 1);
+    auto* originalGlyphs = glyphCapacity == 0 ? nullptr : storage.data();
+    auto* originalClusters = clusterCapacity == 0 ? nullptr : clusterStorage.data();
+    auto* glyphs = originalGlyphs;
+    auto* clusters = originalClusters;
+    int glyphCount = glyphCapacity, clusterCount = clusterCapacity, flags = 99;
+    errno = EDOM;
+    const int status = cairo_scaled_font_text_to_glyphs(font.get(), 3.25, 21.5, text, length,
+        &glyphs, &glyphCount, withClusters ? &clusters : nullptr, &clusterCount, &flags);
+    Check(errno == EDOM, "conversion preserves errno");
+    Check(status == expected.status && glyphCount == expected.glyphCount && flags == expected.flags,
+        "conversion status, count and flags match native");
+    if (withClusters) Check(clusterCount == expected.clusterCount, "cluster count matches native");
+    Check((glyphs != originalGlyphs) == expected.glyphsReplaced, "glyph storage reuse matches native");
+    if (withClusters) Check((clusters != originalClusters) == expected.clustersReplaced, "cluster storage reuse matches native");
+    if (status == 0) {
+        for (int i = 0; i < glyphCount; ++i) {
+            const auto& want = expected.glyphs[static_cast<std::size_t>(i)];
+            Check(glyphs[i].index == want.index && glyphs[i].x == want.x && glyphs[i].y == want.y,
+                "glyph indices and positions match native");
+        }
+        if (withClusters) for (int i = 0; i < clusterCount; ++i) {
+            const auto& want = expected.clusters[static_cast<std::size_t>(i)];
+            Check(clusters[i].numBytes == want.numBytes && clusters[i].numGlyphs == want.numGlyphs,
+                "UTF-8 cluster mapping matches native");
+        }
+        CairoTextExtents extents{};
+        cairo_scaled_font_glyph_extents(font.get(), glyphs, glyphCount, &extents);
+        const auto want = Reference::Extents(matrix, ctm, values, expected.glyphs);
+        Check(std::bit_cast<std::array<double, 6>>(extents) == std::bit_cast<std::array<double, 6>>(want),
+            "glyph extents match native");
+        auto* surface = cairo_image_surface_create(0, 96, 64);
+        auto* context = cairo_create(surface);
+        cairo_set_scaled_font(context, font.get());
+        Check(Reference::ContextStatus(context) == 0, "created scaled font attaches to guest context");
+        cairo_show_glyphs(context, glyphs, glyphCount);
+        Check(Reference::ContextStatus(context) == 0, "produced glyphs draw on guest surface");
+        cairo_destroy(context);
+        cairo_surface_destroy(surface);
+    }
+    if (glyphs != originalGlyphs) cairo_glyph_free(glyphs);
+    if (withClusters && clusters != originalClusters) std::free(clusters);
+}
+
+void Conversions() {
+    for (bool clusters : {false, true}) {
+        for (int capacity : {0, 1, 64}) {
+            Conversion("A gW", -1, capacity, capacity, clusters);
+            Conversion("\xc3\xa9 \xe4\xb8\xad", -1, capacity, capacity, clusters);
+            Conversion("", -1, capacity, capacity, clusters);
+            Conversion(nullptr, -1, capacity, capacity, clusters);
+            Conversion("A\0B", 3, capacity, capacity, clusters);
+            Conversion("A gW", 2, capacity, capacity, clusters);
+            Conversion("\xc0\xaf", 2, capacity, capacity, clusters);
+            Conversion("\xe2\x82", 2, capacity, capacity, clusters);
+            Conversion("text", -2, capacity, capacity, clusters);
+        }
+        Conversion("A gW", -1, 0, 64, clusters);
+        Conversion("A gW", -1, 64, 0, clusters);
+        Conversion("text", -1, -1, 0, clusters);
+        Conversion("text", -1, 0, -1, clusters);
+    }
+}
+
+void Contexts() {
+    auto* surface = cairo_image_surface_create(0, 96, 64);
+    auto* context = cairo_create(surface);
+    auto font = Create();
+    auto* face = cairo_scaled_font_get_font_face(font.get());
+    cairo_select_font_face(context, "monospace", 1, 1);
+    Check(Reference::Face(context) != face, "different starting font face");
+    cairo_set_font_face(context, face);
+    Check(Reference::Face(context) == face, "font face attachment preserves pointer");
+    cairo_set_font_face(context, nullptr);
+    Check(Reference::ContextStatus(context) == 0, "null face resets context font");
+    cairo_scale(context, ctm.xx, ctm.yy);
+    cairo_set_scaled_font(context, font.get());
+    CairoMatrix usedMatrix{};
+    cairo_scaled_font_get_font_matrix(Reference::ContextFont(context), &usedMatrix);
+    Check(std::bit_cast<std::array<double, 6>>(usedMatrix) == std::bit_cast<std::array<double, 6>>(matrix),
+        "context uses created font matrix");
+    Check(Reference::Options(Reference::ContextFont(context)) == values, "context uses created font options");
+    font.reset();
+    cairo_show_text(context, "Alive");
+    Check(Reference::ContextStatus(context) == 0, "context retains font after caller releases it");
+    cairo_set_scaled_font(context, nullptr);
+    Check(Reference::ContextStatus(context) == 7, "null scaled font sets sticky context error");
+    cairo_destroy(context);
+    cairo_surface_destroy(surface);
+}
+
+void Errors() {
+    auto font = Create();
+    int glyphCount = 99, clusterCount = 99, flags = 99;
+    Check(cairo_scaled_font_text_to_glyphs(font.get(), 0, 0, "A", -1, nullptr, &glyphCount,
+        nullptr, &clusterCount, &flags) == 7, "missing glyph output reports null pointer");
+    Check(glyphCount == 0 && clusterCount == 0 && flags == 99, "early argument errors reset counts only");
+    CairoGlyph* glyphs = nullptr;
+    CairoTextCluster* clusters = nullptr;
+    Check(cairo_scaled_font_text_to_glyphs(font.get(), 0, 0, "A", -1, &glyphs, &glyphCount,
+        &clusters, &clusterCount, nullptr) == 7, "cluster flags are mandatory with clusters");
+    Check(cairo_scaled_font_status(font.get()) == 0, "argument errors do not poison font");
+    Rejects([&] { cairo_scaled_font_text_to_glyphs(font.get(), 0, 0,
+        reinterpret_cast<const char*>(1), -1, &glyphs, &glyphCount, nullptr, nullptr, nullptr); });
+    Rejects([&] { cairo_scaled_font_text_to_glyphs(font.get(), 0, 0,
+        "A", 1, reinterpret_cast<CairoGlyph**>(1), &glyphCount, nullptr, nullptr, nullptr); });
+    Rejects([&] { cairo_scaled_font_glyph_extents(font.get(), reinterpret_cast<const CairoGlyph*>(1), 1,
+        reinterpret_cast<CairoTextExtents*>(1)); });
+    auto failed = Create(CairoMatrix{std::numeric_limits<double>::infinity(), 0, 0, 1, 0, 0});
+    glyphCount = 17;
+    Check(cairo_scaled_font_text_to_glyphs(failed.get(), 0, 0, reinterpret_cast<const char*>(1), -1,
+        nullptr, &glyphCount, nullptr, nullptr, nullptr) == 5 && glyphCount == 17,
+        "failed font returns before inspecting guest arguments");
+    CairoTextExtents empty{};
+    cairo_scaled_font_glyph_extents(failed.get(), reinterpret_cast<const CairoGlyph*>(1), 1, &empty);
+    Check(std::bit_cast<std::array<double, 6>>(empty) == std::array<double, 6>{},
+        "failed font gives empty extents without reading glyphs");
+#ifdef _WIN32
+    CairoGlyph wide{std::uint64_t{1} << 32, 0, 0};
+    Rejects([&] { cairo_scaled_font_glyph_extents(font.get(), &wide, 1, &empty); });
+#endif
+}
+
+}
+
+int main(int argc, char** argv) {
+    Check(argc == 2, "test mode supplied");
+    const std::string_view mode = argv[1];
+    if (mode == "creation") Creation();
+    else if (mode == "conversion") Conversions();
+    else if (mode == "contexts") Contexts();
+    else if (mode == "errors") Errors();
+    else Check(false, "known test mode");
+}
