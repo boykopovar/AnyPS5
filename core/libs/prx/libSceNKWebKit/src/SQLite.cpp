@@ -25,6 +25,33 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// Derived from Source/WebCore/platform/sql/SQLiteDatabase.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+/*
+ * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2007 Justin Haygood (jhaygood@reaktix.com)
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 // Derived from Source/WebCore/platform/sql/SQLiteStatement.cpp@73a35b43be7ae44c084885bd3fa4b403e59723c8
 /*
  * Copyright (C) 2006, 2007, 2008 Apple Inc. All rights reserved.
@@ -655,9 +682,11 @@ bool APS5_VABI _ZN7WebCore14SQLiteDatabase11tableExistsERKN3WTF6StringE(SQLiteDa
     auto& db = Checked(self);
     const auto& name = Checked(tableName);
     if (!db.db) return false;
-    ScopedStatement statement(db, Concatenate(u"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '", name, u"';"));
-    Prepare(statement.value);
-    return Step(statement.value) == SqliteRow;
+    ScopedStatement statement(db, Concatenate(u"SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?;"));
+    if (Prepare(statement.value) != SqliteOk || BindText(statement.value, 1, name.impl) != SqliteOk
+        || Step(statement.value) != SqliteRow)
+        return false;
+    return View(GetColumnText(statement.value, 0).impl).length != 0;
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase14clearAllTablesEv(SQLiteDatabase* self) {
