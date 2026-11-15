@@ -676,6 +676,10 @@ std::size_t KeywordAllocationAttempt(std::size_t failed) {
     Require(status == 0);
     std::array<char16_t, 4> currency{};
     Require(ucurr_forLocale_nid_postfix("en_US", currency.data(), 4, &status) == 3 && status == 0);
+    auto* warm = ucurr_getKeywordValuesForLocale_nid_postfix("currency", "und", 1, &status);
+    Require(warm && status <= 0);
+    uenum_close_nid_postfix(warm);
+    status = 0;
     const auto before = memory.calls;
     memory.failAt = failed ? before + failed : 0;
     std::fprintf(stderr, "keyword allocation point %zu\n", failed);
@@ -704,12 +708,37 @@ std::size_t KeywordAllocationAttempt(std::size_t failed) {
     return calls;
 }
 
-void AllocationKeywords(std::size_t shard) {
+void ColdKeywordAllocation() {
+    Memory memory;
+    std::int32_t status = 0;
+    u_setMemoryFunctions_nid_postfix(&memory, AllocateCurrency, ReallocateCurrency, FreeCurrency, &status);
+    Require(status == 0);
+    std::array<char16_t, 4> currency{};
+    Require(ucurr_forLocale_nid_postfix("en_US", currency.data(), 4, &status) == 3 && status == 0);
+    memory.failAt = memory.calls + 17;
+    Require(!ucurr_getKeywordValuesForLocale_nid_postfix("currency", "en_QQ", 1, &status) && status == 7);
+    memory.failAt = 0;
+    u_cleanup_nid_postfix();
+    Require(memory.allocations == memory.frees);
+    status = 0;
+    u_setMemoryFunctions_nid_postfix(&memory, AllocateCurrency, ReallocateCurrency, FreeCurrency, &status);
+    Require(status == 0);
+    auto* enumeration = ucurr_getKeywordValuesForLocale_nid_postfix("currency", "en_QQ", 1, &status);
+    if (enumeration) {
+        Require(status <= 0 && uenum_count_nid_postfix(enumeration, &status) == 2);
+        uenum_close_nid_postfix(enumeration);
+    } else {
+        Require(status == 7);
+    }
+    u_cleanup_nid_postfix();
+    Require(memory.allocations == memory.frees);
+}
+
+void AllocationKeywords() {
     const auto calls = KeywordAllocationAttempt(0);
-    std::fprintf(stderr, "keyword allocation baseline: %zu calls, shard %zu\n", calls, shard);
-    Require(calls > 3 && shard < 16);
-    for (std::size_t failed = shard + 1; failed <= calls + 1; failed += 16) KeywordAllocationAttempt(failed);
-    std::fprintf(stderr, "keyword allocation shard %zu: %zu total constructor allocation points\n", shard, calls);
+    Require(calls > 3);
+    for (std::size_t failed = 1; failed <= calls + 1; ++failed) KeywordAllocationAttempt(failed);
+    std::fprintf(stderr, "%zu warmed keyword allocation failure points qualified\n", calls);
 }
 
 void DefaultState() {
@@ -780,7 +809,7 @@ void ConcurrentRegistry() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2 || (argc == 3 && std::string_view(argv[1]) == "allocation_keywords"));
+        Require(argc == 2);
         const std::string_view mode = argv[1];
         if (mode.starts_with("api_")) Api(static_cast<unsigned>(std::stoi(std::string(mode.substr(4)))));
         else if (mode == "metadata") Metadata();
@@ -800,8 +829,9 @@ int main(int argc, char** argv) {
         else if (mode == "ignored_plural") IgnoredPlural();
         else if (mode == "null_plural") NullPlural();
         else if (mode == "keyword_oracle") KeywordOracle();
+        else if (mode == "cold_keyword_allocation") ColdKeywordAllocation();
         else if (mode == "enumeration_write_bounds") EnumerationWriteBounds();
-        else if (mode == "allocation_keywords") AllocationKeywords(argc == 3 ? std::stoul(argv[2]) : 0);
+        else if (mode == "allocation_keywords") AllocationKeywords();
         else if (mode == "allocation_iso_first") AllocationISO(1);
         else if (mode == "allocation_iso_second") AllocationISO(2);
         else if (mode == "allocation_registry") AllocationRegistry();
