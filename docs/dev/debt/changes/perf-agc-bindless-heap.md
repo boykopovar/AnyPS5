@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Opt-in draw paths
+
+- [Bindless image heap](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureService.cpp) (`APS5_BINDLESS_IMAGES=1`) - opt-in, for sampled image tables outside fetch and mesh shaders; storage, nested, packed and BY table loads and mesh pipelines keep per-draw image arrays. Refused keys read as fault records: multisampled images, comparison sampling of a color texture, unmapped surfaces, T#s matching no runtime mode, and table S#s with unnormalized coordinates, a `min` or `max` reduction, a border, `ANISO_OVERRIDE` or non-seamless cube filtering without `VK_EXT_non_seamless_cube_map`; only the first 64 keep their reason. With the heap on, a key outside the captured snapshot reads the live descriptor, and a dispatch storing into its own table is not refused. `APS5_BINDLESS_LAZY=1` reads the null descriptor until the frame after a key's first miss. Unverified on a console. Closes when: the excluded classes are served or shown not to need it, and the heap is the default.
