@@ -40,6 +40,12 @@ int main() {
     std::uint32_t vDpi = 0;
     Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 72 && vDpi == 72);
     Require(sceFontStyleFrameGetResolutionDpi(&frame, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, reinterpret_cast<std::uint32_t*>(0x10), &vDpi) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, &hDpi, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
     Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
 
