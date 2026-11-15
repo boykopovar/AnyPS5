@@ -134,10 +134,9 @@ int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
 }
 
 int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    if (!mask) throw std::runtime_error("scePthreadAttrGetaffinity: null argument");
-    *mask = (*attr)->_affinity;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<KernelCpumask>(mask, handle->_affinity);
 }
 
 int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state) {
@@ -173,10 +172,9 @@ int APS5_VABI scePthreadAttrGetschedpolicy(const PthreadAttr* attr, int* policy)
 }
 
 int APS5_VABI scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    if (!solosched) throw std::runtime_error(std::string(__func__) + ": null output");
-    *solosched = (*attr)->_solosched;
-    return SCE_OK;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    return StoreOutput<int>(solosched, handle->_solosched);
 }
 
 int APS5_VABI scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stack_addr) {
@@ -192,9 +190,10 @@ int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_
 }
 
 int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    (*attr)->_affinity = mask;
-    (*attr)->_affinityExplicit = true;
+    PthreadAttr handle = nullptr;
+    if (const int error = LoadAttribute(attr, handle)) return error;
+    handle->_affinity = mask;
+    handle->_affinityExplicit = true;
     return SCE_OK;
 }
 

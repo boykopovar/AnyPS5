@@ -21,6 +21,7 @@
 #include "LocaleMap.hpp"
 #include "Unescape.hpp"
 #include "Properties.hpp"
+#include "CodePointTrie.hpp"
 #include "Script.hpp"
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"

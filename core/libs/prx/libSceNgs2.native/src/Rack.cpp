@@ -324,7 +324,7 @@ int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (voice_id >= rack->voices.size()) return SCE_NGS2_ERROR_INVALID_VOICE_INDEX;
-    *handle = reinterpret_cast<Ngs2Handle>(&rack->voices[voice_id]);
+    if (!WriteGuest(handle, reinterpret_cast<Ngs2Handle>(&rack->voices[voice_id]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -395,7 +395,8 @@ int APS5_VABI sceNgs2CustomRackGetModuleInfo(uintptr_t rack_handle, uint32_t mod
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
     if (module_index >= rack->customModules.size() || info_size < sizeof(Ngs2CustomModuleInfo)) APS5_INVALID_ARG_EX;
     if (info_size != sizeof(Ngs2CustomModuleInfo)) throw std::runtime_error("NGS2: custom module info of " + std::to_string(info_size) + " bytes is not implemented");
-    *info = rack->customModules[module_index];
+    const Ngs2CustomModuleInfo local = rack->customModules[module_index];
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "prx/libSceJxr/GuestPixelInfo.h"
+#include "prx/libSceJxr/include/Metadata.hpp"
 #include "prx/libSceJxr/ImageEncode.hpp"
 #include "prx/libSceJxr/Stream.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
@@ -75,7 +76,7 @@ std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* b
 std::int64_t APS5_VABI CreateWS_List_nid_postfix(Jxr::Stream** stream);
 int APS5_VABI EOSWS_File_nid_postfix(Jxr::Stream* stream);
 std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream);
-int APS5_VABI FreeDescMetadata_nid_postfix();
+void APS5_VABI FreeDescMetadata_nid_postfix(Jxr::MetadataVariant* value);
 std::int64_t APS5_VABI GetPosWS_File_nid_postfix(Jxr::Stream* stream, std::size_t* position);
 std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::size_t* position);
 std::int64_t APS5_VABI GetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_t* position);

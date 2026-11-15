@@ -251,7 +251,7 @@ int SendUpdateData(std::uint32_t device, const void* chunk) {
     if (!Initialized()) return ErrorNotInitialized;
     if (chunk == nullptr) return ErrorInvalidArgument;
     std::uint64_t size = 0;
-    std::memcpy(&size, chunk, sizeof(size));
+    if (!LoadGuest(size, static_cast<const std::uint64_t*>(chunk))) return ErrorInvalidArgument;
     if (size > MaximumUpdateChunk) return ErrorInvalidArgument;
     UpdateData request{};
     request.device = device;
