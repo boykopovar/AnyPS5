@@ -754,12 +754,22 @@ void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator) {
 }
 
 int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat) {
+    NpHeap local {};
+    int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&local, heap, sizeof(local));
+    errno = savedErrno;
+    if (!read) return NP_ERROR_INVALID_ARGUMENT;
     MallocManagedSize stats {};
     stats.size = sizeof(stats);
     stats.version = 1;
-    const int result = sceLibcMspaceMallocStats_nid_postfix(heap->mspace, &stats);
-    if (result == 0) *stat = {stats.maxSystemSize, stats.maxInuseSize, stats.currentInuseSize};
-    return result;
+    const int result = sceLibcMspaceMallocStats_nid_postfix(local.mspace, &stats);
+    if (result != 0) return result;
+    const NpHeapStat value {stats.maxSystemSize, stats.maxInuseSize, stats.currentInuseSize};
+    savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 void APS5_VABI sceNpHeapShowStat(const NpHeap* heap) {
