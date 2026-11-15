@@ -4,14 +4,14 @@
 
 extern "C" {
 
-int APS5_VABI sceMusicFwGetCurrentTime();
-int APS5_VABI sceMusicFwGetLoop();
-int APS5_VABI sceMusicFwGetMuted();
-int APS5_VABI sceMusicFwGetNetworkState();
-int APS5_VABI sceMusicFwGetVolume();
-int APS5_VABI sceMusicFwIsEnded();
-int APS5_VABI sceMusicFwIsPlaying();
-int APS5_VABI sceMusicFwIsStopped();
+int APS5_VABI sceMusicFwGetCurrentTime(std::int32_t handle, void* output);
+int APS5_VABI sceMusicFwGetLoop(std::int32_t handle, void* output);
+int APS5_VABI sceMusicFwGetMuted(std::int32_t handle, void* output);
+int APS5_VABI sceMusicFwGetNetworkState(std::int32_t handle, void* output);
+int APS5_VABI sceMusicFwGetVolume(std::int32_t handle, void* output);
+int APS5_VABI sceMusicFwIsEnded(std::int32_t handle, void* output);
+int APS5_VABI sceMusicFwIsPlaying(std::int32_t handle, void* output);
+int APS5_VABI sceMusicFwIsStopped(std::int32_t handle, void* output);
 int APS5_VABI sceMusicFwRemoveSrc();
 int APS5_VABI sceMusicFwSendMessageAsynchronously();
 int APS5_VABI sceMusicFwSendMessageSynchronously();

@@ -3,12 +3,34 @@
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Common.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 
 namespace {
 
 constexpr int POSIX_PROCESS_PRIVATE = 0;
+
+struct ErrnoGuard {
+    const int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
 
 int toPosix(int result) {
     if (result == 0)
@@ -44,8 +66,11 @@ int APS5_VABI pthread_cond_signal_nid_postfix(PthreadCond* cond) {
 }
 
 int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
-    if (!cond || !mutex || !abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
-    return toPosix(CondOperations::AbsoluteTimedwait(cond, mutex, abstime));
+    const ErrnoGuard guard;
+    KernelTimespec deadline{};
+    if (!cond || !mutex || !abstime || !CopyGuestInPreservingErrno(deadline, abstime)) return PosixThread::GUEST_EINVAL;
+    if (deadline.tv_sec < 0 || deadline.tv_nsec < 0 || deadline.tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
+    return toPosix(CondOperations::AbsoluteTimedwait(cond, mutex, &deadline));
 }
 
 int APS5_VABI pthread_cond_reltimedwait_np_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
@@ -77,10 +102,11 @@ int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, Kerne
 }
 
 int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId) {
+    const ErrnoGuard guard;
     PthreadCondattr handle = nullptr;
     if (const int error = CondOperations::LoadAttribute(attr, handle)) return toPosix(error);
     const KernelClockid value = handle->_clockid;
-    if (!GuestCopyOut_nid_no_patch(clockId, &value, sizeof(value))) return PosixThread::GUEST_EFAULT;
+    if (!CopyGuestOutPreservingErrno(clockId, value)) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
@@ -93,9 +119,10 @@ int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int
 }
 
 int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* attr, int* pshared) {
+    const ErrnoGuard guard;
     PthreadCondattr handle = nullptr;
     if (const int error = CondOperations::LoadAttribute(attr, handle)) return toPosix(error);
-    if (!GuestCopyOut_nid_no_patch(pshared, &handle->_pshared, sizeof(handle->_pshared))) return PosixThread::GUEST_EFAULT;
+    if (!CopyGuestOutPreservingErrno(pshared, handle->_pshared)) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
