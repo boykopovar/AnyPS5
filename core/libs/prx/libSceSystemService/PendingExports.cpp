@@ -1016,11 +1016,6 @@ int APS5_VABI sceShellCoreUtilGetTitleWorkaroundFileString(char* value, std::siz
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilGetUIStatus(std::uint64_t* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilGetUmmStatus(std::int32_t userId, ShellCoreUmmStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1387,11 +1382,6 @@ int APS5_VABI sceShellCoreUtilSetSystemBGWaveColor(std::uint32_t color) {
 }
 
 int APS5_VABI sceShellCoreUtilSetSystemBGWaveState(std::uint32_t state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilSetUIStatus(std::uint64_t status, std::uint64_t mask) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
