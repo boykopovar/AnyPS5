@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -402,7 +403,9 @@ void TableOverBoundCase(AgcDriver::VulkanDevice& device) {
     auto resources = std::make_shared<ShaderResources>(context, shader);
     const auto& sampled = resources->SampledTextures();
     const auto perUse = std::count_if(sampled.begin(), sampled.end(), [](const auto& texture) { return texture != nullptr && texture->RefreshedPerUse(); });
-    Require(sampled.size() == TableTextures && perUse == 1, "table over the bound: the build holds " + std::to_string(sampled.size()) + " textures, " + std::to_string(perUse) + " of them refreshed per use, instead of " + std::to_string(TableTextures) + " with one");
+    const bool planeReuse = std::getenv("APS5_NO_DEPTH_PLANE_REUSE") == nullptr;
+    Require(sampled.size() == TableTextures && perUse == (planeReuse ? 0 : 1), "table over the bound: the build holds " + std::to_string(sampled.size()) + " textures, " + std::to_string(perUse) + " of them refreshed per use, instead of " + std::to_string(TableTextures) + " with " + (planeReuse ? "none" : "one"));
+    if (planeReuse) return;
     if (!templates) {
         Require(!resources->Reusable(), "table over the bound: APS5_NO_PER_USE_TEXTURE_TEMPLATES kept a build over a per-use texture reusable");
         return;
@@ -569,6 +572,30 @@ void BaseSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span
     Expect(output, Bits(0.5f), "D32 2D array from base slice 1 through a 2D shader image");
 }
 
+void ReuseCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    auto* base = block.At(ArrayOffset);
+    const Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, 0.375f);
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.375f), "D32 2D array slice 0 before the repeated lookup");
+    const bool reuse = std::getenv("APS5_NO_DEPTH_PLANE_REUSE") == nullptr;
+    const auto words = TextureDescriptor(base, shape);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    const auto texture = AgcDriver::Graphics::DepthSurfaceTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), words, resource, {});
+    Require(texture->HasReuseLookup() == reuse && texture->RefreshedPerUse() != reuse, reuse ? "a depth plane copy's texture carries no lookup to repeat, or is still remade per use" : "APS5_NO_DEPTH_PLANE_REUSE left a depth plane copy's texture reusable");
+    if (reuse) {
+        AgcDriver::Graphics::Texture::TakeReuseLookupCounts();
+        DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, 0.625f);
+        Require(texture->ReuseLookupHolds(), "the repeated lookup of a depth plane copy returned another texture after its slice was drawn again");
+        const auto counts = AgcDriver::Graphics::Texture::TakeReuseLookupCounts();
+        Require(counts.held == 1 && counts.changed == 0, "one repeated lookup counted " + std::to_string(counts.held) + " held and " + std::to_string(counts.changed) + " changed, expected 1 and 0");
+    } else {
+        DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, 0.625f);
+    }
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.625f), "D32 2D array slice 0 drawn again after the first lookup");
+}
+
 void FrameCopiesCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     constexpr VkExtent2D extent{128, 256};
     constexpr VkDeviceSize budget = 1u << 20u;
@@ -665,6 +692,7 @@ int main(int argc, char** argv) {
         PaddedD16CubeCase(*device, block, output);
         present();
         BaseSliceCase(*device, block, output);
+        ReuseCase(*device, block, output);
         RefusalCase(*device, block);
         if (evicting) {
             const auto kept = AgcDriver::Graphics::DepthPlaneCopyCount();

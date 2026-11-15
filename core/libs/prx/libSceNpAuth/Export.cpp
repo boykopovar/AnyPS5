@@ -1,8 +1,10 @@
 #include "prx/libSceNpAuth/include/Api.hpp"
 #include <atomic>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -40,6 +42,13 @@ int CreateRequest(bool isAsync) {
  return reqId;
 }
 
+bool CopyOutResult(int* result, int value) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+ errno = savedErrno;
+ return copied;
+}
+
 }
 
 extern "C" {
@@ -70,10 +79,16 @@ int APS5_VABI sceNpAuthDeleteRequest(int req_id) {
 int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t requestId, const NpAuthAuthorizedAppCodeParameter* parameter, char* code, std::int32_t* issuerId, bool* authorizationRequired) {
  (void)issuerId;
  if (parameter == nullptr || code == nullptr || authorizationRequired == nullptr) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
- if (parameter->size != sizeof(NpAuthAuthorizedAppCodeParameter)) return static_cast<int>(0x80550302u);
- if (parameter->userId == -1 || parameter->clientId == nullptr || parameter->scope == nullptr || parameter->option > 1) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ NpAuthAuthorizedAppCodeParameter localParameter{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParameter, parameter, sizeof(localParameter));
+ errno = savedErrno;
+ if (!copied) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (localParameter.size != sizeof(NpAuthAuthorizedAppCodeParameter)) return static_cast<int>(0x80550302u);
+ if (localParameter.userId == -1 || localParameter.clientId == nullptr || localParameter.scope == nullptr || localParameter.option > 1) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
  if (!g_requests.contains(requestId)) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
+ if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return SCE_NP_ERROR_SIGNED_OUT;
  throw std::logic_error("sceNpAuthGetAuthorizedAppCode: authorization backend is not implemented");
 }
 
@@ -134,7 +149,7 @@ int APS5_VABI sceNpAuthPollAsync(int req_id, int* result) {
   }
   res = it->second.result;
  }
- if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (!CopyOutResult(result, res)) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
 
@@ -163,7 +178,7 @@ int APS5_VABI sceNpAuthWaitAsync(int req_id, int* result) {
   if (!it->second.isAsync || !it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ID;
   res = it->second.result;
  }
- if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (!CopyOutResult(result, res)) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
 

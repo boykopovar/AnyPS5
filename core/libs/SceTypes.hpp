@@ -1513,7 +1513,15 @@ struct SharePlayConnectionInfo {
     std::int32_t visitorUserId;
 };
 static_assert(sizeof(SharePlayConnectionInfo) == 56 && offsetof(SharePlayConnectionInfo, hostUserId) == 48);
-struct NpId { NpOnlineId online_id; std::uint8_t opaque[4]; };
+struct NpId {
+    union {
+        NpOnlineId handle;
+        NpOnlineId online_id;
+    };
+    std::uint8_t opt[8];
+    std::uint8_t reserved[8];
+};
+static_assert(sizeof(NpId) == 36);
 struct NpCreateAsyncRequestParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumResult { std::uint8_t opaque[64]; };

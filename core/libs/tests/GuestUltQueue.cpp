@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -85,6 +86,8 @@ static void Validation() {
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0, 0) == 64);
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(3, 2) == 320);
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0, 0x08000000u) == 0x100000040ull);
+    CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0x80000000u, 0) == 0x40ull);
+    CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(0x80000000u, 1, 0) == 0x80000060ull);
     bool overflow = false;
     try { sceUltQueueDataResourcePoolGetWorkAreaSize(1, UINT64_MAX, 1); }
     catch (const std::out_of_range&) { overflow = true; }
@@ -128,6 +131,29 @@ static void Fifo() {
         }
         CHECK(sceUltQueueTryPop(&fixture.first, output.data()) == Again);
     }
+    fixture.Destroy();
+}
+
+static void GuestPointers() {
+    Fixture fixture;
+    fixture.Create(2);
+    const auto* unreadableInput = reinterpret_cast<const std::uint64_t*>(0x10);
+    auto* unwritableOutput = reinterpret_cast<std::uint64_t*>(0x10);
+    const std::uint64_t first = 0x123456789abcdef0ull;
+    const std::uint64_t second = 0xfedcba9876543210ull;
+    std::uint64_t output = 0;
+    errno = 71;
+    CHECK(sceUltQueueTryPush(&fixture.first, unreadableInput) == Null && errno == 71);
+    CHECK(sceUltQueuePush(&fixture.first, unreadableInput) == Null && errno == 71);
+    CHECK(sceUltQueueTryPop(&fixture.first, &output) == Again && output == 0);
+    CHECK(sceUltQueuePush(&fixture.first, &first) == 0);
+    CHECK(sceUltQueueTryPop(&fixture.first, unwritableOutput) == Null && errno == 71);
+    CHECK(sceUltQueuePop(&fixture.first, unwritableOutput) == Null && errno == 71);
+    CHECK(sceUltQueuePush(&fixture.first, &second) == 0);
+    CHECK(sceUltQueueTryPush(&fixture.first, unreadableInput) == Again);
+    CHECK(sceUltQueueTryPop(&fixture.first, &output) == 0 && output == first);
+    CHECK(sceUltQueuePop(&fixture.first, &output) == 0 && output == second);
+    CHECK(sceUltQueueTryPop(&fixture.first, &output) == Again);
     fixture.Destroy();
 }
 
@@ -237,6 +263,7 @@ int main(int argc, char** argv) {
     CHECK(sceUltInitialize() == 0);
     if (std::strcmp(argv[1], "validation") == 0) Validation();
     else if (std::strcmp(argv[1], "fifo") == 0) Fifo();
+    else if (std::strcmp(argv[1], "guest-pointers") == 0) GuestPointers();
     else if (std::strcmp(argv[1], "blocking") == 0) Blocking();
     else if (std::strcmp(argv[1], "shared-pool") == 0) SharedPool();
     else if (std::strcmp(argv[1], "finalize") == 0) Finalize();

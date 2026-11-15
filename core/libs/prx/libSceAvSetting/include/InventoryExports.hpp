@@ -23,7 +23,7 @@ int APS5_VABI libSceAvSettingUnknown_bXmd6MGBaNI_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_cANt7oF1VsA_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_ftQASJeHi6M_nid_no_patch();
-int APS5_VABI libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch();
+int APS5_VABI libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch(const void* videoOutMode);
 int APS5_VABI libSceAvSettingUnknown_m1Wi0Yp38v0_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch();
 int APS5_VABI libSceAvSettingUnknown_nWFSNYt07Cw_nid_no_patch();

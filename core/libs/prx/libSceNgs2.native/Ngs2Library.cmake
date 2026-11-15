@@ -5,6 +5,7 @@ function(add_sce_ngs2_library target)
         add_library(vgmstream_hevag STATIC EXCLUDE_FROM_ALL ${CMAKE_SOURCE_DIR}/3rdparty/vgmstream/src/coding/psv_decoder.c)
         target_include_directories(vgmstream_hevag PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/vgmstream/src)
         set_target_properties(vgmstream_hevag PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+        target_compile_options(vgmstream_hevag PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fno-sanitize=shift>)
     endif()
     set(ngs2Dir ${CMAKE_CURRENT_FUNCTION_LIST_DIR})
     add_library(${target} SHARED EXCLUDE_FROM_ALL
