@@ -115,6 +115,41 @@ std::string ChangeCase(std::string_view value, bool upper) {
     return result;
 }
 
+bool AlphaNumeric(char value) {
+    return Alpha(value) || (value >= '0' && value <= '9');
+}
+
+bool KeywordName(std::string_view value) {
+    return !value.empty() && std::all_of(value.begin(), value.end(), AlphaNumeric);
+}
+
+bool ValueCharacter(char value) {
+    return AlphaNumeric(value) || value == '_' || value == '-' || value == '+' || value == '/';
+}
+
+std::string_view Trim(std::string_view value) {
+    const auto first = value.find_first_not_of(' ');
+    if (first == std::string_view::npos) return {};
+    return value.substr(first, value.find_last_not_of(' ') - first + 1);
+}
+
+bool ShortestSubtagIsOne(std::string_view value) {
+    std::size_t shortest = value.size();
+    std::size_t current = 0;
+    bool reset = true;
+    for (const char part : value) {
+        if (part != '_' && part != '-') {
+            if (reset) current = 0;
+            reset = false;
+            ++current;
+        } else {
+            if (current != 0 && current < shortest) shortest = current;
+            reset = true;
+        }
+    }
+    return shortest == 1;
+}
+
 bool IsScript(std::string_view value) {
     return value.size() == 4 && std::all_of(value.begin(), value.end(), Alpha);
 }
@@ -269,31 +304,45 @@ std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyw
                                            char* result, std::int32_t capacity,
                                            std::int32_t* status) {
     if (!status || *status > 0) return 0;
-    if (!locale || !keyword || !*keyword) {
+    if (!locale || !keyword || !KeywordName(keyword)) {
         *status = kIllegalArgument;
         return 0;
     }
     const std::string requested = ChangeCase(keyword, false);
-    const std::string values = Parse(locale).keywords;
-    std::size_t start = 0;
-    while (start < values.size()) {
-        const auto end = values.find(';', start);
-        const auto item = std::string_view(values).substr(
-            start, end == std::string::npos ? end : end - start);
-        const auto equal = item.find('=');
-        if (equal == std::string_view::npos) {
+    std::string_view input(locale);
+    std::string converted;
+    if (input.find('@') == std::string_view::npos && ShortestSubtagIsOne(input)) {
+        std::int32_t conversion = 0;
+        const std::int32_t length = uloc_forLanguageTag(locale, nullptr, 0, nullptr, &conversion);
+        if (conversion > 0 && conversion != kBufferOverflow) {
+            *status = conversion;
+            return 0;
+        }
+        if (length > 0) {
+            converted.resize(static_cast<std::size_t>(length));
+            conversion = 0;
+            uloc_forLanguageTag(locale, converted.data(), length, nullptr, &conversion);
+            input = converted;
+        }
+    }
+    auto start = input.find('@');
+    while (start != std::string_view::npos) {
+        const auto equal = input.find('=', start + 1);
+        const auto name = Trim(input.substr(start + 1, equal - start - 1));
+        if (equal == std::string_view::npos || !KeywordName(name)) {
             *status = kIllegalArgument;
             return 0;
         }
-        if (ChangeCase(item.substr(0, equal), false) == requested) {
-            if (equal + 1 == item.size()) {
+        start = input.find(';', equal);
+        if (ChangeCase(name, false) == requested) {
+            const auto value = Trim(input.substr(
+                equal + 1, start == std::string_view::npos ? start : start - equal - 1));
+            if (value.empty() || !std::all_of(value.begin(), value.end(), ValueCharacter)) {
                 *status = kIllegalArgument;
                 return 0;
             }
-            return Write(item.substr(equal + 1), result, capacity, status, false);
+            return Write(value, result, capacity, status, false);
         }
-        if (end == std::string::npos) break;
-        start = end + 1;
     }
     return Write("", result, capacity, status, false);
 }
