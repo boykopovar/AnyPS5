@@ -1282,7 +1282,12 @@ bool APS5_VABI sceNpIntIsOnlineIdString(const char* text) {
 int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
     const NpLanguageCodes* codes = FindLanguageCodes(language);
     if (codes == nullptr || code == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    CopyText(code, codes->code, NP_LANGUAGE_CODE_SIZE);
+    char localCode[NP_LANGUAGE_CODE_SIZE]{};
+    CopyText(localCode, codes->code, NP_LANGUAGE_CODE_SIZE);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(code, localCode, NP_LANGUAGE_CODE_SIZE);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 

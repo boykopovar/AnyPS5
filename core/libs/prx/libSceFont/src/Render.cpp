@@ -261,21 +261,25 @@ int APS5_VABI sceFontGetVerticalLayout(FontHandle fontHandle, FontVerticalLayout
     auto* font = GetNativeFont(fontHandle);
     std::uint32_t fontLock = 0;
     if (font && font->magic == HANDLE_MAGIC && AcquireFontLock(font, fontLock)) {
-        if (!layout) {
+        if (!layout || !Font::CopyOutGuest(layout, FontVerticalLayout{})) {
             rc = SCE_FONT_ERROR_INVALID_PARAMETER;
         } else {
             std::uint8_t blocks[VERTICAL_LAYOUT_SIZE] = {};
             rc = ComputeVerticalLayout(fontHandle, &font->style, blocks);
             if (rc == SCE_FONT_OK) {
-                layout->baselineOffsetX = LoadFloat(blocks, VERTICAL_BASELINE_OFFSET_X);
-                layout->columnAdvance = LoadFloat(blocks, VERTICAL_COLUMN_ADVANCE);
-                layout->decorationSpan = LoadFloat(blocks, VERTICAL_DECORATION_SPAN);
+                FontVerticalLayout localLayout{};
+                localLayout.baselineOffsetX = LoadFloat(blocks, VERTICAL_BASELINE_OFFSET_X);
+                localLayout.columnAdvance = LoadFloat(blocks, VERTICAL_COLUMN_ADVANCE);
+                localLayout.decorationSpan = LoadFloat(blocks, VERTICAL_DECORATION_SPAN);
+                if (!Font::CopyOutGuest(layout, localLayout)) {
+                    rc = SCE_FONT_ERROR_INVALID_PARAMETER;
+                }
             }
         }
         ReleaseFontLock(font, fontLock);
         if (rc == SCE_FONT_OK) return rc;
     }
-    if (layout) *layout = {};
+    if (layout) Font::CopyOutGuest(layout, FontVerticalLayout{});
     return rc;
 }
 
