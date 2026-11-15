@@ -267,11 +267,13 @@ int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption*
 int APS5_VABI sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (buffer_info == nullptr) APS5_INVALID_ARG_EX;
+    Ngs2ContextBufferInfo localBufferInfo{};
+    if (!ReadGuest(buffer_info, localBufferInfo)) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
     RackOptions options{};
     const int result = CheckedRackOption(rack_id, option, options);
     if (result != SCE_NGS2_OK) return result;
     const Ngs2Lock lock;
-    return CreateRack(system_handle, rack_id, options, *buffer_info, {}, handle);
+    return CreateRack(system_handle, rack_id, options, localBufferInfo, {}, handle);
 }
 
 int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
