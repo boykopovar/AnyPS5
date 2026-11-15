@@ -36,30 +36,30 @@ static void CheckBoundedBinaryInput() {
     const std::uint8_t tiny[] = {0x63, 0x82};
     std::uint8_t output[2]{};
     errno = 71;
-    Require(sceRegMgrSetBin(0x2010, tiny, 256 * limit) == bad);
+    Require(sceRegMgrSetBin(0x2020, tiny, 256 * limit) == bad);
     Require(errno == 71);
-    Require(sceRegMgrGetBin(0x2010, output, sizeof(output)) == missing);
-    Require(sceRegMgrIsChange(0x2010, 0x0d010001u) == 0);
+    Require(sceRegMgrGetBin(0x2020, output, sizeof(output)) == missing);
+    Require(sceRegMgrIsChange(0x2020, 0x0d010001u) == 0);
 
-    Require(sceRegMgrSetBin(0x2011, tiny, sizeof(tiny)) == 0);
-    Require(sceRegMgrIsChange(0x2011, 0x0d010001u) == 1);
+    Require(sceRegMgrSetBin(0x2021, tiny, sizeof(tiny)) == 0);
+    Require(sceRegMgrIsChange(0x2021, 0x0d010001u) == 1);
     std::vector<std::uint8_t> oversized(limit + 1, 0x33);
     errno = 71;
-    Require(sceRegMgrSetBin(0x2011, oversized.data(), oversized.size()) == bad);
+    Require(sceRegMgrSetBin(0x2021, oversized.data(), oversized.size()) == bad);
     Require(errno == 71);
-    Require(sceRegMgrGetBin(0x2011, output, sizeof(output)) == 0);
+    Require(sceRegMgrGetBin(0x2021, output, sizeof(output)) == 0);
     Require(std::memcmp(tiny, output, sizeof(tiny)) == 0);
-    Require(sceRegMgrIsChange(0x2011, 0x0d010001u) == 0);
+    Require(sceRegMgrIsChange(0x2021, 0x0d010001u) == 0);
 
     std::vector<std::uint8_t> bytes(limit, 0x5a);
     bytes[0] = 0x45;
-    Require(sceRegMgrSetBin(0x2012, bytes.data(), bytes.size()) == 0);
-    Require(sceRegMgrIsChange(0x2012, 0x0d010001u) == 1);
+    Require(sceRegMgrSetBin(0x2022, bytes.data(), bytes.size()) == 0);
+    Require(sceRegMgrIsChange(0x2022, 0x0d010001u) == 1);
     std::vector<std::uint8_t> restored(limit);
-    Require(sceRegMgrGetBin(0x2012, restored.data(), static_cast<int>(restored.size())) == 0);
+    Require(sceRegMgrGetBin(0x2022, restored.data(), static_cast<int>(restored.size())) == 0);
     Require(restored == bytes);
-    Require(sceRegMgrSetBin(0x2012, bytes.data(), bytes.size()) == 0);
-    Require(sceRegMgrIsChange(0x2012, 0x0d010001u) == 0);
+    Require(sceRegMgrSetBin(0x2022, bytes.data(), bytes.size()) == 0);
+    Require(sceRegMgrIsChange(0x2022, 0x0d010001u) == 0);
 }
 
 using SizeCheck = decltype(&libSceRegMgrUnknown_YtmvqKL9PEo_nid_no_patch);
