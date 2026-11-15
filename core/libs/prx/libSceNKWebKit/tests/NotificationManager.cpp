@@ -86,14 +86,22 @@ int main() {
     Require(gLastAddedManager == managerRef);
     Require(gLastAddedClientInfo == &dummyClientInfo2);
 
-    WKNotificationManagerSetProvider(managerRef, nullptr);
-    Require(!manager->provider.has_value());
-    Require(gLastRemovedManager == managerRef);
-    Require(gLastRemovedClientInfo == &dummyClientInfo2);
+    WKNotificationManagerSetProvider(managerRef, &provider2.base);
+    Require(manager->provider.has_value());
+    gLastRemovedManager = nullptr;
+    gLastRemovedClientInfo = nullptr;
 
     NKWebKit::WKNotificationProviderBase invalidProvider{};
     invalidProvider.version = 999;
     RequireInvalidArgument([&] { WKNotificationManagerSetProvider(managerRef, &invalidProvider); });
+    Require(manager->provider.has_value());
+    Require(gLastRemovedManager == nullptr);
+    Require(gLastRemovedClientInfo == nullptr);
+
+    WKNotificationManagerSetProvider(managerRef, nullptr);
+    Require(!manager->provider.has_value());
+    Require(gLastRemovedManager == managerRef);
+    Require(gLastRemovedClientInfo == &dummyClientInfo2);
 
     WKNotificationManagerProviderDidShowNotification(managerRef, 1001ULL);
     WKNotificationManagerProviderDidShowNotification(managerRef, 2002ULL);

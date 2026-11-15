@@ -11,6 +11,12 @@ const void* APS5_VABI WKContextGetNotificationManager(const void* contextRef) {
 
 void APS5_VABI WKNotificationManagerSetProvider(const void* managerRef, const void* provider) {
     auto* manager = NKWebKit::Cast<NKWebKit::NotificationManager>(managerRef, __func__);
+    if (provider) {
+        const auto* base = static_cast<const NKWebKit::WKNotificationProviderBase*>(provider);
+        if (base->version != 0) {
+            throw std::invalid_argument("WKNotificationManagerSetProvider: unsupported provider version");
+        }
+    }
     if (manager->provider.has_value() && manager->provider->removeNotificationManager) {
         manager->provider->removeNotificationManager(managerRef, manager->provider->base.clientInfo);
     }
@@ -18,15 +24,10 @@ void APS5_VABI WKNotificationManagerSetProvider(const void* managerRef, const vo
         manager->provider.reset();
         return;
     }
-    const auto* base = static_cast<const NKWebKit::WKNotificationProviderBase*>(provider);
-    if (base->version == 0) {
-        const auto* v0 = static_cast<const NKWebKit::WKNotificationProviderV0*>(provider);
-        manager->provider = *v0;
-        if (manager->provider->addNotificationManager) {
-            manager->provider->addNotificationManager(managerRef, manager->provider->base.clientInfo);
-        }
-    } else {
-        throw std::invalid_argument("WKNotificationManagerSetProvider: unsupported provider version");
+    const auto* v0 = static_cast<const NKWebKit::WKNotificationProviderV0*>(provider);
+    manager->provider = *v0;
+    if (manager->provider->addNotificationManager) {
+        manager->provider->addNotificationManager(managerRef, manager->provider->base.clientInfo);
     }
 }
 
