@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstdio>
 #include <string>
 #include "prx/libSceAutoMounterClient/include/Api.hpp"
@@ -26,7 +27,10 @@ extern "C" {
 int APS5_VABI sceAutoMounterClientGetUsbDeviceInfo(const char* deviceName, AutoMounterUsbDeviceInfo* info) {
     if (deviceName != nullptr) {
         std::string name;
-        if (CopyGuestString_nid_no_patch(deviceName, 128, name) != 0) return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
+        const int savedErrno = errno;
+        const int status = CopyGuestString_nid_no_patch(deviceName, 128, name);
+        errno = savedErrno;
+        if (status != 0) return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
         char buf[128];
         if (sscanf(name.c_str(), "/dev%127s", buf) == 0) return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
     }
