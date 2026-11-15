@@ -79,7 +79,8 @@ int main() {
         {"_US", "US"}, {"en_419", "419"}, {"en_001", "001"},
         {"en__POSIX", ""}, {"sr_Latn_RS@currency=EUR", "RS"}, {"eng_USA", "US"},
         {"de-deu", "DE"}, {"zho_Hant_TWN", "TW"}, {"sr_Latn_SRB", "RS"}, {"en_XYZ", "XYZ"},
-        {"en_XEA", "XEA"},
+        {"en_XEA", "XEA"}, {"en_a1", "A1"}, {"en_12", "12"}, {"en_1ab", "1AB"},
+        {"en__US", ""}, {"en_Latn__US", ""},
     });
     Check(uloc_getScript, true, {
         {"en_US", ""}, {"zh_Hant_TW", "Hant"}, {"eN_LatN_us", "Latn"},
@@ -91,6 +92,7 @@ int main() {
         {"fr_FR.utf8", "fr_FR.utf8"}, {"sr_Latn_RS@currency=EUR", "sr_Latn_RS"},
         {"i-klingon", "tlh"}, {"x-private", ""}, {"root", ""}, {"und", ""},
         {"eng_USA_POSIX", "en_US_POSIX"}, {"fra-can", "fr_CA"},
+        {"en_a1_POSIX", "en_A1_POSIX"}, {"en__US", "en__US"},
     });
     Check(uloc_canonicalize, false, {
         {"EN-us", "en_US"}, {"eN_LatN_us", "en_Latn_US"},
@@ -99,6 +101,7 @@ int main() {
         {"de_DE@currency=EUR;collation=phonebook", "de_DE@collation=phonebook;currency=EUR"},
         {"fr@collation=phonebook", "fr@collation=phonebook"},
         {"deu_DEU@currency=EUR", "de_DE@currency=EUR"},
+        {"en-12", "en_12"}, {"en__US", "en__US"},
     });
     CheckKeyword("en_US@currency=USD", "currency", "USD");
     CheckKeyword("de_DE@currency=EUR;collation=phonebook", "collation", "phonebook");
@@ -108,6 +111,32 @@ int main() {
     CheckKeyword("en_US", "currency", "");
     CheckKeyword("en@currency=USD;badstuff", "calendar", "", 1);
     CheckKeyword("en@currency=", "currency", "", 1);
+    CheckKeyword("en@ currency = USD ", "currency", "USD");
+    CheckKeyword("en@currency=USD; calendar = buddhist ", "calendar", "buddhist");
+    CheckKeyword("en@currency=a+b/c_d-e", "currency", "a+b/c_d-e");
+    CheckKeyword("en@cur.rency=USD;calendar=buddhist", "calendar", "", 1);
+    CheckKeyword("en@badstuff;currency=USD", "currency", "", 1);
+    CheckKeyword("en@currency=USD", "cur-rency", "", 1);
+    CheckKeyword("en_US@currency=USD", "cur rency", "", 1);
+    CheckKeyword("en@currency= ", "currency", "", 1);
+    CheckKeyword("en@currency=USD;", "calendar", "", 1);
+    CheckKeyword("en@", "currency", "", 1);
+    CheckKeyword("en@currency=.US", "currency", "", 1);
+    CheckKeyword("en@currency= .S", "currency", "", 1);
+    CheckKeyword("en-x-foo", "x", "foo");
+    CheckKeyword("EN-X-FOO", "X", "foo");
+    CheckKeyword("de-DE-1901-x-ab", "x", "ab");
+    CheckKeyword("en-a-bbb-x-foo-bar", "a", "bbb");
+    CheckKeyword("en-a-bbb-x-foo-bar", "x", "foo-bar");
+    CheckKeyword("und-x-priv", "x", "priv");
+    CheckKeyword("en-u-attr2-attr1", "attribute", "attr1-attr2");
+    CheckKeyword("en-x-foo", "calendar", "");
+    CheckKeyword("C", "currency", "");
+    CheckKeyword("en-x", "x", "");
+    CheckKeyword("en_x_foo", "x", "");
+    CheckKeyword("en-u-ca-buddhist", "cur-rency", "", 1);
+    CheckKeyword("en-u-abcdefg1-abcdefg2-abcdefg3-abcdefg4-abcdefg5-abcdefg6-abcdefg7-abcdefg8-abcdefg9-abcdefga-abcdefgb-abcdefgc",
+                 "attribute", "", 1);
 
     std::array<char, 16> output{};
     output.fill('Q');
@@ -126,6 +155,17 @@ int main() {
         assert(function(nullptr, output.data(), 16, &status) == 0);
         assert(status == 15 && output[0] == 'Q');
     }
+    status = 0;
+    bool keywordThrown = false;
+    try {
+        uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status);
+    } catch (const std::runtime_error&) {
+        keywordThrown = true;
+    }
+    assert(keywordThrown && status == 0 && output[0] == 'Q');
+    status = 15;
+    assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 0);
+    assert(status == 15 && output[0] == 'Q');
     status = 0;
     assert(uloc_getScript("sr_Latn", nullptr, 8, &status) == 0);
     assert(status == 1);
