@@ -227,6 +227,7 @@ std::optional<std::uint64_t> unsignedValue(const Value& value) {
 
 void flatten(const NpUniversalDataSystemEventPropertyObject& object, const std::string& prefix, std::vector<NpTrophy2EventProperty>& properties) {
     for (const auto& [key, value] : object.properties) {
+        if (key.empty() || key.find('.') != std::string::npos) continue;
         auto path = prefix.empty() ? key : prefix + "." + key;
         if (const auto* child = std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyObject>>(&value)) {
             flatten(**child, path, properties);

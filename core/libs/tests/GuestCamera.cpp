@@ -68,6 +68,9 @@ void CheckClosed() {
     attribute.sizeThis = sizeof(CameraAttribute);
     attribute.channel = 1;
     Require(sceCameraGetAttribute(1, &attribute) == ErrorNotOpen, "reading attributes before any open must report NOT_OPEN");
+    errno = 71;
+    Require(sceCameraGetAttribute(1, reinterpret_cast<CameraAttribute*>(0x10)) == ErrorParam, "unmapped attribute pointer must report PARAM");
+    Require(errno == 71, "errno preserved");
     std::uint32_t enable = 7;
     Require(sceCameraGetAutoExposureGain(1, 1, &enable, nullptr) == ErrorNotOpen, "reading auto exposure before any open must report NOT_OPEN");
     Require(sceCameraGetAutoExposureGain(0, 1, &enable, nullptr) == ErrorParam, "reading auto exposure with handle 0 must be rejected");
@@ -139,6 +142,9 @@ void CheckFrames() {
     Require(sceCameraGetFrameData(0, &frame) == ErrorParam, "reading handle 0 must be rejected");
     Require(sceCameraIsValidFrameData(0, &frame) == ErrorParam, "validating handle 0 must be rejected");
     Require(sceCameraIsValidFrameData(1, nullptr) == ErrorParam, "validating a null frame must be rejected");
+    errno = 71;
+    Require(sceCameraIsValidFrameData(1, reinterpret_cast<const CameraFrameData*>(0x10)) == ErrorParam, "validating unreadable frame rejected");
+    Require(errno == 71, "errno preserved");
 }
 
 void CheckClose() {

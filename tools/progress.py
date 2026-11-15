@@ -1,9 +1,11 @@
 import argparse
 import importlib.util
+import hashlib
 import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 import textwrap
 from fractions import Fraction
 from html import escape
@@ -19,11 +21,16 @@ shader_scan = importlib.util.module_from_spec(scan_spec)
 sys.modules[scan_spec.name] = shader_scan
 scan_spec.loader.exec_module(shader_scan)
 
+isa_spec = importlib.util.spec_from_file_location("anyps5_isa_profiles", Path(__file__).with_name("isa_profiles.py"))
+isa_profiles = importlib.util.module_from_spec(isa_spec)
+isa_spec.loader.exec_module(isa_profiles)
+
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
+ISA_GFX1013 = Path(__file__).resolve().parent / "gfx1013_isa_forms.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
@@ -141,14 +148,44 @@ def statements(body):
     return parts
 
 
-def inert_statement(statement, wrappers):
+def template_open(tokens, index):
+    before = tokens[index - 1] if index else ""
+    after = tokens[index + 1] if index + 1 < len(tokens) else ""
+    return bool(re.fullmatch(r"[A-Za-z_]\w*", before)) and after not in ("<", "=")
+
+
+def inert_parameters(signature):
+    parameters, nesting, default = set(), [], False
+    text = signature.partition("(")[2].rpartition(")")[0]
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text)]
+    for index, token in enumerate(tokens):
+        if token == "," and not nesting:
+            default = False
+        elif token == "=" and not nesting:
+            default = True
+        elif token == "<" and default and not template_open(tokens, index):
+            continue
+        elif token in ("(", "[", "{", "<"):
+            nesting.append(token)
+        elif token in (")", "]", "}", ">") and nesting:
+            if nesting[-1] == {")": "(", "]": "[", "}": "{", ">": "<"}[token]:
+                nesting.pop()
+        elif not default and not any(part in ("[", "{", "<") for part in nesting):
+            if re.fullmatch(r"[A-Za-z_]\w*", token):
+                parameters.add(token)
+    return parameters
+
+
+def inert_statement(statement, wrappers, parameters):
     if EMPTY_RETURN.fullmatch(statement) or CONST_RETURN.fullmatch(statement) or BARE_THROW.fullmatch(statement):
-        return True
+        returned = re.fullmatch(r"return\s+(\w+)\s*;", statement)
+        return returned is None or returned.group(1) not in parameters
     call = WRAPPER_RETURN.fullmatch(statement)
     return bool(call) and call.group(1) in wrappers
 
 
-def inert_body(body, wrappers):
+def inert_body(body, wrappers, signature):
+    parameters = inert_parameters(signature)
     terminals = 0
     for statement in statements(body):
         statement = statement.strip()
@@ -156,17 +193,17 @@ def inert_body(body, wrappers):
             continue
         if DISCARD.fullmatch(statement):
             continue
-        if terminals or not inert_statement(statement, wrappers):
+        if terminals or not inert_statement(statement, wrappers, parameters):
             return False
         terminals += 1
     return True
 
 
 def inert_wrappers(text):
-    bodies = {m.group(1): text[m.end() - 1:body_end(text, m.end() - 1)] for m in STUB_WRAPPER.finditer(text)}
+    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
     names = set()
     while True:
-        found = {name for name, body in bodies.items() if name not in names and inert_body(body, names)}
+        found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
         if not found:
             return names
         names |= found
@@ -210,7 +247,7 @@ def scan_library(path):
                 todo.add(name)
                 continue
             done.add(name)
-            (inert if inert_body(body, wrappers) else live).add(name)
+            (inert if inert_body(body, wrappers, match.group()) else live).add(name)
     todo -= done
     inert -= live
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
@@ -287,7 +324,11 @@ def collect_shaders():
 
 
 def collect_shader_source(root=None):
-    return shader_scan.measure(root or ROOT, shader_scan.load_isa_forms(ISA_FORMS))
+    try:
+        profiles = {"gfx1013": ("LLVM gfx1013 reference", isa_profiles.load_gfx1013_forms(ISA_GFX1013))}
+    except (OSError, ValueError) as error:
+        raise shader_scan.ScanError(f"cannot read gfx1013 reference: {error}") from error
+    return shader_scan.measure(root or ROOT, shader_scan.load_isa_forms(ISA_FORMS), profiles)
 
 
 def worst_ratio(row, side):
@@ -515,8 +556,15 @@ def render(libraries, shaders, shader_source=None):
         body += grid
         top += height + 10
     if shader_source:
-        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), 0, top)
-        panel, height = still_needed_svg(shader_source, top, top + row)
+        gfx1013 = shader_source.get("profiles", {}).get("gfx1013")
+        if gfx1013:
+            body += treemap("gfx1013 reference forms decoded", shader_forms_panel(gfx1013), 0, top)
+            body += treemap("RDNA2 reference forms decoded", shader_forms_panel(shader_source), PANEL_WIDTH + GAP, top)
+            top += row
+        else:
+            body += treemap("Shader forms decoded", shader_forms_panel(shader_source), 0, top)
+        needed = {**shader_source, **gfx1013} if gfx1013 else shader_source
+        panel, height = still_needed_svg(needed, top, top + row)
         body += panel
     else:
         body += treemap("GPU shader instructions", shaders, 0, top)
@@ -564,7 +612,28 @@ def shader_source_percent(source):
 
 def shader_source_badge(source):
     instructions = source["instructions"]
-    return badge("shader forms decoded", {"percent": shader_source_percent(source)}, f'{instructions["decoded"]}/{instructions["total"]}')
+    label = "RDNA2 reference" if "profiles" in source else "shader forms decoded"
+    return badge(label, {"percent": shader_source_percent(source)}, f'{instructions["decoded"]}/{instructions["total"]}')
+
+
+def gfx1013_section(source):
+    instructions, dpp = source["instructions"], source["dpp"]
+    missing = [(form_label(form), form["missing"]) for form in source["forms"] if form["missing"]]
+    return "\n".join([
+        "<h2>gfx1013 reference shader coverage</h2>",
+        "<table><tr><th>Measure</th><th>Count</th><th>Of</th></tr>",
+        f'<tr><td>Instruction forms decoded</td><td>{instructions["decoded"]}</td><td>{instructions["total"]}</td></tr>',
+        f'<tr><td>Instruction forms with a translator case</td><td>{instructions["translated"]}</td><td>{instructions["total"]}</td></tr>',
+        f'<tr><td>DPP forms decoded</td><td>{dpp["decoded"]}</td><td>{dpp["total"]}</td></tr></table>',
+        f'<p>This pinned reference profile uses AMD RDNA1 forms, the gfx1013 BVH encodings and explicitly sourced LLVM forms '
+        f'(<a href="{SOURCE}/tools/gfx1013_isa_forms.txt">inventory and provenance</a>). '
+        "The PS5 uses gfx1013, but this public-source profile is not a complete console ISA or hardware verification. "
+        "Literal positions, SDWA selectors and NSA operand layouts are not separate forms. "
+        "Decoded means opcode-table recognition; a translator case does not establish correct execution.</p>",
+        "<h3>gfx1013 reference forms not decoded</h3>",
+        "<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>"
+                             for label, names in missing) + "</table>" if missing else "<p>Every reference form is decoded.</p>",
+    ])
 
 
 def bar_rows(rows, color, scale=0):
@@ -579,12 +648,13 @@ def still_needed_html(source):
             f'<h3>Image formats (of {data["formats"][0][2]})</h3>', "<table>", *bar_rows(data["formats"], FORMAT_COLOR), "</table>",
             f'<p>Formats are counted from <a href="{SOURCE}/core/libs/prx/libSceAgcDriver/Graphics/src/TextureFormat.cpp">TextureFormat.cpp</a> '
             "and the recompiler's format tables: sampled and typed-buffer formats the recompiler handles, and formats the driver maps to a Vulkan format.</p>"]
-    right = ["<h3>Instruction forms still needed</h3>"]
+    right = ["<h3>RDNA2 reference forms still needed</h3>" if "profiles" in source else "<h3>Instruction forms still needed</h3>"]
     for heading, groups in data["lists"]:
         right.append(f"<h4>{escape(heading)}</h4>")
         if groups:
             right.append("<table>" + "".join(f"<tr><td>{escape(label)}</td><td class='names'><code>{escape(', '.join(names))}</code></td></tr>" for label, names in groups) + "</table>")
-    return "\n".join(["<h2>Still needed</h2>", '<div class="cols">', "<div>", *left, "</div>", "<div>", *right, "</div>", "</div>"])
+    title = "<h2>RDNA2 reference still needed</h2>" if "profiles" in source else "<h2>Still needed</h2>"
+    return "\n".join([title, '<div class="cols">', "<div>", *left, "</div>", "<div>", *right, "</div>", "</div>"])
 
 
 def shader_source_section(source):
@@ -592,7 +662,7 @@ def shader_source_section(source):
         return ""
     instructions, dpp = source["instructions"], source["dpp"]
     return "\n".join([
-        "<h2>Shader recompiler: counted from the code</h2>",
+        "<h2>RDNA2 reference: counted from the code</h2>" if "profiles" in source else "<h2>Shader recompiler: counted from the code</h2>",
         "<table>",
         "<tr><th>Measure</th><th>Count</th><th>Of</th></tr>",
         f'<tr><td>Instruction forms decoded</td><td>{instructions["decoded"]}</td><td>{instructions["total"]}</td></tr>',
@@ -618,7 +688,8 @@ def shader_source_section(source):
 
 def shader_page(shader_source, shaders, extra):
     if shader_source:
-        return [shader_source_section(shader_source)]
+        profile = shader_source.get("profiles", {}).get("gfx1013")
+        return ([gfx1013_section(profile)] if profile else []) + [shader_source_section(shader_source)]
     return [table("GPU shader instructions", "Encoding", shaders),
             f'<p>The total is the AMD RDNA 1 + RDNA 2 instruction list (<a href="{SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
             f'An instruction is implemented when the <a href="{SOURCE}/core/shader/recompiler/RdnaDecoder">decoder</a> recognizes it. '
@@ -720,7 +791,8 @@ def compare(title, column, unit, base, head):
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
-    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    unit = unit[:-1] if len(implemented) + len(declared) + len(regressed) + len(removed) == 1 else unit
+    changes =f', {", ".join(counts)} {unit}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
@@ -781,10 +853,17 @@ def report(base, head):
     lines = compare("System libraries", "Library", "functions", base["libraries"], head["libraries"])
     lines += library_report(base["libraries"], head["libraries"])
     lines += compare("GPU shader instructions", "Encoding", "instructions", base["shaders"], head["shaders"])
+    before = base.get("shader_source", {}).get("profiles", {}).get("gfx1013")
+    after = head.get("shader_source", {}).get("profiles", {}).get("gfx1013")
+    if after and (not before or before["instructions"] != after["instructions"] or before["dpp"] != after["dpp"]):
+        instructions = after["instructions"]
+        previous = f'{before["instructions"]["decoded"]}/{before["instructions"]["total"]}' if before else "Not measured"
+        lines += ["#### gfx1013 reference shader forms", "", "| Before | After |", "| - | - |",
+                  f'| {previous} | {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(after)}%) |', ""]
     return "\n".join(lines)
 
 
-SITE_REPORTS = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")
+SITE_REPORTS = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "badge-shaders-gfx1013.svg", "progress.svg", "progress.html")
 
 
 def require_distinct_reports(output):
@@ -817,6 +896,13 @@ def write_site(output, libraries, shaders, shader_source=None, open_pr_progress=
     (output / "progress.json").write_text(json.dumps(site_data(libraries, shaders, shader_source, open_pr_progress), indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(shader_source_badge(shader_source) if shader_source else badge("shaders", shaders), encoding="utf-8")
+    profile = shader_source.get("profiles", {}).get("gfx1013") if shader_source else None
+    if profile:
+        instructions = profile["instructions"]
+        (output / "badge-shaders-gfx1013.svg").write_text(
+            badge("gfx1013 reference", {"percent": shader_source_percent(profile)}, f'{instructions["decoded"]}/{instructions["total"]}'), encoding="utf-8")
+    else:
+        (output / "badge-shaders-gfx1013.svg").write_text(badge("gfx1013 reference", {"percent": 0}, "unavailable", TRACK_COLOR), encoding="utf-8")
     (output / "progress.svg").write_text(render(libraries, shaders, shader_source), encoding="utf-8")
     (output / "progress.html").write_text(summary(libraries, shaders, shader_source, open_pr_progress), encoding="utf-8")
 
@@ -863,6 +949,22 @@ def validate_open_pr_progress(estimate):
 def validate_snapshot(snapshot):
     if not isinstance(snapshot, dict):
         raise ValueError("snapshot must be an object")
+    source = snapshot.get("shader_source", {})
+    if not isinstance(source, dict):
+        raise ValueError("shader_source must be an object")
+    profiles = source.get("profiles", {})
+    if not isinstance(profiles, dict):
+        raise ValueError("shader_source.profiles must be an object")
+    profile = profiles.get("gfx1013")
+    if profile is not None:
+        if not isinstance(profile, dict):
+            raise ValueError("gfx1013 profile must be an object")
+        for field, keys in (("instructions", ("total", "decoded", "translated")), ("dpp", ("total", "decoded"))):
+            counts = profile.get(field)
+            if not isinstance(counts, dict) or any(type(counts.get(key)) is not int or counts[key] < 0 for key in keys):
+                raise ValueError(f"gfx1013.{field} must contain non-negative integer counts")
+            if any(counts[key] > counts["total"] for key in keys[1:]):
+                raise ValueError(f"gfx1013.{field} count exceeds its total")
     for section in ("libraries", "shaders"):
         data = snapshot.get(section)
         if not isinstance(data, dict):
@@ -894,8 +996,32 @@ def validate_snapshot(snapshot):
 
 
 def regenerate_isa_forms(xml):
-    header = [line for line in ISA_FORMS.read_text(encoding="utf-8").splitlines() if line.startswith("#")]
-    forms = shader_scan.parse_isa_xml(xml.read_text(encoding="utf-8"))
+    raw = xml.read_bytes()
+    text = raw.decode("utf-8")
+    try:
+        metadata = ET.fromstring(text)
+    except ET.ParseError as error:
+        raise ValueError(f"{xml}: invalid ISA XML: {error}") from error
+    if metadata.findtext("ISA/Architecture/ArchitectureName") != "AMD RDNA 2":
+        raise ValueError(f"{xml}: expected AMD RDNA 2 XML")
+    if metadata.findtext("Document/License") != "MIT":
+        raise ValueError(f"{xml}: expected MIT-licensed ISA XML")
+    copyright = metadata.findtext("Document/Copyright")
+    release = metadata.findtext("Document/ReleaseDate")
+    if not copyright or not release:
+        raise ValueError(f"{xml}: missing ISA copyright or release date")
+    original = [line for line in ISA_FORMS.read_text(encoding="utf-8").splitlines() if line.startswith("#")]
+    license_start = next((i for i, line in enumerate(original) if line.startswith("# Permission is hereby granted")), None)
+    if license_start is None:
+        raise ValueError(f"{ISA_FORMS}: missing MIT permission notice")
+    header = ["# RDNA 2 instruction forms: name encoding form opcode",
+              f"# Derived from AMD's machine-readable ISA ({xml.name}, release {release}, sha256 of the XML",
+              f"# {hashlib.sha256(raw).hexdigest()}). Regenerate with:",
+              "#   python3 tools/progress.py --regenerate-isa-forms amdgpu_isa_rdna2.xml", "#",
+              f"# {copyright} The XML is published under the MIT licence:", "#", *original[license_start:]]
+    forms = shader_scan.parse_isa_xml(text)
+    if not forms:
+        raise ValueError(f"{xml}: ISA XML has no recognized instruction forms")
     ISA_FORMS.write_text("\n".join(header + [" ".join(map(str, form)) for form in forms]) + "\n", encoding="utf-8")
     print(f"{ISA_FORMS}: {len(forms)} forms")
     return 0
@@ -923,8 +1049,12 @@ def main(argv=None):
                         help="rewrite tools/rdna2_isa_forms.txt from AMD's amdgpu_isa_rdna2.xml (machine-readable ISA, MIT) and exit")
     parser.add_argument("--json", action="store_true",
                         help="print the progress.json object to stdout instead of the summary lines")
+    parser.add_argument("--regenerate-gfx1013-forms", type=Path, nargs=2, metavar=("RDNA1_XML", "RDNA2_XML"),
+                        help="rewrite the pinned LLVM gfx1013 reference inventory from AMD's RDNA1 and RDNA2 XML and exit")
     try:
         args = parser.parse_args(argv)
+        if args.regenerate_isa_forms and args.regenerate_gfx1013_forms:
+            parser.error("--regenerate-isa-forms does not combine with --regenerate-gfx1013-forms")
         if args.compare:
             if args.module or args.json:
                 parser.error("--compare does not combine with --module or --json")
@@ -942,8 +1072,14 @@ def main(argv=None):
             base, head = snapshots
             print(report(base, head), end="")
             return 0
-        if args.regenerate_isa_forms:
-            return regenerate_isa_forms(args.regenerate_isa_forms)
+        if args.regenerate_isa_forms or args.regenerate_gfx1013_forms:
+            try:
+                if args.regenerate_isa_forms:
+                    return regenerate_isa_forms(args.regenerate_isa_forms)
+                isa_profiles.write_gfx1013_forms(ISA_GFX1013, *(path.read_text(encoding="utf-8") for path in args.regenerate_gfx1013_forms))
+                return 0
+            except (OSError, ValueError) as error:
+                parser.error(str(error))
         if not args.output and not (args.module or args.json):
             parser.error("the output directory is required")
         if args.root:
@@ -987,6 +1123,11 @@ def main(argv=None):
                 instructions = shader_source["instructions"]
                 print(f'shader forms decoded {instructions["decoded"]}/{instructions["total"]} ({shader_source_percent(shader_source)}%), '
                       f'translated {instructions["translated"]}, unsupported throws {shader_source["unsupported_throws"]}')
+                profile = shader_source.get("profiles", {}).get("gfx1013")
+                if profile:
+                    instructions = profile["instructions"]
+                    print(f'gfx1013 reference forms decoded {instructions["decoded"]}/{instructions["total"]} '
+                          f'({shader_source_percent(profile)}%), translated {instructions["translated"]}')
         return 0
     finally:
         PRX, OPCODES = previous
