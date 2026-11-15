@@ -5091,7 +5091,7 @@ double APS5_VABI _Sinh_nid_postfix(double x, double y) {
     return SonySinh(x, y);
 }
 
-double APS5_VABI _Cosh_nid_postfix(double x, double y) {
+static double CoshProduct(double x, double y) {
     if (!std::isfinite(x) || !std::isfinite(y)) return y * std::cosh(x);
     if (y == 0.0) return std::copysign(0.0, y);
     constexpr double Ln2High = 0x1.62e42fefa0000p-1;
@@ -5109,6 +5109,13 @@ double APS5_VABI _Cosh_nid_postfix(double x, double y) {
     const int exponent = static_cast<int>(magnitude * InverseLn2);
     const double reduced = std::fma(-exponent, Ln2Low, std::fma(-exponent, Ln2High, magnitude));
     return std::scalbn(scale * (0.5 * std::exp(reduced)), scaleExponent + exponent);
+}
+
+double APS5_VABI _Cosh_nid_postfix(double x, double y) {
+    const double result = CoshProduct(x, y);
+    if (std::isnan(result) && !std::isnan(x) && !std::isnan(y)) errno = EDOM;
+    else if (std::isinf(result) && std::isfinite(x) && std::isfinite(y)) errno = ERANGE;
+    return result;
 }
 
 long double APS5_VABI _LCosh_nid_postfix(long double x, long double y) {
