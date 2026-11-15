@@ -508,6 +508,13 @@ static void CheckRackCreateGuestPointers() {
     Require(query.host_buffer_size != 0 && query.host_buffer == nullptr);
 }
 
+static void CheckDestroyGuestPointers() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Returned(sceNgs2RackDestroy(rack, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackDestroy", "an unwritable buffer info");
+    Returned(sceNgs2RackDestroy(rack, nullptr), SCE_NGS2_OK, "sceNgs2RackDestroy", "a null buffer info after a refused destroy");
+}
+
 int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -542,6 +549,7 @@ int main(int argc, char** argv) {
         Require(value == sentinel);
         CheckCreateArguments();
         CheckRackCreateGuestPointers();
+        CheckDestroyGuestPointers();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();
