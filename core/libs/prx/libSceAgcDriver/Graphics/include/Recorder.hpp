@@ -383,6 +383,7 @@ public:
         std::uint64_t recordedAtOnce;
         std::uint64_t segments;
         std::uint64_t folds;
+        std::uint64_t capacityFolds;
     };
     static SampleDumpStatistics SampleDumpCounts();
     struct QueuedWrite {

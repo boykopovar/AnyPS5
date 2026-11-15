@@ -208,7 +208,7 @@ constexpr std::uint32_t DumpFoldCapacity = 1024;
 constexpr std::uint32_t SampleDumpBytes = 15 * 16 + 8;
 constexpr VkDeviceSize DumpListOffset = 16 + 8 * SegmentFoldCapacity;
 constexpr std::uint32_t SampleDumpPushBytes = 40;
-std::atomic<std::uint64_t> dumpsQueued{0}, dumpsQueuedInPass{0}, dumpsAtOnce{0}, segmentsClosed{0}, dumpFolds{0};
+std::atomic<std::uint64_t> dumpsQueued{0}, dumpsQueuedInPass{0}, dumpsAtOnce{0}, segmentsClosed{0}, dumpFolds{0}, capacityFolds{0};
 
 struct SamplePoolCache {
     VkDevice device;
@@ -2503,7 +2503,7 @@ void reportBarriers() {
         AgcDriver::ProfilePrint_nid_no_patch("; validate: would emit %llu (%s) + %llu batch ends, would skip %llu; emitted/skipped by class:%s", static_cast<unsigned long long>(emitted), kinds.c_str() + 1, static_cast<unsigned long long>(validateBatchEnds.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(skipped), classes.c_str());
     }
     AgcDriver::ProfilePrint_nid_no_patch("\n");
-    AgcDriver::ProfilePrint_nid_no_patch("[samples] occlusion dumps (cumulative): %llu queued (%llu inside an open pass), %llu recorded at once; %llu segments closed; %llu folds of queued dumps\n", static_cast<unsigned long long>(dumpsQueued.load(std::memory_order_relaxed)), static_cast<unsigned long long>(dumpsQueuedInPass.load(std::memory_order_relaxed)), static_cast<unsigned long long>(dumpsAtOnce.load(std::memory_order_relaxed)), static_cast<unsigned long long>(segmentsClosed.load(std::memory_order_relaxed)), static_cast<unsigned long long>(dumpFolds.load(std::memory_order_relaxed)));
+    AgcDriver::ProfilePrint_nid_no_patch("[samples] occlusion dumps (cumulative): %llu queued (%llu inside an open pass), %llu recorded at once; %llu segments closed; %llu folds of queued dumps, %llu at capacity\n", static_cast<unsigned long long>(dumpsQueued.load(std::memory_order_relaxed)), static_cast<unsigned long long>(dumpsQueuedInPass.load(std::memory_order_relaxed)), static_cast<unsigned long long>(dumpsAtOnce.load(std::memory_order_relaxed)), static_cast<unsigned long long>(segmentsClosed.load(std::memory_order_relaxed)), static_cast<unsigned long long>(dumpFolds.load(std::memory_order_relaxed)), static_cast<unsigned long long>(capacityFolds.load(std::memory_order_relaxed)));
 }
 
 }
@@ -2919,7 +2919,7 @@ bool Recorder::QueuesSampleDumps() const {
 }
 
 Recorder::SampleDumpStatistics Recorder::SampleDumpCounts() {
-    return SampleDumpStatistics{dumpsQueued.load(std::memory_order_relaxed), dumpsQueuedInPass.load(std::memory_order_relaxed), dumpsAtOnce.load(std::memory_order_relaxed), segmentsClosed.load(std::memory_order_relaxed), dumpFolds.load(std::memory_order_relaxed)};
+    return SampleDumpStatistics{dumpsQueued.load(std::memory_order_relaxed), dumpsQueuedInPass.load(std::memory_order_relaxed), dumpsAtOnce.load(std::memory_order_relaxed), segmentsClosed.load(std::memory_order_relaxed), dumpFolds.load(std::memory_order_relaxed), capacityFolds.load(std::memory_order_relaxed)};
 }
 
 bool Recorder::segmentSlotReady(const Batch& batch) const {
@@ -3081,6 +3081,7 @@ void Recorder::foldSegments() {
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
     CountBarriers(CommandClass::Copy, 3);
     retireSegments(count);
+    capacityFolds.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Recorder::endSamples(Batch& batch) {
@@ -4587,7 +4588,10 @@ void Recorder::Submit() {
     const bool segments = segmentMode();
     if (!segments) {
         endSamples(*open);
-        if (pendingSamples.size() >= SampleFoldCapacity) foldSamples(*open, 0);
+        if (pendingSamples.size() >= SampleFoldCapacity) {
+            foldSamples(*open, 0);
+            capacityFolds.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     const bool hostReadCovered = (open->run.open || !open->run.queued.empty()) && closeStoreRun(true);
     if (segments && pendingSamples.size() >= SampleFoldCapacity) foldSegments();

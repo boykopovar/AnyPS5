@@ -12197,6 +12197,54 @@ void discardedSampleTests(const Device& device) {
     completesWithin(std::chrono::seconds(20), "the sample total after a discarded batch that folded an earlier batch", [&] { afterFold = recorder.SamplesTotal(); });
     Require(afterFold > beforeFold, "the samples of a submitted batch folded by a discarded batch were lost (" + std::to_string(afterFold) + " after " + std::to_string(beforeFold) + ")");
     if (context.occlusionQueryPrecise) Require(afterFold == beforeFold + CoverPass::Samples, "the sample total after a discarded batch that folded an earlier batch is " + std::to_string(afterFold) + ", not " + std::to_string(beforeFold + CoverPass::Samples));
+    const auto restoredTotal = [&](const std::string& what, std::uint64_t before, std::uint64_t earlierSegments) {
+        std::uint64_t after = 0;
+        completesWithin(std::chrono::seconds(20), "the sample total after " + what, [&] { after = recorder.SamplesTotal(); });
+        Require(after >= before + earlierSegments, "the samples of submitted batches folded by " + what + " were lost (" + std::to_string(after) + " after " + std::to_string(before) + ")");
+        if (context.occlusionQueryPrecise) Require(after == before + earlierSegments * CoverPass::Samples, "the sample total after " + what + " is " + std::to_string(after) + ", not " + std::to_string(before + earlierSegments * CoverPass::Samples));
+    };
+    if (recorder.QueuesSampleDumps()) {
+        constexpr std::uint64_t dumpAddress = 0x7f0000000000ull;
+        const auto beforeQueued = recorder.SamplesTotal();
+        cover.Draw(recorder);
+        recorder.EndPassSamples();
+        recorder.Submit();
+        recorder.Sync();
+        const auto queuedFolds = Recorder::SampleDumpCounts().folds;
+        cover.Draw(recorder);
+        recorder.EndPassSamples();
+        Require(recorder.DumpSamples(dump->DeviceAddress(), dumpAddress), "the first dump of a discarded batch was not made");
+        recorder.FlushStores();
+        cover.Draw(recorder);
+        recorder.EndPassSamples();
+        Require(recorder.DumpSamples(dump->DeviceAddress() + 128, dumpAddress + 128), "the second dump of a discarded batch was not made");
+        failedSubmit("a batch with two folds of queued dumps");
+        Require(Recorder::SampleDumpCounts().folds == queuedFolds + 2, "a batch with two queued dumps split by a flush did not fold them twice");
+        restoredTotal("a discarded batch with two folds of queued dumps", beforeQueued, 1);
+    } else {
+        std::cout << "occlusion dumps are not queued: discarded folds of queued dumps not tested\n";
+    }
+    const auto submitCounted = [&] {
+        cover.Draw(recorder);
+        recorder.EndPassSamples();
+        recorder.Submit();
+    };
+    const auto calibrationFolds = Recorder::SampleDumpCounts().capacityFolds;
+    std::uint64_t shortOfCapacity = 0;
+    for (; shortOfCapacity < 4096 && Recorder::SampleDumpCounts().capacityFolds == calibrationFolds; ++shortOfCapacity) submitCounted();
+    Require(Recorder::SampleDumpCounts().capacityFolds == calibrationFolds + 1, "occlusion samples were never folded at capacity");
+    --shortOfCapacity;
+    recorder.Sync();
+    const auto beforeCapacity = recorder.SamplesTotal();
+    const auto capacityFolds = Recorder::SampleDumpCounts().capacityFolds;
+    for (std::uint64_t i = 0; i < shortOfCapacity; ++i) submitCounted();
+    recorder.Sync();
+    Require(Recorder::SampleDumpCounts().capacityFolds == capacityFolds, "occlusion samples short of the fold capacity were folded");
+    cover.Draw(recorder);
+    recorder.EndPassSamples();
+    failedSubmit("a batch that folded earlier samples at capacity");
+    Require(Recorder::SampleDumpCounts().capacityFolds == capacityFolds + 1, "a discarded batch at the fold capacity did not fold");
+    restoredTotal("a discarded batch that folded earlier samples at capacity", beforeCapacity, shortOfCapacity);
     std::cout << "Recorder discarded sample tests passed\n";
 }
 
