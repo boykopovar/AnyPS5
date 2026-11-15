@@ -23,6 +23,7 @@ static void RequireThrows(TCall call) {
 
 constexpr int SCE_OK = 0;
 constexpr int success = 0;
+constexpr int error = 4;
 constexpr int detached = 1;
 constexpr std::intptr_t threadResult = 7;
 
@@ -72,6 +73,11 @@ static void StartWithName() {
     Require(std::string(anonymous) != "named");
     WaitForStart(anonymousStarted);
     Require(_Thrd_join_nid_postfix(anonymousThread, &code) == success);
+
+    void* unstarted = reinterpret_cast<void*>(0x5a);
+    std::atomic<int> unstartedFlag{0};
+    Require(_Thrd_start_with_name_nid_postfix(&unstarted, RecordEntry, &unstartedFlag, reinterpret_cast<const char*>(0x10)) == error);
+    Require(unstarted == reinterpret_cast<void*>(0x5a) && unstartedFlag.load() == 0);
 }
 
 static void StartWithAttribute() {
