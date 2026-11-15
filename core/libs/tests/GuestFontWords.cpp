@@ -327,6 +327,9 @@ static void CharacterQueries() {
     Require(sceFontCharacterGetTextOrder(text[0], &textOrder) == SCE_FONT_OK && textOrder == &order);
     Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
     Require(sceFontCharacterGetTextOrder(text[0], nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontCharacterGetTextOrder(text[0], reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontCharacterLooksWhiteSpace(text[1]) == ' ' && sceFontCharacterLooksWhiteSpace(text[0]) == 0 && sceFontCharacterLooksWhiteSpace(nullptr) == 0);
     Require(sceFontCharacterLooksFormatCharacters(text[0]) == 'a' && sceFontCharacterLooksFormatCharacters(text[1]) == 0 && sceFontCharacterLooksFormatCharacters(nullptr) == 0);
     Require(sceFontCharacterRefersTextNext(text[0]) == text[1] && sceFontCharacterRefersTextBack(text[2]) == text[1]);
