@@ -223,13 +223,13 @@ void RunWorker(std::stop_token stop, Decoder* decoder) {
     }
 }
 
-void RunCommand(Decoder& decoder, Command::Type type, std::uint32_t* count) {
+std::uint32_t RunCommand(Decoder& decoder, Command::Type type) {
     auto done = std::make_shared<std::atomic<bool>>(false);
     std::unique_lock lock(decoder.mutex);
     decoder.commands.push_back({type, nullptr, done});
     decoder.inputReady.notify_one();
     decoder.outputReady.wait(lock, [&] { return done->load(std::memory_order_acquire); });
-    if (count != nullptr) *count = static_cast<std::uint32_t>(decoder.frames.size());
+    return static_cast<std::uint32_t>(decoder.frames.size());
 }
 
 AVFrame* ConvertNv12(Decoder& decoder, const AVFrame& frame) {
@@ -371,7 +371,8 @@ int APS5_VABI sceVdecCoreFinalizeComputeResource() {
 
 int APS5_VABI sceVdecCoreFlushDecodeOutput(void* decoder, std::uint32_t* count, void*) {
     if (decoder == nullptr) return VdecCoreErrorInvalidArgument;
-    RunCommand(Lookup(decoder, __func__), Command::Type::Flush, count);
+    const std::uint32_t frames = RunCommand(Lookup(decoder, __func__), Command::Type::Flush);
+    if (count != nullptr && !CopyGuestOut(count, &frames, sizeof(frames))) return VdecCoreErrorInvalidArgument;
     return 0;
 }
 
@@ -594,7 +595,7 @@ int APS5_VABI sceVdecCoreQueryInstanceSize(const VdecCoreConfigInfo* config, std
 
 int APS5_VABI sceVdecCoreResetDecoder(void* decoder, void*) {
     if (decoder == nullptr) return VdecCoreErrorInvalidArgument;
-    RunCommand(Lookup(decoder, __func__), Command::Type::Reset, nullptr);
+    RunCommand(Lookup(decoder, __func__), Command::Type::Reset);
     return 0;
 }
 
@@ -646,7 +647,10 @@ int APS5_VABI sceVdecCoreSyncDecode(void* decoder, std::uint32_t* count) {
     auto& target = Lookup(decoder, __func__);
     std::unique_lock lock(target.mutex);
     target.outputReady.wait(lock, [&] { return !target.frames.empty() || (!target.busy && target.commands.empty()); });
-    if (count != nullptr) *count = static_cast<std::uint32_t>(target.frames.size());
+    if (count != nullptr) {
+        const auto frames = static_cast<std::uint32_t>(target.frames.size());
+        if (!CopyGuestOut(count, &frames, sizeof(frames))) return VdecCoreErrorInvalidArgument;
+    }
     return 0;
 }
 
@@ -664,10 +668,16 @@ int APS5_VABI sceVdecCoreTrySyncDecode(void* decoder, std::uint32_t* count) {
     auto& target = Lookup(decoder, __func__);
     std::lock_guard lock(target.mutex);
     if (!target.frames.empty()) {
-        if (count != nullptr) *count = static_cast<std::uint32_t>(target.frames.size());
+        if (count != nullptr) {
+            const auto frames = static_cast<std::uint32_t>(target.frames.size());
+            if (!CopyGuestOut(count, &frames, sizeof(frames))) return VdecCoreErrorInvalidArgument;
+        }
         return 0;
     }
-    if (count != nullptr) *count = 0;
+    if (count != nullptr) {
+        constexpr std::uint32_t zero = 0;
+        if (!CopyGuestOut(count, &zero, sizeof(zero))) return VdecCoreErrorInvalidArgument;
+    }
     if (target.busy || !target.commands.empty()) return VdecCoreErrorDecodeRunning;
     return 0;
 }
