@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -511,12 +512,21 @@ int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, st
 int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength) {
     if (dst == nullptr || dstSize == 0 || src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dstSize < JSON_ESCAPE_MARGIN) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    std::size_t written = ::strnlen(dst, dstSize);
-    if (written >= dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+    std::string existing;
+    const int copyError = CopyGuestString_nid_no_patch(dst, dstSize, existing);
+    if (copyError == 63) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+    if (copyError != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const std::size_t start = existing.size();
+    std::size_t written = start;
+    std::string appended;
+    const auto finish = [&](int result) {
+        if (appended.empty()) return result;
+        return GuestCopyOut_nid_no_patch(dst + start, appended.c_str(), appended.size() + 1) ? result : NP_UTIL_ERROR_INVALID_ARGUMENT;
+    };
     for (std::size_t i = 0; i < srcLength; ++i) {
-        if (written > dstSize - JSON_ESCAPE_MARGIN) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        if (written > dstSize - JSON_ESCAPE_MARGIN) return finish(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
         const auto c = static_cast<unsigned char>(src[i]);
-        if (c == 0) return 0;
+        if (c == 0) return finish(0);
         char piece[JSON_ESCAPE_MARGIN] = {};
         if (const char* escape = JsonShortEscape(c)) {
             std::strcpy(piece, escape);
@@ -525,10 +535,10 @@ int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* sr
         } else {
             std::snprintf(piece, sizeof(piece), "\\u%04x", c);
         }
-        std::strcat(dst, piece);
+        appended += piece;
         written += std::strlen(piece);
     }
-    return 0;
+    return finish(0);
 }
 
 int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength,
