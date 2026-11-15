@@ -37,6 +37,9 @@ static constexpr std::int32_t VARIABLE_SORTTYPE_ASCENDING_VALUE = 4;
 static constexpr std::uint64_t VARIABLE_ENTRY_SIZE = 0x78;
 static constexpr std::uint64_t DATA_STATUS_ENTRY_SIZE = 0x1F0;
 static constexpr std::uint64_t DATA_STATUS_ENTRY_SIZE_LONG = 0x210;
+static constexpr int RESOLVE_TIMEOUT_MIN = 1000000;
+static constexpr int TRANSFER_TIMEOUT_MIN = 10000000;
+static constexpr std::uint32_t SAVE_DATA_OWNER_MODE_MAX = 3;
 
 namespace {
 struct Request {
@@ -269,14 +272,20 @@ int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecre
     return CreateTitleContext();
 }
 
-int APS5_VABI sceNpTusSetTimeout(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusSetTimeout(int id, int resolveRetry, int resolveTimeout, int connTimeout, int sendTimeout, int recvTimeout) {
+    if (resolveRetry < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (resolveTimeout != 0 && resolveTimeout < RESOLVE_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (connTimeout != 0 && connTimeout < TRANSFER_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (recvTimeout != 0 && recvTimeout < TRANSFER_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (sendTimeout != 0 && sendTimeout < TRANSFER_TIMEOUT_MIN) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(tusMutex);
+    return titleContexts.contains(id) || requests.contains(id) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
 }
 
-int APS5_VABI sceNpTusChangeModeForOtherSaveDataOwners(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusChangeModeForOtherSaveDataOwners(int id, std::uint32_t mode) {
+    if (mode > SAVE_DATA_OWNER_MODE_MAX) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(tusMutex);
+    return titleContexts.contains(id) || requests.contains(id) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceNpTusWaitAsync(int reqId, int* result) {
