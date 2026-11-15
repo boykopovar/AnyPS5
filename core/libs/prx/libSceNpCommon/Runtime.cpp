@@ -183,6 +183,14 @@ constexpr KernelClockid NP_SYSTEM_CLOCK = 4;
 
 static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
 
+template <typename T>
+void WriteOptionalGuest(T* output, T value) {
+    if (output == nullptr) return;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(output, &value, sizeof(value));
+    errno = savedErrno;
+}
+
 std::uint32_t SystemVersion() {
     SceKernelSystemSwVersion version {};
     version.size = sizeof(version);
@@ -936,7 +944,10 @@ int APS5_VABI _ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(const NpTime* self, R
     RtcDateTime converted {};
     const int result = sceRtcSetTick(&converted, self);
     if (result < 0) return result;
-    *dateTime = converted;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dateTime, &converted, sizeof(converted));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -975,7 +986,7 @@ bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_lPl(const NpTi
     const auto limit = static_cast<std::uint64_t>(timeout);
     const std::uint64_t elapsed = self->tick - since->tick;
     const bool timedOut = timeout < 0 || self->tick < since->tick || limit <= elapsed;
-    if (remaining != nullptr) *remaining = timedOut ? 0 : static_cast<std::int64_t>(limit - elapsed);
+    WriteOptionalGuest(remaining, timedOut ? std::int64_t{0} : static_cast<std::int64_t>(limit - elapsed));
     return timedOut;
 }
 
@@ -983,7 +994,7 @@ bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(const NpTi
     std::uint32_t* remaining) {
     const std::uint64_t elapsed = self->tick - since->tick;
     const bool before = self->tick < since->tick;
-    if (remaining != nullptr) *remaining = before || elapsed > timeout ? 0 : timeout - static_cast<std::uint32_t>(elapsed);
+    WriteOptionalGuest(remaining, before || elapsed > timeout ? std::uint32_t{0} : timeout - static_cast<std::uint32_t>(elapsed));
     return before || timeout <= elapsed;
 }
 
@@ -997,7 +1008,7 @@ bool APS5_VABI _ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(const NpTime* s
         timedOut = limit <= elapsed;
         left = (elapsed <= limit ? limit - elapsed : 0) / 1000000;
     }
-    if (remaining != nullptr) *remaining = static_cast<std::int64_t>(left);
+    WriteOptionalGuest(remaining, static_cast<std::int64_t>(left));
     return timedOut;
 }
 
