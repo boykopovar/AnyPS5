@@ -694,7 +694,10 @@ class ImportAuditTests(unittest.TestCase):
         previous = b'{"previous": "complete report"}\n'
         output.write_bytes(previous)
         files = set(work.root.iterdir())
-        with patch.object(Path, "replace", side_effect=PermissionError(13, "Permission denied", str(output))):
+        replacement = (patch.object(import_audit.os, "replace", side_effect=PermissionError(13, "Permission denied", str(output)))
+                       if os.name == "nt" else
+                       patch.object(Path, "replace", side_effect=PermissionError(13, "Permission denied", str(output))))
+        with replacement:
             code, out, err = work.run(registry, "--json", str(output))
         self.assertEqual((code, out), (2, ""))
         self.assertIn("Permission denied", err)
@@ -767,15 +770,16 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(set(work.root.iterdir()), files)
 
     def test_long_json_filename_can_be_written_and_replaced(self):
-        root = self.work.root
-        directory = Path("\\\\?\\" + str(root.resolve())) if os.name == "nt" else root
+        directory = self.work.root
         output = directory / ("a" * 245 + ".json")
-        self.addCleanup(output.unlink, missing_ok=True)
-        files = set(directory.iterdir())
+        native_output = import_audit.windows_extended_path(output) if os.name == "nt" else output
+        self.addCleanup(os.unlink, native_output)
+        files = {path.name for path in directory.iterdir()}
         for result in ({"complete": True}, {"complete": False}):
             import_audit.write_json(output, result)
-            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
-            self.assertEqual(set(directory.iterdir()), files | {output})
+            with open(native_output, encoding="utf-8") as report:
+                self.assertEqual(json.load(report), result)
+            self.assertEqual({path.name for path in directory.iterdir()}, files | {output.name})
 
     @unittest.skipUnless(os.name == "posix", "POSIX report permissions")
     def test_new_json_report_permissions_follow_the_process_umask(self):

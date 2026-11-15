@@ -1094,6 +1094,13 @@ def attach_names(records, names):
             record["name_verified"] = nid_names.compute_nid(name) == record["nid"]
 
 
+def windows_extended_path(path):
+    absolute = os.path.abspath(path).replace("/", "\\")
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
 def write_json(path, result):
     if path.is_dir():
         raise AuditError(f"{path}: JSON output is a directory")
@@ -1106,7 +1113,10 @@ def write_json(path, result):
             temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             if destination.exists():
                 temporary.chmod(destination.stat().st_mode & 0o7777)
-            temporary.replace(destination)
+            if os.name == "nt":
+                os.replace(windows_extended_path(temporary), windows_extended_path(destination))
+            else:
+                temporary.replace(destination)
         finally:
             if temporary.exists():
                 temporary.chmod(0o600)
