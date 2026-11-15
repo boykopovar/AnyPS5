@@ -8,10 +8,10 @@
 namespace Agc::Command {
 
 std::uint32_t* WriteDma(CommandBuffer* buffer, bool compute, std::uint8_t engine, std::uint8_t dst, std::uint8_t dstCachePolicy, std::uint64_t dstAddress, std::uint8_t src, std::uint8_t srcCachePolicy, std::uint64_t srcAddress, std::uint32_t numBytes, std::uint8_t waitForPrevious, std::uint8_t writeConfirm, std::uint8_t blockEngine, const char* function) {
-    CheckBits(engine, 1, function);
-    CheckBits(dst, 0xfu, function);
-    CheckBits(dstCachePolicy, 3, function);
-    CheckBits(srcCachePolicy, 3, function);
+    engine &= 1u;
+    dst &= 0xfu;
+    dstCachePolicy &= 3u;
+    srcCachePolicy &= 3u;
     CheckBits(waitForPrevious, 1, function);
     CheckBits(writeConfirm, 1, function);
     CheckBits(blockEngine, 1, function);
@@ -20,7 +20,7 @@ std::uint32_t* WriteDma(CommandBuffer* buffer, bool compute, std::uint8_t engine
         const auto slot = src == 0x14u ? 0u : src == 0x24u ? 1u : 2u;
         srcAddress = (engine == 1 ? 0x30148u : 0x30174u) + slot * 8u;
     } else {
-        CheckBits(src, 0xfu, function);
+        src &= 0xfu;
     }
     const auto control = engine | (static_cast<std::uint32_t>(srcCachePolicy) << 13u) | ((dst & 3u) << 20u) | (static_cast<std::uint32_t>(dstCachePolicy) << 25u) | ((src & 3u) << 29u) | (static_cast<std::uint32_t>(blockEngine) << 31u);
     const auto command = numBytes | ((src & 4u) << 24u) | ((dst & 4u) << 25u) | ((src & 8u) << 25u) | ((dst & 8u) << 26u) | (static_cast<std::uint32_t>(waitForPrevious) << 30u) | (static_cast<std::uint32_t>(writeConfirm) << 31u);
