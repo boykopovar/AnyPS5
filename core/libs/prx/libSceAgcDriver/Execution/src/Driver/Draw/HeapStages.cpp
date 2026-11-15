@@ -208,6 +208,8 @@ std::string heapClassesFailure(const ShaderRecompiler::RecompileResult& result) 
     return {};
 }
 
+constexpr std::size_t ThreadCacheLimit = 65536u;
+
 std::string heapStageFailure(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
     if (auto failure = heapClassesFailure(result); !failure.empty()) return failure;
     std::pair<std::uint32_t, std::uint32_t> refused{};
@@ -217,25 +219,39 @@ std::string heapStageFailure(const ShaderRecompiler::RecompileResult& result, bo
     return {};
 }
 
-bool knownHeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
-    constexpr std::uint64_t Fits = 2, Fails = 1, VerdictBits = 2;
-    auto& memo = result.heapMappableMemo.verdicts[workgroupAddress ? 1 : 0];
-    const auto capacity = Graphics::BindlessHeap::ImageSlotCapacity();
-    const auto known = memo.load(std::memory_order_relaxed);
-    if (known != 0 && known >> VerdictBits == capacity) return (known & 3u) == Fits;
-    const bool fits = heapStageFailure(result, workgroupAddress).empty();
-    memo.store(static_cast<std::uint64_t>(capacity) << VerdictBits | (fits ? Fits : Fails), std::memory_order_relaxed);
-    return fits;
+const std::string& knownHeapStageFailure(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
+    struct MappableStorage {};
+    struct RecentStorage {};
+    struct Recent {
+        std::uint64_t key = 0;
+        const std::string* failure = nullptr;
+    };
+    constexpr std::size_t RecentSlots = 64;
+    auto& known = HostThreadLocal<std::unordered_map<std::uint64_t, std::string>, MappableStorage>();
+    auto& recent = HostThreadLocal<std::array<Recent, RecentSlots>, RecentStorage>();
+    const auto key = result.variantId * 2u + (workgroupAddress ? 1u : 0u);
+    auto& slot = recent[(key ^ (key >> 17u)) % RecentSlots];
+    if (slot.failure != nullptr && slot.key == key) return *slot.failure;
+    auto found = known.find(key);
+    if (found == known.end()) {
+        if (known.size() >= ThreadCacheLimit) {
+            known.clear();
+            recent.fill({});
+        }
+        found = known.emplace(key, heapStageFailure(result, workgroupAddress)).first;
+    }
+    slot = {key, &found->second};
+    return found->second;
 }
 
 }
 
 void RequireHeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
-    if (!knownHeapStageFits(result, workgroupAddress)) throw std::runtime_error(heapStageFailure(result, workgroupAddress));
+    if (const auto& failure = knownHeapStageFailure(result, workgroupAddress); !failure.empty()) throw std::runtime_error(failure);
 }
 
 bool HeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
-    return knownHeapStageFits(result, workgroupAddress);
+    return knownHeapStageFailure(result, workgroupAddress).empty();
 }
 
 bool HeapStageExcluded(ShaderRecompiler::ShaderStage stage) {
