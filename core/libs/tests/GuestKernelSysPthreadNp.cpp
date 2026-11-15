@@ -4,8 +4,12 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <exception>
+#include <iterator>
 #include <initializer_list>
 #include <string_view>
 #include <utility>
@@ -176,6 +180,32 @@ void TestAttr() {
         if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(targetMask), &targetMask) != 0) return false;
         KernelCpumask readBack = 0;
         if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(readBack), &readBack) != 0 || readBack != targetMask) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_attr_np unmapped pointers", [] {
+        auto* unmappedAttr = reinterpret_cast<PthreadAttr*>(0x10);
+        auto* unmappedBytes = reinterpret_cast<void*>(0x10);
+        KernelCpumask mask = 0x3;
+        int solosched = -1;
+        errno = 71;
+        if (pthread_attr_getaffinity_np_nid_postfix(unmappedAttr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(unmappedAttr, sizeof(mask), &mask) != GUEST_EINVAL) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(unmappedAttr, &solosched) != GUEST_EINVAL || solosched != -1) return false;
+        PthreadAttr attr = nullptr;
+        if (pthread_attr_init_nid_postfix(&attr) != 0 || attr == nullptr) return false;
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(mask), unmappedBytes) != GUEST_EFAULT) return false;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(mask), unmappedBytes) != GUEST_EFAULT) return false;
+        if (pthread_attr_getsolosched_np_nid_postfix(&attr, reinterpret_cast<int*>(0x10)) != GUEST_EINVAL) return false;
+        unsigned char wide[256] = {};
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(wide), wide) != 0) return false;
+        wide[200] = 1;
+        if (pthread_attr_setaffinity_np_nid_postfix(&attr, sizeof(wide), wide) != GUEST_EINVAL) return false;
+        std::fill(std::begin(wide), std::end(wide), static_cast<unsigned char>(0xFF));
+        if (pthread_attr_getaffinity_np_nid_postfix(&attr, sizeof(wide), wide) != 0) return false;
+        for (std::size_t i = sizeof(KernelCpumask); i < sizeof(wide); ++i) {
+            if (wide[i] != 0) return false;
+        }
+        if (errno != 71) return false;
         return pthread_attr_destroy_nid_postfix(&attr) == 0;
     });
 }
