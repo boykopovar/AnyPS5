@@ -564,6 +564,7 @@ set(ICU_RECOVERED_SOURCES
     RelativeDateTimeFormatter.cpp
     ResourceBundle.cpp
     StringSearch.cpp
+    NativeUText.cpp
     UText.cpp)
 target_sources(libSceIcu PRIVATE ${ICU_RECOVERED_SOURCES})
 

@@ -198,5 +198,7 @@ void APS5_VABI ures_close(UResourceBundle* resB);
 UStringSearch* APS5_VABI usearch_open_nid_postfix(const char16_t* pattern, std::int32_t patternLength, const char16_t* text, std::int32_t textLength, const char* locale, UBreakIterator* breakIterator, std::int32_t* status);
 
 UText* APS5_VABI utext_close(UText* ut);
+UText* APS5_VABI utext_openUChars(UText* ut, const char16_t* s, std::int64_t length, std::int32_t* status);
+UText* APS5_VABI utext_setup(UText* ut, std::int32_t extraSpace, std::int32_t* status);
 
 }

@@ -83,6 +83,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/ustrcase.cpp
     ${ICU_SOURCE_DIR}/common/ustring.cpp
     ${ICU_SOURCE_DIR}/common/ustrtrns.cpp
+    ${ICU_SOURCE_DIR}/common/utext.cpp
     ${ICU_SOURCE_DIR}/common/utf_impl.cpp
     ${ICU_SOURCE_DIR}/common/util.cpp
     ${ICU_SOURCE_DIR}/common/utrace.cpp
