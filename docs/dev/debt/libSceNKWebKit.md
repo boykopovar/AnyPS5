@@ -70,12 +70,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WebCore::Process identifier](../../../core/libs/prx/libSceNKWebKit/src/WebCoreProcess.cpp) (libSceNKWebKit) - the generation-protection check is not modelled: in firmware 13.42 `identifier()` (`0x207100`) crashes before generating when the byte at `0x3369ef8` is 1, and no store to that byte by address was found in the module's code, so what sets it is unknown. The object-identifier counter it draws from is shared in the module with the `HistoryItem` constructors, seven other exports and internal code, none of which is implemented, so identifiers are unique only among implemented callers. The rest follows `system_ex/common_ex/lib/libSceNKWebKit.sprx` 13.42 (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`; `setIdentifier` at `0x2e3bb0`), read from disassembly, not run. Closes when: measured on a console.
 
-- [WebCore::DOMException::description](../../../core/libs/prx/libSceNKWebKit/src/DOMException.cpp) (libSceNKWebKit, `9kGnP+jnLiI`) - not compared with a console module. It copies the 32-row table of the pinned [DOMException.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/dom/DOMException.cpp#L38-L82), indexed by the [ExceptionCode](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/dom/ExceptionCode.h) order, and returns one shared `{nullptr, nullptr, 0}` record for any code from 32 up. The 24-byte `Description` (name at 0, message at 8, legacy code at 16) assumes the pinned `ASCIILiteral` holds only a `const char*` and that the enum is passed as a 32-bit unsigned value. Closes when: compared with a console module.
-
-- [WebCore::computeCurrentAge](../../../core/libs/prx/libSceNKWebKit/src/CacheControl.cpp) (libSceNKWebKit, `zFaau6WD5yo`) - not compared with a console module. It follows the pinned [CacheValidation.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/CacheValidation.cpp#L106-L117): the larger of the clamped apparent age and the `Age` header, plus the host wall-clock time since `responseTime`. `Date` and `Age` come from the existing `ResourceResponseBase::date` and `age` exports, which parse the headers on each call rather than reading a cached console field. Closes when: compared with a console module.
-
-- [WebCore::HTMLMediaElement media cache directory](../../../core/libs/prx/libSceNKWebKit/src/HTMLMediaElement.cpp) (libSceNKWebKit, `eokEwsWT7zI`, `u4uYkZNxIcg`) - not compared with a console module. `setMediaCacheDirectory` and `mediaCacheDirectory` share one never-destroyed `String`, as in the pinned [HTMLMediaElement.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/html/HTMLMediaElement.cpp#L7219-L7233); assignment references the new string and releases the old one. Nothing in this module reads the directory yet, because the media cache itself is not implemented. Access is not synchronized, as in the source. Closes when: compared with a console module.
-
 - [WTF ICU string transforms](../../../core/libs/prx/libSceNKWebKit/src/WtfStringIcu.cpp) (libSceNKWebKit) - locale case mapping, `String::foldCase` and `normalizedNFC` are not compared with a console module; non-ASCII text goes through `libSceIcu`, whose Unicode data may differ from the console's. `const AtomString&` is read as a pointer to an 8-byte `String` and `StringViewWithUnderlyingString` as a 24-byte `StringView` and `String` pair, per the pinned headers; console layouts are unverified. Behaviour follows [StringImpl.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringImpl.cpp#L351-L689) and [StringView.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/text/StringView.cpp#L277-L312). Null references, null characters with a nonzero length, a failing index past the end or on a 16-bit string, and ICU normalizer errors throw where the source asserts.
 - [PAL::fileSizeDescription](../../../core/libs/prx/libSceNKWebKit/src/PalFileSizeFormatter.cpp) (libSceNKWebKit) - not compared with a console module: the device's WebKit revision is unverified. It follows the non-Cocoa branch of pinned WebKit [FileSizeFormatter.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/PAL/pal/FileSizeFormatter.cpp#L35-L46): below 1000 the decimal size and ` bytes`, otherwise `size / 1000.`, `size / 1000000.` or `size / 1000000000.` to one decimal place with ` KB`, ` MB` or ` GB`, formatted by the existing `NumberToFixedWidthString`. The [PS5 11.x source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/PAL/pal/FileSizeFormatter.cpp#L35-L46) returns an `AtomString` from `makeAtomString`; this returns a plain 8-bit `String` that is not in the atom table. Closes when: compared with a console module.
 
@@ -1941,6 +1935,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore12CSSStyleRule15setSelectorTextERKN3WTF6StringE` | `Dn4hfvMyAFQ` |
 | `_ZN7WebCore12CSSStyleRule5styleEv` | `YW1tv-1DCUw` |
 | `_ZN7WebCore12CryptoKeyAES9importRawENS_25CryptoAlgorithmIdentifierEON3WTF6VectorIhLm0ENS2_15CrashOnOverflowELm16ENS2_10FastMallocEEEbi` | `K6ZnlaOFL+0` |
+| `_ZN7WebCore12DOMException11descriptionENS_13ExceptionCodeE` | `9kGnP+jnLiI` |
 | `_ZN7WebCore12DOMTokenList6tokensEv` | `r9FFtkT+gYM` |
 | `_ZN7WebCore12DataTransferD1Ev` | `NpqX-u41+kA` |
 | `_ZN7WebCore12DataTransferD2Ev` | `SV1G6Vt3Qk0` |
@@ -2532,7 +2527,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore16HTMLMediaElement15togglePlayStateEv` | `wfqHM5ztNrk` |
 | `_ZN7WebCore16HTMLMediaElement16allMediaElementsEv` | `heO6fLodsG8` |
 | `_ZN7WebCore16HTMLMediaElement16returnToRealtimeEv` | `k5rdY0oueBE` |
+| `_ZN7WebCore16HTMLMediaElement19mediaCacheDirectoryEv` | `u4uYkZNxIcg` |
 | `_ZN7WebCore16HTMLMediaElement19originsInMediaCacheERKN3WTF6StringE` | `M-aG2xrDafY` |
+| `_ZN7WebCore16HTMLMediaElement22setMediaCacheDirectoryERKN3WTF6StringE` | `eokEwsWT7zI` |
 | `_ZN7WebCore16HTMLMediaElement23setWebkitPreservesPitchEb` | `HnEU93QBgkw` |
 | `_ZN7WebCore16HTMLMediaElement25setCurrentTimeForBindingsEd` | `FzrPo3xk3aI` |
 | `_ZN7WebCore16HTMLMediaElement25setVideoFullscreenStandbyEb` | `6Ogwaprthfs` |
@@ -2778,6 +2775,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore17SQLiteTransactionD2Ev` | `Myvbbodp9dU` |
 | `_ZN7WebCore17TextureMapperTile5paintERNS_13TextureMapperERKNS_20TransformationMatrixEfj` | `nC34ZWPrJk8` |
 | `_ZN7WebCore17cacheDOMStructureERNS_17JSDOMGlobalObjectEPN3JSC9StructureEPKNS2_9ClassInfoE` | `WJkpnZkmw9Q` |
+| `_ZN7WebCore17computeCurrentAgeERKNS_16ResourceResponseEN3WTF8WallTimeE` | `zFaau6WD5yo` |
 | `_ZN7WebCore17cssValueKeywordIDEN3WTF10StringViewE` | `FyMm5OSA9Mw` |
 | `_ZN7WebCore17isStartOfDocumentERKNS_15VisiblePositionE` | `YLTGftleg3Y` |
 | `_ZN7WebCore17standardUserAgentERKN3WTF6StringES3_` | `Al3HAN0xvfw` |
