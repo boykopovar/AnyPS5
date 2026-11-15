@@ -179,9 +179,9 @@ void destroyObject(AudioPropagationHandle system, AudioPropagationHandle handle,
     state.objects.erase(handle);
 }
 
-std::int32_t writeRaysCount(std::uint32_t* count, const char* function) {
+std::int32_t writeRaysCount(std::uint32_t* count, std::uint32_t capacity, const char* function) {
     require(count != nullptr, function);
-    return copyGuestOut(count, std::uint32_t{0}) ? 0 : ErrorNullPointer;
+    return copyGuestOut(count, capacity) ? 0 : ErrorNullPointer;
 }
 
 void requireNoPropagation(bool none, const char* function) {
@@ -351,7 +351,7 @@ std::int32_t APS5_VABI sceAudioPropagationSystemGetRays(AudioPropagationHandle s
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
     require(rays != nullptr, __func__);
-    return writeRaysCount(count, __func__);
+    return writeRaysCount(count, SystemRayCount, __func__);
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSystemSetRays(AudioPropagationHandle system, const void* rays, std::uint32_t count) {
@@ -474,7 +474,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle s
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
     require(rays != nullptr, __func__);
-    return writeRaysCount(count, __func__);
+    return writeRaysCount(count, SourceRayCount, __func__);
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropagationHandle source, const void* rays, std::uint32_t rayCount, std::uint32_t reflectionOrder, void* paths, std::uint32_t pathCount) {
@@ -483,7 +483,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropaga
     const auto found = state.objects.find(source);
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!rays || !paths) return ErrorNullPointer;
-    if (rayCount != 6 || reflectionOrder == 0 || pathCount == 0) return ErrorInvalidArgument;
+    if (rayCount != SourceRayCount || reflectionOrder == 0 || pathCount == 0) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
