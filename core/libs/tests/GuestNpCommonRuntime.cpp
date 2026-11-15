@@ -1657,6 +1657,8 @@ void TestHexAndCopies() {
         "an unwritable destination is refused");
     Require(sceNpStrncpyToBuf(copy, 4, unterminated, 8) == NpBufferTooSmall && sceNpStrncpyToBuf(copy, 8, "Hi", 8) == 0 && Equals(copy, "Hi"),
         "the length limit and the buffer size bound the source read");
+    Require(sceNpStrncpyToBuf(copy, 4, "ABCD", 8) == NpBufferTooSmall && sceNpStrncpyToBuf(copy, 4, "ABC", 8) == 0 && Equals(copy, "ABC"),
+        "with a limit above the buffer size, a source of exactly the buffer size is refused and one byte shorter fits");
 }
 
 }
