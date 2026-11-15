@@ -4,6 +4,7 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <cctype>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -43,6 +44,23 @@ void setPlatformTag(NpIdFull& npId, std::uint32_t tag) {
     std::memcpy(npId.opt + 4, &tag, sizeof(tag));
 }
 
+bool ReadNpId(const NpIdFull* source, NpIdFull& id) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&id, source, sizeof(id));
+    errno = savedErrno;
+    return copied;
+}
+
+bool WritePlatformTag(NpIdFull* destination, std::uint32_t tag) {
+    constexpr std::size_t offset = offsetof(NpIdFull, opt) + 4;
+    const auto address = reinterpret_cast<std::uintptr_t>(destination);
+    if (address > UINTPTR_MAX - offset) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + offset), &tag, sizeof(tag));
+    errno = savedErrno;
+    return copied;
+}
+
 int platformTypeOf(const NpIdFull& npId) {
     if (npId.opt[4] == 0) return 0;
     const std::uint32_t tag = platformTag(npId);
@@ -54,9 +72,14 @@ int platformTypeOf(const NpIdFull& npId) {
 
 int canonicalizeNpId(NpIdFull* npId, std::int32_t replace, std::uint32_t tag) {
     if (!npId) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    if (replace != 0) setPlatformTag(*npId, 0);
-    if (npId->reserved[0] != 1) return NP_UTIL_ERROR_INVALID_NP_ID;
-    if (npId->opt[4] == 0) setPlatformTag(*npId, tag);
+    NpIdFull local{};
+    if (!ReadNpId(npId, local)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (replace != 0) {
+        if (!WritePlatformTag(npId, 0)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        setPlatformTag(local, 0);
+    }
+    if (local.reserved[0] != 1) return NP_UTIL_ERROR_INVALID_NP_ID;
+    if (local.opt[4] == 0 && !WritePlatformTag(npId, tag)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -112,15 +135,13 @@ int APS5_VABI sceNpIntGetPlatformType(const NpIdFull* npId) {
 int APS5_VABI sceNpSetPlatformType(NpIdFull* npId, std::uint32_t platformType) {
     if (!npId) return NP_ERROR_INVALID_ARGUMENT;
     if (platformType >= std::size(PLATFORM_TAGS)) return NP_ERROR_INVALID_PLATFORM_TYPE;
-    setPlatformTag(*npId, PLATFORM_TAGS[platformType]);
-    return 0;
+    return WritePlatformTag(npId, PLATFORM_TAGS[platformType]) ? 0 : NP_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceNpIntSetPlatformType(NpIdFull* npId, std::uint32_t platformType) {
     if (!npId) return NP_ERROR_INVALID_ARGUMENT;
     if (platformType == PLATFORM_TYPE_COMPANION) {
-        setPlatformTag(*npId, PLATFORM_TAG_COMPANION);
-        return 0;
+        return WritePlatformTag(npId, PLATFORM_TAG_COMPANION) ? 0 : NP_ERROR_INVALID_ARGUMENT;
     }
     return sceNpSetPlatformType(npId, platformType);
 }
