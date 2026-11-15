@@ -2558,7 +2558,10 @@ void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address
         } else {
             surface.CopyAspectFrom(*owner, aspect);
         }
-        if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT && surface.StencilMirrorable() && owner->StencilMirrorable()) surface.stencilGeneration = owner->stencilGeneration;
+        if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT && surface.StencilMirrorable() && owner->StencilMirrorable()) {
+            surface.stencilBaseline = owner->stencilBaseline;
+            surface.stencilGeneration = owner->stencilGeneration;
+        }
     }
     if (compatible && aspect == VK_IMAGE_ASPECT_STENCIL_BIT && surface.StencilMirrorable() && owner->stencilStale) {
         surface.MarkStencilStale();
