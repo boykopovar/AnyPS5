@@ -85,7 +85,7 @@
 
 namespace {
 
-using Jsc::WtfAbi::CString;
+using Jsc::WtfAbi::OwnedCString;
 using Jsc::WtfAbi::CStringBuffer;
 using Jsc::WtfAbi::ConversionMode;
 using Jsc::WtfAbi::ConversionResult;
@@ -291,13 +291,13 @@ UTF8ConversionError Utf8Impl(const char16_t* characters, unsigned length, char*&
     return UTF8ConversionError::None;
 }
 
-CString CopyCString(const char* data, std::size_t length) {
+OwnedCString CopyCString(const char* data, std::size_t length) {
     if (length > std::numeric_limits<std::size_t>::max() - sizeof(CStringBuffer) - 1) throw std::length_error("WTF::CString: length overflow");
     auto* buffer = new (Jsc::WtfAbi::AllocateBlock(sizeof(CStringBuffer) + length + 1)) CStringBuffer{1, length};
     char* characters = reinterpret_cast<char*>(buffer + 1);
     if (length) std::memcpy(characters, data, length);
     characters[length] = '\0';
-    return CString(buffer);
+    return OwnedCString(buffer);
 }
 
 ExpectedCString EmptyCString() {
@@ -340,7 +340,7 @@ ExpectedCString StringTryGetUtf8(const String& string, ConversionMode mode) {
 
 namespace Jsc::WtfAbi {
 
-CString::~CString() {
+OwnedCString::~OwnedCString() {
     if (!buffer) return;
     if (buffer->refCount == 1) FreeBlock(buffer);
     else --buffer->refCount;
@@ -398,9 +398,9 @@ ExpectedCString APS5_VABI _ZNK3WTF6String10tryGetUtf8Ev(const String* self) {
     return StringTryGetUtf8(Require(self, __func__), Jsc::WtfAbi::LenientConversion);
 }
 
-CString APS5_VABI _ZNK3WTF6String4utf8Ev(const String* self) {
+OwnedCString APS5_VABI _ZNK3WTF6String4utf8Ev(const String* self) {
     ExpectedCString expected = StringTryGetUtf8(Require(self, __func__), Jsc::WtfAbi::LenientConversion);
     if (!expected.hasValue) throw std::length_error("WTF::String::utf8: conversion failed where WebKit crashes");
-    return CString(std::move(expected.value));
+    return OwnedCString(std::move(expected.value));
 }
 }

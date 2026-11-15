@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-using Jsc::WtfAbi::CString;
+using Jsc::WtfAbi::OwnedCString;
 using Jsc::WtfAbi::CStringBuffer;
 using Jsc::WtfAbi::ConversionResult;
 using Jsc::WtfAbi::ExpectedCString;
@@ -35,11 +35,11 @@ template<typename Exception, typename Function> bool Throws(Function function) {
     return false;
 }
 
-std::string Bytes(const CString& string) {
+std::string Bytes(const OwnedCString& string) {
     return string.buffer ? std::string(reinterpret_cast<const char*>(string.buffer + 1), string.buffer->length) : std::string();
 }
 
-bool HoldsBytes(const CString& string, const std::string& expected) {
+bool HoldsBytes(const OwnedCString& string, const std::string& expected) {
     if (!string.buffer || string.buffer->refCount != 1 || string.buffer->length != expected.size()) return false;
     const char* data = reinterpret_cast<const char*>(string.buffer + 1);
     return !std::memcmp(data, expected.data(), expected.size()) && !data[expected.size()];
@@ -259,11 +259,11 @@ void TestStringUtf8() {
     Check(HoldsBytes(_ZNK3WTF6String10tryGetUtf8ENS_14ConversionModeE(&wide, Jsc::WtfAbi::StrictConversionReplacingUnpairedSurrogatesWithFFFD), "a\xEF\xBF\xBD"), __LINE__);
 
     String ascii = Make8("hello");
-    CString converted = _ZNK3WTF6String4utf8Ev(&ascii);
+    OwnedCString converted = _ZNK3WTF6String4utf8Ev(&ascii);
     Check(Bytes(converted) == "hello", __LINE__);
     ++converted.buffer->refCount;
     {
-        CString second(converted.buffer);
+        OwnedCString second(converted.buffer);
     }
     Check(converted.buffer->refCount == 1, __LINE__);
     Check(Throws<std::invalid_argument>([] { _ZNK3WTF6String4utf8Ev(nullptr); }), __LINE__);

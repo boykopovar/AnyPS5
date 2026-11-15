@@ -30,5 +30,5 @@ Jsc::WtfAbi::ExpectedCString APS5_VABI _ZNK3WTF10StringImpl18tryGetUtf8ForRangeE
 Jsc::WtfAbi::ExpectedCString APS5_VABI _ZNK3WTF10StringView10tryGetUtf8ENS_14ConversionModeE(const Jsc::WtfAbi::StringView* self, Jsc::WtfAbi::ConversionMode mode);
 Jsc::WtfAbi::ExpectedCString APS5_VABI _ZNK3WTF6String10tryGetUtf8ENS_14ConversionModeE(const Jsc::WtfAbi::String* self, Jsc::WtfAbi::ConversionMode mode);
 Jsc::WtfAbi::ExpectedCString APS5_VABI _ZNK3WTF6String10tryGetUtf8Ev(const Jsc::WtfAbi::String* self);
-Jsc::WtfAbi::CString APS5_VABI _ZNK3WTF6String4utf8Ev(const Jsc::WtfAbi::String* self);
+Jsc::WtfAbi::OwnedCString APS5_VABI _ZNK3WTF6String4utf8Ev(const Jsc::WtfAbi::String* self);
 }
