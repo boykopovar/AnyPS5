@@ -1,9 +1,12 @@
 #pragma once
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "ConstrainedFieldPosition.hpp"
+#include "TerminateBuffer.hpp"
 #include "Enumeration.hpp"
+#include "List.hpp"
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
+#include "CaseProperties.hpp"
 #include "Iterator.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
@@ -18,6 +21,8 @@
 #include "LocaleMap.hpp"
 #include "Unescape.hpp"
 #include "Properties.hpp"
+#include "CodePointTrie.hpp"
+#include "Script.hpp"
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"
 #include "CharsetDetection.hpp"
@@ -25,6 +30,7 @@
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
+#include "prx/libSceIcu/Api.hpp"
 #include "prx/libSceIcu/include/Api.hpp"
 #include "Api.hpp"
 #include "Utf32.hpp"
@@ -35,3 +41,6 @@
 #include "Configuration.hpp"
 
 #include "ConverterHelpers.hpp"
+#include "Utf16Search.hpp"
+#include "RecoveredSignatures.hpp"
+#include "Copy.hpp"

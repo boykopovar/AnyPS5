@@ -3,6 +3,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -384,8 +385,12 @@ int APS5_VABI sceVideoOutWaitVblank(int handle) try {
 
 int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options) {
     if (options == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
-    std::memset(options, 0, sizeof(VideoOutOutputOptions));
-    options->internalData[0] = VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD;
+    VideoOutOutputOptions localOptions{};
+    localOptions.internalData[0] = VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(options, &localOptions, sizeof(localOptions));
+    errno = savedErrno;
+    if (!copied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     return 0;
 }
 
@@ -539,6 +544,7 @@ int APS5_VABI sceVideoOutSetGlobalBlendSpace(int handle, uint32_t space, uint32_
 }
 
 int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle) try {
+    if (handle == -1) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     if (VideoOutDriver::Get().GetConfig(handle) == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
@@ -548,6 +554,7 @@ int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle) try {
 }
 
 int APS5_VABI sceVideoOutVrrPegToFixedRate(int handle, uint64_t arg1, uint64_t arg2) try {
+    if (handle == -1) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     if (VideoOutDriver::Get().GetConfig(handle) == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }

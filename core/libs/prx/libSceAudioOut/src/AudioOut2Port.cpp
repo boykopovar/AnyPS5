@@ -325,6 +325,10 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceAudioOut2PortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num) {
+    return sceAudioOut2PortSetAttributes(port, attributes, num);
+}
+
 int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) try {
     constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
     const AudioOutCall call;
@@ -333,9 +337,16 @@ int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!attributes && num != 0) return ErrorInvalidParam;
     for (uint32_t index = 0; index < num; index++) {
-        const auto& attribute = attributes[index];
+        AudioOut2Attribute attribute{};
+        const int savedReadErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(&attribute, attributes + index, sizeof(attribute));
+        errno = savedReadErrno;
+        if (!read) return ErrorInvalidParam;
         if (attribute.attribute_id == ATTRIBUTE_VOLUME && attribute.value != nullptr) {
-            std::memcpy(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+            const int savedWriteErrno = errno;
+            const bool written = GuestCopyOut_nid_no_patch(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+            errno = savedWriteErrno;
+            if (!written) return ErrorInvalidParam;
         } else if (attribute.attribute_id == 9 || attribute.attribute_id == 0xa || attribute.attribute_id == 0x21) {
             NotImplemented_nid_no_patch(__func__);
         } else {

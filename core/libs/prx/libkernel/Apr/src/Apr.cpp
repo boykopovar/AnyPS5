@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include "prx/libc/include/HostThread.hpp"
 #include <optional>
 #include <deque>
 #include <condition_variable>
@@ -776,7 +777,7 @@ void _complete(bool amm, std::uint32_t id) {
 
 AprQueue* _startQueue(bool amm) {
     auto* created = new AprQueue();
-    std::thread([created, amm] {
+    Libc::StartHostThread([created, amm] {
         for (;;) {
             AprQueue::Work work;
             {
@@ -817,7 +818,7 @@ AprQueue& _queue(bool amm, std::uint32_t priority) {
     return *queue;
 }
 
-std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0) {
+std::optional<std::uint32_t> _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0, std::uint32_t* guestId = nullptr, std::uint32_t* guestResult = nullptr) {
     auto& queue = _queue(amm, priority);
     auto& completion = _completion(amm);
     std::lock_guard submitLock(queue.submit);
@@ -826,6 +827,11 @@ std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, s
         std::lock_guard lock(completion.mutex);
         id = ++completion.issued;
         completion.outstanding.insert(id);
+    }
+    const std::uint32_t succeeded = 0;
+    if ((guestId && !GuestCopyOut_nid_no_patch(guestId, &id, sizeof(id))) || (guestResult && !GuestCopyOut_nid_no_patch(guestResult, &succeeded, sizeof(succeeded)))) {
+        _complete(amm, id);
+        return std::nullopt;
     }
     bool queued;
     {
@@ -858,7 +864,7 @@ void _waitSubmitted(std::uint32_t id, bool amm) {
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
-    return _submit(static_cast<const std::uint8_t*>(base), bytes, true);
+    return *_submit(static_cast<const std::uint8_t*>(base), bytes, true);
 }
 
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
@@ -887,10 +893,16 @@ int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t cou
 int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
     if (!paths || !ids || !sizes) return _fail(GUEST_EINVAL);
     for (uint32_t index = 0; index < count; ++index) {
-        if (!_resolve(paths[index], &ids[index], &sizes[index])) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
-            if (error_index) *error_index = index;
+        uint32_t id = INVALID_FILE_ID;
+        uint64_t size = 0;
+        const bool resolved = _resolve(paths[index], &id, &size);
+        if (!resolved) {
+            id = INVALID_FILE_ID;
+            size = 0;
+        }
+        if (!GuestCopyOut_nid_no_patch(&ids[index], &id, sizeof(id)) || !GuestCopyOut_nid_no_patch(&sizes[index], &size, sizeof(size))) return _fail(GUEST_EFAULT);
+        if (!resolved) {
+            if (error_index && !GuestCopyOut_nid_no_patch(error_index, &index, sizeof(index))) return _fail(GUEST_EFAULT);
             return _fail(GUEST_ENOENT);
         }
     }
@@ -901,10 +913,16 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(const char
     if (!prefix || !paths || !ids) return _fail(GUEST_EINVAL);
     for (uint32_t index = 0; index < count; ++index) {
         const std::string path = paths[index] ? std::string(prefix) + paths[index] : std::string();
-        if (path.empty() || !_resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr)) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
-            if (error_index) *error_index = index;
+        uint32_t id = INVALID_FILE_ID;
+        uint64_t size = 0;
+        const bool resolved = !path.empty() && _resolve(path.c_str(), &id, sizes ? &size : nullptr);
+        if (!resolved) {
+            id = INVALID_FILE_ID;
+            size = 0;
+        }
+        if (!GuestCopyOut_nid_no_patch(&ids[index], &id, sizeof(id)) || (sizes && !GuestCopyOut_nid_no_patch(&sizes[index], &size, sizeof(size)))) return _fail(GUEST_EFAULT);
+        if (!resolved) {
+            if (error_index && !GuestCopyOut_nid_no_patch(error_index, &index, sizeof(index))) return _fail(GUEST_EFAULT);
             return _fail(GUEST_ENOENT);
         }
     }
@@ -942,35 +960,29 @@ std::optional<std::vector<std::uint8_t>> _guestCommands(const Apr::CommandBuffer
     return commands;
 }
 
-int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
+int _submitGuest(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id, uint32_t* result) {
     if (!buffer) return _fail(GUEST_EINVAL);
     Apr::CommandBufferObject object{};
     if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
     const auto commands = _guestCommands(object);
     if (!commands) return _fail(GUEST_EFAULT);
-    _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
+    if (!_submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority, id, result)) return _fail(GUEST_EFAULT);
     return 0;
+}
+
+int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
+    return _submitGuest(buffer, priority, nullptr, nullptr);
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
     if (!id) return _fail(GUEST_EINVAL);
-    if (!buffer) return _fail(GUEST_EINVAL);
-    Apr::CommandBufferObject object{};
-    if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
-    const auto commands = _guestCommands(object);
-    if (!commands) return _fail(GUEST_EFAULT);
-    const std::uint32_t submitted = _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
-    if (!GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return _fail(GUEST_EFAULT);
-    return 0;
+    return _submitGuest(buffer, priority, id, nullptr);
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* result, uint32_t* id) {
     if (!result) return _fail(GUEST_EINVAL);
-    const int submitted = sceKernelAprSubmitCommandBufferAndGetId(buffer, priority, id);
-    if (submitted != 0) return submitted;
-    const std::uint32_t succeeded = 0;
-    if (!GuestCopyOut_nid_no_patch(result, &succeeded, sizeof(succeeded))) return _fail(GUEST_EFAULT);
-    return 0;
+    if (!id) return _fail(GUEST_EINVAL);
+    return _submitGuest(buffer, priority, id, result);
 }
 
 int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {

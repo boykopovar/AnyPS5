@@ -6,6 +6,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <span>
 
 namespace Elfpatcher {
@@ -85,6 +86,33 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         bytes.push_back(0xe9);
         Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
         Io::WriteU64(symbols, index * 24 + 8, thunk);
+    }
+    if (!image.BindingAliases.empty()) {
+        if (symbols.size() % 24 != 0) throw Domain::RelinkerException("Invalid guest symbol table for binding aliases");
+        const auto originalCount = symbols.size() / 24;
+        std::set<std::string> names;
+        for (std::size_t index = 0; index < originalCount; ++index) {
+            const auto offset = Io::ReadU32(symbols, index * 24);
+            if (offset >= strings.size()) throw Domain::RelinkerException("Invalid guest binding alias string offset");
+            const auto start = strings.begin() + offset;
+            const auto end = std::find(start, strings.end(), 0);
+            if (end == strings.end()) throw Domain::RelinkerException("Unterminated guest binding alias string");
+            if (Io::ReadU16(symbols, index * 24 + 6) != 0) names.emplace(start, end);
+        }
+        for (const auto& [index, name] : image.BindingAliases) {
+            if (index == 0 || index >= originalCount) throw Domain::RelinkerException("Invalid guest binding alias symbol index");
+            const auto offset = index * 24;
+            const auto visibility = symbols[offset + 5] & 3;
+            if (Io::ReadU16(symbols, offset + 6) == 0 || (symbols[offset + 4] >> 4) == 0 || visibility == 1 || visibility == 2)
+                throw Domain::RelinkerException("Guest binding alias requires an exported definition");
+            if (name.empty() || name.find('\0') != std::string::npos || !names.insert(name).second)
+                throw Domain::RelinkerException("Duplicate or empty guest binding alias: " + name);
+            if (symbols.size() / 24 >= std::numeric_limits<std::uint32_t>::max()) throw Domain::RelinkerException("Guest binding alias symbol table too large");
+            const std::vector<std::uint8_t> symbol(symbols.begin() + offset, symbols.begin() + offset + 24);
+            const auto entry = symbols.size();
+            symbols.insert(symbols.end(), symbol.begin(), symbol.end());
+            Io::WriteU32(symbols, entry, addString(name));
+        }
     }
     std::vector<std::uint64_t> needed;
     for (const auto& dependency : dependencies) needed.push_back(addString(dependency));
