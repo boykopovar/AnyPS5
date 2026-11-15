@@ -89,6 +89,11 @@ struct String {
 StringView ViewOf(const StringImpl* impl);
 char16_t CodeUnitAt(const StringView& view, unsigned index);
 
+inline bool IsSpaceOrNewline(char16_t character) {
+    if (character <= 0xFF) return character == ' ' || (character >= 0x9 && character <= 0xD);
+    return character == 0x1680 || (character >= 0x2000 && character <= 0x200A) || character == 0x2028 || character == 0x205F || character == 0x3000;
+}
+
 struct StringViewWithUnderlyingString {
     StringView view;
     String underlyingString;

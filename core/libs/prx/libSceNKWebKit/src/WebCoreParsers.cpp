@@ -144,6 +144,7 @@ ByteVector::~ByteVector() {
 namespace {
 
 using NKWebKit::WtfAbi::ByteVector;
+using NKWebKit::WtfAbi::IsSpaceOrNewline;
 using NKWebKit::WtfAbi::StringView;
 using WebCore::HTMLIntegerParsingError;
 
@@ -299,11 +300,6 @@ long long& Checked(long long* value) {
 }
 
 constexpr std::size_t notFound = std::numeric_limits<std::size_t>::max();
-
-bool IsSpaceOrNewline(char16_t character) {
-    if (character <= 0xFF) return character == ' ' || (character >= 0x9 && character <= 0xD);
-    return character == 0x1680 || (character >= 0x2000 && character <= 0x200A) || character == 0x2028 || character == 0x205F || character == 0x3000;
-}
 
 class CodeUnits {
 public:
