@@ -26,8 +26,9 @@ void main() {
     if (index >= parameters.count) return;
     uint value = result.words[parameters.resultBase + index];
     uint before = snapshot.words[parameters.snapshotBase + index];
-    uint held = target.words[parameters.targetBase + index];
     uint changed = differingBytes(value ^ before);
+    if (changed == 0u && parameters.always == 0u) return;
+    uint held = target.words[parameters.targetBase + index];
     uint kept = differingBytes(held ^ before);
     uint stored = parameters.always != 0u ? 0xffffffffu : changed & ~kept;
     if (stored != 0u) target.words[parameters.targetBase + index] = (held & ~stored) | (value & stored);
