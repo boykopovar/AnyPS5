@@ -155,6 +155,15 @@ const char* captureDirectory() {
     return directory;
 }
 
+std::filesystem::path clearCaptureAndTrigger() {
+    const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
+    check(trigger != nullptr && *trigger != '\0', "the test needs APS5_FRAME_CAPTURE_TRIGGER");
+    const std::filesystem::path directory(captureDirectory());
+    std::filesystem::remove(trigger);
+    std::filesystem::remove_all(directory);
+    return directory;
+}
+
 void checkCapturedFrames(const char* directory) {
     const FrameCaptureReader reader{std::filesystem::path(directory)};
     check(!reader.Truncated(), "the capture is truncated");
@@ -279,6 +288,7 @@ void submitWords(std::span<const std::uint32_t> words, std::byte* at) {
 }
 
 void testWaitingRecorderAdmitsBesideBlockedFlip() {
+    const auto directory = clearCaptureAndTrigger();
     auto* const block = allocate();
     auto output = std::make_shared<HeldOutput>();
     AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
@@ -317,7 +327,7 @@ void testWaitingRecorderAdmitsBesideBlockedFlip() {
     check(held, "the flip submission did not wait for flip room");
     check(besideFlip, "with the frame recorder waiting for its trigger, a submission waited for another thread's submission that was waiting for flip room");
     check(std::atomic_ref<std::uint32_t>(*done).load() == 1, "the register list submitted before the flip was not executed");
-    check(!std::filesystem::exists(captureDirectory()) || std::filesystem::is_empty(captureDirectory()), "the frame recorder started without its trigger");
+    check(!std::filesystem::exists(directory) || std::filesystem::is_empty(directory), "the frame recorder started without its trigger");
 }
 
 class Latch {
@@ -362,11 +372,8 @@ void finishedWithin(const std::function<void()>& call, const char* what) {
 void testRecorderStartsAfterAdmittedCalls() {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
     check(recorder != nullptr, "the frame recorder is not active");
-    const std::filesystem::path directory(captureDirectory());
+    const auto directory = clearCaptureAndTrigger();
     const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
-    check(trigger != nullptr && *trigger != '\0', "the startup test needs APS5_FRAME_CAPTURE_TRIGGER");
-    std::filesystem::remove(trigger);
-    std::filesystem::remove_all(directory);
     const auto started = [&] { return std::filesystem::exists(directory / FrameCaptureWriter::MemoryName); };
     std::atomic<bool> holding{false};
     std::atomic<std::uint64_t> waits{0};
