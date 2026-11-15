@@ -4,6 +4,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <iterator>
@@ -517,6 +518,17 @@ constexpr int NP_THREAD_SCHED_POLICY = 1;
 
 int NpResult(int result) {
     return result < 0 ? result : 0;
+}
+
+bool ClearGuestBytes(void* destination, std::size_t size) {
+    constexpr std::array<std::uint8_t, 256> zeros{};
+    const int savedErrno = errno;
+    bool cleared = true;
+    for (std::size_t offset = 0; cleared && offset < size; offset += zeros.size()) {
+        cleared = GuestCopyOut_nid_no_patch(static_cast<std::uint8_t*>(destination) + offset, zeros.data(), std::min(zeros.size(), size - offset));
+    }
+    errno = savedErrno;
+    return cleared;
 }
 
 int NpBusyResult(int result, int busy) {
@@ -1669,8 +1681,11 @@ int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const ch
 
 int APS5_VABI _ZN3sce2np9NpTitleId5BuildERKS1_Pcm(const NpTitleIdObject* titleId, char* text, std::size_t size) {
     if (size <= NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL;
-    std::memset(text, 0, size);
-    std::memcpy(text, titleId->titleId.data, NP_TITLE_ID_LENGTH + 1);
+    if (!ClearGuestBytes(text, size)) return NP_ERROR_INVALID_ARGUMENT_UTIL;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(text, titleId->titleId.data, NP_TITLE_ID_LENGTH + 1);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
@@ -1965,7 +1980,7 @@ int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5BuildERKS1_Pcm(const NpCommIdObject* commId, char* text, std::size_t size) {
-    std::memset(text, 0, size);
+    if (!ClearGuestBytes(text, size)) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return NpResult(sceNpUtilBuildTitleId(reinterpret_cast<const NpTitleIdParts*>(&commId->commId), text, size));
 }
 
