@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceGifParser/include/InventoryExports.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -35,8 +36,13 @@ int APS5_VABI libSceGifParserUnknown_gtaHM_minus_0DRuA_nid_no_patch() {
 APS5_EXPORT("gtaHM-0DRuA", libSceGifParserUnknown_gtaHM_minus_0DRuA_nid_no_patch);
 
 int APS5_VABI libSceGifParserUnknown_WvV54DtSzmQ_nid_no_patch(const void* config) {
+    if (config == nullptr)
+        throw std::invalid_argument("WvV54DtSzmQ: unreadable configuration");
     std::array<std::byte, kConfigSize> copy{};
-    if (config == nullptr || !GuestCopyIn_nid_no_patch(copy.data(), config, copy.size()))
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(copy.data(), config, copy.size());
+    errno = savedErrno;
+    if (!copied)
         throw std::invalid_argument("WvV54DtSzmQ: unreadable configuration");
     const std::lock_guard<std::mutex> lock(g_configMutex);
     g_config = copy;

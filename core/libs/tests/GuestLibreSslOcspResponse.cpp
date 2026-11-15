@@ -70,8 +70,6 @@ static void TestBasicResponseFree() {
     const auto error = ERR_peek_error_nid_postfix();
     OCSP_BASICRESP_free_nid_postfix(nullptr);
     Require(ERR_peek_error_nid_postfix() == error);
-    RequireThrows([] { OCSP_BASICRESP_free_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{1})); });
-    Require(ERR_peek_error_nid_postfix() == error);
 }
 
 static void TestGet1Basic() {

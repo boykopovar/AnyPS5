@@ -233,7 +233,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool keepsDenormals = device->Target().float32DenormPreserve;
         std::uint32_t checked = 0u;
-        for (const std::uint32_t denormals : {1u, 2u}) {
+        for (const std::uint32_t denormals : {0u, 1u, 2u}) {
             for (const bool ieee : {false, true}) {
                 const ShaderRecompiler::ShaderFloatMode floatMode{0xc0u | denormals << 4u, true, ieee, false};
                 const auto refusal = Run(*device, floatMode);
@@ -245,7 +245,7 @@ int main() {
                 Check(denormals, ieee);
             }
         }
-        std::printf("f32 fract, floor, ceil and frexp_mant denormal mode 1 and 2 tests passed (%u of 4 modes run; the others need DenormPreserve 32)\n", checked);
+        std::printf("f32 fract, floor, ceil and frexp_mant denormal mode 0, 1 and 2 tests passed (%u of 6 modes run; the others need DenormPreserve 32)\n", checked);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

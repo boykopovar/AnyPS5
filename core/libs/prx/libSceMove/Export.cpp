@@ -128,20 +128,17 @@ int APS5_VABI sceMoveResetLightSphere(int32_t handle) {
 }
 int APS5_VABI sceMoveGetBluetoothAddress(int32_t handle, uint64_t* address) {
     if (const int result = checkHandle(handle, address != nullptr); result != MOVE_OK) return result;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
 int APS5_VABI sceMoveGetCalibrationInfo(int32_t handle, void* info) {
     if (const int result = checkHandle(handle, info != nullptr); result != MOVE_OK) return result;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
 int APS5_VABI sceMoveGetDeviceId(int32_t handle, uint32_t* deviceId) {
     if (const int result = checkHandle(handle, deviceId != nullptr); result != MOVE_OK) return result;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
 int APS5_VABI sceMoveIsReproductionModel(void) {

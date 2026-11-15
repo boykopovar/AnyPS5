@@ -22,6 +22,7 @@ extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
@@ -367,6 +368,17 @@ static void CheckWideCaseTranslation() {
         Require(_Towctrans_nid_postfix(u'A', descriptor) == u'A' && _Towctrans_nid_postfix(u'7', descriptor) == u'7');
         Require(*__error_nid_postfix() == 22);
     }
+    Require(wctrans_nid_postfix("tolower") == 1 && wctrans_nid_postfix("toupper") == 2);
+    Require(towctrans_nid_postfix(u'A', wctrans_nid_postfix("tolower")) == u'a' && towctrans_nid_postfix(u'a', wctrans_nid_postfix("toupper")) == u'A');
+    Require(wctrans_nid_postfix("") == 0 && wctrans_nid_postfix("totitle") == 0 && wctrans_nid_postfix("tolowercase") == 0);
+    Require(wctrans_nid_postfix(reinterpret_cast<const char*>(0x10)) == 0);
+    const std::uint64_t alpha = wctype_nid_postfix("alpha");
+    Require(alpha != 0 && iswctype_nid_postfix(u'q', alpha) != 0 && iswctype_nid_postfix(u'7', alpha) == 0);
+    const std::uint64_t digit = wctype_nid_postfix("digit");
+    Require(digit != 0 && iswctype_nid_postfix(u'7', digit) != 0 && iswctype_nid_postfix(u'q', digit) == 0);
+    Require(wctype_nid_postfix("phonogram") == 0x200000 && wctype_nid_postfix("ideogram") == 0x80000);
+    Require(wctype_nid_postfix("") == 0 && wctype_nid_postfix("phonograms") == 0 && wctype_nid_postfix("Alpha") == 0);
+    Require(wctype_nid_postfix(reinterpret_cast<const char*>(0x10)) == 0);
 }
 
 static void CheckWideNumPutVtableObject() {
@@ -557,7 +569,13 @@ static void CheckFacetGetcat() {
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 11;
     Require(_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 11);
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut}) {
+    GuestLocale::Facet* wideTimePut = nullptr;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&wideTimePut, &locale) == 5 && wideTimePut != nullptr);
+    Require(sizeof(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix) == 8 && _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 0);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 11;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 11);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
+    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut, wideTimePut}) {
         facet->vtable->retain(facet);
         facet->vtable->retain(facet);
         Require(facet->references == 2);
