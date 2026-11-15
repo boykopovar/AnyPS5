@@ -155,7 +155,6 @@ int main() {
     RequireStub(&_ZN7WebCore12ISOWebVTTCueD1Ev);
     RequireStub(&_ZN7WebCore13MIMETypeCacheD1Ev);
     RequireStub(&_ZN7WebCore16HTMLMediaElement15clearMediaCacheERKN3WTF6StringENS1_8WallTimeE);
-    RequireStub(&_ZN7WebCore18CustomHeaderFieldsD1Ev);
     RequireStub(&_ZN7WebCore26ISOProtectionSchemeInfoBoxD1Ev);
     RequireStub(&_ZN7WebCore30InspectorInstrumentationWebKit16interceptRequestERNS_14ResourceLoaderEON3WTF8FunctionIFvRKNS_15ResourceRequestEEEE);
     RequireStub(&_ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxC1ERKS0_);
