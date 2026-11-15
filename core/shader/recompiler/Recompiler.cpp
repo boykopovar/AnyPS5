@@ -2885,7 +2885,7 @@ PreparedShaderInvocation PreparedShaderInvocation::Rebound(const RecompileReques
 std::uint64_t PreparedShaderInvocation::SnapshotKey(const ResourceCapture& capture) const {
     if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     const auto substitutes = bufferSubstitutesEnabled() && handle->artifact->substitutes != nullptr ? handle->artifact->substitutes->Slots() : std::vector<BufferSubstitute>{};
-    std::uint64_t key = snapshotHash(request, capture.snapshot, false, substitutes);
+    std::uint64_t key = snapshotHash(request, capture.snapshot, {}, substitutes);
     for (const std::uint64_t value : {static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(handle.get())), static_cast<std::uint64_t>(handle->artifact->artifact.variantId), static_cast<std::uint64_t>(request.layout.descriptorSet), static_cast<std::uint64_t>(request.layout.pushConstantSizeBytes)}) {
         key ^= value;
         key *= 0x100000001b3ull;
