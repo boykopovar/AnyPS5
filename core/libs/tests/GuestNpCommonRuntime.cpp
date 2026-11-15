@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1188,6 +1189,9 @@ void TestXmlText() {
     Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), nullptr, 1, &length) == NpUtilInvalid, "xml escaping needs a source");
     Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a", 0, &length) == NpUtilInvalid, "xml escaping needs a source length");
     Require(sceNpUtilXmlEscape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml escaping needs a buffer or a length");
+    errno = 71;
+    Require(sceNpUtilXmlEscape(reinterpret_cast<char*>(0x10), sizeof(escaped), "a&b", 3, &length) == NpUtilInvalid && errno == 71, "xml escaping refuses an unwritable buffer");
+    Require(sceNpUtilXmlEscape(nullptr, 0, "a&b", 3, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71, "xml escaping refuses an unwritable length");
 
     char unescaped[64] = {};
     const char* entities = "x&lt;&gt;&amp;&quot;&apos;y";
@@ -1209,6 +1213,9 @@ void TestXmlText() {
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), nullptr, 1, &length) == NpUtilInvalid, "xml unescaping needs a source");
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a", 0, &length) == NpUtilInvalid, "xml unescaping needs a source length");
     Require(sceNpUtilXmlUnescape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml unescaping needs a buffer or a length");
+    errno = 71;
+    Require(sceNpUtilXmlUnescape(reinterpret_cast<char*>(0x10), sizeof(unescaped), "a&amp;b", 7, &length) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable buffer");
+    Require(sceNpUtilXmlUnescape(nullptr, 0, "a&amp;b", 7, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable length");
     struct {
         char buffer[4];
         char canary[4];

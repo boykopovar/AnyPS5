@@ -678,16 +678,18 @@ int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src
         }
         if (dst != nullptr) {
             if (length + pieceLength > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-            std::memcpy(dst + length, piece, pieceLength);
+            if (!GuestCopyOut_nid_no_patch(dst + length, piece, pieceLength)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
         }
         length += pieceLength;
         src += consumed;
     } while (src < end);
     if (dst != nullptr) {
         if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        dst[length] = '\0';
+        const char terminator = '\0';
+        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
-    if (required != nullptr) *required = length + 1;
+    const std::size_t needed = length + 1;
+    if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -705,15 +707,17 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
                 consumed = std::strlen(entity->text);
             }
         }
-        if (dst != nullptr) dst[length] = character;
+        if (dst != nullptr && !GuestCopyOut_nid_no_patch(dst + length, &character, sizeof(character))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
         ++length;
         src += consumed;
     } while (src < end);
     if (dst != nullptr) {
         if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        dst[length] = '\0';
+        const char terminator = '\0';
+        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
-    if (required != nullptr) *required = length + 1;
+    const std::size_t needed = length + 1;
+    if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
