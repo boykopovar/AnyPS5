@@ -1286,8 +1286,7 @@ int APS5_VABI sceNetCtlGetStateIpcInt(int* state) {
 }
 
 int APS5_VABI sceNetCtlGetState2IpcInt(int* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetCtlGetState(state);
 }
 
 int APS5_VABI sceNetCtlGetInfoIpcInt(std::uint32_t code, NetCtlInfo* info) {

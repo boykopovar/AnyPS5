@@ -181,14 +181,19 @@ void CheckIpcIntGetters() {
     auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetStateIpcInt(nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetStateV6IpcInt(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetState2IpcInt(nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetStateIpcInt(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetStateV6IpcInt(unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetState2IpcInt(unwritable) == kErrInvalidAddr);
     int state = -1;
     int twin = -2;
     Require(sceNetCtlGetStateIpcInt(&state) == 0 && sceNetCtlGetState(&twin) == 0 && state == twin);
     state = -1;
     twin = -2;
     Require(sceNetCtlGetStateV6IpcInt(&state) == 0 && sceNetCtlGetStateV6(&twin) == 0 && state == twin);
+    state = -1;
+    twin = -2;
+    Require(sceNetCtlGetState2IpcInt(&state) == 0 && sceNetCtlGetState(&twin) == 0 && state == twin);
 
     Require(sceNetCtlGetResultIpcInt(kEventDisconnected, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResultIpcInt(kEventDisconnected, unwritable) == kErrInvalidAddr);

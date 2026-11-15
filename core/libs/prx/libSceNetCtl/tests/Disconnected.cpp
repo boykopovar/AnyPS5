@@ -17,6 +17,8 @@ static void CheckState() {
     Require(sceNetCtlGetStateV6(&stateV6) == 0 && stateV6 == 0);
     int stateIpc = -1;
     Require(sceNetCtlGetStateIpcInt(&stateIpc) == 0 && stateIpc == 0);
+    int state2Ipc = -1;
+    Require(sceNetCtlGetState2IpcInt(&state2Ipc) == 0 && state2Ipc == 0);
     int stateV6Ipc = -1;
     Require(sceNetCtlGetStateV6IpcInt(&stateV6Ipc) == 0 && stateV6Ipc == 0);
 }
