@@ -4961,7 +4961,7 @@ void verifyImageTableBindingGrowth() {
             require(allocation.bindings.size() == 2u, "image table bindings: a prepared binding was lost");
             const auto& images = allocation.bindings[0];
             const auto& samplers = allocation.bindings[1];
-            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
+            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageUintStorage.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
             require(samplers.count == count && samplers.guestDescriptor.size() == count * 4u && samplers.samplerDepthCompare.size() == count, "image table bindings: sampler metadata count differs from the descriptors");
             for (std::uint32_t index = 0; index < count; ++index) {
                 require(std::equal(tables.elements[index].words.begin(), tables.elements[index].words.end(), images.guestDescriptor.begin() + index * 8u), "image table bindings: image words changed");
