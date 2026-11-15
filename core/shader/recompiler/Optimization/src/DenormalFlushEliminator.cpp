@@ -46,6 +46,12 @@ bool takenOnlyAsNan(const IrValue* condition, const IrValue* arm) {
 
 const IrValue* tinyGuardedProduct(const IrValue* condition, const IrValue* arm) {
     const IrValue* product = arm->Resolve();
+    if (product->Opcode() == IrOpcode::SelectF32 && product->ArgumentCount() == 3u) {
+        const IrValue* boundary = maskedOperand(product->Argument(0)->Resolve(), IrOpcode::IEqual32, 0x20800000u);
+        if (boundary == nullptr || maskedOperand(boundary, IrOpcode::BitwiseAnd32, 0x7fffffffu) == nullptr) return nullptr;
+        if (maskedOperand(bitsOf(product->Argument(1)), IrOpcode::BitwiseOr32, 0x00800000u) == nullptr) return nullptr;
+        product = product->Argument(2)->Resolve();
+    }
     if (product->Opcode() != IrOpcode::FPMul32 || product->ArgumentCount() != 2u) return nullptr;
     const IrValue* offset = rightOperand(condition->Resolve(), IrOpcode::ULessThan32, 0x207fffffu);
     const IrValue* magnitude = offset != nullptr ? rightOperand(offset, IrOpcode::ISub32, 1u) : nullptr;
