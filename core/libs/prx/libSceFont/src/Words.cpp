@@ -7,6 +7,7 @@
 
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
+#include "prx/libSceFont/include/FontInternal.hpp"
 #include "prx/libSceFont/include/FontWords.hpp"
 
 namespace {
@@ -290,7 +291,7 @@ int Font::WordsFindWordCharacters(FontWords* words, FontTextCharacter* firstChar
     } else {
         found = SelectWord(*data, firstCharacter, endCharacter);
     }
-    if (lastCharacter) *lastCharacter = found;
-    if (nextCharacter) *nextCharacter = found ? NextRendered(found) : nullptr;
+    if (lastCharacter && !Font::CopyOutGuest(lastCharacter, found)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (nextCharacter && !Font::CopyOutGuest(nextCharacter, found ? NextRendered(found) : nullptr)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return rc;
 }
