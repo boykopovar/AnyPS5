@@ -7,6 +7,7 @@
 #include "StencilReplay.hpp"
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -520,7 +521,12 @@ namespace {
 std::uint64_t HeapTemplateBudget() {
     static const std::uint64_t budget = [] {
         const char* value = std::getenv("APS5_HEAP_TEMPLATE_MIB");
-        const auto mib = value != nullptr ? std::strtoull(value, nullptr, 10) : 256ull;
+        std::uint64_t mib = 256u;
+        if (value != nullptr && *value != '\0') {
+            const auto* end = value + std::strlen(value);
+            const auto parsed = std::from_chars(value, end, mib);
+            if (parsed.ec != std::errc{} || parsed.ptr != end || mib > (1u << 20u)) throw std::runtime_error("APS5_HEAP_TEMPLATE_MIB must be an integer from 0 through 1048576");
+        }
         return std::max<std::uint64_t>(mib, 1u) << 20u;
     }();
     return budget;

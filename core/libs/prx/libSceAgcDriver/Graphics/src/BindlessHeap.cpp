@@ -17,6 +17,7 @@
 #include <atomic>
 #include <type_traits>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -70,8 +71,25 @@ std::atomic<std::uint64_t> emptyResourceSets{0};
 
 }
 
+namespace {
+
+std::uint32_t HeapEnvironmentNumber(const char* name, std::uint32_t fallback, std::uint32_t maximum) {
+    const char* text = std::getenv(name);
+    if (text == nullptr || *text == '\0') return fallback;
+    std::uint32_t value = 0;
+    const auto* end = text + std::strlen(text);
+    const auto parsed = std::from_chars(text, end, value);
+    if (parsed.ec != std::errc{} || parsed.ptr != end || value > maximum) throw std::runtime_error(std::string(name) + " must be an integer from 0 through " + std::to_string(maximum));
+    return value;
+}
+
+}
+
 bool GpuHeapEnabled() {
-    static const bool enabled = std::getenv("APS5_GPU_HEAP") != nullptr;
+    static const bool enabled = [] {
+        const char* value = std::getenv("APS5_GPU_HEAP");
+        return value != nullptr && std::string_view(value) != "0";
+    }();
     return enabled;
 }
 
@@ -144,8 +162,7 @@ bool DescriptorHeapEnabled() {
 
 std::uint32_t PushedBufferRecordCap() {
     static const std::uint32_t cap = [] {
-        const char* value = std::getenv("APS5_PUSHED_BUFFER_RECORDS");
-        return value != nullptr && *value != '\0' ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10)) : ShaderRecompiler::RuntimeAbi::PushedBufferLimit;
+        return HeapEnvironmentNumber("APS5_PUSHED_BUFFER_RECORDS", ShaderRecompiler::RuntimeAbi::PushedBufferLimit, ShaderRecompiler::RuntimeAbi::PushedBufferLimit);
     }();
     return cap;
 }
@@ -232,8 +249,7 @@ namespace {
 
 std::uint32_t configuredSlotCap(std::uint32_t slots) {
     static const std::uint32_t requested = [] {
-        const char* value = std::getenv("APS5_HEAP_SLOT_CAP");
-        return value != nullptr ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+        return HeapEnvironmentNumber("APS5_HEAP_SLOT_CAP", 0u, ~0u);
     }();
     if (requested == 0u || slots <= BindlessHeap::SamplerKind) return slots;
     return BindlessHeap::SamplerKind + std::min(requested, slots - BindlessHeap::SamplerKind);
@@ -1153,8 +1169,7 @@ constexpr std::uint32_t InternalEmbeddedSamplers = 8u;
 
 std::uint32_t embeddedSamplerLimit(const Context& context) {
     static const auto cap = [] {
-        const char* value = std::getenv("APS5_EMBEDDED_SAMPLER_CAP");
-        return value != nullptr ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10)) : ~0u;
+        return HeapEnvironmentNumber("APS5_EMBEDDED_SAMPLER_CAP", ~0u, ~0u);
     }();
     const auto device = context.descriptorHeapProperties.maxDescriptorHeapEmbeddedSamplers;
     return std::min(cap, device > InternalEmbeddedSamplers ? device - InternalEmbeddedSamplers : 0u);

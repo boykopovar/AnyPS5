@@ -145,7 +145,7 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
+        const bool heap = AgcDriver::Graphics::GpuHeapEnabled();
         if (heap && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
         FillTexels(TextureMemory, SampleTexel);
         FillTexels(OtherTextureMemory, OtherTexel);

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -106,8 +108,13 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(HeapCache
     static const std::uint64_t every = [] {
         const char* text = std::getenv("APS5_VERIFY_GPU_HEAP");
         if (text == nullptr) return std::uint64_t{0};
-        const auto value = std::strtoull(text, nullptr, 10);
-        return value == 0 ? std::uint64_t{1} : static_cast<std::uint64_t>(value);
+        std::uint64_t value = 0;
+        const auto* end = text + std::strlen(text);
+        if (text != end) {
+            const auto parsed = std::from_chars(text, end, value);
+            if (parsed.ec != std::errc{} || parsed.ptr != end) throw std::runtime_error("APS5_VERIFY_GPU_HEAP must be empty or a non-negative integer");
+        }
+        return value == 0 ? std::uint64_t{1} : value;
     }();
     return every;
 }

@@ -327,7 +327,8 @@ int main(int argc, char** argv) {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
+        const bool heap = AgcDriver::Graphics::GpuHeapEnabled();
+        if (heap && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
         const std::size_t draws = argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 4000u;
         const std::size_t rounds = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 12u;
         Require(draws > 0 && rounds >= 3, "the bench needs at least one draw and three rounds, the first two of which warm up");

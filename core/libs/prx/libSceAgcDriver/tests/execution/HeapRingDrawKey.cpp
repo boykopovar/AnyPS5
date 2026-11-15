@@ -268,7 +268,7 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
+        const bool heap = AgcDriver::Graphics::GpuHeapEnabled();
         constexpr std::size_t Draws = 256, Rounds = 8;
         {
             GuestAllocations::Mutation mutation;

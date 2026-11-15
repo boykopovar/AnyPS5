@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -264,7 +265,7 @@ Facts Inspect(const ShaderRecompiler::RecompileResult& result) {
 }
 
 void RequireHeapPipeline(const AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, std::uint64_t before, const std::string& name) {
-    if (std::getenv("APS5_GPU_HEAP") == nullptr) return;
+    if (!AgcDriver::Graphics::GpuHeapEnabled()) return;
     Require(result.gpuResolvedImages, name + ": the scratch program is not GPU mode");
     Require(device.DescriptorHeapComputePipelines() > before, name + ": the scratch program did not take the descriptor heap");
 }

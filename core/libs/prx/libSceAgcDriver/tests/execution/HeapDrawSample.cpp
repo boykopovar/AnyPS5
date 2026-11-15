@@ -552,7 +552,7 @@ int main() {
             if (!device) return VulkanTestSkipped;
         }
         const bool excluded = std::getenv("APS5_GPU_HEAP_EXCLUDE") != nullptr;
-        const bool heapMode = std::getenv("APS5_GPU_HEAP") != nullptr;
+        const bool heapMode = AgcDriver::Graphics::GpuHeapEnabled();
         const bool heap = heapMode && !excluded;
         if (heapMode && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
         {
