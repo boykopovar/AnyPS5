@@ -647,6 +647,7 @@ bool testNativeRepeatHtileCopy(const std::filesystem::path& directory, std::stri
     constexpr std::size_t CapturedBytes = 2u * Block;
     constexpr VkExtent2D Extent{DepthFastClearHarness::Width, DepthFastClearHarness::Height};
     constexpr float CapturedDepth = 0.25f;
+    const bool boundOutside = mode == "native_repeat_htile_copy_bound_outside";
     const auto texels = Extent.width * Extent.height;
     auto* bytes = allocate(8u * Block);
     std::fill_n(bytes, 8u * Block, std::byte{0});
@@ -656,7 +657,8 @@ bool testNativeRepeatHtileCopy(const std::filesystem::path& directory, std::stri
     const auto begin = address(bytes + 3u * Block);
     const auto htile = begin + Block;
     const auto prefixHtile = address(bytes + 2u * Block);
-    const auto tailHtile = address(bytes + 5u * Block);
+    auto tailHtile = address(bytes + 5u * Block);
+    auto tailDepth = address(bytes + 6u * Block);
     constexpr std::uint64_t Gap = 2u << 20u;
     check(address(bytes) <= std::numeric_limits<std::uint64_t>::max() - Gap, "copied HTILE control allocation hint overflows");
     auto* control = static_cast<std::byte*>(GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(address(bytes) + Gap, CapturedBytes, Block));
@@ -671,6 +673,23 @@ bool testNativeRepeatHtileCopy(const std::filesystem::path& directory, std::stri
     }
     for (std::size_t offset = 0u; offset < Block; offset += sizeof(float)) std::memcpy(control + offset, &CapturedDepth, sizeof(float));
     std::fill_n(control + Block, Block, std::byte{0});
+    if (boundOutside) {
+        check(address(control) <= std::numeric_limits<std::uint64_t>::max() - Gap, "bound outside HTILE allocation hint overflows");
+        auto* outside = static_cast<std::byte*>(GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(address(control) + Gap, CapturedBytes, Block));
+        check(outside != nullptr && address(outside) >= address(control) + Gap, "bound outside HTILE target is not separated from captured memory");
+        GuestArena::GuestArenaCommit_nid_postfix(outside, CapturedBytes, ReadWrite, CapturedBytes);
+#ifdef __linux__
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(outside, CapturedBytes);
+#endif
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(outside, CapturedBytes, true, true, true);
+        }
+        for (std::size_t offset = 0u; offset < Block; offset += sizeof(float)) std::memcpy(outside + offset, &CapturedDepth, sizeof(float));
+        std::fill_n(outside + Block, Block, std::byte{0});
+        tailDepth = address(outside);
+        tailHtile = tailDepth + Block;
+    }
     const std::vector<std::byte> expected(bytes + 3u * Block, bytes + 5u * Block);
     std::uintptr_t arena = 0;
     std::size_t arenaSize = 0;
@@ -736,8 +755,26 @@ bool testNativeRepeatHtileCopy(const std::filesystem::path& directory, std::stri
         AgcDriver::Graphics::NoteCopyDestination(prefixHtile, 2u * Block + metadataBytes);
         AgcDriver::Graphics::NoteCopyDestination(tailHtile, metadataBytes);
     } else {
-        check(mode == "native_repeat_htile_copy", "unknown copied HTILE reset mode");
+        check(mode == "native_repeat_htile_copy" || boundOutside, "unknown copied HTILE reset mode");
         for (const auto metadata : {prefixHtile, htile, tailHtile}) AgcDriver::Graphics::NoteCopyDestination(metadata, metadataBytes);
+    }
+    const auto* outsideMetadata = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(tailHtile));
+    if (boundOutside) {
+        const DepthFastClearHarness::Surface outside{tailDepth, 0u, tailHtile, false, VK_FORMAT_D32_SFLOAT, 0u, 0u, swizzle};
+        DepthFastClearHarness::DrawOptions options;
+        options.depthWrite = true;
+        options.depthCompare = VK_COMPARE_OP_ALWAYS;
+        options.minDepth = options.maxDepth = CapturedDepth;
+        check(DepthFastClearHarness::Draw(*device, shaders, outside, options) == texels, "copied HTILE fixture could not bind and write the outside target before reset");
+        options.depthWrite = false;
+        options.depthCompare = VK_COMPARE_OP_EQUAL;
+        const auto raw = DepthFastClearHarness::Draw(*device, shaders, outside, options);
+        options.minDepth = options.maxDepth = 1.0f;
+        const auto cleared = DepthFastClearHarness::Draw(*device, shaders, outside, options);
+        const bool zero = std::all_of(outsideMetadata, outsideMetadata + metadataBytes, [](std::byte value) { return value == std::byte{0}; });
+        std::printf("copied HTILE bound outside before reset: raw=%u clear=%u htile_zero=%u\n", raw, cleared, zero ? 1u : 0u);
+        check(raw == texels && cleared == 0u && zero, "copied HTILE fixture did not preserve raw depth and zero metadata under the outside copy note");
+        check(AgcDriver::Graphics::ActiveDepthExtent(device->Device(), tailDepth).has_value(), "copied HTILE outside target is not resident before reset");
     }
     Runs changed;
     static_cast<void>(changedSince(begin, CapturedBytes, since, changed));
@@ -751,10 +788,12 @@ bool testNativeRepeatHtileCopy(const std::filesystem::path& directory, std::stri
     const std::vector<AgcDriver::NativeDepthSnapshot> emptyNative;
     const auto reset = resetMemory(reader, skipped, since, ResetFault::None, true, &emptyNative);
     check(reset.compared == 0u && reset.rewritten == 0u && std::equal(expected.begin(), expected.end(), bytes + 3u * Block), "copied HTILE reset compared or rewrote its clean captured range");
+    if (boundOutside) check(std::all_of(outsideMetadata, outsideMetadata + metadataBytes, [](std::byte value) { return value == std::byte{0}; }), "native replay reset altered zero HTILE bytes outside captured ranges");
     const auto restored = firstHtileBind(begin, htile);
     const auto prefix = firstHtileBind(address(bytes + Block), prefixHtile);
-    const auto tail = firstHtileBind(address(bytes + 6u * Block), tailHtile);
+    const auto tail = firstHtileBind(tailDepth, tailHtile);
     std::printf("copied HTILE reset: mode=%s compared=%llu rewritten=%llu restored_raw=%u restored_clear=%u prefix_raw=%u prefix_clear=%u tail_raw=%u tail_clear=%u\n", std::string(mode).c_str(), static_cast<unsigned long long>(reset.compared), static_cast<unsigned long long>(reset.rewritten), restored.first, restored.second, prefix.first, prefix.second, tail.first, tail.second);
+    if (boundOutside) check(tail.first == texels && tail.second == 0u, "native replay reset erased a bound outside target's HTILE copy provenance");
     check(prefix.first == texels && prefix.second == 0u && tail.first == texels && tail.second == 0u, "native replay reset erased copied HTILE provenance outside captured ranges");
     check(restored.first == 0u && restored.second == texels, "native replay reset retained a previous-window HTILE copy note over unchanged captured memory");
     return true;
@@ -2197,7 +2236,7 @@ int main(int argc, char** argv) {
             writeInspectionCapture(directory);
             return 0;
         }
-        if (mode == "native_repeat_htile_copy" || mode == "native_repeat_htile_copy_tail" || mode == "native_repeat_htile_copy_prefix") { if (!testNativeRepeatHtileCopy(directory, mode)) return VulkanTestSkipped; }
+        if (mode == "native_repeat_htile_copy" || mode == "native_repeat_htile_copy_tail" || mode == "native_repeat_htile_copy_prefix" || mode == "native_repeat_htile_copy_bound_outside") { if (!testNativeRepeatHtileCopy(directory, mode)) return VulkanTestSkipped; }
         else if (mode == "native_repeat_htile_orphan") { if (!testNativeRepeatHtileOrphan(directory)) return VulkanTestSkipped; }
         else if (mode == "native_repeat_pipelines") { if (!testNativeRepeatPipelines(directory)) return VulkanTestSkipped; }
         else if (mode == "native_repeat_failure") { if (!testNativeRepeatFailure()) return VulkanTestSkipped; }
