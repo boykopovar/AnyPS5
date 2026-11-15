@@ -319,7 +319,8 @@ void verifyDirectedF16Conversion() {
         const std::array<std::uint32_t, 2> declared{vCvtF16F32, endProgram};
         const auto converted = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
         require(converted == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | (rounding << 2u)})), "runtime f16 rounding does not match the declared rounding");
-        expectRejected(runtime, ShaderFloatMode{0x00}, "f16 denormals not kept", 4);
+        const auto flushed = opcodeSequence(translate(runtime, ShaderFloatMode{0x00}));
+        require(flushed == opcodeSequence(translate(declared, ShaderFloatMode{rounding << 2u})), "runtime f16 rounding with flushed denormals does not match the declared rounding");
     }
 }
 

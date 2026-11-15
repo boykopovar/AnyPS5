@@ -288,7 +288,14 @@ void populatedPages(std::vector<Candidate>& maybe, const Mapping& mapping) {
 std::vector<Candidate> possiblyNonzero(std::uint64_t begin, std::uint64_t end) {
     std::vector<Candidate> maybe;
 #ifdef _WIN32
-    maybe.push_back({begin, end, true});
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> zero;
+    GuestArena::GuestArenaKnownZero_nid_no_patch(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin), [](void* context, std::uintptr_t first, std::uintptr_t last) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(first, last); }, &zero);
+    auto cursor = begin;
+    for (const auto& [first, last] : zero) {
+        if (first > cursor) maybe.push_back({cursor, first, true});
+        cursor = std::max<std::uint64_t>(cursor, last);
+    }
+    if (cursor < end) maybe.push_back({cursor, end, true});
 #else
     for (const auto& mapping : mappings(begin, end)) {
         int file = -1;
@@ -314,7 +321,14 @@ std::vector<Candidate> possiblyNonzero(std::uint64_t begin, std::uint64_t end) {
 }
 
 bool GuestBytesZero(std::uint64_t begin, std::uint64_t end) {
+#ifdef _WIN32
+    for (const auto& candidate : possiblyNonzero(begin, end)) {
+        if (!allZero(candidate.begin, candidate.end)) return false;
+    }
+    return true;
+#else
     return allZero(begin, end);
+#endif
 }
 
 GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates) {

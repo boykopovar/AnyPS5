@@ -1,7 +1,9 @@
 #include "prx/libSceJpegEnc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -101,16 +103,26 @@ static JpegEncEncodeParam ValidEncodeParam() {
     return param;
 }
 
+static void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80650101);
     constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80650102);
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80650103);
     constexpr std::int32_t invalidHandle = static_cast<std::int32_t>(0x80650104);
 
     JpegEncCreateParam param{sizeof(JpegEncCreateParam), 0};
+    errno = 71;
     Require(sceJpegEncQueryMemorySize(&param) == 0x800);
+    Require(errno == 71);
     Require(sceJpegEncQueryMemorySize(nullptr) == invalidAddr);
+    errno = 71;
     Require(sceJpegEncQueryMemorySize(reinterpret_cast<const JpegEncCreateParam*>(0x10)) == invalidAddr);
+    Require(errno == 71);
 
     JpegEncCreateParam badSize{sizeof(JpegEncCreateParam) - 1, 0};
     Require(sceJpegEncQueryMemorySize(&badSize) == invalidSize);
@@ -128,12 +140,20 @@ int main() {
     Require(sceJpegEncCreate(&param, nullptr, 0x800, &handle) == invalidAddr);
     Require(sceJpegEncCreate(&param, unaligned, 0x7FF, &handle) == invalidSize);
     Require(sceJpegEncCreate(&param, unaligned, 0x800, nullptr) == invalidAddr);
+    errno = 71;
     Require(sceJpegEncCreate(reinterpret_cast<const JpegEncCreateParam*>(0x10), unaligned, 0x800, &handle) == invalidAddr);
+    Require(errno == 71);
+    errno = 71;
     Require(sceJpegEncCreate(&param, unaligned, 0x800, reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(errno == 71);
+    errno = 71;
     Require(sceJpegEncCreate(&param, reinterpret_cast<void*>(0x10), 0x800, &handle) == invalidAddr);
+    Require(errno == 71);
     Require(handle == nullptr);
 
+    errno = 71;
     Require(sceJpegEncCreate(&param, unaligned, 0x800, &handle) == 0);
+    Require(errno == 71);
     const auto address = reinterpret_cast<std::uintptr_t>(handle);
     Require(address % 32 == 0);
     Require(address >= reinterpret_cast<std::uintptr_t>(unaligned));
@@ -141,11 +161,15 @@ int main() {
 
     Require(sceJpegEncDelete(nullptr) == invalidHandle);
     Require(sceJpegEncDelete(static_cast<unsigned char*>(handle) + 1) == invalidHandle);
+    errno = 71;
     Require(sceJpegEncDelete(reinterpret_cast<void*>(0x20)) == invalidHandle);
+    Require(errno == 71);
     alignas(32) static unsigned char garbage[64] = {};
     Require(sceJpegEncDelete(garbage) == invalidHandle);
 
+    errno = 71;
     Require(sceJpegEncDelete(handle) == 0);
+    Require(errno == 71);
     Require(sceJpegEncDelete(handle) == invalidHandle);
 
     JpegEncOutputInfo info{};
@@ -156,8 +180,12 @@ int main() {
     Require(sceJpegEncCreate(&param, unaligned, 0x800, &handle) == 0);
     Require(sceJpegEncEncode(handle, nullptr, &info) == invalidAddr);
     Require(sceJpegEncEncode(reinterpret_cast<void*>(0x20), &valid, &info) == invalidHandle);
+    errno = 71;
     Require(sceJpegEncEncode(handle, reinterpret_cast<const JpegEncEncodeParam*>(0x10), &info) == invalidAddr);
+    Require(errno == 71);
+    errno = 71;
     Require(sceJpegEncEncode(handle, &valid, reinterpret_cast<JpegEncOutputInfo*>(0x10)) == invalidAddr);
+    Require(errno == 71);
 
     auto encodeWith = [&](auto change) {
         JpegEncEncodeParam changed = ValidEncodeParam();
@@ -167,9 +195,13 @@ int main() {
 
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image = nullptr; }) == invalidAddr);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image = image + 1; }) == invalidAddr);
+    errno = 71;
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image = reinterpret_cast<void*>(0x10); }) == invalidAddr);
+    Require(errno == 71);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg = nullptr; }) == invalidAddr);
+    errno = 71;
     Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg = reinterpret_cast<void*>(0x10); }) == invalidAddr);
+    Require(errno == 71);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_size = 0; }) == invalidSize);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg_size = 0; }) == invalidSize);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_width = 0x10000; }) == invalidParam);
@@ -339,5 +371,7 @@ int main() {
 
     Require(sceJpegEncDelete(handle) == 0);
 
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }
