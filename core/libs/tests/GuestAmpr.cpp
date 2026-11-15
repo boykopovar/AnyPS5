@@ -1930,6 +1930,43 @@ void TestConstructNopPayloadIntoBuffer() {
     Require(sceAmprCommandBufferDestructor(&buffer) == 0);
 }
 
+static void TestGuestPointerAndErrnoPreservation() {
+    Require(sceAmprCommandBufferClearBuffer(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetCurrentOffset(nullptr) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(nullptr) == 0);
+    Require(sceAmprCommandBufferGetSize(nullptr) == 0);
+    Require(sceAmprCommandBufferGetType(nullptr) == 0);
+
+    Apr::CommandBufferObject buffer{};
+    std::array<std::uint8_t, 512> storage{};
+    const std::uint32_t color = 0x11223344u;
+    AmmUsageStatsData stats{sizeof(AmmUsageStatsData), 0, 0};
+
+    errno = EILSEQ;
+    Require(sceAmprCommandBufferConstructor(&buffer) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetBuffer(&buffer, storage.data(), static_cast<std::uint32_t>(storage.size())) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == storage.data());
+    Require(sceAmprCommandBufferGetSize(&buffer) == storage.size());
+    Require(sceAmprCommandBufferGetCurrentOffset(&buffer) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 0);
+    Require(sceAmprCommandBufferGetType(&buffer) == static_cast<std::uint32_t>(Apr::BufferType::Generic));
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetMarkerWithColor(&buffer, "marker", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferConstructMarker(&buffer, 5, "marker2", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 2);
+    Require(sceAmprCommandBufferClearBuffer(&buffer) == storage.data());
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == nullptr);
+    Require(sceAmprAmmGetUsageStatsData(&stats) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferDestructor(&buffer) == 0);
+}
+
 int main() {
     TestRecording("frame");
     TestRecording("");
@@ -1977,5 +2014,6 @@ int main() {
     TestAmmSubmitAfterGrowth();
     TestExpandedBufferLifecycle();
     TestConstructNopPayloadIntoBuffer();
+    TestGuestPointerAndErrnoPreservation();
     return 0;
 }
