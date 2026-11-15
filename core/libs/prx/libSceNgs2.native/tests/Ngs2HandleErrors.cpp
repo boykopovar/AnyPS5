@@ -496,6 +496,10 @@ static void CheckRackCreateGuestPointers() {
     uintptr_t created = sentinel;
     Returned(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), &created), static_cast<int>(0x804A8020u), "sceNgs2RackCreate", "an unreadable buffer info");
     Require(created == sentinel);
+
+    const int allocationsBefore = allocations;
+    Returned(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), &created), static_cast<int>(0x804A8023u), "sceNgs2RackCreateWithAllocator", "an unreadable allocator");
+    Require(created == sentinel && allocations == allocationsBefore);
 }
 
 int main(int argc, char** argv) {
