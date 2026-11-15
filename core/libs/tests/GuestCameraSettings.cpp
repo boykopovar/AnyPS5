@@ -267,6 +267,9 @@ void CheckSetters() {
     }
     target = {4, 0x10};
     Require(sceCameraSetAutoExposureGain(1, Channel0, 1, &target) == ErrorParam, "an exposure target of the wrong size must be rejected");
+    errno = 71;
+    Require(sceCameraSetAutoExposureGain(1, Channel0, 1, reinterpret_cast<const CameraAutoExposureGainTarget*>(0x10)) == ErrorParam, "an unmapped exposure target must be rejected");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckConfig() {
