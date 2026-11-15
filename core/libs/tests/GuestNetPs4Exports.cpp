@@ -2,6 +2,7 @@
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -111,6 +112,13 @@ void CheckDhcpOptionParser() {
     option.code = 3;
     Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 9, &option) == kDaemonInvalid);
     Require(option.length == 0 && option.declaredLength == 0);
+    errno = 71;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(options.data(), 10, reinterpret_cast<NetDhcpOption*>(0x10)) == kDaemonInvalid && errno == 71);
+    option = {};
+    option.code = 1;
+    option.length = 7;
+    Require(libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(reinterpret_cast<const std::uint8_t*>(0x10), 10, &option) == kDaemonInvalid && errno == 71);
+    Require(option.length == 0 && option.declaredLength == 0 && option.value == nullptr);
     const std::array<std::uint8_t, 4> padded = {0, 0, 6, 1};
     option = {};
     option.code = 6;
