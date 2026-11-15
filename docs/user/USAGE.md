@@ -702,6 +702,14 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 - With no console, for example a Windows executable started without one, only the file receives the log.
 - On Windows the file was checked with a console, with the output redirected to a file or read through a pipe, and with no console, and the crash report path and the handover to a replacement executable are run by the tests.
 
+### Bug report bundle
+
+`python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
+
+- By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
+- Redaction replaces your home directory with `~`, your user and host names with `<user>` and `<host>`, and IPv4 addresses with `<ip>`. It matches whole words only, so a user name inside another word is not changed. It does not know other personal details, such as a name typed into a title, a file name that contains your name, or an IPv6 address; open the bundle and check it before you attach it.
+- A missing log or input mapping is left out of the bundle. The run report must be valid JSON. An existing bundle is never overwritten: the command exits with status 1 and names the file.
+
 ### Controller status panel
 
 A small panel over the presented image lists the controllers of the four player slots, one line for each slot that has had a controller since the game started (with `ANYPS5_PAD_STATUS` unset or 0, since the first F9 press, because controllers are not tracked before that): `P1 DUALSENSE  WIRED`, `P2 XBOX  BATTERY MEDIUM`, `P3 DISCONNECTED`. It is never shown permanently: it disappears 4 seconds after the last thing that showed it. With no controller seen yet it reads `NO CONTROLLER`.
