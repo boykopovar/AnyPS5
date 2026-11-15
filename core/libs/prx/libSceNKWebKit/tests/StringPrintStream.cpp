@@ -81,11 +81,14 @@ void TestConstruction() {
     Require(stream.object.next == 0 && stream.object.size == 128 && stream.object.buffer[0] == 0);
     const void* const* table = stream.object.vtable - 2;
     Require(!table[0] && !table[1]);
+    for (int slot = 2; slot < 8; ++slot) Require(table[slot] != nullptr);
+#ifndef _WIN32
     Require(table[2] == reinterpret_cast<const void*>(&_ZN3WTF17StringPrintStreamD1Ev));
     Require(table[3] == reinterpret_cast<const void*>(&_ZN3WTF17StringPrintStreamD0Ev));
     Require(table[4] == reinterpret_cast<const void*>(&_ZN3WTF17StringPrintStream7vprintfEPKcP13__va_list_tag));
     Require(table[6] == reinterpret_cast<const void*>(&_ZN3WTF11PrintStream5beginEv));
     Require(table[7] == reinterpret_cast<const void*>(&_ZN3WTF11PrintStream3endEv));
+#endif
     reinterpret_cast<void (APS5_VABI*)(StringPrintStream*)>(const_cast<void*>(stream.object.vtable[3]))(stream.get());
     Require(reinterpret_cast<void* (APS5_VABI*)(void*)>(const_cast<void*>(stream.object.vtable[4]))(stream.get()) == stream.get());
 
