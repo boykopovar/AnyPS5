@@ -563,7 +563,43 @@ bool MirrorsSampleIfUnnormalized(SpirvValueEmitContext& ctx, const ImageEmitAcce
     return !setup.dref && !access.image.cube && (dimension == RdnaImageDimension::Dim1D || dimension == RdnaImageDimension::Dim2D) && MirrorsIfUnnormalized(ctx.state.program.Info().samplers.at(access.mem.sampler));
 }
 
-std::uint32_t MirroredUnnormalizedCoord(SpirvValueEmitContext& ctx, const SampleSetup& setup, std::uint32_t coord, std::uint32_t axes) {
+std::uint32_t QuantizedUnnormalizedCoord(SpirvValueEmitContext& ctx, const SampleSetup& setup, std::uint32_t coord, std::uint32_t control) {
+    auto& state = ctx.state;
+    const auto f32 = TypeF32(state);
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto flag = [&](std::uint32_t mask) { return Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, control, ConstantU32(state, mask)), ConstantU32(state, 0u)); };
+    const auto ext = [&](std::uint32_t op, std::uint32_t value) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, result, GlslStd450(state), op, value);
+        return result;
+    };
+    const auto quantize = [&](std::uint32_t value, bool half) {
+        const auto small = Binary(state, spv::OpFOrdLessThan, boolean, ext(GLSLstd450FAbs, value), ConstantF32(state, half ? 0x4a800000u : 0x47000000u));
+        const auto bounded = Select(state, f32, small, value, ZeroF32(state));
+        const auto scaled = Binary(state, spv::OpFMul, f32, bounded, ConstantF32(state, half ? 0x40000000u : 0x43800000u));
+        const auto down = ext(GLSLstd450Floor, scaled);
+        const auto rounded = half ? down : Select(state, f32, flag(2u), down, ext(GLSLstd450RoundEven, scaled));
+        return Select(state, f32, small, Binary(state, spv::OpFMul, f32, rounded, ConstantF32(state, half ? 0x3f000000u : 0x3b800000u)), value);
+    };
+    const auto components = setup.dimensionInfo.spatialComponents;
+    std::array<std::uint32_t, 2> values{};
+    for (std::uint32_t index = 0; index < components; ++index) {
+        auto value = coord;
+        if (components != 1u) {
+            value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, f32, value, coord, index);
+        }
+        const auto fixed = quantize(value, false);
+        values[index] = Select(state, f32, flag(4u), quantize(fixed, true), fixed);
+    }
+    if (components == 1u) return values[0];
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), result, values[0], values[1]);
+    return result;
+}
+
+std::uint32_t MirroredUnnormalizedCoord(SpirvValueEmitContext& ctx, const SampleSetup& setup, std::uint32_t coord, std::uint32_t axes, std::uint32_t control) {
     auto& state = ctx.state;
     const auto f32 = TypeF32(state);
     const auto u32 = TypeU32(state);
@@ -579,8 +615,16 @@ std::uint32_t MirroredUnnormalizedCoord(SpirvValueEmitContext& ctx, const Sample
         const auto mirrors = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, axes, ConstantU32(state, 1u << index)), ConstantU32(state, 0u));
         const auto negative = Binary(state, spv::OpFOrdLessThan, boolean, x, ConstantF32(state, 0u));
         const auto below = Unary(state, spv::OpBitcast, f32, Binary(state, spv::OpISub, u32, Unary(state, spv::OpBitcast, u32, Unary(state, spv::OpFNegate, f32, x)), ConstantU32(state, 1u)));
-        const auto folded = state.module.AllocateId();
-        state.module.AddFunction(spv::OpExtInst, f32, folded, GlslStd450(state), GLSLstd450FMax, Select(state, f32, negative, below, x), ConstantF32(state, 0x3f000000u));
+        const auto nonMcFolded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, nonMcFolded, GlslStd450(state), GLSLstd450FMax, Select(state, f32, negative, below, x), ConstantF32(state, 0x3f000000u));
+        const auto mc = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, control, ConstantU32(state, 1u)), ConstantU32(state, 0u));
+        const auto linear = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, control, ConstantU32(state, 4u)), ConstantU32(state, 0u));
+        const auto indexFloor = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, indexFloor, GlslStd450(state), GLSLstd450Floor, x);
+        const auto center = Binary(state, spv::OpFSub, f32, Unary(state, spv::OpFNegate, f32, indexFloor), ConstantF32(state, 0x3f000000u));
+        const auto mcReflected = Select(state, f32, linear, Unary(state, spv::OpFNegate, f32, x), center);
+        const auto mcFolded = Select(state, f32, negative, mcReflected, x);
+        const auto folded = Select(state, f32, mc, mcFolded, nonMcFolded);
         values[index] = Select(state, f32, mirrors, folded, x);
     }
     if (components == 1u) return values[0];
@@ -1935,9 +1979,13 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
         if (!mirrors) return emitDirectSample(coord, mask, arguments, sampleOpcode);
         const auto axes = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MirrorUnnormalizedBase + mem.sampler, 0u);
-        const auto mirrored = Binary(state, spv::OpINotEqual, TypeBool(state), axes, ConstantU32(state, 0u));
+        const auto control = Binary(state, spv::OpShiftRightLogical, TypeU32(state), axes, ConstantU32(state, 2u));
+        const auto quantized = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), control, ConstantU32(state, 1u)), ConstantU32(state, 0u));
+        const auto coordinateType = setup.dimensionInfo.spatialComponents == 1u ? TypeF32(state) : TypeF32Vector(state, 2);
+        coord = EmitValueIfElse(state, quantized, coordinateType, [&] { return QuantizedUnnormalizedCoord(ctx, setup, coord, control); }, [&] { return coord; });
+        const auto mirrored = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), axes, ConstantU32(state, 3u)), ConstantU32(state, 0u));
         return EmitValueIfElse(state, mirrored, resultType, [&] {
-            return emitDirectSample(MirroredUnnormalizedCoord(ctx, setup, coord, axes), mask, arguments, sampleOpcode);
+            return emitDirectSample(MirroredUnnormalizedCoord(ctx, setup, coord, axes, control), mask, arguments, sampleOpcode);
         }, [&] {
             return emitDirectSample(coord, mask, arguments, sampleOpcode);
         });

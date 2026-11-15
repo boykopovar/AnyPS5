@@ -323,10 +323,80 @@ void ExpectFailure(AgcDriver::VulkanDevice& device, const Program& program, cons
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if ((argc == 5 || argc == 6) && std::string_view(argv[1]) == "--mc") {
+            const auto clamp = static_cast<std::uint32_t>(std::stoul(argv[2]));
+            const bool oneD = argc == 6 && std::string_view(argv[5]) == "1d";
+            Require(argc == 5 || oneD || std::string_view(argv[5]) == "2d", "invalid MC image dimension");
+            const bool linear = std::string_view(argv[3]) == "linear";
+            const bool trunc = std::string_view(argv[4]) == "1";
+            Require((clamp <= 3u || clamp == 6u) && (linear || std::string_view(argv[3]) == "point") && (trunc || std::string_view(argv[4]) == "0"), "invalid MC test mode");
+            alignas(256) std::array<std::uint8_t, 16384> texels{};
+            for (std::uint32_t y = 0; y < 4u; ++y) {
+                for (std::uint32_t x = 0; x < 64u; ++x) {
+                    const auto offset = (y * 64u + x) * 4u;
+                    texels[offset] = static_cast<std::uint8_t>(x * 4u);
+                    texels[offset + 1u] = static_cast<std::uint8_t>(y * 80u);
+                    texels[offset + 2u] = static_cast<std::uint8_t>((x * 37u + y * 53u + 11u) & 255u);
+                    texels[offset + 3u] = 255u;
+                }
+            }
+            const auto address = reinterpret_cast<std::uintptr_t>(texels.data());
+            std::array<std::uint32_t, 8> texture{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u), 15u | (3u << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+            const std::array<std::uint32_t, 4> sampler{clamp | (clamp << 3u) | (2u << 6u) | (1u << 15u) | (1u << 19u) | (trunc ? 1u << 27u : 0u), 0u, linear ? 0x500000u : 0u, 0u};
+            constexpr std::array<float, 8> xs{-0.25f, 0.5f - 1.0f / 1024.0f, 0.5f, 1.0f - 1.0f / 65536.0f, 1.0f + 1.0f / 512.0f, 31.75f, 63.75f, 64.25f};
+            constexpr std::array<float, 8> ys{-0.25f, 0.5f - 1.0f / 1024.0f, 0.5f, 1.0f - 1.0f / 65536.0f, 1.0f + 1.0f / 512.0f, 2.75f, 3.75f, 4.25f};
+            std::vector<Coordinate> coordinates;
+            for (const auto x : xs) for (const auto y : ys) coordinates.push_back({x, y});
+            constexpr std::array<float, 8> mirrorXs{-64.25f, -1.0f - 1.0f / 65536.0f, -1.0f, -1.0f + 1.0f / 65536.0f, -0.5f, -1.0f / 512.0f, 0.5f, 64.25f};
+            constexpr std::array<float, 8> mirrorYs{-4.25f, -1.0f - 1.0f / 65536.0f, -1.0f, -1.0f + 1.0f / 65536.0f, -0.5f, -1.0f / 512.0f, 0.5f, 4.25f};
+            for (const auto x : mirrorXs) for (const auto y : mirrorYs) coordinates.push_back({x, y});
+            auto program = LevelZero;
+            alignas(256) std::array<std::uint32_t, 18> oneDCode = LevelZeroCode;
+            if (oneD) {
+                texture[2] = 15u;
+                texture[3] = 0xfacu | (8u << 28u);
+                oneDCode[6] &= ~0x38u;
+                program.code = oneDCode;
+            }
+            const auto samples = Run(*device, program, texture, sampler, coordinates);
+            const auto quantize = [&](double value) {
+                const auto scaled = value * 256.0;
+                const auto down = std::floor(scaled);
+                const auto fraction = scaled - down;
+                const auto rounded = down + (fraction > 0.5 || (fraction == 0.5 && std::fmod(down, 2.0) != 0.0) ? 1.0 : 0.0);
+                const auto fixed = (trunc ? down : rounded) / 256.0;
+                return linear ? std::floor(fixed * 2.0) / 2.0 : fixed;
+            };
+            const auto fetch = [&](double x, double y, std::uint32_t component) {
+                if (clamp == 1u || clamp == 3u) {
+                    if (x < 0.0) x = -x - 1.0;
+                    if (y < 0.0) y = -y - 1.0;
+                }
+                if (clamp == 6u && (x < 0.0 || x >= 64.0 || y < 0.0 || y >= 4.0)) return 0.0;
+                const auto i = static_cast<std::uint32_t>(std::clamp(x, 0.0, 63.0));
+                const auto j = static_cast<std::uint32_t>(std::clamp(y, 0.0, 3.0));
+                return static_cast<double>(texels[(j * 64u + i) * 4u + component]) / 255.0;
+            };
+            Require(samples.size() == coordinates.size(), "MC sample dispatch lost coordinates");
+            for (std::size_t lane = 0; lane < coordinates.size(); ++lane) {
+                const auto x = quantize(coordinates[lane].u) - (linear ? 0.5 : 0.0);
+                const auto y = oneD ? 0.0 : quantize(coordinates[lane].v) - (linear ? 0.5 : 0.0);
+                const auto i = std::floor(x), j = std::floor(y);
+                const auto a = linear ? x - i : 0.0, b = linear && !oneD ? y - j : 0.0;
+                for (std::uint32_t component = 0; component < 4u; ++component) {
+                    const auto expected = (1.0 - a) * (1.0 - b) * fetch(i, j, component) + a * (1.0 - b) * fetch(i + 1.0, j, component) + (1.0 - a) * b * fetch(i, j + 1.0, component) + a * b * fetch(i + 1.0, j + 1.0, component);
+                    const auto actual = std::bit_cast<float>(samples[lane][component]);
+                    Require(std::isfinite(actual) && std::fabs(static_cast<double>(actual) - expected) <= 1e-6, "MC sampler differs from the native gfx1032 model at lane " + std::to_string(lane) + " component " + std::to_string(component) + ": got " + std::to_string(actual) + ", expected " + std::to_string(expected));
+                }
+            }
+            std::cout << "MC_COORD_TRUNC oracle model passed 128 coordinate pairs\n";
+            return 0;
+        }
+        Require(argc == 1, "invalid image sample test arguments");
         FillTexture(SingleLevel, 1);
         FillTexture(MultiLevel, StorageLevels);
         const auto coordinates = Coordinates(0u);

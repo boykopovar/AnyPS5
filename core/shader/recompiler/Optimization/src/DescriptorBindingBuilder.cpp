@@ -300,7 +300,7 @@ struct UnnormalizedProof {
     std::vector<bool> images;
     std::vector<bool> imagesAtBaseLevel;
     std::vector<bool> samplersIgnoreCoordinates;
-    std::vector<std::uint32_t> mirroredAxes;
+    std::vector<std::uint32_t> coordinateControl;
 };
 
 UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
@@ -351,6 +351,13 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
                 failUnnormalized(reason);
             }
             if (image.constantSwizzle) continue;
+            const auto& samplerWords = snapshot.samplers[r].dwords;
+            if ((samplerWords[0] & (1u << 19u)) != 0u) {
+                const auto supportedClamp = [](std::uint32_t clamp) { return clamp <= 3u || clamp == 6u; };
+                if (!supportedClamp(samplerWords[0] & 7u) || (image.dimension == RdnaImageDimension::Dim2D && !supportedClamp((samplerWords[0] >> 3u) & 7u))) failUnnormalized("uses MC_COORD_TRUNC with an unimplemented clamp mode");
+                if (sampler.forcePointFiltering || IsConvertedUnormTextureFormat(image.conversionFormat)) failUnnormalized("uses MC_COORD_TRUNC with shader-emulated texture filtering");
+                if (((samplerWords[0] >> 29u) & 3u) != 0u) failUnnormalized("uses MC_COORD_TRUNC with a min or max reduction");
+            }
             sampled = true;
             proof.images[pair.image] = true;
         }
@@ -363,7 +370,9 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
         const auto clampX = snapshot.samplers[r].dwords[0] & 7u;
         const auto clampY = (snapshot.samplers[r].dwords[0] >> 3u) & 7u;
         const auto mirrors = [](std::uint32_t clamp) { return clamp == 1u || clamp == 3u || clamp == 7u; };
-        proof.mirroredAxes[r] = (mirrors(clampX) ? 1u : 0u) | (mirrors(clampY) ? 2u : 0u);
+        proof.coordinateControl[r] = (mirrors(clampX) ? 1u : 0u) | (mirrors(clampY) ? 2u : 0u);
+        const auto& words = snapshot.samplers[r].dwords;
+        if ((words[0] & (1u << 19u)) != 0u) proof.coordinateControl[r] |= (1u | (((words[0] >> 27u) & 1u) << 1u) | ((((words[2] >> 20u) & 3u) == 1u ? 1u : 0u) << 2u)) << 2u;
     }
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
         bool exact = proof.images[resource];
@@ -446,7 +455,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
         if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
         if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevelBase + index, unnormalized.samplers[index] ? 1u : 0u});
-        if (MirrorsIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::MirrorUnnormalizedBase + index, unnormalized.mirroredAxes[index]});
+        if (MirrorsIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::MirrorUnnormalizedBase + index, unnormalized.coordinateControl[index]});
         if (info.samplers[index].table != NoTable) continue;
         const auto bias = unnormalized.samplers[index] ? 0.0f : static_cast<float>(static_cast<std::int32_t>((snapshot.samplers.at(index).dwords[2] & 0x3fffu) ^ 0x2000u) - 0x2000) / 256.0f;
         const bool beyondThreshold = bias < -PipelineSpecialization::SamplerLodBiasShaderThreshold || bias > PipelineSpecialization::SamplerLodBiasShaderThreshold;
