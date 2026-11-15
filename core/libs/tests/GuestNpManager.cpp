@@ -501,6 +501,8 @@ void CheckPushLifecycle() {
     std::int32_t connectionState = 0x5a5a5a5a;
     Require(sceNpPushIntGetConnectionState(&connectionState) == 0 && connectionState == 0, "sceNpPushIntGetConnectionState must report the offline state");
     Require(sceNpPushIntGetConnectionState(nullptr) == PushInvalidArgument, "sceNpPushIntGetConnectionState must refuse a null output");
+    errno = 71;
+    Require(sceNpPushIntGetConnectionState(reinterpret_cast<void*>(0x10)) == PushInvalidArgument && errno == 71, "sceNpPushIntGetConnectionState must refuse an unwritable output and keep errno");
     Require(sceNpPushCheckCallback() == 0, "sceNpPushCheckCallback must answer an initialized library");
     Require(sceNpPushTerm() == 0, "sceNpPushTerm must terminate the library");
     Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse a second termination");
@@ -886,6 +888,9 @@ static void CheckSandboxInfo() {
     for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
     for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+    errno = 71;
+    Require(sceNpGetSandboxInfo(reinterpret_cast<void*>(0x10)) == InvalidArgument, "sceNpGetSandboxInfo must reject an unmapped buffer");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckValueClasses() {
@@ -905,6 +910,9 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdefg") == OnlineIdTooLong, "a longer online id must be refused");
     Require(std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0, "a refused online id must leave the text untouched");
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, nullptr) == InvalidArgument, "a null online id text must be refused");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, reinterpret_cast<const char*>(0x10)) == InvalidArgument
+            && std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0,
+        "an unreadable online id text must be refused and leave the text untouched");
 
     NpOnlineIdObject onlineIdCopy;
     _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
@@ -978,14 +986,23 @@ void CheckValueClasses() {
     Require(_ZN3sce2np4User7GetUserEiPS1_(123, &fetchedUser) == UserInvalid, "GetUser must refuse a user that is not registered");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, &fetchedUser) == 0 && fetchedUser.userId == USER_SERVICE_INITIAL_USER_ID, "GetUser must return the registered user");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, nullptr) == InvalidArgument, "GetUser must refuse a null output");
+    errno = 71;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&initialUser, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id output must be refused");
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&initialUser, reinterpret_cast<bool*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id flag must be refused");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<UserObject*>(0x10)) == InvalidArgument && errno == 71, "GetUser must refuse an unwritable output");
 
     SceNpOnlineId onlineIdOut {};
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, &onlineIdOut) == SignedOut, "GetNpOnlineId must report a signed-out user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, nullptr) == InvalidArgument, "GetNpOnlineId must refuse a null SDK output");
+    errno = 71;
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(reinterpret_cast<const UserObject*>(0x10), &onlineIdOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, reinterpret_cast<SceNpOnlineId*>(0x10)) == InvalidArgument && errno == 71, "an unwritable SDK output must be refused");
     NpOnlineIdObject onlineIdObjectOut;
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, &onlineIdObjectOut) == SignedOut, "GetNpOnlineId must report a signed-out object output");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(nullptr, &onlineIdObjectOut) == InvalidArgument, "GetNpOnlineId must refuse a null user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(reinterpret_cast<const UserObject*>(0x10), &onlineIdObjectOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, reinterpret_cast<NpOnlineIdObject*>(0x10)) == InvalidArgument && errno == 71, "an unwritable object output must be refused");
 
     NpTitleTokenObject titleToken;
     _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);

@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -10,8 +11,12 @@ def text(value):
     return "".join(character if character.isprintable() else " " for character in value)
 
 
+def is_finite_number(value):
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
 def number_text(value):
-    return str(value) if type(value) in (int, float) else "unknown"
+    return str(value) if is_finite_number(value) else "unknown"
 
 
 def count_text(value, noun):
@@ -20,9 +25,13 @@ def count_text(value, noun):
 
 def total_count(items, key):
     counts = [item.get(key, 0) for item in items if isinstance(item, dict)]
-    if any(type(count) not in (int, float) for count in counts):
+    if any(not is_finite_number(count) for count in counts):
         return None
-    return sum(counts)
+    try:
+        total = sum(counts)
+    except OverflowError:
+        return None
+    return total if is_finite_number(total) else None
 
 
 def render(report):
@@ -57,8 +66,9 @@ def render(report):
     if coverage.get("milestones"):
         frame_summary = count_text(frames, "frame") if isinstance(frames, int) and not isinstance(frames, bool) else "unknown frame count"
         fps = run.get("averageFps")
-        if isinstance(fps, (int, float)) and not isinstance(fps, bool):
-            frame_summary += f", {fps:.2f} average FPS"
+        if is_finite_number(fps):
+            fps_text = f"{fps}.00" if type(fps) is int else f"{fps:.2f}"
+            frame_summary += f", {fps_text} average FPS"
         elif isinstance(frames, int) and not isinstance(frames, bool) and frames > 1:
             frame_summary += ", average FPS unavailable"
         lines.append(f"Rendering: {frame_summary}")

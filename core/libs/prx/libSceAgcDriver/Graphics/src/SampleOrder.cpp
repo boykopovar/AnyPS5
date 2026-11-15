@@ -248,10 +248,10 @@ public:
         const VkRect2D scissor{{0, 0}, region};
         recording.SetViewport(context, viewport);
         recording.SetScissor(context, scissor);
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, 0, nullptr);
         const auto slots = CommandState::DynamicSlots(depthOrderDynamicStates);
         const auto draw = [&](VkPipeline pipeline, std::uint32_t bit, std::uint32_t writeMask, std::uint32_t reference) {
             recording.BindPipeline(context, pipeline, slots);
+            context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, 0, nullptr);
             recording.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_AND_BACK, writeMask);
             recording.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
             const DepthPush push{map, bit};

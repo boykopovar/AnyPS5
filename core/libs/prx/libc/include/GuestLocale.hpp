@@ -217,6 +217,14 @@ struct TimePutVtable {
     OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
 };
 
+struct WideTimePutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
+};
+
+static_assert(offsetof(WideTimePutVtable, put) == 0x20);
+static_assert(sizeof(WideTimePutVtable) == 0x28);
+
 struct TimeGetVtable {
     FacetVtable facet;
     std::int32_t (APS5_VABI *dateOrder)(const Facet* self);
@@ -249,6 +257,34 @@ struct NumPutVtable {
     OutputIterator (APS5_VABI *putPointer)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const void* value);
 };
 
+struct NumGetVtable {
+    FacetVtable facet;
+    InputIterator (APS5_VABI *getBool)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, bool* value);
+    InputIterator (APS5_VABI *getUnsignedShort)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint16_t* value);
+    InputIterator (APS5_VABI *getUnsignedInt)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint32_t* value);
+    InputIterator (APS5_VABI *getLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::int64_t* value);
+    InputIterator (APS5_VABI *getUnsignedLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    InputIterator (APS5_VABI *getLongLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::int64_t* value);
+    InputIterator (APS5_VABI *getUnsignedLongLong)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    InputIterator (APS5_VABI *getFloat)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, float* value);
+    InputIterator (APS5_VABI *getDouble)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, double* value);
+    InputIterator (APS5_VABI *getLongDouble)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, long double* value);
+    InputIterator (APS5_VABI *getPointer)(const Facet* self, InputIterator first, InputIterator last, IosBase* stream, std::int32_t* state, void** value);
+};
+
+static_assert(offsetof(NumGetVtable, getBool) == 0x20);
+static_assert(offsetof(NumGetVtable, getUnsignedShort) == 0x28);
+static_assert(offsetof(NumGetVtable, getUnsignedInt) == 0x30);
+static_assert(offsetof(NumGetVtable, getLong) == 0x38);
+static_assert(offsetof(NumGetVtable, getUnsignedLong) == 0x40);
+static_assert(offsetof(NumGetVtable, getLongLong) == 0x48);
+static_assert(offsetof(NumGetVtable, getUnsignedLongLong) == 0x50);
+static_assert(offsetof(NumGetVtable, getFloat) == 0x58);
+static_assert(offsetof(NumGetVtable, getDouble) == 0x60);
+static_assert(offsetof(NumGetVtable, getLongDouble) == 0x68);
+static_assert(offsetof(NumGetVtable, getPointer) == 0x70);
+static_assert(sizeof(NumGetVtable) == 0x78);
+
 struct CtypeVtable {
     FacetVtable facet;
     const void* caseMethods[4];
@@ -257,6 +293,18 @@ struct CtypeVtable {
     char (APS5_VABI *narrow)(const Facet* self, char character, char fallback);
     const char* (APS5_VABI *narrowRange)(const Facet* self, const char* first, const char* last, char fallback, char* destination);
 };
+
+struct WideCtypeVtable {
+    FacetVtable facet;
+    const void* classificationMethods[4];
+    const void* caseMethods[4];
+    const void* widenMethods[2];
+    char (APS5_VABI *narrow)(const Facet* self, std::uint16_t character, char fallback);
+    const void* narrowRange;
+};
+
+static_assert(offsetof(WideCtypeVtable, narrow) == 0x70);
+static_assert(sizeof(WideCtypeVtable) == 0x80);
 
 template<typename TString>
 struct MoneyGetVtable {
@@ -365,6 +413,9 @@ extern "C" std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_tr
 inline constexpr std::size_t kTimePutWideVtableSlots = 7;
 static_assert(kTimePutWideVtableSlots * sizeof(std::uintptr_t) == 56);
 extern "C" std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots];
+extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last);
+extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
+extern "C" std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 inline constexpr std::size_t kMoneyPutCharVtableSlots = 8;
 static_assert(kMoneyPutCharVtableSlots * sizeof(std::uintptr_t) == 64);
 extern "C" std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots];
