@@ -1,10 +1,15 @@
 #include "prx/libSceSystemLogger2NativeQueueClient/libSceSystemLogger2NativeQueueClient.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 constexpr int invalidArgument = static_cast<int>(0x818C0002u);
 constexpr int notInitialized = static_cast<int>(0x818C0004u);
@@ -24,6 +29,8 @@ void RequireZeroedThenUntouched(const std::vector<unsigned char>& block, std::si
 } // namespace
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     for (int call = 0; call < 2; ++call) {
         Require(sceSystemLogger2NativeQueueClientCheckAndMaskData() == notInitialized);
         Require(sceSystemLogger2NativeQueueClientSetDeliveryEnable() == notInitialized);
@@ -35,19 +42,25 @@ int main() {
 
         Require(sceSystemLogger2NativeQueueClientGetEvent(nullptr) == invalidArgument);
         std::vector<unsigned char> event(eventBytes + guard, 0x5A);
+        errno = 71;
         Require(sceSystemLogger2NativeQueueClientGetEvent(event.data()) == getEventResult);
+        Require(errno == 71);
         RequireZeroedThenUntouched(event, eventBytes);
 
         std::vector<unsigned char> data(0x40, 0x5A);
         Require(sceSystemLogger2NativeQueueClientCheckData(data.data(), nullptr) == invalidArgument);
         Require(sceSystemLogger2NativeQueueClientCheckData(nullptr, nullptr) == invalidArgument);
         std::vector<unsigned char> result(checkResultBytes + guard, 0x5A);
+        errno = 71;
         Require(sceSystemLogger2NativeQueueClientCheckData(data.data(), result.data()) == notInitialized);
+        Require(errno == 71);
         RequireZeroedThenUntouched(result, checkResultBytes);
         std::vector<unsigned char> second(checkResultBytes + guard, 0x5A);
         Require(sceSystemLogger2NativeQueueClientCheckData(nullptr, second.data()) == notInitialized);
         RequireZeroedThenUntouched(second, checkResultBytes);
         for (const unsigned char byte : data) Require(byte == 0x5A);
     }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }
