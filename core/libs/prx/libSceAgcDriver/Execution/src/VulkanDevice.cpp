@@ -626,6 +626,7 @@ struct VulkanDevice::State {
     bool pipelineLinkTimeOptimization = true;
     bool dynamicColorWriteMask = false;
     bool imageViewMinLod = false;
+    bool imageViewMinLodExtension = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
@@ -1976,6 +1977,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &minLodFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->imageViewMinLod = minLodFeatures.minLod == VK_TRUE && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD") == nullptr;
+        state->imageViewMinLodExtension = state->imageViewMinLod;
         if (state->imageViewMinLod) deviceExtensions.push_back(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     }
     minLodFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT};
@@ -4929,6 +4931,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.fmaFloat16 = state->fmaFloat16;
     context.primitiveListRestart = state->primitiveListRestart;
     context.imageViewMinLod = state->imageViewMinLod;
+    context.imageViewMinLodExtension = state->imageViewMinLodExtension;
     context.shaderResourceMinLod = state->shaderResourceMinLod;
     context.shaderImageMinLod = state->shaderImageMinLod;
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;
