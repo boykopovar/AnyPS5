@@ -1,5 +1,6 @@
 #include <limits>
 #include <cerrno>
+#include <cstddef>
 #include <mutex>
 #include <unordered_set>
 #include <stdexcept>
@@ -87,9 +88,15 @@ int APS5_VABI sceCameraStopByHandle(std::int32_t handle) {
 
 int APS5_VABI sceCameraGetFrameData(std::int32_t handle, CameraFrameData* frameData) {
     if (!frameData) return SCE_CAMERA_ERROR_PARAM;
-    frameData->status[0] = UINT32_MAX;
-    frameData->status[1] = UINT32_MAX;
-    if (handle < 1 || frameData->sizeThis > MAX_FRAME_DATA_SIZE) return SCE_CAMERA_ERROR_PARAM;
+    const auto base = reinterpret_cast<std::uintptr_t>(frameData);
+    if (base > std::numeric_limits<std::uintptr_t>::max() - sizeof(CameraFrameData)) return SCE_CAMERA_ERROR_PARAM;
+    const std::uint32_t status[2] = {UINT32_MAX, UINT32_MAX};
+    std::uint32_t sizeThis = 0;
+    const int savedErrno = errno;
+    const bool wrote = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(base + offsetof(CameraFrameData, status)), status, sizeof(status));
+    const bool read = wrote && GuestCopyIn_nid_no_patch(&sizeThis, reinterpret_cast<const void*>(base + offsetof(CameraFrameData, sizeThis)), sizeof(sizeThis));
+    errno = savedErrno;
+    if (!read || handle < 1 || sizeThis > MAX_FRAME_DATA_SIZE) return SCE_CAMERA_ERROR_PARAM;
     return SCE_CAMERA_ERROR_NOT_OPEN;
 }
 

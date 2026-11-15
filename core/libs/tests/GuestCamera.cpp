@@ -5,6 +5,12 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -153,6 +159,26 @@ void CheckFrames() {
     errno = 71;
     Require(sceCameraIsValidFrameData(1, reinterpret_cast<const CameraFrameData*>(0x10)) == ErrorParam, "validating unreadable frame rejected");
     Require(errno == 71, "errno preserved");
+    Require(sceCameraGetFrameData(1, reinterpret_cast<CameraFrameData*>(0x10)) == ErrorParam, "reading unmapped frame rejected");
+    Require(errno == 71, "errno preserved on unmapped get frame");
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    void* readonlyFrame = VirtualAlloc(nullptr, sysInfo.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(readonlyFrame != nullptr, "allocate readonly frame page");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0, "query page size");
+    void* readonlyFrame = mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readonlyFrame != MAP_FAILED, "allocate readonly frame page");
+#endif
+    Require(sceCameraGetFrameData(1, static_cast<CameraFrameData*>(readonlyFrame)) == ErrorParam, "reading readonly frame rejected");
+    Require(errno == 71, "errno preserved on readonly get frame");
+#ifdef _WIN32
+    Require(VirtualFree(readonlyFrame, 0, MEM_RELEASE) != 0, "free readonly frame page");
+#else
+    Require(munmap(readonlyFrame, static_cast<std::size_t>(pageSize)) == 0, "free readonly frame page");
+#endif
 }
 
 void CheckClose() {
