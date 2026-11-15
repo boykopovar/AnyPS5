@@ -253,7 +253,10 @@ std::uint32_t QueueLevel() {
 int CheckFloatAttribute(const void* attribute, std::size_t attribute_size, float minimum, float maximum) {
     if (attribute == nullptr || attribute_size != sizeof(float)) return AUDIO3D_ERROR_INVALID_PARAMETER;
     float value = 0.0f;
-    if (!GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value))) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (!std::isfinite(value) || value < minimum || value > maximum) return AUDIO3D_ERROR_INVALID_PARAMETER;
     return 0;
 }
@@ -640,9 +643,12 @@ int APS5_VABI sceAudio3dBedWrite2(uint32_t port_id, uint32_t num_channels, uint3
         const std::uint32_t samples = std::min(num_samples, g_port.granularity);
         const std::size_t bytes = static_cast<std::size_t>(samples) * num_channels * sample_size;
         if (g_port.beds.size() >= g_port.queue_depth) return AUDIO3D_ERROR_NOT_READY;
-        const auto* first = static_cast<const std::uint8_t*>(buffer);
         Audio3dBed bed;
-        bed.pcm.assign(first, first + bytes);
+        bed.pcm.resize(bytes);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(bed.pcm.data(), buffer, bytes);
+        errno = savedErrno;
+        if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         bed.channels = num_channels;
         bed.format = format;
         bed.samples = samples;
