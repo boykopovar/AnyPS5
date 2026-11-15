@@ -3,12 +3,24 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 extern "C" {
 
@@ -422,6 +434,85 @@ void LongOptions() {
     Expect(getopt_long_nid_postfix(gnu.Count(), gnu.Values(), nullptr, options, nullptr) == -1, "null option string");
 }
 
+void GuestPointers() {
+    auto rejectsRuntime = [](auto&& call, const char* what) {
+        errno = 71;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            Expect(errno == 71, what);
+            return;
+        }
+        Expect(false, what);
+    };
+
+    const std::size_t pageSize =
+#ifdef _WIN32
+        4096;
+#else
+        static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+#endif
+    void* roPage = nullptr;
+#ifdef _WIN32
+    roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Expect(roPage != nullptr, "VirtualAlloc failed");
+    DWORD oldProtect = 0;
+    std::memset(roPage, 0, pageSize);
+    Expect(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0, "VirtualProtect failed");
+#else
+    roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Expect(roPage != MAP_FAILED, "mmap failed");
+    std::memset(roPage, 0, pageSize);
+    Expect(mprotect(roPage, pageSize, PROT_READ) == 0, "mprotect failed");
+#endif
+    auto* roInt = static_cast<int*>(roPage);
+    auto* badArgv = reinterpret_cast<char* const*>(std::uintptr_t{0x10});
+    const auto* badText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    const auto* badOptions = reinterpret_cast<const GuestOption*>(std::uintptr_t{0x10});
+
+    ArgumentVector valid("foo -a");
+    Reset();
+    rejectsRuntime([&] { getopt_nid_postfix(2, badArgv, "a"); }, "getopt bad argv");
+    Reset();
+    rejectsRuntime([&] { getopt_nid_postfix(valid.Count(), valid.Values(), badText); }, "getopt bad optstring");
+
+    char prog[] = "foo";
+    char* badEntryVec[] = {prog, reinterpret_cast<char*>(std::uintptr_t{0x10}), nullptr};
+    Reset();
+    rejectsRuntime([&] { getopt_nid_postfix(2, badEntryVec, "a"); }, "getopt bad argv[1]");
+
+    ArgumentVector longArg("foo --alpha");
+    Reset();
+    rejectsRuntime([&] { getopt_long_nid_postfix(longArg.Count(), longArg.Values(), "", badOptions, nullptr); }, "getopt_long bad longopts");
+
+    const GuestOption badNameOpts[] = {
+        {badText, 0, nullptr, 'a'},
+        {nullptr, 0, nullptr, 0},
+    };
+    Reset();
+    rejectsRuntime([&] { getopt_long_nid_postfix(longArg.Count(), longArg.Values(), "", badNameOpts, nullptr); }, "getopt_long bad opt name");
+
+    const GuestOption roFlagOpts[] = {
+        {"alpha", 0, roInt, 1},
+        {nullptr, 0, nullptr, 0},
+    };
+    Reset();
+    rejectsRuntime([&] { getopt_long_nid_postfix(longArg.Count(), longArg.Values(), "", roFlagOpts, nullptr); }, "getopt_long ro flag");
+
+    const GuestOption validOpts[] = {
+        {"alpha", 0, nullptr, 'a'},
+        {nullptr, 0, nullptr, 0},
+    };
+    Reset();
+    rejectsRuntime([&] { getopt_long_nid_postfix(longArg.Count(), longArg.Values(), "", validOpts, roInt); }, "getopt_long ro longindex");
+
+#ifdef _WIN32
+    VirtualFree(roPage, 0, MEM_RELEASE);
+#else
+    munmap(roPage, pageSize);
+#endif
+}
+
 }
 
 int main() {
@@ -432,4 +523,5 @@ int main() {
     ShortOptions();
     LongOptions();
     LongOnlyOptions();
+    GuestPointers();
 }
