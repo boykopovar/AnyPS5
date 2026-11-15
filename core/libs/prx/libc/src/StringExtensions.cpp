@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -267,7 +268,7 @@ int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address) {
     if (address) {
         const std::uint8_t bytes[4] = {static_cast<std::uint8_t>(value >> 24), static_cast<std::uint8_t>(value >> 16),
             static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value)};
-        std::memcpy(address, bytes, sizeof(bytes));
+        if (!GuestCopyOut_nid_no_patch(address, bytes, sizeof(bytes))) return 0;
     }
     return 1;
 }

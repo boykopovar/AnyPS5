@@ -79,8 +79,8 @@ def registered_test_commands(build_dir):
             if match:
                 name = match.group(1) if match.group(1) is not None else match.group(2)
                 commands[re.sub(r"\\(.)", r"\1", name)] = [
-                    re.sub(r"\\(.)", r"\1", next(part for part in argument if part))
-                    for argument in TESTFILE_ARGUMENT.findall(match.group(3))]
+                    re.sub(r"\\(.)", r"\1", next(part for part in argument.groups() if part is not None))
+                    for argument in TESTFILE_ARGUMENT.finditer(match.group(3))]
     return commands
 
 
@@ -244,13 +244,13 @@ def main(argv=None):
     parser.add_argument("--output-log", type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.changed_paths is not None:
-            listed = {Path(path).as_posix() for path in args.changed_paths.read_text(encoding="utf-8").splitlines() if path}
+        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
+        if changed_paths is not None:
+            listed = {Path(path).as_posix() for path in changed_paths if path}
             if not reaches_libs(listed) and not script_test_patterns(listed):
                 print("No changed core/libs tests require a run")
                 return 0
         source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
-        changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
         selected = core_lib_test_targets(source_root, targets, changed_paths)
         if not selected:
             print("No core/libs test sources changed")

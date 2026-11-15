@@ -376,11 +376,18 @@ int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, Gu
     {
         std::lock_guard lock(directory.mutex);
         next = ReadEntry(directory, 1);
-        if (next) std::memcpy(entry, next, next->recordLength);
+        if (next && !GuestCopyOut_nid_no_patch(entry, next, next->recordLength)) {
+            errno = savedError;
+            return 14;
+        }
     }
     if (!next && errno) return errno;
     errno = savedError;
-    *result = next ? entry : nullptr;
+    const GuestDirectoryEntry* const output = next ? entry : nullptr;
+    if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output))) {
+        errno = savedError;
+        return 14;
+    }
     return 0;
 }
 
