@@ -11081,9 +11081,7 @@ int APS5_VABI WKPageGetPaginationBehavesLikeColumns() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGetPaginationMode() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageGetProcessIdentifier() {
     NotImplemented_nid_no_patch(__func__);
@@ -11482,9 +11480,7 @@ int APS5_VABI WKPageSetPaginationLineGridEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetPaginationMode() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetRubberBandsAtBottom() {
     NotImplemented_nid_no_patch(__func__);
