@@ -23,32 +23,173 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
+// Derived from neonmodder123/PS5-WebKit-11.x/Source/WebCore/platform/network/ResourceResponseBase.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from neonmodder123/PS5-WebKit-11.x/Source/WebCore/platform/network/HTTPParsers.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+// Derived from neonmodder123/PS5-WebKit-11.x/Source/WebCore/platform/network/RFC7230.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace {
 
 using NKWebKit::WebCoreAbi::ResourceResponseBase;
 
+using NKWebKit::HttpAbi::HeaderVector;
+using NKWebKit::HttpAbi::HTTPHeaderMap;
 using NKWebKit::HttpAbi::HTTPHeaderName;
+using NKWebKit::WebCoreAbi::AllFields;
+using NKWebKit::WebCoreAbi::CommonFieldsOnly;
+using NKWebKit::WebCoreAbi::ResponseInitLevel;
 using NKWebKit::WebCoreAbi::ResponseOptionalTime;
+using NKWebKit::WebCoreAbi::ResponseSanitizationType;
+using NKWebKit::WebCoreAbi::ResponseTainting;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
+using NKWebKit::WtfAbi::URL;
 
 template<class Response>
 Response& Checked(Response* self) {
     if (!self) throw std::invalid_argument("null WebCore::ResourceResponseBase");
     return *self;
+}
+
+template<class Response>
+Response& Initialized(Response* self, ResponseInitLevel level) {
+    auto& response = Checked(self);
+    _ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE(&response, level);
+    return response;
+}
+
+void MarkNotNull(ResourceResponseBase& response) {
+    response.stateBits = static_cast<std::uint8_t>(response.stateBits & ~NKWebKit::WebCoreAbi::responseNullMask);
+}
+
+ResponseTainting Tainting(const ResourceResponseBase& response) {
+    using namespace NKWebKit::WebCoreAbi;
+    return static_cast<ResponseTainting>((response.taintingSourceBits >> responseTaintingShift) & responseTaintingMask);
+}
+
+void Assign(URL& target, const URL& source) {
+    if (source.impl) source.impl->refCount += 2;
+    String released(target.impl);
+    target = source;
+}
+
+template<class Entry>
+void Validate(const HeaderVector<Entry>& vector) {
+    if (vector.size > vector.capacity) throw std::invalid_argument("invalid header vector size");
+    if (vector.size && !vector.buffer) throw std::invalid_argument("null header vector storage");
+}
+
+template<class Entry, class Remove>
+void RemoveAllMatching(HeaderVector<Entry>& vector, Remove remove) {
+    Validate(vector);
+    std::vector<bool> drop;
+    for (unsigned index = 0; index < vector.size; ++index) drop.push_back(remove(vector.buffer[index]));
+    unsigned kept = 0;
+    for (unsigned index = 0; index < vector.size; ++index) {
+        if (!drop[index] && kept != index) std::construct_at(vector.buffer + kept, std::move(vector.buffer[index]));
+        if (drop[index] || kept != index) std::destroy_at(vector.buffer + index);
+        if (!drop[index]) ++kept;
+    }
+    vector.size = kept;
+}
+
+constexpr HTTPHeaderName safeRedirectionHeaders[] = {
+    HTTPHeaderName::Location, HTTPHeaderName::ReferrerPolicy, HTTPHeaderName::CacheControl, HTTPHeaderName::Date,
+    HTTPHeaderName::Expires, HTTPHeaderName::ETag, HTTPHeaderName::LastModified, HTTPHeaderName::Age,
+    HTTPHeaderName::Pragma, HTTPHeaderName::Refresh, HTTPHeaderName::Vary,
+    HTTPHeaderName::CrossOriginOpenerPolicy, HTTPHeaderName::CrossOriginOpenerPolicyReportOnly,
+    HTTPHeaderName::CrossOriginEmbedderPolicy, HTTPHeaderName::CrossOriginEmbedderPolicyReportOnly,
+    HTTPHeaderName::AccessControlAllowCredentials, HTTPHeaderName::AccessControlAllowHeaders,
+    HTTPHeaderName::AccessControlAllowMethods, HTTPHeaderName::AccessControlAllowOrigin,
+    HTTPHeaderName::AccessControlExposeHeaders, HTTPHeaderName::AccessControlMaxAge,
+    HTTPHeaderName::CrossOriginResourcePolicy, HTTPHeaderName::TimingAllowOrigin,
+};
+
+constexpr HTTPHeaderName safeCrossOriginHeaders[] = {
+    HTTPHeaderName::AcceptRanges, HTTPHeaderName::AccessControlAllowCredentials,
+    HTTPHeaderName::AccessControlAllowHeaders, HTTPHeaderName::AccessControlAllowMethods,
+    HTTPHeaderName::AccessControlAllowOrigin, HTTPHeaderName::AccessControlExposeHeaders,
+    HTTPHeaderName::AccessControlMaxAge, HTTPHeaderName::AccessControlRequestHeaders,
+    HTTPHeaderName::AccessControlRequestMethod, HTTPHeaderName::Age, HTTPHeaderName::CacheControl,
+    HTTPHeaderName::ContentDisposition, HTTPHeaderName::ContentEncoding, HTTPHeaderName::ContentLanguage,
+    HTTPHeaderName::ContentLength, HTTPHeaderName::ContentRange, HTTPHeaderName::ContentSecurityPolicy,
+    HTTPHeaderName::ContentSecurityPolicyReportOnly, HTTPHeaderName::ContentType,
+    HTTPHeaderName::CrossOriginResourcePolicy, HTTPHeaderName::Date, HTTPHeaderName::ETag,
+    HTTPHeaderName::Expires, HTTPHeaderName::IcyMetaInt, HTTPHeaderName::IcyMetadata,
+    HTTPHeaderName::LastEventID, HTTPHeaderName::LastModified, HTTPHeaderName::Link, HTTPHeaderName::Location,
+    HTTPHeaderName::Pragma, HTTPHeaderName::Range, HTTPHeaderName::ReferrerPolicy, HTTPHeaderName::Refresh,
+    HTTPHeaderName::ServerTiming, HTTPHeaderName::SourceMap, HTTPHeaderName::XSourceMap,
+    HTTPHeaderName::TimingAllowOrigin, HTTPHeaderName::Trailer, HTTPHeaderName::Vary,
+    HTTPHeaderName::XContentTypeOptions, HTTPHeaderName::XDNSPrefetchControl, HTTPHeaderName::XFrameOptions,
+    HTTPHeaderName::XXSSProtection,
+};
+
+template<std::size_t count>
+bool IsOneOf(const HTTPHeaderName (&names)[count], HTTPHeaderName name) {
+    return std::find(std::begin(names), std::end(names), name) != std::end(names);
+}
+
+bool IsHTTPSpace(char16_t character) {
+    return character == ' ' || character == '\n' || character == '\t' || character == '\r';
+}
+
+bool IsTokenCharacter(char16_t character) {
+    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')
+        || std::u16string_view(u"!#$%&'*+-.^_`|~").find(character) != std::u16string_view::npos;
+}
+
+std::u16string Widen(std::string_view text) {
+    return {text.begin(), text.end()};
+}
+
+std::u16string Widen(const String& value);
+
+bool EqualIgnoringCase(const std::u16string& a, const std::u16string& b) {
+    const auto fold = [](char16_t character) { return character >= 'A' && character <= 'Z' ? char16_t(character + ('a' - 'A')) : character; };
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [&](char16_t x, char16_t y) { return fold(x) == fold(y); });
+}
+
+bool AddToken(const std::u16string& text, std::size_t start, std::size_t end, std::vector<std::u16string>& list) {
+    while (start <= end && IsHTTPSpace(text[start])) ++start;
+    if (start > end) return true;
+    while (end && IsHTTPSpace(text[end])) --end;
+    const auto token = text.substr(start, end - start + 1);
+    if (!std::all_of(token.begin(), token.end(), IsTokenCharacter)) return false;
+    list.push_back(token);
+    return true;
+}
+
+std::vector<std::u16string> AccessControlAllowList(const std::u16string& text) {
+    std::vector<std::u16string> list;
+    std::size_t start = 0;
+    std::size_t end;
+    while ((end = text.find(u',', start)) != text.npos) {
+        if (start != end && !AddToken(text, start, end - 1, list)) return {};
+        start = end + 1;
+    }
+    if (start != text.size() && !AddToken(text, start, text.size() - 1, list)) return {};
+    return list;
+}
+
+bool Contains(const std::vector<std::u16string>& list, const std::u16string& name) {
+    return std::any_of(list.begin(), list.end(), [&](const auto& item) { return EqualIgnoringCase(item, name); });
 }
 
 bool IsEmpty(const String& value) {
@@ -108,6 +249,14 @@ bool MatchesAscii(std::basic_string_view<Char> value, std::string_view expected,
         if (character != expected[index]) return false;
     }
     return true;
+}
+
+std::u16string Widen(const String& value) {
+    return VisitString(value.impl, [](auto view) {
+        std::u16string text;
+        for (auto character : view) text.push_back(static_cast<char16_t>(static_cast<std::make_unsigned_t<decltype(character)>>(character)));
+        return text;
+    });
 }
 
 bool IsAttachment(const String& disposition) {
@@ -300,6 +449,104 @@ ResponseOptionalTime APS5_VABI _ZNK7WebCore20ResourceResponseBase3ageEv(const Re
             seconds = _ZN3WTF18charactersToDoubleEPKDsmPb(value.data(), value.size(), &ok);
         return ok ? OptionalTime(seconds) : ResponseOptionalTime{};
     });
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC1Ev(ResourceResponseBase* self) {
+    std::construct_at(&Checked(self));
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBaseC2Ev(ResourceResponseBase* self) {
+    std::construct_at(&Checked(self));
+}
+
+int APS5_VABI _ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(const ResourceResponseBase* self) {
+    return Initialized(self, CommonFieldsOnly).httpStatusCode;
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase17setHTTPStatusCodeEi(ResourceResponseBase* self, int statusCode) {
+    auto& response = Initialized(self, CommonFieldsOnly);
+    response.httpStatusCode = static_cast<short>(statusCode);
+    MarkNotNull(response);
+}
+
+bool APS5_VABI _ZNK7WebCore20ResourceResponseBase12isSuccessfulEv(const ResourceResponseBase* self) {
+    const int code = _ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(self);
+    return code >= 200 && code < 300;
+}
+
+bool APS5_VABI _ZNK7WebCore20ResourceResponseBase13isRedirectionEv(const ResourceResponseBase* self) {
+    const int code = Checked(self).httpStatusCode;
+    return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase6setURLERKN3WTF3URLE(ResourceResponseBase* self, const URL& url) {
+    auto& response = Initialized(self, CommonFieldsOnly);
+    MarkNotNull(response);
+    Assign(response.url, url);
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase24setExpectedContentLengthEx(ResourceResponseBase* self, long long expectedContentLength) {
+    auto& response = Initialized(self, CommonFieldsOnly);
+    MarkNotNull(response);
+    response.expectedContentLength = expectedContentLength;
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase7setTypeENS0_4TypeE(ResourceResponseBase* self, NKWebKit::WebCoreAbi::ResponseType type) {
+    using namespace NKWebKit::WebCoreAbi;
+    auto& response = Checked(self);
+    MarkNotNull(response);
+    response.typeBits = static_cast<std::uint8_t>((response.typeBits & ~responseTypeMask) | (static_cast<unsigned>(type) & responseTypeMask));
+}
+
+NKWebKit::WebCoreAbi::ResponseSource APS5_VABI _ZNK7WebCore20ResourceResponseBase6sourceEv(const ResourceResponseBase* self) {
+    using namespace NKWebKit::WebCoreAbi;
+    const auto& response = Initialized(self, AllFields);
+    return static_cast<ResponseSource>((response.taintingSourceBits >> responseSourceShift) & responseSourceMask);
+}
+
+void APS5_VABI _ZNK7WebCore20ResourceResponseBase22includeCertificateInfoEv(const ResourceResponseBase* self) {
+    auto& certificate = const_cast<ResourceResponseBase&>(Checked(self)).certificateInfo;
+    if (certificate.hasValue) return;
+    certificate = {{}, true};
+}
+
+void APS5_VABI _ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE(const ResourceResponseBase* self, ResponseInitLevel) {
+    Checked(self);
+}
+
+void APS5_VABI _ZN7WebCore20ResourceResponseBase24sanitizeHTTPHeaderFieldsENS0_16SanitizationTypeE(ResourceResponseBase* self, ResponseSanitizationType type) {
+    auto& response = Initialized(self, AllFields);
+    if (static_cast<unsigned>(type) > static_cast<unsigned>(ResponseSanitizationType::CrossOriginSafe))
+        throw std::invalid_argument("invalid SanitizationType");
+    auto& headers = response.httpHeaderFields;
+    _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::SetCookie);
+    _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(&headers, HTTPHeaderName::SetCookie2);
+    if (type == ResponseSanitizationType::RemoveCookies) return;
+    const auto removeAll = [](const auto&) { return true; };
+    if (type == ResponseSanitizationType::Redirection) {
+        RemoveAllMatching(headers.common, [](const auto& header) { return !IsOneOf(safeRedirectionHeaders, header.key); });
+        RemoveAllMatching(headers.uncommon, removeAll);
+        return;
+    }
+    switch (Tainting(response)) {
+    case ResponseTainting::Basic:
+        return;
+    case ResponseTainting::Cors: {
+        const auto allowed = AccessControlAllowList(Widen(Header(&response, HTTPHeaderName::AccessControlExposeHeaders)));
+        if (Contains(allowed, u"*")) return;
+        RemoveAllMatching(headers.common, [&](const auto& header) {
+            return !IsOneOf(safeCrossOriginHeaders, header.key)
+                && !Contains(allowed, Widen(std::string_view(_ZN7WebCore20httpHeaderNameStringENS_14HTTPHeaderNameE(header.key).characters)));
+        });
+        RemoveAllMatching(headers.uncommon, [&](const auto& header) { return !Contains(allowed, Widen(header.key)); });
+        return;
+    }
+    case ResponseTainting::Opaque:
+    case ResponseTainting::Opaqueredirect:
+        RemoveAllMatching(headers.common, [](const auto& header) { return !IsOneOf(safeCrossOriginHeaders, header.key); });
+        RemoveAllMatching(headers.uncommon, removeAll);
+        return;
+    }
 }
 
 }

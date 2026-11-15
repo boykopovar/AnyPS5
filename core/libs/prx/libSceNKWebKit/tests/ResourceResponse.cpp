@@ -1,13 +1,16 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 using NKWebKit::WebCoreAbi::ResourceResponseBase;
 using NKWebKit::WtfAbi::StringImpl;
@@ -380,7 +383,303 @@ static void TestRevalidationHeaders() {
     Require(uncommon.size == 3);
 }
 
+using namespace NKWebKit::WebCoreAbi;
+
+static bool IsNull(const ResourceResponseBase& response) {
+    return response.stateBits & responseNullMask;
+}
+
+template<class Call>
+static bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestDefaultConstruction() {
+    for (auto construct : {_ZN7WebCore20ResourceResponseBaseC1Ev, _ZN7WebCore20ResourceResponseBaseC2Ev}) {
+        alignas(ResourceResponseBase) unsigned char storage[sizeof(ResourceResponseBase)];
+        std::memset(storage, 0xAB, sizeof(storage));
+        auto& response = *reinterpret_cast<ResourceResponseBase*>(storage);
+        construct(&response);
+
+        Require(!response.url.impl && response.url.bits == 0 && response.url.queryEnd == 0);
+        Require(!response.mimeType.impl && !response.textEncodingName.impl);
+        Require(!response.httpStatusText.impl && !response.httpVersion.impl);
+        Require(_ZNK7WebCore20ResourceResponseBase21expectedContentLengthEv(&response) == 0);
+        Require(!response.httpHeaderFields.common.buffer && !response.httpHeaderFields.common.capacity);
+        Require(!response.httpHeaderFields.common.size && !response.httpHeaderFields.uncommon.size);
+        Require(!response.httpHeaderFields.uncommon.buffer && !response.httpHeaderFields.uncommon.capacity);
+        Require(!response.networkLoadMetrics);
+        Require(!response.certificateInfo.hasValue);
+        Require(response.httpStatusCode == 0);
+        Require(std::isnan(response.age) && std::isnan(response.date));
+        Require(std::isnan(response.expires) && std::isnan(response.lastModified));
+        Require(response.contentRange.firstBytePosition == 0 && response.contentRange.lastBytePosition == 0);
+        Require(response.contentRange.instanceLength == ParsedContentRange::invalidLength);
+        const auto& directives = response.cacheControlDirectives;
+        Require(std::isnan(directives.maxAge) && std::isnan(directives.maxStale) && std::isnan(directives.staleWhileRevalidate));
+        Require(!directives.noCache && !directives.noStore && !directives.mustRevalidate && !directives.immutable);
+        Require(response.stateBits == responseNullMask && response.parseBits == 0 && response.taintingSourceBits == 0);
+        Require(response.typeBits == static_cast<std::uint8_t>(ResponseType::Default));
+        Require(IsNull(response));
+        Require(_ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(&response) == 0);
+        Require(_ZNK7WebCore20ResourceResponseBase6sourceEv(&response) == ResponseSource::Unknown);
+        Require(!_ZNK7WebCore20ResourceResponseBase12isSuccessfulEv(&response));
+        Require(!_ZNK7WebCore20ResourceResponseBase13isRedirectionEv(&response));
+    }
+    Require(Throws([] { _ZN7WebCore20ResourceResponseBaseC1Ev(nullptr); }));
+    Require(Throws([] { _ZN7WebCore20ResourceResponseBaseC2Ev(nullptr); }));
+}
+
+static void TestStatusCode() {
+    ResourceResponseBase response{};
+    Require(IsNull(response));
+    _ZN7WebCore20ResourceResponseBase17setHTTPStatusCodeEi(&response, 200);
+    Require(!IsNull(response));
+    Require(_ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(&response) == 200);
+    _ZN7WebCore20ResourceResponseBase17setHTTPStatusCodeEi(&response, -1);
+    Require(_ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(&response) == -1);
+    _ZN7WebCore20ResourceResponseBase17setHTTPStatusCodeEi(&response, 70000);
+    Require(_ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(&response) == 4464);
+
+    for (int code = 0; code < 600; ++code) {
+        _ZN7WebCore20ResourceResponseBase17setHTTPStatusCodeEi(&response, code);
+        Require(_ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(&response) == code);
+        Require(_ZNK7WebCore20ResourceResponseBase12isSuccessfulEv(&response) == (code >= 200 && code < 300));
+        Require(_ZNK7WebCore20ResourceResponseBase13isRedirectionEv(&response)
+            == (code == 301 || code == 302 || code == 303 || code == 307 || code == 308));
+    }
+
+    ResourceResponseBase untouched{};
+    Require(!_ZNK7WebCore20ResourceResponseBase13isRedirectionEv(&untouched));
+    Require(IsNull(untouched));
+    Require(Throws([] { _ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv(nullptr); }));
+    Require(Throws([] { _ZN7WebCore20ResourceResponseBase17setHTTPStatusCodeEi(nullptr, 200); }));
+    Require(Throws([] { _ZNK7WebCore20ResourceResponseBase12isSuccessfulEv(nullptr); }));
+    Require(Throws([] { _ZNK7WebCore20ResourceResponseBase13isRedirectionEv(nullptr); }));
+}
+
+static void TestSetURL() {
+    auto first = Make("http://a/");
+    auto second = Make("https://b/path?q");
+    NKWebKit::WtfAbi::URL url{&first, 1 | (4 << 6), 1, 2, 3, 4, 5, 6, 7};
+    ResourceResponseBase response{};
+    Require(IsNull(response));
+
+    _ZN7WebCore20ResourceResponseBase6setURLERKN3WTF3URLE(&response, url);
+    Require(!IsNull(response));
+    Require(response.url.impl == &first && first.refCount == 4);
+    Require(response.url.bits == url.bits && response.url.userStart == 1 && response.url.userEnd == 2);
+    Require(response.url.passwordEnd == 3 && response.url.hostEnd == 4 && response.url.pathAfterLastSlash == 5);
+    Require(response.url.pathEnd == 6 && response.url.queryEnd == 7);
+
+    _ZN7WebCore20ResourceResponseBase6setURLERKN3WTF3URLE(&response, response.url);
+    Require(response.url.impl == &first && first.refCount == 4 && response.url.queryEnd == 7);
+
+    url.impl = &second;
+    url.queryEnd = 9;
+    _ZN7WebCore20ResourceResponseBase6setURLERKN3WTF3URLE(&response, url);
+    Require(response.url.impl == &second && second.refCount == 4 && first.refCount == 2 && response.url.queryEnd == 9);
+
+    _ZN7WebCore20ResourceResponseBase6setURLERKN3WTF3URLE(&response, NKWebKit::WtfAbi::URL{});
+    Require(!response.url.impl && second.refCount == 2 && response.url.bits == 0);
+    Require(Throws([&] { _ZN7WebCore20ResourceResponseBase6setURLERKN3WTF3URLE(nullptr, url); }));
+}
+
+static void TestExpectedContentLength() {
+    ResourceResponseBase response{};
+    Require(IsNull(response));
+    _ZN7WebCore20ResourceResponseBase24setExpectedContentLengthEx(&response, -1);
+    Require(!IsNull(response));
+    Require(_ZNK7WebCore20ResourceResponseBase21expectedContentLengthEv(&response) == -1);
+    _ZN7WebCore20ResourceResponseBase24setExpectedContentLengthEx(&response, 1234567890123LL);
+    Require(_ZNK7WebCore20ResourceResponseBase21expectedContentLengthEv(&response) == 1234567890123LL);
+    Require(Throws([] { _ZN7WebCore20ResourceResponseBase24setExpectedContentLengthEx(nullptr, 1); }));
+}
+
+static void TestTypeAndSource() {
+    ResourceResponseBase response{};
+    Require(IsNull(response));
+    for (auto type : {ResponseType::Basic, ResponseType::Cors, ResponseType::Error, ResponseType::Opaque, ResponseType::Opaqueredirect, ResponseType::Default}) {
+        response.stateBits = 0xFF;
+        response.parseBits = 0xFF;
+        response.taintingSourceBits = 0x10;
+        response.typeBits = 0xF8;
+        _ZN7WebCore20ResourceResponseBase7setTypeENS0_4TypeE(&response, type);
+        Require(!IsNull(response));
+        Require(response.stateBits == 0xFE && response.parseBits == 0xFF && response.taintingSourceBits == 0x10);
+        Require(response.typeBits == (0xF8 | static_cast<unsigned>(type)));
+        Require(_ZNK7WebCore20ResourceResponseBase6sourceEv(&response) == ResponseSource::MemoryCache);
+    }
+    for (unsigned source = 0; source <= static_cast<unsigned>(ResponseSource::InspectorOverride); ++source) {
+        response.taintingSourceBits = static_cast<std::uint8_t>((source << responseSourceShift) | 0xC3);
+        Require(static_cast<unsigned>(_ZNK7WebCore20ResourceResponseBase6sourceEv(&response)) == source);
+    }
+    Require(Throws([] { _ZN7WebCore20ResourceResponseBase7setTypeENS0_4TypeE(nullptr, ResponseType::Basic); }));
+    Require(Throws([] { _ZNK7WebCore20ResourceResponseBase6sourceEv(nullptr); }));
+}
+
+static void TestCertificateInfo() {
+    ResourceResponseBase response{};
+    response.certificateInfo.value.verificationError = 9;
+    response.certificateInfo.value.privateKeyPassword.impl = reinterpret_cast<StringImpl*>(&response);
+    _ZNK7WebCore20ResourceResponseBase22includeCertificateInfoEv(&response);
+    const auto& certificate = response.certificateInfo;
+    Require(certificate.hasValue && certificate.value.verificationError == 0);
+    Require(!certificate.value.certificateChain.buffer && !certificate.value.certificateChain.size);
+    Require(!certificate.value.certificateChain.capacity && !certificate.value.privateKey.buffer);
+    Require(!certificate.value.privateKey.size && !certificate.value.privateKeyPassword.impl);
+    response.certificateInfo.value.verificationError = 7;
+    _ZNK7WebCore20ResourceResponseBase22includeCertificateInfoEv(&response);
+    Require(certificate.hasValue && certificate.value.verificationError == 7);
+    Require(Throws([] { _ZNK7WebCore20ResourceResponseBase22includeCertificateInfoEv(nullptr); }));
+}
+
+static void TestLazyInit() {
+    ResourceResponseBase response{};
+    for (auto level : {Uninitialized, CommonFieldsOnly, AllFields})
+        _ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE(&response, level);
+    Require(IsNull(response) && response.httpStatusCode == 0);
+    Require(Throws([] { _ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE(nullptr, AllFields); }));
+}
+
+static std::vector<HTTPHeaderName> CommonKeys(const ResourceResponseBase& response) {
+    const auto& common = response.httpHeaderFields.common;
+    std::vector<HTTPHeaderName> keys;
+    for (unsigned index = 0; index < common.size; ++index) keys.push_back(common.buffer[index].key);
+    return keys;
+}
+
+static void Populate(ResponseFixture& fixture) {
+    fixture.Set(HTTPHeaderName::SetCookie, Text("a=b"));
+    fixture.Set(HTTPHeaderName::SetCookie2, Text("c=d"));
+    fixture.Set(HTTPHeaderName::ContentType, Text("text/html"));
+    fixture.Set(HTTPHeaderName::Location, Text("http://b/"));
+    fixture.Set(HTTPHeaderName::Connection, Text("close"));
+    fixture.Set(HTTPHeaderName::CacheControl, Text("no-store"));
+    fixture.Set(HTTPHeaderName::ContentLength, Text("5"));
+    fixture.Set(HTTPHeaderName::Authorization, Text("secret"));
+    fixture.Set(HTTPHeaderName::CrossOriginOpenerPolicy, Text("same-origin"));
+    _ZN7WebCore20ResourceResponseBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&fixture.response, Text("X-Custom"), Text("v"));
+    _ZN7WebCore20ResourceResponseBase18setHTTPHeaderFieldERKN3WTF6StringES4_(&fixture.response, Text("X-Other"), Text("w"));
+}
+
+static void SetTainting(ResourceResponseBase& response, ResponseTainting tainting) {
+    response.taintingSourceBits = static_cast<std::uint8_t>(
+        (response.taintingSourceBits & ~(responseTaintingMask << responseTaintingShift))
+        | (static_cast<unsigned>(tainting) << responseTaintingShift));
+}
+
+static void Sanitize(ResponseFixture& fixture, ResponseSanitizationType type) {
+    _ZN7WebCore20ResourceResponseBase24sanitizeHTTPHeaderFieldsENS0_16SanitizationTypeE(&fixture.response, type);
+}
+
+static std::vector<std::u16string> UncommonKeys(const ResourceResponseBase& response) {
+    const auto& uncommon = response.httpHeaderFields.uncommon;
+    std::vector<std::u16string> keys;
+    for (unsigned index = 0; index < uncommon.size; ++index) keys.push_back(Contents(uncommon.buffer[index].key));
+    return keys;
+}
+
+static void TestSanitize() {
+    using Keys = std::vector<HTTPHeaderName>;
+    using Names = std::vector<std::u16string>;
+    const Keys withoutCookies{HTTPHeaderName::ContentType, HTTPHeaderName::Location, HTTPHeaderName::Connection,
+        HTTPHeaderName::CacheControl, HTTPHeaderName::ContentLength, HTTPHeaderName::Authorization, HTTPHeaderName::CrossOriginOpenerPolicy};
+    {
+        ResponseFixture fixture;
+        Populate(fixture);
+        Require(CommonKeys(fixture.response).size() == 9 && fixture.response.httpHeaderFields.uncommon.size == 2);
+        Sanitize(fixture, ResponseSanitizationType::RemoveCookies);
+        Require(CommonKeys(fixture.response) == withoutCookies);
+        Require(UncommonKeys(fixture.response) == Names({u"X-Custom", u"X-Other"}));
+        Require(Contents(fixture.Get(HTTPHeaderName::Location)) == u"http://b/");
+    }
+    {
+        ResponseFixture fixture;
+        Populate(fixture);
+        _ZN7WebCore13HTTPHeaderMap6appendERKN3WTF6StringES4_(&fixture.response.httpHeaderFields, Text("Location"), Text("http://c/"));
+        Require(CommonKeys(fixture.response).size() == 10);
+        Sanitize(fixture, ResponseSanitizationType::Redirection);
+        Require(CommonKeys(fixture.response) == Keys({HTTPHeaderName::Location, HTTPHeaderName::CacheControl,
+            HTTPHeaderName::CrossOriginOpenerPolicy, HTTPHeaderName::Location}));
+        Require(fixture.response.httpHeaderFields.uncommon.size == 0);
+        Require(Contents(fixture.Get(HTTPHeaderName::Location)) == u"http://b/");
+        Require(Contents(fixture.Get(HTTPHeaderName::CrossOriginOpenerPolicy)) == u"same-origin");
+    }
+    {
+        ResponseFixture fixture;
+        Populate(fixture);
+        SetTainting(fixture.response, ResponseTainting::Basic);
+        Sanitize(fixture, ResponseSanitizationType::CrossOriginSafe);
+        Require(CommonKeys(fixture.response) == withoutCookies);
+        Require(UncommonKeys(fixture.response) == Names({u"X-Custom", u"X-Other"}));
+    }
+    for (auto tainting : {ResponseTainting::Opaque, ResponseTainting::Opaqueredirect}) {
+        ResponseFixture fixture;
+        Populate(fixture);
+        fixture.Set(HTTPHeaderName::AccessControlExposeHeaders, Text("Connection, X-Custom"));
+        SetTainting(fixture.response, tainting);
+        Sanitize(fixture, ResponseSanitizationType::CrossOriginSafe);
+        Require(CommonKeys(fixture.response) == Keys({HTTPHeaderName::ContentType, HTTPHeaderName::Location,
+            HTTPHeaderName::CacheControl, HTTPHeaderName::ContentLength, HTTPHeaderName::AccessControlExposeHeaders}));
+        Require(fixture.response.httpHeaderFields.uncommon.size == 0);
+        Require(Contents(fixture.Get(HTTPHeaderName::ContentType)) == u"text/html");
+    }
+    struct CorsCase {
+        const char* expose;
+        Keys common;
+        Names uncommon;
+    };
+    const Keys safe{HTTPHeaderName::ContentType, HTTPHeaderName::Location, HTTPHeaderName::CacheControl, HTTPHeaderName::ContentLength};
+    const auto with = [&](HTTPHeaderName extra) {
+        auto keys = safe;
+        keys.push_back(extra);
+        return keys;
+    };
+    const Keys exposedSafe = with(HTTPHeaderName::AccessControlExposeHeaders);
+    const std::vector<CorsCase> cases{
+        {nullptr, safe, {}},
+        {"x-custom ,, CONNECTION\t", {HTTPHeaderName::ContentType, HTTPHeaderName::Location, HTTPHeaderName::Connection,
+            HTTPHeaderName::CacheControl, HTTPHeaderName::ContentLength, HTTPHeaderName::AccessControlExposeHeaders}, {u"X-Custom"}},
+        {"x-custom, bad token, Connection", exposedSafe, {}},
+        {"x-custom, na(me", exposedSafe, {}},
+        {"*", withoutCookies, {u"X-Custom", u"X-Other"}},
+        {"x-other, *", withoutCookies, {u"X-Custom", u"X-Other"}},
+    };
+    for (const auto& test : cases) {
+        ResponseFixture fixture;
+        Populate(fixture);
+        if (test.expose) fixture.Set(HTTPHeaderName::AccessControlExposeHeaders, Text(test.expose));
+        SetTainting(fixture.response, ResponseTainting::Cors);
+        Sanitize(fixture, ResponseSanitizationType::CrossOriginSafe);
+        auto expected = test.common;
+        if (test.expose && expected == withoutCookies) expected.push_back(HTTPHeaderName::AccessControlExposeHeaders);
+        Require(CommonKeys(fixture.response) == expected);
+        Require(UncommonKeys(fixture.response) == test.uncommon);
+    }
+    {
+        ResponseFixture fixture;
+        Populate(fixture);
+        Require(Throws([&] { Sanitize(fixture, static_cast<ResponseSanitizationType>(3)); }));
+        Require(CommonKeys(fixture.response).size() == 9);
+        Require(Throws([] { _ZN7WebCore20ResourceResponseBase24sanitizeHTTPHeaderFieldsENS0_16SanitizationTypeE(nullptr, ResponseSanitizationType::Redirection); }));
+    }
+}
+
 int main() {
+    TestDefaultConstruction();
+    TestStatusCode();
+    TestSetURL();
+    TestExpectedContentLength();
+    TestTypeAndSource();
+    TestCertificateInfo();
+    TestLazyInit();
+    TestSanitize();
     TestFields();
     TestHTTPFamily();
     TestHeaderMutation();
