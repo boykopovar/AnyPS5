@@ -9,7 +9,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <stdexcept>
 #include <string>
 
 namespace {
@@ -215,16 +214,6 @@ void CheckArguments() {
     Require(sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData(0, nullptr) == ErrorInvalidArgument, "telemetry null output");
     Require(libSceHidControlUnknown_DUGI7AXFtV0_nid_no_patch(nullptr) == ErrorInvalidArgument, "DUGI7AXFtV0 null data");
     Require(sceHidControlGetControllerSerialNumberInformation(0, nullptr) == ErrorInvalidArgument, "serial number null output");
-    std::array<std::uint8_t, 0x20> serial{};
-    serial.fill(0x5a);
-    try {
-        Require(sceHidControlGetControllerSerialNumberInformation(7, serial.data()) < 0,
-                "failed serial ioctl returns an error");
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()).find("ioctl: request 0xC0184852") != std::string::npos,
-                "only the unsupported fake-file ioctl may throw");
-    }
-    Require(AllBytes(serial.data(), serial.size(), 0x5a), "failed serial ioctl leaves the output untouched");
     Require(sceHidControlSetPswControllerCommunicationMethod(0) == 0, "SetPswControllerCommunicationMethod 0");
     Require(sceHidControlSetPswControllerCommunicationMethod(1) == 0, "SetPswControllerCommunicationMethod 1");
     Require(sceHidControlSetPswControllerCommunicationMethod(2) == ErrorInvalidArgument, "SetPswControllerCommunicationMethod 2");

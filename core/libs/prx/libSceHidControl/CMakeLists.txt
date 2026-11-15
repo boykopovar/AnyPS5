@@ -12,4 +12,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_hid_control PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHidControl>")
     endif()
+    add_test_executable(guest_hid_control_serial_tests ${LIBS_INCLUDE_DIR}/tests/GuestHidControlSerial.cpp Export.cpp)
+    target_include_directories(guest_hid_control_serial_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_hid_control_serial_tests PRIVATE libc)
+    configure_windows_unwind(guest_hid_control_serial_tests)
+    add_test(NAME guest_hid_control_serial COMMAND guest_hid_control_serial_tests)
+    if(WIN32)
+        set_tests_properties(guest_hid_control_serial PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
