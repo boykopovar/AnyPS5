@@ -703,6 +703,7 @@ class ImportAuditTests(unittest.TestCase):
         root = self.work.root
         directory = Path("\\\\?\\" + str(root.resolve())) if os.name == "nt" else root
         output = directory / ("a" * 245 + ".json")
+        self.addCleanup(output.unlink, missing_ok=True)
         files = set(directory.iterdir())
         for result in ({"complete": True}, {"complete": False}):
             import_audit.write_json(output, result)

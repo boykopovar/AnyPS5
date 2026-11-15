@@ -297,6 +297,9 @@ void GnmDrawupPattern() {
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == InvalidParameter);
         Require(out == nullptr);
         Require(g_errorCount == before);
+        errno = 71;
+        Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, reinterpret_cast<void**>(0x10)) == InvalidParameter);
+        Require(errno == 71);
         f.surface.initialized = 1;
         Require(sceFontGraphicsGnmDrawupFillTexturePattern(frame, &f.surface, 1, 2, 3, 4, 5, 6, &out) == 0);
         Require(out != nullptr);
@@ -343,6 +346,16 @@ void GnmSequences() {
         Require(sceFontGraphicsSequenceGetGnmCommandsForChain(seq, &out, &count, &out2, &count2) == 0);
         Require(out == firstData && count == 8 && out2 == secondData && count2 == 3);
         Require(g_errorCount == before + 6 && g_lastError == Fatal);
+        count = 0xcccc;
+        out2 = reinterpret_cast<void*>(0xbeef);
+        count2 = 0xdddd;
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetGnmCommandsForChain(seq, reinterpret_cast<void**>(0x10), &count, &out2, &count2) ==
+                InvalidParameter);
+        Require(errno == 71);
+        Require(g_errorCount == before + 6);
+        Require(count == 0 && out2 == nullptr && count2 == 0);
+        errno = 0;
     }
     {
         void* out = reinterpret_cast<void*>(0xdead);
@@ -361,6 +374,13 @@ void GnmSequences() {
         Require(sceFontGraphicsSequenceGetGnmCommandsForSubmit(seq, &out, &count) == 0);
         Require(out == firstData && count == 0x20);
         Require(g_errorCount == before + 4 && g_lastError == SequenceLocked);
+        out = reinterpret_cast<void*>(0xdead);
+        errno = 71;
+        Require(sceFontGraphicsSequenceGetGnmCommandsForSubmit(seq, &out, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter);
+        Require(errno == 71);
+        Require(g_errorCount == before + 4);
+        Require(out == nullptr);
+        errno = 0;
     }
 }
 

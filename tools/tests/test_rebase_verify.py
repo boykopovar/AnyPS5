@@ -112,6 +112,14 @@ class RebaseVerifyTests(unittest.TestCase):
             self.git("commit", "-q", "-a", "--amend", "--no-edit")
             self.assertEqual(rebase_verify.main(arguments), 1)
 
+    def test_a_non_ascii_line_is_reported_as_utf8(self):
+        self.write("f.txt", "a\nNEW\nb\nc\ntail\n→ 界\n")
+        self.git("commit", "-q", "-a", "--amend", "--no-edit")
+        done = subprocess.run([sys.executable, str(Path(rebase_verify.__file__)), "old", "new", "--onto", "main", "--repo", str(self.root)],
+                              capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+        self.assertEqual(done.returncode, 1, done.stderr.decode("utf-8", "replace"))
+        self.assertIn("error: f.txt: a line is added that the branch did not add (1x): → 界", done.stdout.decode("utf-8"))
+
     def test_a_clean_rebase_stays_clean_after_main_moves_on(self):
         self.git("checkout", "-q", "main")
         self.write("g.txt", "later main work\n")

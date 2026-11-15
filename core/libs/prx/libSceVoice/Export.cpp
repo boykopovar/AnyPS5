@@ -387,20 +387,25 @@ int APS5_VABI sceVoiceGetResourceInfo(VoiceResourceInfo* info) {
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return NotInitialized;
     if (info == nullptr) return InvalidArgument;
+    VoiceResourceInfo localInfo{};
     switch (voice.appType) {
     case 4:
-        *info = {0, 0, 4, 5};
+        localInfo = {0, 0, 4, 5};
         break;
     case 0x08000000:
     case 0x10000000:
-        *info = {15, 4, 4, 4};
+        localInfo = {15, 4, 4, 4};
         break;
     case 0x20000000:
-        *info = {7, 4, 4, 4};
+        localInfo = {7, 4, 4, 4};
         break;
     default:
         Fail(__func__, "unsupported initialization mode");
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+    errno = savedErrno;
+    if (!copied) return InvalidArgument;
     return 0;
 }
 

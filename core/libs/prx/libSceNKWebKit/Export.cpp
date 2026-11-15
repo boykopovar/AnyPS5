@@ -7619,10 +7619,6 @@ int APS5_VABI _ZN7WebCore11JSDOMWindow4infoEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22parseVPCodecParametersEN3WTF10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13KeyboardEvent6createERKNS_21PlatformKeyboardEventEON3WTF6RefPtrINS_11WindowProxyENS4_13DumbPtrTraitsIS6_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -12751,22 +12747,6 @@ int APS5_VABI _ZN3JSC14JSRunLoopTimerD1Ev() {
 }
 
 int APS5_VABI _ZN3JSC14JSRunLoopTimerD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame15clearCurrentVPCEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame8argumentEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrameaSERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -23745,10 +23725,6 @@ int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore36visiblePositionForPositionWithOffsetERKNS_15VisiblePositionEi() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -28470,10 +28446,6 @@ int APS5_VABI _ZNK3JSC14CellAttributes4dumpERN3WTF11PrintStreamE() {
 }
 
 int APS5_VABI _ZNK3JSC14FullCodeOrigin4dumpERN3WTF11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC14ProtoCallFrame13argumentCountEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

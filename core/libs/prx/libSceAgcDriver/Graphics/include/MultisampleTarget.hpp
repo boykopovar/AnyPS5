@@ -123,6 +123,7 @@ bool HoldsMultisampleTargetsLock();
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active);
+void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
 
 }

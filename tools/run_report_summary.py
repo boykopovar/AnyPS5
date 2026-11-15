@@ -95,7 +95,8 @@ def render(report):
         lines.append(f"Unsupported shader instructions: {count_text(total, 'occurrence')} across {count_text(len(unsupported), 'instruction')}")
         for item in unsupported[:5]:
             if isinstance(item, dict):
-                instruction = item.get("opcode") or item.get("opcodeValue") or "unknown instruction"
+                opcode_value = item.get("opcodeValue")
+                instruction = item.get("opcode") or (opcode_value if opcode_value is not None else "unknown instruction")
                 lines.append(f"  - {text(item.get('encoding'))}: {text(str(instruction))} ({count_text(item.get('count', 0), 'occurrence')})")
         if truncated.get("unsupported", 0):
             lines.append(f"  - {count_text(truncated['unsupported'], 'additional instruction')} omitted")

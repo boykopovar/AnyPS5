@@ -587,7 +587,11 @@ int APS5_VABI scePadGetAccessibilityControllerState(int handle, std::uint32_t* s
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (state == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    *state = 0;
+    const std::uint32_t controllerState = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &controllerState, sizeof(controllerState));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
 
@@ -769,7 +773,11 @@ int APS5_VABI scePadGetControllerType(std::int32_t handle, std::int32_t* type) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (type == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    *type = SpecialHandle(handle) ? PAD_CONTROLLER_TYPE_UNKNOWN : PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    const std::int32_t controllerType = SpecialHandle(handle) ? PAD_CONTROLLER_TYPE_UNKNOWN : PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(type, &controllerType, sizeof(controllerType));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     return PAD_OK;
 }
 

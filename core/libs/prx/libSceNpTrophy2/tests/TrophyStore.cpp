@@ -6,6 +6,7 @@
 #include "tests/TemporaryFile.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -281,6 +282,45 @@ void testPostedUnlockRules() {
 
 }
 
+template <typename TAction>
+bool refusesKeepingErrno(TAction action) {
+    errno = 71;
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+void testUnwritableOutputs() {
+    int context = 0;
+    check(sceNpTrophy2CreateContext(&context, InitialUser, 4, 0) == 0, "a context for the title's trophy data was not created");
+    auto* bad = reinterpret_cast<void*>(0x10);
+    NpTrophy2GameDetails gameDetails{};
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGameInfo(context, 1, static_cast<NpTrophy2GameDetails*>(bad), nullptr); }), "unwritable game details were taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGameInfo(context, 1, &gameDetails, static_cast<NpTrophy2GameData*>(bad)); }), "unwritable game data was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfo(context, 1, -1, static_cast<NpTrophy2GroupDetails*>(bad), nullptr); }), "unwritable group details were taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfo(context, 1, -1, nullptr, static_cast<NpTrophy2GroupData*>(bad)); }), "unwritable group data was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfo(context, 1, 1, static_cast<NpTrophy2Details*>(bad), nullptr); }), "unwritable trophy details were taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfo(context, 1, 1, nullptr, static_cast<NpTrophy2Data*>(bad)); }), "unwritable trophy data was taken");
+
+    std::uint32_t count = 99;
+    NpTrophy2GroupDetails groups[1]{};
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, static_cast<NpTrophy2GroupDetails*>(bad), nullptr, &count); }), "an unwritable group details array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, groups, static_cast<NpTrophy2GroupData*>(bad), &count); }), "an unwritable group data array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, groups, nullptr, static_cast<std::uint32_t*>(bad)); }), "an unwritable group count was taken");
+    NpTrophy2Details trophies[4]{};
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, static_cast<NpTrophy2Details*>(bad), nullptr, &count); }), "an unwritable trophy details array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, trophies, static_cast<NpTrophy2Data*>(bad), &count); }), "an unwritable trophy data array was taken");
+    check(refusesKeepingErrno([&] { sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, trophies, nullptr, static_cast<std::uint32_t*>(bad)); }), "an unwritable trophy count was taken");
+    check(count == 99, "a refused query wrote the count");
+
+    check(sceNpTrophy2GetTrophyInfoArray(context, 1, 0, 4, trophies, nullptr, &count) == 0 && count == 4 && trophies[3].trophy_id == 3, "the trophy list is not reported after the refusals");
+    check(sceNpTrophy2GetGroupInfoArray(context, 1, 0, 1, groups, nullptr, &count) == 0 && count == 1 && groups[0].group_id == -1, "the group list is not reported after the refusals");
+    check(sceNpTrophy2DestroyContext(context) == 0, "the context was not destroyed");
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-store-" + std::to_string(std::random_device{}()));
@@ -291,6 +331,7 @@ int main() {
     testDamagedRecords();
     testQueries();
     testPostedUnlockRules();
+    testUnwritableOutputs();
     testListenerRemovalWaitsForItsCallback();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);

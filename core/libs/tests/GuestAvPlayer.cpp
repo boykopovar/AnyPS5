@@ -1254,6 +1254,12 @@ void TestWithoutAllocators() {
     errno = 71;
     Check(sceAvPlayerInitEx(&extended, reinterpret_cast<AvPlayerInternal**>(0x10)) == InvalidParams, "extended init rejected unwritable handle");
     Check(errno == 71, "errno preserved");
+    AvPlayerInternal* unused = nullptr;
+    extended.default_language = reinterpret_cast<const char*>(0x10);
+    Check(sceAvPlayerInitEx(&extended, &unused) == InvalidParams && unused == nullptr, "extended init accepted an unmapped default language");
+    init.default_language = reinterpret_cast<const char*>(0x10);
+    Check(sceAvPlayerInit(&init) == nullptr, "init accepted an unmapped default language");
+    Check(errno == 71, "errno preserved across an unmapped default language");
     Check(sceAvPlayerClose(handle) == 0, "close failed");
 }
 

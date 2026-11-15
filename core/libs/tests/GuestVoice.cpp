@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -163,6 +164,9 @@ int main() {
         std::uint32_t guard;
     } resourceOutput{{}, 0xa5a5a5a5u};
     Require(sceVoiceGetResourceInfo(&resourceOutput.info) == 0);
+    errno = 71;
+    Require(sceVoiceGetResourceInfo(reinterpret_cast<VoiceResourceInfo*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(resourceOutput.info.maxVoiceInputPorts == 15);
     Require(resourceOutput.info.maxVoiceOutputPorts == 4);
     Require(resourceOutput.info.maxDeviceInputPorts == 4);
