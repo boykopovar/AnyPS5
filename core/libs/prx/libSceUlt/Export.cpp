@@ -188,11 +188,17 @@ int joinUlthread(void* ulthread, std::int32_t* status, bool blocking) {
         releaseUlthreadJoin(&state);
         return ULT_ERROR_STATE;
     }
-    if (status != nullptr) *status = static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(result));
-    std::lock_guard lock(gMutex);
-    const auto it = gUlthreads.find(ulthread);
-    if (it != gUlthreads.end() && it->second == state) gUlthreads.erase(it);
-    return ULT_OK;
+    {
+        std::lock_guard lock(gMutex);
+        const auto it = gUlthreads.find(ulthread);
+        if (it != gUlthreads.end() && it->second == state) gUlthreads.erase(it);
+    }
+    if (status == nullptr) return ULT_OK;
+    const auto exitStatus = static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(result));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &exitStatus, sizeof(exitStatus));
+    errno = savedErrno;
+    return copied ? ULT_OK : ULT_ERROR_NULL;
 }
 
 }
