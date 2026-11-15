@@ -22,6 +22,7 @@
 #include <charconv>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <exception>
@@ -49,6 +50,7 @@ constexpr int ConnectTimedOut = static_cast<int>(0x817b1221);
 constexpr int ReceiveTimedOut = static_cast<int>(0x817b1222);
 constexpr int SendTimedOut = static_cast<int>(0x817b1223);
 constexpr int ConnectionReset = static_cast<int>(0x80410136);
+constexpr int NetworkError = static_cast<int>(0x80431063);
 constexpr std::array<int, 7> HandshakeFailures{
     static_cast<int>(0x8095f00b), static_cast<int>(0x8095f00c), static_cast<int>(0x8095f00d), static_cast<int>(0x8095f010),
     static_cast<int>(0x8095170d), static_cast<int>(0x80951d78), static_cast<int>(0x80410136)};
@@ -1102,6 +1104,10 @@ int Request::Send(const void* data, std::size_t size) {
     state->started = true;
     state->totalDeadline = Clock::now() + std::chrono::microseconds(state->settings.timeout);
     try {
+        if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
+            state->Check(state->Total());
+            state->Raise(NetworkError, "sceHttp2: network disconnected");
+        }
         const void* payload = data;
         std::size_t payloadSize = size;
         for (unsigned redirects = 0;; ++redirects) {

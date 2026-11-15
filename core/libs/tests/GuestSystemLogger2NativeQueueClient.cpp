@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -20,6 +21,17 @@ constexpr std::size_t guard = 0x20;
 
 void Require(bool value) {
     if (!value) std::abort();
+}
+
+template <typename Fn>
+void RequireThrows(Fn&& fn) {
+    bool threw = false;
+    try {
+        fn();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 void RequireZeroedThenUntouched(const std::vector<unsigned char>& block, std::size_t zeroed) {
@@ -41,6 +53,9 @@ int main() {
         Require(libSceSystemLogger2NativeQueueClientUnknown_AuwwRl6zAcU_nid_no_patch() == notInitialized);
 
         Require(sceSystemLogger2NativeQueueClientGetEvent(nullptr) == invalidArgument);
+        errno = 71;
+        RequireThrows([] { sceSystemLogger2NativeQueueClientGetEvent(reinterpret_cast<void*>(0x10)); });
+        Require(errno == 71);
         std::vector<unsigned char> event(eventBytes + guard, 0x5A);
         errno = 71;
         Require(sceSystemLogger2NativeQueueClientGetEvent(event.data()) == getEventResult);
@@ -50,13 +65,21 @@ int main() {
         std::vector<unsigned char> data(0x40, 0x5A);
         Require(sceSystemLogger2NativeQueueClientCheckData(data.data(), nullptr) == invalidArgument);
         Require(sceSystemLogger2NativeQueueClientCheckData(nullptr, nullptr) == invalidArgument);
+        errno = 71;
+        RequireThrows([&] { sceSystemLogger2NativeQueueClientCheckData(data.data(), reinterpret_cast<void*>(0x10)); });
+        Require(errno == 71);
+        errno = 71;
+        RequireThrows([] { sceSystemLogger2NativeQueueClientCheckData(nullptr, reinterpret_cast<void*>(0x10)); });
+        Require(errno == 71);
         std::vector<unsigned char> result(checkResultBytes + guard, 0x5A);
         errno = 71;
         Require(sceSystemLogger2NativeQueueClientCheckData(data.data(), result.data()) == notInitialized);
         Require(errno == 71);
         RequireZeroedThenUntouched(result, checkResultBytes);
         std::vector<unsigned char> second(checkResultBytes + guard, 0x5A);
+        errno = 71;
         Require(sceSystemLogger2NativeQueueClientCheckData(nullptr, second.data()) == notInitialized);
+        Require(errno == 71);
         RequireZeroedThenUntouched(second, checkResultBytes);
         for (const unsigned char byte : data) Require(byte == 0x5A);
     }
