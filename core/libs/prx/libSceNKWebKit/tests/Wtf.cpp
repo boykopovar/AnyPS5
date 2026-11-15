@@ -10,6 +10,7 @@
 #include "prx/libc/include/GuestErrno.hpp"
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
@@ -830,6 +831,49 @@ static void TestSleepSeconds() {
     Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
 }
 
+static void TestMakeAllDirectories() {
+    const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
+    const auto guest = [](const char* text) {
+        return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(text));
+    };
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(std::filesystem::is_directory(root / "a" / "b" / "c"));
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "a" / "b").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+    Require((std::filesystem::status(root / "a" / "b" / "c").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+    Require(make(guest("/nkwebkit-dirs")));
+    Require(make(guest("/nkwebkit-dirs/d/e/")));
+    Require(std::filesystem::is_directory(root / "d" / "e"));
+    Require(make(guest("/nkwebkit-dirs/\xC3\xA9/z")));
+    Require(std::filesystem::is_directory(root / std::filesystem::path(u8"é") / "z"));
+    {
+        std::ofstream file(root / "f.bin", std::ios::binary);
+        Require(static_cast<bool>(file));
+    }
+    Require(make(guest("/nkwebkit-dirs/f.bin")));
+    Require(std::filesystem::is_regular_file(root / "f.bin"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x")));
+    Require(!std::filesystem::exists(root / "f.bin" / "x"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x/y")));
+    NKWebKit::WtfAbi::String nullPath;
+    Require(!make(nullPath));
+    Require(!make(guest("")));
+    RemovePathAlias_nid_no_patch("/nkwebkit-dirs");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     if (!TestBmallocHeapOperators()) {
         return 1;
@@ -846,6 +890,7 @@ int main() {
     TestFileHandles();
     TestUniStdExtras();
     TestSleepSeconds();
+    TestMakeAllDirectories();
     return 0;
 }
 
