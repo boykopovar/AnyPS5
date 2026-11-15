@@ -4980,6 +4980,7 @@ bool LabelTrapsEnabled() {
     static const bool enabled = [] {
         if (std::getenv("APS5_NO_LABEL_READ_TRAP") != nullptr || !GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveLabelTrap)) return false;
         GuestWriteWatch::GuestWriteWatchSetReadTrapBypass_nid_postfix(+[] { return GuestMemory::GpuMutex().HeldByThisThread(); });
+        GuestWriteWatch::GuestWriteWatchSetReadTrapLock_nid_postfix(+[] { GuestMemory::GpuMutex().lock(); }, +[] { GuestMemory::GpuMutex().unlock(); });
         return true;
     }();
     return enabled;

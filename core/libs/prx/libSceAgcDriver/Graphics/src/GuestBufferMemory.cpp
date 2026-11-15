@@ -2347,6 +2347,9 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     if (alignment == 0 || base % alignment != 0 || bytes % alignment != 0) return nullptr;
     if (const auto limit = importMaxBytes.load(std::memory_order_relaxed); limit != 0 && bytes > limit) return nullptr;
+#ifdef __APPLE__
+    if (GuestWriteWatch::GuestWriteWatchResolveReadTrapsLater_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes))) return nullptr;
+#endif
     if (const auto failed = failures.find(base); !stepDown && failed != failures.end()) {
         if (sameRun(failed->second, run)) return nullptr;
         failures.erase(failed);

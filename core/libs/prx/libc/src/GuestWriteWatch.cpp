@@ -653,6 +653,11 @@ public:
         _bypass.store(bypass, std::memory_order_release);
     }
 
+    void SetReadTrapLock(void (*acquire)(), void (*release)()) {
+        _lockAcquire.store(acquire, std::memory_order_release);
+        _lockRelease.store(release, std::memory_order_release);
+    }
+
     bool TrapReads(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available || end <= begin || _resolver.load(std::memory_order_acquire) == nullptr) return false;
         const auto first = pageStart(begin);
@@ -684,6 +689,36 @@ public:
         for (const auto& [runBegin, runEnd] : runs) trapped(context, runBegin, runEnd);
     }
 
+    bool ResolveReadTrapsLater(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_available || end <= begin || !_trapping.load(std::memory_order_acquire)) return false;
+        std::vector<std::uintptr_t> firsts;
+        {
+            const Lock lock(_lock);
+            std::uintptr_t previous = 0;
+            forEachPage(pageStart(begin), pageEnd(end), [&](std::uintptr_t page, std::uint8_t& state) {
+                if ((state & ReadTrapped) == 0) return;
+                if (firsts.empty() || previous + _page != page) firsts.push_back(page);
+                previous = page;
+            });
+        }
+        for (const auto page : firsts) {
+            Slot* slot = nullptr;
+            for (auto& candidate : _slots) {
+                unsigned expected = Free;
+                if (candidate.state.compare_exchange_strong(expected, Claimed, std::memory_order_acq_rel)) {
+                    slot = &candidate;
+                    break;
+                }
+            }
+            if (slot == nullptr) break;
+            slot->page = page;
+            slot->detached = true;
+            slot->state.store(Queued, std::memory_order_release);
+            semaphore_signal(_wake);
+        }
+        return !firsts.empty();
+    }
+
     void ReleaseReads(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available || end <= begin) return;
         const Lock lock(_lock);
@@ -713,6 +748,7 @@ private:
     struct Slot {
         std::atomic<unsigned> state{Free};
         std::uintptr_t page = 0;
+        bool detached = false;
         semaphore_t done = MACH_PORT_NULL;
     };
 
@@ -912,11 +948,17 @@ private:
                 unsigned expected = Queued;
                 if (!slot.state.compare_exchange_strong(expected, Running, std::memory_order_acq_rel)) continue;
                 const auto page = slot.page;
+                const bool detached = slot.detached;
                 waitForResolving(page, page + _page);
-                resolve(page, page + _page);
+                resolve(page, page + _page, _lockAcquire.load(std::memory_order_acquire), _lockRelease.load(std::memory_order_acquire));
                 {
                     const Lock lock(_lock);
                     untrap(page, page + _page);
+                }
+                if (detached) {
+                    slot.detached = false;
+                    slot.state.store(Free, std::memory_order_release);
+                    continue;
                 }
                 slot.state.store(Done, std::memory_order_release);
                 semaphore_signal(slot.done);
@@ -924,7 +966,8 @@ private:
         }
     }
 
-    void resolve(std::uintptr_t begin, std::uintptr_t end) {
+    void resolve(std::uintptr_t begin, std::uintptr_t end, void (*acquire)() = nullptr, void (*release)() = nullptr) {
+        if (acquire != nullptr) acquire();
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> taken;
         const auto self = pthread_self();
         {
@@ -932,6 +975,7 @@ private:
             taken = takeTraps(begin, end);
             for (const auto& [first, last] : taken) _resolving.push_back({first, last, self});
         }
+        if (release != nullptr) release();
         if (taken.empty()) return;
         const auto resolver = _resolver.load(std::memory_order_acquire);
         for (const auto& [first, last] : taken) resolver(first, last);
@@ -1167,6 +1211,8 @@ private:
     std::atomic<bool> _trapping{false};
     std::atomic<void (*)(std::uintptr_t, std::uintptr_t)> _resolver{nullptr};
     std::atomic<bool (*)()> _bypass{nullptr};
+    std::atomic<void (*)()> _lockAcquire{nullptr};
+    std::atomic<void (*)()> _lockRelease{nullptr};
     std::once_flag _resolverStarted;
     std::atomic<bool> _resolverRunning{false};
     pthread_t _resolverThread{};
@@ -1365,6 +1411,15 @@ void GuestWriteWatchSetReadTrapBypass_nid_postfix(bool (*bypass)()) {
 #endif
 }
 
+void GuestWriteWatchSetReadTrapLock_nid_postfix(void (*acquire)(), void (*release)()) {
+#if defined(__APPLE__)
+    Watch::Get().SetReadTrapLock(acquire, release);
+#else
+    static_cast<void>(acquire);
+    static_cast<void>(release);
+#endif
+}
+
 bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t bytes) {
 #if defined(__APPLE__)
     return bytes != 0 && address + bytes > address && Watch::Get().TrapReads(address, address + bytes);
@@ -1383,6 +1438,16 @@ void GuestWriteWatchReadTraps_nid_postfix(std::uintptr_t address, std::size_t by
     static_cast<void>(bytes);
     static_cast<void>(trapped);
     static_cast<void>(context);
+#endif
+}
+
+bool GuestWriteWatchResolveReadTrapsLater_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+#if defined(__APPLE__)
+    return bytes != 0 && address + bytes > address && Watch::Get().ResolveReadTrapsLater(address, address + bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
 #endif
 }
 
