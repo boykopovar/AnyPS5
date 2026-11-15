@@ -42,6 +42,8 @@ constexpr int ErrorReasonRsaLibrary = 4;
 constexpr int Asn1NestedAsn1Error = 58;
 constexpr int Asn1LengthMismatch = 62;
 constexpr int Asn1FieldMissing = 121;
+constexpr int Asn1IntegerTooLargeForLong = 128;
+constexpr int Asn1TooLarge = 223;
 constexpr int Asn1WrongTag = 168;
 
 constexpr char RsaTraditionalPem[] =
@@ -1155,6 +1157,33 @@ void TestTraditionalDerValidationAndContext() {
         {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary},
         {ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
         {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> rsaLongSentinelPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x08, 0x02, 0x04, 0x7f, 0xff, 0xff, 0xff, 0x04, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaLongSentinelPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1IntegerTooLargeForLong}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {RsaLibrary, ErrorReasonRsaLibrary}, {ErrorReasonAsn1Library, Asn1WrongTag},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> rsaSignedOverflowPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x0d, 0x02, 0x09, 0x00, 0x80, 0, 0, 0, 0, 0, 0, 0, 0x04, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaSignedOverflowPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1TooLarge}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {RsaLibrary, ErrorReasonRsaLibrary}, {ErrorReasonAsn1Library, Asn1WrongTag},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> rsaUnsignedOverflowPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x0d, 0x02, 0x09, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaUnsignedOverflowPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1TooLarge}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {RsaLibrary, ErrorReasonRsaLibrary}, {ErrorReasonAsn1Library, Asn1WrongTag},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {PemLibrary, ErrorReasonAsn1Library}});
 
     const std::vector<unsigned char> rsaEmptyModIntPem = EncodePemRecord(
         "RSA PRIVATE KEY", {0x30, 0x05, 0x02, 0x01, 0x00, 0x02, 0x00});

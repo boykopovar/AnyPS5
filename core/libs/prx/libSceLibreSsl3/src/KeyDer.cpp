@@ -380,7 +380,9 @@ constexpr int ErrRMallocFailure = 65;
 constexpr int Asn1RBadObjectHeader = 102;
 constexpr int Asn1RFieldMissing = 121;
 constexpr int Asn1RHeaderTooLong = 123;
+constexpr int Asn1RIntegerTooLargeForLong = 128;
 constexpr int Asn1RNotEnoughData = 142;
+constexpr int Asn1RTooLarge = 223;
 constexpr int Asn1RSequenceLengthMismatch = 148;
 constexpr int Asn1RSequenceNotConstructed = 149;
 constexpr int Asn1RTooLong = 155;
@@ -539,9 +541,18 @@ bool ValidateUnsignedIntegerContent(std::span<const unsigned char> raw,
         return false;
     }
     while (content.size() > 1 && content[0] == 0) content = content.subspan(1);
-    if (kind == IntegerKind::Long && content.size() > sizeof(std::int64_t)) {
-        PutError(ErrLibAsn1, Asn1RBadObjectHeader);
-        return false;
+    if (kind == IntegerKind::Long) {
+        if (content.size() > sizeof(std::int64_t)
+            || (content.size() == sizeof(std::int64_t) && (content[0] & 0x80))) {
+            PutError(ErrLibAsn1, Asn1RTooLarge);
+            return false;
+        }
+        std::uint64_t value = 0;
+        for (unsigned char byte : content) value = (value << 8) | byte;
+        if (value == 0x7fffffff) {
+            PutError(ErrLibAsn1, Asn1RIntegerTooLargeForLong);
+            return false;
+        }
     }
     return true;
 }
