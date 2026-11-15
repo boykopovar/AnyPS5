@@ -2362,16 +2362,16 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                                 GuestBufferMemory buffer(uploadContext);
                                 buffer.AddWritable(target.htileAddress, metadataBytes);
                                 buffer.Upload(false);
-                            }, PublicationRefusal(format));
+                            }, "guest publication of a written native multisample depth needs the texture detiler");
                             const auto accepted = std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)};
                             RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, accepted);
-                            if (format == VK_FORMAT_D32_SFLOAT) TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.address, bytes, accepted); }, PublicationRefusal(format));
-                            if (format == VK_FORMAT_D32_SFLOAT) TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes + 1u, accepted); }, PublicationRefusal(format));
+                            if (format == VK_FORMAT_D32_SFLOAT) TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.address, bytes, accepted); }, "guest publication of a written native multisample depth needs the texture detiler");
+                            if (format == VK_FORMAT_D32_SFLOAT) TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes + 1u, accepted); }, "guest publication of a written native multisample depth needs the texture detiler");
                             Require(DepthSurfaceAt(target.address), "an accepted HTILE buffer access retired its native depth owner");
                         }
                         if (completionCandidate) ArmHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
                         if (completionCandidate && fault == ClearFault::None && format == VK_FORMAT_D32_SFLOAT) {
-                            TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)}); }, PublicationRefusal(format));
+                            TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)}); }, "guest publication of a written native multisample depth needs the texture detiler");
                         }
                         if (fault == ClearFault::Overlap) NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes);
                         const auto storedBytes = fault == ClearFault::PartialStore ? 4u : static_cast<std::size_t>(metadataBytes);
