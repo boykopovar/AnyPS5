@@ -292,6 +292,18 @@ static void CheckPathCompare() {
     REQUIRE(sceFiosPathncmp("abc", "xyz", 0) == 0);
 }
 
+static void CheckOpWaitUntilDelegation(const std::string& file) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    const SceFiosOp op = sceFiosFileGetSize(nullptr, file.c_str());
+    REQUIRE(op > 0);
+    REQUIRE(sceFiosOpIsDone(op));
+    REQUIRE(sceFiosOpWaitUntil(op, 0) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpWaitUntil(op, 1000000000000000000LL) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetError(op) == SCE_FIOS_OK);
+    sceFiosOpDelete(op);
+    REQUIRE(sceFiosOpWaitUntil(op, 1000000000000000000LL) == SCE_FIOS_ERROR_BAD_OP);
+}
+
 static void CheckOperationLifecycle(const std::string& file) {
     const SceFiosOp op = sceFiosFileGetSize(nullptr, file.c_str());
     REQUIRE(op > 0);
@@ -990,6 +1002,7 @@ int main() {
     CheckQueries(directory.generic_string(), file);
     CheckPathCompare();
     CheckOperationLifecycle(file);
+    CheckOpWaitUntilDelegation(file);
     CheckCallbacks(file);
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
