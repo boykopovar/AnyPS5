@@ -241,6 +241,13 @@ void CheckWideToMultibyte() {
     before = constraintCalls;
     Require(wctomb_s_nid_postfix(nullptr, bytes, sizeof(bytes), 'A') == 22, "wctomb_s accepted a null status");
     RequireViolation(before, "wctomb_s: bad argument", 22);
+    before = constraintCalls;
+    Require(wctomb_s_nid_postfix(reinterpret_cast<int*>(0x10), bytes, sizeof(bytes), 'A') == 22, "wctomb_s accepted an unwritable status");
+    RequireViolation(before, "wctomb_s: bad argument", 22);
+    status = 7;
+    before = constraintCalls;
+    Require(wctomb_s_nid_postfix(&status, reinterpret_cast<char*>(0x10), sizeof(bytes), 'A') == 22 && status == 7, "wctomb_s accepted an unwritable buffer");
+    RequireViolation(before, "wctomb_s: bad argument", 22);
 
     unsigned char state[128]{};
     std::size_t result = 7;
@@ -256,6 +263,13 @@ void CheckWideToMultibyte() {
     before = constraintCalls;
     bytes[0] = 'x';
     Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 'B', nullptr) == 22 && result == failed && bytes[0] == 0, "wcrtomb_s accepted a null state");
+    RequireViolation(before, "wcrtomb_s: bad argument", 22);
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(reinterpret_cast<std::size_t*>(0x10), bytes, sizeof(bytes), 'B', state) == 22, "wcrtomb_s accepted an unwritable result");
+    RequireViolation(before, "wcrtomb_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(&result, reinterpret_cast<char*>(0x10), sizeof(bytes), 'B', state) == 22 && result == failed, "wcrtomb_s accepted an unwritable buffer");
     RequireViolation(before, "wcrtomb_s: bad argument", 22);
     before = constraintCalls;
     bytes[0] = 'x';

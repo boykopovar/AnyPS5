@@ -25,11 +25,6 @@
 #include "SceUltTypes.hpp"
 #include "prx/libSceUlt/src/ReaderWriterLock.hpp"
 
-bool CurrentWaitRecord(UltWaitRecord& record, std::int32_t waitValue);
-void RemoveWaitRecord(std::vector<UltWaitRecord>& records, const UltWaitRecord& record);
-int ValidateWaitRecords(const UltWaitingThreadInfo* records, std::uint32_t capacity);
-int WriteWaitRecords(const std::vector<UltWaitRecord>& records, UltWaitingThreadInfo* destination, std::uint32_t capacity);
-
 namespace {
 
 std::mutex gMutex;
@@ -101,7 +96,10 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
     }
     if (push) {
         const auto slot = pool._free;
-        std::memcpy(pool._data.data() + slot * pool._dataSize, source, state->_dataSize);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(pool._data.data() + slot * pool._dataSize, source, state->_dataSize);
+        errno = savedErrno;
+        if (!copied) return ULT_ERROR_NULL;
         pool._free = pool._next[slot];
         pool._next[slot] = UINT32_MAX;
         if (state->_tail == UINT32_MAX) state->_head = slot;
@@ -110,7 +108,10 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
         ++state->_queuedItems;
     } else {
         const auto slot = state->_head;
-        std::memcpy(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
+        errno = savedErrno;
+        if (!copied) return ULT_ERROR_NULL;
         state->_head = pool._next[slot];
         if (state->_head == UINT32_MAX) state->_tail = UINT32_MAX;
         pool._next[slot] = pool._free;
