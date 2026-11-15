@@ -724,6 +724,8 @@ void CheckOnlineIdQueries() {
     Require(sceNpGetAccountId(&onlineId, &accountId) == SignedOut, "sceNpGetAccountId must report NP as signed out");
     Require(sceNpGetAccountId(nullptr, &accountId) == InvalidArgument, "sceNpGetAccountId must reject a null online id");
     Require(sceNpGetAccountId(&onlineId, nullptr) == InvalidArgument, "sceNpGetAccountId must reject a null output");
+    errno = 71;
+    Require(sceNpGetAccountId(reinterpret_cast<const NpOnlineId*>(0x10), &accountId) == InvalidArgument && errno == 71, "sceNpGetAccountId must reject an unmapped online id and keep errno");
     const int presenceRequest = sceNpCreateRequest();
     Require(presenceRequest > 0, "sceNpCreateRequest must return a positive request id");
     Require(sceNpSetGamePresenceOnline(presenceRequest, &onlineId, 0) == SignedOut, "sceNpSetGamePresenceOnline must report NP as signed out");
@@ -1203,10 +1205,13 @@ int main() {
     std::memset(&onlineId, 0x5a, sizeof(onlineId));
     NpOnlineId untouchedOnlineId{};
     std::memset(&untouchedOnlineId, 0x5a, sizeof(untouchedOnlineId));
+    Require(sceNpGetOnlineId(-1, &onlineId) == InvalidArgument, "sceNpGetOnlineId must reject an invalid user id");
     Require(sceNpGetOnlineId(0x10000, &onlineId) == SignedOut, "sceNpGetOnlineId must report the user as signed out");
     Require(std::memcmp(&onlineId, &untouchedOnlineId, sizeof(onlineId)) == 0, "sceNpGetOnlineId must leave the online id untouched");
     Require(sceNpGetOnlineId(0x10000, nullptr) == InvalidArgument, "sceNpGetOnlineId must reject a null online id");
     std::uint64_t accountIdA = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceNpGetAccountIdA(-1, &accountIdA) == InvalidArgument, "sceNpGetAccountIdA must reject an invalid user id");
+    Require(sceNpGetAccountIdA(0x10000, nullptr) == InvalidArgument, "sceNpGetAccountIdA must reject a null output");
     Require(sceNpGetAccountIdA(0x10000, &accountIdA) == SignedOut, "sceNpGetAccountIdA must report the user as signed out");
     Require(accountIdA == 0x5a5a5a5a5a5a5a5aull, "sceNpGetAccountIdA must leave the account id untouched");
     int userId = 0x5a5a;
