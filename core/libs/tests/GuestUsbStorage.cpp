@@ -491,6 +491,21 @@ void TestDeviceMaps(const FakeHost& host) {
     Require(sceUsbStorageRequestMapWSB(0, nullptr, 0, 0, mountPoint, &status) == 0, "map the root through the WSB request");
     Require(std::string_view(mountPoint) == "/mnt/usb0" && status == 0, "the WSB request mapped the root at the mount point");
     Require(sceUsbStorageRequestUnmap(0, "/mnt/usb0") == 0, "unmap the WSB root");
+
+    char* const unmappedText = reinterpret_cast<char*>(0x10);
+    errno = 71;
+    Require(sceUsbStorageGetMountPointOfShellCore(0, unmappedText) == UsbStorage::InvalidArgument, "unwritable shell-core mount point");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, unmappedText, nullptr) == UsbStorage::InvalidArgument, "unwritable map mount point");
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, reinterpret_cast<std::uint64_t*>(0x10)) == UsbStorage::InvalidArgument,
+            "unwritable map id");
+    Require(sceUsbStorageRequestMapWSB(0, "Music", 0, 0, unmappedText, nullptr) == UsbStorage::InvalidArgument, "unwritable WSB mount path");
+    Require(sceUsbStorageRequestMapWSB(0, "Music", 0, 0, mountPoint, reinterpret_cast<std::int32_t*>(0x10)) == UsbStorage::InvalidArgument,
+            "unwritable WSB status");
+    Require(errno == 71, "errno preserved");
+    mountId = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceUsbStorageRequestMap(0, "Music", 0, 0, mountPoint, &mountId) == 0, "a failed map request left no map behind");
+    Require(std::string_view(mountPoint) == "/mnt/usb0/Music" && mountId == 0, "the directory is mapped after the failed requests");
+    Require(sceUsbStorageRequestUnmap(0, "/mnt/usb0/Music") == 0, "unmap the directory after the failed requests");
 }
 
 void TestMapAvailability(const FakeHost& host) {
