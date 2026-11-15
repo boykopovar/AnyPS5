@@ -160,11 +160,21 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordArray(void** record) {
     std::lock_guard<std::recursive_mutex> recordsLock(g_recordsMutex);
     if (!g_initialized.load()) return kNotInitialized;
     if (record == nullptr) return kInvalidArgument;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(record, sizeof(*record))) {
+        errno = savedErrno;
+        return kInvalidArgument;
+    }
+    void* handle = nullptr;
     try {
-        *record = g_arrays.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
+        handle = g_arrays.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
     } catch (const std::bad_alloc&) {
+        errno = savedErrno;
         return kOutOfMemory;
     }
+    const bool copied = GuestCopyOut_nid_no_patch(record, &handle, sizeof(handle));
+    errno = savedErrno;
+    if (!copied) return kInvalidArgument;
     return 0;
 }
 
@@ -172,11 +182,21 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordObject(void** record) {
     std::lock_guard<std::recursive_mutex> recordsLock(g_recordsMutex);
     if (!g_initialized.load()) return kNotInitialized;
     if (record == nullptr) return kInvalidArgument;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(record, sizeof(*record))) {
+        errno = savedErrno;
+        return kInvalidArgument;
+    }
+    void* handle = nullptr;
     try {
-        *record = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
+        handle = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
     } catch (const std::bad_alloc&) {
+        errno = savedErrno;
         return kOutOfMemory;
     }
+    const bool copied = GuestCopyOut_nid_no_patch(record, &handle, sizeof(handle));
+    errno = savedErrno;
+    if (!copied) return kInvalidArgument;
     return 0;
 }
 
