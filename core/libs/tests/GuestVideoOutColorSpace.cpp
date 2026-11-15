@@ -45,6 +45,9 @@ int main() {
     Require(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(&settings, 1.0f, 0) == 0);
 
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(0, nullptr); });
+    errno = 71;
+    ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(0, reinterpret_cast<const VideoOutColorSpaceConversionSettings*>(0x10)); });
+    Require(errno == 71);
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(-1, &settings); });
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(0, &settings); });
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(1, &settings); });
@@ -55,6 +58,9 @@ int main() {
     ExpectFailure([&] { sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&settings, 1.0f, 0, sizeof(settings) - 1); });
     Require(sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(&settings, 1.0f, 0, sizeof(settings)) == 0);
 
+    errno = 71;
+    ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(1, reinterpret_cast<const VideoOutColorSpaceConversionSettings*>(0x10), sizeof(settings)); });
+    Require(errno == 71);
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(1, &settings, sizeof(settings) - 1); });
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(1, &settings, sizeof(settings)); });
 
@@ -89,7 +95,12 @@ int main() {
     Require(colorOut.dynamicRange == 1 || colorOut.dynamicRange == 2);
 
     Require(sceVideoOutAdjustColorSpaceConversion(handle, &settings) == 0);
+    errno = 71;
+    ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(handle, reinterpret_cast<const VideoOutColorSpaceConversionSettings*>(0x10)); });
+    Require(errno == 71);
     Require(sceVideoOutAdjustColorSpaceConversion_(handle, &settings, sizeof(settings)) == 0);
+    ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(handle, reinterpret_cast<const VideoOutColorSpaceConversionSettings*>(0x10), sizeof(settings)); });
+    Require(errno == 71);
     Require(sceVideoOutSetGlobalBlendSpace(handle, 0, 0) == 0);
 
     Require(sceVideoOutClose(handle) == 0);
