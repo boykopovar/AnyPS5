@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <climits>
 #include <cstring>
@@ -549,6 +550,8 @@ int main() {
     Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
     Require(inetAton("1.2.3.4\n", "1.2.3.4"));
     Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    errno = 71;
+    Require(__inet_aton_nid_postfix("1.2.3.4", reinterpret_cast<void*>(0x10)) == 0 && errno == 71);
     bool atonNullThrew = false;
     try {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};

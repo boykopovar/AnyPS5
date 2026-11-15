@@ -338,11 +338,6 @@ int APS5_VABI _ZNSt7_MpunctIcED0Ev_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZSt11setiosflagsNSt5_IosbIiE9_FmtflagsE_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI __atomic_load_n_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
