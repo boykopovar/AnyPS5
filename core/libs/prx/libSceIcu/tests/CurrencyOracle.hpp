@@ -39,6 +39,7 @@ void SetDefault(const char*);
 ScalarResult Scalar(unsigned, const char16_t*, const char*, std::int32_t, double, double, std::int32_t);
 CodeResult Code(const char*, double, std::int32_t, std::int32_t, std::int32_t, bool);
 NameResult Name(const char16_t*, const char*, std::int32_t, const char*, std::int32_t, bool);
-EnumerationResult Enumeration(std::uint32_t, const char*, bool, std::int32_t);
+EnumerationResult Enumeration(std::uint32_t, const char*, bool, std::int32_t, bool = true);
+bool EnumerationWriteBounds(std::int32_t*, std::int32_t*);
 
 }

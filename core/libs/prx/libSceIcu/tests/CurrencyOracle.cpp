@@ -1,3 +1,4 @@
+#include <string_view>
 #include "prx/libSceIcu/tests/CurrencyOracle.hpp"
 #include "unicode/ucurr.h"
 #include "unicode/uenum.h"
@@ -50,10 +51,10 @@ NameResult Name(const char16_t* code, const char* locale, std::int32_t style, co
     return result;
 }
 
-EnumerationResult Enumeration(std::uint32_t type, const char* locale, bool keywords, std::int32_t error) {
+EnumerationResult Enumeration(std::uint32_t type, const char* locale, bool keywords, std::int32_t error, bool commonlyUsed) {
     EnumerationResult result;
     auto status = static_cast<UErrorCode>(error);
-    auto* enumeration = keywords ? ucurr_getKeywordValuesForLocale("currency", locale, true, &status) : ucurr_openISOCurrencies(type, &status);
+    auto* enumeration = keywords ? ucurr_getKeywordValuesForLocale("currency", locale, commonlyUsed, &status) : ucurr_openISOCurrencies(type, &status);
     result.status = status;
     if (!enumeration) throw std::runtime_error("native currency oracle enumeration failed");
     try {
@@ -79,6 +80,21 @@ EnumerationResult Enumeration(std::uint32_t type, const char* locale, bool keywo
         uenum_close(enumeration);
         throw;
     }
+}
+
+bool EnumerationWriteBounds(std::int32_t* readOnly, std::int32_t* ignoredLength) {
+    UErrorCode status = U_ZERO_ERROR;
+    auto* enumeration = ucurr_getKeywordValuesForLocale("currency", "en_US", true, &status);
+    if (!enumeration || U_FAILURE(status)) throw std::runtime_error("native keyword guard setup failed");
+    std::int32_t length = -99;
+    const auto* first = uenum_next(enumeration, &length, reinterpret_cast<UErrorCode*>(readOnly));
+    bool matched = first && std::string_view(first, length) == "USD" && *readOnly == 0;
+    while (uenum_next(enumeration, &length, &status)) {}
+    matched = matched && !uenum_next(enumeration, ignoredLength, &status) && status == U_ZERO_ERROR;
+    length = -99;
+    matched = matched && !uenum_unext(enumeration, &length, &status) && length == 0 && status == U_ZERO_ERROR;
+    uenum_close(enumeration);
+    return matched;
 }
 
 }

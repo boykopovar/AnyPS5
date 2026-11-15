@@ -456,6 +456,78 @@ void EnumerationOracle() {
     }
 }
 
+void NullPlural() {
+    for (const auto* locale : {"en", "fr_FR", "ru_RU"}) {
+        const auto expected = CurrencyOracle::Name(u"USD", locale, 1, nullptr, 0, true);
+        std::int32_t status = 0;
+        std::int32_t length = -99;
+        std::int8_t choice = 73;
+        const auto* text = ucurr_getPluralName_nid_postfix(u"USD", locale, &choice, nullptr, &length, &status);
+        Require(text && !expected.null && std::u16string_view(text, length) == expected.text
+            && status == expected.status && length == expected.length && choice == expected.choice && choice == 73);
+    }
+}
+
+void KeywordOracle() {
+    CurrencyOracle::SetDefault(uloc_getDefault());
+    for (const auto* locale : {"en_US", "fr_FR", "zh_CN", "en_QQ", "und", "root"}) {
+        for (bool commonlyUsed : {false, true}) {
+            for (std::int32_t incoming : {0, -128}) {
+                const auto expected = CurrencyOracle::Enumeration(0, locale, true, incoming, commonlyUsed);
+                auto status = incoming;
+                auto* enumeration = ucurr_getKeywordValuesForLocale_nid_postfix(reinterpret_cast<const char*>(1), locale, commonlyUsed, &status);
+                Require(enumeration && status == expected.status && uenum_count_nid_postfix(enumeration, &status) == expected.count);
+                std::vector<std::string> values;
+                for (;;) {
+                    std::int32_t length = -99;
+                    const auto* value = uenum_next_nid_postfix(enumeration, &length, &status);
+                    if (!value) { Require(length == expected.endLength); break; }
+                    values.emplace_back(value, static_cast<std::size_t>(length));
+                }
+                Require(values == expected.values && status <= 0);
+                enumeration->reset(enumeration, &status);
+                std::vector<std::u16string> unicode;
+                for (;;) {
+                    std::int32_t length = -99;
+                    const auto* value = uenum_unext_nid_postfix(enumeration, &length, &status);
+                    if (!value) { Require(length == expected.unicodeEndLength); break; }
+                    unicode.emplace_back(value, static_cast<std::size_t>(length));
+                }
+                Require(unicode == expected.unicode && status <= 0);
+                uenum_close_nid_postfix(enumeration);
+            }
+        }
+    }
+}
+
+void EnumerationWriteBounds() {
+    Guarded memory;
+    auto* readOnly = reinterpret_cast<std::int32_t*>(memory.data);
+    *readOnly = 0;
+    memory.ReadOnly();
+    Require(CurrencyOracle::EnumerationWriteBounds(readOnly, reinterpret_cast<std::int32_t*>(1)));
+    std::int32_t status = 0;
+    auto* enumeration = ucurr_getKeywordValuesForLocale_nid_postfix("currency", "en_US", 1, &status);
+    Require(enumeration && status == 0);
+    std::int32_t length = -99;
+    auto* value = uenum_next_nid_postfix(enumeration, &length, readOnly);
+    Require(value && std::string_view(value, length) == "USD" && *readOnly == 0);
+    enumeration->reset(enumeration, &status);
+    RequireThrows([&] { uenum_next_nid_postfix(enumeration, readOnly, &status); });
+    value = uenum_next_nid_postfix(enumeration, &length, &status);
+    Require(value && std::string_view(value, length) == "USD" && status == 0);
+    enumeration->reset(enumeration, &status);
+    RequireThrows([&] { uenum_unext_nid_postfix(enumeration, readOnly, &status); });
+    const auto* unicode = uenum_unext_nid_postfix(enumeration, &length, &status);
+    Require(unicode && std::u16string_view(unicode, length) == u"USD" && status == 0);
+    while (uenum_next_nid_postfix(enumeration, &length, &status)) {}
+    Require(!uenum_next_nid_postfix(enumeration, reinterpret_cast<std::int32_t*>(1), &status) && status == 0);
+    RequireThrows([&] { uenum_unext_nid_postfix(enumeration, readOnly, &status); });
+    length = -99;
+    Require(!uenum_unext_nid_postfix(enumeration, &length, &status) && length == 0 && status == 0);
+    uenum_close_nid_postfix(enumeration);
+}
+
 void IgnoredPlural() {
     const auto* code = u"ZZZtail";
     const auto* ignored = reinterpret_cast<const char*>(1);
@@ -597,6 +669,44 @@ void AllocationName() {
     Require(memory.allocations == memory.frees);
 }
 
+std::size_t KeywordAllocationAttempt(std::size_t failed) {
+    Memory memory;
+    std::int32_t status = 0;
+    u_setMemoryFunctions_nid_postfix(&memory, AllocateCurrency, ReallocateCurrency, FreeCurrency, &status);
+    Require(status == 0);
+    std::array<char16_t, 4> currency{};
+    Require(ucurr_forLocale_nid_postfix("en_US", currency.data(), 4, &status) == 3 && status == 0);
+    const auto before = memory.calls;
+    memory.failAt = failed ? before + failed : 0;
+    std::fprintf(stderr, "keyword allocation point %zu\n", failed);
+    auto* enumeration = ucurr_getKeywordValuesForLocale_nid_postfix("currency", "en_QQ", 1, &status);
+    const auto calls = memory.calls - before;
+    memory.failAt = 0;
+    if (enumeration) {
+        Require(status <= 0 && uenum_count_nid_postfix(enumeration, &status) == 2);
+        uenum_close_nid_postfix(enumeration);
+    } else {
+        Require(status == 7);
+    }
+    status = 0;
+    enumeration = ucurr_getKeywordValuesForLocale_nid_postfix("currency", "en_QQ", 1, &status);
+    Require(enumeration && status <= 0 && uenum_count_nid_postfix(enumeration, &status) == 2);
+    std::int32_t length = -99;
+    const auto* value = uenum_next_nid_postfix(enumeration, &length, &status);
+    Require(value && std::string_view(value, length) == "USD" && status <= 0);
+    uenum_close_nid_postfix(enumeration);
+    u_cleanup_nid_postfix();
+    Require(memory.allocations == memory.frees);
+    return calls;
+}
+
+void AllocationKeywords() {
+    const auto calls = KeywordAllocationAttempt(0);
+    Require(calls > 3 && calls < 512);
+    for (std::size_t failed = 1; failed <= calls + 1; ++failed) KeywordAllocationAttempt(failed);
+    std::fprintf(stderr, "%zu keyword allocation failure points qualified\n", calls);
+}
+
 void DefaultState() {
     Require(setenv_nid_postfix("LC_ALL", "sv_SE.UTF-8", 1) == 0);
     Require(std::string_view(uloc_getDefault()) == "sv_SE");
@@ -683,6 +793,10 @@ int main(int argc, char** argv) {
         else if (mode == "name_oracle") NameOracle();
         else if (mode == "enumeration_oracle") EnumerationOracle();
         else if (mode == "ignored_plural") IgnoredPlural();
+        else if (mode == "null_plural") NullPlural();
+        else if (mode == "keyword_oracle") KeywordOracle();
+        else if (mode == "enumeration_write_bounds") EnumerationWriteBounds();
+        else if (mode == "allocation_keywords") AllocationKeywords();
         else if (mode == "allocation_iso_first") AllocationISO(1);
         else if (mode == "allocation_iso_second") AllocationISO(2);
         else if (mode == "allocation_registry") AllocationRegistry();
