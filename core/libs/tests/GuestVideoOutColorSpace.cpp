@@ -3,6 +3,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -57,6 +58,16 @@ int main() {
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(-1, 0, 0); });
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(0, 0, 0); });
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(1, 0, 0); });
+
+    VideoOutColorSettings colorSettings{};
+    ExpectFailure([] { sceVideoOutColorSettingsSetGamma(nullptr, 1.0f); });
+    ExpectFailure([&] { sceVideoOutColorSettingsSetGamma(&colorSettings, 0.05f); });
+    ExpectFailure([&] { sceVideoOutColorSettingsSetGamma(&colorSettings, 2.5f); });
+    errno = 71;
+    ExpectFailure([] { sceVideoOutColorSettingsSetGamma(reinterpret_cast<VideoOutColorSettings*>(0x10), 1.0f); });
+    Require(errno == 71);
+    Require(sceVideoOutColorSettingsSetGamma(&colorSettings, 1.2f) == 0);
+    Require(colorSettings.gamma == 1.2f);
 
     int handle = 0;
     try {
