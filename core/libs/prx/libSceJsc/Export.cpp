@@ -425,10 +425,6 @@ int APS5_VABI _ZN9Inspector31NetworkBackendDispatcherHandler20LoadResourceCallba
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC14ProtoCallFrame9codeBlockEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC11VMInspector9dumpValueENS_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -721,10 +717,6 @@ int APS5_VABI JSWeakObjectMapClear() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated11ScriptValueC1ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -733,28 +725,12 @@ void APS5_VABI _ZN10Deprecated11ScriptValueC1Ev(void* self) {
     std::memset(self, 0, 8);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI _ZN10Deprecated11ScriptValueC2Ev(void* self) {
     std::memset(self, 0, 8);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueaSERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN10Deprecated12ScriptObjectC1EPN3JSC14JSGlobalObjectEPNS1_8JSObjectE() {
@@ -990,14 +966,6 @@ int APS5_VABI _ZN3JSC14JSRunLoopTimer13timeUntilFireEv() {
 }
 
 int APS5_VABI _ZN3JSC14LocalAllocator16allocateSlowCaseERNS_4HeapEPNS_17GCDeferralContextENS_21AllocationFailureModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame14needArityCheckEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame4initEPNS_9CodeBlockEPNS_14JSGlobalObjectEPNS_8JSObjectENS_7JSValueEiPS7_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
