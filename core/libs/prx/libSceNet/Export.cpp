@@ -3420,14 +3420,19 @@ int APS5_VABI sceNetGetIfnameNumList(std::uint32_t* interfaceIds, std::int32_t c
     const bool withLoopback = (flags & 1) != 0;
     const std::uint32_t last = withLoopback ? 9 : 8;
     std::int32_t count = 0;
+    std::array<std::uint32_t, 10> localIds{};
     const auto add = [&](std::uint32_t interfaceId) {
-        if (count < capacity && HostInterfaceIndex(interfaceId)) interfaceIds[count++] = interfaceId;
+        if (count < capacity && HostInterfaceIndex(interfaceId)) localIds[count++] = interfaceId;
     };
     if (withLoopback) {
         add(1);
         add(0);
     }
     for (std::uint32_t interfaceId = withLoopback ? 2 : 1; interfaceId <= last; ++interfaceId) add(interfaceId);
+    const int savedErrno = errno;
+    const bool copied = count == 0 || GuestCopyOut_nid_no_patch(interfaceIds, localIds.data(), count * sizeof(std::uint32_t));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return count;
 }
 

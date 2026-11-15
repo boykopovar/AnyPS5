@@ -589,6 +589,7 @@ static void CheckIfNameIndex() {
     for (int i = 0; i < withoutLoopback; ++i) Require(ids[i] >= 1 && ids[i] <= 8);
     Require(sceNetGetIfnameNumList(ids.data(), 1, 1) == 1 && ids[0] == (primary > 0 ? 1u : 0u));
     Require(Failed(sceNetGetIfnameNumList(ids.data(), 1, 2), 22));
+    Require(Failed(sceNetGetIfnameNumList(reinterpret_cast<std::uint32_t*>(0x10), 1, 1), 14));
 }
 
 static void CheckRandom() {
