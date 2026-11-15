@@ -273,6 +273,45 @@ class ImportRelocationTests(unittest.TestCase):
         module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], relocations=(), kind="gnu", bloom_count=1))
         self.assertEqual(module.symbol_count, 1)
 
+    def test_empty_gnu_hash_keeps_imports_from_both_relocation_tables(self):
+        symbols = [(IMPORT_NAME, 0, 0x12, 0), (SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 7, 8, 23, 2, 20), symbols=symbols,
+                                      glob_dats=((SLOT + 8, 2),), kind="gnu"))
+        struct.pack_into("<I", image, 0x2018, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 3)
+        self.assertEqual(module.imports(), {SLOT: symbol_name(IMPORT_NAME), SLOT + 8: symbol_name(SECOND_IMPORT_NAME)})
+        self.assertEqual(module.exports(), ({}, {}))
+        names = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME, nid(SECOND_IMPORT_NAME): SECOND_IMPORT_NAME})
+        self.assertEqual(annotate_module.ghidra_symbols(module, names),
+                         ["imp_%s %#x l" % (IMPORT_NAME, SLOT), "imp_%s %#x l" % (SECOND_IMPORT_NAME, SLOT + 8)])
+
+    def test_empty_gnu_hash_ignores_unused_relocation_symbol_indices(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], kind="gnu")
+        image = with_relocation(image, 0x2280, 0, SLOT, 0xFFFFFFFF, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 1)
+        self.assertEqual(module.imports(), {})
+
+    def test_empty_gnu_hash_still_validates_relocations_and_symbol_ranges(self):
+        for values, index, message in (({2: 25}, 1, "multiple"), ({23: DATA_ADDRESS + 0x800}, 1, "PT_LOAD"),
+                                       ({}, 0xFFFFFFFF, "PT_LOAD|symbol index .* is outside")):
+            with self.subTest(values=values, index=index):
+                image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), values=values,
+                                              symbols=[(IMPORT_NAME, 0, 0x12, 0)], kind="gnu"))
+                struct.pack_into("<I", image, 0x2018, 0)
+                image = with_relocation(image, 0x2280, 0, SLOT, index, 7)
+                with self.assertRaisesRegex(annotate_module.ModuleError, message):
+                    annotate_module.Module(image).imports()
+
+    def test_nonempty_gnu_hash_keeps_its_symbol_count_limit(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20),
+                             symbols=[(IMPORT_NAME, 0, 0x12, 0)], relocations=((SLOT, 3),), kind="gnu")
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 2)
+        with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index 3 is outside"):
+            module.imports()
+
     def test_dt_hash_precedence_preserves_unused_invalid_gnu_hash(self):
         tags = (4, GNU_HASH, 5, 6, 10, 11, 23, 2, 20)
         module = build_module(tags=tags, values={GNU_HASH: DATA_ADDRESS + 0x400}, kind="sysv", bloom_count=3)
