@@ -1639,19 +1639,41 @@ std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t byt
     return zero;
 }
 
-std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::DrawParameters& draw, const ShaderRecompiler::MeshConfiguration& mesh) {
+std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::DrawParameters& draw, const ShaderRecompiler::MeshConfiguration& mesh, const std::shared_ptr<Buffer>& snapshot = nullptr, bool snapshotReused = false) {
+    struct SnapshotTable {
+        std::weak_ptr<Buffer> snapshot;
+        std::uint32_t count, size, vertexLimit, primitiveLimit;
+        std::shared_ptr<const std::vector<std::uint32_t>> table;
+    };
+    static std::mutex snapshotMutex;
+    static auto& snapshotTables = *new std::unordered_map<const Buffer*, SnapshotTable>();
+    const auto sameSnapshot = [&](const SnapshotTable& entry) {
+        return entry.snapshot.lock() == snapshot && entry.count == draw.indexCount && entry.size == draw.indexSize && entry.vertexLimit == mesh.reuseVertexLimit && entry.primitiveLimit == mesh.reusePrimitiveLimit;
+    };
+    if (snapshot != nullptr && snapshotReused) {
+        std::lock_guard lock(snapshotMutex);
+        if (const auto found = snapshotTables.find(snapshot.get()); found != snapshotTables.end() && sameSnapshot(found->second)) return found->second.table;
+    }
     std::vector<std::uint32_t> indices(draw.indexCount);
     if (draw.indexed) {
         Require(draw.indexSize == 2u || draw.indexSize == 4u, "mesh reuse grouping reads 16- or 32-bit indices");
-        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(draw.indexCount) * draw.indexSize);
-        Require(GuestCopyIn_nid_no_patch(bytes.data(), reinterpret_cast<const void*>(draw.indexAddress), bytes.size()), "mesh reuse grouping cannot read the draw's indices");
+        const auto byteCount = static_cast<std::size_t>(draw.indexCount) * draw.indexSize;
+        std::vector<std::uint8_t> read;
+        const std::uint8_t* bytes = nullptr;
+        if (snapshot != nullptr && snapshot->Bytes().size() >= byteCount) {
+            bytes = reinterpret_cast<const std::uint8_t*>(snapshot->Bytes().data());
+        } else {
+            read.resize(byteCount);
+            GuestMemory::Read(draw.indexAddress, std::as_writable_bytes(std::span(read)), draw.indexSize);
+            bytes = read.data();
+        }
         for (std::uint32_t i = 0; i < draw.indexCount; ++i) {
             if (draw.indexSize == 2u) {
                 std::uint16_t value;
-                std::memcpy(&value, bytes.data() + i * 2u, sizeof(value));
+                std::memcpy(&value, bytes + i * 2u, sizeof(value));
                 indices[i] = value;
             } else {
-                std::memcpy(&indices[i], bytes.data() + i * 4u, sizeof(std::uint32_t));
+                std::memcpy(&indices[i], bytes + i * 4u, sizeof(std::uint32_t));
             }
         }
     } else {
@@ -1673,6 +1695,10 @@ std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::D
     {
         std::lock_guard lock(cacheMutex);
         if (const auto found = cache.find(key); found != cache.end()) {
+            if (snapshot != nullptr) {
+                std::lock_guard snapshotLock(snapshotMutex);
+                snapshotTables[snapshot.get()] = SnapshotTable{snapshot, draw.indexCount, draw.indexSize, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit, found->second};
+            }
             return found->second;
         }
     }
@@ -1683,6 +1709,11 @@ std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::D
         std::lock_guard lock(cacheMutex);
         if (cache.size() >= 8192u) cache.clear();
         cache.emplace(key, table);
+    }
+    if (snapshot != nullptr) {
+        std::lock_guard lock(snapshotMutex);
+        if (snapshotTables.size() >= 8192u) std::erase_if(snapshotTables, [](const auto& entry) { return entry.second.snapshot.expired(); });
+        snapshotTables[snapshot.get()] = SnapshotTable{snapshot, draw.indexCount, draw.indexSize, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit, table};
     }
     return table;
 }
@@ -1699,6 +1730,7 @@ struct DrawPlan {
     std::uint32_t meshLayers = 1;
     std::uint32_t meshLayerStride = 0;
     std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTable;
+    bool meshGroupsFromIndices = false;
     VertexInputLayout vertexInput;
     std::shared_ptr<const VertexInputLayout> retainedVertexInput;
     bool candidate = false;
@@ -1764,8 +1796,9 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
         if (args == nullptr) {
             const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
             const auto primitives = (draw.indexCount - inputSize) / step + 1u;
-            if (mesh.reuseVertexLimit != 0u) plan.meshGroupTable = meshGroupTableFor(draw, mesh);
-            const auto groups = plan.meshGroupTable != nullptr ? (*plan.meshGroupTable)[0] : (primitives - 1u) / mesh.primitivesPerGroup + 1u;
+            plan.meshGroupsFromIndices = mesh.reuseVertexLimit != 0u && draw.indexed;
+            if (mesh.reuseVertexLimit != 0u && !draw.indexed) plan.meshGroupTable = meshGroupTableFor(draw, mesh);
+            const auto groups = plan.meshGroupsFromIndices ? 1u : plan.meshGroupTable != nullptr ? (*plan.meshGroupTable)[0] : (primitives - 1u) / mesh.primitivesPerGroup + 1u;
             const auto grid = MeshGridFor(context, groups, draw.instanceCount);
             Require(grid.has_value(), "mesh draw exceeds workgroup count limits");
             APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u as %u x %u", primitives, groups, grid->groups, grid->layers);
@@ -1814,7 +1847,7 @@ void requireDrawPlanRepeats(const Context& context, const State& state, const Pm
     const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
     const auto& layout = plan.VertexLayout();
     const auto& repeated = again.VertexLayout();
-    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.candidate == plan.candidate && again.keyed == plan.keyed && again.contentKey == plan.contentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), "APS5_VERIFY_DRAW_PLAN: the plan built after the draw's record-time work differs from the plan the draw used");
+    Require(again.nothing == plan.nothing && again.indexBytes == plan.indexBytes && again.fragmentOutputs == plan.fragmentOutputs && again.shaderStages == plan.shaderStages && again.meshGroups == plan.meshGroups && again.meshLayers == plan.meshLayers && again.meshLayerStride == plan.meshLayerStride && again.meshGroupsFromIndices == plan.meshGroupsFromIndices && again.candidate == plan.candidate && again.keyed == plan.keyed && again.contentKey == plan.contentKey && std::ranges::equal(repeated.bindings, layout.bindings, sameBinding) && std::ranges::equal(repeated.attributes, layout.attributes, sameAttribute), "APS5_VERIFY_DRAW_PLAN: the plan built after the draw's record-time work differs from the plan the draw used");
 }
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& drawPlan, DrawTimer& timer, PerformanceTimer& timing) {
@@ -1962,6 +1995,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         DrawInputCopy copy;
         if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
+        const auto meshIndexSnapshot = import == nullptr ? copy.buffer : nullptr;
+        const bool meshIndexSnapshotReused = import == nullptr && copy.reused;
         std::optional<std::uint32_t> highest;
         std::uint32_t lowest = 0;
         if (import != nullptr) {
@@ -1982,6 +2017,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         if (!highest) {
             inputs.nothing = true;
             return inputs;
+        }
+        if (drawPlan.meshGroupsFromIndices) {
+            inputs.meshGroupTable = meshGroupTableFor(draw, *state.stages.mesh, meshIndexSnapshot, meshIndexSnapshotReused);
+            const auto grid = MeshGridFor(context, (*inputs.meshGroupTable)[0], draw.instanceCount);
+            Require(grid.has_value(), "mesh draw exceeds workgroup count limits");
+            inputs.meshGroups = grid->groups;
+            inputs.meshLayers = grid->layers;
+            inputs.meshLayerStride = grid->layerStride;
         }
         constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
         if (const auto zeroFrom = state.stages.mesh || shaders.front().program->vertexAttributes.empty() ? std::nullopt : ZeroFetchVertex(shaders.front().program->vertexAttributes)) {
