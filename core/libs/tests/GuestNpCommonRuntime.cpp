@@ -743,6 +743,10 @@ void TestTitleIdObjects() {
         && _ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXYZ54321-07") == NpTitleIdInvalid,
         "parsing needs four letters, five digits, an underscore and two digits");
     Require(std::memcmp(parsed.titleId.data, "WXYZ54321_00", 13) == 0, "a rejected title id leaves the object as it was");
+    const char* const unmappedText = reinterpret_cast<const char*>(0x10);
+    Require(_ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, unmappedText) == static_cast<int>(0x80558009)
+        && std::memcmp(parsed.titleId.data, "WXYZ54321_00", 13) == 0, "parsing unreadable text fails and leaves the object as it was");
+    Require(_ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXYZ54321_07x") == NpTitleIdInvalid, "parsing rejects a thirteen character title id");
 
     NpTitleIdObject built {};
     _ZN3sce2np9NpTitleIdC1Ev(&built);
@@ -752,6 +756,8 @@ void TestTitleIdObjects() {
         "constructing takes only the nine character code");
     Require(_ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(&built, "WXYZ54321") == 0 && !_ZNK3sce2np9NpTitleId7IsEmptyEv(&built),
         "a constructed title id is not empty");
+    Require(_ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(&built, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80558009),
+        "constructing from unreadable text fails");
 
     char text[16];
     std::memset(text, 'x', sizeof(text));
@@ -1922,6 +1928,9 @@ void TestCommIdObjects() {
     Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXY154321_00") == NpTitleIdInvalid
             && _ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "WXYZ54321_0", 11) == NpTitleIdInvalid && commId.commId.num == 42,
         "a rejected communication id leaves the object as it was");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80558009)
+            && _ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXYZ54321_421") == NpTitleIdInvalid && commId.commId.num == 42,
+        "unreadable or thirteen character text leaves the communication id as it was");
     Require(_ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "ABCD12345_09xyz", 12) == 0 && commId.commId.num == 9
             && std::memcmp(commId.commId.data, "ABCD12345", 9) == 0,
         "the sized parse reads only the given length");
@@ -1940,6 +1949,8 @@ void TestCommIdObjects() {
     Require(_ZNK3sce2np8NpCommId6EqualsERKS1_(&copy, &commId) && _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(&copy, &plain)
             && _ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_09") && !_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_9"),
         "equal communication ids compare equal, ignoring the spare byte");
+    Require(!_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, reinterpret_cast<const char*>(0x10)) && !_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_099"),
+        "unreadable or thirteen character text is not equal");
     plain.num = 10;
     Require(_ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(&plain, &copy) && !_ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(&copy, &plain),
         "the number takes part in the comparison");
