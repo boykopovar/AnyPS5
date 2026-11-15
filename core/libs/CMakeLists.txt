@@ -1726,6 +1726,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
     endif()
 
+    add_test_executable(guest_agc_acquire_mem_poll_tests tests/GuestAgcAcquireMemPoll.cpp)
+    target_include_directories(guest_agc_acquire_mem_poll_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_agc_acquire_mem_poll_tests PRIVATE libSceAgc libSceAgcDriver libc)
+    configure_windows_unwind(guest_agc_acquire_mem_poll_tests)
+    add_test(NAME guest_agc_acquire_mem_poll COMMAND guest_agc_acquire_mem_poll_tests)
+    if(WIN32)
+        set_tests_properties(guest_agc_acquire_mem_poll PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_gnm_neo_default_state_tests tests/GuestGnmNeoDefaultState.cpp)
     target_include_directories(guest_gnm_neo_default_state_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_gnm_neo_default_state_tests PRIVATE libSceGnmDriverForNeoMode libc)
