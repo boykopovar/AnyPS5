@@ -572,10 +572,13 @@ def markdown_intervals(result):
         lines += ["", "| # | " + " | ".join(table_cell(name) for name in count_names) + " |", "|---|" + "---|" * len(count_names)]
         for index, row in enumerate(rows, 1):
             lines.append(f"| {index} | " + " | ".join(str(row["owned_draw_counts"].get(name, 0)) if row["owned_draw_counts"] is not None else "-" for name in count_names) + " |")
-    if any(row["encoder"] and row["encoder"].get("posts") for row in rows):
+    if any(row["encoder"] and any(row["encoder"].get(name) for name in ("posts", "commands", "waits", "wait_ms_per_frame")) for row in rows):
         lines += ["", "| # | encoder posts | commands | waits | wait ms/frame |", "|---|---|---|---|---|"]
         for index, row in enumerate(rows, 1):
-            encoder = row["encoder"] or {}
+            encoder = row["encoder"]
+            if encoder is None:
+                lines.append(f"| {index} | - | - | - | - |")
+                continue
             lines.append(f"| {index} | {encoder.get('posts', 0)} | {encoder.get('commands', 0)} | {encoder.get('waits', 0)} | {encoder.get('wait_ms_per_frame', 0.0):.2f} |")
     track = [row["graphics_track"] or {} for row in rows]
     if any(track):

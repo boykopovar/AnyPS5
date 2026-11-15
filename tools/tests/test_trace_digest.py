@@ -500,11 +500,26 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(result["intervals"][0]["encoder"], first["encoder"])
         text = trace_digest.markdown_intervals(result)
         self.assertIn("| 1 | 3100 | 84000 | 23 | 0.25 |", text)
-        self.assertIn("| 2 | 0 | 0 | 0 | 0.00 |", text)
+        self.assertIn("| 2 | - | - | - | - |", text)
         self.assertNotIn("encoder posts", trace_digest.markdown_intervals(trace_digest.digest_intervals([second])))
         first["encoder"] = {"waits": -1}
         with self.assertRaises(ValueError):
             trace_digest.validate_interval(first)
+
+    def test_encoder_waits_without_posts_are_shown(self):
+        waited = interval_line(0.0, 30.0, 20.0, 5.0)
+        idle = interval_line(30.0, 60.0, 20.0, 5.0)
+        older = interval_line(60.0, 90.0, 20.0, 5.0)
+        waited["encoder"] = {"posts": 0, "commands": 0, "waits": 7, "wait_ms_per_frame": 0.5}
+        idle["encoder"] = {"posts": 0, "commands": 0, "waits": 0, "wait_ms_per_frame": 0.0}
+        for line in (waited, idle, older):
+            trace_digest.validate_interval(line)
+        text = trace_digest.markdown_intervals(trace_digest.digest_intervals([waited, idle, older]))
+        self.assertIn("encoder posts", text)
+        self.assertIn("| 1 | 0 | 0 | 7 | 0.50 |", text)
+        self.assertIn("| 2 | 0 | 0 | 0 | 0.00 |", text)
+        self.assertIn("| 3 | - | - | - | - |", text)
+        self.assertNotIn("encoder posts", trace_digest.markdown_intervals(trace_digest.digest_intervals([idle, older])))
 
     def test_graphics_track_interval_counts_are_preserved(self):
         first = interval_line(0.0, 30.0, 20.0, 5.0)
