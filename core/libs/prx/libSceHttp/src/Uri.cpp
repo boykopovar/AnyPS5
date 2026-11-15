@@ -114,6 +114,28 @@ bool CopyGuestCString(const char* source, std::string& destination) {
     }
 }
 
+bool ZeroGuest(void* destination, std::size_t bytes) {
+    const char zeros[256]{};
+    auto* cursor = static_cast<char*>(destination);
+    while (bytes != 0) {
+        const std::size_t count = std::min(bytes, sizeof(zeros));
+        const int savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(cursor, zeros, count);
+        errno = savedErrno;
+        if (!written) return false;
+        cursor += count;
+        bytes -= count;
+    }
+    return true;
+}
+
+bool WriteGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return written;
+}
+
 int parseUri(std::string_view uri, UriParts& parts) {
     if (const size_t schemeEnd = schemeLength(uri); schemeEnd != 0) {
         parts.scheme = uri.substr(0, schemeEnd);
@@ -409,8 +431,9 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
     if (!write && !require) return ERROR_INVALID_VALUE;
 
     if (write) {
-        std::memset(out, 0, sizeof(*out));
-        std::memset(pool, 0, prepare);
+        if (!ZeroGuest(pool, prepare)) return ERROR_INVALID_VALUE;
+        const SceHttpUriElement cleared{};
+        if (!WriteGuestBytes(out, &cleared, sizeof(cleared))) return ERROR_INVALID_VALUE;
     }
     SceHttpUriElement source{};
     const int savedErrno = errno;
@@ -430,7 +453,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         used += lengths[i] + 1;
     }
     if (!write) {
-        *require = used;
+        if (!WriteGuestBytes(require, &used, sizeof(used))) return ERROR_INVALID_VALUE;
         return 0;
     }
     if (used > prepare) return ERROR_OUT_OF_MEMORY;
@@ -439,17 +462,20 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
     char* strings[5];
     for (size_t i = 0; i < 5; ++i) {
         strings[i] = next;
-        if (lengths[i] != 0) std::memcpy(next, values[i].data(), lengths[i]);
-        next[lengths[i]] = '\0';
+        std::string segment = values[i];
+        segment.push_back('\0');
+        if (!WriteGuestBytes(next, segment.data(), segment.size())) return ERROR_INVALID_VALUE;
         next += lengths[i] + 1;
     }
-    out->scheme = strings[0];
-    out->hostname = strings[1];
-    out->path = strings[2];
-    out->username = strings[3];
-    out->password = strings[4];
-    out->port = port;
-    if (require) *require = used;
+    SceHttpUriElement element{};
+    element.scheme = strings[0];
+    element.hostname = strings[1];
+    element.path = strings[2];
+    element.username = strings[3];
+    element.password = strings[4];
+    element.port = port;
+    if (!WriteGuestBytes(out, &element, sizeof(element))) return ERROR_INVALID_VALUE;
+    if (require && !WriteGuestBytes(require, &used, sizeof(used))) return ERROR_INVALID_VALUE;
     return 0;
 }
 
