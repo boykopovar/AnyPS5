@@ -1067,6 +1067,13 @@ void TestUserIdList() {
     }
     Require(sceNpUserGetUserIdList(users.data(), users.size(), &count) == 0, "the registered user ids are read");
     Require(count == 1 && users[0] == USER_SERVICE_INITIAL_USER_ID, "the initial user is the only registered user");
+    count = 0x5A5A;
+    errno = 71;
+    Require(sceNpUserGetUserIdList(reinterpret_cast<int*>(0x10), users.size(), &count) == NpInvalidArgument && errno == 71,
+        "an unwritable user id list is refused and errno is kept");
+    Require(count == 0x5A5A, "an unwritable user id list leaves the count unchanged");
+    Require(sceNpUserGetUserIdList(users.data(), users.size(), reinterpret_cast<int*>(0x10)) == NpInvalidArgument && errno == 71,
+        "an unwritable user count is refused and errno is kept");
 }
 
 void TestIds() {

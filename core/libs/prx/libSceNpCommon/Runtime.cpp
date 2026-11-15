@@ -4,6 +4,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <iterator>
@@ -1101,10 +1102,15 @@ int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* coun
     std::fill(std::begin(registered.user_id), std::end(registered.user_id), USER_ID_INVALID);
     const int result = sceUserServiceGetRegisteredUserIdList(&registered);
     if (result < 0) return result;
+    std::array<int, std::size(registered.user_id)> ids{};
     int found = 0;
     for (const int user : registered.user_id)
-        if (user != USER_ID_INVALID) users[found++] = user;
-    *count = found;
+        if (user != USER_ID_INVALID) ids[found++] = user;
+    const int savedErrno = errno;
+    const bool copied = (found == 0 || GuestCopyOut_nid_no_patch(users, ids.data(), found * sizeof(int))) &&
+        GuestCopyOut_nid_no_patch(count, &found, sizeof(found));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
