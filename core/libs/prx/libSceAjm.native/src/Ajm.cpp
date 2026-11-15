@@ -2240,7 +2240,13 @@ int APS5_VABI sceAjmBatchCancel(uint32_t context, uint32_t batch) {
 
 int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) {
     (void)info;
-    if (error) std::memset(error, 0, sizeof(*error));
+    if (error) {
+        constexpr AjmBatchError localError{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(error, &localError, sizeof(localError));
+        errno = savedErrno;
+        if (!copied) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
