@@ -535,15 +535,21 @@ char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* s
         errno = 22;
         return nullptr;
     }
-    int count = 0;
-    while (count < size - 1) {
+    const auto unwritable = [stream] {
+        stream->SetError();
+        errno = 22;
+        return nullptr;
+    };
+    if (!GuestWritable_nid_no_patch(buffer, sizeof(char16_t))) return unwritable();
+    std::u16string line;
+    while (line.size() < static_cast<std::size_t>(size - 1)) {
         const std::int32_t character = fgetwc_nid_postfix(stream);
         if (character == -1) break;
-        buffer[count++] = static_cast<char16_t>(character);
+        line.push_back(static_cast<char16_t>(character));
         if (character == static_cast<std::int32_t>(u'\n')) break;
     }
-    if (count == 0) return nullptr;
-    buffer[count] = 0;
+    if (line.empty()) return nullptr;
+    if (!GuestCopyOut_nid_no_patch(buffer, line.c_str(), (line.size() + 1) * sizeof(char16_t))) return unwritable();
     return buffer;
 }
 

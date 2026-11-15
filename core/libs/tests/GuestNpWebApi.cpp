@@ -1,5 +1,6 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceNpWebApi/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cerrno>
@@ -11,6 +12,7 @@
 #include <climits>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -43,6 +45,10 @@ constexpr int MethodPost = 1;
 constexpr int MethodPatch = 4;
 
 alignas(16) std::array<std::byte, 0x40> process{};
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 const char onlineId[20] = "player";
 const char filterParam[16] = {};
 const char body[] = "{}";
@@ -676,7 +682,15 @@ void TestUtilityParseNpId() {
     Require(errno == 71, "unwritable npId changed host errno");
 
     std::memset(&npId, 0xCC, sizeof(npId));
-    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0, "parse serialized npId");
+    const NpId untouchedNpId = npId;
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId(reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10)), &npId) == NpInvalidArgument && errno == 71,
+            "unreadable jsonNpId must return InvalidArgument without changing errno");
+    Require(std::memcmp(&npId, &untouchedNpId, sizeof(npId)) == 0, "failed parseNpId modified output");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0 && errno == 71, "parse serialized npId");
     Require(std::strcmp(npId.handle.data, "player") == 0, "handle matches string before at");
     Require(std::memcmp(npId.opt, "seg1seg2", 8) == 0, "opt concatenates segments");
     Require(npId.reserved[0] == 0x01, "reserved 0 is 1");
@@ -831,6 +845,8 @@ void TestConnectionChecks() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
     TestUnknownFieldChecks();
@@ -877,6 +893,38 @@ int main() {
                 "unreadable internalArgs must fail");
         Require(sceNpWebApiDeleteContext(userCtx) == 0, "delete userCtx");
         Require(sceNpWebApiTerminate(libCtx) == 0, "terminate libCtx");
+
+        alignas(8) std::array<std::byte, 0x30> inventoryObj{};
+        std::memset(inventoryObj.data(), 0xff, inventoryObj.size());
+        errno = 71;
+        Require(!libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(inventoryObj.data()) && errno == 71, "ojGP5vur+qM -1 check");
+        errno = 71;
+        Require(!libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(inventoryObj.data()) && errno == 71, "zQE2rxZdLy8 -1 check");
+        std::memset(inventoryObj.data(), 0, inventoryObj.size());
+        errno = 71;
+        Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(inventoryObj.data()) && errno == 71, "ojGP5vur+qM valid check");
+        errno = 71;
+        Require(libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(inventoryObj.data()) && errno == 71, "zQE2rxZdLy8 valid check");
+        for (const void* badObj : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10))}) {
+            bool threwOj = false;
+            errno = 71;
+            try {
+                libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(badObj);
+            } catch (const std::runtime_error&) {
+                threwOj = true;
+            }
+            Require(threwOj && errno == 71, "ojGP5vur+qM invalid object threw and preserved errno");
+            bool threwZq = false;
+            errno = 71;
+            try {
+                libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(badObj);
+            } catch (const std::runtime_error&) {
+                threwZq = true;
+            }
+            Require(threwZq && errno == 71, "zQE2rxZdLy8 invalid object threw and preserved errno");
+        }
     }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

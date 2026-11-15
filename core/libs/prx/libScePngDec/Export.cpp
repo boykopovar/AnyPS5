@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -28,6 +29,20 @@ static_assert(offsetof(PngDecInputControlParam, operation) == 0x1c);
 static_assert(offsetof(PngDecInputControlParam, reserved) == 0x22);
 
 namespace {
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
 
 constexpr std::int32_t SCE_PNG_DEC_ERROR_INVALID_ADDR = static_cast<std::int32_t>(0x80690001);
 constexpr std::int32_t SCE_PNG_DEC_ERROR_INVALID_SIZE = static_cast<std::int32_t>(0x80690002);
@@ -75,7 +90,7 @@ std::uint32_t requiredMemory(const PngDecCreateParam& param) {
 std::int32_t validateCreateParam(const PngDecCreateParam* param, PngDecCreateParam* outParam = nullptr) {
     if (!param) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     PngDecCreateParam local{};
-    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyInPreservingErrno(&local, param, sizeof(local))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (local.this_size != sizeof(PngDecCreateParam)) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
     if (local.attribute != ATTRIBUTE_NONE && local.attribute != ATTRIBUTE_BIT_DEPTH_16) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     if (local.max_image_width - 1 >= MAX_IMAGE_WIDTH) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
@@ -88,7 +103,7 @@ Context* toContext(void* handle) {
     if (address == 0 || address % HANDLE_ALIGNMENT != 0) return nullptr;
     auto* context = reinterpret_cast<Context*>(handle);
     Context selfCheck{};
-    if (!GuestCopyIn_nid_no_patch(&selfCheck, context, sizeof(selfCheck))) return nullptr;
+    if (!CopyInPreservingErrno(&selfCheck, context, sizeof(selfCheck))) return nullptr;
     return selfCheck.self == context ? context : nullptr;
 }
 
@@ -399,7 +414,7 @@ bool pull(InputStream& stream, std::size_t size) {
         const std::size_t count = std::min({size, static_cast<std::size_t>(stream.chunkSize), MaxCopyStep});
         const std::size_t old = stream.data.size();
         stream.data.resize(old + count);
-        if (!GuestCopyIn_nid_no_patch(stream.data.data() + old, stream.chunk, count)) {
+        if (!CopyInPreservingErrno(stream.data.data() + old, stream.chunk, count)) {
             stream.data.resize(old);
             stream.status = SCE_PNG_DEC_ERROR_INVALID_ADDR;
             break;
@@ -467,13 +482,13 @@ int32_t APS5_VABI scePngDecCreate(const PngDecCreateParam* param, void* memoryAd
     localContext.attribute = localParam.attribute;
     localContext.maxImageWidth = (localParam.max_image_width + 7u) & ~7u;
     localContext.memorySize = requiredMemory(localParam) - 144u;
-    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &localContext, sizeof(localContext))) {
+    if (!CopyOutPreservingErrno(reinterpret_cast<void*>(aligned), &localContext, sizeof(localContext))) {
         return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     }
     auto* context = reinterpret_cast<Context*>(aligned);
-    if (!GuestCopyOut_nid_no_patch(handle, &context, sizeof(context))) {
+    if (!CopyOutPreservingErrno(handle, &context, sizeof(context))) {
         Context cleared{};
-        GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
+        CopyOutPreservingErrno(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
         return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     }
     return 0;
@@ -484,7 +499,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
     if (!param) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     PngDecDecodeParam localParam{};
-    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyInPreservingErrno(&localParam, param, sizeof(localParam))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (!localParam.png_mem_addr || !localParam.image_mem_addr || (reinterpret_cast<std::uintptr_t>(localParam.image_mem_addr) & 3u) != 0) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (localParam.png_mem_size == 0 || localParam.image_mem_size == 0) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
     if (localParam.pixel_format == 132) throw std::runtime_error("scePngDecDecode: pixel format 132 is not implemented");
@@ -492,7 +507,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     if (localParam.alpha_value > 0xFF) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
 
     std::vector<std::uint8_t> pngBytes(localParam.png_mem_size);
-    if (!GuestCopyIn_nid_no_patch(pngBytes.data(), localParam.png_mem_addr, pngBytes.size())) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyInPreservingErrno(pngBytes.data(), localParam.png_mem_addr, pngBytes.size())) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     const ChunkScan scan = scanChunks(pngBytes);
     if (scan.headerResult != 0) return scan.headerResult;
     const std::span<const std::uint8_t> png = scan.png;
@@ -501,7 +516,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     if (imageInfo) {
         PngDecImageInfo localInfo{};
         fillImageInfo(*header, &localInfo);
-        if (!GuestCopyOut_nid_no_patch(imageInfo, &localInfo, sizeof(localInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+        if (!CopyOutPreservingErrno(imageInfo, &localInfo, sizeof(localInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     }
     const bool packedDimensions = header->width <= MAX_PACKED_DIMENSION && header->height <= MAX_PACKED_DIMENSION;
     if (!imageInfo && !packedDimensions) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
@@ -535,7 +550,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
             if (fillAlpha) pixel[3] = alpha;
         }
         std::uint8_t* out = output + y * pitch;
-        if (!GuestCopyOut_nid_no_patch(out, rowBuffer.data(), rowSize)) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+        if (!CopyOutPreservingErrno(out, rowBuffer.data(), rowSize)) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     }
 
     if (scan.imageResult != 0) return scan.imageResult;
@@ -547,7 +562,7 @@ int32_t APS5_VABI scePngDecDelete(void* handle) {
     Context* context = toContext(handle);
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
     Context cleared{};
-    if (!GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyOutPreservingErrno(context, &cleared, sizeof(cleared))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     forgetStream(context);
     return 0;
 }
@@ -555,20 +570,20 @@ int32_t APS5_VABI scePngDecDelete(void* handle) {
 int32_t APS5_VABI scePngDecParseHeader(const PngDecParseParam* param, PngDecImageInfo* imageInfo) {
     if (!param) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     PngDecParseParam localParam{};
-    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyInPreservingErrno(&localParam, param, sizeof(localParam))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (!localParam.png_mem_addr) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (localParam.png_mem_size == 0) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
     if (localParam.reserved0 != 0) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     if (!imageInfo) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     std::vector<std::uint8_t> pngBytes(localParam.png_mem_size);
-    if (!GuestCopyIn_nid_no_patch(pngBytes.data(), localParam.png_mem_addr, pngBytes.size())) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyInPreservingErrno(pngBytes.data(), localParam.png_mem_addr, pngBytes.size())) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     const ChunkScan scan = scanChunks(pngBytes);
     if (scan.headerResult != 0) return scan.headerResult;
     const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(scan.png);
     if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
     PngDecImageInfo localInfo{};
     fillImageInfo(*header, &localInfo);
-    if (!GuestCopyOut_nid_no_patch(imageInfo, &localInfo, sizeof(localInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyOutPreservingErrno(imageInfo, &localInfo, sizeof(localInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -583,7 +598,7 @@ int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInpu
     const Context* context = toContext(handle);
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
     PngDecInputControlParam localParam{};
-    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!CopyInPreservingErrno(&localParam, param, sizeof(localParam))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (!localParam.input) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (localParam.reserved != 0) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     if (localParam.operation == 0x10) {
@@ -602,7 +617,7 @@ int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInpu
         if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
         PngDecImageInfo localInfo{};
         fillImageInfo(*header, &localInfo);
-        if (!GuestCopyOut_nid_no_patch(imageInfo, &localInfo, sizeof(localInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+        if (!CopyOutPreservingErrno(imageInfo, &localInfo, sizeof(localInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
         return 0;
     }
     if (localParam.operation != 0x20) return SCE_PNG_DEC_ERROR_INVALID_PARAM;

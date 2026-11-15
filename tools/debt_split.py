@@ -17,15 +17,17 @@ def parse(text):
     items = []
     section = None
     current = None
+    block = None
     blanks = []
     for line in text.splitlines():
         heading = HEADING.match(line)
         if heading:
             section = heading[2] if len(heading[1]) == 3 else section
-            current = None
+            current = block = None
             items.append(["heading", section, [line]])
         elif line.startswith("- "):
             current = ["entry", section, [line]]
+            block = None
             items.append(current)
             blanks = []
         elif current and (line.startswith(" ") or line.startswith("\t")):
@@ -33,8 +35,12 @@ def parse(text):
             blanks = []
         elif line.strip():
             current = None
-            items.append(["text", section, [line]])
+            if block is None:
+                block = ["text", section, []]
+                items.append(block)
+            block[2].append(line)
         else:
+            block = None
             blanks.append(line)
     return [(kind, section, "\n".join(lines)) for kind, section, lines in items]
 
@@ -138,12 +144,21 @@ def debt_file(name):
     return f"{DEBT_DIR}/{name}.md"
 
 
+def separated(items):
+    out = []
+    for item in items:
+        if out and not (out[-1].startswith("- ") and item.startswith("- ")):
+            out.append("")
+        out.append(item)
+    return out
+
+
 def render(title, sections, order, preamble=()):
     out = [title, ""]
-    for text in preamble:
-        out += [text, ""]
+    if preamble:
+        out += separated(list(preamble)) + [""]
     for section in sorted(sections, key=lambda section: order.index(section) if section in order else len(order)):
-        out += [f"### {section}", ""] + sections[section] + [""]
+        out += [f"### {section}", ""] + separated(sections[section]) + [""]
     return "\n".join(out)
 
 
