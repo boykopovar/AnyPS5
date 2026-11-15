@@ -69,6 +69,7 @@ const void* APS5_VABI WKBundleDOMWindowExtensionCreate(const void* frameRef, con
 const void* APS5_VABI WKBundleDOMWindowExtensionGetFrame(const void* extensionRef);
 const void* APS5_VABI WKBundleDOMWindowExtensionGetScriptWorld(const void* extensionRef);
 std::uint32_t APS5_VABI WKBundleFrameGetTypeID();
+const void* APS5_VABI WKBundleFrameCreateHitTestResult(const void* frameRef, NKWebKit::PointValue point);
 std::uint32_t APS5_VABI WKBundleGetTypeID();
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL(const void* hitTestResultRef);
@@ -83,6 +84,9 @@ std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestRes
 bool APS5_VABI WKBundleHitTestResultIsDownloadableMedia(const void* hitTestResultRef);
 bool APS5_VABI WKBundleHitTestResultMediaHasAudio(const void* hitTestResultRef);
 bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyNodeHandle(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyURLElementHandle(const void* hitTestResultRef);
+NKWebKit::RectValue APS5_VABI WKBundleHitTestResultGetImageRect(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleInspectorGetTypeID();
 std::uint32_t APS5_VABI WKBundleNavigationActionGetTypeID();
 std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();

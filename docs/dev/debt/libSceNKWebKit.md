@@ -239,7 +239,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleFrameCopySuggestedFilenameForResourceWithURL` | `kGAitTwtXq0` |
 | `WKBundleFrameCopyURL` | `xoaQMJQ9JFg` |
 | `WKBundleFrameCreateFrameHandle` | `URUBvWtDFRU` |
-| `WKBundleFrameCreateHitTestResult` | `OuVGXFusQvs` |
 | `WKBundleFrameFocus` | `kgGUjo9h2ao` |
 | `WKBundleFrameForJavaScriptContext` | `26sRl2nNXaE` |
 | `WKBundleFrameGetContentBounds` | `NC762sOoy-g` |
@@ -266,10 +265,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleGetApplicationConnection` | `L4ZuA2XEwzw` |
 | `WKBundleGetJavaScriptObjectsCount` | `IzxyWmghAig` |
 | `WKBundleHitTestResultCopyImage` | `SKZ7PFisSuc` |
-| `WKBundleHitTestResultCopyNodeHandle` | `y-ZCGGbJyUU` |
-| `WKBundleHitTestResultCopyURLElementHandle` | `S2Sb-NajDeo` |
 | `WKBundleHitTestResultGetFrame` | `mGM-NRBuZvE` |
-| `WKBundleHitTestResultGetImageRect` | `CHPZFRIZO7o` |
 | `WKBundleHitTestResultGetTargetFrame` | `w32pxSSQ4Rs` |
 | `WKBundleInspectorClose` | `xTfnxYXtinY` |
 | `WKBundleInspectorEvaluateScriptForTest` | `b6+hAoAkJl8` |
@@ -6012,7 +6008,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF StringBuilder](../../../core/libs/prx/libSceNKWebKit/src/StringBuilder.cpp) (libSceNKWebKit) - throws where WebKit crashes: an overflow of a builder that crashes on overflow, a length sum above `UINT32_MAX`, `toString` after an overflow, and null characters with a nonzero length. It also throws where a debug assertion guards memory WebKit would corrupt: `reserveCapacity` on an empty 16-bit builder without a buffer, and [`appendQuotedJSONString`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilderJSON.cpp#L127-L128) of a 16-bit string into an 8-bit builder that holds an adopted string and no buffer. A capacity above the tree's `StringImpl` limit records an overflow, as a failed allocation does. Growing or shrinking a buffer with one reference copies it instead of calling `fastRealloc`, so its address always changes.
 - [WTF TextStream pointers](../../../core/libs/prx/libSceNKWebKit/src/TextStream.cpp) (libSceNKWebKit) - `operator<<(const void*)` formats the pointer as the tree's libc formats `%p` ([`snprintf`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/TextStream.cpp#L114-L119) in WebKit); the console libc's output is unverified.
 - [WKBundleNodeHandle document and frame getters](../../../core/libs/prx/libSceNKWebKit/src/BundleNodeHandle.cpp) (libSceNKWebKit) - no export creates a `WKBundleNodeHandle` or connects DOM bindings yet, so getters return null until DOM node and frame references are connected.
-- [WKBundleHitTestResult property getters](../../../core/libs/prx/libSceNKWebKit/src/BundleHitTestResult.cpp) (libSceNKWebKit) - `WKBundleHitTestResultCopyAbsoluteImageURL`, `WKBundleHitTestResultCopyAbsoluteLinkURL`, `WKBundleHitTestResultCopyAbsoluteMediaURL`, `WKBundleHitTestResultCopyAbsolutePDFURL`, `WKBundleHitTestResultCopyLinkLabel`, `WKBundleHitTestResultCopyLinkTitle`, `WKBundleHitTestResultCopyLinkSuggestedFilename`, `WKBundleHitTestResultGetIsSelected`, `WKBundleHitTestResultGetMediaType`, `WKBundleHitTestResultIsDownloadableMedia`, `WKBundleHitTestResultMediaHasAudio` and `WKBundleHitTestResultMediaIsInFullscreen` inspect hit test results test-driven until injected bundle hit testing produces them.
+- [WKBundleHitTestResult property getters and hit testing](../../../core/libs/prx/libSceNKWebKit/src/BundleHitTestResult.cpp) (libSceNKWebKit) - WKBundleFrameCreateHitTestResult, WKBundleHitTestResultCopyAbsoluteImageURL, WKBundleHitTestResultCopyAbsoluteLinkURL, WKBundleHitTestResultCopyAbsoluteMediaURL, WKBundleHitTestResultCopyAbsolutePDFURL, WKBundleHitTestResultCopyLinkLabel, WKBundleHitTestResultCopyLinkTitle, WKBundleHitTestResultCopyLinkSuggestedFilename, WKBundleHitTestResultCopyNodeHandle, WKBundleHitTestResultCopyURLElementHandle, WKBundleHitTestResultGetImageRect, WKBundleHitTestResultGetIsSelected, WKBundleHitTestResultGetMediaType, WKBundleHitTestResultIsDownloadableMedia, WKBundleHitTestResultMediaHasAudio and WKBundleHitTestResultMediaIsInFullscreen create and inspect hit test results, associating the frame's node handle and coordinates in host memory; live layout tree hit testing remains unmodeled.
 - [WKBundleDOMWindowExtension creation and property accessors](../../../core/libs/prx/libSceNKWebKit/src/BundleDOMWindowExtension.cpp) (libSceNKWebKit) - DOM window extensions follow WebKit's Injected Bundle C API, retaining the frame and script world references; DOM window execution is test-driven.
 - [WKDownload property queries and cancellation](../../../core/libs/prx/libSceNKWebKit/src/Download.cpp) (libSceNKWebKit) - download properties and cancellation reflect host state until downloads are connected to network transfers.
 - [WKAXObject property getters](../../../core/libs/prx/libSceNKWebKit/src/AccessibilityObject.cpp) (libSceNKWebKit) - accessibility objects are test-driven until accessibility tree queries produce them.
