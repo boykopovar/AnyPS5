@@ -1,5 +1,7 @@
 #include "prx/libSceVrHand/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +14,10 @@
 #endif
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -70,13 +76,19 @@ int Query(const std::array<std::uint8_t, 0x40>& param, std::array<std::uint8_t, 
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::array<std::uint8_t, 0x28> out{};
     auto param = ValidParam();
 
     out.fill(kFill);
     auto* const badPtr = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    errno = 71;
     Require(sceVrHandQueryMemory(badPtr, out.data()) == kErrInvalidArg && Untouched(out));
+    Require(errno == 71);
+    errno = 71;
     Require(sceVrHandQueryMemory(param.data(), badPtr) == kErrInvalidArg);
+    Require(errno == 71);
     Require(sceVrHandQueryMemory(nullptr, out.data()) == kErrInvalidArg && Untouched(out));
     Require(sceVrHandQueryMemory(param.data(), nullptr) == kErrInvalidArg);
 
@@ -85,18 +97,26 @@ int main() {
     std::memset(boundaryParam, 0, 0x20);
     boundaryParam[0] = 0x20;
     out.fill(kFill);
+    errno = 71;
     Require(sceVrHandQueryMemory(boundaryParam, out.data()) == 0);
+    Require(errno == 71);
 
     auto* const spanningParam = region.memory + region.pageSize - 0x10;
     out.fill(kFill);
+    errno = 71;
     Require(sceVrHandQueryMemory(spanningParam, out.data()) == kErrInvalidArg && Untouched(out));
+    Require(errno == 71);
 
     auto* const boundaryOut = region.memory + region.pageSize - 28;
     std::memset(boundaryOut, kFill, 28);
+    errno = 71;
     Require(sceVrHandQueryMemory(param.data(), boundaryOut) == 0);
+    Require(errno == 71);
 
     auto* const spanningOut = region.memory + region.pageSize - 8;
+    errno = 71;
     Require(sceVrHandQueryMemory(param.data(), spanningOut) == kErrInvalidArg);
+    Require(errno == 71);
 
     for (const std::uint32_t size : {0u, 0x1fu, 0x21u, 0x40u, 0x120u, 0x10020u, 0x1000020u}) {
         param = ValidParam();
@@ -120,5 +140,7 @@ int main() {
     Require(at4 == 0x10000);
     for (std::size_t index = 8; index < 0x1c; ++index) Require(out[index] == 0);
     for (std::size_t index = 0x1c; index < out.size(); ++index) Require(out[index] == kFill);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

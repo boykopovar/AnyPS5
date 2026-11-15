@@ -91,7 +91,11 @@ EGLBoolean APS5_VABI eglGetConfigAttrib_nid_postfix(EGLDisplay display, EGLConfi
     auto it = configAttributes.find(attribute);
     if (it == configAttributes.end()) return EglError_nid_no_patch(0x3004);
     if (!value) return EglError_nid_no_patch(0x300c);
-    *value = it->second;
+    const EGLint result = it->second;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) return EglError_nid_no_patch(0x300c);
     return 1;
 }
 
@@ -121,8 +125,18 @@ EGLBoolean APS5_VABI eglChooseConfig_nid_postfix(EGLDisplay display, const EGLin
         else if ((key >= 0x3020 && key <= 0x3026) || key == 0x3031 || key == 0x3032 || key == 0x303d || key == 0x303e) match &= actual >= value;
         else if (key != 0x3035 && key != 0x3036 && key != 0x3037) match &= actual == value;
     }
-    *count = match && (!configs || size > 0) ? 1 : 0;
-    if (configs && *count) configs[0] = &configToken;
+    const EGLint countValue = match && (!configs || size > 0) ? 1 : 0;
+    const int savedErrno = errno;
+    const bool countCopied = GuestCopyOut_nid_no_patch(count, &countValue, sizeof(countValue));
+    errno = savedErrno;
+    if (!countCopied) return EglError_nid_no_patch(0x300c);
+    if (configs && countValue) {
+        const EGLConfig config = &configToken;
+        const int savedErrno2 = errno;
+        const bool configsCopied = GuestCopyOut_nid_no_patch(configs, &config, sizeof(config));
+        errno = savedErrno2;
+        if (!configsCopied) return EglError_nid_no_patch(0x300c);
+    }
     return 1;
 }
 
@@ -267,13 +281,18 @@ EGLBoolean APS5_VABI eglQueryContext_nid_postfix(EGLDisplay display, EGLContext 
     auto context = ContextFor(handle);
     if (!context) return 0;
     if (!value) return EglError_nid_no_patch(0x300c);
+    EGLint result;
     switch (attribute) {
-    case 0x3028: *value = 1; break;
-    case 0x3097: *value = 0x30a0; break;
-    case 0x3098: *value = 2; break;
-    case 0x3086: *value = context->bound ? 0x3084 : 0x3038; break;
+    case 0x3028: result = 1; break;
+    case 0x3097: result = 0x30a0; break;
+    case 0x3098: result = 2; break;
+    case 0x3086: result = context->bound ? 0x3084 : 0x3038; break;
     default: return EglError_nid_no_patch(0x3004);
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(value, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) return EglError_nid_no_patch(0x300c);
     return 1;
 }
 
@@ -373,6 +392,8 @@ const char* APS5_VABI eglQueryString_nid_postfix(EGLDisplay display, EGLint name
 
 __eglMustCastToProperFunctionPointerType APS5_VABI eglGetProcAddress_nid_postfix(const char* name) {
     if (!name) return nullptr;
+    std::string procName;
+    if (CopyGuestString_nid_no_patch(name, 64, procName) != 0) return nullptr;
     static const std::pair<const char*, __eglMustCastToProperFunctionPointerType> functions[]{
         {"eglBindAPI", reinterpret_cast<__eglMustCastToProperFunctionPointerType>(&eglBindAPI_nid_postfix)},
         {"eglBindTexImage", reinterpret_cast<__eglMustCastToProperFunctionPointerType>(&eglBindTexImage_nid_postfix)},
@@ -548,7 +569,7 @@ __eglMustCastToProperFunctionPointerType APS5_VABI eglGetProcAddress_nid_postfix
         {"glVertexAttribPointer", reinterpret_cast<__eglMustCastToProperFunctionPointerType>(&glVertexAttribPointer_nid_postfix)},
         {"glViewport", reinterpret_cast<__eglMustCastToProperFunctionPointerType>(&glViewport_nid_postfix)},
     };
-    for (auto& entry : functions) if (std::strcmp(entry.first, name) == 0) return entry.second;
+    for (auto& entry : functions) if (procName == entry.first) return entry.second;
     return nullptr;
 }
 

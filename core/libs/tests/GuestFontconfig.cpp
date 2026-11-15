@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libfontconfig/libfontconfig.hpp"
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -35,6 +36,15 @@ static void CheckMatrix() {
     FcMatrix both = first;
     FcMatrixMultiply(&both, &both, &both);
     Check(Same(both, 7, 10, 15, 22));
+
+    errno = 71;
+    FcMatrixMultiply(nullptr, &first, &second);
+    FcMatrixMultiply(&result, nullptr, &second);
+    FcMatrixMultiply(&result, &first, nullptr);
+    FcMatrixMultiply(reinterpret_cast<FcMatrix*>(0x10), &first, &second);
+    FcMatrixMultiply(&result, reinterpret_cast<const FcMatrix*>(0x10), &second);
+    FcMatrixMultiply(&result, &first, reinterpret_cast<const FcMatrix*>(0x10));
+    Check(errno == 71);
 }
 
 static void CheckNullSets() {
@@ -109,6 +119,9 @@ static void CheckMerge() {
     Check(FcCharSetAddChar(source, 0x3042) == 1);
 
     int changed = 0;
+    errno = 71;
+    Check(FcCharSetMerge(target, source, reinterpret_cast<int*>(0x10)) == 0);
+    Check(errno == 71);
     Check(FcCharSetMerge(target, source, &changed) == 1);
     Check(changed == 1);
     Check(FcCharSetSubtractCount(source, target) == 0);
