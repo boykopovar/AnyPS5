@@ -298,10 +298,10 @@ void TestStreamExports() {
 
     Require(sceNgs2StreamCreate(system, &opt, nullptr, &streamHandle) == InvalidBufferInfo);
     Require(sceNgs2StreamCreate(system, &opt, reinterpret_cast<const void*>(0x10), &streamHandle) == InvalidBufferInfo);
-    Require(sceNgs2StreamCreate(system, reinterpret_cast<const void*>(0x10), &bufInfo, &streamHandle) == InvalidOptionSize);
     Ngs2ContextBufferInfo emptyHost{};
     Require(sceNgs2StreamCreate(system, &opt, &emptyHost, &streamHandle) == InvalidBufferInfo);
     bufInfo.host_buffer = reinterpret_cast<void*>(0x1000);
+    Require(sceNgs2StreamCreate(system, reinterpret_cast<const void*>(0x10), &bufInfo, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreate(system, &opt, &bufInfo, nullptr) == InvalidOutAddress);
     Require(sceNgs2StreamCreate(0xdead, &opt, &bufInfo, &streamHandle) == InvalidSystemHandle);
     AssertThrows([&] { sceNgs2StreamCreate(system, &opt, &bufInfo, &streamHandle); });
@@ -309,9 +309,9 @@ void TestStreamExports() {
     Ngs2BufferAllocator alloc{};
     Require(sceNgs2StreamCreateWithAllocator(system, &opt, nullptr, &streamHandle) == InvalidBufferAllocator);
     Require(sceNgs2StreamCreateWithAllocator(system, &opt, reinterpret_cast<const void*>(0x10), &streamHandle) == InvalidBufferAllocator);
-    Require(sceNgs2StreamCreateWithAllocator(system, reinterpret_cast<const void*>(0x10), &alloc, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, &streamHandle) == InvalidBufferAllocator);
     alloc.alloc_handler = &TestBufferAllocHandler;
+    Require(sceNgs2StreamCreateWithAllocator(system, reinterpret_cast<const void*>(0x10), &alloc, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, nullptr) == InvalidOutAddress);
     Require(sceNgs2StreamCreateWithAllocator(0xdead, &opt, &alloc, &streamHandle) == InvalidSystemHandle);
     AssertThrows([&] { sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, &streamHandle); });
