@@ -36,5 +36,14 @@ void APS5_VABI _ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb(NKWebK
 void APS5_VABI _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE(NKWebKit::WebCoreAbi::HistoryItem* self, std::uint8_t value);
 void APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* value);
 NKWebKit::WebCoreAbi::HistoryItem* APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* target);
+void APS5_VABI _ZN7WebCore11HistoryItemC1Ev(NKWebKit::WebCoreAbi::HistoryItem* self);
+void APS5_VABI _ZN7WebCore11HistoryItemC2Ev(NKWebKit::WebCoreAbi::HistoryItem* self);
+void APS5_VABI _ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* urlString, const NKWebKit::WtfAbi::String* title);
+void APS5_VABI _ZN7WebCore11HistoryItemC2ERKN3WTF6StringES4_(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* urlString, const NKWebKit::WtfAbi::String* title);
+void APS5_VABI _ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_S4_(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* urlString, const NKWebKit::WtfAbi::String* title, const NKWebKit::WtfAbi::String* alternateTitle);
+void APS5_VABI _ZN7WebCore11HistoryItemC2ERKN3WTF6StringES4_S4_(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* urlString, const NKWebKit::WtfAbi::String* title, const NKWebKit::WtfAbi::String* alternateTitle);
+void APS5_VABI _ZN7WebCore11HistoryItemD1Ev(NKWebKit::WebCoreAbi::HistoryItem* self);
+void APS5_VABI _ZN7WebCore11HistoryItemD2Ev(NKWebKit::WebCoreAbi::HistoryItem* self);
+NKWebKit::WebCoreAbi::HistoryItemRef APS5_VABI _ZNK7WebCore11HistoryItem4copyEv(const NKWebKit::WebCoreAbi::HistoryItem* self);
 
 }
