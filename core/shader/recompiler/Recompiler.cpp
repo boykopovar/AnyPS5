@@ -1130,14 +1130,25 @@ SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShad
     return spirv;
 }
 
+template <typename Entry, typename Function>
+void runOnce(Entry& entry, Function&& function) {
+    if (entry.done.load(std::memory_order_acquire)) return;
+    std::call_once(entry.ready, [&] {
+        function();
+        entry.done.store(true, std::memory_order_release);
+    });
+}
+
 struct SpecializedModuleEntry {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     std::shared_ptr<const SpecializedModule> module;
 };
 
 struct PreparedModuleEntry {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     std::shared_ptr<const SpecializedModule> module;
     DescriptorBindingPlan bindings;
@@ -1145,6 +1156,7 @@ struct PreparedModuleEntry {
 
 struct PreparedBindingPlan {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     DescriptorBindingPlan bindings;
     PrimedSharedMutex mutex;
@@ -1153,6 +1165,7 @@ struct PreparedBindingPlan {
 
 struct RegistrationModuleEntry {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     std::shared_ptr<const SpecializedModule> module;
 };
@@ -1178,7 +1191,7 @@ SpecializedSpirv registrationModule(std::uint64_t variantId, std::span<const std
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<RegistrationModuleEntry>()).first->second;
     }
     SharedSpirv built;
-    std::call_once(entry->ready, [&] {
+    runOnce(*entry, [&] {
         try {
             auto specialized = specialize();
             entry->module = std::move(specialized.module);
@@ -1237,7 +1250,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
         const auto found = plans.find(key);
         plan = found != plans.end() ? found->second : plans.emplace(key, std::make_shared<PreparedBindingPlan>()).first->second;
     }
-    std::call_once(plan->ready, [&] {
+    runOnce(*plan, [&] {
         try {
             plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet, substitutes, shaderImageMinLod);
         } catch (...) {
@@ -1271,7 +1284,7 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<SpecializedModuleEntry>()).first->second;
     }
     SharedSpirv built;
-    std::call_once(entry->ready, [&] {
+    runOnce(*entry, [&] {
         try {
             auto specialized = buildSpecializedModule(artifact, classes, constants, target);
             entry->module = std::move(specialized.module);
@@ -1475,7 +1488,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             entry->module = module;
             built = std::move(specialized.spirv);
         };
-        std::call_once(entry->ready, [&] {
+        runOnce(*entry, [&] {
             try {
                 prepare();
             } catch (...) {
