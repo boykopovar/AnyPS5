@@ -1,6 +1,5 @@
 #include <atomic>
 #include <bit>
-#include <cerrno>
 #include <cstdint>
 #include <cstring>
 
