@@ -394,9 +394,11 @@ int main() {
     setenv("APS5_NO_IDLE_STORE", "1", 1);
 #endif
     try {
+        bool drawIndirectCount = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            drawIndirectCount = device->DrawIndirectSupport().count;
         }
         ColorMemory = AllocateWatched(2 * Block);
         Pool = AllocateWatched(PoolBytes);
@@ -407,7 +409,8 @@ int main() {
         Register(PixelShader, PixelCode.data(), sizeof(PixelCode), 1);
         for (std::size_t i = 0; i < Vertices.size(); ++i) Vertices[i] = {{PositionX[i], PositionY[i], 0.5f, 1.0f}, {Negative[i], Negative[i], Negative[i], 0.0f}};
         RunCase(false, "the indirect draw whose arguments the image covers");
-        RunCase(true, "the count-indirect draw whose arguments and count word the image covers");
+        if (drawIndirectCount) RunCase(true, "the count-indirect draw whose arguments and count word the image covers");
+        else std::puts("skipped, the count-indirect draw needs VK_KHR_draw_indirect_count, which this device lacks");
         std::puts("queued indirect read vs. deferred storage write-back tests passed");
         AgcDriverShutdown_nid_postfix();
         return 0;
