@@ -250,6 +250,29 @@ static void GuestPointers() {
 #endif
     CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == 0);
     waiter.join();
+
+    Object sem;
+    CHECK(sceUltSemaphoreCreate(&sem, "sem", &waitPool, 0, 1, nullptr, 0) == 0);
+    std::thread semWaiter([&] {
+        CHECK(sceUltSemaphoreAcquire(&sem) == 0);
+        CHECK(sceUltSemaphoreRelease(&sem) == 0);
+    });
+    for (;;) {
+        UltSemaphoreInfo pollSem{};
+        CHECK(sceUltGetSemaphoreInfo(&sem, &pollSem, nullptr, 0) == 0);
+        if (pollSem.waitingThreads == 1) break;
+        std::this_thread::yield();
+    }
+    UltSemaphoreInfo probeSem{};
+    std::memset(&probeSem, 0x55, sizeof(probeSem));
+    const UltSemaphoreInfo expectedProbeSem = probeSem;
+    errno = 71;
+    CHECK(sceUltGetSemaphoreInfo(&sem, &probeSem, reinterpret_cast<UltWaitingThreadInfo*>(0x10), 1) == Null && errno == 71);
+    CHECK(std::memcmp(&probeSem, &expectedProbeSem, sizeof(probeSem)) == 0);
+    CHECK(sceUltSemaphoreRelease(&sem) == 0);
+    semWaiter.join();
+    CHECK(sceUltSemaphoreDestroy(&sem) == 0);
+
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     CHECK(sceUltReaderWriterLockDestroy(&rwlock) == 0);
