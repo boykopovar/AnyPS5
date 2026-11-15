@@ -2,6 +2,9 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
+#include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "prx/libSceNKWebKit/src/WtfVector.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -25,6 +28,7 @@ void APS5_VABI _ZN7WebCore15AffineTransformC1Edddddd(WebCore::AffineTransform* s
 void APS5_VABI _ZN7WebCore15AffineTransformC2Edddddd(WebCore::AffineTransform* self, double a, double b, double c, double d, double e, double f);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform15scaleNonUniformEdd( WebCore::AffineTransform* self, double sx, double sy);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform4skewEdd( WebCore::AffineTransform* self, double angleX, double angleY);
+WebCore::VelocityData APS5_VABI _ZN7WebCore22HistoricalVelocityData18velocityForNewDataENS_10FloatPointEdN3WTF13MonotonicTimeE( WebCore::HistoricalVelocityData* self, WebCore::FloatPoint newPosition, double scale, WTF::MonotonicTime timestamp);
 void APS5_VABI _ZN7WebCore15AffineTransform5blendERKS0_d( WebCore::AffineTransform* self, const WebCore::AffineTransform& from, double progress);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5flipXEv(WebCore::AffineTransform* self);
 WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5flipYEv(WebCore::AffineTransform* self);
@@ -54,6 +58,11 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix9trans
 void APS5_VABI _ZN7WebCore20TransformationMatrixC1ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
 void APS5_VABI _ZN7WebCore20TransformationMatrixC2ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
 void APS5_VABI _ZN7WebCore27setPresentingApplicationPIDEi(int pid);
+WebCore::AutofillFieldName APS5_VABI _ZN7WebCore19toAutofillFieldNameERKN3WTF10AtomStringE(const NKWebKit::WtfAbi::AtomString& value);
+int APS5_VABI _ZN7WebCore24presentingApplicationPIDEv();
+unsigned APS5_VABI _ZN7WebCore25TextureMapperBackingStore25calculateExposedTileEdgesERKNS_9FloatRectES3_(const WebCore::FloatRect& totalRect, const WebCore::FloatRect& tileRect);
+bool APS5_VABI _ZN7WebCore8SVGTests27hasFeatureForLegacyBindingsERKN3WTF6StringES4_(const NKWebKit::WtfAbi::String& feature, const NKWebKit::WtfAbi::String& version);
+WebCore::FloatRect APS5_VABI _ZN7WebCore9unionRectERKN3WTF6VectorINS_9FloatRectELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(const NKWebKit::WtfAbi::Vector<WebCore::FloatRect>& rects);
 bool APS5_VABI _ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE(WebCore::RedirectChainCacheStatus status, int reuseExpiredRedirection);
 bool APS5_VABI _ZN7WebCore30isStatusCodeCacheableByDefaultEi(int statusCode);
 bool APS5_VABI _ZN7WebCore32isStatusCodePotentiallyCacheableEi(int statusCode);
@@ -79,6 +88,7 @@ void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_10LayoutRectE(WebCore::IntRect* self, 
 void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_9FloatRectE(WebCore::IntRect* self, const WebCore::FloatRect& r);
 void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_10LayoutRectE(WebCore::IntRect* self, const WebCore::LayoutRect& r);
 void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_9FloatRectE(WebCore::IntRect* self, const WebCore::FloatRect& r);
+WebCore::IntSize APS5_VABI _ZN7WebCore18ImageBufferBackend20calculateBackendSizeERKNS_9FloatSizeEf(const WebCore::FloatSize& size, float resolutionScale);
 void APS5_VABI _ZN7WebCore7IntSizeC1ERKNS_9FloatSizeE(WebCore::IntSize* self, const WebCore::FloatSize& s);
 void APS5_VABI _ZN7WebCore7IntSizeC2ERKNS_9FloatSizeE(WebCore::IntSize* self, const WebCore::FloatSize& s);
 std::uint64_t APS5_VABI _ZN7WebCore7Process10identifierEv();

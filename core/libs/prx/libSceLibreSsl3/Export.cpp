@@ -29,17 +29,7 @@ std::uint64_t APS5_VABI ERR_peek_last_error_nid_postfix() {
     return LibreSslPeekLastError_nid_no_patch();
 }
 
-int APS5_VABI ERR_print_errors_cb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKCS82PKEY_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -81,11 +71,6 @@ int APS5_VABI PKCS7_free_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -102,16 +87,6 @@ int APS5_VABI d2i_ECParameters_nid_postfix(void) {
 }
 
 int APS5_VABI d2i_PKCS7_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_PrivateKey_bio_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
