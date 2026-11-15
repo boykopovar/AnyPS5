@@ -450,6 +450,13 @@ void TestToUIntStrict() {
     Check(_ZNK3WTF6String12toUIntStrictEPbi(&wide, &ok, 10) == 5 && ok, __LINE__);
     String base36 = Make8("zz");
     Check(_ZNK3WTF6String12toUIntStrictEPbi(&base36, &ok, 40) == 35 * 40 + 35 && ok, __LINE__);
+    String ten = Make8("10");
+    Check(_ZNK3WTF6String12toUIntStrictEPbi(&ten, &ok, 37) == 37 && ok, __LINE__);
+    String zeros = Make8("00");
+    Check(_ZNK3WTF6String12toUIntStrictEPbi(&zeros, &ok, 1) == 0 && ok, __LINE__);
+    Check(_ZNK3WTF6String12toUIntStrictEPbi(&ten, &ok, 1) == 0 && !ok, __LINE__);
+    ok = true;
+    Check(_ZNK3WTF6String12toUIntStrictEPbi(&zeros, &ok, -1) == 0 && !ok, __LINE__);
     String blank = Make8(" ");
     Check(_ZNK3WTF6String12toUIntStrictEPbi(&blank, &ok, 10) == 0 && !ok, __LINE__);
     const String nullString;
