@@ -404,7 +404,7 @@ constexpr int InvalidObjectEncoding = 216;
 constexpr int HeaderTooLong = 123;
 constexpr int SequenceLengthMismatch = 148;
 constexpr int SequenceNotConstructed = 149;
-constexpr int LoadingCertificates = 9;
+constexpr int PemLibraryFailure = 9;
 
 std::string RecordWithHeader(const char* label, const std::string& header, const Bytes& body) {
     const std::string encoded = Base64(body);
@@ -1300,7 +1300,7 @@ void StoreLocations() {
     {
         StoreFixture store("a store for the undecodable record");
         Require(store.Load(files.Path("undecodable-after-good.pem")) == 0, "a file whose second record cannot be decoded is refused");
-        RequireCodes({Code(Asn1Library, SequenceNotConstructed), Code(PemLibrary, Asn1LibraryError), Code(X509Library, LoadingCertificates)},
+        RequireCodes({Code(Asn1Library, SequenceNotConstructed), Code(PemLibrary, Asn1LibraryError), Code(X509Library, PemLibraryFailure)},
             "the undecodable record queues the sequence, PEM and X509 reasons in the reference order");
         Require(StackCount(store.Objects()) == 0, "the decodable record of a refused file is not stored");
         Require(StackCount(store.Lookups()) == 1, "the refused file still adds one lookup");
