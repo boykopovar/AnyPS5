@@ -11,6 +11,12 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -122,6 +128,34 @@ int main() {
     Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "", canaryBuf, sizeof(canaryBuf)) == kInvalidArgument,
             "empty key canary call did not fail");
     Require(canaryBuf[0] == 'X', "buffer was modified on empty key error");
+
+    errno = 71;
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, reinterpret_cast<const char*>(0x10), canaryBuf, sizeof(canaryBuf)) == kInvalidArgument,
+            "unreadable key call did not fail");
+    Require(errno == 71, "errno modified on unreadable key");
+    Require(canaryBuf[0] == 'X', "buffer was modified on unreadable key error");
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", reinterpret_cast<char*>(0x10), sizeof(buf)) == kInvalidArgument,
+            "unmapped value buf call did not fail");
+    Require(errno == 71, "errno modified on unmapped value buf");
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    void* readonlyValueBuf = VirtualAlloc(nullptr, sysInfo.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    Require(readonlyValueBuf != nullptr, "allocate readonly value buf page");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0, "query page size");
+    void* readonlyValueBuf = mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readonlyValueBuf != MAP_FAILED, "allocate readonly value buf page");
+#endif
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", static_cast<char*>(readonlyValueBuf), sizeof(buf)) == kInvalidArgument,
+            "readonly value buf call did not fail");
+    Require(errno == 71, "errno modified on readonly value buf");
+#ifdef _WIN32
+    Require(VirtualFree(readonlyValueBuf, 0, MEM_RELEASE) != 0, "free readonly value buf page");
+#else
+    Require(munmap(readonlyValueBuf, static_cast<std::size_t>(pageSize)) == 0, "free readonly value buf page");
+#endif
 
     Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", canaryBuf, sizeof(canaryBuf)) == kValueNotFound,
             "get property value mismatch");
