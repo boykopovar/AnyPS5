@@ -557,18 +557,25 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
+ int localValue = 0;
  switch (paramId) {
   case SYSTEM_SERVICE_PARAM_ID_LANG:
-  case SYSTEM_SERVICE_PARAM_ID_400: *value = SystemServiceConsoleLanguage("sceSystemServiceParamGetInt"); break;
-  case SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT: *value = SystemServiceDateTime::ConsoleDateFormat("sceSystemServiceParamGetInt"); break;
-  case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: *value = SystemServiceDateTime::ConsoleTimeFormat("sceSystemServiceParamGetInt"); break;
-  case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: *value = HostTimeZone().minutes; break;
-  case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: *value = HostTimeZone().summer ? 1 : 0; break;
+  case SYSTEM_SERVICE_PARAM_ID_400: localValue = SystemServiceConsoleLanguage("sceSystemServiceParamGetInt"); break;
+  case SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT: localValue = SystemServiceDateTime::ConsoleDateFormat("sceSystemServiceParamGetInt"); break;
+  case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: localValue = SystemServiceDateTime::ConsoleTimeFormat("sceSystemServiceParamGetInt"); break;
+  case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: localValue = HostTimeZone().minutes; break;
+  case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: localValue = HostTimeZone().summer ? 1 : 0; break;
   default: {
    const auto measured = std::ranges::find(RegistryParameters, paramId, &MeasuredParameter::id);
    if (measured == std::ranges::end(RegistryParameters)) return SYSTEM_SERVICE_ERROR_PARAMETER;
-   *value = measured->value;
+   localValue = measured->value;
   }
+ }
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(value, &localValue, sizeof(localValue));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  return SYSTEM_SERVICE_OK;
 }
@@ -604,9 +611,13 @@ int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
 
 void APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param) {
  if (param == nullptr) APS5_INVALID_ARG_EX;
- *param = SystemServicePlayerDialogParam{};
- param->size = sizeof(SystemServicePlayerDialogParam);
- param->user_id = -1;
+ SystemServicePlayerDialogParam local{};
+ local.size = sizeof(local);
+ local.user_id = -1;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(param, &local, sizeof(local));
+ errno = savedErrno;
+ if (!copied) APS5_INVALID_ARG_EX;
 }
 
 int APS5_VABI sceSystemServiceDisableMediaPlay() {
