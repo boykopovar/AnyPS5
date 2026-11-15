@@ -92,7 +92,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 if (localDevice != nullptr) Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before interrupt");
                 ++noOpLabels;
             }
-            if (reason == 0 || reason == 5) {
+            if (reason == 0 || reason == 5 || reason == 7) {
                 const auto queueId = submission.queue;
                 const auto context = *interrupt;
                 interruptDeferred = localDevice->AfterRecordedWork([this, queueId, context] { deliverGuestEopInterrupt(queueId, context); }, submission.queue == 0);
