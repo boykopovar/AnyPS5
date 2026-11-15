@@ -317,6 +317,11 @@ static void CharacterQueries() {
     Require(sceFontCharacterGetTextFontCode(text[0], &handle, &code) == SCE_FONT_OK && handle == font && code == 'a');
     Require(sceFontCharacterGetTextFontCode(text[0], nullptr, &code) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCharacterGetTextFontCode(text[0], &handle, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontCharacterGetTextFontCode(text[0], reinterpret_cast<FontHandle*>(0x10), &code) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontCharacterGetTextFontCode(text[0], &handle, reinterpret_cast<std::uint32_t*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     code = 7;
     Require(sceFontCharacterGetTextFontCode(nullptr, &handle, &code) == SCE_FONT_ERROR_INVALID_PARAMETER && handle == nullptr && code == 0);
     int level = -1;
