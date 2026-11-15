@@ -50,6 +50,11 @@ int main() {
     FT_Set_Default_Properties_nid_postfix(library);
     Require(FT_Property_Get_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
     Require(interpreterVersion == 35);
+    interpreterVersion = 40;
+    Require(FT_Property_Set_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
+    FT_Set_Default_Properties_nid_postfix(nullptr);
+    Require(FT_Property_Get_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);
+    Require(interpreterVersion == 40);
     Require(unsetenv_nid_postfix("FREETYPE_PROPERTIES") == 0);
     interpreterVersion = 40;
     Require(FT_Property_Set_nid_postfix(library, "truetype", "interpreter-version", &interpreterVersion) == 0);

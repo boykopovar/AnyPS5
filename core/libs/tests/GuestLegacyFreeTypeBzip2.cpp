@@ -9,7 +9,6 @@
 namespace {
 
 constexpr int UnimplementedFeature = 0x07;
-constexpr int InvalidStreamHandle = 0x28;
 
 int allocations = 0;
 
@@ -46,5 +45,14 @@ int main() {
     Require(FT_Stream_OpenBzip2_nid_postfix(&output, &source) == UnimplementedFeature);
     Require(std::memcmp(&output, &untouched, sizeof(output)) == 0);
     Require(source.pos == 0 && allocations == 0);
-    Require(FT_Stream_OpenBzip2_nid_postfix(nullptr, &source) == InvalidStreamHandle);
+    Require(FT_Stream_OpenBzip2_nid_postfix(nullptr, &source) == UnimplementedFeature);
+    Require(FT_Stream_OpenBzip2_nid_postfix(&output, nullptr) == UnimplementedFeature);
+    Require(FT_Stream_OpenBzip2_nid_postfix(nullptr, nullptr) == UnimplementedFeature);
+    LegacyFreeType::GuestStreamRec original{};
+    std::memcpy(&original, &source, sizeof(source));
+    Require(FT_Stream_OpenBzip2_nid_postfix(&source, &source) == UnimplementedFeature);
+    Require(std::memcmp(&source, &original, sizeof(source)) == 0);
+    source.memory = nullptr;
+    Require(FT_Stream_OpenBzip2_nid_postfix(&output, &source) == UnimplementedFeature);
+    Require(std::memcmp(&output, &untouched, sizeof(output)) == 0 && source.pos == 0 && allocations == 0);
 }
