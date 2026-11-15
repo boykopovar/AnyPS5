@@ -243,7 +243,12 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
         return nullptr;
     }
     lookup->storeContext = store;
-    if (Push(lookupMethods, lookup, __func__)) return lookup;
+    try {
+        if (Push(lookupMethods, lookup, __func__)) return lookup;
+    } catch (...) {
+        FreeLookup(lookup, false, __func__);
+        throw;
+    }
     FreeLookup(lookup, false, __func__);
     return nullptr;
 }

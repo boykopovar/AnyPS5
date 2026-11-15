@@ -35,6 +35,19 @@ struct Facet {
     std::uint32_t reserved;
 };
 
+struct CtypeFacet {
+    Facet base;
+    const std::int16_t* classification;
+    const std::int16_t* lower;
+    const std::int16_t* upper;
+    std::int32_t deleteTable;
+    std::uint32_t reserved;
+};
+
+static_assert(offsetof(CtypeFacet, lower) == 0x18);
+static_assert(offsetof(CtypeFacet, upper) == 0x20);
+static_assert(sizeof(CtypeFacet) == 0x30);
+
 struct TimeInfo {
     const char* amPm;
     const char* days;
@@ -204,6 +217,14 @@ struct TimePutVtable {
     OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
 };
 
+struct WideTimePutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
+};
+
+static_assert(offsetof(WideTimePutVtable, put) == 0x20);
+static_assert(sizeof(WideTimePutVtable) == 0x28);
+
 struct TimeGetVtable {
     FacetVtable facet;
     std::int32_t (APS5_VABI *dateOrder)(const Facet* self);
@@ -244,6 +265,18 @@ struct CtypeVtable {
     char (APS5_VABI *narrow)(const Facet* self, char character, char fallback);
     const char* (APS5_VABI *narrowRange)(const Facet* self, const char* first, const char* last, char fallback, char* destination);
 };
+
+struct WideCtypeVtable {
+    FacetVtable facet;
+    const void* classificationMethods[4];
+    const void* caseMethods[4];
+    const void* widenMethods[2];
+    char (APS5_VABI *narrow)(const Facet* self, std::uint16_t character, char fallback);
+    const void* narrowRange;
+};
+
+static_assert(offsetof(WideCtypeVtable, narrow) == 0x70);
+static_assert(sizeof(WideCtypeVtable) == 0x80);
 
 template<typename TString>
 struct MoneyGetVtable {
@@ -352,6 +385,8 @@ extern "C" std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_tr
 inline constexpr std::size_t kTimePutWideVtableSlots = 7;
 static_assert(kTimePutWideVtableSlots * sizeof(std::uintptr_t) == 56);
 extern "C" std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots];
+extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last);
+extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
 inline constexpr std::size_t kMoneyPutCharVtableSlots = 8;
 static_assert(kMoneyPutCharVtableSlots * sizeof(std::uintptr_t) == 64);
 extern "C" std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots];

@@ -126,8 +126,13 @@ async function confirmReplacement() {
     });
 }
 
-function valueChoices(type) {
+function valueChoices(type, value = '') {
+    if (type === 'PAD') return value ? [value] : [];
     return type === 'KEY' ? exportableKeys : type === 'MOUSE' ? mouseValues : type === 'WHEEL' ? wheelValues : [];
+}
+
+function typeChoices(entry) {
+    return typesForAction(entry.action).filter(type => type !== 'PAD' || entry.type === 'PAD');
 }
 
 function dropdownText() {
@@ -183,8 +188,8 @@ function renderCategories() {
 function renderBinding(entry, position) {
     const row = element('div', undefined, 'binding');
     const label = t('bindingLabel', {action: entry.action, number: position + 1});
-    const type = selectControl(t('typeLabel', {binding: label}), typesForAction(entry.action), entry.type);
-    const value = selectControl(t('valueLabel', {binding: label}), valueChoices(entry.type), entry.value);
+    const type = selectControl(t('typeLabel', {binding: label}), typeChoices(entry), entry.type);
+    const value = selectControl(t('valueLabel', {binding: label}), valueChoices(entry.type, entry.value), entry.value);
     type.element.dir = 'ltr';
     value.element.dir = 'ltr';
     const capture = button(t('capture'), t('captureLabel', {binding: label}), () => {
