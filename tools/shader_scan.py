@@ -1,3 +1,4 @@
+import functools
 import re
 from pathlib import Path
 
@@ -23,6 +24,7 @@ def skip_literal(source, start):
     return j
 
 
+@functools.cache
 def strip_comments(source):
     out, i, n = [], 0, len(source)
     while i < n:
