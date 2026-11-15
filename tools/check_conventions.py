@@ -166,6 +166,9 @@ class Check:
                   [path for path, (added, _) in self.numstat.items() if self.status.get(path) != "D" and added != "-" and
                    not path.startswith("3rdparty/") and PurePosixPath(path).suffix.lower() not in IMAGES])
 
+    def changes_debt(self):
+        return any(is_debt(path) or is_debt_fragment(path) for path in self.status)
+
     def report(self, rule, path, line, detail=""):
         self.findings.append((rule, path, line, detail))
 
@@ -245,7 +248,7 @@ class Check:
                 comment = number in comments if comments is not None else "#" in STRINGS.sub('""', text)
                 if comment and not shebang:
                     self.report("comment", path, number)
-        if any(is_debt(path) for path in self.status):
+        if self.changes_debt():
             self.findings = [finding for finding in self.findings if finding[0] != "comment"]
 
     def duplicates(self, exports):
@@ -303,7 +306,7 @@ class Check:
                 self.report("system-dependency", ".gitmodules", number, match.group(1))
 
     def shaders(self):
-        if any(is_debt(path) for path in self.status):
+        if self.changes_debt():
             return
         for path, lines in self.files(lambda p: p.suffix in (".comp", ".frag", ".vert", ".glsl")):
             masked = cpp_text(self.show(path), preserve_comments=True).split("\n")
@@ -313,7 +316,7 @@ class Check:
                     self.report("comment", path, number)
 
     def assembly(self):
-        if any(is_debt(path) for path in self.status):
+        if self.changes_debt():
             return
         for path, lines in self.files(lambda p: p.suffix in ASSEMBLY):
             preprocessed = PurePosixPath(path).suffix == ".S"
