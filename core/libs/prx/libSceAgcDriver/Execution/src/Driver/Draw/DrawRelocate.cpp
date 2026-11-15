@@ -374,8 +374,9 @@ void Driver::relocateDrawEntry(const QueueState& queue, const DrawAliasKeys& ali
         }
         relocated->stages[i].push_back(std::move(copy));
     }
-    if (complete) ++counters.donors;
     patches = std::move(current);
+    if (!complete) return;
+    ++counters.donors;
     entry = std::move(relocated);
     decode = shared;
 }

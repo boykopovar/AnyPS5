@@ -132,7 +132,16 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             std::uint64_t stageValidations = 0, stageEqual = 0, compared = 0, imagesFlushed = 0, runsSynced = 0, dataStages = 0, dataWords = 0;
             std::vector<std::pair<std::uint32_t, std::uint32_t>> liveData;
             auto* live = drawStageDataHits() ? &liveData : nullptr;
-            if (entry->stages.size() != programs.size()) miss = DrawMiss::Stages;
+            if (entry->stages.size() != programs.size()) {
+                miss = DrawMiss::Stages;
+            } else {
+                for (std::size_t i = 0; i < programs.size(); ++i) {
+                    if (roles[i] != Role::GeometryBack && entry->stages[i].empty()) {
+                        miss = DrawMiss::Stages;
+                        break;
+                    }
+                }
+            }
 
             std::uint32_t cursor = 0;
             {
