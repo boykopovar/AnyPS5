@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/Pad.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -25,5 +26,8 @@ int main() {
     Require(scePadBondUpdateStart(-1, nullptr) == PAD_ERROR_INVALID_ARG);
     PadUpdateData wrong{};
     Require(scePadBondUpdateSendData(0, &wrong) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadBondUpdateSendData(0, reinterpret_cast<const PadUpdateData*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     return 0;
 }
