@@ -51,9 +51,9 @@ struct Ktimer {
 static_assert(TimerMax == TimerSignalSlots);
 static_assert(sizeof(GuestSigevent) == 80);
 
-std::mutex g_ktimerLock;
+std::mutex& g_ktimerLock = *new std::mutex();
 Ktimer g_ktimers[TimerMax];
-TimedWait::Condition g_ktimerChanged;
+TimedWait::Condition& g_ktimerChanged = *new TimedWait::Condition();
 bool g_ktimerThreadStarted = false;
 
 Nanoseconds ToNanoseconds(const KernelTimespec& time) {
