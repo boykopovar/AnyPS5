@@ -433,6 +433,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_out_output_mode PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_video_out_configure_output_mode_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutConfigureOutputModeBounds.cpp)
+    target_include_directories(guest_video_out_configure_output_mode_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_configure_output_mode_bounds_tests PRIVATE libSceVideoOut libc)
+    configure_windows_unwind(guest_video_out_configure_output_mode_bounds_tests)
+    add_test(NAME guest_video_out_configure_output_mode_bounds COMMAND guest_video_out_configure_output_mode_bounds_tests)
+    set_tests_properties(guest_video_out_configure_output_mode_bounds PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    if(WIN32)
+        set_tests_properties(guest_video_out_configure_output_mode_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     add_test_executable(guest_video_out_flip_rate_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutFlipRateBounds.cpp)
     target_include_directories(guest_video_out_flip_rate_tests PRIVATE ${LIBS_INCLUDE_DIR})
