@@ -611,9 +611,9 @@ int APS5_VABI sceNgs2ReportRegisterHandler(uint32_t report_type, Ngs2ReportHandl
     if (out_handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (handler == nullptr) APS5_INVALID_ARG_EX;
     const Ngs2Lock lock;
-    auto* registration = new Ngs2ReportRegistration{report_type, handler, user_data};
-    ReportRegistrations().push_back(registration);
-    *out_handle = reinterpret_cast<Ngs2Handle>(registration);
+    std::unique_ptr<Ngs2ReportRegistration> registration(new Ngs2ReportRegistration{report_type, handler, user_data});
+    if (!WriteGuest(out_handle, reinterpret_cast<Ngs2Handle>(registration.get()))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    ReportRegistrations().push_back(registration.release());
     return SCE_NGS2_OK;
 }
 
@@ -660,7 +660,7 @@ int APS5_VABI sceNgs2FftQuerySize(std::uint32_t length, std::uint32_t flags, std
     if (size == nullptr || length < 8 || length > 12) return -1;
     std::uint32_t count = samples[length - 8];
     if ((flags & 2) != 0) count /= 2;
-    *size = static_cast<std::uint64_t>(count) * 2 * 16 + 64;
+    if (!WriteGuest(size, static_cast<std::uint64_t>(count) * 2 * 16 + 64)) return -1;
     return 0;
 }
 

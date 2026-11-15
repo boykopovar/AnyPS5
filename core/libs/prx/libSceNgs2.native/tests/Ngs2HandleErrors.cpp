@@ -458,6 +458,8 @@ static void CheckFftQuerySize() {
     Require(sceNgs2FftQuerySize(7, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(13, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(8, 0, nullptr) == -1);
+    errno = 71;
+    Require(sceNgs2FftQuerySize(8, 0, reinterpret_cast<std::uint64_t*>(0x10)) == -1 && errno == 71);
 }
 
 static void CheckEnumeration() {
