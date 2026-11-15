@@ -90,7 +90,7 @@ struct ContextOwner {
     std::uint32_t serviceLabel = 0;
 };
 
-int CreateContext(std::int32_t userId, std::uint32_t serviceLabel);
+bool CreateContext(std::int32_t userId, std::uint32_t serviceLabel, int* context);
 void DestroyContext(int context);
 std::optional<ContextOwner> FindContext(int context);
 std::optional<std::uint64_t> ContextUnlockTick(int context, std::int32_t trophyId);

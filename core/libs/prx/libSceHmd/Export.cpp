@@ -26,7 +26,12 @@ std::atomic<bool> initialized{false};
 std::int32_t Initialize(const Hmd::InitializeParam* param) {
     if (initialized.load()) return Hmd::AlreadyInitialized;
     if (!param) return Hmd::ParameterNull;
-    if (param->reserved0) return Hmd::UnsupportedFeature;
+    Hmd::InitializeParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return Hmd::ParameterNull;
+    if (localParam.reserved0) return Hmd::UnsupportedFeature;
     return initialized.exchange(true) ? Hmd::AlreadyInitialized : 0;
 }
 
@@ -51,18 +56,23 @@ std::int32_t CommandQueryHandle(std::int32_t handle, const char* query) {
 }
 
 template <typename T>
-T ParameterWord(const Hmd2dVrCommandParameter* parameter, std::size_t offset) {
+T ParameterWord(const unsigned char* bytes, std::size_t offset) {
     T value;
-    std::memcpy(&value, reinterpret_cast<const unsigned char*>(parameter) + offset, sizeof(value));
+    std::memcpy(&value, bytes + offset, sizeof(value));
     return value;
 }
 
 std::int32_t Vr2dCommandArguments(const Hmd2dVrCommandParameter* parameter, const HmdCommandBuffer* commandBuffer) {
     if (!parameter || !commandBuffer) return Hmd::ParameterNull;
+    unsigned char bytes[0x40]{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(bytes, parameter, sizeof(bytes));
+    errno = savedErrno;
+    if (!copied) return Hmd::ParameterNull;
     for (const std::size_t offset : {0x00u, 0x08u, 0x20u}) {
-        if (ParameterWord<std::uint64_t>(parameter, offset) == 0) return Hmd::ParameterNull;
+        if (ParameterWord<std::uint64_t>(bytes, offset) == 0) return Hmd::ParameterNull;
     }
-    if (ParameterWord<std::uint32_t>(parameter, 0x34) != 0 || ParameterWord<std::uint64_t>(parameter, 0x38) != 0) return Hmd::ParameterInvalid;
+    if (ParameterWord<std::uint32_t>(bytes, 0x34) != 0 || ParameterWord<std::uint64_t>(bytes, 0x38) != 0) return Hmd::ParameterInvalid;
     return 0;
 }
 
