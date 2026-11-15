@@ -1137,6 +1137,29 @@ static void GuestPointerFaults(EGLDisplay display, EGLConfig config, EGLContext 
     glGenBuffers_nid_postfix(0x7fffffff, &oversized);
     Error(0x0505);
     Require(oversized == 0);
+
+    GLuint reserved = 0;
+    glGenBuffers_nid_postfix(1, &reserved);
+    Error(0);
+    Require(reserved != 0);
+    glDeleteBuffers_nid_postfix(1, &reserved);
+    errno = 71;
+    glGenBuffers_nid_postfix(2, static_cast<GLuint*>(unmapped));
+    Error(0x0505);
+    Require(errno == 71);
+    GLuint again = 0;
+    glGenBuffers_nid_postfix(1, &again);
+    Error(0);
+    Require(again == reserved);
+    glDeleteBuffers_nid_postfix(1, &again);
+    errno = 71;
+    glGenTextures_nid_postfix(1, static_cast<GLuint*>(unmapped));
+    Error(0x0505);
+    glGenRenderbuffers_nid_postfix(1, static_cast<GLuint*>(unmapped));
+    Error(0x0505);
+    glGenFramebuffers_nid_postfix(1, static_cast<GLuint*>(unmapped));
+    Error(0x0505);
+    Require(errno == 71);
 }
 
 int main() {

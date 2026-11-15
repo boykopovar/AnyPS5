@@ -291,10 +291,10 @@ int APS5_VABI sceFontTextSourceSetWritingForm(FontTextSource* textSource, std::i
 
 int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* textSource, const FontCreateStringDetail* detail, FontString* pFontString) {
     if (!fontMemory || !textSource || !pFontString || !textSource->textParser) {
-        if (pFontString) *pFontString = nullptr;
+        if (pFontString) CopyOutGuest(pFontString, static_cast<FontString>(nullptr));
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    *pFontString = nullptr;
+    if (!CopyOutGuest(pFontString, static_cast<FontString>(nullptr))) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     if (fontMemory->mem_kind != MEMORY_MAGIC || !fontMemory->iface || !fontMemory->iface->alloc || !fontMemory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (detail) {
@@ -350,7 +350,12 @@ int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* 
     LinkCharacters(data->characters, characters.size());
     data->textCount = static_cast<std::uint32_t>(characters.size());
     data->renderCount = data->textCount;
-    *pFontString = reinterpret_cast<FontString>(data);
+    if (!CopyOutGuest(pFontString, reinterpret_cast<FontString>(data))) {
+        data->magic = 0;
+        if (data->characters) fontMemory->iface->dealloc(fontMemory->mspace_handle, data->characters);
+        fontMemory->iface->dealloc(fontMemory->mspace_handle, raw);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     return SCE_FONT_OK;
 }
 
@@ -650,15 +655,15 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
 
 int APS5_VABI sceFontWritingGetRenderMetrics(FontWriting* fontWriting, FontWritingMetrics* writingMetrics) {
     if (!fontWriting || !writingMetrics) {
-        if (writingMetrics) *writingMetrics = {};
+        if (writingMetrics) CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const auto* writing = GetWritingData(fontWriting);
     if (!writing) {
-        *writingMetrics = {};
+        CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_WRITING;
     }
-    *writingMetrics = writing->metrics;
+    if (!CopyOutGuest(writingMetrics, writing->metrics)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 

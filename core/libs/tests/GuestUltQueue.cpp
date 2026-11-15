@@ -1,4 +1,5 @@
 #include "prx/libSceUlt/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -11,6 +12,12 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int Null = -2139029503;
 static constexpr int Alignment = -2139029502;
@@ -155,6 +162,98 @@ static void GuestPointers() {
     CHECK(sceUltQueuePop(&fixture.first, &output) == 0 && output == second);
     CHECK(sceUltQueueTryPop(&fixture.first, &output) == Again);
     fixture.Destroy();
+
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(clobberErrno);
+
+    Object waitPool;
+    Object rwlock;
+    CHECK(sceUltWaitingQueueResourcePoolCreate(&waitPool, "wait", 4, 4, nullptr, nullptr, 0) == 0);
+    CHECK(sceUltReaderWriterLockCreate(&rwlock, "rwlock", &waitPool, nullptr, 0) == 0);
+    CHECK(sceUltReaderWriterLockLockWrite(&rwlock) == 0);
+
+    std::thread waiter([&] {
+        CHECK(sceUltReaderWriterLockLockRead(&rwlock) == 0);
+        CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == 0);
+    });
+    for (;;) {
+        UltReaderWriterLockInfo pollInfo{};
+        CHECK(sceUltGetReaderWriterLockInfo(&rwlock, &pollInfo, nullptr, 0) == 0);
+        if (pollInfo.waitingThreads == 1) break;
+        std::this_thread::yield();
+    }
+
+    UltReaderWriterLockInfo sentinelInfo{};
+    std::memset(&sentinelInfo, 0xaa, sizeof(sentinelInfo));
+    UltWaitingThreadInfo validWaiter{};
+    validWaiter.size = sizeof(UltWaitingThreadInfo);
+
+    std::size_t pageSize = 4096u;
+    void* roInfoPage = nullptr;
+    void* roWaiterPage = nullptr;
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo{};
+    GetSystemInfo(&sysInfo);
+    if (sysInfo.dwPageSize != 0) pageSize = sysInfo.dwPageSize;
+    roInfoPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    roWaiterPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    CHECK(roInfoPage != nullptr && roWaiterPage != nullptr);
+    std::memcpy(roInfoPage, &sentinelInfo, sizeof(sentinelInfo));
+    std::memcpy(roWaiterPage, &validWaiter, sizeof(validWaiter));
+    DWORD oldProtect = 0;
+    CHECK(VirtualProtect(roInfoPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    CHECK(VirtualProtect(roWaiterPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const long sysPage = sysconf(_SC_PAGESIZE);
+    if (sysPage > 0) pageSize = static_cast<std::size_t>(sysPage);
+    roInfoPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    roWaiterPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(roInfoPage != MAP_FAILED && roWaiterPage != MAP_FAILED);
+    std::memcpy(roInfoPage, &sentinelInfo, sizeof(sentinelInfo));
+    std::memcpy(roWaiterPage, &validWaiter, sizeof(validWaiter));
+    CHECK(mprotect(roInfoPage, pageSize, PROT_READ) == 0);
+    CHECK(mprotect(roWaiterPage, pageSize, PROT_READ) == 0);
+#endif
+
+    errno = 71;
+    CHECK(sceUltGetReaderWriterLockInfo(&rwlock, reinterpret_cast<UltReaderWriterLockInfo*>(0x10), nullptr, 0) == Null && errno == 71);
+    errno = 71;
+    CHECK(sceUltGetReaderWriterLockInfo(&rwlock, static_cast<UltReaderWriterLockInfo*>(roInfoPage), nullptr, 0) == Null && errno == 71);
+    CHECK(std::memcmp(roInfoPage, &sentinelInfo, sizeof(sentinelInfo)) == 0);
+
+    UltReaderWriterLockInfo probeInfo{};
+    std::memset(&probeInfo, 0x55, sizeof(probeInfo));
+    const UltReaderWriterLockInfo expectedProbe = probeInfo;
+    errno = 71;
+    CHECK(sceUltGetReaderWriterLockInfo(&rwlock, &probeInfo, reinterpret_cast<UltWaitingThreadInfo*>(0x10), 1) == Null && errno == 71);
+    CHECK(std::memcmp(&probeInfo, &expectedProbe, sizeof(probeInfo)) == 0);
+
+    errno = 71;
+    CHECK(sceUltGetReaderWriterLockInfo(&rwlock, &probeInfo, static_cast<UltWaitingThreadInfo*>(roWaiterPage), 1) == Null && errno == 71);
+    CHECK(std::memcmp(&probeInfo, &expectedProbe, sizeof(probeInfo)) == 0);
+    CHECK(std::memcmp(roWaiterPage, &validWaiter, sizeof(validWaiter)) == 0);
+
+    UltWaitingThreadInfo waiterOut{};
+    waiterOut.size = sizeof(UltWaitingThreadInfo);
+    UltReaderWriterLockInfo validInfo{};
+    errno = 71;
+    CHECK(sceUltGetReaderWriterLockInfo(&rwlock, &validInfo, &waiterOut, 1) == 0 && errno == 71);
+    CHECK(validInfo.waitingThreads == 1 && waiterOut.size == sizeof(UltWaitingThreadInfo) && waiterOut.thread != nullptr);
+
+#ifdef _WIN32
+    VirtualFree(roInfoPage, 0, MEM_RELEASE);
+    VirtualFree(roWaiterPage, 0, MEM_RELEASE);
+#else
+    munmap(roInfoPage, pageSize);
+    munmap(roWaiterPage, pageSize);
+#endif
+    CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == 0);
+    waiter.join();
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == 0);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&waitPool) == 0);
 }
 
 static void WaitUntilBlocked(std::future<int>& result) {

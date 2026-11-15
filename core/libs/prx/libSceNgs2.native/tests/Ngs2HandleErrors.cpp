@@ -307,6 +307,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {CreateCase{&valid, nullptr, true, bufferError, "a null buffer info"},
                           CreateCase{&valid, &noHost, true, bufferError, "a null host buffer"},
+                          CreateCase{&valid, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), true, bufferError, "an unreadable buffer info"},
                           CreateCase{&badRate, nullptr, false, bufferError, "a null buffer info, handle and bad option"},
                           CreateCase{&badRate, &noHost, false, bufferError, "a null host buffer, handle and bad option"},
                           CreateCase{&badRate, &buffer, false, outputError, "a null handle and bad option"},
@@ -328,6 +329,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {AllocatorCase{&valid, nullptr, true, allocatorError, "a null allocator"},
                           AllocatorCase{&valid, &noAlloc, true, allocatorError, "a null alloc handler"},
+                          AllocatorCase{&valid, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), true, allocatorError, "an unreadable allocator"},
                           AllocatorCase{&badRate, nullptr, false, allocatorError, "a null allocator, handle and bad option"},
                           AllocatorCase{&badRate, &noAlloc, false, allocatorError, "a null alloc handler, handle and bad option"},
                           AllocatorCase{&badRate, &allocator, false, outputError, "a null handle and bad option"},
