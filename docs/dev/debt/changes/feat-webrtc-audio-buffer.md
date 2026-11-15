@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::AudioBuffer constructor, CopyFrom and CopyTo for interleaved int16_t](../../../core/libs/prx/libwebrtc/src/AudioBuffer.cpp) (libwebrtc) - unverified on the console: the 168-byte object, its `ChannelBuffer<float>`, `SplittingFilter` and resampler vectors follow upstream's members and come from the guest `operator new`. The virtual destructors are reached only through the vtable, since the console exports no `~AudioBuffer`; the splitting filter states stay zero, as nothing exported runs them. `RTC_DCHECK`s become exceptions: sample rates below 100 Hz or above 384000 Hz, no channels or more than 8 (`kMaxConcurrentChannels`), more buffer than input channels, and stream configs that don't match the input or output format. As upstream, more than one buffer channel deinterleaves with the buffer's channel count as the stride. Adapted from M134's [audio_buffer.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/audio_processing/audio_buffer.cc).
