@@ -1090,13 +1090,12 @@ struct GuestBlock {
     void* memory = nullptr;
 };
 
-std::array<std::uint32_t, 8> GuestDescriptor(std::uint64_t address, std::uint32_t side) {
-    constexpr std::uint32_t Format32UInt = 20u;
+std::array<std::uint32_t, 8> GuestDescriptor(std::uint64_t address, std::uint32_t side, std::uint32_t format = 20u) {
     constexpr std::uint32_t TileR64KBX = 0x1bu;
     constexpr std::uint32_t Type2D = 9u;
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
         ((side - 1u) >> 2u) | ((side - 1u) << 14u),
         0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
@@ -1177,6 +1176,62 @@ void driverTests(const Device& device) {
         Require(textures.size() == GuestBlock::Surfaces && counts.imageSlots == GuestBlock::Surfaces && counts.created == GuestBlock::Surfaces + 2u && counts.refused == 1u, "the primer did not share one cached texture and one heap slot per surface: " + std::to_string(textures.size()) + " textures, " + std::to_string(counts.imageSlots) + " slots, " + std::to_string(counts.created) + " entries, " + std::to_string(counts.refused) + " refused");
         recorder.Sync();
         std::cout << "driver resolver: " << compared << " primed entries match the old resolver (same cached texture, same runtime mode), " << counts.imageSlots << " heap slots, unmapped T# refused, null records are null-slot entries\n";
+    }
+    {
+        constexpr std::uint32_t Format32Float = 22u;
+        const auto floatDescriptor = GuestDescriptor(block.Surface(0u), GuestBlock::SurfaceSide, Format32Float);
+        std::vector<std::uint32_t> samplerRecords(floatDescriptor.begin(), floatDescriptor.end());
+        const std::array<std::uint32_t, 4> baseSampler{0x92u, 0u, 0u, 0u};
+        const std::array<std::uint32_t, 4> filteredSampler{0x92u, 0u, (1u << 20u) | (1u << 22u), 0u};
+        const std::array<std::uint32_t, 4> biasedSampler{0x92u, 0u, 256u, 0u};
+        const std::array<std::uint32_t, 4> unnormalizedSampler{0x92u | (1u << 15u), 0u, 0u, 0u};
+        const std::array<std::uint32_t, 4> reductionSampler{0x92u | (1u << 29u), 0u, 0u, 0u};
+        BindlessTable samplerTable(context, DescriptorHeap::Capacities{std::min(capacities.samplers, 64u), std::min(capacities.sampledImages, 1024u), std::min(capacities.storageImages, 64u)});
+        TextureService::Options options;
+        options.worker = false;
+        TextureService samplerService(samplerTable, std::make_shared<AgcDriver::Graphics::DriverBindlessResolver>(context), std::make_shared<AgcDriver::Graphics::GuestBindlessMemory>(), options);
+        auto serving = context;
+        serving.textureService = &samplerService;
+        const std::array<BindlessTableRegistration, 1> validTables{BindlessTableRegistration{
+            reinterpret_cast<std::uint64_t>(samplerRecords.data()),
+            1u,
+            32u,
+            {
+                BindlessUse{Interface, Abi::TableSamplerClass, baseSampler},
+                BindlessUse{Interface, Abi::TableSamplerClass, filteredSampler},
+                BindlessUse{Interface, Abi::TableSamplerClass, biasedSampler},
+            },
+        }};
+        AgcDriver::Graphics::PrimeBindlessTables(serving, validTables);
+        AgcDriver::Graphics::ServeBindlessTables(serving, recorder, validTables);
+        std::set<std::uint32_t> samplerSlots;
+        for (const auto& sampler : {baseSampler, filteredSampler, biasedSampler}) {
+            const auto key = Abi::MakeKey(std::span<const std::uint32_t, 8>(floatDescriptor), Interface, Abi::TableSamplerClass, sampler);
+            const auto value = samplerService.Find(key);
+            Require(value.has_value() && value->fault == 0u && value->slot != 0u && value->samplerSlot != 0u, "a table S# entry failed to resolve into image and sampler slots");
+            samplerSlots.insert(value->samplerSlot);
+        }
+        const auto samplerTotals = samplerService.Totals();
+        Require(samplerTotals.imageSlots == 1u && samplerTotals.samplerSlots == 3u && samplerSlots.size() == 3u, "table S# filter and LOD-bias distinctions did not share 1 image slot across 3 sampler slots");
+        const std::array<BindlessTableRegistration, 1> refusedTables{BindlessTableRegistration{
+            reinterpret_cast<std::uint64_t>(samplerRecords.data()),
+            1u,
+            32u,
+            {
+                BindlessUse{Interface, Abi::TableSamplerClass, unnormalizedSampler},
+                BindlessUse{Interface, Abi::TableSamplerClass, reductionSampler},
+            },
+        }};
+        AgcDriver::Graphics::PrimeBindlessTables(serving, refusedTables);
+        AgcDriver::Graphics::ServeBindlessTables(serving, recorder, refusedTables);
+        const auto unnormValue = samplerService.Find(Abi::MakeKey(std::span<const std::uint32_t, 8>(floatDescriptor), Interface, Abi::TableSamplerClass, unnormalizedSampler));
+        const auto reductionValue = samplerService.Find(Abi::MakeKey(std::span<const std::uint32_t, 8>(floatDescriptor), Interface, Abi::TableSamplerClass, reductionSampler));
+        Require(unnormValue.has_value() && unnormValue->fault != 0u && samplerService.Rejection(unnormValue->fault).value_or("").find("unnormalized coordinates") != std::string::npos, "an unnormalized table S# was not refused with its reason");
+        Require(reductionValue.has_value() && reductionValue->fault != 0u && samplerService.Rejection(reductionValue->fault).value_or("").find("min or max reduction") != std::string::npos, "a min/max reduction table S# was not refused with its reason");
+        const auto refusalTotals = samplerService.Totals();
+        Require(refusalTotals.refusals[static_cast<std::size_t>(AgcDriver::Graphics::BindlessRefusalKind::Sampler)] == 2u, "table S# refusals were not counted as sampler refusals");
+        recorder.Sync();
+        std::cout << "driver table S#: " << samplerTotals.imageSlots << " image slot, " << samplerTotals.samplerSlots << " sampler slots (filter + LOD bias), 2 sampler refusals\n";
     }
     recorder.Sync();
     recorder.FlushDeferredReleases();
@@ -1269,6 +1324,33 @@ int flagTests(bool on) {
     return 0;
 }
 
+void rejectionCapTests(const Device& device) {
+    Fixture fixture(device);
+    Recorder recorder(fixture.context, device.Timeline());
+    recorder.Activate();
+    constexpr std::uint32_t RefusedCount = static_cast<std::uint32_t>(TextureService::MaxRejectionDetails) + 16u;
+    for (std::uint32_t record = 0; record < RefusedCount; ++record) {
+        fixture.records[record].mode = PermanentMode;
+        fixture.write(record, false);
+    }
+    TextureService service(*fixture.table, fixture.resolver, fixture.memory, TextureService::Options{});
+    const auto id = service.Register(fixture.Registration(0u, RefusedCount));
+    Require(service.WaitPrimed(id, 60000u), "the rejection cap table was not primed");
+    const auto totals = service.Totals();
+    Require(totals.refused == RefusedCount, "expected " + std::to_string(RefusedCount) + " refused keys, got " + std::to_string(totals.refused));
+    Require(totals.rejections == TextureService::MaxRejectionDetails + 1u, "expected " + std::to_string(TextureService::MaxRejectionDetails + 1u) + " retained rejection strings, got " + std::to_string(totals.rejections));
+    const auto first = service.Find(fixture.Key(0u));
+    Require(first.has_value() && first->fault == 1u && service.Rejection(first->fault).value_or("").find("refuses this T#") != std::string::npos, "the first refused key did not retain its detail string");
+    const auto overflow = service.Find(fixture.Key(RefusedCount - 1u));
+    Require(overflow.has_value() && overflow->fault == TextureService::MaxRejectionDetails + 1u, "an overflow refused key did not point at the suppressed-details slot");
+    Require(service.Rejection(overflow->fault).value_or("").find("suppressed") != std::string::npos, "the overflow rejection entry did not report suppressed details");
+    std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+    const std::array<std::uint64_t, 1> served{id};
+    service.Serve(served, recorder);
+    recorder.Sync();
+    std::cout << "rejection cap: " << totals.refused << " refused keys stored in " << totals.rejections << " rejection strings\n";
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1296,6 +1378,7 @@ int main(int argc, char** argv) {
         perUseTests(*device);
         budgetTests(*device);
         liveBudgetTests(*device);
+        rejectionCapTests(*device);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "texture service test failed: " << error.what() << '\n';

@@ -6945,6 +6945,101 @@ void verifySplitWaterfallImageTable() {
     }
 }
 
+void verifyBindlessHeapLowering() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    const auto userData = TableUserData(guest);
+
+    auto bindlessRequest = TableRequest(TableWholeCode, userData);
+    bindlessRequest.target.bindlessImages = true;
+    const auto bindless = CompileTable(bindlessRequest);
+    require(bindless.result && bindless.result->bindlessHeap, "bindless heap lowering: TableWholeCode was not lowered to the bindless heap");
+    require(TableBinding(*bindless.result, DescriptorRole::ImageTable) == nullptr, "bindless heap lowering: bindless lowering kept an ImageTable binding");
+    require(bindless.result->bindlessTables.size() == 1u, "bindless heap lowering: expected 1 bindless table registration");
+    const auto& reg = bindless.result->bindlessTables[0];
+    require(reg.base == static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(heap.data())) && reg.records == 4u && reg.stride == 32u, "bindless heap lowering: bindless table registration base, records or stride is wrong");
+    require(!reg.uses.empty() && ResourceMaterializer::FindBindlessInterface(reg.uses[0].interfaceId) != nullptr, "bindless heap lowering: bindless table use interfaceId is missing or unregistered");
+
+    const auto disabledRequest = TableRequest(TableWholeCode, userData);
+    const auto disabled = CompileTable(disabledRequest);
+    require(disabled.result && !disabled.result->bindlessHeap && disabled.result->bindlessTables.empty() && TableBinding(*disabled.result, DescriptorRole::ImageTable) != nullptr, "bindless heap fallback: disabled target used the bindless heap");
+
+    const auto storageCode = WithImageOperation(TableWholeCode, 0xf0200f08u, false);
+    auto storageRequest = TableRequest(storageCode, userData);
+    storageRequest.target.bindlessImages = true;
+    const auto storage = CompileTable(storageRequest);
+    require(storage.result && !storage.result->bindlessHeap && storage.result->bindlessTables.empty() && TableBinding(*storage.result, DescriptorRole::ImageStorageTable) != nullptr, "bindless heap fallback: storage table lowered to the bindless heap");
+
+    const auto packedCode = WithImageOperation(TableWholeCode, 0xf0080f08u, false);
+    auto packedRequest = TableRequest(packedCode, userData);
+    packedRequest.target.bindlessImages = true;
+    const auto packed = CompileTable(packedRequest);
+    require(packed.result && !packed.result->bindlessHeap && packed.result->bindlessTables.empty() && TableBinding(*packed.result, DescriptorRole::ImageTable) != nullptr, "bindless heap fallback: packed table op lowered to the bindless heap");
+
+    for (std::uint32_t entry = 0; entry < 4u; ++entry) heap[entry] = TableT(textures[entry & 1u].bytes.data(), TableFormat16UNorm, TableType2D);
+    const auto by2Code = WithImageOperation(TableWholeCode, 0xf1080308u, false);
+    auto by2Request = TableRequest(by2Code, userData);
+    by2Request.target.bindlessImages = true;
+    const auto by2 = CompileTable(by2Request);
+    require(by2.result && !by2.result->bindlessHeap && by2.result->bindlessTables.empty() && TableBinding(*by2.result, DescriptorRole::ImageTable) != nullptr, "bindless heap fallback: BY2 table op lowered to the bindless heap");
+
+    alignas(512) static std::array<std::array<std::uint32_t, 64>, 2> nestedRecords{};
+    alignas(256) static std::array<std::array<std::uint32_t, 16>, 2> nestedPalettes{};
+    alignas(256) static std::array<std::uint32_t, 16> nestedRoot{};
+    alignas(256) static std::array<std::uint32_t, 16> nestedKeys{};
+    alignas(256) static std::array<std::uint32_t, 16> nestedOutput{};
+    alignas(256) static std::array<std::uint32_t, 16> nestedSrt{};
+    nestedRecords = {};
+    nestedPalettes = {};
+    nestedRoot = {};
+    nestedKeys = {};
+    for (std::uint32_t outer = 0; outer < 2u; ++outer) {
+        auto child = TableV(nestedPalettes[outer].data(), 64u, 1u);
+        child[3] = 0x31016facu;
+        std::copy(child.begin(), child.end(), nestedRecords[outer].begin() + 40u);
+        const auto descriptor = TableT(textures[outer].bytes.data(), TableFormat8888UNorm, TableType2D);
+        std::copy(descriptor.begin(), descriptor.end(), nestedPalettes[outer].begin());
+        std::copy(descriptor.begin(), descriptor.end(), nestedPalettes[outer].begin() + 8u);
+        const auto pointer = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(nestedRecords[outer].data()));
+        nestedRoot[outer * 4u + 2u] = static_cast<std::uint32_t>(pointer);
+        nestedRoot[outer * 4u + 3u] = static_cast<std::uint32_t>(pointer >> 32u);
+    }
+    const auto rootV = TableV(nestedRoot.data(), 0u, 64u);
+    const auto keysV = TableV(nestedKeys.data(), 0u, 16u);
+    const auto outputV = TableV(nestedOutput.data(), 0u, 16u);
+    std::copy(rootV.begin(), rootV.end(), nestedSrt.begin());
+    std::copy(keysV.begin(), keysV.end(), nestedSrt.begin() + 4u);
+    std::copy(outputV.begin(), outputV.end(), nestedSrt.begin() + 8u);
+    nestedSrt[12] = 0x92u;
+    nestedSrt[13] = (4u * 256u) << 12u;
+    nestedSrt[14] = 0u;
+    nestedSrt[15] = 0u;
+    const std::vector<std::uint32_t> nestedCode{
+        0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+        0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148514u,
+        0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf42c090cu, 0x28000000u,
+        0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+        0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+    };
+    const auto nestedAddr = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(nestedSrt.data()));
+    const std::array<std::uint32_t, 2> nestedUserData{static_cast<std::uint32_t>(nestedAddr), static_cast<std::uint32_t>(nestedAddr >> 32u)};
+    auto nestedRequest = TableRequest(nestedCode, nestedUserData);
+    nestedRequest.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {true, false, false}, false, 1u};
+    nestedRequest.target.bindlessImages = true;
+    const auto nestedPlan = GetResourcePlan(nestedRequest);
+    require(nestedPlan->info.images.size() == 1u && nestedPlan->info.images[0].nestedTable, "bindless heap fallback: nested test program was not classified as nestedTable");
+    const auto nested = CompileTable(nestedRequest);
+    require(nested.result && !nested.result->bindlessHeap && nested.result->bindlessTables.empty() && TableBinding(*nested.result, DescriptorRole::ImageTable) != nullptr, "bindless heap fallback: nested table lowered to the bindless heap");
+}
+
 void verifyDescriptorPhis() {
     using namespace ShaderRecompiler;
     {
@@ -13239,6 +13334,7 @@ int main(int argc, char** argv) {
             verifyPointerChainImageTable();
             verifyWaterfallImageTable();
             verifySplitWaterfallImageTable();
+            verifyBindlessHeapLowering();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
@@ -13349,6 +13445,7 @@ int main(int argc, char** argv) {
         verifyPointerChainImageTable();
         verifyWaterfallImageTable();
         verifySplitWaterfallImageTable();
+        verifyBindlessHeapLowering();
         verifyDescriptorPhis();
         verifyUniformTableImage();
         verifyUndefinedImageFormats();
