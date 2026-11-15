@@ -2311,15 +2311,7 @@ std::uint64_t CollectSince() {
 void RaiseCollectSince(std::uint64_t since) {
     const auto now = SteadyNanoseconds();
     const auto raised = since == 0 ? now : std::min(since, now);
-    if (raised > HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get()) {
-        HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(raised);
-        if (HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() != 0) {
-            const auto epoch = nextCollectEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
-            HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(epoch);
-            auto last = lastBumpedEpoch.load(std::memory_order_relaxed);
-            while (last < epoch && !lastBumpedEpoch.compare_exchange_weak(last, epoch, std::memory_order_release, std::memory_order_relaxed)) {}
-        }
-    }
+    if (raised > HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get()) HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(raised);
 }
 
 void BumpCollectEpochSince(std::uint64_t since) {
