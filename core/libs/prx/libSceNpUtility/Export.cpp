@@ -113,6 +113,20 @@ struct FamilyState {
     std::int32_t currentRequest = 0;
 };
 
+bool CopyInPreservingErrno(void* dst, const void* src, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutPreservingErrno(void* dst, const void* src, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = savedErrno;
+    return copied;
+}
+
 int AppLaunchLinkCreateRequest(FamilyState& state, std::int32_t userId, const void* param, std::int32_t* requestId, int notInitialized, int invalidArgument) {
     if (userId == -1 || !param || !requestId) return invalidArgument;
     std::lock_guard lock(state.mutex);
@@ -150,7 +164,7 @@ int AppLaunchLinkGetCompatibleTitleIdNum(FamilyState& state, std::int32_t reques
     if (!state.initialized) return notInitialized;
     if (!state.requests.contains(requestId)) return requestNotFound;
     const std::int32_t zero = 0;
-    if (!GuestCopyOut_nid_no_patch(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
+    if (!CopyOutPreservingErrno(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
     return 0;
 }
 
@@ -161,7 +175,7 @@ int AppLaunchLinkGetCompatibleTitleIdList(FamilyState& state, std::int32_t reque
     if (!state.requests.contains(requestId)) return requestNotFound;
     if (titleIdNum) {
         const std::int32_t zero = 0;
-        if (!GuestCopyOut_nid_no_patch(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
+        if (!CopyOutPreservingErrno(titleIdNum, &zero, sizeof(zero))) return invalidArgument;
     }
     return 0;
 }
@@ -543,7 +557,7 @@ int APS5_VABI sceNpLookupNetInitWithMemoryPool(const void* param, const void* po
 }
 int APS5_VABI sceNpLookupNetIsInit(std::int32_t* out) {
     const std::int32_t value = LookupNetIsInitialized() ? 1 : 0;
-    if (out && !GuestCopyOut_nid_no_patch(out, &value, sizeof(value))) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (out && !CopyOutPreservingErrno(out, &value, sizeof(value))) return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpLookupNetNpId(std::int32_t requestId, const void* onlineId, void* npId, const void* option) {
@@ -589,7 +603,7 @@ int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
     std::uint32_t id = serviceChecker2.nextRequest;
     while (serviceChecker2.requests.contains(static_cast<int>(id))) id = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
     const int value = static_cast<int>(id);
-    if (!GuestCopyOut_nid_no_patch(requestId, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
+    if (!CopyOutPreservingErrno(requestId, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
     serviceChecker2.nextRequest = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
     serviceChecker2.requests.insert(value);
     return 0;
@@ -699,7 +713,7 @@ int APS5_VABI sceNpServiceCheckerIntIsCached(std::int32_t requestId, std::uint8_
     if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
     if (!serviceChecker1.requests.contains(requestId)) return SCE_NP_SERVICE_CHECKER_ERROR_REQUEST_NOT_FOUND;
     const std::uint8_t value = 0;
-    if (!GuestCopyOut_nid_no_patch(cached, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
+    if (!CopyOutPreservingErrno(cached, &value, sizeof(value))) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpTitleMetadataIntAbortRequest() {
@@ -723,10 +737,10 @@ int APS5_VABI sceNpTitleMetadataIntGetNpTitleId(const char* titleId, std::size_t
     if (!titleId || !npTitleId) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
     if (titleIdLength > 9) return SCE_NP_TITLE_METADATA_ERROR_TOO_LONG;
     char buffer[16] = {};
-    if (!GuestCopyIn_nid_no_patch(buffer, titleId, titleIdLength)) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
+    if (!CopyInPreservingErrno(buffer, titleId, titleIdLength)) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
     const std::size_t length = strnlen(buffer, sizeof(buffer));
     std::memcpy(buffer + length, "_00", 4);
-    if (!GuestCopyOut_nid_no_patch(npTitleId, buffer, sizeof(buffer))) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
+    if (!CopyOutPreservingErrno(npTitleId, buffer, sizeof(buffer))) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpUtilityInit() {

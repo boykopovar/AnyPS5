@@ -472,9 +472,13 @@ PacketTag CurrentPacket() {
 }
 
 const char* ReadSiteName(ReadSite site) {
-    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache"};
+    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache", "host-write"};
     const auto index = static_cast<std::size_t>(site);
     return index < static_cast<std::size_t>(ReadSite::Count) ? names[index] : "?";
+}
+
+bool WritesGuestMemory(ReadSite site) {
+    return site == ReadSite::Store || site == ReadSite::HostWrite;
 }
 
 ReadSite SetReadSite(ReadSite site) {
@@ -3090,7 +3094,14 @@ std::atomic<std::uint64_t> gpuHoldSerial{0};
 }
 
 void GpuMutexType::enter() {
-    if (!HeldByThisThread()) LockSpinning(mutex, HandoffSpinWindow());
+    if (HeldByThisThread() || mutex.try_lock()) return;
+    block();
+}
+
+void GpuMutexType::block() {
+    waiters.fetch_add(1, std::memory_order_relaxed);
+    LockSpinning(mutex, HandoffSpinWindow());
+    waiters.fetch_sub(1, std::memory_order_relaxed);
 }
 
 bool GpuMutexType::tryEnter() {
@@ -3177,7 +3188,7 @@ void GpuMutexType::lock() {
             const auto site = static_cast<std::size_t>(std::exchange(LockStats().nextSite, GpuLockSite::Other));
             if (!tryEnter()) {
                 const auto start = std::chrono::steady_clock::now();
-                LockSpinning(mutex, HandoffSpinWindow());
+                block();
                 trace->Add("GpuMutex.wait", GpuLockSiteNames[site], start, std::chrono::steady_clock::now());
             }
         }
@@ -3195,7 +3206,7 @@ void GpuMutexType::lock() {
         HolderMatrixValues before{};
         if (holders) Holders().Snapshot(before);
         const auto start = std::chrono::steady_clock::now();
-        LockSpinning(mutex, HandoffSpinWindow());
+        block();
         acquired();
         const auto now = std::chrono::steady_clock::now();
         if (auto* trace = PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr) trace->Add("GpuMutex.wait", GpuLockSiteNames[site], start, now);
@@ -3304,6 +3315,17 @@ GpuMutexType& GpuMutex() {
     static GpuMutexType mutex;
     return mutex;
 #endif
+}
+
+std::function<bool()> YieldToGpuMutexWaiters(std::function<bool()> stop) {
+    return [stop = std::move(stop), first = true]() mutable {
+        if (stop()) return true;
+        if (first) {
+            first = false;
+            return false;
+        }
+        return GpuMutex().Waiters() != 0;
+    };
 }
 
 void TagGpuLockThread(std::uint32_t queue) {
@@ -3445,7 +3467,7 @@ void PrepareHostWrite(std::uintptr_t address, std::size_t bytes) {
     if (GpuMutex().HeldByThisThread()) noteLockedHostWrite(address, bytes);
     const HostWriteInFlight inFlight;
     if (hostWritesStopped.load(std::memory_order_seq_cst)) return;
-    const ReadSiteScope site(ReadSite::Store);
+    const ReadSiteScope site(ReadSite::HostWrite);
     if (!MemoryProfiled()) {
         FlushGpuWrites(address, bytes);
         return;

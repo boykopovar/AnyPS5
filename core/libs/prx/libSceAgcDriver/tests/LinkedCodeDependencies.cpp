@@ -28,7 +28,7 @@ struct DriverTestAccess {
         auto& driver = Driver::Get();
         auto memory = std::make_shared<ShaderMemory>(request.context.memory);
         std::shared_ptr<const PreparedShaderState::UserDataLink> linking;
-        auto invocation = InvocationFor(*shader, 0, request, &linking);
+        auto invocation = InvocationFor(*shader, 0, request, false, &linking);
         const auto forget = GuestMemory::ForgetSerial();
         const auto capture = CaptureInvocation(*memory, *shader, 0, request, invocation, &linking);
         if (dependencies != nullptr && linking != nullptr) dependencies->assign(linking->dependencies.begin(), linking->dependencies.end());
@@ -321,7 +321,7 @@ void Run(const std::string& mode, std::string_view watch) {
         Require(evicted.entries == 0u && evicted.variantBytes == 0u, "eviction did not remove dispatch-cache accounting");
         for (const auto& dependency : dependencies) Require(dependency.expired(), "evicted dependency snapshot survived outside the dispatch-cache budget");
         std::shared_ptr<const PreparedShaderState::UserDataLink> reused;
-        InvocationFor(*shader, 0, request, &reused);
+        InvocationFor(*shader, 0, request, false, &reused);
         Require(reused != nullptr && reused->linked == linked, "eviction discarded the reusable direct-call link");
         std::printf("dispatch-cache bytes: %llu -> %llu; released %zu dependency snapshots\n", static_cast<unsigned long long>(footprint.variantBytes), static_cast<unsigned long long>(evicted.variantBytes), dependencies.size());
         return;
