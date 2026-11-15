@@ -50,6 +50,7 @@ using NKWebKit::WtfAbi::String;
 
 constexpr int InvalidHandle = -1;
 constexpr int GuestEINTR = 4;
+constexpr int GuestEINVAL = 22;
 constexpr bool FileAccessPermissionAll = true;
 
 FileHandle& Checked(FileHandle* self, const char* operation) {
@@ -113,8 +114,14 @@ int Retry(Transfer transfer) {
     return -1;
 }
 
+int RejectNegativeLength() {
+    *__error_nid_postfix() = GuestEINVAL;
+    return -1;
+}
+
 int Write(FileHandle& handle, const void* data, int length) {
     if (!Open(handle)) return -1;
+    if (length < 0) return RejectNegativeLength();
     return Retry([&] { return write_nid_postfix(handle.fileHandle, static_cast<const char*>(data), static_cast<std::int64_t>(static_cast<std::size_t>(length))); });
 }
 
@@ -197,6 +204,7 @@ bool APS5_VABI _ZN7WebCore10FileHandle4openEv(FileHandle* self) {
 int APS5_VABI _ZN7WebCore10FileHandle4readEPvi(FileHandle* self, void* data, int length) {
     auto& handle = Checked(self, "read");
     if (!Open(handle)) return -1;
+    if (length < 0) return RejectNegativeLength();
     return Retry([&] { return read_nid_postfix(handle.fileHandle, data, static_cast<std::uint64_t>(static_cast<std::size_t>(length))); });
 }
 

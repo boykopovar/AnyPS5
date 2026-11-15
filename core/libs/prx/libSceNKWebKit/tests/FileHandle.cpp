@@ -96,6 +96,27 @@ static void WritesReadsAndReopens(const std::filesystem::path& host) {
     _ZN7WebCore10FileHandleD1Ev(absent.get());
 }
 
+static void RejectsNegativeLengths(const std::filesystem::path& host) {
+    auto path = Guest("/nkwebkit-filehandle/negative.txt");
+    Storage writer;
+    _ZN7WebCore10FileHandleC1ERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeE(writer.get(), &path, Truncate);
+    *__error_nid_postfix() = 0;
+    Require(_ZN7WebCore10FileHandle5writeEPKvi(writer.get(), "data", -1) == -1 && *__error_nid_postfix() == 22);
+    Require(_ZNK7WebCore10FileHandlecvbEv(writer.get()));
+    Require(_ZN7WebCore10FileHandle5writeEPKvi(writer.get(), "data", 4) == 4);
+    _ZN7WebCore10FileHandleD1Ev(writer.get());
+    Require(Contents(host / "negative.txt") == "data");
+
+    Storage reader;
+    _ZN7WebCore10FileHandleC1ERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeE(reader.get(), &path, Read);
+    char buffer[4] = {'q', 'q', 'q', 'q'};
+    *__error_nid_postfix() = 0;
+    Require(_ZN7WebCore10FileHandle4readEPvi(reader.get(), buffer, -1) == -1 && *__error_nid_postfix() == 22);
+    Require(std::memcmp(buffer, "qqqq", 4) == 0);
+    Require(_ZN7WebCore10FileHandle4readEPvi(reader.get(), buffer, 4) == 4 && std::memcmp(buffer, "data", 4) == 0);
+    _ZN7WebCore10FileHandleD2Ev(reader.get());
+}
+
 static void MovesAsTheSourceDoes() {
     auto path = Guest("/nkwebkit-filehandle/moved.txt");
     Storage locked;
@@ -147,6 +168,7 @@ int main() {
     AddPathAlias_nid_no_patch("/nkwebkit-filehandle", reinterpret_cast<const char*>(hostPath.c_str()));
     DefaultHandleIsClosed();
     WritesReadsAndReopens(root);
+    RejectsNegativeLengths(root);
     MovesAsTheSourceDoes();
     LockingCloseKeepsTheDescriptor();
     RefusesNull();
