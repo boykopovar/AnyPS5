@@ -28,6 +28,18 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_cairo_scaled_font_tests)
     add_test(NAME guest_cairo_scaled_font COMMAND guest_cairo_scaled_font_tests)
     set_tests_properties(guest_cairo_scaled_font PROPERTIES TIMEOUT 30)
+
+    add_test_executable(guest_cairo_scaled_font_export_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestCairoScaledFontExports.cpp)
+    target_include_directories(guest_cairo_scaled_font_export_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_scaled_font_export_tests PRIVATE libcairo libc)
+    configure_windows_unwind(guest_cairo_scaled_font_export_tests)
+    add_test(NAME guest_cairo_scaled_font_exports COMMAND guest_cairo_scaled_font_export_tests)
+    set_tests_properties(guest_cairo_scaled_font_exports PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_scaled_font_exports PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+    endif()
     add_test_executable(guest_cairo_mesh_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoMesh.cpp)
     target_include_directories(guest_cairo_mesh_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_cairo_mesh_tests PRIVATE libcairo cairo_backend)
