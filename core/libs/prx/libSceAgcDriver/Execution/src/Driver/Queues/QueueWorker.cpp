@@ -74,8 +74,8 @@ void Driver::deferCompletion(const Submission& submission) {
     completionDeferred() = true;
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f deferred completion serial=%llu to the draw pipeline\n", TraceMs(), static_cast<unsigned long long>(submission.serial));
-    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Completion, [this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, holdsFlip = submission.holdsFlip] {
-        completeSubmission(serial, received, labelWrites, progress, holdsFlip);
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Completion, [this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, flipWork = submission.holdsFlip ? submission.flipWork : nullptr] {
+        completeSubmission(serial, received, labelWrites, progress, flipWork);
     }, {});
 }
 
@@ -107,7 +107,7 @@ std::uint64_t Driver::submitFlipWork(std::uint32_t queue) {
     return localDevice != nullptr ? localDevice->SubmitAndEpoch() : 0;
 }
 
-void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, bool holdsFlip) {
+void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, const std::shared_ptr<FlipWork>& flipWork) {
     struct Complete {
         Driver& driver;
         std::uint64_t serial, received;
@@ -125,7 +125,7 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    if (holdsFlip) finishFlipWork(submitFlipWork(0));
+    if (flipWork != nullptr) finishFlipWork(flipWork, submitFlipWork(0));
     else submitOpenWork(progress);
 }
 
@@ -157,6 +157,9 @@ void Driver::run(std::uint32_t id) noexcept {
     char role[32];
     std::snprintf(role, sizeof role, "queue worker 0x%x", id);
     PinWorkerThread(role);
+    char threadName[16];
+    std::snprintf(threadName, sizeof threadName, "qworker 0x%x", id);
+    NameDriverThread(threadName);
 
     GuestMemory::TagGpuLockThread(id);
     StartWorkerSampler(id);
