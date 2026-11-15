@@ -37,6 +37,10 @@ constexpr int PemNotProcType = 107;
 constexpr int Asn1TooLong = 155;
 constexpr int EcLibrary = 16;
 constexpr int ErrorReasonEcLibrary = 16;
+constexpr int RsaLibrary = 4;
+constexpr int ErrorReasonRsaLibrary = 4;
+constexpr int Asn1NestedAsn1Error = 58;
+constexpr int Asn1WrongTag = 168;
 
 constexpr char RsaTraditionalPem[] =
     "-----BEGIN RSA PRIVATE KEY-----\n"
@@ -190,6 +194,43 @@ constexpr char Ec384PublicPem[] =
     "yxBhugUpDI+7+BGAsSTH8jbKfKBvsFXQNtWYU5dBxSJo08NuxmW3fiCzPS5ewUZn\n"
     "yMxrAY4I0HoUQH2mAs+5oPkUs6GM8ZBt\n"
     "-----END PUBLIC KEY-----\n";
+
+constexpr char Ec256Pkcs8InRsaLabelPem[] =
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg5nQz4+xqzEFJ+T+M\n"
+    "n505TUF2CjHUe4KJWO2XbrcgJGKhRANCAARSkMMb/d4n1YlW6ESrlNoh7YxwUXd0\n"
+    "1OYA8narO0WYzXWIrMINy+ZrTuBKlbw13TxUx/eemzOsgolTQCv+5xUv\n"
+    "-----END RSA PRIVATE KEY-----\n";
+
+constexpr char RsaPkcs8InEcLabelPem[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCdIua+yJO2bUqF\n"
+    "LBoWaf2RtLuvy3Y5qR+kNWVWwDf/snFp7/a0d0/dEFe1my2T+aC5g4ERUSpkLhbR\n"
+    "RmYM66uG7cl6q1UIyOFExsH97xWrChU9VpwYJZJii7krGDZyC7C3zdsT4CINeT11\n"
+    "TJCWpScAeBmJooLu+nkN3GemS5yMRGOml4svb9xrr3ibcPbOy6xLXQ4NPL53W3pu\n"
+    "P3MEfwCnRufLfzCySERHoYZHgsNfzWIoeswODt/NwskHaDSm7QxzEirlWoew/Cma\n"
+    "oyAgRBEci95YFTbh/AqkwQjx9POMMPRdwDYMXP1zlJ9Z3vsyiAJK2CXqH26PvwGc\n"
+    "Vq8Ytk5tAgMBAAECggEABNm587OvU5dGEJxO5dg5upCwpnmKWbdNwbzgNvBSCjOQ\n"
+    "6qs8m09/iJxjiLiUjJfNDUzw4/70ZwlBLQ6WQdnYfp7CdGXrhwzkX0IfZN5HdfMm\n"
+    "urD8uoYWYbJccecabyTLPLE/DPsDMhVG/2Lwp6XLcWlDqIr6rbPPnszp6ik1WOML\n"
+    "JCFgcsp5NSZT+yvYUeS7qoSGNgDIvhkqu1NzLnQJMOysKliCmAAhJJC47qOWo7Wp\n"
+    "YWqZzJNYfRFSOLfne0aaPrYIjRiHUMt9a/4ine0OhCXVgVU0i26vdcG9UTbC2rfd\n"
+    "Dhd0daMGq6jCI7V1evEyeIG2iuxE2zjlaT1qWX4sZQKBgQDVu+cE3wd11cNxb1c5\n"
+    "CbLKWnH09gVHZziqDv0q598uw9y/Rv54iFu00OgtSKLJpdiGQF9BS/G4nFyWZlov\n"
+    "9PYfJbSMixth5lH4hxT9qdCi5fQtOy/tvrOqeqj7mV7zAvp3Eti5tzG5vwzoguhH\n"
+    "DgNlUQr3/4rFyERC9xRDeBq1CwKBgQC8NcqlbEHuanMI4XYOid4YUtcDAVM16Ekt\n"
+    "syKUz2eNbsH4DHPyLuTzF9Uf4NFjOhuyY97mWrVg2FX2pFQ5sdPO5ExgE3+Bv64W\n"
+    "UHqyNbOIYdOXZzbLxyEIqoL5GtJ7WarwdDhHLBtoUQL+iAzzngqyx2nV4yNuABOH\n"
+    "1Z8aZbLFZwKBgQCspgNAGRTCp7EfkWvopB/re1HwKUcsXYIVRNRWc0UCVq6bSDLI\n"
+    "lIVXsyTJZ5Ivxyr3j0oiycDxekUELJuPf5XMpT2KBdhRpaXzVtKq8SCaZZxvaQ8X\n"
+    "QeOJw1l7G3HqZS6DPxMYOZYOT/iSXSRaOUSe8+8jUyX7DAGwAjw5H+ya7wKBgQCh\n"
+    "AWNaIEJGssm1zyovRcG5DSTibT/B3fS8I4JxyvvLAfTtPbnydCtnyfuIScrWF9+Z\n"
+    "u9XzOaXwMyFW3T0wHfAUDTlI92Ucmd1TOYW87jOneAiKfMFjkfWwdC2W7FsjKpIR\n"
+    "IVsDh7fqhWMKW1i5D3oXdoATeTvV3jrW+OgirN1CAQKBgQCset5MY7jAoSXgB9iY\n"
+    "44mzJsvzFbbHnnsQQvxI6T+aikZg/dU2fkHwF8Ar56qBuOinp8Tg9kOnafftrjTZ\n"
+    "vhSlzslCsicalnAiUT/1sNNcVBaRLpmfLQCdxCM4mljZpjJ3Gdv+6OUS4BxJPIZB\n"
+    "AgZqaf3dCsy28HfnV0FUlpQkgw==\n"
+    "-----END EC PRIVATE KEY-----\n";
 
 constexpr char CertificatePem[] =
     "-----BEGIN CERTIFICATE-----\n"
@@ -822,6 +863,208 @@ void TestCorruptTraditionalEc() {
         {ErrorReasonAsn1Library, Asn1TooLong}, {PemLibrary, ErrorReasonAsn1Library}});
 }
 
+void TestPkcs8InTraditionalLabelFallback() {
+    const std::vector<unsigned char> ecInRsa = BytesOf(Ec256Pkcs8InRsaLabelPem);
+    const std::vector<unsigned char> rsaInEc = BytesOf(RsaPkcs8InEcLabelPem);
+    auto* ecReference = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    auto* rsaReference = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    auto* ecTraditional = ReadPrivateKey(BytesOf(Ec256TraditionalPem), nullptr, nullptr, nullptr);
+    auto* rsaTraditional = ReadPrivateKey(BytesOf(RsaTraditionalPem), nullptr, nullptr, nullptr);
+
+    ERR_clear_error_nid_postfix();
+    auto* bioEcInRsa1 = MemoryBio(ecInRsa);
+    auto* keyEcInRsa1 = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(bioEcInRsa1, nullptr, nullptr, nullptr);
+    BIO_free_nid_postfix(bioEcInRsa1);
+    Require(keyEcInRsa1 != nullptr);
+    Require(keyEcInRsa1->type == EcType);
+    Require(EVP_PKEY_id_nid_postfix(keyEcInRsa1) == EcType);
+    Require(EVP_PKEY_base_id_nid_postfix(keyEcInRsa1) == EcType);
+    CompareEc(static_cast<const EcKey*>(keyEcInRsa1->key), static_cast<const EcKey*>(ecReference->key), Secp256r1, true);
+    CompareEc(static_cast<const EcKey*>(keyEcInRsa1->key), static_cast<const EcKey*>(ecTraditional->key), Secp256r1, true);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary}});
+
+    ERR_clear_error_nid_postfix();
+    LibreSsl3EvpPkey* slotEcNull = nullptr;
+    auto* bioEcInRsaNull = MemoryBio(ecInRsa);
+    auto* keyEcInRsaNull = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(bioEcInRsaNull, &slotEcNull, nullptr, nullptr);
+    BIO_free_nid_postfix(bioEcInRsaNull);
+    Require(keyEcInRsaNull != nullptr);
+    Require(slotEcNull == keyEcInRsaNull);
+    Require(keyEcInRsaNull->type == EcType);
+    Require(EVP_PKEY_id_nid_postfix(keyEcInRsaNull) == EcType);
+    Require(EVP_PKEY_base_id_nid_postfix(keyEcInRsaNull) == EcType);
+    CompareEc(static_cast<const EcKey*>(keyEcInRsaNull->key), static_cast<const EcKey*>(ecReference->key), Secp256r1, true);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary}});
+
+    ERR_clear_error_nid_postfix();
+    auto* rsaPreExisting = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    auto* slotEcReplace = rsaPreExisting;
+    auto* bioEcInRsaReplace = MemoryBio(ecInRsa);
+    auto* keyEcInRsaReplace = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(bioEcInRsaReplace, &slotEcReplace, nullptr, nullptr);
+    BIO_free_nid_postfix(bioEcInRsaReplace);
+    Require(keyEcInRsaReplace != nullptr);
+    Require(slotEcReplace == keyEcInRsaReplace);
+    Require(keyEcInRsaReplace->type == EcType);
+    Require(EVP_PKEY_id_nid_postfix(keyEcInRsaReplace) == EcType);
+    Require(EVP_PKEY_base_id_nid_postfix(keyEcInRsaReplace) == EcType);
+    CompareEc(static_cast<const EcKey*>(keyEcInRsaReplace->key), static_cast<const EcKey*>(ecReference->key), Secp256r1, true);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary}});
+    ERR_clear_error_nid_postfix();
+    ExpectEmptyQueue();
+
+    ERR_clear_error_nid_postfix();
+    auto* bioRsaInEc1 = MemoryBio(rsaInEc);
+    auto* keyRsaInEc1 = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(bioRsaInEc1, nullptr, nullptr, nullptr);
+    BIO_free_nid_postfix(bioRsaInEc1);
+    Require(keyRsaInEc1 != nullptr);
+    Require(keyRsaInEc1->type == RsaType);
+    Require(EVP_PKEY_id_nid_postfix(keyRsaInEc1) == RsaType);
+    Require(EVP_PKEY_base_id_nid_postfix(keyRsaInEc1) == RsaType);
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEc1->key), static_cast<const LibreSsl3Rsa*>(rsaReference->key), true);
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEc1->key), static_cast<const LibreSsl3Rsa*>(rsaTraditional->key), true);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
+
+    ERR_clear_error_nid_postfix();
+    LibreSsl3EvpPkey* slotRsaNull = nullptr;
+    auto* bioRsaInEcNull = MemoryBio(rsaInEc);
+    auto* keyRsaInEcNull = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(bioRsaInEcNull, &slotRsaNull, nullptr, nullptr);
+    BIO_free_nid_postfix(bioRsaInEcNull);
+    Require(keyRsaInEcNull != nullptr);
+    Require(slotRsaNull == keyRsaInEcNull);
+    Require(keyRsaInEcNull->type == RsaType);
+    Require(EVP_PKEY_id_nid_postfix(keyRsaInEcNull) == RsaType);
+    Require(EVP_PKEY_base_id_nid_postfix(keyRsaInEcNull) == RsaType);
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEcNull->key), static_cast<const LibreSsl3Rsa*>(rsaReference->key), true);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
+
+    ERR_clear_error_nid_postfix();
+    auto* ecPreExisting = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    auto* slotRsaReplace = ecPreExisting;
+    auto* bioRsaInEcReplace = MemoryBio(rsaInEc);
+    auto* keyRsaInEcReplace = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(bioRsaInEcReplace, &slotRsaReplace, nullptr, nullptr);
+    BIO_free_nid_postfix(bioRsaInEcReplace);
+    Require(keyRsaInEcReplace != nullptr);
+    Require(slotRsaReplace == keyRsaInEcReplace);
+    Require(keyRsaInEcReplace->type == RsaType);
+    Require(EVP_PKEY_id_nid_postfix(keyRsaInEcReplace) == RsaType);
+    Require(EVP_PKEY_base_id_nid_postfix(keyRsaInEcReplace) == RsaType);
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEcReplace->key), static_cast<const LibreSsl3Rsa*>(rsaReference->key), true);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
+    ERR_clear_error_nid_postfix();
+    ExpectEmptyQueue();
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(keyEcInRsa1);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(keyEcInRsaNull);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(keyEcInRsaReplace);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(keyRsaInEc1);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(keyRsaInEcNull);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(keyRsaInEcReplace);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecTraditional);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaTraditional);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecReference);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReference);
+}
+
+void TestNormalTraditionalCleanQueue() {
+    ERR_clear_error_nid_postfix();
+    const std::vector<unsigned char> rsaTradBytes = BytesOf(RsaTraditionalPem);
+    auto* rsaBio = MemoryBio(rsaTradBytes);
+    auto* rsaKey = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(rsaBio, nullptr, nullptr, nullptr);
+    BIO_free_nid_postfix(rsaBio);
+    Require(rsaKey != nullptr);
+    Require(rsaKey->type == RsaType);
+    Require(EVP_PKEY_id_nid_postfix(rsaKey) == RsaType);
+    Require(EVP_PKEY_base_id_nid_postfix(rsaKey) == RsaType);
+    ExpectEmptyQueue();
+
+    auto* rsaRef = KeyFromPkcs8Der(BodyBytes(BytesOf(RsaPkcs8Pem)));
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(rsaKey->key), static_cast<const LibreSsl3Rsa*>(rsaRef->key), true);
+
+    const void* rsaN = nullptr;
+    const void* rsaE = nullptr;
+    const void* rsaD = nullptr;
+    RSA_get0_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(rsaKey->key), &rsaN, &rsaE, &rsaD);
+    Require(rsaN != nullptr && rsaE != nullptr && rsaD != nullptr);
+    const void* refN = nullptr;
+    const void* refE = nullptr;
+    const void* refD = nullptr;
+    RSA_get0_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(rsaRef->key), &refN, &refE, &refD);
+    CompareBignums(rsaN, refN);
+    CompareBignums(rsaE, refE);
+    CompareBignums(rsaD, refD);
+
+    LibreSsl3EvpPkey* rsaSlotNull = nullptr;
+    auto* rsaBioNull = MemoryBio(rsaTradBytes);
+    auto* rsaKeyNull = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(rsaBioNull, &rsaSlotNull, nullptr, nullptr);
+    BIO_free_nid_postfix(rsaBioNull);
+    Require(rsaKeyNull != nullptr);
+    Require(rsaSlotNull == rsaKeyNull);
+    ExpectEmptyQueue();
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(rsaKeyNull->key), static_cast<const LibreSsl3Rsa*>(rsaRef->key), true);
+
+    auto* rsaSlotReplace = rsaKey;
+    auto* rsaBioReplace = MemoryBio(rsaTradBytes);
+    auto* rsaReplaced = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(rsaBioReplace, &rsaSlotReplace, nullptr, nullptr);
+    BIO_free_nid_postfix(rsaBioReplace);
+    Require(rsaReplaced != nullptr);
+    Require(rsaSlotReplace == rsaReplaced);
+    ExpectEmptyQueue();
+    CompareRsa(static_cast<const LibreSsl3Rsa*>(rsaReplaced->key), static_cast<const LibreSsl3Rsa*>(rsaRef->key), true);
+
+    ERR_clear_error_nid_postfix();
+    const std::vector<unsigned char> ecTradBytes = BytesOf(Ec256TraditionalPem);
+    auto* ecBio = MemoryBio(ecTradBytes);
+    auto* ecKey = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(ecBio, nullptr, nullptr, nullptr);
+    BIO_free_nid_postfix(ecBio);
+    Require(ecKey != nullptr);
+    Require(ecKey->type == EcType);
+    Require(EVP_PKEY_id_nid_postfix(ecKey) == EcType);
+    Require(EVP_PKEY_base_id_nid_postfix(ecKey) == EcType);
+    ExpectEmptyQueue();
+
+    auto* ecRef = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    CompareEc(static_cast<const EcKey*>(ecKey->key), static_cast<const EcKey*>(ecRef->key), Secp256r1, true);
+
+    const auto* ecKeyStruct = static_cast<const EcKey*>(ecKey->key);
+    const auto* ecRefStruct = static_cast<const EcKey*>(ecRef->key);
+    Require(ecKeyStruct->group != nullptr && ecRefStruct->group != nullptr);
+    Require(ecKeyStruct->group->curve.nid == Secp256r1);
+    Require(ecRefStruct->group->curve.nid == Secp256r1);
+    Require(ecKeyStruct->privateKey != nullptr && ecRefStruct->privateKey != nullptr);
+    Require(mbedtls_mpi_cmp_mpi(&ecKeyStruct->privateKey->value, &ecRefStruct->privateKey->value) == 0);
+
+    LibreSsl3EvpPkey* ecSlotNull = nullptr;
+    auto* ecBioNull = MemoryBio(ecTradBytes);
+    auto* ecKeyNull = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(ecBioNull, &ecSlotNull, nullptr, nullptr);
+    BIO_free_nid_postfix(ecBioNull);
+    Require(ecKeyNull != nullptr);
+    Require(ecSlotNull == ecKeyNull);
+    ExpectEmptyQueue();
+    CompareEc(static_cast<const EcKey*>(ecKeyNull->key), static_cast<const EcKey*>(ecRef->key), Secp256r1, true);
+
+    auto* ecSlotReplace = ecKey;
+    auto* ecBioReplace = MemoryBio(ecTradBytes);
+    auto* ecReplaced = PEM_read_bio_PrivateKey_nid_disambig1_nid_postfix(ecBioReplace, &ecSlotReplace, nullptr, nullptr);
+    BIO_free_nid_postfix(ecBioReplace);
+    Require(ecReplaced != nullptr);
+    Require(ecSlotReplace == ecReplaced);
+    ExpectEmptyQueue();
+    CompareEc(static_cast<const EcKey*>(ecReplaced->key), static_cast<const EcKey*>(ecRef->key), Secp256r1, true);
+
+    ERR_clear_error_nid_postfix();
+    ExpectEmptyQueue();
+
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaKeyNull);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaReplaced);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(rsaRef);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecKeyNull);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecReplaced);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ecRef);
+}
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
@@ -862,5 +1105,7 @@ int main() {
     TestLabels();
     TestCorruptTraditionalEc();
     TestErrors();
+    TestPkcs8InTraditionalLabelFallback();
+    TestNormalTraditionalCleanQueue();
     return 0;
 }
