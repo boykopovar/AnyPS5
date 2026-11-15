@@ -285,6 +285,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_bda_staging PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_carried_shadow COMMAND agc_driver_recorder_tests --carried-shadow-only)
+    set_tests_properties(agc_carried_shadow PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_carried_shadow PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_bda_staging_bound COMMAND agc_driver_recorder_tests --bda-staging-bound-only)
     set_tests_properties(agc_bda_staging_bound PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
