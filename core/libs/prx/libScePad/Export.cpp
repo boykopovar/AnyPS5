@@ -506,7 +506,12 @@ int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
- const std::uint8_t* bytes = static_cast<const std::uint8_t*>(param);
+ std::array<std::uint8_t, 120> local{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(local.data(), param, local.size());
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
+ const std::uint8_t* bytes = local.data();
  const std::uint8_t mask = bytes[0];
  if ((mask & ~0x3u) != 0) {
   return PAD_ERROR_INVALID_ARG;
