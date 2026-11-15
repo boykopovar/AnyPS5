@@ -95,7 +95,7 @@ def comparison_path(path, links=frozenset()):
     for prefix in (*reversed(path.parents), path):
         if not prefix.is_symlink():
             continue
-        identity = prefix.parent.resolve() / prefix.name
+        identity = (prefix.parent.resolve() / prefix.name).parts
         if identity in links:
             raise RuntimeError("symbolic link cycle")
         target = prefix.readlink()
@@ -226,6 +226,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     sys.exit(main())

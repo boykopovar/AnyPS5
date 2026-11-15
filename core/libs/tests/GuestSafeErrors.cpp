@@ -100,6 +100,11 @@ void CheckConstraints() {
         Require(strerror_s_nid_postfix(nullptr, capacity, 2) == 22, "reject null destination");
         Require(violations == before + 1 && violationBuffer == nullptr, "one callback for null destination");
     }
+    for (const auto capacity : {std::size_t{4}, std::size_t{128}}) {
+        const int before = violations;
+        Require(strerror_s_nid_postfix(reinterpret_cast<char*>(0x10), capacity, 2) == 22, "reject unwritable destination");
+        Require(violations == before + 1 && violationBuffer == nullptr, "one callback for an unwritable destination");
+    }
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(ignore_handler_s_nid_postfix));
 
     Require(strerror_s_nid_postfix(nullptr, 1, 2) == 22, "installed ignore handler returns to caller");

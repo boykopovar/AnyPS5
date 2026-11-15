@@ -363,14 +363,16 @@ int APS5_VABI sceNgs2JobSchedulerResetOption(Ngs2JobSchedulerOption* option) {
 
 int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2ContextBufferInfo* buffer_info) {
     if (buffer_info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    std::memset(buffer_info, 0, offsetof(Ngs2ContextBufferInfo, user_data));
+    const Ngs2ContextBufferInfo cleared{};
+    if (!WriteGuestBytes(buffer_info, &cleared, offsetof(Ngs2ContextBufferInfo, user_data))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     Ngs2SystemOption checked{};
     const int result = CheckSystemOption(option, checked);
     if (result != SCE_NGS2_OK) return result;
     Ngs2JobPlan plan;
     const int planned = PlanJobs(checked, plan);
     if (planned < 0) return planned;
-    buffer_info->host_buffer_size = plan.size;
+    const std::size_t size = plan.size;
+    if (!WriteGuest(&buffer_info->host_buffer_size, size)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -455,18 +457,19 @@ int APS5_VABI sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info
     const Ngs2Lock lock;
     const auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
-    *info = {};
-    std::memcpy(info->name, system->option.name, sizeof(info->name));
-    info->system_handle = system_handle;
-    info->buffer_info = system->bufferInfo;
-    info->uid = system->uid;
-    info->min_grain_samples = MIN_GRAIN_SAMPLES;
-    info->max_grain_samples = system->option.max_grain_samples;
-    info->state_flags = 1;
-    info->rack_count = static_cast<std::uint32_t>(system->racks.size());
-    info->render_count = system->renderCount;
-    info->sample_rate = system->option.sample_rate;
-    info->num_grain_samples = system->option.num_grain_samples;
+    Ngs2SystemInfo local{};
+    std::memcpy(local.name, system->option.name, sizeof(local.name));
+    local.system_handle = system_handle;
+    local.buffer_info = system->bufferInfo;
+    local.uid = system->uid;
+    local.min_grain_samples = MIN_GRAIN_SAMPLES;
+    local.max_grain_samples = system->option.max_grain_samples;
+    local.state_flags = 1;
+    local.rack_count = static_cast<std::uint32_t>(system->racks.size());
+    local.render_count = system->renderCount;
+    local.sample_rate = system->option.sample_rate;
+    local.num_grain_samples = system->option.num_grain_samples;
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -511,8 +514,7 @@ int APS5_VABI sceNgs2SystemGetUserData(uintptr_t system_handle, uintptr_t* user_
     const Ngs2Lock lock;
     const auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
-    if (user_data == nullptr) APS5_INVALID_ARG_EX;
-    *user_data = system->userData;
+    if (user_data == nullptr || !WriteGuest(user_data, system->userData)) APS5_INVALID_ARG_EX;
     return SCE_NGS2_OK;
 }
 
@@ -601,7 +603,7 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
 
 int APS5_VABI sceNgs2SystemResetOption(Ngs2SystemOption* option) {
     if (option == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *option = DefaultSystemOption();
+    if (!WriteGuest(option, DefaultSystemOption())) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -609,9 +611,9 @@ int APS5_VABI sceNgs2ReportRegisterHandler(uint32_t report_type, Ngs2ReportHandl
     if (out_handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (handler == nullptr) APS5_INVALID_ARG_EX;
     const Ngs2Lock lock;
-    auto* registration = new Ngs2ReportRegistration{report_type, handler, user_data};
-    ReportRegistrations().push_back(registration);
-    *out_handle = reinterpret_cast<Ngs2Handle>(registration);
+    std::unique_ptr<Ngs2ReportRegistration> registration(new Ngs2ReportRegistration{report_type, handler, user_data});
+    if (!WriteGuest(out_handle, reinterpret_cast<Ngs2Handle>(registration.get()))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    ReportRegistrations().push_back(registration.release());
     return SCE_NGS2_OK;
 }
 
@@ -632,7 +634,7 @@ int APS5_VABI sceNgs2SystemEnumHandles(uintptr_t* out_handles, uint32_t max_hand
     const Ngs2Lock lock;
     uint32_t count = 0;
     for (const auto* system : Systems()) {
-        if (out_handles != nullptr && count < max_handles) out_handles[count] = reinterpret_cast<uintptr_t>(system);
+        if (out_handles != nullptr && count < max_handles && !WriteGuest(out_handles + count, reinterpret_cast<uintptr_t>(system))) return invalid_argument;
         ++count;
     }
     return static_cast<int>(count);
@@ -647,7 +649,7 @@ int APS5_VABI sceNgs2SystemEnumRackHandles(uintptr_t system_handle, uintptr_t* o
     if (system == nullptr) return invalid_system_handle;
     uint32_t count = 0;
     for (const auto* rack : system->racks) {
-        if (out_handles != nullptr && count < max_handles) out_handles[count] = reinterpret_cast<uintptr_t>(rack);
+        if (out_handles != nullptr && count < max_handles && !WriteGuest(out_handles + count, reinterpret_cast<uintptr_t>(rack))) return invalid_argument;
         ++count;
     }
     return static_cast<int>(count);
@@ -658,7 +660,7 @@ int APS5_VABI sceNgs2FftQuerySize(std::uint32_t length, std::uint32_t flags, std
     if (size == nullptr || length < 8 || length > 12) return -1;
     std::uint32_t count = samples[length - 8];
     if ((flags & 2) != 0) count /= 2;
-    *size = static_cast<std::uint64_t>(count) * 2 * 16 + 64;
+    if (!WriteGuest(size, static_cast<std::uint64_t>(count) * 2 * 16 + 64)) return -1;
     return 0;
 }
 

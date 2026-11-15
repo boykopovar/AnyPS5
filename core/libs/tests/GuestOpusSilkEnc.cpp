@@ -1,4 +1,5 @@
 #include "prx/libSceOpusSilkEnc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -13,6 +14,10 @@
 #include <opus.h>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
@@ -175,7 +180,15 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(encodeFloat(ToState(wideMarker), floatPcm.data(), 960, packet.data(), 1500, 50) == EncoderError(0x15));
 
     Require(sceOpusSilkEncCtl(nullptr, 4000) == EncoderError(0x01));
+    errno = 71;
     Require(sceOpusSilkEncCtl(ToState(blank), 4000) == EncoderError(0x15));
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusSilkEncCtl(reinterpret_cast<OpusSilkEncoder*>(0x10), 4000); });
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusSilkEncEncodeWithPriority(reinterpret_cast<OpusSilkEncoder*>(0x10), pcm.data(), 960, packet.data(), 1500, 50); });
+    Require(errno == 71);
     Require(sceOpusSilkEncCtl(ToState(wideMarker), 4000) == EncoderError(0x15));
     for (const int request : std::array<int, 9>{0, -3, 3999, 4032, 4047, 11001, 11004, 2147483647, -2147483647 - 1})
         Require(sceOpusSilkEncCtl(ToState(marked), request) == EncoderError(0x07));
@@ -205,6 +218,8 @@ void RequireEarlyAnswers(int callerApplication) {
 } // namespace
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::uint32_t errorBase = 0x81770000u;
     constexpr std::size_t stateSize = 752;
     constexpr int callerApplication = OPUS_APPLICATION_VOIP;
@@ -370,4 +385,6 @@ int main() {
     ++instanceId;
     Require(sceOpusSilkEncDestroy(ToState(liveState)) == 0);
     RequireEarlyAnswers(callerApplication);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
