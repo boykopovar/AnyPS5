@@ -2638,7 +2638,14 @@ int APS5_VABI sceUserServiceGetDefaultNewUserGroupName(char* name, std::size_t s
     while (groupIndex < 128 && UserGroupSlotExists(groupIndex)) {
         ++groupIndex;
     }
-    std::snprintf(name, size, "User Group %d", groupIndex + 1);
+    char text[129];
+    const int length = std::snprintf(text, sizeof(text), "User Group %d", groupIndex + 1);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(name, text, static_cast<std::size_t>(length) + 1);
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     return USER_SERVICE_OK;
 }
 
