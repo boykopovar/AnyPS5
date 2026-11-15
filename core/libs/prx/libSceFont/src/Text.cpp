@@ -609,10 +609,11 @@ FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(const FontTextCharacte
     if (!textCodes) return nullptr;
     if (!textCharacter) throw std::runtime_error("libSceFont: sceFontCharactersRefersTextCodes without a text character");
     if (textCharacter->clusterIndex != 0 || textCharacter->synthetic != 0) return nullptr;
-    std::memset(textCodes, 0, sizeof(FontTextCodes));
-    StepTextCodes(textCodes, textCharacter);
-    textCodes->systemUse[TEXT_CODES_START] = const_cast<FontTextCharacter*>(textCharacter);
-    textCodes->systemUse[TEXT_CODES_TERM] = const_cast<FontTextCharacter*>(termCharacter);
+    FontTextCodes localCodes{};
+    StepTextCodes(&localCodes, textCharacter);
+    localCodes.systemUse[TEXT_CODES_START] = const_cast<FontTextCharacter*>(textCharacter);
+    localCodes.systemUse[TEXT_CODES_TERM] = const_cast<FontTextCharacter*>(termCharacter);
+    if (!CopyOutGuest(textCodes, localCodes)) return nullptr;
     return textCodes;
 }
 
