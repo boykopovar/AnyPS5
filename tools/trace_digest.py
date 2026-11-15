@@ -199,6 +199,169 @@ def load_summary_lines(path, numbered=False, label=None):
     return records
 
 
+def _summary_object(value, field):
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return value
+
+
+def _summary_string(value, field):
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    return value
+
+
+def _summary_bool(value, field):
+    if type(value) is not bool:
+        raise ValueError(f"{field} must be a boolean")
+    return value
+
+
+def _summary_integer(value, field):
+    try:
+        valid = type(value) is int and math.isfinite(value) and value >= 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError(f"{field} must be a finite non-negative integer")
+    return value
+
+
+def _summary_window_ms(value, field="window.ms"):
+    interval_number(value, field)
+    try:
+        scaled = value * 1000.0
+    except OverflowError as error:
+        raise ValueError(f"{field} is out of range") from error
+    if not math.isfinite(scaled):
+        raise ValueError(f"{field} is out of range")
+    return value
+
+
+def _require_field(mapping, key, validator, prefix=None):
+    field = f"{prefix}.{key}" if prefix else key
+    if key not in mapping:
+        raise ValueError(f"missing {field}")
+    return validator(mapping[key], field)
+
+
+def _validate_metric_map(mapping, field, validator):
+    values = _summary_object(mapping, field)
+    for key, value in values.items():
+        if not isinstance(key, str):
+            raise ValueError(f"{field} keys must be strings")
+        validator(value, f"{field}.{key}")
+
+
+def _validate_json_finite(root):
+    try:
+        json.dumps(root, allow_nan=False)
+        return
+    except (RecursionError, TypeError, ValueError):
+        pass
+    active = set()
+    stack = [(root, "summary", False)]
+    while stack:
+        value, path, exiting = stack.pop()
+        if exiting:
+            active.discard(id(value))
+            continue
+        if value is None or isinstance(value, (bool, str)):
+            continue
+        if type(value) is int:
+            try:
+                str(value)
+            except ValueError as error:
+                raise ValueError(f"{path} integer exceeds JSON limits") from error
+            continue
+        if type(value) is float:
+            if not math.isfinite(value):
+                raise ValueError(f"{path} must be finite")
+            continue
+        if isinstance(value, dict):
+            obj_id = id(value)
+            if obj_id in active:
+                raise ValueError(f"{path} contains a circular reference")
+            if len(active) >= 250:
+                raise ValueError(f"{path} nesting is too deep")
+            active.add(obj_id)
+            stack.append((value, path, True))
+            for key, item in reversed(list(value.items())):
+                if not isinstance(key, str):
+                    raise ValueError(f"{path} keys must be strings")
+                child = key if path == "summary" else f"{path}.{key}"
+                stack.append((item, child, False))
+            continue
+        if isinstance(value, (list, tuple)):
+            obj_id = id(value)
+            if obj_id in active:
+                raise ValueError(f"{path} contains a circular reference")
+            if len(active) >= 250:
+                raise ValueError(f"{path} nesting is too deep")
+            active.add(obj_id)
+            stack.append((value, path, True))
+            for index in range(len(value) - 1, -1, -1):
+                stack.append((value[index], f"{path}[{index}]", False))
+            continue
+        raise ValueError(f"{path} has unsupported JSON value type {type(value).__name__}")
+
+
+def validate_summary(summary):
+    record = _summary_object(summary, "summary")
+    window = _require_field(record, "window", _summary_object)
+    _require_field(window, "ms", _summary_window_ms, "window")
+    _require_field(window, "spec", _summary_string, "window")
+    _require_field(window, "first_present", _summary_integer, "window")
+    _require_field(record, "presents", _summary_integer)
+    frame = _require_field(record, "frame_ms", _summary_object)
+    p50 = _require_field(frame, "p50", interval_number, "frame_ms")
+    p90 = _require_field(frame, "p90", interval_number, "frame_ms")
+    p99 = _require_field(frame, "p99", interval_number, "frame_ms")
+    pmax = _require_field(frame, "max", interval_number, "frame_ms")
+    if not (p50 <= p90 <= p99 <= pmax):
+        raise ValueError("frame_ms percentiles must satisfy p50 <= p90 <= p99 <= max")
+    _require_field(record, "gpu_busy_ms_per_present", interval_number)
+    for key in ("commit", "gpu", "driver", "os", "resolution"):
+        _require_field(record, key, _summary_string)
+    _require_field(record, "trace_dropped", _summary_bool)
+    if "dirty" in record and record["dirty"] is not None:
+        _summary_bool(record["dirty"], "dirty")
+    if "trace" in record:
+        _summary_string(record["trace"], "trace")
+    if "env" in record:
+        _validate_metric_map(record["env"], "env", _summary_string)
+    for key in ("cpu", "title_id", "title", "content_version"):
+        if key in record:
+            _summary_string(record[key], key)
+    for key in ("cpu_threads", "memory_mib"):
+        if key in record:
+            _summary_integer(record[key], key)
+    for key in ("worker_busy_pct", "phase_totals_ms", "top_phases_ms_per_frame"):
+        if key in record:
+            _validate_metric_map(record[key], key, interval_number)
+    for key in ("owned_draw_counts", "graphics_track"):
+        if key in record:
+            _validate_metric_map(record[key], key, _summary_integer)
+    if "trace_dropped_threads" in record:
+        threads = _summary_object(record["trace_dropped_threads"], "trace_dropped_threads")
+        for name, entry in threads.items():
+            if not isinstance(name, str):
+                raise ValueError("trace_dropped_threads keys must be strings")
+            thread = _summary_object(entry, f"trace_dropped_threads.{name}")
+            if "totals_full" in thread:
+                _summary_bool(thread["totals_full"], f"trace_dropped_threads.{name}.totals_full")
+            if "events_lost" in thread:
+                _summary_integer(thread["events_lost"], f"trace_dropped_threads.{name}.events_lost")
+            if "events_full_after_s" in thread:
+                interval_number(thread["events_full_after_s"], f"trace_dropped_threads.{name}.events_full_after_s")
+    start = interval_number(record["interval_start_s"], "interval_start_s") if "interval_start_s" in record else None
+    end = interval_number(record["interval_end_s"], "interval_end_s") if "interval_end_s" in record else None
+    if start is not None and end is not None and end < start:
+        raise ValueError("interval_end_s must be at least interval_start_s")
+    _validate_json_finite(record)
+    return record
+
+
 def load_summary(path, trace_path):
     if path:
         candidate = resolve_summary_path(path)
@@ -208,13 +371,16 @@ def load_summary(path, trace_path):
             return None
         candidate = resolve_summary_path(hint)
     label = Path(path) if path else hint
-    lines = load_summary_lines(candidate, label=label)
+    lines = load_summary_lines(candidate, numbered=True, label=label)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
-        for line in reversed(lines):
+        for number, line in reversed(lines):
             if line.get("trace") == filename:
-                return line
+                try:
+                    return validate_summary(line)
+                except ValueError as error:
+                    raise ValueError(f"{label}:{number}: {error}") from error
     return None
 
 
@@ -262,7 +428,21 @@ def persistent_peaks(values):
     return sorted((entry for entry in peaks if entry[1] > 0), key=lambda entry: (-entry[1], entry[0]))
 
 
+def _is_window_override(summary):
+    return (
+        isinstance(summary, dict)
+        and summary.keys() == {"window"}
+        and isinstance(summary["window"], dict)
+        and summary["window"].keys() == {"ms"}
+    )
+
+
 def digest(trace, summary=None, stacks=None, worst=5, top=10):
+    if summary is not None:
+        if _is_window_override(summary):
+            _summary_window_ms(summary["window"]["ms"], "window.ms")
+        else:
+            validate_summary(summary)
     window_ms = summary["window"]["ms"] if summary else None
     frames = trace.frames(window_ms * 1000.0 if window_ms is not None else None)
     span_us = frames[-1][2] - frames[0][1] if frames else 0.0
@@ -398,7 +578,8 @@ def markdown(result):
         lines += ["Thread filter: " + ", ".join(table_cell(name) for name in result["thread_filter"])
                   + ". Frame bounds, summary and stack samples remain capture-wide.", ""]
     summary = result["summary"]
-    if summary:
+    if summary is not None:
+        validate_summary(summary)
         frame = summary["frame_ms"]
         lines.append(f"**{markdown_text(summary['window']['spec'])}** from present {summary['window']['first_present']}: {summary['presents']} presents, "
                      f"frame p50 {frame['p50']:.1f} / p90 {frame['p90']:.1f} / p99 {frame['p99']:.1f} / max {frame['max']:.1f} ms, "
@@ -407,7 +588,7 @@ def markdown(result):
                      f"{' (dirty)' if summary.get('dirty') else ''}, dropped: {'yes' if summary['trace_dropped'] else 'no'}")
         lines.append("")
         lines.append("```json")
-        lines.append(json.dumps(summary, separators=(",", ":")))
+        lines.append(json.dumps(summary, separators=(",", ":"), allow_nan=False))
         lines.append("```")
     else:
         lines.append(f"{result['frames']} frames over {result['window_ms']:.1f} ms (no summary line found)")
@@ -637,13 +818,10 @@ def main(arguments=None):
     if options.thread:
         trace.select_threads(options.thread)
     summary = load_summary(options.summary, options.trace)
-    try:
-        result = digest(trace, summary, stacks, options.frames, options.top)
-    except KeyError as error:
-        parser.exit(2, f"FAIL: the summary line has no {error} field\n")
+    result = digest(trace, summary, stacks, options.frames, options.top)
     if options.thread:
         result["thread_filter"] = sorted(set(options.thread))
-    sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
+    sys.stdout.write(json.dumps(result, indent=1, allow_nan=False) + "\n" if options.json else markdown(result))
     return 0
 
 

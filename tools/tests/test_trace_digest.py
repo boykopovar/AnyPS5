@@ -1,9 +1,11 @@
 import contextlib
+import copy
 from functools import lru_cache
 import gzip
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -395,12 +397,15 @@ class TraceDigestTests(unittest.TestCase):
         summary = self.trace.with_name("aps5-summary.jsonl")
         record = dict(SUMMARY, window={"spec": "frames 600:3"})
         summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
-        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
-                                capture_output=True, text=True, encoding="utf-8", timeout=20)
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertTrue(result.stderr.startswith("FAIL: the summary line has no 'ms' field"), result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
-        self.assertEqual(result.stdout, "")
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), *output],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertTrue(result.stderr.startswith(f"FAIL: {summary}:1: "), result.stderr)
+                self.assertIn("window.ms", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
 
     def test_cli_rejects_invalid_summary_records_without_partial_output(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
@@ -1564,6 +1569,279 @@ class IntervalSchemaTests(unittest.TestCase):
         digest = trace_digest.digest_intervals(loaded)
         self.assertEqual(digest["intervals"][0]["busiest_worker"]["pct"], 125)
         self.assertIn("0-0", trace_digest.markdown_intervals(digest))
+
+
+class CaptureSummarySchemaTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        self.trace = root / SUMMARY["trace"]
+        with gzip.open(self.trace, "wt", encoding="utf-8") as handle:
+            json.dump({"traceEvents": EVENTS}, handle)
+        self.summary_path = root / "aps5-summary.jsonl"
+        self.baseline = trace_digest.Trace(EVENTS)
+
+    def write_summary(self, path, *records):
+        data = ("\n".join(json.dumps(record) if not isinstance(record, str) else record for record in records) + "\n").encode("utf-8")
+        path.write_bytes(data)
+        return data
+
+    def set_path(self, record, path, value):
+        target = record
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+        return record
+
+    def pop_path(self, record, path):
+        target = record
+        for key in path[:-1]:
+            target = target[key]
+        target.pop(path[-1], None)
+        return record
+
+    def test_invalid_capture_summary_fields_report_source_line_and_fail_direct_consumers(self):
+        unmatched = dict(SUMMARY, trace="other.json.gz", window={"ms": "ignored"})
+        invalid_cases = []
+        invalid_cases += [(("window",), value, "window") for value in (None, [], True, 10, "40", {})]
+        invalid_cases += [(("window", "ms"), value, "window.ms")
+                          for value in ("40.0", None, True, False, -1, -0.001, float("nan"), float("inf"), float("-inf"), 1e308, 10**306, 10**400, [])]
+        invalid_cases += [(("window", "spec"), value, "window.spec") for value in (None, True, 123, [])]
+        invalid_cases += [(("window", "first_present"), value, "window.first_present")
+                          for value in (None, True, False, -1, 1.5, "600", 10**400)]
+        invalid_cases += [(("presents",), value, "presents")
+                          for value in (None, True, False, -1, 1.5, "3", 10**400)]
+        invalid_cases += [(("frame_ms",), value, "frame_ms")
+                          for value in (None, [], True, {"p50": 1.0},
+                                        {"p50": 2, "p90": 1, "p99": 3, "max": 4},
+                                        {"p50": 1, "p90": 3, "p99": 2, "max": 4},
+                                        {"p50": 1, "p90": 2, "p99": 4, "max": 3})]
+        for percentile in ("p50", "p90", "p99", "max"):
+            invalid_cases += [(("frame_ms", percentile), value, f"frame_ms.{percentile}")
+                              for value in (None, True, False, -1, "10", float("nan"), float("inf"), 10**400)]
+        invalid_cases += [(("gpu_busy_ms_per_present",), value, "gpu_busy_ms_per_present")
+                          for value in (None, True, False, -1, "5", float("nan"), float("-inf"), 10**400)]
+        for field in ("commit", "gpu", "driver", "os", "resolution"):
+            invalid_cases += [((field,), value, field) for value in (None, True, 7, [], {})]
+        invalid_cases += [(("trace_dropped",), value, "trace_dropped") for value in (None, 0, 1, "false", [])]
+        invalid_cases += [(("dirty",), value, "dirty") for value in (0, 1, "false", [])]
+        invalid_cases += [(("env",), value, "env") for value in (None, [], {"APS5_TRACE_FRAMES": 4}, {"APS5_TRACE_FRAMES": None})]
+        for field in ("worker_busy_pct", "phase_totals_ms", "top_phases_ms_per_frame"):
+            invalid_cases += [((field,), value, field)
+                              for value in (None, [], {"x": "bad"}, {"x": True}, {"x": -1}, {"x": float("nan")}, {"x": float("inf")}, {"x": 10**400})]
+        for field in ("owned_draw_counts", "graphics_track"):
+            invalid_cases += [((field,), value, field)
+                              for value in (None, [], {"x": -1}, {"x": True}, {"x": 1.5}, {"x": "1"}, {"x": 10**400})]
+        invalid_cases += [(("trace_dropped_threads",), value, "trace_dropped_threads")
+                          for value in (None, [], {"worker": None}, {"worker": {"totals_full": 1}},
+                                        {"worker": {"events_lost": True}}, {"worker": {"events_lost": -1}},
+                                        {"worker": {"events_lost": 1.5}}, {"worker": {"events_lost": 10**400}},
+                                        {"worker": {"events_full_after_s": -1}}, {"worker": {"events_full_after_s": True}},
+                                        {"worker": {"events_full_after_s": float("nan")}})]
+        for field in ("cpu", "title_id", "title", "content_version"):
+            invalid_cases += [((field,), value, field) for value in (None, True, 12, [])]
+        for field in ("cpu_threads", "memory_mib"):
+            invalid_cases += [((field,), value, field) for value in (None, True, -1, 1.5, "16", 10**400)]
+        invalid_cases += [(("extra",), {"bad": float("nan")}, "extra.bad"),
+                          (("extra",), [float("inf")], "extra[0]")]
+
+        missing_paths = [
+            (("window", "ms"), "window.ms"),
+            (("window", "spec"), "window.spec"),
+            (("window", "first_present"), "window.first_present"),
+            (("presents",), "presents"),
+            (("frame_ms", "p99"), "frame_ms.p99"),
+            (("gpu_busy_ms_per_present",), "gpu_busy_ms_per_present"),
+            (("commit",), "commit"),
+            (("gpu",), "gpu"),
+            (("driver",), "driver"),
+            (("os",), "os"),
+            (("resolution",), "resolution"),
+            (("trace_dropped",), "trace_dropped"),
+        ]
+
+        valid_result = trace_digest.digest(self.baseline, copy.deepcopy(SUMMARY))
+
+        for path, value, expected in invalid_cases:
+            record = self.set_path(copy.deepcopy(SUMMARY), path, value)
+            with self.subTest(path=path, value=value):
+                self.write_summary(self.summary_path, {}, "", unmatched, record)
+                with self.assertRaises(ValueError) as raised:
+                    trace_digest.load_summary(None, self.trace)
+                self.assertRegex(str(raised.exception), rf"^{re.escape(str(self.summary_path))}:4: .*{re.escape(expected)}")
+                with self.assertRaisesRegex(ValueError, re.escape(expected)):
+                    trace_digest.digest(self.baseline, copy.deepcopy(record))
+                broken = copy.deepcopy(valid_result)
+                broken["summary"] = copy.deepcopy(record)
+                with self.assertRaisesRegex(ValueError, re.escape(expected)):
+                    trace_digest.markdown(broken)
+
+        for path, expected in missing_paths:
+            record = self.pop_path(copy.deepcopy(SUMMARY), path)
+            with self.subTest(missing=path):
+                self.write_summary(self.summary_path, {}, "", unmatched, record)
+                with self.assertRaises(ValueError) as raised:
+                    trace_digest.load_summary(None, self.trace)
+                self.assertRegex(str(raised.exception), rf"^{re.escape(str(self.summary_path))}:4: .*{re.escape(expected)}")
+                with self.assertRaisesRegex(ValueError, re.escape(expected)):
+                    trace_digest.digest(self.baseline, copy.deepcopy(record))
+                broken = copy.deepcopy(valid_result)
+                broken["summary"] = copy.deepcopy(record)
+                with self.assertRaisesRegex(ValueError, re.escape(expected)):
+                    trace_digest.markdown(broken)
+
+        for bad_top in (None, True, False, 7, 1.5, "", [], {}):
+            with self.subTest(top_level=bad_top):
+                with self.assertRaises(ValueError):
+                    trace_digest.validate_summary(bad_top)
+                broken = copy.deepcopy(valid_result)
+                broken["summary"] = bad_top
+                if bad_top is None:
+                    self.assertIn("no summary line found", trace_digest.markdown(broken))
+                else:
+                    with self.assertRaises(ValueError):
+                        trace_digest.markdown(broken)
+                if bad_top is not None:
+                    with self.assertRaises(ValueError):
+                        trace_digest.digest(self.baseline, bad_top)
+
+        for value in ("10", None, True, -1, float("nan"), float("inf"), 1e308, 10**400):
+            with self.subTest(window_override=value):
+                with self.assertRaisesRegex(ValueError, r"window\.ms"):
+                    trace_digest.digest(self.baseline, {"window": {"ms": value}})
+
+        window_only = trace_digest.digest(self.baseline, {"window": {"ms": 10.0}})
+        with self.assertRaises(ValueError):
+            trace_digest.markdown(window_only)
+
+        bad_trace = copy.deepcopy(SUMMARY)
+        bad_trace["trace"] = 123
+        with self.assertRaisesRegex(ValueError, r"trace"):
+            trace_digest.digest(self.baseline, bad_trace)
+
+    def test_cli_rejects_malformed_capture_summaries_without_partial_output_or_tracebacks(self):
+        explicit = Path(self.directory.name) / "explicit-summary.jsonl"
+        uncompressed = self.trace.with_suffix("")
+        uncompressed.write_bytes(gzip.decompress(self.trace.read_bytes()))
+        cases = [
+            (("window", "ms"), "40.0", "window.ms"),
+            (("frame_ms", "p50"), None, "frame_ms.p50"),
+            (("window", "ms"), float("nan"), "window.ms"),
+            (("window", "ms"), float("inf"), "window.ms"),
+            (("window", "ms"), 1e308, "window.ms"),
+            (("window", "ms"), 10**400, "window.ms"),
+            (("presents",), True, "presents"),
+            (("gpu_busy_ms_per_present",), -1, "gpu_busy_ms_per_present"),
+            (("frame_ms",), {"p50": 10.0, "p90": 30.0, "p99": 20.0, "max": 40.0}, "frame_ms"),
+            (("worker_busy_pct",), {"queue worker 0x0": True}, "worker_busy_pct"),
+            (("owned_draw_counts",), {"OwnedDraw.arm_attempt": -1}, "owned_draw_counts"),
+            (("trace_dropped_threads",), {"gpu": {"events_full_after_s": float("nan")}}, "trace_dropped_threads"),
+            (("gpu",), None, "gpu"),
+            (("extra",), {"nested": float("nan")}, "extra.nested"),
+        ]
+        for index, (path, value, field) in enumerate(cases):
+            record = self.set_path(copy.deepcopy(SUMMARY), path, value)
+            if index < 3:
+                targets = (
+                    ([str(self.trace)], self.summary_path),
+                    ([str(self.trace), "--summary", str(explicit)], explicit),
+                    ([str(uncompressed), "--summary", str(explicit)], explicit),
+                )
+            else:
+                targets = (
+                    ([str(self.trace)], self.summary_path),
+                    ([str(self.trace), "--summary", str(explicit)], explicit),
+                )
+            for arguments, source in targets:
+                data = self.write_summary(source, SUMMARY, "", record)
+                for output in ([], ["--json"]):
+                    with self.subTest(field=field, value=value, arguments=arguments, output=output):
+                        result = subprocess.run([sys.executable, trace_digest.__file__, *arguments, *output],
+                                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertTrue(result.stderr.startswith(f"FAIL: {source}:3: "), result.stderr)
+                        self.assertIn(field, result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertNotIn("NaN", result.stdout + result.stderr)
+                        self.assertNotIn("Infinity", result.stdout + result.stderr)
+                        self.assertEqual(source.read_bytes(), data)
+
+    def test_valid_historical_minimal_full_zero_and_absent_or_unmatched_summaries(self):
+        minimal = {
+            "commit": "abc",
+            "gpu": "GPU",
+            "driver": "Driver 1",
+            "os": "OS 1",
+            "resolution": "1920x1080",
+            "window": {"spec": "frames 0:1", "first_present": 0, "ms": 0.0},
+            "presents": 0,
+            "frame_ms": {"p50": 0.0, "p90": 0.0, "p99": 0.0, "max": 0.0},
+            "gpu_busy_ms_per_present": 0.0,
+            "trace_dropped": False,
+            "trace": SUMMARY["trace"],
+        }
+        historical_dirty_null = dict(SUMMARY, dirty=None)
+        modern_full = dict(
+            SUMMARY,
+            cpu="CPU X",
+            cpu_threads=16,
+            memory_mib=32768,
+            title_id="PPSA00001",
+            title="Example",
+            content_version="01.000.000",
+            worker_busy_pct={"queue worker 0x0": 125.0},
+            phase_totals_ms={"Driver.Packet": 21.0},
+            top_phases_ms_per_frame={"Driver.Packet": 7.0},
+            owned_draw_counts={"OwnedDraw.arm_attempt": 4},
+            graphics_track={"Graphics.RenderPass": 2, "Graphics.Copy.bytes": 4096},
+            trace_dropped=True,
+            trace_dropped_threads={"queue worker 0x0": {"events_full_after_s": 0.01, "events_lost": 5, "totals_full": False}},
+            extra={"nested": [{"note": "ok"}]},
+        )
+        unmatched_malformed = {"trace": "other.json.gz", "window": {"ms": "bad"}, "frame_ms": {"p50": None}}
+
+        for label, record in (("minimal", minimal), ("dirty_null", historical_dirty_null), ("modern_full", modern_full)):
+            with self.subTest(variant=label):
+                self.write_summary(self.summary_path, unmatched_malformed, {}, record)
+                loaded = trace_digest.load_summary(None, self.trace)
+                self.assertEqual(loaded, record)
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), "--json"],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                report = json.loads(result.stdout)
+                self.assertEqual(report["summary"], record)
+                self.assertIn(record["window"]["spec"], trace_digest.markdown(report))
+
+        earlier_malformed = dict(SUMMARY, window={"ms": "bad"})
+        self.write_summary(self.summary_path, earlier_malformed, SUMMARY)
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), "--json"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(json.loads(result.stdout)["summary"], SUMMARY)
+
+        self.write_summary(self.summary_path, unmatched_malformed, {})
+        for output in ([], ["--json"]):
+            with self.subTest(unmatched=output):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), *output],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                if output:
+                    self.assertIsNone(json.loads(result.stdout)["summary"])
+                else:
+                    self.assertIn("no summary line found", result.stdout)
+
+        self.summary_path.unlink()
+        for output in ([], ["--json"]):
+            with self.subTest(absent=output):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), *output],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                if output:
+                    self.assertIsNone(json.loads(result.stdout)["summary"])
+                else:
+                    self.assertIn("no summary line found", result.stdout)
 
 
 if __name__ == "__main__":
