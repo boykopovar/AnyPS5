@@ -11166,9 +11166,7 @@ int APS5_VABI WKPageHideFindUI() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageHorizontalRubberBandingIsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageIsClosed() {
     NotImplemented_nid_no_patch(__func__);
@@ -11374,9 +11372,7 @@ int APS5_VABI WKPageSetCustomUserAgent() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetEnableHorizontalRubberBanding() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetEnableVerticalRubberBanding() {
     NotImplemented_nid_no_patch(__func__);
