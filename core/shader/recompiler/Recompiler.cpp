@@ -1692,6 +1692,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             loaded.layout = request.layout;
             loaded.artifact.variantId = nextVariantId();
             attachSubstitutes(loaded);
+            ShaderDiskCache::ReleaseMapped(loaded.artifact.spirv);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
             NoteShader(2);
         }
