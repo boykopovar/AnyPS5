@@ -433,10 +433,20 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompleti
 
 int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject* buffer, uint64_t* gatherState, uint64_t* scatterState) {
     if (!buffer || !gatherState || !scatterState) return SCE_KERNEL_ERROR_EINVAL;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(buffer, sizeof(*buffer)) ||
+        !GuestWritable_nid_no_patch(gatherState, sizeof(*gatherState)) ||
+        !GuestWritable_nid_no_patch(scatterState, sizeof(*scatterState))) {
+        errno = savedErrno;
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     ReleaseExpandedCommandBuffer(buffer);
-    buffer->type = Apr::BufferType::Apr;
+    const Apr::BufferType type = Apr::BufferType::Apr;
+    CopyGuestOut(&buffer->type, type);
     const std::uint64_t zero = 0;
-    if (!CopyGuestOut(gatherState, zero) || !CopyGuestOut(scatterState, zero)) return SCE_KERNEL_ERROR_EFAULT;
+    CopyGuestOut(gatherState, zero);
+    CopyGuestOut(scatterState, zero);
+    errno = savedErrno;
     return 0;
 }
 

@@ -148,6 +148,8 @@ void TestRejectedArguments() {
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, nullptr, &scatterState) == invalidArgument);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, nullptr) == invalidArgument);
     Require(sceAmprCommandBufferConstructor(reinterpret_cast<Apr::CommandBufferObject*>(0x10)) == invalidPointer);
+    errno = 71;
+    Require(sceAmprAprCommandBufferConstructor(reinterpret_cast<Apr::CommandBufferObject*>(0x10), &gatherState, &scatterState) == invalidPointer && errno == 71);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, reinterpret_cast<std::uint64_t*>(0x10), &scatterState) == invalidPointer);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
