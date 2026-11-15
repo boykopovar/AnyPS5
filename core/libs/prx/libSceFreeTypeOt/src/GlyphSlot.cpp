@@ -16,7 +16,6 @@ using namespace FreeType;
 namespace {
 
 constexpr std::int32_t InvalidArgument = 0x06;
-constexpr std::int32_t InvalidFaceHandle = 0x23;
 
 GuestSlotInternalRec* Internal(GuestGlyphSlotRec* slot) {
     return static_cast<GuestSlotInternalRec*>(slot->internal);
@@ -76,7 +75,7 @@ int APS5_VABI ft_glyphslot_alloc_bitmap_nid_postfix(GuestGlyphSlotRec* slot, std
 
 int APS5_VABI FT_New_GlyphSlot_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestGlyphSlotRec**) {
     const char* function = __func__;
-    if (!face) return InvalidFaceHandle;
+    if (!face) return InvalidArgument;
     FreeType::GuestFace* owner = FreeType::FaceOf(face);
     if (!owner) NotImplemented_nid_no_patch(function);
     if (!owner->host->driver) return InvalidArgument;

@@ -18,7 +18,7 @@ void Require(bool condition, const char* message) {
 
 void NullFace() {
     GuestGlyphSlotRec* aslot = nullptr;
-    Require(FT_New_GlyphSlot_nid_postfix(nullptr, &aslot) == 0x23, "a null face returns Invalid_Face_Handle");
+    Require(FT_New_GlyphSlot_nid_postfix(nullptr, &aslot) == 0x06, "a null face returns Invalid_Argument");
     Require(aslot == nullptr, "a null face leaves the slot pointer unchanged");
 }
 
