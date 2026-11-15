@@ -1144,6 +1144,9 @@ int main() {
     syllableState = -1;
     Require(sceFontCharacterGetSyllableStringState(nullptr, &syllableState) == SCE_FONT_ERROR_INVALID_PARAMETER && syllableState == 0);
     Require(sceFontCharacterGetSyllableStringState(&character, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontCharacterGetSyllableStringState(&character, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
 
     const auto* glyphs0 = sceFontSelectGlyphsFt(0);
     Require(glyphs0 != nullptr);
