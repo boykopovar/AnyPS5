@@ -3,6 +3,17 @@ target_include_directories(libSceFios2 PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceFios2)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_fios2_diagnostics_tests ${LIBS_INCLUDE_DIR}/tests/GuestFios2Diagnostics.cpp)
+    target_include_directories(guest_fios2_diagnostics_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fios2_diagnostics_tests PRIVATE libSceFios2 libkernel libc)
+    configure_windows_unwind(guest_fios2_diagnostics_tests)
+    add_test(NAME guest_fios2_diagnostics COMMAND guest_fios2_diagnostics_tests)
+    set_tests_properties(guest_fios2_diagnostics PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fios2_diagnostics PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
+    endif()
+
     add_test_executable(guest_fios2_tests ${LIBS_INCLUDE_DIR}/tests/GuestFios2.cpp)
     target_include_directories(guest_fios2_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_fios2_tests PRIVATE libSceFios2 libkernel libc)

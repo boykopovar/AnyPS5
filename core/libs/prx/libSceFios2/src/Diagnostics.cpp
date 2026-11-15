@@ -6,6 +6,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -27,13 +28,19 @@ std::vector<Timestamp> g_timestamps;
 bool g_timestampOverflow = false;
 std::uint32_t g_dllOverlayCount = 0;
 
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = Fios::CopyOut(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
 const char* CopyDump(const std::string& text, char* output, std::size_t capacity) {
     if (output != nullptr) {
         if (capacity == 0) return output;
         const auto count = std::min(text.size(), capacity - 1);
-        if (count != 0 && !Fios::CopyOut(output, text.data(), count)) return nullptr;
-        const char terminator = 0;
-        if (!Fios::CopyOut(output + count, &terminator, 1)) return nullptr;
+        const std::string truncated(text.data(), count);
+        if (!CopyOutPreservingErrno(output, truncated.c_str(), count + 1)) return nullptr;
         return output;
     }
     struct DumpBufferStorage {};
@@ -112,11 +119,11 @@ std::int64_t APS5_VABI sceFiosTraceTimestamp(char* buffer, std::uint64_t size) {
     if (buffer == nullptr || size == 0) return SCE_FIOS_ERROR_BAD_PTR;
     const auto now = (sceFiosTimeGetCurrent() + 999) / 1000;
     std::array<char, 32> text{};
-    std::snprintf(text.data(), text.size(), "%lld.%06lld", static_cast<long long>(now / 1000000), static_cast<long long>(now % 1000000));
-    const auto count = std::min<std::uint64_t>(size - 1, text.size() - 1);
-    if (!Fios::CopyOut(buffer, text.data(), count)) return SCE_FIOS_ERROR_BAD_PTR;
-    const char terminator = 0;
-    if (!Fios::CopyOut(buffer + count, &terminator, 1)) return SCE_FIOS_ERROR_BAD_PTR;
+    const int formatted = std::snprintf(text.data(), text.size(), "%lld.%06lld", static_cast<long long>(now / 1000000), static_cast<long long>(now % 1000000));
+    const std::size_t formattedLength = formatted > 0 ? std::min<std::size_t>(static_cast<std::size_t>(formatted), text.size() - 1) : 0;
+    const auto count = std::min<std::uint64_t>(size - 1, formattedLength);
+    text[static_cast<std::size_t>(count)] = '\0';
+    if (!CopyOutPreservingErrno(buffer, text.data(), static_cast<std::size_t>(count) + 1)) return SCE_FIOS_ERROR_BAD_PTR;
     return SCE_FIOS_OK;
 }
 
