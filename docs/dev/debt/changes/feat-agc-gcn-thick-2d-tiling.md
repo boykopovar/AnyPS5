@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## change [PS4 (GCN) thick and layered surfaces]
+
+- [PS4 (GCN) thick and layered surfaces](../../../core/libs/prx/libSceAgcDriver/Graphics/src/TextureTiling.cpp) (libSceAgcDriver, PS4) - not checked on a console; [GcnDetile.cpp](../../../core/libs/prx/libSceAgcDriver/tests/execution/GcnDetile.cpp) covers thin, depth and mode 20 thick modes; mode 19 has layout tests only. Modes 15 and 21 to 26 throw, as do block compression on thick modes, mode 20 micro-tile splitting (elements > 4B) or mip chains, non-3D thick descriptors, and storage images or depth planes of layered surfaces with mips. Modes 19 (`Thick_1dThick`) and 20 (`Thick_2dThick`) 3D surfaces use 8x8x4 micro tiles in 4-slice slabs; mode 20 macro tiles banks per slab following addrlib's macro equations (`egbaddrlib.cpp`, `siaddrlib.cpp`). Sampled layered surfaces and thin 3D surfaces store level by level, slice counts halving per level (rounded with `POW2_PAD`), following [ac_surface](https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-24.0.0/src/amd/common/ac_surface.c#L776).
