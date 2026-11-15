@@ -1788,6 +1788,9 @@ int main() {
     Require(scePadSetTriggerEffect(handle2 + 99, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(-1, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadSetTriggerEffect(handle2, reinterpret_cast<const void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 
     PadInputState p0MotionSample{};
     p0MotionSample.hasMotion = true;

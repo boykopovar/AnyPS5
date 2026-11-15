@@ -131,7 +131,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         next.gpuResolvedImages = true;
     }
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
-    next.pushDataStartDword = !gpuResolvedImages && next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
+    const auto dataSize = stencilReplay && pushSize != 0u ? pushSize - 1u : pushSize;
+    next.pushDataStartDword = !gpuResolvedImages && next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= dataSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
     next.dataAddress = descriptorMemory && gpuResolvedImages;
     if (stencilReplay && !next.UsesDataAddress()) {
         const auto offset = next.UsesPushData() ? next.ShaderDataDwords() : 0u;

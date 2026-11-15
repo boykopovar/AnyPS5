@@ -1945,7 +1945,6 @@ int APS5_VABI ures_initStackObject_nid_postfix();
 int APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix();
 int APS5_VABI udata_getInfo_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_qsrqpMOCXYE_nid_no_patch();
-int APS5_VABI uloc_getVariant_nid_postfix();
 int APS5_VABI uhash_iremovei_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_r_minus_f6QCLZd44_nid_no_patch();
 int APS5_VABI _ZNK6icu_6813UnicodeString10doHashCodeEv_nid_postfix();

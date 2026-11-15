@@ -42,6 +42,16 @@ inline std::uint32_t StagePushOffset(std::uint32_t cursor, ShaderRecompiler::Sha
     return fixedSlots && stage == ShaderRecompiler::ShaderStage::Fragment ? PipelinePushSlotBytes : cursor;
 }
 
+inline std::uint32_t StagePushBudget(std::uint32_t limit, std::uint32_t offset, ShaderRecompiler::ShaderStage stage, bool fixedSlots, bool hasFragment) {
+    const bool fragment = stage == ShaderRecompiler::ShaderStage::Fragment;
+    const auto base = fixedSlots && fragment ? PipelinePushSlotBytes : 0u;
+    if (offset < base) return 0u;
+    const auto capacity = fixedSlots && fragment ? PipelinePushSlotBytes : std::min(limit, PipelinePushSlotBytes);
+    const auto used = offset - base;
+    const auto reserved = !fixedSlots && hasFragment && !fragment ? 4u : 0u;
+    return used <= capacity && reserved <= capacity - used ? capacity - used - reserved : 0u;
+}
+
 struct CompiledShader {
     ShaderRecompiler::ShaderStage stage;
     const ShaderRecompiler::RecompileResult* program;

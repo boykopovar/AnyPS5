@@ -1748,6 +1748,7 @@ void verifyTypeZeroImageMaterialization() {
     static bool knownRecord0 = false;
     static std::array<std::uint32_t, 4> pendingV0{};
 
+    static std::uint64_t phase3WaitLimit = ~std::uint64_t{0};
     AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
         if (phase == 1u && !flushed && address < syncEnd && syncBegin < address + bytes) {
             flushed = true;
@@ -1758,7 +1759,7 @@ void verifyTypeZeroImageMaterialization() {
             if (waits == 0u && address < record1Addr + 32u && record1Addr + 12u < address + bytes) {
                 ++waits;
                 std::memcpy(reinterpret_cast<void*>(record1Addr), pendingT1.data(), sizeof(pendingT1));
-            } else if ((waits == 1u || (phase == 3u && waits >= 1u)) && address < record2Addr + 32u && record2Addr + 12u < address + bytes) {
+            } else if ((waits == 1u || (phase == 3u && waits >= 1u && waits < phase3WaitLimit)) && address < record2Addr + 32u && record2Addr + 12u < address + bytes) {
                 ++waits;
                 if (phase != 6u) std::memcpy(reinterpret_cast<void*>(record0Addr), pendingT0.data(), sizeof(pendingT0));
                 std::memcpy(reinterpret_cast<void*>(record2Addr), pendingT2.data(), sizeof(pendingT2));
@@ -2016,7 +2017,7 @@ void verifyTypeZeroImageMaterialization() {
         AgcDriver::ShaderMemory twoWaitMemory({}, multiPending, nullptr, hookWaits);
         const auto twoWaitCapture = twoWaitMemory.Capture(twoWaitReq);
         const auto& col = twoWaitCapture->snapshot.tables.tables.at(0);
-        require(waits == 2u && forcedHookCalls == 15u && (!gateSecondWaitOnSrtRoot || srtRootReads == 5u) && col.keys == 3u,
+        require(waits == 2u && forcedHookCalls == 15u && (!gateSecondWaitOnSrtRoot || srtRootReads == 3u) && col.keys == 3u,
                 "multi-wait readWords: forced third attempt did not execute or nested forceSync scope was not preserved");
         require(col.words.at(col.codes.at(0)).dwords == newT && col.words.at(col.codes.at(1)).dwords == thirdT && col.words.at(col.codes.at(2)).dwords == newT,
                 "multi-wait readWords: retry pass accepted an unstable epoch after a second invalidation");
@@ -2053,6 +2054,28 @@ void verifyTypeZeroImageMaterialization() {
             refused = true;
         }
         require(refused && waits >= 3u, "unstable epoch refusal: capture succeeded despite invalidation on every retry attempt");
+        for (const std::uint64_t limit : {1u, 2u, 4u, 8u}) {
+            std::fill(srt.begin(), srt.end(), 0u);
+            std::copy(oldT.begin(), oldT.end(), srt.begin());
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + stepWords);
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + 2u * stepWords);
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + 256u);
+            std::copy(outputV.begin(), outputV.end(), srt.begin() + 256u + 16u);
+            srt[256u + 20u] = 1u;
+            fillWholeSrt(srt.data() + 512u, srt.data(), stride, 3u);
+            phase = 3u;
+            phase3WaitLimit = limit;
+            waits = 0u;
+            forcedHookCalls = 0u;
+            srtRootReads = 0u;
+            lastPendingAddr = 0u;
+            flushed = false;
+            AgcDriver::ShaderMemory settlingMemory({}, multiPending, nullptr, hookWaits);
+            const auto settled = settlingMemory.Capture(twoWaitReq);
+            require(settled->snapshot.tables.tables.at(0).keys == 3u,
+                    "settling epoch: a forced pass whose waits ended was disturbed by a Sync read that did not wait and left its raw words unchanged");
+        }
+        phase3WaitLimit = ~std::uint64_t{0};
         phase = 5u;
         waits = 0u;
         forcedHookCalls = 0u;
@@ -2368,34 +2391,56 @@ void verifyTypeZeroImageMaterialization() {
             std::uint32_t settledFill = 0u;
             std::uint64_t epoch = 0u;
             std::uint32_t fillReads = 0u;
+            std::uint64_t generation = 0u;
+            std::uint32_t snapshotChecks = 0u;
+            bool backingMoved = false;
+            bool cached = false;
+            bool throwOnMove = false;
         };
-        FillMemory fillState;
-        fillState.words = outputV;
-        fillState.fill = 0x11111111u;
-        fillState.settledFill = 0x3f800000u;
-        SrtRuntime fillRuntime{retryUserData};
-        fillRuntime.userContext = &fillState;
-        fillRuntime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
-            auto& self = *static_cast<FillMemory*>(ctx);
-            if (address == RetryBase + sizeof(self.words)) {
-                ++self.fillReads;
-                *value = self.fill;
-                if (self.fill != self.settledFill) {
-                    self.fill = self.settledFill;
-                    ++self.epoch;
+        for (const std::uint32_t mode : {0u, 2u, 1u}) {
+            FillMemory fillState;
+            fillState.backingMoved = mode != 0u;
+            fillState.throwOnMove = mode == 2u;
+            fillState.words = outputV;
+            fillState.fill = 0x11111111u;
+            fillState.settledFill = 0x3f800000u;
+            SrtRuntime fillRuntime{retryUserData};
+            fillRuntime.userContext = &fillState;
+            fillRuntime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
+                auto& self = *static_cast<FillMemory*>(ctx);
+                if (address == RetryBase + sizeof(self.words)) {
+                    ++self.fillReads;
+                    *value = self.fill;
+                    if (self.fill != self.settledFill && !self.cached) {
+                        if (!self.backingMoved) self.fill = self.settledFill;
+                        ++self.epoch;
+                        if (self.backingMoved) ++self.generation;
+                        self.cached = true;
+                        if (self.throwOnMove) throw std::runtime_error("uniform fill page remapped during a read");
+                    }
+                    return true;
                 }
+                if (address < RetryBase || address >= RetryBase + sizeof(self.words)) return false;
+                *value = self.words[(address - RetryBase) / sizeof(std::uint32_t)];
                 return true;
-            }
-            if (address < RetryBase || address >= RetryBase + sizeof(self.words)) return false;
-            *value = self.words[(address - RetryBase) / sizeof(std::uint32_t)];
-            return true;
-        };
-        fillRuntime.readSpecializationMemory = fillRuntime.readMemory;
-        fillRuntime.descriptorScope = +[](void* ctx, std::size_t) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->epoch; };
-        ResourceSnapshot fillSnapshot;
-        ResourceMaterializer{}.Materialize(fillPlan, fillRuntime, fillSnapshot);
-        require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
-                "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
+            };
+            fillRuntime.readSpecializationMemory = fillRuntime.readMemory;
+            fillRuntime.descriptorScope = +[](void* ctx, std::size_t) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->epoch; };
+            fillRuntime.imageViewGeneration = +[](void* ctx) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->generation; };
+            fillRuntime.snapshotCurrent = +[](void* ctx, std::span<const RegisteredImageView>) {
+                auto& self = *static_cast<FillMemory*>(ctx);
+                ++self.snapshotChecks;
+                self.fill = self.settledFill;
+                return false;
+            };
+            ResourceSnapshot fillSnapshot;
+            ResourceMaterializer{}.Materialize(fillPlan, fillRuntime, fillSnapshot);
+            require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
+                    fillState.throwOnMove ? "uniform fill remap after read failure: a retry kept the cached value from before the remap"
+                                               : "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
+            require(!fillState.backingMoved || fillState.snapshotChecks == 1u,
+                    "uniform fill remap: descriptor scope retry skipped the snapshot backing check and retained cached words");
+        }
     }
 }
 
@@ -5195,6 +5240,10 @@ void verifyImageTables() {
     materials[2][1] = 2u;
     const auto nulled = CompileTable(request);
     require(TableCodes(TableMap(*nulled.result), 0).at(2) == Abi::NullCode, "image tables: a null entry's key was mapped to a record");
+    heap[2].fill(0xffffffffu);
+    const auto unbound = CompileTable(request);
+    require(TableCodes(TableMap(*unbound.result), 0).at(2) == Abi::NullCode && unbound.result->imageTableFaults == 0u, "image tables: an entry filled with ones was mapped to a record or expects a fault");
+    heap[2] = {};
     materials[2][1] = 3u;
 
     std::vector<std::uint32_t> latchCode(TableWholeCode.begin(), TableWholeCode.begin() + 12);
@@ -6998,7 +7047,16 @@ void verifyDescriptorPhis() {
     require(countOps(Recompile(twoLane, *twoLaneCapture)->spirv, OpImageSampleExplicitLod) == 4u, "descriptor Phi: the specialized two-lane SPIR-V does not sample once per edge and half");
 
     auto dynamic = makeRequest(dynamicCode);
-    expectFailure([&] { static_cast<void>(GetResourcePlan(dynamic)); }, "GetSamplerResource dword 0 is not a valid runtime value", "descriptor Phi: an edge without an SRT slot was accepted");
+    const auto dynamicPlan = GetResourcePlan(dynamic);
+    require(dynamicPlan->info.usesFaultBuffer, "descriptor Phi: an unsupported sampler arm was accepted without a runtime fault buffer");
+    AgcDriver::ShaderMemory dynamicMemory({});
+    const auto dynamicCapture = dynamicMemory.Capture(dynamic);
+    const auto dynamicRegions = dynamicMemory.Regions();
+    dynamic.context.memory = dynamicRegions;
+    const auto dynamicCompiled = Recompile(dynamic, *dynamicCapture);
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(dynamicCompiled->spirv, dynamic.target.vulkanVersion, dynamic.target.spirvVersion));
+#endif
 
     const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
     const auto loopCapture = compile(loopCode, 2u, 1u);

@@ -1030,6 +1030,8 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
     const DrawStageContext stageContext{queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, meshBarycentrics};
+    const bool fixedSlots = localDevice->GraphicsPipelineLibraries();
+    const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; });
     const bool heapMode = Graphics::DescriptorHeapEnabled();
     const bool heapCheck = !drawHit && heapMode;
     const bool heapDraw = heapMode && [&] {
@@ -1040,20 +1042,24 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             const auto stage = programs[i].binary.stage;
             require(stage == Stage::Fragment || HeapPreRasterStage(stage), "a draw stage kind the GPU heap does not take");
             require(stage == Stage::Fragment || descriptorMemory, "a GPU heap draw on a device target without descriptor memory");
-            cursor = Graphics::StagePushOffset(cursor, stage, localDevice->GraphicsPipelineLibraries());
+            cursor = Graphics::StagePushOffset(cursor, stage, fixedSlots);
             if (HeapStageExcluded(stage) || (HeapClassesExcluded() && drawStageExcluded(stageContext, i, cursor, drawParameters))) return false;
         }
         return true;
     }();
     const auto fitsDraw = [&](const ShaderRecompiler::RecompileResult& compiled) { return !heapMode || compiled.gpuResolvedImages == heapDraw; };
-    const auto candidateForStage = [&](std::size_t i) {
-        return std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes && fitsDraw(*kept.first->compiled); });
+    const auto candidateForStage = [&](std::size_t i, std::uint32_t pushBudget) {
+        return std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) {
+            return kept.first->pushOffset == pushCursorBytes && kept.first->compiled->pushConstants.size() <= pushBudget && fitsDraw(*kept.first->compiled);
+        });
     };
     const auto runStages = [&]() -> std::optional<DrawVerdict> {
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (roles[i] == Role::GeometryBack) continue;
             const auto& program = programs[i];
-            pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, localDevice->GraphicsPipelineLibraries());
+            pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, fixedSlots);
+            require(pushCursorBytes <= Graphics::PushBlockBytes(fixedSlots), "stage push constant offset exceeds the pipeline push constant block");
+            const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushCursorBytes, graphics.depthRemap.mode != 0u), pushCursorBytes, program.binary.stage, fixedSlots, hasFragment);
             pushOffsets[i] = pushCursorBytes;
             if (drawHit) {
                 adoptMatched(i);
@@ -1063,7 +1069,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                     matched[i] = nullptr;
                     matchedRegions[i].clear();
                 }
-                const auto candidate = reused[i] ? dataCandidates[i].end() : candidateForStage(i);
+                const auto candidate = reused[i] ? dataCandidates[i].end() : candidateForStage(i, pushBudget);
                 if (reused[i]) {
                     adoptMatched(i);
                 } else if (candidate != dataCandidates[i].end() && !verifyDrawDataHits()) {
@@ -1098,8 +1104,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 fold(result, drawParameters);
             }
             try {
-                const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
-                require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
+                require(result.pushConstants.size() <= pushBudget, "stage push constants exceed the pipeline push constant block");
                 stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].registeredViews.get(), stageCaptures[i].heapWords.get()});
                 pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
             } catch (...) {
