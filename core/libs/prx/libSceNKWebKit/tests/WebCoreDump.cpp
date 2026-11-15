@@ -98,6 +98,11 @@ void TestFloatGeometry() {
     auto dump3 = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_12FloatPoint3DE(s, point3); };
     Check(Dump(dump3) == "1.00 2.50 -3.00");
     Check(Dump(dump3, NumberRespectingIntegers) == "1 2.50 -3");
+
+    WebCore::RectEdges<float> edges{1.0f, 2.5f, -3.0f, 4.25f};
+    auto dumpEdges = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE(s, edges); };
+    Check(Dump(dumpEdges) == "(1.00, 2.50, -3.00, 4.25)");
+    Check(Dump(dumpEdges, NumberRespectingIntegers) == "(1, 2.50, -3, 4.25)");
 }
 
 void TestEnums() {

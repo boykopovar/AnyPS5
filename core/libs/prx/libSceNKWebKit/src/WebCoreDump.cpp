@@ -154,6 +154,18 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_12
     return Float(stream, value.m_z);
 }
 
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE(TextStream& stream, const WebCore::RectEdges<float>& value) {
+    Text(stream, "(");
+    Float(stream, value.top());
+    Text(stream, ", ");
+    Float(stream, value.right());
+    Text(stream, ", ");
+    Float(stream, value.bottom());
+    Text(stream, ", ");
+    Float(stream, value.left());
+    return Text(stream, ")");
+}
+
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_10LayoutUnitE(TextStream& stream, const WebCore::LayoutUnit& value) {
     return RespectingIntegers(stream, ToFloat(value));
 }

@@ -136,8 +136,26 @@ struct ScrollAlignment {
     Behavior m_rectPartial;
 };
 
+template<typename T>
+struct RectEdges {
+    T m_top{};
+    T m_right{};
+    T m_bottom{};
+    T m_left{};
+
+    constexpr RectEdges() = default;
+    constexpr RectEdges(T top, T right, T bottom, T left)
+        : m_top(top), m_right(right), m_bottom(bottom), m_left(left) {}
+
+    constexpr T top() const { return m_top; }
+    constexpr T right() const { return m_right; }
+    constexpr T bottom() const { return m_bottom; }
+    constexpr T left() const { return m_left; }
+};
+
 static_assert(sizeof(FloatPoint3D) == 12);
 static_assert(sizeof(ScrollAlignment) == 12);
+static_assert(sizeof(RectEdges<float>) == 16);
 static_assert(sizeof(WindRule) == 1);
 static_assert(sizeof(ScrollType) == 1);
 
@@ -170,6 +188,7 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_7I
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_8IntPointE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::IntPoint& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatRect& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9FloatSizeE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatSize& value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::RectEdges<float>& value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::VelocityData& value);
 
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_17ScrollingNodeTypeE(NKWebKit::WtfAbi::TextStream& stream, WebCore::ScrollingNodeType value);
