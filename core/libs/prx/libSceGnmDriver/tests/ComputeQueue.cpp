@@ -52,6 +52,14 @@ struct Memory {
     alignas(256) volatile std::uint32_t wrapped;
     alignas(256) volatile std::uint32_t waiting;
     alignas(256) volatile std::uint32_t independent;
+    alignas(256) std::uint32_t outer[32];
+    alignas(256) std::uint32_t inner[16];
+    alignas(256) std::uint32_t innermost[8];
+    alignas(256) volatile std::uint32_t released;
+    alignas(256) volatile std::uint64_t releasedWide;
+    alignas(256) volatile std::uint32_t afterPrefetch;
+    alignas(256) volatile std::uint32_t refused;
+    alignas(256) volatile std::uint32_t predicated;
 };
 
 class GuestBlock {
@@ -207,6 +215,77 @@ void TestComputeQueues() {
     Require(sceGnmUnmapComputeQueue(again) == 0, "sceGnmUnmapComputeQueue of the remapped ring failed");
 }
 
+std::vector<std::uint32_t> Call(const std::uint32_t* target, std::size_t words) {
+    return {Type3(0x3f, 3), Low(target), High(target) & 0xffffu, static_cast<std::uint32_t>(words)};
+}
+
+template<std::size_t Count>
+std::size_t Fill(std::uint32_t (&target)[Count], const std::vector<std::uint32_t>& words) {
+    Require(words.size() <= Count, "a test command buffer does not fit");
+    std::memcpy(target, words.data(), words.size() * sizeof(std::uint32_t));
+    return words.size();
+}
+
+void TestCalledBuffers() {
+    GuestBlock block;
+    auto& memory = block.Data();
+    int queue = sceGnmMapComputeQueue(0, 0, memory.ringA, RingWords, &memory.readA);
+    Require(queue > 0, "sceGnmMapComputeQueue did not return a queue id");
+
+    const auto innerWords = Fill(memory.inner, {Type3(0x49, 6) | 2u, 0x62fu, 0x43000000u, Low(&memory.releasedWide), High(&memory.releasedWide), 9u, 1u});
+    std::vector<std::uint32_t> words{Type3(0x49, 6) | 2u, 0x62fu, 0x23000000u, Low(&memory.released), High(&memory.released), 7u, 0u};
+    words.insert(words.end(), {Type3(0x50, 6), 0x60000000u, Low(memory.called), High(memory.called), 0xc08bu * 4u, 0u, 0x2820006cu});
+    WriteData(words, &memory.afterPrefetch, 8);
+    const auto call = Call(memory.inner, innerWords);
+    words.insert(words.end(), call.begin(), call.end());
+    const auto outerWords = Fill(memory.outer, words);
+    auto offset = Put(memory.ringA, 0, Call(memory.outer, outerWords));
+    Require(sceGnmDingDong(queue, offset) == 0, "sceGnmDingDong with a called buffer of PS4 packets failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.released == 7, "a PS4 RELEASE_MEM in a command buffer the ring calls did not store its 32-bit value");
+    Require(memory.afterPrefetch == 8, "the packet after a tag prefetch DMA_DATA in a called command buffer did not run");
+    Require(memory.releasedWide == 0x100000009ull, "a PS4 RELEASE_MEM two levels below the ring did not store its 64-bit value");
+    Require(memory.readA == offset, "the read offset was not moved past the call");
+
+    words.clear();
+    WriteData(words, &memory.refused, 1);
+    const auto innermostWords = Fill(memory.innermost, words);
+    Fill(memory.inner, Call(memory.innermost, innermostWords));
+    Fill(memory.outer, Call(memory.inner, 4));
+    const auto deep = Put(memory.ringA, offset, Call(memory.outer, 4));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, deep); }).find("more than two levels") != std::string::npos, "a call three levels below the ring did not throw");
+    Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
+
+    queue = sceGnmMapComputeQueue(0, 0, memory.ringA, RingWords, &memory.readA);
+    Require(queue > 0, "the ring could not be mapped again");
+    Fill(memory.outer, {Type3(0x49, 6) | 2u, 0x62fu, 0x23010000u, Low(&memory.refused), High(&memory.refused), 2u, 0u});
+    offset = Put(memory.ringA, 0, Call(memory.outer, 7));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("destination other than memory") != std::string::npos, "a PS4 RELEASE_MEM to a cache destination did not throw");
+    Fill(memory.outer, {Type3(0x49, 7) | 2u, 0x62fu, 0x23000000u, Low(&memory.refused), High(&memory.refused), 3u, 0u, 0u});
+    offset = Put(memory.ringA, 0, Call(memory.outer, 8));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("invalid RELEASE_MEM size") != std::string::npos, "a RELEASE_MEM of eight dwords in a PS4 command buffer did not throw");
+    Fill(memory.outer, {Type3(0x59, 1), 0u});
+    offset = Put(memory.ringA, 0, Call(memory.outer, 2));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("a REWIND packet in a command buffer a compute ring calls") != std::string::npos, "a REWIND packet in a called command buffer did not throw");
+    const auto* unmapped = reinterpret_cast<const std::uint32_t*>(std::uintptr_t{0x1000u});
+    offset = Put(memory.ringA, 0, Call(unmapped, 4));
+    Require(ExpectFailure([&] { sceGnmDingDong(queue, offset); }).find("not readable") != std::string::npos, "an unreadable called command buffer did not throw");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.refused == 0, "a refused submission ran in part");
+
+    const auto nopWords = Fill(memory.inner, {Type3(OpNop, 2), 0u, 0u});
+    auto predicatedCall = Call(memory.inner, nopWords);
+    predicatedCall[0] |= 1u;
+    std::vector<std::uint32_t> ring(predicatedCall);
+    WriteData(ring, &memory.predicated, 4);
+    offset = Put(memory.ringA, 0, ring);
+    Require(sceGnmDingDong(queue, offset) == 0, "a predicated indirect buffer call failed");
+    AgcDriverWaitIdle_nid_postfix();
+    Require(memory.predicated == 4, "the packet after a predicated indirect buffer call did not run");
+    Require(memory.readA == offset, "the read offset was not moved past the predicated call");
+    Require(sceGnmUnmapComputeQueue(queue) == 0, "sceGnmUnmapComputeQueue failed");
+}
+
 }
 
 int main() {
@@ -215,6 +294,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         device.reset();
         TestComputeQueues();
+        TestCalledBuffers();
         std::puts("GnmDriver compute queue tests passed");
         return 0;
     } catch (const std::exception& error) {

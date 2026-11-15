@@ -7,6 +7,7 @@
 #include <cstring>
 #include <new>
 #include <stdexcept>
+#include <string>
 
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -96,7 +97,9 @@ extern "C" FileStream* __stderrp_nid_postfix;
 
 // Only the "C" locale exists.
 const char* APS5_VABI setlocale_nid_postfix(int, const char* locale) {
-    if (locale == nullptr || locale[0] == 0 || std::strcmp(locale, "C") == 0) return "C";
+    if (locale == nullptr) return "C";
+    std::string name;
+    if (CopyGuestString_nid_no_patch(locale, 2, name) == 0 && (name.empty() || name == "C")) return "C";
     return nullptr;
 }
 

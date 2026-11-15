@@ -12,6 +12,7 @@
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -212,22 +213,6 @@ int APS5_VABI sceLibcInternalPending4_070_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("+i81FtUCarA", sceLibcInternalPending4_070_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_071_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("Sc0lXhQG5Ko", sceLibcInternalPending4_071_nid_no_patch);
-
-int APS5_VABI _ZNKSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_RSt8ios_basewPK2tmcc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE6do_putES3_RSt8ios_basewPK2tmcc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI _ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERSs_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -613,8 +598,10 @@ const char* APS5_VABI _getprogname_nid_postfix() {
 
 void APS5_VABI setprogname_nid_postfix(const char* name) {
     if (name == nullptr) throw std::invalid_argument("setprogname: null name");
-    const char* slash = std::strrchr(name, '/');
-    __progname_nid_postfix = (slash != nullptr) ? slash + 1 : name;
+    std::string copied;
+    if (CopyGuestString_nid_no_patch(name, 65536, copied) != 0) throw std::invalid_argument("setprogname: unreadable name");
+    const std::size_t slash = copied.rfind('/');
+    __progname_nid_postfix = slash != std::string::npos ? name + slash + 1 : name;
 }
 
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
@@ -876,16 +863,6 @@ int APS5_VABI _Getgloballocale_nid_postfix() {
 }
 
 int APS5_VABI _Getint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Getpcostate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Getpwcostate_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
