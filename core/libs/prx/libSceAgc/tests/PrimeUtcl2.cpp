@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 
 namespace {
 
@@ -44,12 +45,21 @@ struct Storage {
     }
 };
 
+template <typename TWriter>
+std::uint32_t* writePrime(TWriter writer, CommandBuffer* buffer, std::uint32_t permission, std::uint32_t mode, const volatile void* address, std::uint32_t pages) {
+    if constexpr (std::is_invocable_v<TWriter, CommandBuffer*, std::uint32_t, std::uint32_t, const volatile void*, std::uint32_t>) {
+        return writer(buffer, permission, mode, address, pages);
+    } else {
+        return writer(buffer, address, pages);
+    }
+}
+
 std::uint32_t* writeCompute(CommandBuffer* buffer) {
-    return sceAgcAcbPrimeUtcl2(buffer, 3u, 1u, reinterpret_cast<const volatile void*>(Address), PageCount);
+    return writePrime(sceAgcAcbPrimeUtcl2, buffer, 3u, 1u, reinterpret_cast<const volatile void*>(Address), PageCount);
 }
 
 std::uint32_t* writeDraw(CommandBuffer* buffer) {
-    return sceAgcDcbPrimeUtcl2(buffer, 3u, 1u, reinterpret_cast<const volatile void*>(Address), PageCount);
+    return writePrime(sceAgcDcbPrimeUtcl2, buffer, 3u, 1u, reinterpret_cast<const volatile void*>(Address), PageCount);
 }
 
 template <typename TWriter, typename TSize>
@@ -100,7 +110,7 @@ void testReferencePackets() {
         const auto writer = compute ? sceAgcAcbPrimeUtcl2 : sceAgcDcbPrimeUtcl2;
         for (const auto& item : cases) {
             Storage storage;
-            const auto* packet = writer(&storage.buffer, item.permission, item.mode, reinterpret_cast<const volatile void*>(item.address), item.pages);
+            const auto* packet = writePrime(writer, &storage.buffer, item.permission, item.mode, reinterpret_cast<const volatile void*>(item.address), item.pages);
             auto expected = item.payload;
             if (!compute) expected[0] |= 0x40000000u;
             check(packet == storage.words.data() && packet[0] == 0xc0035d00u, "reference prime header or result differs");
