@@ -20,6 +20,17 @@
 
 static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
+static void* gTamperContext = nullptr;
+static std::uintptr_t gWatchReadStart = 0;
+static std::uintptr_t gWatchReadEnd = 0;
+
+static void TamperContextOnRead(std::uintptr_t address, std::size_t) {
+    errno = 99;
+    if (gTamperContext && address >= gWatchReadStart && address < gWatchReadEnd) {
+        std::memset(static_cast<std::uint8_t*>(gTamperContext) + sizeof(void*), 0, 16);
+    }
+}
+
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
     std::fprintf(stderr, "%s:%u: PNG decoder assertion failed\n", location.file_name(), location.line());
@@ -709,6 +720,9 @@ int main() {
     Require(scePngDecDelete(static_cast<unsigned char*>(handle) + 1) == invalidHandle);
     Require(scePngDecDelete(reinterpret_cast<void*>(0x20)) == invalidHandle);
     errno = 71;
+    Require(scePngDecDecodeWithInputControl(handle, nullptr, &info) == invalidAddr);
+    Require(errno == 71);
+    errno = 71;
     Require(scePngDecDecodeWithInputControl(handle, reinterpret_cast<const PngDecInputControlParam*>(0x10), &info) == invalidAddr);
     Require(errno == 71);
     Require(scePngDecDelete(handle) == 0);
@@ -718,6 +732,26 @@ int main() {
     for (const std::uint32_t dimension : {32767, 32768, 65536}) {
         CheckDimensionReporting(dimension, 1);
         CheckDimensionReporting(1, dimension);
+    }
+    {
+        std::vector<unsigned char> tamperedMemory(static_cast<std::size_t>(memorySize) + 16);
+        void* tamperedHandle = nullptr;
+        Require(scePngDecCreate(&param, tamperedMemory.data(), static_cast<std::uint32_t>(memorySize), &tamperedHandle) == 0);
+        std::vector<std::uint8_t> tamperedImage(3 * 2 * 4, 0xCC);
+        const PngDecDecodeParam tamperedDecode = DecodeParam(rgbPng, tamperedImage);
+        gTamperContext = tamperedHandle;
+        gWatchReadStart = reinterpret_cast<std::uintptr_t>(rgbPng.data());
+        gWatchReadEnd = gWatchReadStart + rgbPng.size();
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(TamperContextOnRead);
+        info = {};
+        errno = 71;
+        Require(scePngDecDecode(tamperedHandle, &tamperedDecode, &info) == (3 << 16 | 2));
+        Require(errno == 71);
+        gTamperContext = nullptr;
+        gWatchReadStart = 0;
+        gWatchReadEnd = 0;
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        Require(scePngDecDelete(tamperedHandle) == 0);
     }
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
