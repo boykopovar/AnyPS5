@@ -327,6 +327,7 @@ int main(int argc, char** argv) {
         const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
         const std::size_t draws = argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 4000u;
         const std::size_t rounds = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 12u;
+        Require(draws > 0 && rounds >= 3, "the bench needs at least one draw and three rounds, the first two of which warm up");
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(BufferMemory.data(), sizeof(BufferMemory), true, true, true);
@@ -354,7 +355,7 @@ int main(int argc, char** argv) {
         const bool tookHeap = AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore;
         Require(tookHeap == heap, heap ? "the bench draws did not take the GPU heap" : "the bench draws took the GPU heap with it off");
         const auto hits = AgcDriver::VulkanDevice::DrawRecipeHits() - hitsBefore;
-        if (rounds > 2 && AgcDriver::Graphics::DrawRecipes() && std::getenv("APS5_VERIFY_DRAW_ENTRIES") == nullptr)
+        if (AgcDriver::Graphics::DrawRecipes() && std::getenv("APS5_VERIFY_DRAW_ENTRIES") == nullptr)
             Require(hits >= (rounds - 2) * draws, "the bench's repeated draws replayed " + std::to_string(hits) + " recipes, fewer than the " + std::to_string((rounds - 2) * draws) + " draws of its repeated rounds");
         std::printf("bench %s: %zu draws x %zu rounds: min %.3f us/draw, median %.3f us/draw, heap stages taken %s\n", heap ? "heap" : "per-draw", draws,
                     perDraw.size(), perDraw.front(), perDraw[perDraw.size() / 2], tookHeap ? "yes" : "no");

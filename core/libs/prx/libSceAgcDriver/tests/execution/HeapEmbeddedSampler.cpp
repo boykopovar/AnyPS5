@@ -37,7 +37,7 @@ alignas(256) constexpr std::array<std::uint32_t, 8> UserSamplerCode{0x7e0002f3u,
 constexpr std::array<std::uint8_t, 4> White{0xffu, 0xffu, 0xffu, 0xffu};
 
 alignas(256) std::array<std::uint8_t, 1024> TextureMemory{};
-alignas(4096) std::array<std::array<float, 1024>, 3> Outputs{};
+alignas(4096) std::array<std::array<float, 1024>, 4> Outputs{};
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, float* output, std::span<const std::uint32_t> code, bool userSampler) {
     auto userData = SampleUserData(TextureMemory.data(), output);
@@ -90,7 +90,7 @@ int main() {
         const auto constant = Compile(*device, Outputs[0].data(), ConstantSamplerCode, false);
         const auto user = Compile(*device, Outputs[1].data(), UserSamplerCode, true);
         const auto wrap = Compile(*device, Outputs[2].data(), WrapSamplerCode, false);
-        const auto mirror = Compile(*device, Outputs[2].data(), MirrorSamplerCode, false);
+        const auto mirror = Compile(*device, Outputs[3].data(), MirrorSamplerCode, false);
         Require(constant.gpuResolvedImages == heap, "the constant-sampler stage is not in the expected mode");
         Require((EmbeddedElements(constant) != 0u) == embedding, embedding ? "a constant sampler was not embedded" : "a sampler was embedded outside heap mode");
         Require(DecoratesEmbeddedSet(constant) == embedding, "the stage's SPIR-V does not match its embedded samplers");
@@ -105,10 +105,12 @@ int main() {
         device->Dispatch(constant, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(ConstantSamplerCode.data()));
         device->Dispatch(user, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(UserSamplerCode.data()));
         device->Dispatch(wrap, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(WrapSamplerCode.data()));
+        device->Dispatch(mirror, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(MirrorSamplerCode.data()));
         device->WaitIdle();
         RequireSampled(Outputs[0].data(), White, "the constant sampler's opaque white border", heap);
         RequireSampled(Outputs[1].data(), White, "the user-data sampler's opaque white border", heap);
         RequireSampled(Outputs[2].data(), SampleTexel, "the wrapping constant sampler's texel", heap);
+        RequireSampled(Outputs[3].data(), SampleTexel, "the mirroring constant sampler's texel", heap);
         if (embedding) {
             const bool capped = std::getenv("APS5_EMBEDDED_SAMPLER_CAP") != nullptr;
             const auto* heapObject = AgcDriver::Graphics::BindlessHeap::Existing(device->graphicsContext());
