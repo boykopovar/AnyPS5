@@ -1,10 +1,13 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 namespace WebCore {
 
@@ -136,10 +139,67 @@ struct ScrollAlignment {
     Behavior m_rectPartial;
 };
 
+enum class TouchAction : std::uint8_t {
+    Auto = 1 << 0,
+    None = 1 << 1,
+    Manipulation = 1 << 2,
+    PanX = 1 << 3,
+    PanY = 1 << 4,
+    PinchZoom = 1 << 5
+};
+
+enum class BoxSide : std::uint8_t { Top, Right, Bottom, Left };
+
+template<typename T> struct RectEdges {
+    std::array<T, 4> m_sides{};
+
+    const T& at(BoxSide side) const { return m_sides[static_cast<std::size_t>(side)]; }
+};
+
+enum class ScrollElasticity : std::uint8_t { Automatic, None, Allowed };
+
+enum class ScrollbarMode : std::uint8_t { Auto, AlwaysOff, AlwaysOn };
+
+enum class OverscrollBehavior : std::uint8_t { Auto, Contain, None };
+
+enum class NativeScrollbarVisibility : std::uint8_t { Visible, HiddenByStyle, ReplacedByCustomScrollbar };
+
+struct ScrollableAreaParameters {
+    ScrollElasticity horizontalScrollElasticity{ScrollElasticity::None};
+    ScrollElasticity verticalScrollElasticity{ScrollElasticity::None};
+    ScrollbarMode horizontalScrollbarMode{ScrollbarMode::Auto};
+    ScrollbarMode verticalScrollbarMode{ScrollbarMode::Auto};
+    OverscrollBehavior horizontalOverscrollBehavior{OverscrollBehavior::Auto};
+    OverscrollBehavior verticalOverscrollBehavior{OverscrollBehavior::Auto};
+    bool allowsHorizontalScrolling{false};
+    bool allowsVerticalScrolling{false};
+    NativeScrollbarVisibility horizontalNativeScrollbarVisibility{NativeScrollbarVisibility::Visible};
+    NativeScrollbarVisibility verticalNativeScrollbarVisibility{NativeScrollbarVisibility::Visible};
+    bool useDarkAppearanceForScrollbars{false};
+};
+
 static_assert(sizeof(FloatPoint3D) == 12);
 static_assert(sizeof(ScrollAlignment) == 12);
 static_assert(sizeof(WindRule) == 1);
 static_assert(sizeof(ScrollType) == 1);
+static_assert(sizeof(TouchAction) == 1);
+static_assert(sizeof(RectEdges<float>) == 16);
+static_assert(offsetof(RectEdges<float>, m_sides) == 0);
+static_assert(std::is_trivially_copyable_v<RectEdges<float>>);
+static_assert(sizeof(ScrollableAreaParameters) == 11);
+static_assert(alignof(ScrollableAreaParameters) == 1);
+static_assert(offsetof(ScrollableAreaParameters, horizontalScrollElasticity) == 0);
+static_assert(offsetof(ScrollableAreaParameters, verticalScrollElasticity) == 1);
+static_assert(offsetof(ScrollableAreaParameters, horizontalScrollbarMode) == 2);
+static_assert(offsetof(ScrollableAreaParameters, verticalScrollbarMode) == 3);
+static_assert(offsetof(ScrollableAreaParameters, horizontalOverscrollBehavior) == 4);
+static_assert(offsetof(ScrollableAreaParameters, verticalOverscrollBehavior) == 5);
+static_assert(offsetof(ScrollableAreaParameters, allowsHorizontalScrolling) == 6);
+static_assert(offsetof(ScrollableAreaParameters, allowsVerticalScrolling) == 7);
+static_assert(offsetof(ScrollableAreaParameters, horizontalNativeScrollbarVisibility) == 8);
+static_assert(offsetof(ScrollableAreaParameters, verticalNativeScrollbarVisibility) == 9);
+static_assert(offsetof(ScrollableAreaParameters, useDarkAppearanceForScrollbars) == 10);
+static_assert(std::is_trivially_copyable_v<ScrollableAreaParameters>);
 
 }  // namespace WebCore
 
@@ -178,4 +238,10 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_21Vi
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_26GraphicsLayerPaintingPhaseE(NKWebKit::WtfAbi::TextStream& stream, WebCore::GraphicsLayerPaintingPhase value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_25ScrollPositioningBehaviorE(NKWebKit::WtfAbi::TextStream& stream, WebCore::ScrollPositioningBehavior value);
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_13GraphicsLayer16CustomAppearanceE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::GraphicsLayer::CustomAppearance& value);
+
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE(NKWebKit::WtfAbi::TextStream& stream, WebCore::TouchAction value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_16FloatRoundedRectE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::FloatRoundedRect& value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::RectEdges<float>& value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(NKWebKit::WtfAbi::TextStream& stream, const WebCore::Region& value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE(NKWebKit::WtfAbi::TextStream& stream, WebCore::ScrollableAreaParameters value);
 }

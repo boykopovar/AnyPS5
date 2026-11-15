@@ -1,11 +1,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #include "../src/WtfTextAbi.hpp"
 
@@ -257,6 +260,147 @@ void TestScrollingAndLayerEnums() {
     }
 }
 
+void TestTouchAction() {
+    using WebCore::TouchAction;
+    auto dump = [](TouchAction value) {
+        return Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamENS_11TouchActionE(s, value); });
+    };
+    Check(dump(TouchAction::Auto) == "auto");
+    Check(dump(TouchAction::None) == "none");
+    Check(dump(TouchAction::Manipulation) == "manipulation");
+    Check(dump(TouchAction::PanX) == "pan-x");
+    Check(dump(TouchAction::PanY) == "pan-y");
+    Check(dump(TouchAction::PinchZoom) == "pinch-zoom");
+    Check(dump(static_cast<TouchAction>(0)).empty());
+    Check(dump(static_cast<TouchAction>(0x40)).empty());
+    Check(dump(static_cast<TouchAction>(0x18)).empty());
+}
+
+void TestFloatRoundedRect() {
+    static_assert(sizeof(WebCore::FloatRoundedRect) == 48);
+    static_assert(offsetof(WebCore::FloatRoundedRect, m_radii) == 16);
+    WebCore::FloatRoundedRect value{{{1.0f, 2.5f}, {3.0f, 4.0f}}, {{1.0f, 2.0f}, {3.0f, 4.0f}, {0.5f, 0.0f}, {5.0f, 6.0f}}};
+    auto dump = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_16FloatRoundedRectE(s, value); };
+    const std::string multiLine = "(1,2.50) width=3 height=4\n(top-left width=1 height=2)\n(top-right width=3 height=4)"
+                                  "\n(bottom-left width=0.50 height=0)\n(bottom-right width=5 height=6)";
+    Check(Dump(dump) == multiLine);
+    Check(Dump(dump, NumberRespectingIntegers) == multiLine);
+    Check(Dump(dump, 0, false) == "(1,2.50) width=3 height=4 (top-left width=1 height=2) (top-right width=3 height=4)"
+                                  " (bottom-left width=0.50 height=0) (bottom-right width=5 height=6)");
+    Check(Dump(dump, SVGStyleRect, false) == "at (1,2.50) size 3x4 (top-left width=1 height=2) (top-right width=3 height=4)"
+                                             " (bottom-left width=0.50 height=0) (bottom-right width=5 height=6)");
+
+    TextStream indented = NewStream();
+    indented.indent = 1;
+    _ZN7WebCorelsERN3WTF10TextStreamERKNS_16FloatRoundedRectE(indented, value);
+    Check(indented.indent == 1);
+    Check(Release(indented) == "(1,2.50) width=3 height=4\n  (top-left width=1 height=2)\n  (top-right width=3 height=4)"
+                               "\n  (bottom-left width=0.50 height=0)\n  (bottom-right width=5 height=6)");
+}
+
+void TestRectEdges() {
+    static_assert(sizeof(WebCore::RectEdges<float>) == 16);
+    WebCore::RectEdges<float> edges{{1.0f, 2.5f, 3.0f, 4.0f}};
+    auto dump = [&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE(s, edges); };
+    Check(Dump(dump) == "[top 1.00 right 2.50 bottom 3.00 left 4.00]");
+    Check(Dump(dump, NumberRespectingIntegers) == "[top 1 right 2.50 bottom 3 left 4]");
+    Check(Dump(dump, 0, false) == "[top 1.00 right 2.50 bottom 3.00 left 4.00]");
+    WebCore::RectEdges<float> negative{{-0.25f, 0.0f, 0.0f, -8.0f}};
+    Check(Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE(s, negative); }, NumberRespectingIntegers)
+        == "[top -0.25 right 0 bottom 0 left -8]");
+}
+
+struct RegionHolder {
+    alignas(alignof(WebCore::Region)) unsigned char storage[sizeof(WebCore::Region)];
+    WebCore::Region* ptr() { return reinterpret_cast<WebCore::Region*>(storage); }
+};
+
+std::string DumpRegion(WebCore::Region& region, int indent, bool multiLine) {
+    TextStream stream = NewStream(0, multiLine);
+    stream.indent = indent;
+    TextStream& returned = _ZN7WebCorelsERN3WTF10TextStreamERKNS_6RegionE(stream, region);
+    Check(&returned == &stream);
+    Check(stream.indent == indent);
+    return Release(stream);
+}
+
+void TestRegion() {
+    RegionHolder empty;
+    _ZN7WebCore6RegionC1Ev(empty.ptr());
+    Check(DumpRegion(*empty.ptr(), 0, true) == "\n");
+    Check(DumpRegion(*empty.ptr(), 3, false) == "\n");
+    _ZN7WebCore6RegionD1Ev(empty.ptr());
+
+    RegionHolder single;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(single.ptr(), WebCore::IntRect{{1, 2}, {3, 4}});
+    Check(DumpRegion(*single.ptr(), 0, true) == "\n  (rect (1,2) width=3 height=4)\n");
+
+    RegionHolder other;
+    _ZN7WebCore6RegionC1ERKNS_7IntRectE(other.ptr(), WebCore::IntRect{{20, 2}, {5, 4}});
+    _ZN7WebCore6Region5uniteERKS0_(single.ptr(), *other.ptr());
+    Check(DumpRegion(*single.ptr(), 0, true) == "\n  (rect (1,2) width=3 height=4)\n  (rect (20,2) width=5 height=4)\n");
+    Check(DumpRegion(*single.ptr(), 1, true) == "\n    (rect (1,2) width=3 height=4)\n    (rect (20,2) width=5 height=4)\n");
+    Check(DumpRegion(*single.ptr(), 1, false) == "\n(rect (1,2) width=3 height=4)\n(rect (20,2) width=5 height=4)\n");
+    _ZN7WebCore6RegionD1Ev(other.ptr());
+    _ZN7WebCore6RegionD1Ev(single.ptr());
+}
+
+void TestScrollableAreaParameters() {
+    using WebCore::NativeScrollbarVisibility;
+    using WebCore::ScrollableAreaParameters;
+    static_assert(sizeof(ScrollableAreaParameters) == 11);
+    static_assert(offsetof(ScrollableAreaParameters, allowsHorizontalScrolling) == 6);
+    static_assert(offsetof(ScrollableAreaParameters, horizontalNativeScrollbarVisibility) == 8);
+    static_assert(offsetof(ScrollableAreaParameters, useDarkAppearanceForScrollbars) == 10);
+    static_assert(std::is_trivially_copyable_v<ScrollableAreaParameters>);
+    auto dump = [](ScrollableAreaParameters value, bool multiLine = true) {
+        return Dump([&](TextStream& s) -> TextStream& { return _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE(s, value); }, 0, multiLine);
+    };
+
+    ScrollableAreaParameters defaults;
+    const std::string base = "\n(horizontal scroll elasticity 1)\n(vertical scroll elasticity 1)\n(horizontal scrollbar mode 0)\n(vertical scrollbar mode 0)";
+    Check(dump(defaults) == base);
+    Check(dump(defaults, false) == " (horizontal scroll elasticity 1) (vertical scroll elasticity 1) (horizontal scrollbar mode 0) (vertical scrollbar mode 0)");
+
+    ScrollableAreaParameters ignored;
+    ignored.horizontalOverscrollBehavior = WebCore::OverscrollBehavior::Contain;
+    ignored.verticalOverscrollBehavior = WebCore::OverscrollBehavior::None;
+    ignored.useDarkAppearanceForScrollbars = true;
+    ignored.horizontalNativeScrollbarVisibility = NativeScrollbarVisibility::ReplacedByCustomScrollbar;
+    ignored.verticalNativeScrollbarVisibility = NativeScrollbarVisibility::ReplacedByCustomScrollbar;
+    Check(dump(ignored) == base);
+
+    ScrollableAreaParameters all;
+    all.horizontalScrollElasticity = WebCore::ScrollElasticity::Allowed;
+    all.verticalScrollElasticity = WebCore::ScrollElasticity::Automatic;
+    all.horizontalScrollbarMode = WebCore::ScrollbarMode::AlwaysOn;
+    all.verticalScrollbarMode = WebCore::ScrollbarMode::AlwaysOff;
+    all.allowsHorizontalScrolling = true;
+    all.allowsVerticalScrolling = true;
+    all.horizontalNativeScrollbarVisibility = NativeScrollbarVisibility::HiddenByStyle;
+    all.verticalNativeScrollbarVisibility = NativeScrollbarVisibility::HiddenByStyle;
+    Check(dump(all) == "\n(horizontal scroll elasticity 2)\n(vertical scroll elasticity 0)\n(horizontal scrollbar mode 2)\n(vertical scrollbar mode 1)"
+                       "\n(allows horizontal scrolling 1)\n(allows vertical scrolling 1)"
+                       "\n(horizontal scrollbar hidden by style 1)\n(vertical scrollbar hidden by style 1)");
+
+    ScrollableAreaParameters vertical;
+    vertical.allowsVerticalScrolling = true;
+    vertical.horizontalNativeScrollbarVisibility = NativeScrollbarVisibility::HiddenByStyle;
+    Check(dump(vertical) == base + "\n(allows vertical scrolling 1)\n(horizontal scrollbar hidden by style 1)");
+
+    ScrollableAreaParameters invalid;
+    invalid.horizontalScrollElasticity = static_cast<WebCore::ScrollElasticity>(3);
+    invalid.verticalScrollbarMode = static_cast<WebCore::ScrollbarMode>(9);
+    Check(dump(invalid) == "\n(horizontal scroll elasticity )\n(vertical scroll elasticity 1)\n(horizontal scrollbar mode 0)\n(vertical scrollbar mode )");
+
+    TextStream indented = NewStream();
+    indented.indent = 2;
+    _ZN7WebCorelsERN3WTF10TextStreamENS_24ScrollableAreaParametersE(indented, vertical);
+    Check(indented.indent == 2);
+    Check(Release(indented) == "\n    (horizontal scroll elasticity 1)\n    (vertical scroll elasticity 1)\n    (horizontal scrollbar mode 0)"
+                               "\n    (vertical scrollbar mode 0)\n    (allows vertical scrolling 1)\n    (horizontal scrollbar hidden by style 1)");
+}
+
 void TestChaining() {
     TextStream stream = NewStream();
     WebCore::IntPoint point{1, 2};
@@ -277,6 +421,11 @@ int main() {
     TestScrollingAndLayerEnums();
     TestLayoutValues();
     TestTransforms();
+    TestTouchAction();
+    TestFloatRoundedRect();
+    TestRectEdges();
+    TestRegion();
+    TestScrollableAreaParameters();
     TestChaining();
     return 0;
 }
