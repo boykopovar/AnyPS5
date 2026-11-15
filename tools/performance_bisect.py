@@ -144,8 +144,8 @@ def git(repo, *args):
 
 
 def first_parent_commits(repo, good, bad):
-    good_sha = git(repo, "rev-parse", "--verify", f"{good}^{{commit}}")
-    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^{{commit}}")
+    good_sha = git(repo, "rev-parse", "--verify", f"{good}^0")
+    bad_sha = git(repo, "rev-parse", "--verify", f"{bad}^0")
     result = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", good_sha, bad_sha], capture_output=True)
     if result.returncode:
         raise ValueError("good commit must be an ancestor of bad commit")
