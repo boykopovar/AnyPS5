@@ -4465,7 +4465,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const auto unwatch = GuestMemory::UnwatchSerial();
         const auto importSet = directRegions.empty() ? 0 : HostImportSetGeneration();
         const auto allocations = directRegions.empty() ? 0 : GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases && provedUnwatch == unwatch && provedImportSet == importSet && provedAllocations == allocations && refreshPerUseCopies()) {
+        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases && provedUnwatch == unwatch && provedImportSet == importSet && provedAllocations == allocations && !DepthPlanesStale() && refreshPerUseCopies()) {
             static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
             if (verify) {
                 const bool ok = revalidateFull(shaders, report);
