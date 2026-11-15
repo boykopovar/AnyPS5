@@ -6,6 +6,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -270,6 +271,11 @@ int main() {
         Require(scePthreadMutexLock(&context.mutex) == SCE_OK);
         Require(pthread_cond_timedwait_nid_postfix(&cond, &context.mutex, &negativeSeconds) == POSIX_EINVAL);
         Require(pthread_cond_timedwait_nid_postfix(&cond, &context.mutex, &negativeNanoseconds) == POSIX_EINVAL);
+        errno = 71;
+        Require(pthread_cond_timedwait_nid_postfix(&cond, &context.mutex, reinterpret_cast<const KernelTimespec*>(0x10)) == POSIX_EINVAL);
+        Require(errno == 71);
+        const KernelTimespec past{0, 0};
+        Require(pthread_cond_timedwait_nid_postfix(&cond, &context.mutex, &past) == POSIX_ETIMEDOUT);
         Require(scePthreadMutexUnlock(&context.mutex) == SCE_OK);
     }
     Require(pthread_cond_destroy_nid_postfix(&cond) == 0);
