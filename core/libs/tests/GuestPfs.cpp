@@ -370,15 +370,32 @@ int main() {
     ValidateV3();
     {
         PfsHeader header = HeaderV2(4, 0x80000, 0x200);
+        PfsHeader headerV3 = HeaderV2(0, 0x80000, 0);
+        headerV3.version = 3;
         std::uint64_t table[5] = {0, 0x20000, 0x40000, 0x60000, 0x80000};
+        std::array<std::uint64_t, 6> command{};
+        std::array<std::uint8_t, 0x100> buffer{};
+        std::array<std::uint8_t, 0x100> work{};
+        std::uint64_t size = 0;
         std::uint32_t first = 0;
         std::uint32_t last = 0;
+        void* bad = reinterpret_cast<void*>(std::uintptr_t{0x10});
         errno = 71;
-        Require(scePfsGetUncompressedSize(&header, reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10})) == InvalidArgument);
-        Require(errno == 71);
-        Require(scePfsGetPreadBlockRange(0x1000, 0, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), &last, &header, table) == InvalidArgument);
-        Require(errno == 71);
-        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), &header, table) == InvalidArgument);
+        Require(scePfsGetHeaderReadCommand(bad) == InvalidArgument);
+        Require(scePfsGetBlockTableReadCommand(bad, command.data()) == InvalidArgument);
+        Require(scePfsGetBlockTableReadCommand(&header, bad) == InvalidArgument);
+        Require(scePfsGetSingleBlockReadCommand(bad, table, 0, command.data()) == InvalidArgument);
+        Require(scePfsGetSingleBlockReadCommand(&header, bad, 0, command.data()) == InvalidArgument);
+        Require(scePfsGetSingleBlockReadCommand(&header, table, 0, bad) == InvalidArgument);
+        Require(scePfsGetUncompressedSize(bad, &size) == InvalidArgument);
+        Require(scePfsGetUncompressedSize(&header, reinterpret_cast<std::uint64_t*>(bad)) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, reinterpret_cast<std::uint32_t*>(bad), &last, &header, table) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, reinterpret_cast<std::uint32_t*>(bad), &header, table) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, &last, bad, table) == InvalidArgument);
+        Require(scePfsGetPreadBlockRange(0x1000, 0, &first, &last, &headerV3, bad) == InvalidArgument);
+        Require(scePfsPread(buffer.data(), 0x100, 0, bad, work.data()) == InvalidArgument);
+        Require(scePfsValidate(bad, 1) == InvalidArgument);
+        Require(scePfsValidate(bad, 2) == InvalidArgument);
         Require(errno == 71);
     }
     return 0;
