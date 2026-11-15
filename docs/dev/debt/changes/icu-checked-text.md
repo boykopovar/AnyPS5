@@ -1,9 +1,5 @@
 # libSceIcu
 
-## change [Additional callable exports]
-
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - the remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The table also retains identified exports implemented in other source files.
-
 ## change [ICU UText exports]
 
 - [ICU UText exports](../../../core/libs/prx/libSceIcu/UText.cpp) have no console ABI or behavior verification. `utext_setup`, `utext_openUChars`, `utext_close` and the UTF-16 provider callbacks follow [ICU 78.1 utext.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/utext.cpp), with the 144-byte public layout and guest-ABI callbacks. Self-clones, non-144-byte clone layouts and inaccessible memory throw `std::invalid_argument`; overlong NUL-terminated text also throws. Deep clones redirect the current chunk to their owned copy, whereas the pinned source leaves it referencing the original text. The other text providers and generic UText access exports remain unimplemented. Closes when: compared with the console.
