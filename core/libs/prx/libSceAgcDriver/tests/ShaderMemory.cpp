@@ -12390,6 +12390,27 @@ void verifyShortCubeMode() {
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, ResourceMaterializer::RuntimeImageModes(image))); }, "fewer than six slices is implemented only for sampling", "a stored cube with three slices was accepted");
 }
 
+void verifyCubeFaceConversionStoreMode() {
+    using namespace ShaderRecompiler;
+    const auto cubeDescriptor = [](std::uint32_t format) { return DescriptorValue{{0x00000100u, 0xc0000000u | (format << 20u), 0x0001c001u, 0xb0000facu, 11u, 0u, 0u, 0u}, 8u}; };
+    ImageResource store{};
+    store.resourceClass = ImageResourceClass::Storage;
+    store.dimension = RdnaImageDimension::Dim2D;
+    store.written = true;
+    store.fmaskCompatible = false;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(store);
+    require(modes.size() < ImageTableAbi::MaxModes, "2D image store reaches the image table mode limit");
+    for (const auto format : {IrBufferFormat::Format32SInt, IrBufferFormat::Format16_16Float, IrBufferFormat::Format16_16_16_16Float}) {
+        const auto& mode = modes[ResourceMaterializer::RuntimeImageMode(store, cubeDescriptor(static_cast<std::uint32_t>(format)), modes)];
+        require(mode.cube && mode.dimension == RdnaImageDimension::Dim2DArray && mode.conversionFormat == format, "2D image store on a cube T# of a measured conversion format did not select a cube face runtime mode");
+    }
+    for (const auto format : {IrBufferFormat::Format8_8_8_8SInt, IrBufferFormat::Format16Float, IrBufferFormat::Format16_16SInt}) {
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, cubeDescriptor(static_cast<std::uint32_t>(format)), modes)); }, "incompatible with the static runtime image interface", "2D image store on a cube T# of an unmeasured conversion format was accepted");
+    }
+    store.atomic = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, cubeDescriptor(static_cast<std::uint32_t>(IrBufferFormat::Format32SInt)), ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "2D image atomic on a cube T# of 32_SINT was accepted");
+}
+
 void verifyVolumeArrayLoadMode() {
     using namespace ShaderRecompiler;
     const DescriptorValue descriptor{{0x02466600u, 0x01400000u, 0u, 0xa0500204u, 1u, 0x00700000u, 0u, 0u}, 8u};
@@ -13041,6 +13062,7 @@ int main(int argc, char** argv) {
         verifyFmaskImageMode();
         verifyCubeDepthCompareMode();
         verifyShortCubeMode();
+        verifyCubeFaceConversionStoreMode();
         verifyVolumeArrayLoadMode();
         verifyArrayVolumeStoreMode();
         verifyMultisamplePlaneReadMode();
