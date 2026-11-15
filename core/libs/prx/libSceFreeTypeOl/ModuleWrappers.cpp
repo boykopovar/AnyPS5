@@ -64,6 +64,7 @@ FREETYPEOL_STUB("oJm1lThZ3iQ", sceFreeTypeOlDoneGlyphSlot)
 #include <freetype/internal/ftobjs.h>
 
 #include <cstdint>
+#include <cerrno>
 
 using namespace FreeType;
 
@@ -302,11 +303,27 @@ APS5_EXPORT("OmxJF0FvwWc", sceFreeTypeOlFtaRemoveModuleWinfonts_nid_postfix);
 
 
 int APS5_VABI sceFreeTypeOlAlloc_nid_postfix(GuestMemoryRec* memory, std::int64_t size, void** output) {
-    if (output) *output = nullptr;
-    if (!memory || !memory->alloc || !output || size < 0) return 6;
-    if (size == 0) return 0;
-    *output = memory->alloc(memory, size);
-    return *output ? 0 : 64;
+    if (!output) return 6;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(output, sizeof(*output))) {
+        errno = savedErrno;
+        return 6;
+    }
+    void* nullBlock = nullptr;
+    GuestCopyOut_nid_no_patch(output, &nullBlock, sizeof(nullBlock));
+    if (!memory || !memory->alloc || size < 0) {
+        errno = savedErrno;
+        return 6;
+    }
+    if (size == 0) {
+        errno = savedErrno;
+        return 0;
+    }
+    void* allocated = memory->alloc(memory, size);
+    const bool copied = GuestCopyOut_nid_no_patch(output, &allocated, sizeof(allocated));
+    errno = savedErrno;
+    if (!copied) return 6;
+    return allocated ? 0 : 64;
 }
 APS5_EXPORT("Uw+BZJpflxk", sceFreeTypeOlAlloc_nid_postfix);
 

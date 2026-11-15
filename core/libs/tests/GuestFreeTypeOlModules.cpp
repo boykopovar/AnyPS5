@@ -106,6 +106,8 @@ int main() {
     REQUIRE(block == nullptr);
     REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, -1, &block) == 6);
     REQUIRE(block == nullptr);
+    errno = 71;
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 24, reinterpret_cast<void**>(0x10)) == 6 && errno == 71);
 
     const auto font = SquareGlyphFont('A', 700, true);
     GuestFaceRec* activeFace = nullptr;
