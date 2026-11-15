@@ -79,6 +79,8 @@ static void GuestText(int standard, const std::string& text) {
         Require(fprintf_nid_postfix(&_Stderr_nid_postfix, "guest-fprintf\n") >= 0);
         *__error_nid_postfix() = 2;
         perror_nid_postfix("guest-perror");
+        perror_nid_postfix(nullptr);
+        perror_nid_postfix("");
 
         Require(fflush_nid_postfix(&_Stderr_nid_postfix) == 0);
     }
@@ -144,6 +146,6 @@ int main(int argc, char** argv) {
     Split(2);
     Split(1);
     GuestText(1, "guest-printf\nguest-puts\n");
-    GuestText(2, "guest-fprintf\nguest-perror: No such file or directory\n");
+    GuestText(2, "guest-fprintf\nguest-perror: No such file or directory\nNo such file or directory\nNo such file or directory\n");
     return 0;
 }

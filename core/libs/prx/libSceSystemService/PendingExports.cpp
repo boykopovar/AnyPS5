@@ -3,10 +3,20 @@
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 
 namespace {
+
+std::filesystem::space_info HostSpace() {
+    std::error_code error;
+    const std::filesystem::path directory = std::filesystem::current_path(error);
+    if (error) return {};
+    const std::filesystem::space_info space = std::filesystem::space(directory, error);
+    return error ? std::filesystem::space_info{} : space;
+}
 
 constexpr int SystemServiceUnavailable = static_cast<int>(0x80A10002);
 constexpr int SystemServiceInvalidArgument = static_cast<int>(0x80A10003);
@@ -230,11 +240,6 @@ int APS5_VABI sceLncUtilGetAppCategory(std::int32_t appId, char* category) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilGetAppFocusedAppStatus(LncAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -348,7 +353,11 @@ int APS5_VABI sceLncUtilIsHostBoot(std::int32_t appId, bool* hostBoot) {
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) throw std::runtime_error("sceLncUtilIsSpeculativeLaunch: application other than the running title");
-    *speculative = false;
+    const bool localSpeculative = false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(speculative, &localSpeculative, sizeof(localSpeculative));
+    errno = savedErrno;
+    if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -502,16 +511,6 @@ int APS5_VABI sceLncUtilUnregisterShellUI() {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilAccessibilityZoomLock() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilAccessibilityZoomUnlock() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilAcquireBgmCpuBudget() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -533,20 +532,36 @@ int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t handle) {
 
 int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32_t* status, std::int32_t* result) {
     if (status == nullptr || result == nullptr) return ShellCoreInvalidArgument;
-    *status = ActivationStatus;
-    *result = 0;
+    const std::int32_t localStatus = ActivationStatus;
+    const std::int32_t localResult = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus)) && GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* handle) {
     if (handle == nullptr) return ShellCoreInvalidArgument;
-    *handle = nextActivationHandle.fetch_add(ActivationHandleStep);
+    const std::intptr_t cleared = 0;
+    const int savedErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(handle, &cleared, sizeof(cleared));
+    errno = savedErrno;
+    if (!writable) return ShellCoreInvalidArgument;
+    const std::intptr_t localHandle = nextActivationHandle.fetch_add(ActivationHandleStep);
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &localHandle, sizeof(localHandle));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilActivateIsActivated(std::int32_t type, bool* activated) {
     if (activated == nullptr) return ShellCoreInvalidArgument;
-    *activated = true;
+    const bool localActivated = true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(activated, &localActivated, sizeof(localActivated));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
@@ -822,12 +837,27 @@ int APS5_VABI sceShellCoreUtilGetEffectiveTotalSizeOfUserPartition(std::uint64_t
 }
 
 std::uint64_t APS5_VABI sceShellCoreUtilGetFreeSizeOfAvContentsTmp() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return HostSpace().available;
 }
 
 int APS5_VABI sceShellCoreUtilGetFreeSizeOfUserPartition(std::uint64_t* freeSize, std::uint64_t* totalSize) {
-    NotImplemented_nid_no_patch(__func__);
+    const std::filesystem::space_info space = HostSpace();
+    const int savedErrno = errno;
+    if (freeSize != nullptr) {
+        const std::uint64_t localFree = space.available;
+        if (!GuestCopyOut_nid_no_patch(freeSize, &localFree, sizeof(localFree))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    if (totalSize != nullptr) {
+        const std::uint64_t localTotal = space.capacity;
+        if (!GuestCopyOut_nid_no_patch(totalSize, &localTotal, sizeof(localTotal))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -1022,11 +1052,6 @@ int APS5_VABI sceShellCoreUtilHideBlocksFromUser(std::int64_t bytes, std::int32_
 }
 
 int APS5_VABI sceShellCoreUtilIncrementVersionNumberOfCameraCalibrationData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsAccessibilityZoomLocked(std::int32_t appId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1684,11 +1709,6 @@ int APS5_VABI sceSystemServiceEnablePersonalEyeToEyeDistanceSetting() {
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetAppFocusedAppStatus(SystemServiceAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1726,14 +1746,20 @@ int APS5_VABI sceSystemServiceGetMainAppTitleId() {
 
 int APS5_VABI sceSystemServiceGetPSButtonEvent(const SystemServiceEvent* event, SystemServicePSButtonEvent* buttonEvent) {
     if (event == nullptr || buttonEvent == nullptr) return SystemServiceInvalidArgument;
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(event);
+    std::uint8_t bytes[20]{};
+    const int savedErrno = errno;
+    const bool copiedInput = GuestCopyIn_nid_no_patch(bytes, event, sizeof(bytes));
+    errno = savedErrno;
+    if (!copiedInput) return SystemServiceInvalidArgument;
     SystemServicePSButtonEvent result{};
     std::memcpy(&result.eventType, bytes, sizeof(result.eventType));
     if (result.eventType < FirstPSButtonEventType || result.eventType > LastPSButtonEventType) return SystemServiceInvalidArgument;
     std::memcpy(&result.dataAt0, bytes + 4, sizeof(result.dataAt0));
     std::memcpy(&result.dataAt8, bytes + 12, sizeof(result.dataAt8));
-    *buttonEvent = result;
-    return 0;
+    const int copyErrno = errno;
+    const bool copiedOutput = GuestCopyOut_nid_no_patch(buttonEvent, &result, sizeof(result));
+    errno = copyErrno;
+    return copiedOutput ? 0 : SystemServiceInvalidArgument;
 }
 
 int APS5_VABI sceSystemServiceGetParentSocket() {

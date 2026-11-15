@@ -503,7 +503,7 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
             merge.layered = reader.ReadBool();
             merge.firstSlice = reader.ReadU32();
             merge.lastSlice = reader.ReadU32();
-            if (version >= 57u) {
+            if (version >= 58u) {
                 const auto format = reader.ReadU8();
                 if (format >= StorageImageFormatCount) throw std::runtime_error("invalid recompile request target merge storage format");
                 merge.storageFormat = static_cast<StorageImageFormat>(format);
@@ -922,7 +922,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(57u);
+    writer.WriteU32(58u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -973,6 +973,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
         writer.WriteU32(request.context.compute->granulatedVgprCount);
         writer.WriteU32(request.context.compute->sharedVgprBlocks);
     }
+    writer.WriteU32(request.target.maxImageArrayLayers);
+    writer.WriteBool(request.target.fixedPushSlots);
     return base64Encode(buffer);
 }
 
@@ -981,7 +983,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 57u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 58u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1051,6 +1053,10 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 56u && result.request.context.compute.has_value()) {
         result.request.context.compute->granulatedVgprCount = reader.ReadU32();
         result.request.context.compute->sharedVgprBlocks = reader.ReadU32();
+    }
+    if (version >= 57u) {
+        result.request.target.maxImageArrayLayers = reader.ReadU32();
+        result.request.target.fixedPushSlots = reader.ReadBool();
     }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
