@@ -12,10 +12,21 @@ struct LibreSsl3SslMethod {
     std::uint16_t maxTlsVersion;
 };
 
+struct LibreSsl3Stack;
+
 struct LibreSsl3Ssl3State {
     std::int64_t flags;
     unsigned char serverRandom[32];
     unsigned char clientRandom[32];
+    unsigned char recordState[208];
+    unsigned char handshakeStart[240];
+    LibreSsl3Stack* verifiedChain;
+    unsigned char handshakeRest[312];
+    unsigned char renegotiationState[144];
+    std::uint8_t* alpnSelected;
+    std::uint64_t alpnSelectedLength;
+    std::uint8_t* peerQuicTransportParams;
+    std::uint64_t peerQuicTransportParamsLength;
 };
 
 struct LibreSsl3Ssl {
@@ -82,8 +93,14 @@ struct LibreSsl3SslSession {
 static_assert(sizeof(LibreSsl3SslMethod) == 16);
 static_assert(offsetof(LibreSsl3SslMethod, minTlsVersion) == 12);
 static_assert(offsetof(LibreSsl3SslMethod, maxTlsVersion) == 14);
-static_assert(sizeof(LibreSsl3Ssl3State) == 72);
+static_assert(sizeof(LibreSsl3Ssl3State) == 1016);
 static_assert(offsetof(LibreSsl3Ssl3State, clientRandom) == 40);
+static_assert(offsetof(LibreSsl3Ssl3State, handshakeStart) == 280);
+static_assert(offsetof(LibreSsl3Ssl3State, verifiedChain) == 520);
+static_assert(offsetof(LibreSsl3Ssl3State, renegotiationState) == 840);
+static_assert(offsetof(LibreSsl3Ssl3State, alpnSelected) == 984);
+static_assert(offsetof(LibreSsl3Ssl3State, peerQuicTransportParams) == 1000);
+static_assert(offsetof(LibreSsl3Ssl3State, peerQuicTransportParamsLength) == 1008);
 static_assert(sizeof(LibreSsl3Ssl) == 320);
 static_assert(offsetof(LibreSsl3Ssl, s3) == 56);
 static_assert(offsetof(LibreSsl3Ssl, references) == 176);
