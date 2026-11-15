@@ -443,14 +443,20 @@ int APS5_VABI sceNpStrToInt32(const char* str, std::int32_t* value, int base, st
 }
 
 int APS5_VABI sceNpStrToInt64(const char* str, std::int64_t* value, int base, std::size_t* parsedLength) {
+    const int savedErrno = errno;
+    if (value == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     long long parsed = 0;
     bool saturated = false;
     const int result = ParseInteger(str, parsedLength, [&](const char* s, char** end) {
         parsed = std::strtoll(s, end, base);
         saturated = parsed == LLONG_MIN || parsed == LLONG_MAX;
     }, &saturated);
+    errno = savedErrno;
     if (result < 0) return result;
-    *value = parsed;
+    const auto val = static_cast<std::int64_t>(parsed);
+    const bool ok = GuestCopyOut_nid_no_patch(value, &val, sizeof(val));
+    errno = savedErrno;
+    if (!ok) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
