@@ -4123,6 +4123,21 @@ void InvalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes) 
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "depth metadata invalidation range overflows");
     const auto end = address + bytes;
     std::lock_guard lock(surfacesMutex());
+    {
+        std::lock_guard copyLock(copyDestinationsMutex());
+        auto& ranges = copyDestinations();
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> remaining;
+        remaining.reserve(ranges.size());
+        for (const auto& range : ranges) {
+            if (range.second <= address || end <= range.first) {
+                remaining.push_back(range);
+                continue;
+            }
+            if (range.first < address) remaining.emplace_back(range.first, address);
+            if (end < range.second) remaining.emplace_back(end, range.second);
+        }
+        ranges.swap(remaining);
+    }
     forgetHtileReads(address, bytes);
     std::erase_if(clearedHtiles(), [&](const auto& cleared) { return cleared.second != 0u && cleared.first < end && (cleared.first >= address || cleared.second > address - cleared.first); });
 }
