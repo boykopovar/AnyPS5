@@ -199,6 +199,8 @@ void CheckSync() {
     Require(sync.mutex != nullptr && sync.condition != nullptr && sync.signals == 0);
     std::uint32_t timeout = 2000;
     Require(sceNetSyncWait(&sync, &timeout) == 0 && timeout == 0xFFFFFFFFu);
+    errno = 71;
+    Require(sceNetSyncWait(&sync, reinterpret_cast<std::uint32_t*>(0x10)) == 0 && errno == 71);
     Require(sceNetSyncSignal(&sync, 2) == 0);
     Require(sceNetSyncSignal(&sync, 4) == 0);
     timeout = 2000;

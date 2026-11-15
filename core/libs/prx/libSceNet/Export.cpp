@@ -3609,12 +3609,27 @@ int APS5_VABI sceNetSyncSignal(NetSyncObject* sync, std::uint32_t signals) {
 }
 
 int APS5_VABI sceNetSyncWait(NetSyncObject* sync, std::uint32_t* timeout) {
+    std::uint32_t localTimeout = 0;
+    if (timeout) {
+        const int savedErrno = errno;
+        if (!GuestCopyIn_nid_no_patch(&localTimeout, timeout, sizeof(localTimeout)) ||
+            !GuestWritable_nid_no_patch(timeout, sizeof(*timeout))) {
+            errno = savedErrno;
+            return 0;
+        }
+        errno = savedErrno;
+    }
     if (scePthreadMutexLock(&sync->mutex) < 0) return 0;
     while (sync->signals == 0) {
         const int waited = timeout == nullptr ? scePthreadCondWait(&sync->condition, &sync->mutex)
-                                              : scePthreadCondTimedwait(&sync->condition, &sync->mutex, *timeout);
+                                              : scePthreadCondTimedwait(&sync->condition, &sync->mutex, localTimeout);
         if (waited == 0) continue;
-        if (waited == NET_KERNEL_ERROR_TIMEDOUT) *timeout = 0xFFFFFFFFu;
+        if (waited == NET_KERNEL_ERROR_TIMEDOUT) {
+            const std::uint32_t timedOutVal = 0xFFFFFFFFu;
+            const int savedErrno = errno;
+            GuestCopyOut_nid_no_patch(timeout, &timedOutVal, sizeof(timedOutVal));
+            errno = savedErrno;
+        }
         scePthreadMutexUnlock(&sync->mutex);
         return 0;
     }
