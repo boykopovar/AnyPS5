@@ -71,6 +71,7 @@ void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 void DiscardHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
+std::uint64_t ArmedHtileDepthClearCount();
 std::uint64_t DiscardedHtileDepthClearCount();
 struct HtileMaskClear {
     std::uint64_t address = 0;

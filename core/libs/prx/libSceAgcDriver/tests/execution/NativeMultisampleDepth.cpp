@@ -1833,6 +1833,11 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                                 try { AgcDriverShutdown_nid_postfix(); } catch (...) {}
                             }
                         } shutdownDriver;
+                        gpuLock.unlock();
+                        AgcDriverWaitForPipelineJournal_nid_postfix();
+                        AgcDriverWaitIdle_nid_postfix();
+                        gpuLock.lock();
+                        const auto armedClears = ArmedHtileDepthClearCount();
                         const auto discardedClears = DiscardedHtileDepthClearCount();
                         Recorder::FailNextSubmitsForTest(1u);
                         std::string failure;
@@ -1840,6 +1845,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                         catch (const std::exception& error) { failure = error.what(); }
                         Recorder::FailNextSubmitsForTest(0u);
                         recorder.Activate();
+                        Require(ArmedHtileDepthClearCount() == armedClears + 1u, "the HTILE clear dispatch was not armed exactly once before its batch failed (" + std::to_string(ArmedHtileDepthClearCount() - armedClears) + " armed; failure '" + failure + "')");
                         if (failure.find("injected failure") == std::string::npos) {
                             const auto [accepted, completed] = AgcDriver::DriverDetail::DriverTestAccess::SerialProgress();
                             std::string late = "none";

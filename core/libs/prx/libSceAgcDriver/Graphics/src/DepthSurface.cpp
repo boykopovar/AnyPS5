@@ -94,6 +94,7 @@ bool singleComponent(VkFormat format, std::uint32_t bytes) {
 
 std::atomic<bool> depthTransferPasses{std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") == nullptr};
 std::atomic<std::uint64_t> depthTransferPassCount{0};
+std::atomic<std::uint64_t> armedHtileClears{0};
 std::atomic<std::uint64_t> discardedHtileClears{0};
 
 bool depthToStoragePass(const Context& context, VkFormat depthFormat, VkFormat colorFormat) {
@@ -3939,6 +3940,7 @@ bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::siz
 
 void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes) {
     std::lock_guard lock(surfacesMutex());
+    armedHtileClears.fetch_add(1, std::memory_order_relaxed);
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire) || !surface->samplingActive || surface->target.htileAddress != htileAddress || !surface->clearPending) continue;
         const auto& metadata = surface->sampling.initial[1];
@@ -4638,6 +4640,10 @@ void SetDepthTransferPasses(bool enabled) {
 
 std::uint64_t DepthTransferPassCount() {
     return depthTransferPassCount.load(std::memory_order_relaxed);
+}
+
+std::uint64_t ArmedHtileDepthClearCount() {
+    return armedHtileClears.load(std::memory_order_relaxed);
 }
 
 std::uint64_t DiscardedHtileDepthClearCount() {
