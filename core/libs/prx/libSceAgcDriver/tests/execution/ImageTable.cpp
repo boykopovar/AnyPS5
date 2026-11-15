@@ -2173,8 +2173,9 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     for (std::uint32_t record = 0; record < 2u; ++record) std::copy(images[record].begin(), images[record].end(), records[record].begin() + 16u);
     const bool bitField = shape == PointerMask::BitField || shape == PointerMask::MaskShift || shape == PointerMask::ScalarBfe;
     const std::uint32_t pointerWord = shape == PointerMask::LaneNot || bitField ? 0u : 2u;
+    const std::uint64_t recordsAddress = bitField ? 0x7f0000001000ull : reinterpret_cast<std::uintptr_t>(records.data());
     for (std::uint32_t record = 0; record < 3u; ++record) {
-        const auto pointer = reinterpret_cast<std::uintptr_t>(records[record % 2u].data());
+        const auto pointer = recordsAddress + (record % 2u) * sizeof(records[0]);
         Table[record * 4u + pointerWord] = static_cast<std::uint32_t>(pointer);
         Table[record * 4u + pointerWord + 1u] = static_cast<std::uint32_t>(pointer >> 32u);
     }
@@ -2199,7 +2200,7 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
             {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
             {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
             {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
-            {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
+            {recordsAddress, std::as_bytes(std::span(records))},
             {secondAddress, std::as_bytes(std::span(second))},
         };
         const auto inputTable = Table;
