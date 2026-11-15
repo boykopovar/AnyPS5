@@ -63,6 +63,7 @@ FREETYPEOL_STUB("oJm1lThZ3iQ", sceFreeTypeOlDoneGlyphSlot)
 #include <freetype/internal/ftdrv.h>
 #include <freetype/internal/ftobjs.h>
 
+#include <cerrno>
 #include <cstdint>
 
 using namespace FreeType;
@@ -311,9 +312,18 @@ int APS5_VABI sceFreeTypeOlAlloc_nid_postfix(GuestMemoryRec* memory, std::int64_
 APS5_EXPORT("Uw+BZJpflxk", sceFreeTypeOlAlloc_nid_postfix);
 
 void APS5_VABI sceFreeTypeOlFree_nid_postfix(GuestMemoryRec* memory, void** block) {
-    if (!memory || !memory->free || !block || !*block) return;
-    memory->free(memory, *block);
-    *block = nullptr;
+    if (!memory || !memory->free || !block) return;
+    void* targetBlock = nullptr;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&targetBlock, block, sizeof(targetBlock)) || !targetBlock) {
+        errno = savedErrno;
+        return;
+    }
+    errno = savedErrno;
+    memory->free(memory, targetBlock);
+    void* nullBlock = nullptr;
+    GuestCopyOut_nid_no_patch(block, &nullBlock, sizeof(nullBlock));
+    errno = savedErrno;
 }
 APS5_EXPORT("fHMsRluEMfI", sceFreeTypeOlFree_nid_postfix);
 

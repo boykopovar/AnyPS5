@@ -104,6 +104,7 @@ int main() {
     REQUIRE(block != nullptr);
     sceFreeTypeOlFree_nid_postfix(&memory, &block);
     REQUIRE(block == nullptr);
+    sceFreeTypeOlFree_nid_postfix(&memory, reinterpret_cast<void**>(0x10));
     REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, -1, &block) == 6);
     REQUIRE(block == nullptr);
 
