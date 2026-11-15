@@ -650,15 +650,15 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
 
 int APS5_VABI sceFontWritingGetRenderMetrics(FontWriting* fontWriting, FontWritingMetrics* writingMetrics) {
     if (!fontWriting || !writingMetrics) {
-        if (writingMetrics) *writingMetrics = {};
+        if (writingMetrics) CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const auto* writing = GetWritingData(fontWriting);
     if (!writing) {
-        *writingMetrics = {};
+        CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_WRITING;
     }
-    *writingMetrics = writing->metrics;
+    if (!CopyOutGuest(writingMetrics, writing->metrics)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
