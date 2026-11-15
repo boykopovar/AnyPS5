@@ -22,11 +22,13 @@ struct NextResult {
     std::int32_t length = INT32_MIN;
 };
 
+using CurrencyReader = const char16_t* (*)(void*, bool);
+using PluralReader = const char* (*)(void*);
+
 void SetDefault_nid_no_patch(const char*, std::int32_t&);
-bool ValidNameLocale_nid_no_patch(const char*);
 CodeResult ForLocale_nid_no_patch(const char*, std::int32_t, std::int32_t&);
 CodeResult ForLocaleAndDate_nid_no_patch(const char*, double, std::int32_t, std::int32_t, std::int32_t&);
-NameResult Name_nid_no_patch(const char16_t*, const char*, std::int32_t, const char*, bool, bool, std::int32_t&);
+NameResult Name_nid_no_patch(const char*, std::int32_t, bool, bool, CurrencyReader, PluralReader, void*, std::int32_t&);
 std::int32_t FractionDigits_nid_no_patch(const char16_t*, std::int32_t, std::int32_t&);
 double RoundingIncrement_nid_no_patch(const char16_t*, std::int32_t, std::int32_t&);
 std::int32_t NumericCode_nid_no_patch(const char16_t*);

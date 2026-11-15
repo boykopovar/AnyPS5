@@ -125,6 +125,33 @@ double Rounding(const char16_t* currency, std::int32_t usage, std::int32_t* outp
     return status.Finish(result);
 }
 
+struct NameInput {
+    const char16_t* currency;
+    const char* plural;
+    bool lengthAvailable;
+    std::array<char16_t, 4> prefix{};
+    std::u16string complete;
+    std::string keyword;
+};
+
+const char16_t* ReadNameCurrency(void* context, bool terminated) {
+    auto& input = *static_cast<NameInput*>(context);
+    if (terminated) {
+        if (!input.lengthAvailable) NotImplemented_nid_no_patch("ucurr: missing fallback length");
+        input.complete = ReadString(input.currency);
+        if (input.complete.size() > INT32_MAX) NotImplemented_nid_no_patch("ucurr: currency input exceeds INT32_MAX");
+        return input.complete.c_str();
+    }
+    input.prefix = Prefix(input.currency, false);
+    return input.prefix.data();
+}
+
+const char* ReadNamePlural(void* context) {
+    auto& input = *static_cast<NameInput*>(context);
+    input.keyword = ReadString(input.plural);
+    return input.keyword.c_str();
+}
+
 const char16_t* Name(const char16_t* currency, const char* locale, std::int32_t style, std::int8_t* choice,
                      const char* plural, bool pluralName, std::int32_t* length, std::int32_t* output) {
     const PreserveErrno preserve;
@@ -136,21 +163,8 @@ const char16_t* Name(const char16_t* currency, const char* locale, std::int32_t 
         return status.Finish(static_cast<const char16_t*>(nullptr));
     }
     const auto localeName = Locale(locale, status);
-    if (!IcuCurrency::ValidNameLocale_nid_no_patch(localeName.c_str())) {
-        status.value = 1;
-        return status.Finish(static_cast<const char16_t*>(nullptr));
-    }
-    const auto code = Prefix(currency, false);
-    const auto pluralCount = pluralName ? ReadString(plural) : std::string{};
-    const auto incoming = status.value;
-    auto result = IcuCurrency::Name_nid_no_patch(code.data(), localeName.c_str(), style, pluralCount.c_str(), pluralName, choice != nullptr, status.value);
-    std::u16string complete;
-    if (result.inputAlias) {
-        if (!length) NotImplemented_nid_no_patch("ucurr: missing fallback length");
-        complete = ReadString(currency);
-        status.value = incoming;
-        result = IcuCurrency::Name_nid_no_patch(complete.c_str(), localeName.c_str(), style, pluralCount.c_str(), pluralName, choice != nullptr, status.value);
-    }
+    NameInput input{currency, plural, length != nullptr};
+    const auto result = IcuCurrency::Name_nid_no_patch(localeName.c_str(), style, pluralName, choice != nullptr, ReadNameCurrency, ReadNamePlural, &input, status.value);
     if (length && result.length != INT32_MIN) Probe(length, sizeof(*length));
     if (choice && result.choice != -1) Probe(choice, sizeof(*choice));
     status.ProbeChanged();

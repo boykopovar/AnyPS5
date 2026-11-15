@@ -14,7 +14,10 @@
 #include "unicode/uenum.h"
 #include "unicode/uloc.h"
 #include "unicode/ures.h"
+#include "unicode/ustring.h"
+#include "cstring.h"
 #include "ulocimp.h"
+#include "uresimp.h"
 #include "ureslocs.h"
 #include <algorithm>
 #include <bit>
@@ -71,6 +74,103 @@ struct HistoricalResult {
     std::int32_t count = 0;
     CodeResult selected;
 };
+
+void NameWarning(UErrorCode local, UErrorCode& status) {
+    if (U_SUCCESS(local) && (local == U_USING_DEFAULT_WARNING || (local == U_USING_FALLBACK_WARNING && status != U_USING_DEFAULT_WARNING))) status = local;
+}
+
+NameResult BasicName(const char* locale, std::int32_t style, bool choice, CurrencyReader currency, void* context, UErrorCode& status) {
+    NameResult result;
+    if (U_FAILURE(status)) return result;
+    UErrorCode localStatus = U_ZERO_ERROR;
+    const auto name = ulocimp_getName(locale, localStatus);
+    if (U_FAILURE(localStatus)) {
+        status = U_ILLEGAL_ARGUMENT_ERROR;
+        return result;
+    }
+    std::array<char, 4> code{};
+    u_UCharsToChars(currency(context, false), code.data(), 3);
+    T_CString_toUpperCase(code.data());
+    ResourceSet resources;
+    try {
+        localStatus = U_ZERO_ERROR;
+        auto* bundle = ures_open(U_ICUDATA_CURR, name.data(), &localStatus);
+        resources.items[0] = bundle;
+        if (style >= 2) {
+            constexpr const char* keys[] = {"Currencies%narrow", "Currencies%formal", "Currencies%variant"};
+            icu::CharString key;
+            key.append(keys[style - 2], localStatus).append("/", localStatus).append(code.data(), localStatus);
+            result.text = ures_getStringByKeyWithFallback(bundle, key.data(), &result.length, &localStatus);
+            if (localStatus == U_MISSING_RESOURCE_ERROR) {
+                status = U_USING_FALLBACK_WARNING;
+                localStatus = U_ZERO_ERROR;
+                style = 0;
+            }
+        }
+        if (!result.text) {
+            ures_getByKey(bundle, "Currencies", bundle, &localStatus);
+            ures_getByKeyWithFallback(bundle, code.data(), bundle, &localStatus);
+            result.text = ures_getStringByIndex(bundle, style, &result.length, &localStatus);
+        }
+        NameWarning(localStatus, status);
+        if (choice) result.choice = 0;
+        if (U_FAILURE(localStatus)) {
+            result.text = currency(context, true);
+            result.length = u_strlen(result.text);
+            status = U_USING_DEFAULT_WARNING;
+            result.inputAlias = true;
+        }
+        resources.Close();
+        return result;
+    } catch (...) {
+        resources.Close();
+        throw;
+    }
+}
+
+NameResult PluralName(const char* locale, bool choice, CurrencyReader currency, PluralReader plural, void* context, UErrorCode& status) {
+    NameResult result;
+    if (U_FAILURE(status)) return result;
+    UErrorCode localStatus = U_ZERO_ERROR;
+    const auto name = ulocimp_getName(locale, localStatus);
+    if (U_FAILURE(localStatus)) {
+        status = U_ILLEGAL_ARGUMENT_ERROR;
+        return result;
+    }
+    std::array<char, 4> code{};
+    u_UCharsToChars(currency(context, false), code.data(), 3);
+    ResourceSet resources;
+    try {
+        localStatus = U_ZERO_ERROR;
+        auto* bundle = ures_open(U_ICUDATA_CURR, name.data(), &localStatus);
+        resources.items[0] = bundle;
+        ures_getByKey(bundle, "CurrencyPlurals", bundle, &localStatus);
+        auto* entry = ures_getByKeyWithFallback(bundle, code.data(), bundle, &localStatus);
+        const auto* keyword = U_SUCCESS(localStatus) ? plural(context) : nullptr;
+        result.text = ures_getStringByKeyWithFallback(entry, keyword, &result.length, &localStatus);
+        if (U_FAILURE(localStatus)) {
+            localStatus = U_ZERO_ERROR;
+            result.text = ures_getStringByKeyWithFallback(entry, "other", &result.length, &localStatus);
+            if (U_FAILURE(localStatus)) {
+                result = BasicName(locale, 1, choice, currency, context, status);
+                resources.Close();
+                return result;
+            }
+        }
+        NameWarning(localStatus, status);
+        if (U_FAILURE(localStatus)) {
+            result.text = currency(context, true);
+            result.length = u_strlen(result.text);
+            status = U_USING_DEFAULT_WARNING;
+            result.inputAlias = true;
+        }
+        resources.Close();
+        return result;
+    } catch (...) {
+        resources.Close();
+        throw;
+    }
+}
 
 HistoricalResult Historical(const char* locale, double date, std::int32_t index, std::int32_t capacity, bool select, UErrorCode& status) {
     HistoricalResult result;
@@ -129,12 +229,6 @@ void SetDefault_nid_no_patch(const char* locale, std::int32_t& error) {
     error = status;
 }
 
-bool ValidNameLocale_nid_no_patch(const char* locale) {
-    UErrorCode status = U_ZERO_ERROR;
-    const auto name = ulocimp_getName(locale, status);
-    return U_SUCCESS(status);
-}
-
 CodeResult ForLocale_nid_no_patch(const char* locale, std::int32_t capacity, std::int32_t& error) {
     auto status = static_cast<UErrorCode>(error);
     CodeResult result;
@@ -151,13 +245,10 @@ CodeResult ForLocaleAndDate_nid_no_patch(const char* locale, double date, std::i
     return result;
 }
 
-NameResult Name_nid_no_patch(const char16_t* currency, const char* locale, std::int32_t style, const char* plural, bool pluralName, bool choice, std::int32_t& error) {
+NameResult Name_nid_no_patch(const char* locale, std::int32_t style, bool pluralName, bool choice, CurrencyReader currency, PluralReader plural, void* context, std::int32_t& error) {
     auto status = static_cast<UErrorCode>(error);
-    NameResult result;
-    auto* choiceOutput = choice ? &result.choice : nullptr;
-    result.text = pluralName ? ucurr_getPluralName(currency, locale, choiceOutput, plural, &result.length, &status)
-        : ucurr_getName(currency, locale, static_cast<UCurrNameStyle>(style), choiceOutput, &result.length, &status);
-    result.inputAlias = result.text && result.text == currency;
+    auto result = pluralName ? PluralName(locale, choice, currency, plural, context, status)
+        : BasicName(locale, style, choice, currency, context, status);
     error = status;
     return result;
 }
