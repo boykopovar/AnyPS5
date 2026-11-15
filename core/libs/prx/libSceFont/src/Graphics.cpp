@@ -278,8 +278,11 @@ bool IsObject(const void* pointer) {
 bool IsValidFill(const FontGraphicsFill* fill) {
     const auto value = reinterpret_cast<std::intptr_t>(fill);
     if (value >= -1 && value < 3) return true;
-    const std::uint8_t mode = *reinterpret_cast<const std::uint8_t*>(fill);
-    return (mode & 0xf) == 0 && mode >= 0x10 && mode <= 0x50;
+    std::uint8_t mode{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&mode, fill, sizeof(mode));
+    errno = savedErrno;
+    return copied && (mode & 0xf) == 0 && mode >= 0x10 && mode <= 0x50;
 }
 
 bool IsValidEffect(std::uint32_t effect) {
@@ -324,7 +327,7 @@ int OutlineVertexesInterfaceInit(void* interface, const void* first, const void*
     static_assert(sizeof(OutlineInterface) == 0x30);
     const bool valid = first != nullptr && count >= 1 && count <= 3;
     const OutlineInterface value = valid ? OutlineInterface{0xf08, first, second, count, {}} : OutlineInterface{};
-    std::memcpy(interface, &value, sizeof(value));
+    if (!CopyOutGuest(static_cast<OutlineInterface*>(interface), value)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return valid ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
 }
 
@@ -423,14 +426,16 @@ int GraphicsFillPlotSetMapping(FontGraphicsFillPlot* plot, float first, float se
 
 int GraphicsFillRatesInit(FontGraphicsFillRates* rates, const FontGraphicsFill* fill, std::uint32_t effect) {
     if (!IsObject(rates)) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
-    *rates = {};
+    if (!CopyOutGuest(rates, FontGraphicsFillRates{})) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     if (!IsValidFill(fill)) return Fail(FONT_GRAPHICS_ERROR_INVALID_FILL);
     if (!IsValidEffect(effect)) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
-    rates->fill = fill;
-    rates->tag = FillRatesTag;
-    rates->effect = static_cast<std::uint16_t>(effect);
-    rates->layout = DefaultLayout;
-    rates->flags = 2;
+    FontGraphicsFillRates value{};
+    value.fill = fill;
+    value.tag = FillRatesTag;
+    value.effect = static_cast<std::uint16_t>(effect);
+    value.layout = DefaultLayout;
+    value.flags = 2;
+    if (!CopyOutGuest(rates, value)) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     return SCE_FONT_OK;
 }
 
