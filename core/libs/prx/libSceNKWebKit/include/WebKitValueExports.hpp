@@ -13,6 +13,10 @@ struct OpaqueJSContext;
 struct OpaqueJSValue;
 using JSContextRef = const OpaqueJSContext*;
 using JSValueRef = const OpaqueJSValue*;
+void APS5_VABI WKPageSetMediaVolume(const void* page, float volume);
+void APS5_VABI WKPageSetMuted(const void* page, bool muted);
+bool APS5_VABI WKPageIsPlayingAudio(const void* page);
+
 }
 
 extern "C" {
@@ -389,5 +393,9 @@ void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const 
 void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
 void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
+
+void APS5_VABI WKPageSetMediaVolume(const void* page, float volume);
+void APS5_VABI WKPageSetMuted(const void* page, bool muted);
+bool APS5_VABI WKPageIsPlayingAudio(const void* page);
 
 }

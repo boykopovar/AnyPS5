@@ -11162,10 +11162,6 @@ int APS5_VABI WKPageIsContentEditable() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageIsPlayingAudio() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageListenForLayoutMilestones() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11386,15 +11382,7 @@ int APS5_VABI WKPageSetMediaCaptureEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetMediaVolume() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageSetMockCameraOrientation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetMuted() {
     NotImplemented_nid_no_patch(__func__);
 }
 

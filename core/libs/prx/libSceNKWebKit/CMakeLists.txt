@@ -94,3 +94,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>")
     endif()
 endif()
+
+    add_executable(nkwebkit_pagemediaaudio_tests tests/PageMediaAudio.cpp)
+    target_link_libraries(nkwebkit_pagemediaaudio_tests PRIVATE libSceNKWebKit_tests_common)
+    add_test(NAME nkwebkit_pagemediaaudio COMMAND nkwebkit_pagemediaaudio_tests)
