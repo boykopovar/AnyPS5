@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -75,7 +76,7 @@ class KnownTests(unittest.TestCase):
             path = Path(directory) / "known.tsv"
             path.write_text("# header\na\tdiff\t#1\ns\tskip\tenvironment\nold\tdiff\tgone\n", encoding="utf-8")
             known = library_oracle.load_known(path)
-            library_oracle.write_known(path, known, {"a": ("diff", "x"), "n": ("crash", "y")})
+            library_oracle.write_known(path, known, {"a": ("diff", "x"), "n": ("crash", "y")}, {"a", "n", "old"})
             self.assertEqual(path.read_text(encoding="utf-8"), "a\tdiff\t#1\nn\tcrash\ns\tskip\tenvironment\n")
 
     def test_an_unknown_kind_is_refused(self):
@@ -84,6 +85,35 @@ class KnownTests(unittest.TestCase):
             path.write_text("a\tbroken\treason\n", encoding="utf-8")
             with self.assertRaises(SystemExit):
                 library_oracle.load_known(path)
+
+    def test_write_known_after_one_family_preserves_unrun_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            path.write_text("libc-pass\tdiff\tnow matches\nlibc-change\tdiff\tkeep reason\nkernel-case\tcrash\tunrun reason\nskipped-case\tskip\tenvironment\n",
+                            encoding="utf-8")
+            golden = Path(directory) / "libc.golden.tsv"
+            golden.write_text("libc-pass\tcase\nlibc-change\tcase\nlibc-new\tcase\nskipped-case\tcase\n", encoding="utf-8")
+            findings = {"libc-change": ("throw", "new detail"), "libc-new": ("diff", "new finding")}
+            with mock.patch.object(library_oracle, "fetch", return_value=golden) as fetch, \
+                 mock.patch.object(library_oracle, "replay", return_value=(findings, "compared 3")) as replay, \
+                 mock.patch("sys.stdout", new_callable=io.StringIO):
+                result = library_oracle.main(["libc", "--known", str(path), "--replay", "unused", "--write-known"])
+            self.assertEqual(result, 0)
+            self.assertEqual(fetch.call_args.args[0], "libc")
+            self.assertEqual(replay.call_args.args[3], {"skipped-case"})
+            self.assertEqual(library_oracle.load_known(path), {
+                "kernel-case": ("crash", "unrun reason"),
+                "libc-change": ("throw", "keep reason"),
+                "libc-new": ("diff", ""),
+                "skipped-case": ("skip", "environment"),
+            })
+
+    def test_write_known_without_replayed_cases_preserves_existing_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            known = {"unrun": ("crash", "reason"), "skip": ("skip", "environment")}
+            library_oracle.write_known(path, known, {}, set())
+            self.assertEqual(library_oracle.load_known(path), known)
 
     def test_the_committed_known_file_parses(self):
         known = library_oracle.load_known(library_oracle.HERE / "known.tsv")

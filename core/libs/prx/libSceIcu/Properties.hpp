@@ -2,12 +2,15 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 
+struct UCPMap;
+
 namespace Icu {
 using CharTypeRange = std::int8_t (APS5_VABI*)(const void*, std::int32_t, std::int32_t, std::int32_t);
 bool PropertyNeedsData(std::int32_t property);
 } // namespace Icu
 
 extern "C" {
+const UCPMap* APS5_VABI u_getIntPropertyMap_nid_postfix(std::int32_t, std::int32_t*);
 std::int8_t APS5_VABI u_charType_nid_postfix(std::int32_t);
 void APS5_VABI u_enumCharTypes_nid_postfix(Icu::CharTypeRange, const void*);
 std::int8_t APS5_VABI u_islower_nid_postfix(std::int32_t);

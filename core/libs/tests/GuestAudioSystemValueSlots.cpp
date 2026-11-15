@@ -1,13 +1,20 @@
 #include "prx/libSceAudioSystem/libSceAudioSystem.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -39,9 +46,21 @@ void Store(std::int32_t value) {
     Require(libSceAudioSystemUnknown_uoPBJTVWhrg_nid_no_patch(value) == 0, "uoPBJTVWhrg result");
 }
 
+template <typename TFunction>
+void RequireThrows(TFunction function, const char* message) {
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    Require(false, message);
+}
+
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     auto* out = static_cast<std::int32_t*>(GuestHeap::GuestHeapAllocate_nid_postfix(sizeof(std::int32_t)));
     Require(out != nullptr, "guest allocation failed");
 
@@ -69,8 +88,21 @@ int main() {
     Give(200);
     Require(Taken(out) == 200, "second pending value was not taken");
     Require(Taken(out) == 0, "second take did not clear pending value");
+    errno = 71;
     Require(Stored(out) == 100, "second take altered stored value");
+    Require(errno == 71, "mS9gpe47Eio preserved errno on success");
+    errno = 71;
+    Require(Taken(out) == 0, "pending read after clear with errno");
+    Require(errno == 71, "FkFcs7NTFDo preserved errno on success");
+    errno = 71;
+    RequireThrows([&] { libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "mS9gpe47Eio threw on unmapped output");
+    Require(errno == 71, "mS9gpe47Eio preserved errno on unmapped output");
+    errno = 71;
+    RequireThrows([&] { libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "FkFcs7NTFDo threw on unmapped output");
+    Require(errno == 71, "FkFcs7NTFDo preserved errno on unmapped output");
 
     std::puts("AudioSystem value slot tests passed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }
