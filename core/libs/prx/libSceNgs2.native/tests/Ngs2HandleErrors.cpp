@@ -478,6 +478,11 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemEnumRackHandles(0x1234, handles, 8) == invalidSystem);
     const int racks = sceNgs2SystemEnumRackHandles(system, handles, 8);
     Require(racks == 1 && handles[0] == rack);
+    errno = 71;
+    Require(sceNgs2SystemEnumHandles(reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Require(sceNgs2SystemEnumRackHandles(system, reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Status(sceNgs2SystemGetInfo(system, reinterpret_cast<Ngs2SystemInfo*>(0x10), sizeof(Ngs2SystemInfo)), static_cast<int>(0x804A8010u), "an unwritable system info did not return the invalid out address error");
+    Require(errno == 71);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
