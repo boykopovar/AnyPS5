@@ -12,6 +12,7 @@
 #include "prx/libc/include/General.hpp"
 
 static_assert(sizeof(LibreSslCtxInternal) == 464);
+static_assert(offsetof(LibreSslCtxInternal, exData) == 248);
 static_assert(offsetof(LibreSslCtxInternal, quietShutdown) == 292);
 static_assert(sizeof(LibreSslCtx) == 120);
 static_assert(offsetof(LibreSslCtx, certStore) == 16);
@@ -110,7 +111,13 @@ enum Command : int {
 };
 
 constexpr int ErrLibSsl = 20;
+constexpr int ErrLibEvp = 6;
+constexpr int ErrLibAsn1 = 13;
 constexpr int ErrFunctionNone = 0xfff;
+constexpr int ErrMallocFailure = 65;
+constexpr int ErrEvpLibrary = 6;
+constexpr int ErrUnsupportedAlgorithm = 156;
+constexpr int ErrUnknownPublicKeyType = 163;
 constexpr int ShouldNotHaveBeenCalled = 66;
 constexpr int SessionIdContextTooLong = 273;
 constexpr int InvalidTicketKeysLength = 325;
@@ -234,6 +241,24 @@ void APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(LibreSslCtx* c
 
 int APS5_VABI SSL_CTX_set_ex_data_nid_postfix(LibreSslCtx* ctx, int index, void* value) {
     return SetCtxExData_nid_no_patch(Internal(ctx, __func__), index, value);
+}
+
+int APS5_VABI SSL_CTX_use_PrivateKey_ASN1_nid_postfix(int type, LibreSslCtx*, const unsigned char*, std::int64_t) {
+    if (type != 0) NotImplemented_nid_no_patch(__func__);
+
+    void* const pkey = EVP_PKEY_new_nid_postfix();
+    if (!pkey) {
+        LibreSslPutError_nid_no_patch(ErrLibEvp, ErrFunctionNone, ErrMallocFailure);
+        LibreSslPutError_nid_no_patch(ErrLibAsn1, ErrFunctionNone, ErrEvpLibrary);
+        PutSslError(13);
+        return 0;
+    }
+
+    LibreSslPutError_nid_no_patch(ErrLibEvp, ErrFunctionNone, ErrUnsupportedAlgorithm);
+    LibreSslPutError_nid_no_patch(ErrLibAsn1, ErrFunctionNone, ErrUnknownPublicKeyType);
+    EVP_PKEY_free_nid_postfix(pkey);
+    PutSslError(13);
+    return 0;
 }
 
 std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::int64_t larg, void* parg) {
@@ -367,6 +392,14 @@ int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const
     context.sidCtxLength = length;
     std::copy_n(sidCtx, length, context.sidCtx);
     return 1;
+}
+
+void* APS5_VABI SSL_CTX_get_ex_data_nid_postfix(const LibreSslCtx* ctx, int index) {
+    if (!ctx) throw std::invalid_argument(std::string(__func__) + ": null context");
+    if (!ctx->internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
+    const auto* const data = static_cast<const LibreSslStack*>(ctx->internal->exData);
+    if (!data || index >= sk_num_nid_postfix(data)) return nullptr;
+    return sk_value_nid_postfix(data, index);
 }
 
 }

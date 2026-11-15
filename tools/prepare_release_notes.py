@@ -41,7 +41,8 @@ def prepare_notes(source, body, full, check=False):
     paths = (source, body, full)
     for index, first in enumerate(paths):
         for second in paths[index + 1:]:
-            if os.path.realpath(first) == os.path.realpath(second) or (first.exists() and second.exists() and first.samefile(second)):
+            if (os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second)) or
+                    (first.exists() and second.exists() and first.samefile(second))):
                 raise ValueError("Release note input and outputs must be distinct files")
     try:
         payload = json.loads(source.read_text(encoding="utf-8-sig"))
@@ -81,8 +82,34 @@ def prepare_notes(source, body, full, check=False):
                 if target.exists():
                     temporary.chmod(stat.S_IMODE(target.stat().st_mode))
                 output.write(text.encode("utf-8"))
-        for temporary, target in staged:
-            os.replace(temporary, target)
+        promoted = []
+        backed_up = []
+        try:
+            for temporary, target in staged:
+                if target.exists():
+                    backup = target.parent / (".release-notes-" + secrets.token_hex(16))
+                    os.replace(target, backup)
+                    backed_up.append((target, backup))
+                os.replace(temporary, target)
+                promoted.append(target)
+        except OSError as promotion_error:
+            rollback_errors = []
+            for target in reversed(promoted):
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError as error:
+                    rollback_errors.append(error)
+            for target, backup in reversed(backed_up):
+                try:
+                    os.replace(backup, target)
+                except OSError as error:
+                    rollback_errors.append(error)
+            if rollback_errors:
+                details = "; ".join(str(error) for error in rollback_errors)
+                raise RuntimeError(f"Release note promotion failed: {promotion_error}; rollback failed: {details}") from promotion_error
+            raise
+        for _, backup in backed_up:
+            backup.unlink(missing_ok=True)
     finally:
         for temporary, _ in staged:
             temporary.unlink(missing_ok=True)

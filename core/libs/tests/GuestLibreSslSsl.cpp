@@ -6,6 +6,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -32,9 +33,19 @@ struct TestSsl {
     void* rbio;
     void* wbio;
     void* bbio;
-    unsigned char beforeSession[88];
+    int server;
+    void* s3;
+    void* d1;
+    void* param;
+    void* cipherList;
+    void* cert;
+    unsigned int sidCtxLength;
+    unsigned char sidCtx[32];
     void* session;
-    unsigned char beforeCtx[16];
+    int verifyMode;
+    int error;
+    int errorCode;
+    int beforeCtx;
     void* ctx;
     std::int64_t verifyResult;
     unsigned char beforeInternal[56];
@@ -43,7 +54,7 @@ struct TestSsl {
 
 static_assert(sizeof(TestSslInternal) == 432 && offsetof(TestSslInternal, rwstate) == 156 && offsetof(TestSslInternal, shutdown) == 168);
 static_assert(offsetof(TestSslInternal, exData) == 272);
-static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, ctx) == 152);
+static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, cert) == 80 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, error) == 140 && offsetof(TestSsl, errorCode) == 144 && offsetof(TestSsl, ctx) == 152);
 static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, internal) == 224);
 
 static LibreSslSsl* Ssl(TestSsl* ssl) {
@@ -59,6 +70,33 @@ static void Require(bool condition, std::source_location location = std::source_
 template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
     try { action(); } catch (const std::exception&) { return; }
     Require(false, location);
+}
+
+static void TestCheckPrivateKey() {
+    constexpr std::uint64_t firstCode = (8ULL << 24) | (0xfffULL << 12) | 101;
+    constexpr std::uint64_t nullSslCode = (20ULL << 24) | (0xfffULL << 12) | 67;
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(8, 0xfff, 101);
+    Require(SSL_check_private_key_nid_postfix(nullptr) == 0);
+    Require(ERR_peek_error_nid_postfix() == firstCode);
+    Require(ERR_get_error_nid_postfix() == firstCode);
+    Require(ERR_get_error_nid_postfix() == nullSslCode);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    RequireThrows([] { SSL_check_private_key_nid_postfix(reinterpret_cast<const LibreSslSsl*>(std::uintptr_t{1})); });
+    Require(ERR_peek_error_nid_postfix() == 0);
+
+    TestSsl ssl;
+    std::memset(&ssl, 0xa5, sizeof(ssl));
+    ssl.cert = reinterpret_cast<void*>(std::uintptr_t{1});
+    ssl.error = 0x12345678;
+    ssl.errorCode = 0x23456789;
+    unsigned char before[sizeof(ssl)];
+    std::memcpy(before, &ssl, sizeof(ssl));
+    ERR_clear_error_nid_postfix();
+    RequireThrows([&] { SSL_check_private_key_nid_postfix(Ssl(&ssl)); });
+    Require(ERR_peek_error_nid_postfix() == 0);
+    Require(std::memcmp(before, &ssl, sizeof(ssl)) == 0);
 }
 
 static void TestGetSslCtx() {
@@ -271,6 +309,7 @@ int main() {
     void* heap[10] {};
     ApplicationHeapRegister_nid_no_patch(heap);
     TestGet1Session();
+    TestCheckPrivateKey();
     TestGetSslCtx();
     TestGetRbio();
     TestGetWbio();
