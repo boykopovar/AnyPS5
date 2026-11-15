@@ -480,12 +480,20 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
 
 int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std::size_t length, bool uppercase) {
     if (size == 0 || length > (size - 1) / 2) return NP_ERROR_BUFFER_TOO_SMALL;
-    const auto* bytes = static_cast<const std::uint8_t*>(src);
-    for (std::size_t i = 0; i < length; ++i) {
-        dst[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
-        dst[i * 2 + 1] = HexDigit(bytes[i] & 0xF, uppercase);
+    constexpr std::size_t chunk = 256;
+    std::array<std::uint8_t, chunk> bytes{};
+    std::array<char, chunk * 2> hex{};
+    for (std::size_t offset = 0; offset < length; offset += chunk) {
+        const std::size_t count = std::min(chunk, length - offset);
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), static_cast<const std::uint8_t*>(src) + offset, count)) return NP_ERROR_INVALID_ARGUMENT;
+        for (std::size_t i = 0; i < count; ++i) {
+            hex[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
+            hex[i * 2 + 1] = HexDigit(bytes[i] & 0xF, uppercase);
+        }
+        if (!GuestCopyOut_nid_no_patch(dst + offset * 2, hex.data(), count * 2)) return NP_ERROR_INVALID_ARGUMENT;
     }
-    dst[length * 2] = '\0';
+    const char terminator = '\0';
+    if (!GuestCopyOut_nid_no_patch(dst + length * 2, &terminator, sizeof(terminator))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
