@@ -4222,7 +4222,7 @@ bool sparseRunImportTests(const Device& device, bool copied) {
     return true;
 }
 
-bool pendingUploadGpuCopyTests(const Device& device, Recorder& recorder) {
+bool pendingUploadGpuCopy(const Device& device, Recorder& recorder, std::size_t producedOffset, std::size_t producedBytes) {
     const auto& context = device.GetContext();
     const auto alignment = context.limits.minStorageBufferOffsetAlignment;
     if (alignment < 8 || alignment > 256) {
@@ -4264,8 +4264,7 @@ bool pendingUploadGpuCopyTests(const Device& device, Recorder& recorder) {
     }
     constexpr std::size_t viewOffset = 4096 + 4;
     constexpr std::size_t viewBytes = 3u << 20u;
-    constexpr std::size_t producedOffset = 1u << 20u;
-    constexpr std::size_t producedBytes = 1u << 20u;
+    Require(producedOffset >= viewOffset && producedOffset + producedBytes <= viewOffset + viewBytes, "the producer's write is not inside the test view");
     const auto view = address + viewOffset;
     const auto produced = address + producedOffset;
     Require((view - import->base) % alignment != 0 && (view - import->base) % 4 == 0, "the test view is not a DWORD-aligned view off the storage buffer offset alignment");
@@ -4291,13 +4290,21 @@ bool pendingUploadGpuCopyTests(const Device& device, Recorder& recorder) {
         memory.AddReadable(view, viewBytes);
         const auto waitsBefore = Recorder::ThreadHookWaits();
         const auto submissionsBefore = recorder.Submissions();
+        const auto notedBefore = Recorder::ReadCounts().noted;
         {
             std::lock_guard lock(GpuMutex());
             memory.Upload(false);
         }
         const auto waits = Recorder::ThreadHookWaits() - waitsBefore;
         const auto submissions = recorder.Submissions() - submissionsBefore;
-        Require(waits == 0 && submissions == 0 && recorder.OpenWriteOverlaps(produced, producedBytes), "the upload of a misaligned " + std::to_string(viewBytes >> 20u) + " MiB region over a pending GPU write waited for it on the CPU (" + std::to_string(waits) + " flush-hook waits, " + std::to_string(submissions) + " submissions)");
+        const auto shape = "a misaligned " + std::to_string(viewBytes >> 20u) + " MiB region over a pending " + std::to_string(producedBytes >> 10u) + " KiB GPU write";
+        Require(waits == 0 && submissions == 0 && recorder.OpenWriteOverlaps(produced, producedBytes), "the upload of " + shape + " waited for it on the CPU (" + std::to_string(waits) + " flush-hook waits, " + std::to_string(submissions) + " submissions)");
+        Require(memory.CopiedBytes() == viewBytes, "the upload of " + shape + " copied " + std::to_string(memory.CopiedBytes()) + " bytes, not the region's " + std::to_string(viewBytes));
+        const auto noted = Recorder::ReadCounts().noted - notedBefore;
+        const auto copy = recorder.DescribePendingRead(view, viewBytes);
+        const bool copiedOnGpu = noted == 1 && copy.has_value() && copy->open && copy->kind == Recorder::ReadKind::GpuCopy;
+        const bool wholeRegion = recorder.PendingReadOverlaps(view, 4) && recorder.PendingReadOverlaps(view + viewBytes - 4, 4) && !recorder.PendingReadOverlaps(view - 4, 4) && !recorder.PendingReadOverlaps(view + viewBytes, 4);
+        Require(copiedOnGpu && wholeRegion, "the upload of " + shape + " did not copy the region once on the GPU (" + std::to_string(noted) + " reads noted)");
         auto readback = std::make_shared<Buffer>(context, viewBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         {
             std::lock_guard lock(GpuMutex());
@@ -4320,8 +4327,16 @@ bool pendingUploadGpuCopyTests(const Device& device, Recorder& recorder) {
         Require(mismatch.first == expected.end(), "the region uploaded behind the pending GPU write misses the producer's bytes at byte " + std::to_string(mismatch.first - expected.begin()) + " of the view");
         Require(std::memcmp(guest + producedOffset, pattern, producedBytes) == 0, "the producer's GPU write did not reach guest memory");
     }
-    std::cout << "uploads behind a pending GPU write tests passed\n";
+    std::cout << "uploads behind a pending " << (producedBytes >> 10u) << " KiB GPU write tests passed\n";
     return true;
+}
+
+bool pendingUploadGpuCopyTests(const Device& device, Recorder& recorder) {
+    return pendingUploadGpuCopy(device, recorder, 1u << 20u, 1u << 20u);
+}
+
+bool pendingUploadGpuCopyBytesTests(const Device& device, Recorder& recorder) {
+    return pendingUploadGpuCopy(device, recorder, 2u << 20u, 4096);
 }
 
 void misalignedRegionTests(const Device& device, Recorder& recorder) {
@@ -12569,6 +12584,9 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pending-upload-gpu-copy-only") {
             return pendingUploadGpuCopyTests(device, recorder) ? 0 : 77;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pending-upload-gpu-copy-bytes-only") {
+            return pendingUploadGpuCopyBytesTests(device, recorder) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--integer-clear-only") {
             integerClearTests(device);
             return 0;
@@ -12828,6 +12846,7 @@ int main(int argc, char** argv) {
         misalignedSnapshotTests(device, recorder);
         misalignedRegionTests(device, recorder);
         pendingUploadGpuCopyTests(device, recorder);
+        pendingUploadGpuCopyBytesTests(device, recorder);
         drawSnapshotReuseTests(device, recorder);
         drawDescriptorWriteTests(device, recorder);
         drawSnapshotTableSetTests(device, recorder);
