@@ -167,9 +167,11 @@ int main(int argc, char** argv) {
             FillInput(!linear);
             const auto srgb = Sample(*device, Format8888Srgb, filter, 0u);
             if (!linear) RequireDecoded(srgb, "ordinary sRGB control");
+            RequireSame(Sample(*device, Format8888Srgb, filter, 0u), srgb, "ordinary sRGB cache admission control");
             const auto unorm = Sample(*device, Format8888UNorm, filter, 0u);
             Require(srgb != unorm, "sRGB control must differ from encoded UNORM values");
             RequireSame(Sample(*device, Format8888Srgb, filter, SkipDegamma), unorm, "SKIP_DEGAMMA", "through the sRGB descriptor with SKIP_DEGAMMA", "through the UNORM descriptor");
+            RequireSame(Sample(*device, Format8888Srgb, filter, SkipDegamma), unorm, "SKIP_DEGAMMA cache admission control");
             RequireSame(Sample(*device, Format8888Srgb, filter, 0u), srgb, "sRGB after SKIP_DEGAMMA", "after changing sampler mode", "before changing sampler mode");
             RequireSame(Sample(*device, Format8888UNorm, filter, SkipDegamma), unorm, "SKIP_DEGAMMA on UNORM", "with SKIP_DEGAMMA", "without SKIP_DEGAMMA");
             RequireSame(Sample(*device, Format8888Srgb, filter, SkipDegamma | ForceDegamma), srgb, "FORCE_DEGAMMA precedence", "with both sampler bits", "with neither sampler bit");

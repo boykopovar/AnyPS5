@@ -24,6 +24,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "SceShaders.hpp"
@@ -5923,6 +5924,8 @@ struct MockVulkan {
     struct ImageBufferCopy { VkImage image; VkBuffer buffer; VkBufferImageCopy region; bool fromImage; };
     std::vector<ImageBufferCopy> imageBufferCopies;
     std::set<VkImage> destroyedImages;
+    struct ImageCreation { VkFormat format; VkImageCreateFlags flags; };
+    std::vector<ImageCreation> imageCreations;
     std::map<VkBuffer, VkDeviceSize> bufferSizes;
     std::map<VkBuffer, VkBufferUsageFlags> bufferUsage;
     std::map<VkDeviceMemory, VkMemoryAllocateFlags> allocationFlags;
@@ -6068,7 +6071,7 @@ VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const
     --mock.live;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL mockCreateImage(VkDevice, const VkImageCreateInfo*, const VkAllocationCallbacks*, VkImage* image) { *image = makeHandle<VkImage>(); ++mock.live; return VK_SUCCESS; }
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImage(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image) { *image = makeHandle<VkImage>(); mock.imageCreations.push_back({info->format, info->flags}); ++mock.live; return VK_SUCCESS; }
 VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements(VkDevice, VkImage, VkMemoryRequirements* requirements) { *requirements = {4096, 1, 1}; }
 
 VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* info, VkMemoryRequirements2* requirements) {
@@ -7939,6 +7942,69 @@ void unsetFormatStorageImageTests() {
         compiled.bindings.front().guestDescriptor = words(0u, 0u);
         Require(AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded).empty(), "a null written storage image contributed dispatch write ranges");
     }
+}
+
+void sampledGammaAllocationTests() {
+    mock = MockVulkan{};
+    mock.allowCopies = true;
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.physical = makeHandle<VkPhysicalDevice>();
+    context.formatProperties = mockFormatProperties;
+    context.deviceProc = mockDepthCopyProc;
+    context.memory.memoryTypes[0].propertyFlags |= VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    context.memory.memoryHeapCount = 1;
+    context.memory.memoryHeaps[0] = {std::uint64_t{4} << 30u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    context.limits.maxMemoryAllocationCount = 4096;
+    context.limits.maxImageDimension2D = 4096;
+    context.limits.maxPerStageDescriptorSampledImages = 8;
+    context.limits.maxDescriptorSetSampledImages = 8;
+    context.limits.maxPerStageDescriptorSamplers = 8;
+    context.limits.maxDescriptorSetSamplers = 8;
+    context.limits.maxPerStageResources = 64;
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    alignas(256) std::array<std::byte, 4096> guest{};
+    guest.fill(std::byte{0x5b});
+    const auto address = reinterpret_cast<std::uint64_t>(guest.data());
+    {
+        AgcDriver::Graphics::TextureDetiler detiler(context);
+        context.detiler = &detiler;
+        AgcDriver::Graphics::TextureCache textures(context);
+        AgcDriver::Graphics::SamplerCache samplers;
+        context.textureCache = &textures;
+        context.samplerCache = &samplers;
+        try {
+            for (const auto skip : {false, true, false}) {
+                ShaderRecompiler::RecompileResult vertex, fragment;
+                auto sampled = makeBinding(Role::GuestImages, ShaderRecompiler::RuntimeAbi::FirstImageBinding, 1,
+                        {static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (130u << 20u) | (3u << 30u), 3u | (15u << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u});
+                sampled.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+                sampled.imageWritten.clear();
+                sampled.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+                sampled.imageSamplers = {1u};
+                auto sampler = makeBinding(Role::GuestSamplers, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers), 1, {0x92u | (skip ? 1u << 31u : 0u), 0u, 0u, 0u});
+                sampler.kind = ShaderRecompiler::DescriptorKind::Sampler;
+                sampler.samplerDepthCompare = {false};
+                vertex.bindings = {sampled, sampler};
+                const auto before = mock.imageCreations.size();
+                const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+                AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+                bool made = false;
+                for (auto i = before; i < mock.imageCreations.size(); ++i) {
+                    const auto& image = mock.imageCreations[i];
+                    if (image.format != VK_FORMAT_R8G8B8A8_SRGB) continue;
+                    made = true;
+                    Require(((image.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) != 0) == skip, "ordinary sRGB images must stay immutable; only SKIP_DEGAMMA requests mutable images");
+                }
+                if (skip || before == 0u) Require(made, "a first-use sRGB allocation or its SKIP-capable replacement was not created");
+            }
+        } catch (...) {
+            AgcDriver::Graphics::ClearCachedTextures(context.device);
+            throw;
+        }
+        AgcDriver::Graphics::ClearCachedTextures(context.device);
+    }
+    Require(mock.live == 0, "sampled gamma allocation test leaked Vulkan objects");
 }
 
 void descriptorCacheTests() {
@@ -15342,6 +15408,7 @@ int main(int argc, char** argv) {
         pushConstantTests();
         resourceTests();
         unsetFormatStorageImageTests();
+        sampledGammaAllocationTests();
         oversizedDescriptorTests();
         viewAtRangeLimitTests();
         guestBufferViewBytesTests();
