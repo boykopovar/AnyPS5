@@ -845,7 +845,12 @@ void UnreadableNamesAndObjects() {
     CHECK(sceUltGetWaitingQueueResourcePoolInfo(unwritable, &poolInfo) == State);
     CHECK(sceUltWaitingQueueResourcePoolCreate(&pool, "pool", 4, 4, nullptr, nullptr, 0) == Ok);
 
+    auto* const unreadableOptParam = reinterpret_cast<const UltMutexOptParam*>(std::uintptr_t{0x10});
     CHECK(sceUltMutexCreate(&mutex, unreadable, &pool, nullptr, 0) == Null);
+    CHECK(sceUltMutexCreate(&mutex, "mutex", &pool, unreadableOptParam, 0) == Null);
+    CHECK(sceUltGetMutexInfo(&mutex, &mutexInfo, nullptr, 0) == State);
+    CHECK(_sceUltMutexCreate(&mutex, "mutex", &pool, unreadableOptParam) == Null);
+    CHECK(sceUltGetMutexInfo(&mutex, &mutexInfo, nullptr, 0) == State);
     CHECK(sceUltMutexCreate(unwritable, "mutex", &pool, nullptr, 0) == Null);
     CHECK(sceUltGetMutexInfo(unwritable, &mutexInfo, nullptr, 0) == State);
     CHECK(sceUltMutexCreate(&mutex, "mutex", &pool, nullptr, 0) == Ok);

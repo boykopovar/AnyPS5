@@ -37,6 +37,14 @@ std::unordered_map<void*, std::shared_ptr<UltQueueState>> gQueues;
 std::unordered_map<void*, UltRuntimeState> gRuntimes;
 std::unordered_map<void*, std::shared_ptr<UltUlthreadState>> gUlthreads;
 
+template <typename T>
+bool ReadGuestValue(const T* source, T& destination) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    return copied;
+}
+
 int validateCommonOptParam(const void* optParam) {
     if (optParam == nullptr) return ULT_OK;
     if ((reinterpret_cast<std::uintptr_t>(optParam) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
@@ -364,8 +372,12 @@ int APS5_VABI sceUltMutexCreate(void* mutex, const char* name, void* waitingQueu
     if (mutex == nullptr) {
         return ULT_ERROR_NULL;
     }
+    UltMutexOptParam localOptParam{};
+    if (optParam != nullptr && !ReadGuestValue(optParam, localOptParam)) {
+        return ULT_ERROR_NULL;
+    }
     auto state = std::make_shared<UltMutexState>();
-    state->_attribute = optParam != nullptr ? optParam->attribute : 0;
+    state->_attribute = optParam != nullptr ? localOptParam.attribute : 0;
     state->_waitingPool = waitingQueueResourcePool;
     if (!CopyUltName(state->_name, name)) return ULT_ERROR_NULL;
     std::lock_guard<std::mutex> lock(gMutex);
@@ -1090,10 +1102,16 @@ int APS5_VABI _sceUltMutexCreate(void* mutex, const char* name, void* waitingQue
     if (((reinterpret_cast<std::uintptr_t>(mutex) | reinterpret_cast<std::uintptr_t>(optParam) | reinterpret_cast<std::uintptr_t>(waitingQueueResourcePool)) & 7u) != 0) {
         return ULT_ERROR_ALIGNMENT;
     }
-    if (optParam != nullptr && (optParam->header[0] != 0x6C696275 || optParam->header[1] != 0x6C746D61 || optParam->header[2] != 0x67696300 || optParam->attribute > 1 || std::any_of(std::begin(optParam->reserved), std::end(optParam->reserved), [](std::uint32_t value) { return value != 0; }))) {
-        return ULT_ERROR_INVALID;
+    UltMutexOptParam localOptParam{};
+    if (optParam != nullptr) {
+        if (!ReadGuestValue(optParam, localOptParam)) {
+            return ULT_ERROR_NULL;
+        }
+        if (localOptParam.header[0] != 0x6C696275 || localOptParam.header[1] != 0x6C746D61 || localOptParam.header[2] != 0x67696300 || localOptParam.attribute > 1 || std::any_of(std::begin(localOptParam.reserved), std::end(localOptParam.reserved), [](std::uint32_t value) { return value != 0; })) {
+            return ULT_ERROR_INVALID;
+        }
     }
-    return sceUltMutexCreate(mutex, name, waitingQueueResourcePool, optParam, 0);
+    return sceUltMutexCreate(mutex, name, waitingQueueResourcePool, optParam != nullptr ? &localOptParam : nullptr, 0);
 }
 
 int APS5_VABI _sceUltQueueDataResourcePoolOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
