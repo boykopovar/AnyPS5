@@ -37,15 +37,9 @@ struct SavedErrno {
 
 bool CopyResolverString(const char* source, std::string& destination) {
     const SavedErrno savedErrno;
-    auto address = reinterpret_cast<std::uintptr_t>(source);
-    for (;;) {
-        char value = 0;
-        if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address), sizeof(value))) return false;
-        if (value == 0) return true;
-        destination.push_back(value);
-        if (address == std::numeric_limits<std::uintptr_t>::max()) return false;
-        ++address;
-    }
+    const int error = CopyGuestString_nid_no_patch(source, 1024, destination);
+    if (error == 12) throw std::bad_alloc();
+    return error == 0;
 }
 
 template<typename TValue>
