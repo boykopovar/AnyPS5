@@ -76,7 +76,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
         std::map<std::string, std::size_t> stubsByName;
-        const auto counted = [](const std::string& name) { return name == "VRSQRTPS" || name == "VRCPPS" || name == "256-bit store" || name == "scalar compare"; };
+        const auto counted = [](const std::string& name) { return name == "VRSQRTPS" || name == "VRCPPS" || name == "VRSQRTSS" || name == "VRCPSS" || name == "256-bit store" || name == "scalar compare"; };
         for (const auto& report : converted.Reports) {
             if (report.Lowering == Codegen::Amd64OnlyLowering::Kept)
                 { std::ostringstream message; message << "Intel substitution: " << report.InstructionName << " at 0x" << std::hex << report.Offset << std::dec << " (" << report.OriginalLength << " bytes) kept: no room for a jump\n"; inputProgress.Message(message.str()); }
@@ -160,7 +160,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         inputProgress.Message("Warning: with --lazy-binding the Linux executable stays position independent and is not placed at 0x400000; a title whose own sceLibcMspaceCreate checks the 40-bit address window stops at start-up\n");
     std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
     if (macos) {
-        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); }, options.TraceImports, options.FunctionSymbolRoots);
+        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); }, options.TraceImports, options.FunctionSymbolRoots, Io::Utf8Path(input.OutputPath.filename()));
     } else if (windows) {
         patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); }, Io::Utf8Path(input.OutputPath.filename()), options.FunctionSymbolRoots);
     } else {

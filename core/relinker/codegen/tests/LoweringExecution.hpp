@@ -14,11 +14,6 @@
 #include <signal.h>
 #include <sys/mman.h>
 #define LOWERING_EXECUTION_AVAILABLE 1
-#elif defined(_WIN32) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
-#include <windows.h>
-#undef far
-#undef near
-#define LOWERING_EXECUTION_AVAILABLE 1
 #else
 #define LOWERING_EXECUTION_AVAILABLE 0
 #endif
@@ -52,104 +47,6 @@ inline State InitialState() {
 
 #if LOWERING_EXECUTION_AVAILABLE
 
-#if defined(_WIN32)
-inline std::uint8_t* AllocatePages(std::size_t size) {
-    return static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-}
-
-inline bool ProtectPages(std::uint8_t* pages, std::size_t size, bool executable, bool writable) {
-    DWORD previous = 0;
-    const DWORD protection = executable ? PAGE_EXECUTE_READ : writable ? PAGE_READWRITE : PAGE_NOACCESS;
-    return VirtualProtect(pages, size, protection, &previous) != 0 && (!executable || FlushInstructionCache(GetCurrentProcess(), pages, size) != 0);
-}
-
-inline void FreePages(std::uint8_t* pages, std::size_t) {
-    if (pages) VirtualFree(pages, 0, MEM_RELEASE);
-}
-#else
-inline std::uint8_t* AllocatePages(std::size_t size) {
-    void* pages = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    return pages == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(pages);
-}
-
-inline bool ProtectPages(std::uint8_t* pages, std::size_t size, bool executable, bool writable) {
-    const int protection = executable ? PROT_READ | PROT_EXEC : writable ? PROT_READ | PROT_WRITE : PROT_NONE;
-    return mprotect(pages, size, protection) == 0;
-}
-
-inline void FreePages(std::uint8_t* pages, std::size_t size) {
-    if (pages) munmap(pages, size);
-}
-#endif
-
-inline std::size_t AppendHostEntry(Bytes& bytes) {
-#if defined(_WIN32)
-    const auto entry = bytes.size();
-    bytes.insert(bytes.end(), {0x56, 0x57, 0x48, 0x83, 0xEC, 0x08, 0x48, 0x89, 0xCF, 0xE8});
-    const auto displacement = static_cast<std::int32_t>(0 - static_cast<std::int64_t>(bytes.size() + 4));
-    for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
-    bytes.insert(bytes.end(), {0x48, 0x83, 0xC4, 0x08, 0x5F, 0x5E, 0xC3});
-    return entry;
-#else
-    (void)bytes;
-    return 0;
-#endif
-}
-
-inline void Call(const std::uint8_t* code, std::size_t entry, void* argument) { reinterpret_cast<void (*)(void*)>(const_cast<std::uint8_t*>(code + entry))(argument); }
-
-#if defined(_WIN32)
-inline std::uint8_t*& ProbeCode() {
-    static std::uint8_t* code = nullptr;
-    return code;
-}
-
-inline std::size_t& ProbeLength() {
-    static std::size_t length = 0;
-    return length;
-}
-
-inline bool& ProbeFaulted() {
-    static bool faulted = false;
-    return faulted;
-}
-
-inline LONG CALLBACK ProbeHandler(EXCEPTION_POINTERS* info) {
-    const EXCEPTION_RECORD* const record = info->ExceptionRecord;
-    const auto* const address = static_cast<const std::uint8_t*>(record->ExceptionAddress);
-    if (record->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION || !ProbeCode() || address < ProbeCode() || address >= ProbeCode() + ProbeLength()) return EXCEPTION_CONTINUE_SEARCH;
-    ProbeFaulted() = true;
-    info->ContextRecord->Rip = reinterpret_cast<DWORD64>(ProbeCode() + ProbeLength());
-    return EXCEPTION_CONTINUE_EXECUTION;
-}
-
-inline bool HostExecutes(const Bytes& instruction) {
-    std::uint8_t* const code = AllocatePages(4096);
-    if (!code) throw std::runtime_error("Cannot allocate the instruction probe page");
-    std::memcpy(code, instruction.data(), instruction.size());
-    code[instruction.size()] = 0xC3;
-    if (!ProtectPages(code, 4096, true, false)) {
-        FreePages(code, 4096);
-        throw std::runtime_error("Cannot make the instruction probe executable");
-    }
-    ProbeCode() = code;
-    ProbeLength() = instruction.size();
-    ProbeFaulted() = false;
-    void* const handler = AddVectoredExceptionHandler(1, ProbeHandler);
-    alignas(64) std::uint8_t scratch[64] = {};
-    asm volatile(
-        "sub $128, %%rsp\n\t"
-        "call *%[code]\n\t"
-        "add $128, %%rsp\n\t"
-        :
-        : [code] "r"(code), "D"(scratch)
-        : "rax", "rcx", "rdx", "xmm0", "memory", "cc");
-    if (handler) RemoveVectoredExceptionHandler(handler);
-    ProbeCode() = nullptr;
-    FreePages(code, 4096);
-    return !ProbeFaulted();
-}
-#else
 inline sigjmp_buf& ProbeJump() {
     static sigjmp_buf jump;
     return jump;
@@ -185,7 +82,6 @@ inline bool HostExecutes(const Bytes& instruction) {
     munmap(code, 4096);
     return executed;
 }
-#endif
 
 class Execution {
 public:
@@ -245,26 +141,24 @@ public:
         memory(0x8D, 4, 4, 128);
         for (auto reg : {15, 14, 13, 12, 5, 3}) pop(static_cast<std::uint8_t>(reg));
         bytes.push_back(0xC3);
-        entry = AppendHostEntry(bytes);
         if (bytes.size() >= 4096) throw std::runtime_error("Execution wrapper exceeded its code page");
-        code = AllocatePages(8192);
-        if (!code) throw std::runtime_error("Cannot allocate execution test pages");
+        code = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (code == MAP_FAILED) throw std::runtime_error("Cannot allocate execution test pages");
         std::memcpy(code, bytes.data(), bytes.size());
         std::memcpy(code + 4096 + 24, &memoryValue, sizeof(memoryValue));
-        if (!ProtectPages(code, 4096, true, false)) throw std::runtime_error("Cannot make lowering test code executable");
+        if (mprotect(code, 4096, PROT_READ | PROT_EXEC) != 0) throw std::runtime_error("Cannot make lowering test code executable");
     }
 
-    ~Execution() { FreePages(code, 8192); }
+    ~Execution() { if (code != MAP_FAILED) munmap(code, 8192); }
     Execution(const Execution&) = delete;
     Execution& operator=(const Execution&) = delete;
 
-    void Run(State& state) const { Call(code, entry, &state); }
+    void Run(State& state) const { reinterpret_cast<void (*)(State*)>(code)(&state); }
     const void* Memory() const { return code + 4096 + 24; }
 
 private:
     Bytes bytes;
-    std::uint8_t* code = nullptr;
-    std::size_t entry = 0;
+    std::uint8_t* code = reinterpret_cast<std::uint8_t*>(MAP_FAILED);
 
     void append32(std::int32_t value) {
         for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
