@@ -152,6 +152,79 @@ void detileVolume(const Context& context, TextureDetiler& detiler, TextureTileMo
     Require(range.type == VK_IMAGE_VIEW_TYPE_3D && range.levels == 3u && range.layers == 1u, what + ": the texture is not viewed as one 3D image of three levels");
 }
 
+void detileThickVolume(const Context& context, TextureDetiler& detiler) {
+    constexpr std::uint32_t bytes = 4u;
+    constexpr std::uint32_t depth = 8u;
+    const auto mode = TextureTileMode::kGcnThick2D;
+    const std::string what = "PS4 volume in tile mode 20 (Thick_2dThick)";
+    const auto block = GcnTiling(mode, bytes);
+    GuestTextureResource volume{};
+    volume.baseAddress = 0x100000u;
+    volume.width = block.blockWidth;
+    volume.height = block.blockHeight;
+    volume.depthOrLastArray = depth - 1u;
+    volume.mipCount = 1u;
+    volume.allocatedMipCount = 1u;
+    volume.lastLevel = 0u;
+    volume.tileMode = mode;
+    volume.dimension = TextureDimension::k3D;
+    volume.format = 20u;
+    volume.dstSelX = 4u;
+    volume.dstSelY = 5u;
+    volume.dstSelZ = 6u;
+    volume.dstSelW = 7u;
+    volume.gcnPitch = volume.width;
+    const auto geometry = DescribeSurface(volume);
+    Require(!geometry.levelMajor && geometry.thick && geometry.imageDepth == depth && geometry.mips.size() == 1u, what + ": the surface is not one thick 3D image of its depth");
+    Buffer tiled(context, static_cast<std::size_t>(geometry.guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer linear(context, static_cast<std::size_t>(geometry.sliceLinearBytes * depth), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::memset(tiled.Bytes().data(), 0, tiled.Bytes().size());
+    std::memset(linear.Bytes().data(), 0xcd, linear.Bytes().size());
+    const auto element = [](std::uint32_t slice, std::uint32_t x, std::uint32_t y, std::uint32_t byte) { return static_cast<std::uint8_t>(elementByte(x, y, byte) + slice * 53u); };
+    const auto& mip = geometry.mips[0];
+    const auto tiling = GcnTiling(mode, bytes);
+    for (std::uint32_t slice = 0; slice < depth; ++slice) {
+        const auto base = geometry.GuestOffset(slice, mip);
+        const auto bankXor = GcnLayerBankXor(tiling, slice);
+        for (std::uint32_t y = 0; y < mip.height; ++y) {
+            for (std::uint32_t x = 0; x < mip.width; ++x) {
+                std::uint32_t inBlock = 0;
+                for (std::uint32_t bit = 0; bit < 16u; ++bit) {
+                    const auto selected = (x & tiling.equation[bit] & 0xfffu) ^ ((y << 12u) & tiling.equation[bit] & 0xfff000u) ^ ((slice << 24u) & tiling.equation[bit] & 0xff000000u);
+                    inBlock |= (static_cast<std::uint32_t>(std::popcount(selected)) & 1u) << bit;
+                }
+                const auto tile = static_cast<std::uint64_t>(y / tiling.blockHeight) * mip.blocksPerRow + x / tiling.blockWidth;
+                const auto offset = base + tile * tiling.blockBytes + (inBlock ^ bankXor);
+                Require(offset + bytes <= tiled.Bytes().size(), what + ": an element lies outside the tiled surface");
+                for (std::uint32_t byte = 0; byte < bytes; ++byte) tiled.Bytes()[offset + byte] = static_cast<std::byte>(element(slice, x, y, byte));
+            }
+        }
+    }
+    CommandBatch batch(context);
+    detiler.BeginBatch();
+    for (std::uint32_t slice = 0; slice < depth; ++slice) {
+        detiler.Dispatch(batch.Handle(), mode, bytes, tiled.Handle(), geometry.GuestOffset(slice, mip), linear.Handle(), geometry.LinearLayerOffset(slice), mip, false, slice, true);
+    }
+    const VkMemoryBarrier toHost{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &toHost, 0, nullptr, 0, nullptr);
+    batch.SubmitAndWait();
+    for (std::uint32_t slice = 0; slice < depth; ++slice) {
+        const auto base = geometry.LinearLayerOffset(slice);
+        for (std::uint32_t y = 0; y < mip.height; ++y) {
+            for (std::uint32_t x = 0; x < mip.width; ++x) {
+                for (std::uint32_t byte = 0; byte < bytes; ++byte) {
+                    const auto got = static_cast<std::uint8_t>(linear.Bytes()[base + static_cast<std::size_t>(y) * mip.pitchBytes + static_cast<std::size_t>(x) * bytes + byte]);
+                    Require(got == element(slice, x, y, byte), what + ": slice " + std::to_string(slice) + " element " + std::to_string(x) + "," + std::to_string(y) + " detiled as " + std::to_string(got));
+                }
+            }
+        }
+    }
+    const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    const Texture texture(context, detiler, volume, identity, tiled.Bytes());
+    const auto range = texture.SampledViewRange(false);
+    Require(range.type == VK_IMAGE_VIEW_TYPE_3D && range.levels == 1u && range.layers == 1u, what + ": the texture is not viewed as one 3D image of one level");
+}
+
 }
 
 int main() {
@@ -170,6 +243,7 @@ int main() {
             for (const auto mode : {kGcnThin1D, kGcnDisplay1D, kGcnDisplay2D, kGcnThin2D}) {
                 for (const auto pow2Pad : {false, true}) detileVolume(context, detiler, mode, pow2Pad);
             }
+            detileThickVolume(context, detiler);
             device->WaitIdle();
         }
         device.reset();

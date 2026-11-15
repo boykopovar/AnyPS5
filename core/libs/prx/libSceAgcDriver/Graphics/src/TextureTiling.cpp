@@ -76,7 +76,8 @@ BlockLayout GetBlockLayout(TextureTileMode tileMode, std::uint32_t bytesPerEleme
         case TextureTileMode::kGcnDisplay2DPrt:
         case TextureTileMode::kGcnThinPrt:
         case TextureTileMode::kGcnThin2DPrt:
-        case TextureTileMode::kGcnThick1D: {
+        case TextureTileMode::kGcnThick1D:
+        case TextureTileMode::kGcnThick2D: {
             const auto geometry = GcnTiling(tileMode, bytesPerElement);
             return {geometry.blockBytes, geometry.blockWidth, geometry.blockHeight};
         }
@@ -138,7 +139,8 @@ bool GetMipTailLayout(TextureTileMode tileMode, const BlockLayout& block, std::u
         case TextureTileMode::kGcnDisplay2DPrt:
         case TextureTileMode::kGcnThinPrt:
         case TextureTileMode::kGcnThin2DPrt:
-        case TextureTileMode::kGcnThick1D: return false;
+        case TextureTileMode::kGcnThick1D:
+        case TextureTileMode::kGcnThick2D: return false;
         case TextureTileMode::kStandard4KB:
         case TextureTileMode::kD4KB:
         case TextureTileMode::kS4KBX:
@@ -336,6 +338,10 @@ std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uin
         case TextureTileMode::kS64KBX:
         case TextureTileMode::kD64KBX: return {1u << thick64KB[index][0], 1u << thick64KB[index][1], 1u << thick64KB[index][2]};
         case TextureTileMode::kGcnThick1D: return {8u, 8u, 4u};
+        case TextureTileMode::kGcnThick2D: {
+            const auto geometry = GcnTiling(tileMode, bytesPerElement);
+            return {geometry.blockWidth, geometry.blockHeight, 4u};
+        }
         default: throw std::runtime_error("AGC graphics: thick 3D textures are only supported in SW_4KB_S, SW_4KB_S_X, SW_64KB_S, SW_64KB_S_X and SW_64KB_D_X, not in swizzle mode " + std::to_string(EquationSwizzleMode(tileMode)) + " at " + std::to_string(bytesPerElement) + " bytes per element");
     }
 }
@@ -535,12 +541,13 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     }};
     const auto log2Bytes = static_cast<std::uint32_t>(std::countr_zero(bytesPerElement));
     const bool displayOrder = tileMode == TextureTileMode::kGcnDisplay1D || tileMode == TextureTileMode::kGcnDisplay2D || tileMode == TextureTileMode::kGcnDisplayPrt || tileMode == TextureTileMode::kGcnDisplay2DPrt;
-    const auto& order = displayOrder ? display[log2Bytes] : thin;
-    const auto microBytes = 64u * bytesPerElement;
+    const auto z = [](std::uint32_t bit) { return 1u << (24u + bit); };
+    const std::array<std::uint32_t, 8> thick = log2Bytes <= 1u ? std::array<std::uint32_t, 8>{x(0), y(0), x(1), y(1), z(0), z(1), x(2), y(2)} : log2Bytes == 2u ? std::array<std::uint32_t, 8>{x(0), y(0), x(1), z(0), y(1), z(1), x(2), y(2)} : std::array<std::uint32_t, 8>{x(0), y(0), z(0), x(1), y(1), z(1), x(2), y(2)};
+    const bool thickMacro = tileMode == TextureTileMode::kGcnThick2D;
+    const std::span<const std::uint32_t> order = thickMacro ? std::span<const std::uint32_t>(thick) : displayOrder ? std::span<const std::uint32_t>(display[log2Bytes]) : std::span<const std::uint32_t>(thin);
+    const auto microBytes = (thickMacro ? 256u : 64u) * bytesPerElement;
     GcnTileGeometry geometry{};
     if (tileMode == TextureTileMode::kGcnThick1D) {
-        const auto z = [](std::uint32_t bit) { return 1u << (24u + bit); };
-        const std::array<std::uint32_t, 8> thick = log2Bytes <= 1u ? std::array<std::uint32_t, 8>{x(0), y(0), x(1), y(1), z(0), z(1), x(2), y(2)} : log2Bytes == 2u ? std::array<std::uint32_t, 8>{x(0), y(0), x(1), z(0), y(1), z(1), x(2), y(2)} : std::array<std::uint32_t, 8>{x(0), y(0), z(0), x(1), y(1), z(1), x(2), y(2)};
         geometry = {256u * bytesPerElement, 8u, 8u, {}};
         for (std::uint32_t bit = 0; bit < thick.size(); ++bit) geometry.equation[log2Bytes + bit] = thick[bit];
         return geometry;
@@ -553,7 +560,8 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     struct MacroMode { std::uint32_t bankHeight; std::uint32_t banks; std::uint32_t aspect; };
     constexpr std::array<MacroMode, 5> macroModes{{{4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
     constexpr std::array<MacroMode, 5> prtMacroModes{{{8u, 16u, 4u}, {4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
-    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * microBytes));
+    std::uint32_t tileSplit = std::min(1024u, std::max(256u, thickMacro ? microBytes : 2u * microBytes));
+    Require(!thickMacro || microBytes <= tileSplit, "PS4 2D thick tile mode with elements over 4 bytes splits its micro tiles, which is not implemented");
     switch (tileMode) {
         case TextureTileMode::kGcnDepth2D64: tileSplit = 64u; break;
         case TextureTileMode::kGcnDepth2D128: tileSplit = 128u; break;
@@ -608,6 +616,7 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     for (std::uint32_t bit = 0; bit < bankBits; ++bit) geometry.equation[pipeInterleaveBits + log2Pipes + bit] = bank[bit];
     for (auto bit = pipeInterleaveBits; bit < innerBits; ++bit) geometry.equation[bit + log2Pipes + bankBits] = inner[bit];
     geometry.layerBankStep = prt ? 0u : mode.banks / 2u - 1u;
+    geometry.layerThickness = thickMacro ? 4u : 1u;
     geometry.bankMask = mode.banks - 1u;
     geometry.bankShift = pipeInterleaveBits + log2Pipes;
     return geometry;
@@ -622,6 +631,9 @@ SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
     const auto texelHeight = BlockHeight(descriptor.format);
     Require(texelWidth == 1u && texelHeight == 1u, "PS4 block-compressed volumes are tiled thin, which is not implemented");
     const auto depth = descriptor.depthOrLastArray + 1u;
+    const bool macro = IsGcnMacroTiled(descriptor.tileMode);
+    Require(!macro || descriptor.mipCount == 1u, "PS4 2D thick volumes with several mip levels are not implemented");
+    const auto block = macro ? GcnTiling(descriptor.tileMode, bytes) : GcnTileGeometry{0u, 8u, 8u, {}};
     SurfaceGeometry geometry;
     geometry.mips.resize(descriptor.mipCount);
     std::uint64_t offset = 0, linearOffset = 0;
@@ -635,8 +647,8 @@ SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
             levelDepth = std::bit_ceil(levelDepth);
         }
         const bool thin = level != 0 && levelDepth < 4u;
-        auto rowElements = AlignUp(levelWidth, 8u);
-        const auto rows = AlignUp(levelHeight, 8u);
+        auto rowElements = AlignUp(levelWidth, block.blockWidth);
+        const auto rows = AlignUp(levelHeight, block.blockHeight);
         if (thin) while ((rowElements * rows * bytes) % 256u != 0) rowElements += 8u;
         const auto thickness = thin ? 1u : 4u;
         const auto slabs = (levelDepth + thickness - 1u) / thickness;
@@ -644,7 +656,7 @@ SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
         auto& mip = geometry.mips[level];
         mip.width = TexelLevelDimension(descriptor.width, level, texelWidth);
         mip.height = TexelLevelDimension(descriptor.height, level, texelHeight);
-        mip.blocksPerRow = rowElements / 8u;
+        mip.blocksPerRow = rowElements / block.blockWidth;
         mip.pitchBytes = rowElements * bytes;
         mip.tiledSize = static_cast<std::uint64_t>(rowElements) * rows * thickness * bytes;
         mip.gcnMicroTiled = thin;

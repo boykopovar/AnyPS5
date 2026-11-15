@@ -42,6 +42,7 @@ enum class TextureTileMode {
     kGcnThinPrt,
     kGcnThin2DPrt,
     kGcnThick1D,
+    kGcnThick2D,
     // Upstream's name for SW_64KB_R_X (tile mode 0x1b).
     RenderTarget64KB = kR64KBX
 };
@@ -128,7 +129,7 @@ constexpr bool IsGcnPrtTiled(TextureTileMode mode) {
 }
 
 constexpr bool IsGcnMacroTiled(TextureTileMode mode) {
-    return mode == TextureTileMode::kGcnDisplay2D || mode == TextureTileMode::kGcnThin2D || IsGcnDepthTiled(mode) || IsGcnPrtTiled(mode);
+    return mode == TextureTileMode::kGcnDisplay2D || mode == TextureTileMode::kGcnThin2D || mode == TextureTileMode::kGcnThick2D || IsGcnDepthTiled(mode) || IsGcnPrtTiled(mode);
 }
 
 constexpr bool IsGcnTiled(TextureTileMode mode) {
@@ -136,7 +137,7 @@ constexpr bool IsGcnTiled(TextureTileMode mode) {
 }
 
 constexpr bool IsGcnThick(TextureTileMode mode) {
-    return mode == TextureTileMode::kGcnThick1D;
+    return mode == TextureTileMode::kGcnThick1D || mode == TextureTileMode::kGcnThick2D;
 }
 
 constexpr TextureTileMode GcnMicroTileMode(TextureTileMode mode) {

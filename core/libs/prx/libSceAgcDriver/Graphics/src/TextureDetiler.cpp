@@ -212,7 +212,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
 }
 
 std::uint32_t TextureDetiler::layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer) {
-    if (layer == 0 || layout.gcnMicroTiled || !IsGcnMacroTiled(tileMode)) return 0u;
+    if (layout.gcnMicroTiled || !IsGcnMacroTiled(tileMode)) return 0u;
     const auto key = (static_cast<std::uint32_t>(tileMode) << 8u) | elementBytes;
     for (const auto& entry : gcnGeometries) {
         if (entry.first == key) return GcnLayerBankXor(entry.second, layer);
