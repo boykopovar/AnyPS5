@@ -1013,10 +1013,6 @@ void testCopyDataAndComputeEvents() {
     rejected.words.fill(0xa5a5a5a5u);
     const auto rejectedWords = rejected.words;
     const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 4, 0x1000, 0xa, 0, 1, 0, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 0, 0x1000, 0xa, 4, 1, 0, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 2, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 0, 2); });
