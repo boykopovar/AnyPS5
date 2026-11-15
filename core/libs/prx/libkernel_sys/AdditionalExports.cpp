@@ -1,4 +1,5 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -98,19 +99,11 @@ int APS5_VABI __sys_get_proc_type_info_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_is_development_mode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix() {
+    return 0;
 }
 
 int APS5_VABI __sys_kqueueex_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __sys_namedobj_create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __sys_namedobj_delete_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -456,8 +449,8 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
     return fail(accessFailure ? GuestEacces : GuestEnoent);
 }
 
-int APS5_VABI _wait4_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _wait4_nid_postfix(int pid, int* status, int options, void* usage) {
+    return wait4_nid_postfix(pid, status, options, usage);
 }
 
 int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta) {
@@ -1634,13 +1627,6 @@ int APS5_VABI sceKernelAddFGCInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelCreateUuidV1() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelCreateUuidV7() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceKernelDeleteDynlibEvent() {
     NotImplemented_nid_no_patch(__func__);
@@ -1686,8 +1672,8 @@ int APS5_VABI sceKernelGetCpuCoreClock() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion(SceKernelProsperoSystemSwVersion* version) {
+    return sceKernelGetProsperoSystemSwVersion_nid_postfix(version);
 }
 
 int APS5_VABI sceKernelGetNandInfo() {

@@ -42,8 +42,10 @@ int StatusError(const std::error_code& error) {
 void LeaveTrouble(char* resolved, const std::string& trouble) {
     if (resolved == nullptr) return;
     const auto length = trouble.size() < PathMax ? trouble.size() : PathMax - 1;
-    std::memcpy(resolved, trouble.data(), length);
-    resolved[length] = '\0';
+    char buffer[PathMax];
+    std::memcpy(buffer, trouble.data(), length);
+    buffer[length] = '\0';
+    GuestCopyOut_nid_no_patch(resolved, buffer, length + 1);
 }
 
 void DropLastComponent(std::string& result) {
@@ -219,14 +221,19 @@ extern "C" char* APS5_VABI realpath_nid_postfix(const char* path, char* resolved
         errno = InvalidArgument;
         return nullptr;
     }
-    if (*path == '\0') {
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(path, 4096, copy)) {
+        errno = error;
+        return nullptr;
+    }
+    if (copy.empty()) {
         errno = NoEntry;
         return nullptr;
     }
     std::string result;
     int error = 0;
     try {
-        if (!ResolveGuest(path, result, error)) {
+        if (!ResolveGuest(copy.c_str(), result, error)) {
             LeaveTrouble(resolved, result);
             errno = error;
             return nullptr;
@@ -237,8 +244,13 @@ extern "C" char* APS5_VABI realpath_nid_postfix(const char* path, char* resolved
                 errno = NoMemory;
                 return nullptr;
             }
+            std::memcpy(resolved, result.c_str(), result.size() + 1);
+            return resolved;
         }
-        std::memcpy(resolved, result.c_str(), result.size() + 1);
+        if (!GuestCopyOut_nid_no_patch(resolved, result.c_str(), result.size() + 1)) {
+            errno = 14;
+            return nullptr;
+        }
         return resolved;
     } catch (const std::bad_alloc&) {
         errno = NoMemory;

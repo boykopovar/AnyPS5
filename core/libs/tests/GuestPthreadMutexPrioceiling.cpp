@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -89,6 +90,11 @@ static void CheckPriorityProtected() {
     Require(Ceiling(&mutex) == 300);
     Require(Throws([&] { pthread_mutex_getprioceiling_nid_postfix(&mutex, nullptr); }));
     Require(Throws([&] { scePthreadMutexGetprioceiling(&mutex, nullptr); }));
+    errno = 71;
+    Require(Throws([&] { pthread_mutex_getprioceiling_nid_postfix(&mutex, reinterpret_cast<int*>(0x10)); }));
+    Require(errno == 71);
+    Require(Throws([&] { scePthreadMutexGetprioceiling(&mutex, reinterpret_cast<int*>(0x10)); }));
+    Require(errno == 71);
     int ceiling = -1;
     Require(scePthreadMutexGetprioceiling(&mutex, &ceiling) == SCE_OK && ceiling == 300);
 
@@ -97,6 +103,11 @@ static void CheckPriorityProtected() {
     Require(Ceiling(&mutex) == 400);
     Require(pthread_mutex_setprioceiling_nid_postfix(&mutex, 500, nullptr) == 0);
     Require(Ceiling(&mutex) == 500);
+    errno = 71;
+    Require(Throws([&] { pthread_mutex_setprioceiling_nid_postfix(&mutex, 550, reinterpret_cast<int*>(0x10)); }));
+    Require(errno == 71 && Ceiling(&mutex) == 500);
+    Require(Throws([&] { scePthreadMutexSetprioceiling(&mutex, 550, reinterpret_cast<int*>(0x10)); }));
+    Require(errno == 71 && Ceiling(&mutex) == 500);
     Require(scePthreadMutexSetprioceiling(&mutex, 600, &previous) == SCE_OK && previous == 500);
     Require(Ceiling(&mutex) == 600);
 
