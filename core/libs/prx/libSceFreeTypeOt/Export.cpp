@@ -1,6 +1,7 @@
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include <cerrno>
+#include FT_MODULE_H
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -188,10 +189,9 @@ int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch() {
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_qAPXM5DN62Q_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI FT_Reference_Library_nid_postfix(FreeType::GuestLibrary* library) {
+    return FT_Reference_Library(library ? library->host : nullptr);
 }
-APS5_EXPORT("qAPXM5DN62Q", sceFreeTypeOtUnknown_qAPXM5DN62Q_nid_no_patch);
 
 int APS5_VABI FT_Render_Glyph_Internal_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestGlyphSlotRec* slot, std::int32_t renderMode) {
     if (!library || !slot || !slot->face || slot->library != library) NotImplemented_nid_no_patch(__func__);
