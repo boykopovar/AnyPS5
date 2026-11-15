@@ -107,7 +107,13 @@ static std::vector<unsigned char> Pixels(const unsigned char* buffer, std::uint3
     return {buffer, buffer + stride * rows};
 }
 
-static void CheckSame(const GuestBitmap& guest, const FT_Bitmap& native, const GuestVector& guestOffset, const FT_Vector& nativeOffset) {
+static void CheckSame(const GuestBitmap& guest, const FT_Bitmap& native, const GuestVector& guestOffset, const FT_Vector& nativeOffset,
+                      std::source_location caller = std::source_location::current()) {
+    if (guest.rows != native.rows || guest.width != native.width || guest.pitch != native.pitch || guestOffset.x != nativeOffset.x || guestOffset.y != nativeOffset.y) {
+        std::fprintf(stderr, "bitmap mismatch from line %u: guest %ux%u pitch %d mode %u offset (%lld, %lld); FreeType %ux%u pitch %d mode %u offset (%lld, %lld)\n",
+                     caller.line(), guest.rows, guest.width, guest.pitch, guest.pixel_mode, static_cast<long long>(guestOffset.x), static_cast<long long>(guestOffset.y),
+                     native.rows, native.width, native.pitch, native.pixel_mode, static_cast<long long>(nativeOffset.x), static_cast<long long>(nativeOffset.y));
+    }
     Require(guest.rows == native.rows && guest.width == native.width && guest.pitch == native.pitch);
     Require(guest.num_grays == native.num_grays && guest.pixel_mode == native.pixel_mode && guest.palette_mode == native.palette_mode);
     Require((guest.buffer == nullptr) == (native.buffer == nullptr));
