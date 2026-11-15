@@ -12,6 +12,7 @@
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <span>
 #include <array>
 #include <atomic>
 #include <type_traits>
@@ -1280,8 +1281,13 @@ std::size_t heapRecordIndex(bool compute, bool heap) {
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapStageReason::Count)> heapStageReasons{};
 constexpr std::array<const char*, static_cast<std::size_t>(HeapStageReason::Count)> HeapStageReasonNames{"heap", "disabled", "excluded"};
 constexpr std::array<const char*, static_cast<std::size_t>(SetBindSite::Count)> SetBindSiteNames{"draw", "dispatch", "detiler",
-                                                                                                 "color transfer", "presentation", "depth transfer", "staged merge", "first-sample copy"};
+                                                                                                 "color transfer", "presentation", "depth transfer", "staged merge", "first-sample copy", "changed copy"};
 constexpr std::array<const char*, static_cast<std::size_t>(HeapExcluded::Count)> HeapExcludedNames{"draw excluded", "dispatch excluded"};
+
+constexpr bool AllNamed(std::span<const char* const> names) {
+    return std::ranges::none_of(names, [](const char* name) { return name == nullptr; });
+}
+static_assert(AllNamed(HeapStageReasonNames) && AllNamed(SetBindSiteNames) && AllNamed(HeapExcludedNames), "every counter needs a name");
 
 std::uint64_t takeCount(std::atomic<std::uint64_t>& counter) {
     return counter.exchange(0, std::memory_order_relaxed);
