@@ -114,6 +114,8 @@ int main(int argc, char** argv) {
         Require(owner == 0x5a5a && index == 0x5a5a);
         errno = 71;
         Status(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2SamplerVoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable sampler output");
+        const auto reverbVoice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_REVERB));
+        Status(sceNgs2VoiceGetState(reverbVoice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2VoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable reverb output");
         Require(errno == 71);
         Status(sceNgs2VoiceGetStateFlags(voice, reinterpret_cast<std::uint32_t*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetStateFlags accepted an unwritable output");
         Status(sceNgs2VoiceGetOwner(voice, reinterpret_cast<uintptr_t*>(0x10), &index), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner accepted an unwritable rack output");
