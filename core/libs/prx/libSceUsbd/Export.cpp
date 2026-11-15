@@ -408,24 +408,21 @@ void APS5_VABI sceUsbdFillIsoTransfer(UsbdTransfer* transfer, void* deviceHandle
 
 void APS5_VABI sceUsbdFillControlSetup(std::uint8_t* buffer, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint16_t length) {
     if (buffer == nullptr) throw std::runtime_error(std::string(__func__) + ": null buffer");
-    buffer[0] = requestType;
-    buffer[1] = request;
-    buffer[2] = static_cast<std::uint8_t>(value);
-    buffer[3] = static_cast<std::uint8_t>(value >> 8);
-    buffer[4] = static_cast<std::uint8_t>(index);
-    buffer[5] = static_cast<std::uint8_t>(index >> 8);
-    buffer[6] = static_cast<std::uint8_t>(length);
-    buffer[7] = static_cast<std::uint8_t>(length >> 8);
+    const std::uint8_t setup[CONTROL_SETUP_SIZE] = {requestType, request, static_cast<std::uint8_t>(value), static_cast<std::uint8_t>(value >> 8),
+        static_cast<std::uint8_t>(index), static_cast<std::uint8_t>(index >> 8), static_cast<std::uint8_t>(length), static_cast<std::uint8_t>(length >> 8)};
+    if (!GuestCopyOut_nid_no_patch(buffer, setup, sizeof(setup))) throw std::runtime_error(std::string(__func__) + ": unwritable buffer");
 }
 
 void APS5_VABI sceUsbdFillControlTransfer(UsbdTransfer* transfer, void* deviceHandle, std::uint8_t* buffer, UsbdTransferCallback callback, void* userData, std::uint32_t timeout) {
     if (transfer == nullptr) throw std::runtime_error(std::string(__func__) + ": null transfer");
+    std::uint8_t dataLength[2] = {};
+    if (buffer != nullptr && !GuestCopyIn_nid_no_patch(dataLength, buffer + 6, sizeof(dataLength))) throw std::runtime_error(std::string(__func__) + ": unreadable setup");
     transfer->deviceHandle = deviceHandle;
     transfer->endpoint = 0;
     transfer->type = TRANSFER_TYPE_CONTROL;
     transfer->timeout = timeout;
     transfer->buffer = buffer;
-    transfer->length = buffer != nullptr ? CONTROL_SETUP_SIZE + (buffer[6] | buffer[7] << 8) : 0;
+    transfer->length = buffer != nullptr ? CONTROL_SETUP_SIZE + (dataLength[0] | dataLength[1] << 8) : 0;
     transfer->userData = userData;
     transfer->callback = callback;
 }
@@ -468,15 +465,21 @@ std::uint8_t* APS5_VABI sceUsbdGetIsoPacketBuffer(UsbdTransfer* transfer, std::u
 std::int32_t APS5_VABI sceUsbdBulkTransfer(void* deviceHandle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t* transferred, std::uint32_t timeout) {
     if (deviceHandle == nullptr || (length != 0 && data == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
-    *transferred = 0;
-    return ToGuestError(libusb_bulk_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, transferred, timeout));
+    std::int32_t moved = 0;
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    const std::int32_t result = ToGuestError(libusb_bulk_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    return result;
 }
 
 std::int32_t APS5_VABI sceUsbdInterruptTransfer(void* deviceHandle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t* transferred, std::uint32_t timeout) {
     if (deviceHandle == nullptr || (length != 0 && data == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
-    *transferred = 0;
-    return ToGuestError(libusb_interrupt_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, transferred, timeout));
+    std::int32_t moved = 0;
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    const std::int32_t result = ToGuestError(libusb_interrupt_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    return result;
 }
 
 std::int32_t APS5_VABI sceUsbdCancelTransfer(UsbdTransfer* transfer) {
@@ -545,14 +548,19 @@ std::int32_t APS5_VABI sceUsbdControlTransfer(void* deviceHandle, std::uint8_t r
 std::int32_t APS5_VABI sceUsbdGetActiveConfigDescriptor(void* device, void** config) {
     if (device == nullptr) throw std::runtime_error(std::string(__func__) + ": null device");
     if (config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(config, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_config_descriptor* host = nullptr;
     const int result = libusb_get_active_config_descriptor(KnownDevice(device, __func__), &host);
-    *config = nullptr;
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(config, &stored, sizeof(stored))) {
+        libusb_free_config_descriptor(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.configs.insert(host);
-    *config = host;
     return 0;
 }
 
@@ -563,14 +571,19 @@ std::uint8_t APS5_VABI sceUsbdGetBusNumber(void* device) {
 
 std::int32_t APS5_VABI sceUsbdGetConfigDescriptor(void* device, std::uint8_t configIndex, void** config) {
     if (device == nullptr || config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(config, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_config_descriptor* host = nullptr;
     const int result = libusb_get_config_descriptor(KnownDevice(device, __func__), configIndex, &host);
-    *config = nullptr;
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(config, &stored, sizeof(stored))) {
+        libusb_free_config_descriptor(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.configs.insert(host);
-    *config = host;
     return 0;
 }
 
@@ -600,14 +613,19 @@ std::int32_t APS5_VABI sceUsbdKernelDriverActive(void* deviceHandle, std::int32_
 std::int32_t APS5_VABI sceUsbdOpen(void* device, void** deviceHandle) {
     if (device == nullptr) throw std::runtime_error(std::string(__func__) + ": null device");
     if (deviceHandle == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
-    *deviceHandle = nullptr;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(deviceHandle, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_device_handle* host = nullptr;
     const int result = libusb_open(KnownDevice(device, __func__), &host);
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(deviceHandle, &stored, sizeof(stored))) {
+        libusb_close(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.handles.insert(host);
-    *deviceHandle = host;
     return 0;
 }
 
@@ -713,14 +731,19 @@ std::int32_t APS5_VABI sceUsbdEventHandlerActive() {
 
 std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint8_t configurationValue, void** config) {
     if (device == nullptr || config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(config, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_config_descriptor* host = nullptr;
     const int result = libusb_get_config_descriptor_by_value(KnownDevice(device, __func__), configurationValue, &host);
-    *config = nullptr;
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(config, &stored, sizeof(stored))) {
+        libusb_free_config_descriptor(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.configs.insert(host);
-    *config = host;
     return 0;
 }
 
@@ -728,7 +751,10 @@ std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t*
     if (deviceHandle == nullptr || configuration == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
     int host = 0;
     const int result = libusb_get_configuration(KnownHandle(deviceHandle, __func__), &host);
-    if (result == 0) *configuration = host;
+    if (result == 0) {
+        const std::int32_t localConfig = host;
+        if (!GuestCopyOut_nid_no_patch(configuration, &localConfig, sizeof(localConfig))) return SCE_USBD_ERROR_INVALID_ARG;
+    }
     return ToGuestError(result);
 }
 

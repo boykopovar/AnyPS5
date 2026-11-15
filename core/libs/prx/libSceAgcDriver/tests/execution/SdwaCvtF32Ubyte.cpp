@@ -18,6 +18,8 @@ constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 4;
 constexpr std::uint32_t Selectors = 7;
+constexpr std::uint32_t Destinations = 7;
+constexpr std::uint32_t Garbage = 0xabcd1234u;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
@@ -25,13 +27,15 @@ constexpr std::array<std::uint32_t, Results> ModifierWords{14, 16, 18, 20};
 
 alignas(256) std::array<std::uint32_t, 30> SdwaCode{
     0x34020082, 0x34060082, 0xe0302000, 0x80000401,
-    0x7e1402ff, 0xabcd1234, 0x7e1602ff, 0xabcd1234, 0x7e1802ff, 0xabcd1234, 0x7e1a02ff, 0xabcd1234,
+    0x7e1402ff, Garbage, 0x7e1602ff, Garbage, 0x7e1802ff, Garbage, 0x7e1a02ff, Garbage,
     0xbf8c3f70, 0x7e1422f9, 0x00060604, 0x7e1624f9, 0x00060604, 0x7e1826f9, 0x00060604, 0x7e1a28f9, 0x00060604,
     0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03, 0xe070200c, 0x80010d03,
     0xbf810000,
 };
 
 const std::array<const char*, Selectors> SelectorNames{"BYTE_0", "BYTE_1", "BYTE_2", "BYTE_3", "WORD_0", "WORD_1", "DWORD"};
+const std::array<const char*, Destinations> DestinationNames{"BYTE_0", "BYTE_1", "BYTE_2", "BYTE_3", "WORD_0", "WORD_1", "DWORD"};
+const std::array<const char*, 3> UnusedNames{"UNUSED_PAD", "UNUSED_SEXT", "UNUSED_PRESERVE"};
 
 struct SelectVector {
     std::uint32_t value;
@@ -74,14 +78,24 @@ std::uint32_t FloatBits(std::uint32_t value) {
     return std::bit_cast<std::uint32_t>(static_cast<float>(value));
 }
 
+std::uint32_t InsertResult(std::uint32_t bits, std::uint32_t destination, std::uint32_t unused) {
+    if (destination == 6u) return bits;
+    const auto width = destination < 4u ? 8u : 16u;
+    const auto offset = destination < 4u ? destination * 8u : (destination == 5u ? 16u : 0u);
+    const auto mask = (1u << width) - 1u;
+    auto field = bits & mask;
+    if (unused == 1u && (field & (1u << (width - 1u)))) field |= ~mask;
+    return (field << offset) | (unused == 2u ? (Garbage & ~(mask << offset)) : 0u);
+}
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x11016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t selector, bool signExtend) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t destination, std::uint32_t unused, std::uint32_t selector, bool signExtend) {
     for (const auto word : ModifierWords) {
-        SdwaCode[word] = 0x00000604u | (selector << 16u) | (signExtend ? 1u << 19u : 0u);
+        SdwaCode[word] = 0x00000004u | (destination << 8u) | (unused << 11u) | (selector << 16u) | (signExtend ? 1u << 19u : 0u);
     }
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -94,7 +108,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t selector, bool signExten
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
-        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
         {0, 0, 0, 128}
     };
@@ -104,33 +118,47 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t selector, bool signExten
     device.WaitIdle();
 }
 
-void Check(std::uint32_t selector, bool signExtend) {
+void Check(std::uint32_t destination, std::uint32_t unused, std::uint32_t selector, bool signExtend) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto& vector = Vectors[tid % Vectors.size()];
         const auto selected = signExtend ? vector.signExtended[selector] : vector.zeroExtended[selector];
         const auto* out = &Output[tid * Results];
         for (std::uint32_t byte = 0; byte < Results; ++byte) {
-            const auto expected = FloatBits((selected >> (byte * 8u)) & 0xffu);
-            Require(out[byte] == expected, "sdwa v_cvt_f32_ubyte" + std::to_string(byte) + " src0_sel:" + SelectorNames[selector] + (signExtend ? " src0_sext" : "") + " of " +
-                                               Hex(vector.value) + " is " + Hex(out[byte]) + ", expected " + Hex(expected));
+            const auto expected = InsertResult(FloatBits((selected >> (byte * 8u)) & 0xffu), destination, unused);
+            Require(out[byte] == expected, "sdwa v_cvt_f32_ubyte" + std::to_string(byte) + " dst_sel:" + DestinationNames[destination] +
+                                               " dst_unused:" + UnusedNames[unused] + " src0_sel:" + SelectorNames[selector] +
+                                               (signExtend ? " src0_sext" : "") + " of " + Hex(vector.value) + " is " +
+                                               Hex(out[byte]) + ", expected " + Hex(expected));
         }
     }
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "wave64"), "expected no argument or wave64");
+        const auto waveSize = argc == 2 ? 64u : 32u;
         FillInput();
         for (const bool signExtend : {false, true}) {
             for (std::uint32_t selector = 0; selector < Selectors; ++selector) {
-                Run(*device, selector, signExtend);
-                Check(selector, signExtend);
+                Run(*device, waveSize, 6u, 0u, selector, signExtend);
+                Check(6u, 0u, selector, signExtend);
             }
         }
-        std::puts("sdwa cvt f32 ubyte tests passed");
+        for (std::uint32_t destination = 0; destination < 6; ++destination) {
+            for (std::uint32_t unused = 0; unused < 3; ++unused) {
+                for (const bool signExtend : {false, true}) {
+                    for (std::uint32_t selector = 0; selector < Selectors; ++selector) {
+                        Run(*device, waveSize, destination, unused, selector, signExtend);
+                        Check(destination, unused, selector, signExtend);
+                    }
+                }
+            }
+        }
+        std::printf("sdwa cvt f32 ubyte wave%u tests passed\n", waveSize);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
