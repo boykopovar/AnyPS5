@@ -1,0 +1,9 @@
+# libkernel
+
+## change [ktimer_create, ktimer_settime, ktimer_gettime, ktimer_getoverrun, ktimer_delete]
+
+- [ktimer_create, ktimer_settime, ktimer_gettime, ktimer_getoverrun, ktimer_delete](../../../core/libs/prx/libkernel/Time/Ktimer.cpp) (libkernel) - an expiry checks the mask of the thread that last armed the timer (`SIGEV_SIGNAL`, or a null `sigevent`: `SIGALRM`) or of its `SIGEV_THREAD_ID` target, and throws if that thread does not block the signal (`SIGALRM` with the default disposition exits with status 142), as guest handlers never run on the timer thread. A blocked one pends with `SI_TIMER`, and overruns count while it is pending, as [`itimer_fire`](https://github.com/freebsd/freebsd-src/blob/5ed7eb0d97ba4436218e810f61bd059acba984c2/sys/kern/kern_time.c#L1577-L1682) does; an unknown thread id disarms the timer at expiry (`sigev_findtd`). Values under one tick round up to 1 ms (hz 1000); the console's hz is not measured
+
+## change [pthread_sigmask]
+
+- [pthread_sigmask](../../../core/libs/prx/libkernel/System/src/Signals.cpp) (libkernel) shares the per-thread blocked mask of `sigprocmask` and `_sigprocmask`, started from the creating thread's mask by `scePthreadCreate` as in FreeBSD's `td_sigmask`. The pending set stays process-wide, so a signal that `raise` leaves pending is taken by `sigwait`, `sigtimedwait` or `sigwaitinfo` on any thread and delivered by the first thread that unblocks it, and `pthread_kill` to another thread pends on that set instead of on the target thread. A `SIGALRM` or `ktimer` expiry checks the mask of the thread that armed the timer or that it targets, and a host signal from outside the guest (Ctrl+C, or `SIGTERM` from another process) the mask of the host thread that receives it, where FreeBSD delivers to any thread that does not block it. The mask of an exited thread is not released, so an expiry for a timer armed by a thread that exited with `SIGALRM` blocked stays pending
