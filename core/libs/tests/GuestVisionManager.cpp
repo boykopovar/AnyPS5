@@ -1,10 +1,13 @@
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 void Require(bool value) {
     if (!value) std::abort();
@@ -62,5 +65,38 @@ int main() {
     Require(sceVisionManagerSetCallbackForUpdateCalibrateTrackingLedResult(nullptr) == invalidArg);
     Require(sceVisionManagerSetCallbackForUpdateRunningStatus(nullptr, block) == invalidArg);
     Require(sceVisionManagerSetCallbackForUpdateRunningStatus(block, nullptr) == invalidArg);
+
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+    auto* const bad = reinterpret_cast<std::uint32_t*>(0x10);
+    std::uint32_t first = 0xCCCCCCCCu;
+    std::uint32_t second = 0xCCCCCCCCu;
+    std::uint32_t third = 0xCCCCCCCCu;
+
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(nullptr, &second, &third) == invalidArg);
+    Require(errno == 71 && second == 0xCCCCCCCCu && third == 0xCCCCCCCCu);
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(&first, nullptr, &third) == invalidArg);
+    Require(errno == 71 && first == 0xCCCCCCCCu && third == 0xCCCCCCCCu);
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(&first, &second, nullptr) == invalidArg);
+    Require(errno == 71 && first == 0xCCCCCCCCu && second == 0xCCCCCCCCu);
+
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(bad, &second, &third) == invalidArg);
+    Require(errno == 71 && second == 0xCCCCCCCCu && third == 0xCCCCCCCCu);
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(&first, bad, &third) == invalidArg);
+    Require(errno == 71 && first == 0xCCCCCCCCu && third == 0xCCCCCCCCu);
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(&first, &second, bad) == invalidArg);
+    Require(errno == 71 && first == 0xCCCCCCCCu && second == 0xCCCCCCCCu);
+
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(&first, &second, &third) == 0);
+    Require(errno == 71 && first == 0u && second == 0x1600000u && third == 0x4200000u);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

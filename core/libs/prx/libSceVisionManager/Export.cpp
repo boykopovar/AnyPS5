@@ -30,6 +30,13 @@ bool CopyOut(void* dst, const void* src, std::size_t size) {
     return ok;
 }
 
+bool Writable(void* dst, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestWritable_nid_no_patch(dst, size);
+    errno = saved;
+    return ok;
+}
+
 }
 
 extern "C" {
@@ -169,15 +176,26 @@ int APS5_VABI sceVisionManagerGetStoreCameraImgYPtr() {
 
 int APS5_VABI sceVisionManagerGetWorkingMemorySize(std::uint32_t* first, std::uint32_t* second, std::uint32_t* third) {
     if (first == nullptr || second == nullptr || third == nullptr) return ErrorInvalidArgument;
+    if (!Writable(first, sizeof(*first)) || !Writable(second, sizeof(*second)) || !Writable(third, sizeof(*third))) {
+        return ErrorInvalidArgument;
+    }
     const std::uint32_t valFirst = 0;
     const std::uint32_t valSecond = 0x1600000;
     const std::uint32_t valThird = 0x4200000;
-    const int savedErrno = errno;
-    const bool copiedFirst = GuestCopyOut_nid_no_patch(first, &valFirst, sizeof(valFirst));
-    const bool copiedSecond = GuestCopyOut_nid_no_patch(second, &valSecond, sizeof(valSecond));
-    const bool copiedThird = GuestCopyOut_nid_no_patch(third, &valThird, sizeof(valThird));
-    errno = savedErrno;
-    if (!copiedFirst || !copiedSecond || !copiedThird) return ErrorInvalidArgument;
+    std::uint32_t prevFirst = 0;
+    std::uint32_t prevSecond = 0;
+    const bool hadFirst = CopyIn(&prevFirst, first, sizeof(prevFirst));
+    const bool hadSecond = CopyIn(&prevSecond, second, sizeof(prevSecond));
+    if (!CopyOut(first, &valFirst, sizeof(valFirst))) return ErrorInvalidArgument;
+    if (!CopyOut(second, &valSecond, sizeof(valSecond))) {
+        if (hadFirst) CopyOut(first, &prevFirst, sizeof(prevFirst));
+        return ErrorInvalidArgument;
+    }
+    if (!CopyOut(third, &valThird, sizeof(valThird))) {
+        if (hadSecond) CopyOut(second, &prevSecond, sizeof(prevSecond));
+        if (hadFirst) CopyOut(first, &prevFirst, sizeof(prevFirst));
+        return ErrorInvalidArgument;
+    }
     return 0;
 }
 
