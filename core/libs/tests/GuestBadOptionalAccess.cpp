@@ -4,6 +4,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <typeinfo>
+#ifdef __APPLE__
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 struct Vtable { std::ptrdiff_t offset; const std::type_info* type; const void* destroy; const void* deleteObject; const char* (APS5_VABI *what)(const LibcException::ExceptionObject*); };
 
@@ -50,6 +54,29 @@ extern void* const _ZTVN10__cxxabiv117__pbase_type_infoE_nid_postfix[];
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+#ifdef __APPLE__
+static const std::type_info* expectedType = nullptr;
+
+static void ExitWithThrownType() {
+    const auto* type = __cxa_current_exception_type_nid_postfix();
+    _exit(type == expectedType ? 0 : 1);
+}
+
+static bool TerminateSeesType(void (*call)(), const std::type_info* type) {
+    expectedType = type;
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        _ZSt13set_terminatePFvvE_nid_postfix(ExitWithThrownType);
+        call();
+        _exit(2);
+    }
+    int status = 0;
+    Require(waitpid(child, &status, 0) == child);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
+
 static void* const* Vptr(const std::type_info& record) {
     return *reinterpret_cast<void* const* const*>(&record);
 }
@@ -72,6 +99,13 @@ static void TestFundamentalRecords() {
     Require(!catchType(&_ZTIf_nid_postfix, &_ZTIi_nid_postfix, &thrownObject, 0));
     Require(!catchType(&_ZTIDn_nid_postfix, &_ZTIi_nid_postfix, &thrownObject, 0));
 
+#ifdef __APPLE__
+    Require(TerminateSeesType([] {
+        void* exception = __cxa_allocate_exception_nid_postfix(sizeof(int));
+        *static_cast<int*>(exception) = 42;
+        __cxa_throw_nid_postfix(exception, &_ZTIi_nid_postfix, nullptr);
+    }, &_ZTIi_nid_postfix));
+#else
     void* exception = __cxa_allocate_exception_nid_postfix(sizeof(int));
     *static_cast<int*>(exception) = 42;
     bool caught = false;
@@ -81,6 +115,7 @@ static void TestFundamentalRecords() {
         caught = __cxa_current_exception_type_nid_postfix() == &_ZTIi_nid_postfix;
     }
     Require(caught);
+#endif
 }
 
 static void TestAbiAndPointerRecords() {
