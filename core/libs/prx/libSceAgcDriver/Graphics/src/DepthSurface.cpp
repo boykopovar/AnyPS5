@@ -1167,8 +1167,8 @@ public:
 
     bool Overlaps(std::uint64_t address, std::uint64_t bytes) const {
         const auto end = address + bytes;
-        if (address < target.address + depthBytes() && target.address < end) return true;
-        return target.stencilAddress != 0 && address < target.stencilAddress + stencilBytes() && target.stencilAddress < end;
+        if (address < target.address + depthPlaneBytes && target.address < end) return true;
+        return target.stencilAddress != 0 && address < target.stencilAddress + stencilPlaneBytes && target.stencilAddress < end;
     }
 
     bool PlaneCoveredBy(bool stencilPlane, std::span<const std::pair<std::uint64_t, std::uint64_t>> written, std::span<const WrittenStorageExtent> extents) const {
@@ -1189,9 +1189,9 @@ public:
             }
             return false;
         };
-        if (stencilPlane) return target.stencilAddress != 0 && ((target.samples == 1u && reaches(target.stencilAddress, 1u)) || covers(target.stencilAddress, target.stencilAddress + stencilBytes()));
+        if (stencilPlane) return target.stencilAddress != 0 && ((target.samples == 1u && reaches(target.stencilAddress, 1u)) || covers(target.stencilAddress, target.stencilAddress + stencilPlaneBytes));
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
-        return (target.samples == 1u && reaches(target.address, d16 ? 2u : 4u)) || covers(target.address, target.address + depthBytes());
+        return (target.samples == 1u && reaches(target.address, d16 ? 2u : 4u)) || covers(target.address, target.address + depthPlaneBytes);
     }
 
     bool CoveredBy(std::span<const std::pair<std::uint64_t, std::uint64_t>> written, std::span<const WrittenStorageExtent> extents) const {
@@ -1200,26 +1200,26 @@ public:
 
     bool StencilWrittenInMemory() const {
         if (target.stencilAddress == 0) return false;
-        GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilBytes()));
-        return GuestMemory::WrittenSince(target.stencilAddress, static_cast<std::size_t>(stencilBytes()), stencilMemory);
+        GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilPlaneBytes));
+        return GuestMemory::WrittenSince(target.stencilAddress, static_cast<std::size_t>(stencilPlaneBytes), stencilMemory);
     }
 
     void NoteMemory() {
-        depthMemory = GuestMemory::CollectWrites(target.address, static_cast<std::size_t>(depthBytes()));
-        stencilMemory = target.stencilAddress != 0 ? GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilBytes())) : 0;
+        depthMemory = GuestMemory::CollectWrites(target.address, static_cast<std::size_t>(depthPlaneBytes));
+        stencilMemory = target.stencilAddress != 0 ? GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilPlaneBytes)) : 0;
     }
 
     bool OverwrittenOnGpu() const {
-        std::array<std::pair<std::uint64_t, std::uint64_t>, 2> ranges{{{target.address, target.address + depthBytes()}, {target.stencilAddress, target.stencilAddress + stencilBytes()}}};
+        std::array<std::pair<std::uint64_t, std::uint64_t>, 2> ranges{{{target.address, target.address + depthPlaneBytes}, {target.stencilAddress, target.stencilAddress + stencilPlaneBytes}}};
         return StorageTexture::AnyPendingOverlaps(std::span(ranges).first(target.stencilAddress != 0 ? 2u : 1u));
     }
 
     bool OverwrittenInMemory() const {
-        GuestMemory::CollectWrites(target.address, static_cast<std::size_t>(depthBytes()));
-        if (GuestMemory::WrittenSince(target.address, static_cast<std::size_t>(depthBytes()), depthMemory)) return true;
+        GuestMemory::CollectWrites(target.address, static_cast<std::size_t>(depthPlaneBytes));
+        if (GuestMemory::WrittenSince(target.address, static_cast<std::size_t>(depthPlaneBytes), depthMemory)) return true;
         if (target.stencilAddress == 0) return false;
-        GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilBytes()));
-        return GuestMemory::WrittenSince(target.stencilAddress, static_cast<std::size_t>(stencilBytes()), stencilMemory);
+        GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilPlaneBytes));
+        return GuestMemory::WrittenSince(target.stencilAddress, static_cast<std::size_t>(stencilPlaneBytes), stencilMemory);
     }
 
     VkImageAspectFlags pendingClear = 0;
@@ -2057,13 +2057,6 @@ private:
         stencilCopy = {};
     }
 
-    std::uint64_t depthBytes() const {
-        return depthPlaneBytes;
-    }
-
-    std::uint64_t stencilBytes() const {
-        return stencilPlaneBytes;
-    }
     PlaneStorage mirrorPlane;
     PlaneStorage stencilMirror;
 

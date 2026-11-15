@@ -211,8 +211,7 @@ std::string heapClassesFailure(const ShaderRecompiler::RecompileResult& result) 
 std::string heapStageFailure(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
     if (auto failure = heapClassesFailure(result); !failure.empty()) return failure;
     std::pair<std::uint32_t, std::uint32_t> refused{};
-    if (!Graphics::DescriptorHeapMappable(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()), workgroupAddress, result.dataAddressPush,
-                                          result.functionLdsBuffer, result.meshWindowBuffer, result.scratchPoolSlotDwords != 0u, &refused))
+    if (!Graphics::DescriptorHeapMappable(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()), {.workgroupAddress = workgroupAddress, .gdsAddress = result.dataAddressPush, .pixelLds = result.functionLdsBuffer, .meshWindow = result.meshWindowBuffer, .scratchPool = result.scratchPoolSlotDwords != 0u}, &refused))
         return "AGC graphics: a GPU heap stage uses descriptor set " + std::to_string(refused.first) + " binding " + std::to_string(refused.second) +
                ", which the heap cannot map";
     return {};
@@ -457,13 +456,10 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     auto sharedRanges = takeRecycledRanges();
     auto& ranges = *sharedRanges;
     reads.Reset();
-    Graphics::HeapCostScope snapshotCost(Graphics::HeapCost::Guards);
     const auto before = Graphics::Recorder::PendingWriteSnapshot();
-    snapshotCost.Stop();
     const auto generation = GuestMemory::StableTrackerGeneration();
     const auto variant = invocation.VariantId();
 
-    Graphics::HeapCostScope walkCost(Graphics::HeapCost::Walk);
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
     try {
         capture = captureWalk(invocation, userData, shaderBase, reads);
@@ -475,18 +471,13 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     auto& values = *sharedValues;
     if (!reads.failed) copyRangeValues(ranges, values);
     const bool settled = rangesSettled(ranges, before.get(), generation);
-    walkCost.Stop();
     if (!settled) return {};
 
-    Graphics::HeapCostScope guardCost(Graphics::HeapCost::Guards);
     guardRanges(ranges);
-    guardCost.Stop();
-    Graphics::HeapCostScope materializeCost(Graphics::HeapCost::Materialize);
     auto words = recycledStageWords();
     auto result = invocation.MaterializeHeap(*capture, *words);
     if (result == nullptr) result = invocation.Materialize(*capture);
     words->dataOrigin = NextHeapDataOrigin();
-    materializeCost.Stop();
     const bool complete = !reads.failed && result != nullptr;
     HeapStageMaterialized materialized;
     if (complete) materialized.reads = {std::move(sharedRanges), std::move(sharedValues), capture, true};

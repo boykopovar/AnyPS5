@@ -2301,7 +2301,6 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     const bool candidate = recordable && plan.candidate;
-    HeapCostScope findCost(HeapCost::TemplateFind);
     resolved.cacheable = recordable && plan.keyed;
     const auto address = candidate && !ShaderResources::SpaceReuseDisabled() ? addressStages(shaders) : AddressStages::None;
     std::optional<AddressDrawReuse> reuse;
@@ -2372,12 +2371,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     } else {
         countCache(&DrawProfile::uncacheable);
     }
-    findCost.Stop();
     timer.phase(PhaseLookup);
     if (resolved.resources == nullptr) {
-        HeapCostScope buildCost(HeapCost::TemplateBuild);
         resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots, recordable && drawStagingEnabled());
-        buildCost.Stop();
         resolved.built = &resolved.resources->Timing();
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;

@@ -65,8 +65,6 @@ std::atomic<std::uint64_t> userWordsRewrites{0};
 std::atomic<std::uint64_t> userWordsRewriteBlockWords{0};
 std::atomic<std::uint64_t> userWordsRewriteUserWords{0};
 std::atomic<std::uint64_t> embeddedSamplerMappings{0};
-std::atomic<std::uint64_t> slotPressureSubmits{0};
-std::atomic<std::uint64_t> heapSlotEvictions{0};
 std::atomic<std::uint64_t> emptyResourceSets{0};
 
 }
@@ -117,14 +115,6 @@ std::uint64_t PushedUserDataKeeps() {
 
 std::uint64_t EmbeddedSamplerMappings() {
     return embeddedSamplerMappings.load(std::memory_order_relaxed);
-}
-
-std::uint64_t SlotPressureSubmits() {
-    return slotPressureSubmits.load(std::memory_order_relaxed);
-}
-
-std::uint64_t HeapSlotEvictions() {
-    return heapSlotEvictions.load(std::memory_order_relaxed);
 }
 
 void NoteEmptyResourceSet() {
@@ -250,6 +240,17 @@ std::uint32_t configuredSlotCap(std::uint32_t slots) {
 
 std::atomic<std::uint32_t> deviceImageSlots{Abi::GpuImageHeapSlots};
 
+constexpr VkBufferUsageFlags DataBlockUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+std::unique_ptr<Buffer> makeHeapBuffer(const Context& context, std::size_t bytes, VkBufferUsageFlags usage) {
+    constexpr VkMemoryPropertyFlags deviceVisible = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    try {
+        return std::make_unique<Buffer>(context, bytes, usage, deviceVisible);
+    } catch (const std::exception&) {
+    }
+    return std::make_unique<Buffer>(context, bytes, usage);
+}
+
 }
 
 BindlessHeap::BindlessHeap(const Context& context) : context(context) {
@@ -263,17 +264,9 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     meshWindowHeapOffset = sizes.meshWindowOffset;
     samplerHeapUsed = sizes.samplerUsed;
     Require(Fits(heapProperties), "the GPU heap's slots exceed the device's descriptor heap sizes");
-    constexpr VkMemoryPropertyFlags deviceVisible = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    const auto makeBuffer = [&](std::size_t bytes, VkBufferUsageFlags usage) {
-        try {
-            return std::make_unique<Buffer>(context, bytes, usage, deviceVisible);
-        } catch (const std::exception&) {
-        }
-        return std::make_unique<Buffer>(context, bytes, usage);
-    };
     constexpr VkBufferUsageFlags heapUsage = VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    resourceHeap = makeBuffer(static_cast<std::size_t>(resourceHeapUsed + heapProperties.minResourceHeapReservedRange), heapUsage);
-    samplerHeap = makeBuffer(static_cast<std::size_t>(samplerHeapUsed + heapProperties.minSamplerHeapReservedRangeWithEmbedded), heapUsage);
+    resourceHeap = makeHeapBuffer(context, static_cast<std::size_t>(resourceHeapUsed + heapProperties.minResourceHeapReservedRange), heapUsage);
+    samplerHeap = makeHeapBuffer(context, static_cast<std::size_t>(samplerHeapUsed + heapProperties.minSamplerHeapReservedRangeWithEmbedded), heapUsage);
     std::fill(resourceHeap->Bytes().begin(), resourceHeap->Bytes().end(), std::byte{0});
     std::fill(samplerHeap->Bytes().begin(), samplerHeap->Bytes().end(), std::byte{0});
     writeResourceDescriptors = context.Function<PFN_vkWriteResourceDescriptorsEXT>("vkWriteResourceDescriptorsEXT");
@@ -328,20 +321,22 @@ CachedHeap& ThreadCachedHeap() {
     return cached;
 }
 
+BindlessHeap* cachedHeap(VkDevice device) {
+    const auto& cached = ThreadCachedHeap();
+    return cached.device == device && cached.epoch == heapsEpoch.load(std::memory_order_acquire) ? cached.heap : nullptr;
+}
+
 }
 
 BindlessHeap& BindlessHeap::For(const Context& context) {
-    auto& cached = ThreadCachedHeap();
-    if (cached.heap != nullptr && cached.device == context.device && cached.epoch == heapsEpoch.load(std::memory_order_acquire)) {
-        return *cached.heap;
-    }
+    if (auto* cached = cachedHeap(context.device)) return *cached;
     std::lock_guard lock(heapsMutex());
     auto& heap = heaps()[context.device];
     if (heap == nullptr) {
         heap = std::make_unique<BindlessHeap>(context);
         heapsEpoch.fetch_add(1, std::memory_order_acq_rel);
     }
-    cached = {context.device, heap.get(), heapsEpoch.load(std::memory_order_acquire)};
+    ThreadCachedHeap() = {context.device, heap.get(), heapsEpoch.load(std::memory_order_acquire)};
     return *heap;
 }
 
@@ -358,12 +353,11 @@ void BindlessHeap::Release(VkDevice device) {
 }
 
 BindlessHeap* BindlessHeap::Existing(const Context& context) {
-    auto& cached = ThreadCachedHeap();
-    if (cached.heap != nullptr && cached.device == context.device && cached.epoch == heapsEpoch.load(std::memory_order_acquire)) return cached.heap;
+    if (auto* cached = cachedHeap(context.device)) return cached;
     std::lock_guard lock(heapsMutex());
     const auto found = heaps().find(context.device);
     if (found == heaps().end()) return nullptr;
-    cached = {context.device, found->second.get(), heapsEpoch.load(std::memory_order_acquire)};
+    ThreadCachedHeap() = {context.device, found->second.get(), heapsEpoch.load(std::memory_order_acquire)};
     return found->second.get();
 }
 
@@ -390,11 +384,9 @@ std::optional<std::uint32_t> BindlessHeap::imageSlot(std::uint32_t kind, const H
         touchLocked(found->second);
         return found->second;
     }
-    bool reused = false;
-    auto slot = imagePool.Take(reused);
-    if (!slot && reclaimLocked(true)) slot = imagePool.Take(reused);
+    auto slot = imagePool.Take();
+    if (!slot && reclaimLocked(true)) slot = imagePool.Take();
     if (!slot) return std::nullopt;
-    if (reused) ++counts.slotsReused;
     writeImageSlot(kind, *slot, view, layout);
     claimSlotLocked(key, *slot).texture = texture;
     touchLocked(*slot);
@@ -446,12 +438,10 @@ const BindlessHeap::SlotOwner* BindlessHeap::ownerLocked(std::uint32_t slot) con
     return slot < owners.size() ? &owners[slot] : nullptr;
 }
 
-std::optional<std::uint32_t> BindlessHeap::SlotPool::Take(bool& reused) {
-    reused = false;
+std::optional<std::uint32_t> BindlessHeap::SlotPool::Take() {
     if (!free.empty()) {
         const auto slot = free.back();
         free.pop_back();
-        reused = true;
         return slot;
     }
     if (next >= limit) return std::nullopt;
@@ -564,7 +554,6 @@ void BindlessHeap::evictLocked(std::uint32_t idleSubmissions) {
         imagePool.Retire(slot);
         retiring.push_back({slot, 0u});
         ++counts.slotsEvicted;
-        heapSlotEvictions.fetch_add(1, std::memory_order_relaxed);
     }
     slotSerial.fetch_add(1, std::memory_order_release);
 }
@@ -591,7 +580,6 @@ void BindlessHeap::evictSamplersLocked(std::uint32_t idleSubmissions) {
         retiring.push_back({slot, 0u, true});
         ++retiringSamplers;
         ++counts.samplersEvicted;
-        heapSlotEvictions.fetch_add(1, std::memory_order_relaxed);
     }
     slotSerial.fetch_add(1, std::memory_order_release);
 }
@@ -696,11 +684,9 @@ std::optional<std::uint32_t> BindlessHeap::samplerSlot(const std::shared_ptr<Sam
         if (pin) samplerPinned[found->second] = true;
         return found->second;
     }
-    bool reused = false;
-    auto slot = samplerPool.Take(reused);
-    if (!slot && reclaimLocked(true)) slot = samplerPool.Take(reused);
+    auto slot = samplerPool.Take();
+    if (!slot && reclaimLocked(true)) slot = samplerPool.Take();
     if (!slot) return std::nullopt;
-    if (reused) ++counts.slotsReused;
     writeSamplerSlot(*slot, sampler->Handle());
     const HeapSlotOwner* owner = sampler.get();
     samplerSlots.emplace(owner, *slot);
@@ -717,8 +703,8 @@ std::optional<std::uint32_t> BindlessHeap::samplerSlot(const std::shared_ptr<Sam
 }
 
 BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words) {
-    SpanMark mark;
-    return Allocate(words, mark);
+    SpanScope scope(*this);
+    return allocateLocked(words);
 }
 
 BindlessHeap::SpanScope::SpanScope(const BindlessHeap& heap) : heap(heap), acquired(heap.spanOwner.load(std::memory_order_relaxed) != std::this_thread::get_id()) {
@@ -731,27 +717,6 @@ BindlessHeap::SpanScope::~SpanScope() {
     if (!acquired) return;
     heap.spanOwner.store(std::thread::id{}, std::memory_order_relaxed);
     heap.spanMutex.unlock();
-}
-
-bool BindlessHeap::Held(const SpanMark& mark) {
-    if (mark.entry == 0u || mark.words == 0u) return false;
-    SpanScope scope(*this);
-    return heldLocked(mark);
-}
-
-bool BindlessHeap::heldLocked(const SpanMark& mark) {
-    if (mark.entry == 0u || mark.words == 0u) return false;
-    if (mark.block != 0u) {
-        const auto index = mark.block - 1u;
-        if (index >= poolBlocks.size() || poolBlocks[index].generation != mark.entry) {
-            ++counts.spansExpired;
-            return false;
-        }
-        poolBlocks[index].open = true;
-        ++counts.spansKept;
-        return true;
-    }
-    return false;
 }
 
 void BindlessHeap::Write(const DataSpan& span, std::span<const std::uint32_t> words) {
@@ -767,26 +732,8 @@ void BindlessHeap::Write(const DataSpan& span, std::span<const std::uint32_t> wo
 #endif
 }
 
-BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark) {
-    SpanScope scope(*this);
-    return allocateLocked(words, mark);
-}
-
-std::optional<BindlessHeap::DataSpan> BindlessHeap::KeepOrAllocate(const SpanScope& held, std::size_t words, SpanMark& mark, bool same) {
-    Require(&held.heap == this, "a heap span was kept or allocated under another heap's lock");
-    if (same && heldLocked(mark)) return std::nullopt;
-    return allocateLocked(words, mark);
-}
-
 std::size_t BindlessHeap::makeTableBlockLocked(std::size_t bytes) {
-    constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    constexpr VkMemoryPropertyFlags deviceVisible = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    std::unique_ptr<Buffer> buffer;
-    try {
-        buffer = std::make_unique<Buffer>(context, bytes, usage, deviceVisible);
-    } catch (const std::exception&) {
-    }
-    if (buffer == nullptr) buffer = std::make_unique<Buffer>(context, bytes, usage);
+    auto buffer = makeHeapBuffer(context, bytes, DataBlockUsage);
     const auto vacant = std::find_if(tableBlocks.begin(), tableBlocks.end(), [](const TableBlock& block) { return block.buffer == nullptr; });
     auto& block = vacant != tableBlocks.end() ? *vacant : tableBlocks.emplace_back();
     block.data = buffer->Bytes().data();
@@ -858,7 +805,7 @@ void BindlessHeap::reclaimTablesLocked() {
     }
 }
 
-BindlessHeap::DataSpan BindlessHeap::allocateLocked(std::size_t words, SpanMark& mark) {
+BindlessHeap::DataSpan BindlessHeap::allocateLocked(std::size_t words) {
     const auto bytes = alignUp(std::max<std::size_t>(words, 1u) * sizeof(std::uint32_t), SpanAlignment);
     if (poolCurrent >= poolBlocks.size() || alignUp(poolBlocks[poolCurrent].cursor, poolAlignment) + bytes > poolBlocks[poolCurrent].bytes) poolCurrent = takePoolBlockLocked(bytes);
     auto& block = poolBlocks[poolCurrent];
@@ -869,8 +816,7 @@ BindlessHeap::DataSpan BindlessHeap::allocateLocked(std::size_t words, SpanMark&
     counts.poolBytes += bytes;
     counts.spanPeakBytes = std::max<std::uint64_t>(counts.spanPeakBytes, bytes);
     poolBatchBytes += bytes;
-    mark = {static_cast<std::uint32_t>(offset), static_cast<std::uint32_t>(words), block.generation, static_cast<std::uint32_t>(poolCurrent + 1u), block.address + offset};
-    return {static_cast<std::uint32_t>(offset), std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.data + offset), words), mark.address};
+    return {static_cast<std::uint32_t>(offset), std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.data + offset), words), block.address + offset};
 }
 
 bool BindlessHeap::poolBlockDoneLocked(PoolBlock& block) {
@@ -897,19 +843,11 @@ std::size_t BindlessHeap::takePoolBlockLocked(std::size_t bytes) {
     if (best < poolBlocks.size()) {
         auto& block = poolBlocks[best];
         block.cursor = 0;
-        ++block.generation;
         ++counts.poolBlocksRecycled;
         return best;
     }
     const auto size = need == PoolBlockBytes ? PoolBlockBytes : static_cast<std::size_t>(alignUp(need, PoolBlockBytes));
-    constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    constexpr VkMemoryPropertyFlags deviceVisible = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    std::unique_ptr<Buffer> buffer;
-    try {
-        buffer = std::make_unique<Buffer>(context, size, usage, deviceVisible);
-    } catch (const std::exception&) {
-    }
-    if (buffer == nullptr) buffer = std::make_unique<Buffer>(context, size, usage);
+    auto buffer = makeHeapBuffer(context, size, DataBlockUsage);
     if (vacant == poolBlocks.size()) poolBlocks.emplace_back();
     auto& block = poolBlocks[vacant];
     block.data = buffer->Bytes().data();
@@ -917,7 +855,6 @@ std::size_t BindlessHeap::takePoolBlockLocked(std::size_t bytes) {
     block.buffer = std::move(buffer);
     block.bytes = size;
     block.cursor = 0;
-    ++block.generation;
     block.recorder = nullptr;
     block.serial = 0u;
     block.open = false;
@@ -939,7 +876,6 @@ void BindlessHeap::trimPoolLocked() {
         block.data = nullptr;
         block.address = 0;
         block.bytes = 0;
-        ++block.generation;
         ++counts.poolBlocksFreed;
     }
 }
@@ -951,31 +887,44 @@ bool BindlessHeap::TakeSlotPressure() {
     if (imagePool.Unused() + imageRetiring() < 2u * static_cast<std::size_t>(imageMargin())) evictLocked(0u);
     if (samplerPool.Unused() + retiringSamplers < 2u * SamplerSlotMargin) evictSamplersLocked(0u);
     ++counts.slotPressureSubmits;
-    slotPressureSubmits.fetch_add(1, std::memory_order_relaxed);
     return true;
+}
+
+namespace {
+
+struct DataBlockHit {
+    Buffer* buffer = nullptr;
+    std::byte* data = nullptr;
+    VkDeviceAddress address = 0;
+};
+
+template <typename Block>
+std::optional<DataBlockHit> findIn(const std::vector<Block>& blocks, VkDeviceAddress address, std::size_t bytes) {
+    for (const auto& block : blocks) {
+        if (block.buffer != nullptr && address >= block.address && address + bytes <= block.address + block.bytes) return DataBlockHit{block.buffer.get(), block.data, block.address};
+    }
+    return std::nullopt;
+}
+
+template <typename PoolBlocks, typename TableBlocks>
+DataBlockHit findBlock(const PoolBlocks& pool, const TableBlocks& tables, VkDeviceAddress address, std::size_t bytes, const char* outside) {
+    if (const auto hit = findIn(pool, address, bytes)) return *hit;
+    if (const auto hit = findIn(tables, address, bytes)) return *hit;
+    throw std::runtime_error(outside);
+}
+
 }
 
 std::span<const std::uint32_t> BindlessHeap::DataWords(VkDeviceAddress address, std::size_t words) const {
     SpanScope scope(*this);
-    const auto bytes = words * sizeof(std::uint32_t);
-    for (const auto& block : poolBlocks) {
-        if (block.buffer != nullptr && address >= block.address && address + bytes <= block.address + block.bytes) return {reinterpret_cast<const std::uint32_t*>(block.data + (address - block.address)), words};
-    }
-    for (const auto& block : tableBlocks) {
-        if (block.buffer != nullptr && address >= block.address && address + bytes <= block.address + block.bytes) return {reinterpret_cast<const std::uint32_t*>(block.data + (address - block.address)), words};
-    }
-    throw std::runtime_error("AGC bindless heap: the words read lie outside every data block");
+    const auto block = findBlock(poolBlocks, tableBlocks, address, words * sizeof(std::uint32_t), "AGC bindless heap: the words read lie outside every data block");
+    return {reinterpret_cast<const std::uint32_t*>(block.data + (address - block.address)), words};
 }
 
 std::pair<VkBuffer, VkDeviceSize> BindlessHeap::DataLocation(VkDeviceAddress address) const {
     SpanScope scope(*this);
-    for (const auto& block : poolBlocks) {
-        if (block.buffer != nullptr && address >= block.address && address < block.address + block.bytes) return {block.buffer->Handle(), address - block.address};
-    }
-    for (const auto& block : tableBlocks) {
-        if (block.buffer != nullptr && address >= block.address && address < block.address + block.bytes) return {block.buffer->Handle(), address - block.address};
-    }
-    throw std::runtime_error("AGC bindless heap: shader data lies outside every data pool block");
+    const auto block = findBlock(poolBlocks, tableBlocks, address, 1u, "AGC bindless heap: shader data lies outside every data pool block");
+    return {block.buffer->Handle(), address - block.address};
 }
 
 void BindlessHeap::writeSamplerSlot(std::uint32_t slot, VkSampler sampler) {
@@ -1011,7 +960,6 @@ void BindlessHeap::writeImageSlot(std::uint32_t kind, std::uint32_t slot, VkImag
     resource.data.pImage = &imageInfo;
     encodeScratch.resize(stride);
     const VkHostAddressRangeEXT range{encodeScratch.data(), stride};
-    if (writeResourceDescriptors == nullptr) writeResourceDescriptors = context.Function<PFN_vkWriteResourceDescriptorsEXT>("vkWriteResourceDescriptorsEXT");
     Check(writeResourceDescriptors(context.device, 1, &resource, &range), "vkWriteResourceDescriptorsEXT");
     std::memcpy(target, encodeScratch.data(), stride);
     KeepEncodedImageView(view, record->generation, key, encodeScratch);
@@ -1021,15 +969,6 @@ void BindlessHeap::writeImageSlot(std::uint32_t kind, std::uint32_t slot, VkImag
 namespace {
 
 const std::uint32_t GeneratedFaultBinding = Abi::BindingNumber(Abi::Stage::TessellationControl, Abi::Binding::FaultBuffer);
-
-struct HeapBindingRoots {
-    bool workgroupAddress = false;
-    bool gdsAddress = false;
-    bool faultAddress = false;
-    bool pixelLds = false;
-    bool meshWindow = false;
-    bool scratchPool = false;
-};
 
 using SetAndBinding = std::pair<std::uint32_t, std::uint32_t>;
 
@@ -1125,27 +1064,21 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
            (!roots.pixelLds || use.pixelLdsMemory) && (!roots.meshWindow || use.meshWindowMemory) && (!roots.scratchPool || use.scratchPoolMemory);
 }
 
-VkDescriptorSetAndBindingMappingEXT heapMapping(std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
-                                                VkDeviceSize heapOffset, VkDeviceSize stride) {
+VkDescriptorSetAndBindingMappingEXT baseMapping(std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources, VkDescriptorMappingSourceEXT source) {
     VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
     mapping.descriptorSet = set;
     mapping.firstBinding = binding;
     mapping.bindingCount = 1;
     mapping.resourceMask = resources;
-    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
-    mapping.sourceData.constantOffset.heapOffset = static_cast<std::uint32_t>(heapOffset);
-    mapping.sourceData.constantOffset.heapArrayStride = static_cast<std::uint32_t>(stride);
+    mapping.source = source;
     return mapping;
 }
 
-VkDescriptorSetAndBindingMappingEXT pushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset) {
-    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = set;
-    mapping.firstBinding = binding;
-    mapping.bindingCount = 1;
-    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
-    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
-    mapping.sourceData.pushAddressOffset = pushOffset;
+VkDescriptorSetAndBindingMappingEXT heapMapping(std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
+                                                VkDeviceSize heapOffset, VkDeviceSize stride) {
+    auto mapping = baseMapping(set, binding, resources, VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT);
+    mapping.sourceData.constantOffset.heapOffset = static_cast<std::uint32_t>(heapOffset);
+    mapping.sourceData.constantOffset.heapArrayStride = static_cast<std::uint32_t>(stride);
     return mapping;
 }
 
@@ -1156,14 +1089,10 @@ std::uint32_t rootItemOffset(const ShaderRecompiler::StagePushPlacement* placeme
 
 VkDescriptorSetAndBindingMappingEXT pushedBufferMapping(std::uint32_t binding, const ShaderRecompiler::StagePushPlacement* placement) {
     Require(placement != nullptr && binding < placement->pushedBuffers, "a heap mapping reads a pushed buffer its pipeline's push layout does not count");
-    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = Abi::PushedBufferSet;
-    mapping.firstBinding = binding;
-    mapping.bindingCount = 1;
-    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
+    auto mapping = baseMapping(Abi::PushedBufferSet, binding, VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT,
+                              VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT);
     const auto root = binding < Abi::PushedBufferLimit ? placement->bufferRoots[binding] : Abi::NoPushPosition;
     if (root != Abi::NoPushPosition) {
-        mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
         mapping.sourceData.pushAddressOffset = root * static_cast<std::uint32_t>(sizeof(std::uint32_t));
         return mapping;
     }
@@ -1175,24 +1104,16 @@ VkDescriptorSetAndBindingMappingEXT pushedBufferMapping(std::uint32_t binding, c
 }
 
 VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, const ShaderRecompiler::StagePushPlacement* placement) {
-    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = Abi::GpuDataSet;
-    mapping.firstBinding = binding;
-    mapping.bindingCount = 1;
-    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT;
-    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
     const bool user = binding % static_cast<std::uint32_t>(Abi::Binding::Count) == static_cast<std::uint32_t>(Abi::Binding::UserData);
     const bool userPlaced = user && placement != nullptr && placement->Item(Abi::RootItem::UserData) != Abi::NoPushPosition;
-    mapping.sourceData.pushAddressOffset = rootItemOffset(placement, userPlaced ? Abi::RootItem::UserData : Abi::RootItem::ShaderData);
-    return mapping;
+    return HeapPushAddressMapping(Abi::GpuDataSet, binding, rootItemOffset(placement, userPlaced ? Abi::RootItem::UserData : Abi::RootItem::ShaderData), VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT);
 }
 
 }
 
-bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds, bool meshWindow, bool scratchPool,
-                            std::pair<std::uint32_t, std::uint32_t>* refused) {
+bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, const HeapBindingRoots& roots, std::pair<std::uint32_t, std::uint32_t>* refused) {
     HeapBindingUse use;
-    const bool mappable = heapBindings(spirv, {.workgroupAddress = workgroupAddress, .gdsAddress = gdsAddress, .pixelLds = pixelLds, .meshWindow = meshWindow, .scratchPool = scratchPool}, use);
+    const bool mappable = heapBindings(spirv, roots, use);
     if (!mappable && refused != nullptr) *refused = use.refused;
     if (!mappable && pipelineStats()) {
         static std::mutex causesMutex;
@@ -1203,7 +1124,7 @@ bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroup
             std::fprintf(
                 stderr,
                 "[gpu-heap] unmappable stage: descriptor set %d binding %d (workgroup address %d, gds address %d); %llu stage variants with this cause\n",
-                static_cast<int>(use.refused.first), static_cast<int>(use.refused.second), workgroupAddress ? 1 : 0, gdsAddress ? 1 : 0,
+                static_cast<int>(use.refused.first), static_cast<int>(use.refused.second), roots.workgroupAddress ? 1 : 0, roots.gdsAddress ? 1 : 0,
                 static_cast<unsigned long long>(count));
         }
     }
@@ -1230,7 +1151,7 @@ std::uint32_t BindlessHeap::EmbeddedSamplerCount() const {
     return embeddedSamplerCount;
 }
 
-std::optional<VkDescriptorSetAndBindingMappingEXT> BindlessHeap::embeddedSamplerMapping(const ShaderRecompiler::DescriptorBinding& binding, std::size_t element) const {
+std::optional<VkDescriptorSetAndBindingMappingEXT> BindlessHeap::embeddedSamplerMapping(const ShaderRecompiler::DescriptorBinding& binding, std::size_t element) {
     if (binding.samplerEmbeddedWords.size() < (element + 1u) * 4u || element >= binding.samplerDepthCompare.size()) return std::nullopt;
     std::array<std::uint32_t, 4> words{};
     std::copy_n(binding.samplerEmbeddedWords.begin() + static_cast<std::ptrdiff_t>(element * 4u), 4u, words.begin());
@@ -1239,12 +1160,7 @@ std::optional<VkDescriptorSetAndBindingMappingEXT> BindlessHeap::embeddedSampler
     const bool unnormalized = element < binding.samplerUnnormalized.size() && binding.samplerUnnormalized[element];
     const bool integerBorder = element < binding.samplerIntegerBorder.size() && binding.samplerIntegerBorder[element];
     const std::array<std::uint32_t, 5> key{words[0], words[1], words[2], words[3], (compare ? 1u : 0u) | (unnormalized ? 2u : 0u) | (integerBorder ? 4u : 0u)};
-    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = Abi::EmbeddedSamplerSet;
-    mapping.firstBinding = binding.samplerEmbedded[element];
-    mapping.bindingCount = 1;
-    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
-    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
+    auto mapping = baseMapping(Abi::EmbeddedSamplerSet, binding.samplerEmbedded[element], VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT, VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT);
     std::lock_guard lock(embeddedMutex);
     auto found = embeddedSamplers.find(key);
     if (found == embeddedSamplers.end()) {
@@ -1264,7 +1180,7 @@ std::optional<VkDescriptorSetAndBindingMappingEXT> BindlessHeap::embeddedSampler
         return mapping;
     }
     if (entry.slot == ~0u) {
-        const auto slot = const_cast<BindlessHeap*>(this)->PinnedSamplerSlot(entry.heapSampler);
+        const auto slot = PinnedSamplerSlot(entry.heapSampler);
         Require(slot.has_value(), "the global sampler heap is full");
         entry.slot = *slot;
     }
@@ -1272,16 +1188,12 @@ std::optional<VkDescriptorSetAndBindingMappingEXT> BindlessHeap::embeddedSampler
     return mapping;
 }
 
-bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
-                                          std::uint32_t workgroupAddressOffset, bool rootGds, bool rootFault, bool pixelLds, bool meshWindow,
-                                          bool scratchPool, const ShaderRecompiler::StagePushPlacement* placement,
-                                          const std::vector<ShaderRecompiler::DescriptorBinding>* bindings) const {
+bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings, const HeapBindingRoots& roots,
+                                          const ShaderRecompiler::StagePushPlacement* placement, const std::vector<ShaderRecompiler::DescriptorBinding>* bindings,
+                                          std::uint32_t workgroupAddressOffset) {
     mappings.clear();
     if (resourceHeap == nullptr) return false;
     HeapBindingUse use;
-    const HeapBindingRoots roots{
-        .workgroupAddress = workgroupAddressOffset != ~0u, .gdsAddress = rootGds, .faultAddress = rootFault, .pixelLds = pixelLds, .meshWindow = meshWindow,
-        .scratchPool = scratchPool};
     if (!heapBindings(spirv, roots, use)) return false;
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
     constexpr VkSpirvResourceTypeFlagsEXT imageResources = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT |
@@ -1313,13 +1225,13 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
     std::ranges::sort(use.pushedBuffers);
     for (const auto binding : use.pushedBuffers) mappings.push_back(pushedBufferMapping(binding, placement));
     if (use.workgroupMemory)
-        mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset));
+        mappings.push_back(HeapPushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset, VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT));
     if (use.scratchPoolMemory)
-        mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuScratchPoolDescriptorSet, 0, ShaderRecompiler::GpuScratchPoolAddressPushByte));
+        mappings.push_back(HeapPushAddressMapping(ShaderRecompiler::GpuScratchPoolDescriptorSet, 0, ShaderRecompiler::GpuScratchPoolAddressPushByte, VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT));
     if (use.gdsBinding != ~0u)
-        mappings.push_back(pushAddressMapping(Abi::GpuGdsSet, use.gdsBinding, rootItemOffset(placement, Abi::RootItem::GdsAddress)));
+        mappings.push_back(HeapPushAddressMapping(Abi::GpuGdsSet, use.gdsBinding, rootItemOffset(placement, Abi::RootItem::GdsAddress), VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT));
     if (use.faultMemory)
-        mappings.push_back(pushAddressMapping(Abi::DescriptorSet, GeneratedFaultBinding, rootItemOffset(placement, Abi::RootItem::FaultAddress)));
+        mappings.push_back(HeapPushAddressMapping(Abi::DescriptorSet, GeneratedFaultBinding, rootItemOffset(placement, Abi::RootItem::FaultAddress), VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT));
     if (use.pixelLdsMemory)
         mappings.push_back(heapMapping(ShaderRecompiler::PixelFunctionLdsDescriptorSet, 0,
                                        VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT, pixelLdsHeapOffset, 0));
@@ -1337,7 +1249,7 @@ void BindlessHeap::writeBufferDescriptor(VkDeviceSize offset, VkDeviceAddress ad
     resource.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     resource.data.pAddressRange = &buffer;
     const VkHostAddressRangeEXT range{resourceHeap->Bytes().data() + offset, static_cast<std::size_t>(properties.bufferDescriptorSize)};
-    Check(context.Function<PFN_vkWriteResourceDescriptorsEXT>("vkWriteResourceDescriptorsEXT")(context.device, 1, &resource, &range),
+    Check(writeResourceDescriptors(context.device, 1, &resource, &range),
           (std::string("vkWriteResourceDescriptorsEXT ") + what).c_str());
 }
 
@@ -1355,7 +1267,6 @@ std::mutex boundHeapsMutex;
 std::unordered_set<VkCommandBuffer> boundHeaps;
 std::atomic<std::uint64_t> boundHeapsEpoch{0};
 std::atomic<std::uint64_t> heapBinds{0};
-std::atomic<std::uint64_t> heapBindWindow{0};
 std::atomic<std::uint64_t> commandBuffersBegun{0};
 std::atomic<std::uint64_t> cpuBufferCopies{0};
 std::atomic<std::uint64_t> cpuBufferCopyBytes{0};
@@ -1387,11 +1298,6 @@ unsigned long long printed(std::uint64_t value) {
     return static_cast<unsigned long long>(value);
 }
 
-std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapCost::Count)> heapCostNs{};
-std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapCost::Count)> heapCostCalls{};
-constexpr std::array<const char*, static_cast<std::size_t>(HeapCost::Count)> HeapCostNames{
-    "stage prepare", "heap stage call", "stage finish", "walk", "materialize", "template find", "template build", "slots", "stage data", "guards"};
-
 void reportHeapStatistics() {
     if (!pipelineStats()) return;
     static std::atomic<std::uint64_t> calls{0};
@@ -1406,56 +1312,18 @@ void reportHeapStatistics() {
     const auto binds = takeNamedCounts(setBinds, SetBindSiteNames);
     const auto excluded = takeNamedCounts(heapExcludedCounts, HeapExcludedNames);
     const auto stageReasons = takeNamedCounts(heapStageReasons, HeapStageReasonNames);
-    std::string costs;
-    for (std::size_t i = 0; i < heapCostNs.size(); ++i) {
-        const auto calls = takeCount(heapCostCalls[i]);
-        const auto ns = static_cast<double>(takeCount(heapCostNs[i]));
-        const auto averageUs = calls != 0 ? ns / static_cast<double>(calls) / 1000.0 : 0.0;
-        char cost[96];
-        std::snprintf(cost, sizeof(cost), " %s %llu x %.2f us = %.0f ms", HeapCostNames[i], printed(calls), averageUs, ns / 1e6);
-        costs += cost;
-    }
-    if (HeapCostTimed()) {
-        std::fprintf(stderr, "[gpu-heap] cost (10 s):%s\n", costs.c_str());
-    }
     const auto heapDraws = takeCount(heapRecords[heapRecordIndex(false, true)]);
     const auto plainDraws = takeCount(heapRecords[heapRecordIndex(false, false)]);
     const auto heapDispatches = takeCount(heapRecords[heapRecordIndex(true, true)]);
     const auto plainDispatches = takeCount(heapRecords[heapRecordIndex(true, false)]);
-    const auto heapBindsSeen = takeCount(heapBindWindow);
     const auto commandBuffers = takeCount(commandBuffersBegun);
     const auto copies = takeCount(cpuBufferCopies);
     const auto copiedMiB = takeCount(cpuBufferCopyBytes) >> 20u;
     static BindlessHeap::Counts lastTotals;
-    BindlessHeap::Counts totals;
-    {
-        std::lock_guard heapsLock(heapsMutex());
-        for (const auto& entry : heaps()) {
-            const auto counts = entry.second->Statistics();
-            totals.spansWritten += counts.spansWritten;
-            totals.spansKept += counts.spansKept;
-            totals.spansExpired += counts.spansExpired;
-            totals.encodes += counts.encodes;
-            totals.encodedCopies += counts.encodedCopies;
-            totals.slotsEvicted += counts.slotsEvicted;
-            totals.evictionWaits += counts.evictionWaits;
-            totals.imageSlotsHeld += counts.imageSlotsHeld;
-            totals.spanPeakBytes = std::max(totals.spanPeakBytes, counts.spanPeakBytes);
-            totals.poolBytes += counts.poolBytes;
-            totals.slotPressureSubmits += counts.slotPressureSubmits;
-            totals.samplersEvicted += counts.samplersEvicted;
-            totals.poolBlocksMade += counts.poolBlocksMade;
-            totals.poolBlocksRecycled += counts.poolBlocksRecycled;
-            totals.poolBlocksFreed += counts.poolBlocksFreed;
-            totals.poolBlocksHeld += counts.poolBlocksHeld;
-            totals.poolBlockBytes += counts.poolBlockBytes;
-            totals.poolBatchPeakBytes = std::max(totals.poolBatchPeakBytes, counts.poolBatchPeakBytes);
-        }
-    }
+    const auto totals = BindlessHeap::TotalStatistics();
     const auto windowDelta = [](std::uint64_t now, std::uint64_t before) { return now >= before ? now - before : now; };
     const auto spansWritten = windowDelta(totals.spansWritten, lastTotals.spansWritten);
     const auto spansKept = windowDelta(totals.spansKept, lastTotals.spansKept);
-    const auto spansExpired = windowDelta(totals.spansExpired, lastTotals.spansExpired);
     const auto imageEncodes = windowDelta(totals.encodes, lastTotals.encodes);
     const auto imageCopies = windowDelta(totals.encodedCopies, lastTotals.encodedCopies);
     const auto slotsEvicted = windowDelta(totals.slotsEvicted, lastTotals.slotsEvicted);
@@ -1467,6 +1335,10 @@ void reportHeapStatistics() {
     const auto poolRecycled = windowDelta(totals.poolBlocksRecycled, lastTotals.poolBlocksRecycled);
     const auto poolFreed = windowDelta(totals.poolBlocksFreed, lastTotals.poolBlocksFreed);
     lastTotals = totals;
+    static std::uint64_t lastBinds = 0;
+    const auto bindsTotal = heapBinds.load(std::memory_order_relaxed);
+    const auto heapBindsSeen = windowDelta(bindsTotal, lastBinds);
+    lastBinds = bindsTotal;
     static std::uint64_t lastPushedKeeps = 0;
     const auto pushedKeepsTotal = PushedUserDataKeeps();
     const auto pushedKeeps = windowDelta(pushedKeepsTotal, lastPushedKeeps);
@@ -1480,10 +1352,10 @@ void reportHeapStatistics() {
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; excluded:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept (%llu for pushed user data only) / %llu expired, %llu written for user words only (%llu block words, %llu user words); data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept (%llu for pushed user data only), %llu written for user words only (%llu block words, %llu user words); data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), excluded.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(pushedKeeps), printed(spansExpired), printed(userRewrites[0]), printed(userRewrites[1]), printed(userRewrites[2]), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.spanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(pushedKeeps), printed(userRewrites[0]), printed(userRewrites[1]), printed(userRewrites[2]), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.spanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {
@@ -1503,19 +1375,6 @@ void NoteHeapRecord(bool compute, bool heap) {
 
 void NoteHeapStageReason(HeapStageReason reason) {
     heapStageReasons[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
-}
-
-bool HeapCostTimed() {
-    static const bool timed = [] {
-        const char* stats = std::getenv("APS5_PIPELINE_STATS");
-        return stats != nullptr && std::string_view(stats) == "2";
-    }();
-    return timed;
-}
-
-void NoteHeapCost(HeapCost cost, std::uint64_t nanoseconds) {
-    heapCostNs[static_cast<std::size_t>(cost)].fetch_add(nanoseconds, std::memory_order_relaxed);
-    heapCostCalls[static_cast<std::size_t>(cost)].fetch_add(1, std::memory_order_relaxed);
 }
 
 void NoteCpuBufferCopy(std::uint64_t bytes) {
@@ -1569,25 +1428,15 @@ bool HeapPassesActive(const Context& context) {
     return DescriptorHeapEnabled() && context.descriptorHeap && BindlessHeap::For(context).DescriptorHeapMode();
 }
 
-VkDescriptorSetAndBindingMappingEXT HeapPushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset) {
-    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = set;
-    mapping.firstBinding = binding;
-    mapping.bindingCount = 1;
-    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT;
-    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
+VkDescriptorSetAndBindingMappingEXT HeapPushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset, VkSpirvResourceTypeFlagsEXT resources) {
+    auto mapping = baseMapping(set, binding, resources, VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT);
     mapping.sourceData.pushAddressOffset = pushOffset;
     return mapping;
 }
 
 VkDescriptorSetAndBindingMappingEXT HeapPushIndexMapping(const BindlessHeap& heap, std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
                                                          std::uint32_t pushOffset) {
-    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = set;
-    mapping.firstBinding = binding;
-    mapping.bindingCount = 1;
-    mapping.resourceMask = resources;
-    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
+    auto mapping = baseMapping(set, binding, resources, VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT);
     mapping.sourceData.pushIndex.pushOffset = pushOffset;
     mapping.sourceData.pushIndex.heapIndexStride = static_cast<std::uint32_t>(heap.ImageHeapStride());
     mapping.sourceData.pushIndex.heapArrayStride = static_cast<std::uint32_t>(heap.ImageHeapStride());
@@ -1679,7 +1528,6 @@ void BindlessHeap::BindDescriptorHeaps(VkCommandBuffer commands) const {
         if (!inserted) return;
     }
     heapBinds.fetch_add(1, std::memory_order_relaxed);
-    heapBindWindow.fetch_add(1, std::memory_order_relaxed);
     VkBindHeapInfoEXT info{VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT};
     info.heapRange = {resourceHeap->DeviceAddress(), resourceHeapUsed + context.descriptorHeapProperties.minResourceHeapReservedRange};
     info.reservedRangeOffset = resourceHeapUsed;
@@ -1725,6 +1573,35 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
     }
     reclaimTablesLocked();
     trimPoolLocked();
+}
+
+BindlessHeap::Counts& BindlessHeap::Counts::operator+=(const Counts& other) {
+    encodes += other.encodes;
+    encodedCopies += other.encodedCopies;
+    slotsFreed += other.slotsFreed;
+    slotsEvicted += other.slotsEvicted;
+    evictionWaits += other.evictionWaits;
+    imageSlotsHeld += other.imageSlotsHeld;
+    spansWritten += other.spansWritten;
+    spansKept += other.spansKept;
+    slotPressureSubmits += other.slotPressureSubmits;
+    samplersEvicted += other.samplersEvicted;
+    poolBytes += other.poolBytes;
+    poolBlocksMade += other.poolBlocksMade;
+    poolBlocksRecycled += other.poolBlocksRecycled;
+    poolBlocksFreed += other.poolBlocksFreed;
+    poolBlocksHeld += other.poolBlocksHeld;
+    poolBlockBytes += other.poolBlockBytes;
+    spanPeakBytes = std::max(spanPeakBytes, other.spanPeakBytes);
+    poolBatchPeakBytes = std::max(poolBatchPeakBytes, other.poolBatchPeakBytes);
+    return *this;
+}
+
+BindlessHeap::Counts BindlessHeap::TotalStatistics() {
+    Counts totals;
+    std::lock_guard lock(heapsMutex());
+    for (const auto& entry : heaps()) totals += entry.second->Statistics();
+    return totals;
 }
 
 BindlessHeap::Counts BindlessHeap::Statistics() const {

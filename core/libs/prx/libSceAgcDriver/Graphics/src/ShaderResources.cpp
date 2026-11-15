@@ -8584,7 +8584,6 @@ std::pair<std::uint64_t, std::uint64_t> ShaderResources::writeSplitHeapStage(con
 
 void ShaderResources::writeHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader) {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
-    HeapCostScope slotsCost(HeapCost::Slots);
     const VkShaderStageFlags stageBit = VulkanStage(shader.stage);
     const auto stageIndex = HeapStageIndex(shader.stage);
     auto& stageState = heapStages[stageIndex];
@@ -8610,9 +8609,7 @@ void ShaderResources::writeHeapStage(const BindlessHeap::SpanScope& spans, Bindl
     }
     stageState.slotSerial = slotSerial;
     if (verifySlots) verifyHeapSlots(heap, stageState, stageBit);
-    slotsCost.Stop();
 
-    HeapCostScope dataCost(HeapCost::StageData);
     const std::size_t dataIndex = DataOffsetIndex(stageIndex, Abi::Binding::ShaderData);
     const std::size_t flatIndex = DataOffsetIndex(stageIndex, Abi::Binding::FlattenedSrt);
     const auto& program = *shader.program;

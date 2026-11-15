@@ -38,6 +38,8 @@ class HeapSlotOwner;
         std::uint32_t pipeBankXor = 0;
     };
 
+    enum class DetileVariant : std::uint8_t { Classic, Addressed, Heap };
+
     class TextureDetiler {
     public:
         explicit TextureDetiler(const Context& context);
@@ -63,7 +65,7 @@ class HeapSlotOwner;
     private:
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth, bool heap);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes, bool heap);
-        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false, bool addressed = false, bool heap = false);
+        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false, DetileVariant variant = DetileVariant::Classic);
         VkDeviceAddress bufferAddress(VkBuffer buffer) const;
         void release() noexcept;
         struct DescriptorRing {

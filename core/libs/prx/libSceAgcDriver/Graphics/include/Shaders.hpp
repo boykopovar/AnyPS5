@@ -19,10 +19,8 @@ inline constexpr std::uint32_t PipelinePushSlotBytes = 128;
 inline constexpr std::uint32_t ComputePushConstantBytes = 128;
 
 inline constexpr std::uint32_t HeapLayoutKeyTag = 0x48454150u;
-inline constexpr std::uint32_t DataSetKeyTag = 0x44415441u;
 inline constexpr std::uint32_t MainSetBit = 1u;
-inline constexpr std::uint32_t HeapSetBit = 2u;
-inline constexpr std::uint32_t DataSetBit = 4u;
+inline constexpr std::uint32_t FragmentSetBit = 2u;
 
 inline std::uint32_t PushBlockBytes(bool libraries) {
     return libraries ? PipelinePushConstantBytes : PipelinePushSlotBytes;

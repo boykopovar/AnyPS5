@@ -23,7 +23,6 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <list>
 #include <mutex>
 #include <spirv/unified1/spirv.hpp>
@@ -410,7 +409,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
             if (HeapShader(shader)) {
-                sets |= HeapSetBit;
+                sets |= FragmentSetBit;
                 for (const auto& binding : shader.program->bindings) {
                     if (binding.descriptorSet == 0u) sets |= MainSetBit;
                 }
@@ -423,13 +422,13 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         }
     }
     if (resources.split && AnyHeapShader(shaders)) {
-        keys.preRasterizationSets |= HeapSetBit;
-        keys.fragmentSets |= HeapSetBit;
+        keys.preRasterizationSets |= FragmentSetBit;
+        keys.fragmentSets |= FragmentSetBit;
     }
     if (resources.split) {
         const auto unused = 3u & ~(keys.preRasterizationSets | keys.fragmentSets);
         keys.preRasterizationSets |= unused & MainSetBit;
-        keys.fragmentSets |= unused & HeapSetBit;
+        keys.fragmentSets |= unused & FragmentSetBit;
     }
     for (const auto& binding : input.bindings) {
         appendKey(keys.vertexInput, binding.binding);
@@ -511,11 +510,10 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             appendKey(key, resources.mainKey.size());
             for (const auto word : resources.mainKey) appendKey(key, word);
         }
-        if ((sets & HeapSetBit) != 0u) {
+        if ((sets & FragmentSetBit) != 0u) {
             appendKey(key, resources.fragmentKey.size());
             for (const auto word : resources.fragmentKey) appendKey(key, word);
         }
-        if ((sets & DataSetBit) != 0u) appendKey(key, DataSetKeyTag);
     };
     splitKey(keys.layout, 3u);
     splitKey(keys.preRasterizationLayout, keys.preRasterizationSets);
@@ -586,7 +584,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             const bool rooted = RootedPushData(shaders);
             descriptorHeap = std::all_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
                 const auto index = static_cast<std::size_t>(&shader - shaders.data());
-                return heap.DescriptorHeapMappings(std::span<const std::uint32_t>(shader.program->spirv.data(), shader.program->spirv.size()), heapMappings[index], ~0u, shader.program->dataAddressPush, PushesGeneratedFaultAddress(shader, rooted), shader.program->functionLdsBuffer, shader.program->meshWindowBuffer, false, &pushPlacements[index], &shader.program->bindings);
+                return heap.DescriptorHeapMappings(std::span<const std::uint32_t>(shader.program->spirv.data(), shader.program->spirv.size()), heapMappings[index],
+                                            {.gdsAddress = shader.program->dataAddressPush, .faultAddress = PushesGeneratedFaultAddress(shader, rooted), .pixelLds = shader.program->functionLdsBuffer, .meshWindow = shader.program->meshWindowBuffer},
+                                            &pushPlacements[index], &shader.program->bindings);
             });
         }
         Require(descriptorHeap || !AnyHeapShader(shaders), "a pipeline with GPU-mode stages does not map onto VK_EXT_descriptor_heap");

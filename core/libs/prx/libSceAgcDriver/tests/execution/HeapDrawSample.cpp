@@ -555,9 +555,10 @@ int main() {
         if (excluded)
             Require(AgcDriver::Graphics::HeapExcludedCount(AgcDriver::Graphics::HeapExcluded::Draw) != 0u,
                     "no draw took the per-draw path for its excluded heap class");
-        if (capped)
-            Require(AgcDriver::Graphics::HeapSlotEvictions() != 0u,
-                    "the capped heap evicted no image slot");
+        if (capped) {
+            const auto totals = AgcDriver::Graphics::BindlessHeap::TotalStatistics();
+            Require(totals.slotsEvicted + totals.samplersEvicted != 0u, "the capped heap evicted no image slot");
+        }
         AgcDriverShutdown_nid_postfix();
         if (heap && !capped)
             Require(AgcDriver::Graphics::EmptyResourceSets() != 0, "no heap draw bound without a per-draw resource set");

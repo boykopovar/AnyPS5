@@ -57,7 +57,7 @@ void textureSlots(const Context& context, VkImageView view) {
     require(heap.SlotGeneration(*slot) != generation, "a freed slot moves its generation");
     require(heap.SlotTexture(kind, *slot) == second.get(), "the reused slot names the second texture");
     const auto counts = heap.Statistics();
-    require(counts.slotsFreed == 1u && counts.slotsReused == 1u, "one slot freed and reused");
+    require(counts.slotsFreed == 1u, "one slot freed");
 
     auto shared = fakeTexture(2);
     const auto otherKind = kind + 1u;
@@ -157,7 +157,7 @@ void ownerViewsRelease(const Context& context, VkImageView view) {
     const auto serial = heap.SlotSerial();
     require(heap.StorageSlot(firstKind, &owner, view) == first && heap.ViewSlot(secondKind, &owner, view) == second, "a lookup hit returns the owner's existing slots");
     const auto hit = heap.Statistics();
-    require(hit.slotsFreed == before.slotsFreed && hit.slotsReused == before.slotsReused && hit.encodes == before.encodes && hit.encodedCopies == before.encodedCopies,
+    require(hit.slotsFreed == before.slotsFreed && hit.encodes == before.encodes && hit.encodedCopies == before.encodedCopies,
             "a lookup hit changed the counts");
     require(heap.SlotSerial() == serial, "a lookup hit moved the slot serial");
     const auto firstGeneration = heap.SlotGeneration(*first), secondGeneration = heap.SlotGeneration(*second);
@@ -199,8 +199,7 @@ void writeTails(const Context& context) {
     for (const std::size_t count : {0u, 1u, 3u, 4u, 5u, 7u, 9u}) {
         std::vector<std::uint32_t> words(count);
         for (std::size_t index = 0; index < count; ++index) words[index] = 0x1000u * static_cast<std::uint32_t>(count) + static_cast<std::uint32_t>(index) + 1u;
-        BindlessHeap::SpanMark mark;
-        const auto span = heap.Allocate(count + 1u, mark);
+        const auto span = heap.Allocate(count + 1u);
         span.words[count] = 0xdeadbeefu;
         BindlessHeap::Write(span, words);
         require(std::equal(words.begin(), words.end(), span.words.begin()), "a GPU heap span holds other words than were written");
@@ -210,18 +209,15 @@ void writeTails(const Context& context) {
 
 void spanScope(const Context& context) {
     BindlessHeap heap(context);
-    BindlessHeap::SpanMark first;
     std::atomic<bool> allocated{false};
     std::thread other;
     bool waited = false;
     {
         const BindlessHeap::SpanScope outer(heap);
         const BindlessHeap::SpanScope inner(heap);
-        static_cast<void>(heap.Allocate(16u, first));
-        require(heap.Held(first) && !heap.KeepOrAllocate(inner, 16u, first, true), "spans are allocated and kept inside nested scopes");
+        static_cast<void>(heap.Allocate(16u));
         other = std::thread([&] {
-            BindlessHeap::SpanMark mark;
-            static_cast<void>(heap.Allocate(16u, mark));
+            static_cast<void>(heap.Allocate(16u));
             allocated.store(true, std::memory_order_release);
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -229,7 +225,7 @@ void spanScope(const Context& context) {
     }
     other.join();
     require(waited, "another thread's span waits while a scope holds the allocator");
-    require(allocated.load(std::memory_order_acquire) && heap.Held(first), "the other thread allocates once the scope ends");
+    require(allocated.load(std::memory_order_acquire), "the other thread allocates once the scope ends");
     require(heap.Statistics().spansWritten == 2u, "both spans are counted");
 }
 
@@ -239,38 +235,26 @@ bool dataPool(const Context& context) {
     constexpr std::size_t blockWords = AgcDriver::Graphics::BindlessHeap::PoolBlockBytes / sizeof(std::uint32_t);
     {
         BindlessHeap heap(context);
-        std::vector<BindlessHeap::SpanMark> marks(5);
-        for (auto& mark : marks) static_cast<void>(heap.Allocate(blockWords / 2u, mark));
+        for (int index = 0; index < 5; ++index) static_cast<void>(heap.Allocate(blockWords / 2u));
         require(heap.Statistics().poolBlocksMade == 3u, "one batch's shader data grows into new blocks instead of waiting");
-        for (const auto& mark : marks) require(heap.Held(mark), "every span of the batch is held");
-        BindlessHeap::SpanMark big;
-        const auto span = heap.Allocate(blockWords * 3u / 2u, big);
+        const auto span = heap.Allocate(blockWords * 3u / 2u);
         require(span.words.size() == blockWords * 3u / 2u && heap.Statistics().poolBlocksMade == 4u, "a span larger than a block gets a block of its own");
         const auto [buffer, offset] = heap.DataLocation(span.address + 64u);
         require(buffer != VK_NULL_HANDLE && offset == span.offset + 64u, "a pooled address maps back to its buffer and offset");
         heap.Submitted(recorder, recorder.Submissions() + (1ull << 40u));
         const auto made = heap.Statistics().poolBlocksMade;
-        BindlessHeap::SpanMark fill;
-        for (int index = 0; index < 4; ++index) static_cast<void>(heap.Allocate(blockWords / 2u + 1u, fill));
+        for (int index = 0; index < 4; ++index) static_cast<void>(heap.Allocate(blockWords / 2u + 1u));
         const auto busy = heap.Statistics();
         require(busy.poolBlocksRecycled == 0u && busy.poolBlocksMade > made, "blocks a batch in flight still reads are not reused");
     }
     {
         BindlessHeap heap(context);
-        BindlessHeap::SpanMark kept;
-        BindlessHeap::SpanMark first;
-        static_cast<void>(heap.Allocate(blockWords - 64u, kept));
-        static_cast<void>(heap.Allocate(blockWords - 64u, first));
-        static_cast<void>(heap.Allocate(blockWords - 64u));
+        for (int index = 0; index < 3; ++index) static_cast<void>(heap.Allocate(blockWords - 64u));
         heap.Submitted(recorder, 0u);
-        require(heap.Held(kept), "a span a later draw reuses stays held");
         const auto made = heap.Statistics().poolBlocksMade;
-        BindlessHeap::SpanMark fill;
-        static_cast<void>(heap.Allocate(blockWords - 64u, fill));
+        static_cast<void>(heap.Allocate(blockWords - 64u));
         const auto counts = heap.Statistics();
         require(counts.poolBlocksRecycled == 1u && counts.poolBlocksMade == made, "a completed block is reused instead of making a new one");
-        require(heap.Held(kept), "the block a kept span reopened is not reused");
-        require(!heap.Held(first), "a span in a reused block has expired");
     }
     {
         BindlessHeap heap(context);
@@ -495,12 +479,12 @@ bool slotPressureSubmits(const Context& context, VkImageView view) {
     submit();
     require(heap.Statistics().slotsEvicted == 0u && BindlessHeap::NearlyFull(),
             "a submission in the middle of a draw evicts no slot the draw took in the batch it submitted");
-    const auto submitsBefore = SlotPressureSubmits();
+    const auto submitsBefore = heap.Statistics().slotPressureSubmits;
     const auto generation = heap.SlotGeneration(slots[0]);
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         static_cast<void>(recorder.Commands());
-        require(heap.TakeSlotPressure() && SlotPressureSubmits() == submitsBefore + 1u, "a nearly full heap asks the next draw to submit its batch");
+        require(heap.TakeSlotPressure() && heap.Statistics().slotPressureSubmits == submitsBefore + 1u, "a nearly full heap asks the next draw to submit its batch");
         recorder.Submit();
     }
     require(heap.Statistics().slotsEvicted == slots.size(), "the pressure submission evicts every slot, since no draw is being prepared at draw entry");

@@ -174,8 +174,7 @@ void RefreshAfterOriginalDestroyed(const AgcDriver::VulkanDevice& device, const 
     RequireHeapTable(*slot);
     const auto* original = &*slot;
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    AgcDriver::Graphics::BindlessHeap::SpanMark lead;
-    static_cast<void>(AgcDriver::Graphics::BindlessHeap::For(context).Allocate(64, lead));
+    static_cast<void>(AgcDriver::Graphics::BindlessHeap::For(context).Allocate(64));
     const CompiledShader built{ShaderStage::Compute, original, 0};
     auto resources = std::make_shared<ShaderResources>(context, built);
     Require(resources->HeapStage(), "heap table stage reuse: the set was not built on the heap");

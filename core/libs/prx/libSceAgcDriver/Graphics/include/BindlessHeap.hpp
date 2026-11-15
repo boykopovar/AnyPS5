@@ -5,7 +5,6 @@
 #include "RuntimeAbi.hpp"
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -25,6 +24,15 @@ struct DescriptorBinding;
 }
 
 namespace AgcDriver::Graphics {
+
+struct HeapBindingRoots {
+    bool workgroupAddress = false;
+    bool gdsAddress = false;
+    bool faultAddress = false;
+    bool pixelLds = false;
+    bool meshWindow = false;
+    bool scratchPool = false;
+};
 
 class Buffer;
 class Recorder;
@@ -48,11 +56,9 @@ public:
     bool DescriptorHeapMode() const { return resourceHeap != nullptr; }
     VkDeviceSize ImageHeapStride() const { return imageHeapStride; }
     void BindDescriptorHeaps(VkCommandBuffer commands) const;
-    bool DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
-                                std::uint32_t workgroupAddressOffset = ~0u, bool rootGds = false, bool rootFault = false,
-                                bool pixelLds = false, bool meshWindow = false, bool scratchPool = false,
+    bool DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings, const HeapBindingRoots& roots,
                                 const ShaderRecompiler::StagePushPlacement* placement = nullptr,
-                                const std::vector<ShaderRecompiler::DescriptorBinding>* bindings = nullptr) const;
+                                const std::vector<ShaderRecompiler::DescriptorBinding>* bindings = nullptr, std::uint32_t workgroupAddressOffset = 0u);
     void WritePixelLdsBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     void WriteMeshWindowBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     std::pair<VkBuffer, VkDeviceSize> DataLocation(VkDeviceAddress address) const;
@@ -84,16 +90,7 @@ public:
         VkDeviceAddress address = 0;
     };
     DataSpan Allocate(std::size_t words);
-    struct SpanMark {
-        std::uint32_t offset = 0;
-        std::uint32_t words = 0;
-        std::uint64_t entry = 0;
-        std::uint32_t block = 0;
-        VkDeviceAddress address = 0;
-    };
-    DataSpan Allocate(std::size_t words, SpanMark& mark);
     static void Write(const DataSpan& span, std::span<const std::uint32_t> words);
-    bool Held(const SpanMark& mark);
     class SpanScope {
     public:
         explicit SpanScope(const BindlessHeap& heap);
@@ -106,7 +103,6 @@ public:
         const BindlessHeap& heap;
         bool acquired;
     };
-    std::optional<DataSpan> KeepOrAllocate(const SpanScope& held, std::size_t words, SpanMark& mark, bool same);
     struct TableMark {
         std::uint32_t block = 0;
         std::uint32_t offset = 0;
@@ -125,13 +121,15 @@ public:
 
     struct Counts {
         std::uint64_t encodes = 0, encodedCopies = 0;
-        std::uint64_t slotsFreed = 0, slotsReused = 0, slotsEvicted = 0, evictionWaits = 0;
+        std::uint64_t slotsFreed = 0, slotsEvicted = 0, evictionWaits = 0;
         std::uint64_t spanPeakBytes = 0, imageSlotsHeld = 0;
-        std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0;
+        std::uint64_t spansWritten = 0, spansKept = 0;
         std::uint64_t slotPressureSubmits = 0, samplersEvicted = 0;
         std::uint64_t poolBytes = 0, poolBatchPeakBytes = 0, poolBlocksMade = 0, poolBlocksRecycled = 0, poolBlocksFreed = 0, poolBlocksHeld = 0, poolBlockBytes = 0;
+        Counts& operator+=(const Counts& other);
     };
     Counts Statistics() const;
+    static Counts TotalStatistics();
 
     static constexpr std::size_t PoolBlockBytes = 2u << 20u;
     static constexpr std::size_t PoolIdleBytes = 32u << 20u;
@@ -158,7 +156,6 @@ private:
         VkDeviceAddress address = 0;
         std::size_t bytes = 0;
         std::size_t cursor = 0;
-        std::uint64_t generation = 0;
         Recorder* recorder = nullptr;
         std::uint64_t serial = 0;
         bool open = false;
@@ -187,8 +184,7 @@ private:
     std::uint32_t poolAlignment = 256;
     std::size_t poolBatchBytes = 0;
     std::size_t takePoolBlockLocked(std::size_t bytes);
-    bool heldLocked(const SpanMark& mark);
-    DataSpan allocateLocked(std::size_t words, SpanMark& mark);
+    DataSpan allocateLocked(std::size_t words);
     bool poolBlockDoneLocked(PoolBlock& block);
     void trimPoolLocked();
     mutable std::mutex mutex;
@@ -201,9 +197,9 @@ private:
         std::uint32_t slot = ~0u;
     };
     mutable std::mutex embeddedMutex;
-    mutable std::map<std::array<std::uint32_t, 5>, EmbeddedSampler> embeddedSamplers;
-    mutable std::uint32_t embeddedSamplerCount = 0;
-    std::optional<VkDescriptorSetAndBindingMappingEXT> embeddedSamplerMapping(const ShaderRecompiler::DescriptorBinding& binding, std::size_t element) const;
+    std::map<std::array<std::uint32_t, 5>, EmbeddedSampler> embeddedSamplers;
+    std::uint32_t embeddedSamplerCount = 0;
+    std::optional<VkDescriptorSetAndBindingMappingEXT> embeddedSamplerMapping(const ShaderRecompiler::DescriptorBinding& binding, std::size_t element);
     std::atomic<std::uint64_t> slotSerial{1};
     struct ImageSlotKey {
         std::uint32_t kind;
@@ -233,7 +229,7 @@ private:
         std::unique_ptr<std::atomic<std::uint32_t>[]> generations;
         void Configure(std::uint32_t first, std::uint32_t slots);
         void Retire(std::uint32_t slot);
-        std::optional<std::uint32_t> Take(bool& reused);
+        std::optional<std::uint32_t> Take();
         void Free(std::uint32_t slot);
         std::size_t Unused() const;
         std::uint32_t Generation(std::uint32_t slot) const;
@@ -311,8 +307,7 @@ void SetDescriptorHeapDevice(bool available);
 bool DescriptorHeapEnabled();
 bool ChooseUniformConstantBuffers(bool standardLayout, const VkPhysicalDeviceLimits& limits);
 bool UniformConstantBuffersEnabled();
-bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds = false, bool meshWindow = false, bool scratchPool = false,
-                            std::pair<std::uint32_t, std::uint32_t>* refused = nullptr);
+bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, const HeapBindingRoots& roots, std::pair<std::uint32_t, std::uint32_t>* refused = nullptr);
 void NoteHeapComputeStage();
 std::uint64_t HeapComputeStages();
 void NoteImageTableBuild();
@@ -325,8 +320,6 @@ void NoteEmptyResourceSet();
 std::uint64_t EmptyResourceSets();
 std::uint64_t DataAddressPushes();
 std::uint64_t EmbeddedSamplerMappings();
-std::uint64_t SlotPressureSubmits();
-std::uint64_t HeapSlotEvictions();
 enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, DepthTransfer, StagedMerge, FirstSampleCopy, ChangedCopy, Count };
 enum class HeapExcluded : std::uint8_t { Draw, Dispatch, Count };
 enum class HeapStageReason : std::uint8_t {
@@ -341,40 +334,6 @@ void NoteHeapExcluded(HeapExcluded reason);
 std::uint64_t HeapExcludedCount(HeapExcluded reason);
 std::uint64_t HeapStageReasons(HeapStageReason reason);
 void NoteCpuBufferCopy(std::uint64_t bytes);
-enum class HeapCost : std::uint8_t {
-    StagePrepare,
-    HeapStageCall,
-    StageFinish,
-    Walk,
-    Materialize,
-    TemplateFind,
-    TemplateBuild,
-    Slots,
-    StageData,
-    Guards,
-    Count
-};
-bool HeapCostTimed();
-
-void NoteHeapCost(HeapCost cost, std::uint64_t nanoseconds);
-class HeapCostScope {
-public:
-    explicit HeapCostScope(HeapCost cost) :
-        cost(cost), start(HeapCostTimed() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
-    ~HeapCostScope() { Stop(); }
-    HeapCostScope(const HeapCostScope&) = delete;
-    HeapCostScope& operator=(const HeapCostScope&) = delete;
-    void Stop() {
-        if (start == std::chrono::steady_clock::time_point{}) return;
-        NoteHeapCost(cost, static_cast<std::uint64_t>(
-                               std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()));
-        start = {};
-    }
-
-private:
-    HeapCost cost;
-    std::chrono::steady_clock::time_point start;
-};
 void NoteCommandBufferBegun(VkCommandBuffer commands);
 void CmdPushConstants(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout, VkShaderStageFlags stages,
                       std::uint32_t offset, std::uint32_t size, const void* values);
@@ -385,6 +344,7 @@ void CmdPushDescriptorSet(PFN_vkCmdPushDescriptorSetKHR push, VkCommandBuffer co
 std::uint64_t DescriptorHeapBinds();
 inline constexpr std::uint32_t HeapPassSampledKind = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
 inline constexpr std::uint32_t HeapPassStorageKind = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
+inline constexpr VkSpirvResourceTypeFlagsEXT HeapPassStorageBuffers = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT;
 inline constexpr VkSpirvResourceTypeFlagsEXT HeapPassStorageImages = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_IMAGE_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_IMAGE_BIT_EXT;
 class HeapPassSlots : public HeapSlotOwner {
 public:
@@ -396,7 +356,7 @@ private:
     Context context;
 };
 bool HeapPassesActive(const Context& context);
-VkDescriptorSetAndBindingMappingEXT HeapPushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset);
+VkDescriptorSetAndBindingMappingEXT HeapPushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset, VkSpirvResourceTypeFlagsEXT resources = HeapPassStorageBuffers);
 VkDescriptorSetAndBindingMappingEXT HeapPushIndexMapping(const BindlessHeap& heap, std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
                                                          std::uint32_t pushOffset);
 VkPipeline CreateHeapComputePipeline(const Context& context, VkComputePipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings);

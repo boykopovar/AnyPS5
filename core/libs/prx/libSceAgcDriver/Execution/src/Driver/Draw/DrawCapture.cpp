@@ -99,14 +99,11 @@ bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t 
     const auto& program = context.programs[i];
     auto& stageCapture = context.stageCaptures[i];
     HeapStageMaterialized materialized;
-    Graphics::HeapCostScope callCost(Graphics::HeapCost::HeapStageCall);
     try {
         materialized = MaterializeHeapStage(invocation, program.userData, program.binary.codeAddress);
     } catch (const std::exception& error) {
         throw stageFailure(program, request, error, request.context.memory);
     }
-    callCost.Stop();
-    Graphics::HeapCostScope finishCost(Graphics::HeapCost::StageFinish);
     if (materialized.result == nullptr) return false;
     RequireHeapStageMappable(*materialized.result);
     NoteHeapDirect();
@@ -192,7 +189,6 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     using Stage = ShaderRecompiler::ShaderStage;
     context.phaseTiming.Phase(DrawRowVectors);
     const auto& program = context.programs[i];
-    Graphics::HeapCostScope prepareCost(Graphics::HeapCost::StagePrepare);
     auto request = drawStageRequest(context, i, pushOffset, drawParameters);
 
     const auto waitedBefore = traceCapSync() || context.profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
@@ -214,7 +210,6 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
             throw std::runtime_error(std::string("AGC graphics: a GPU heap stage cannot take the heap: ") + ineligible);
     }
     Graphics::NoteHeapStageReason(stageReason);
-    prepareCost.Stop();
     timing.Mark("prepared_invocation");
     auto& stageCapture = context.stageCaptures[i];
     stageCapture.direct = false;
