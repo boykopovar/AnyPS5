@@ -328,6 +328,12 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     Require(sceFontStringGetWritingForm(rtlString) == 0x12);
     Require(sceFontDestroyString(&rtlString) == SCE_FONT_OK);
     Require(sceFontTextSourceSetWritingForm(&source, 0x10) == SCE_FONT_OK);
+    FontTextSource* const unmapped = reinterpret_cast<FontTextSource*>(0x10);
+    errno = 71;
+    Require(sceFontTextSourceInit(unmapped, parsed.text, 3, ParseText, &parsed) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontTextSourceRewind(unmapped) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontTextSourceSetDefaultFont(unmapped, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontTextSourceSetWritingForm(unmapped, 0x10) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
 
     const std::uint32_t latinCodes[]{'A', 0x00E9, 0x4E2D};
     const std::uint32_t greekCodes[]{0x03B1};
