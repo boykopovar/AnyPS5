@@ -408,24 +408,21 @@ void APS5_VABI sceUsbdFillIsoTransfer(UsbdTransfer* transfer, void* deviceHandle
 
 void APS5_VABI sceUsbdFillControlSetup(std::uint8_t* buffer, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint16_t length) {
     if (buffer == nullptr) throw std::runtime_error(std::string(__func__) + ": null buffer");
-    buffer[0] = requestType;
-    buffer[1] = request;
-    buffer[2] = static_cast<std::uint8_t>(value);
-    buffer[3] = static_cast<std::uint8_t>(value >> 8);
-    buffer[4] = static_cast<std::uint8_t>(index);
-    buffer[5] = static_cast<std::uint8_t>(index >> 8);
-    buffer[6] = static_cast<std::uint8_t>(length);
-    buffer[7] = static_cast<std::uint8_t>(length >> 8);
+    const std::uint8_t setup[CONTROL_SETUP_SIZE] = {requestType, request, static_cast<std::uint8_t>(value), static_cast<std::uint8_t>(value >> 8),
+        static_cast<std::uint8_t>(index), static_cast<std::uint8_t>(index >> 8), static_cast<std::uint8_t>(length), static_cast<std::uint8_t>(length >> 8)};
+    if (!GuestCopyOut_nid_no_patch(buffer, setup, sizeof(setup))) throw std::runtime_error(std::string(__func__) + ": unwritable buffer");
 }
 
 void APS5_VABI sceUsbdFillControlTransfer(UsbdTransfer* transfer, void* deviceHandle, std::uint8_t* buffer, UsbdTransferCallback callback, void* userData, std::uint32_t timeout) {
     if (transfer == nullptr) throw std::runtime_error(std::string(__func__) + ": null transfer");
+    std::uint8_t dataLength[2] = {};
+    if (buffer != nullptr && !GuestCopyIn_nid_no_patch(dataLength, buffer + 6, sizeof(dataLength))) throw std::runtime_error(std::string(__func__) + ": unreadable setup");
     transfer->deviceHandle = deviceHandle;
     transfer->endpoint = 0;
     transfer->type = TRANSFER_TYPE_CONTROL;
     transfer->timeout = timeout;
     transfer->buffer = buffer;
-    transfer->length = buffer != nullptr ? CONTROL_SETUP_SIZE + (buffer[6] | buffer[7] << 8) : 0;
+    transfer->length = buffer != nullptr ? CONTROL_SETUP_SIZE + (dataLength[0] | dataLength[1] << 8) : 0;
     transfer->userData = userData;
     transfer->callback = callback;
 }
