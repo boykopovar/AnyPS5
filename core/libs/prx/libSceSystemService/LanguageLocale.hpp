@@ -311,7 +311,10 @@ inline std::vector<std::string> PosixHostLocales(const Environment& environment)
         while (!preferred.empty()) {
             const std::size_t colon = preferred.find(':');
             const std::string_view entry = preferred.substr(0, colon);
-            if (!entry.empty()) locales.emplace_back(entry);
+            if (!entry.empty()) {
+                locales.emplace_back(entry);
+                if (entry == "C" || entry == "POSIX" || entry.starts_with("C.")) return locales;
+            }
             preferred = colon == std::string_view::npos ? std::string_view{} : preferred.substr(colon + 1);
         }
     }

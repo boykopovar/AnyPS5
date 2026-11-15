@@ -85,6 +85,9 @@ class PadInputTests(unittest.TestCase):
             (1, b"0 100 16384\n0 100 64\n"),
             (1, b"0 100 16384\ntrailing\n"),
             (1, b"0 100 16384\n" + b" " * 4096 + b"extra"),
+            (1, b"0 100 16384 255\n"), (1, b"0 100 16384 255 128\n"), (1, b"0 100 16384 255 128 128\n"),
+            (1, b"0 100 16384 255 128 128 128 128\n"), (1, b"0 100 16384 256 128 128 128\n"),
+            (1, b"0 100 16384 255 128 128 x\n"),
         ]
         for count, body in cases:
             with self.subTest(count=count, body=body):
@@ -98,6 +101,8 @@ class PadInputTests(unittest.TestCase):
             b"0+100+16384\n100 100 64\n200 1 0\n",
             b"0 100 16384\x00-1\n100 100 64\n200 1 0\n",
             b"0 100 16384\n100 100 64\n" + b" " * 120 + b"200 1 0",
+            b"0 100 16384 255 0 128 128\n100 100 64\n200 1 0 0 255 +255 +0\n",
+            b"0+100+16384+255+0+128+128\n100 100 64\n200 1 0\n",
         ]
         for body in bodies:
             with self.subTest(body=body):
@@ -212,6 +217,33 @@ class PadInputTests(unittest.TestCase):
         self.path.write_bytes(b" " * 113 + b"2000 16384 300\r\n")
         expected = 2001 if os.name == "nt" else 1000
         self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
+    def test_pulse_nul_termination_preserves_sequence(self):
+        for pulse in [b"2000 16384 300", b"2000 0 300 0 255 128 128",
+                      b"2000 0 300 touch(100,200,3,1)"]:
+            with self.subTest(pulse=pulse):
+                self.path.write_bytes(pulse + b"\0-ignored\n")
+                self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+
+    def test_nul_does_not_hide_invalid_or_overlong_pulse(self):
+        for pulse in [b"2000 16384\0 300\n", b"2000 1 300\0ignored\n",
+                      b"2000 16384 300\0" + b" " * 114 + b"\n"]:
+            with self.subTest(pulse=pulse):
+                self.path.write_bytes(pulse)
+                self.assertEqual(self.queue(1000, "down"), [1000, 64, 300])
+
+    def test_pulse_text_end_marker_matches_host_text_mode(self):
+        self.path.write_bytes(b"2000 16384 300\x1aignored\n")
+        expected = 2001 if os.name == "nt" else 1000
+        self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
+    def test_nul_terminated_exhausted_pulse_preserves_command(self):
+        original = f"{2**64 - 1} 16384 300".encode() + b"\0ignored\n"
+        self.path.write_bytes(original)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            self.queue(1, "down")
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(self.path.read_bytes(), original)
 
     def test_empty_and_malformed_commands_can_be_replaced(self):
         for text in ["", "not a command\n", "18446744073709551615 nonsense\n",

@@ -100,12 +100,12 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     for (const auto& directory : directories) {
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + Io::Utf8Path(directory));
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-            if (Io::Utf8Path(entry.path().filename()).ends_with(GuestModuleSuffix)) continue;
-            if (excludedModules.contains(Io::Utf8Path(entry.path().filename()))) {
-                unmatchedExclusions.erase(Io::Utf8Path(entry.path().filename()));
+            const auto filename = Io::Utf8Path(entry.path().filename());
+            if (filename.ends_with(GuestModuleSuffix) || !entry.is_regular_file()) continue;
+            if (excludedModules.contains(filename)) {
+                unmatchedExclusions.erase(filename);
                 continue;
             }
-            if (!entry.is_regular_file()) continue;
             if (Io::SameFile(entry.path(), inputPath)) continue;
             const auto header = ReadCandidateHeader(entry.path());
             if (header.Elf) paths.push_back(entry.path());
@@ -142,16 +142,6 @@ void ReportUnconvertedNeeded(const NativeModules& modules, const std::vector<std
     std::vector<Found> found;
     std::error_code error;
     for (auto entry = std::filesystem::recursive_directory_iterator(modules.Root, std::filesystem::directory_options::skip_permission_denied, error); !error && entry != std::filesystem::recursive_directory_iterator(); entry.increment(error)) {
-        const bool directory = entry->is_directory(error);
-        if (error) {
-            error.clear();
-            continue;
-        }
-        if (directory) {
-            if (std::any_of(modules.Directories.begin(), modules.Directories.end(), [&](const auto& scanned) { return std::filesystem::equivalent(scanned, entry->path(), error) && !error; })) entry.disable_recursion_pending();
-            error.clear();
-            continue;
-        }
         const auto filename = FoldedName(Io::Utf8Path(entry->path().filename()), foldCase);
         if (Domain::ModuleSuffix(filename).empty()) continue;
         const auto stem = stems.find(std::string(ModuleStem(filename)));
@@ -162,6 +152,11 @@ void ReportUnconvertedNeeded(const NativeModules& modules, const std::vector<std
         }
         const auto header = TryReadCandidateHeader(entry->path());
         if (!header || (!header->Self && !(header->Elf && header->Type == 0xfe18))) continue;
+        const auto parent = entry->path().parent_path();
+        if (std::any_of(modules.Directories.begin(), modules.Directories.end(), [&](const auto& scanned) {
+            std::error_code identityError;
+            return std::filesystem::equivalent(scanned, parent, identityError);
+        })) continue;
         for (const auto& name : stem->second) found.push_back({entry->path().lexically_relative(modules.Root), name, header->Self});
     }
     std::sort(found.begin(), found.end(), [](const auto& left, const auto& right) { return std::tie(left.Relative, left.Name) < std::tie(right.Relative, right.Name); });

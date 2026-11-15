@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
@@ -155,7 +156,7 @@ bool PassthroughEnabled() {
 
 }
 
-std::vector<HostVolume> ScanHostVolumes() {
+std::vector<HostVolume> ScanDeviceVolumes() {
     if (!PassthroughEnabled()) return {};
     std::optional<std::pair<std::filesystem::path, std::filesystem::path>> roots;
     {
@@ -171,6 +172,40 @@ std::vector<HostVolume> ScanHostVolumes() {
 #else
     return {};
 #endif
+}
+
+std::optional<HostVolume> HostFolderVolume(std::string_view folder) {
+    if (folder.empty()) return std::nullopt;
+    const auto root = Utf8Path(folder);
+    std::error_code error;
+    if (!std::filesystem::is_directory(root, error) || error) return std::nullopt;
+    HostVolume volume;
+    volume.key = "anyps5-folder:" + root.string();
+    volume.root = root;
+    const auto space = std::filesystem::space(root, error);
+    volume.volumeSize = error ? 0 : static_cast<std::uint64_t>(space.capacity);
+    volume.vendor = "AnyPS5";
+    volume.product = "Host folder";
+    volume.fileSystem = FileSystem::Fat;
+    return volume;
+}
+
+std::vector<HostVolume> HostFolderVolumes() {
+    const char* configured = std::getenv("ANYPS5_STORAGE_FOLDER");
+    if (configured == nullptr || configured[0] == '\0') return {};
+    auto volume = HostFolderVolume(configured);
+    if (!volume) {
+        std::fprintf(stderr, "[usb] ANYPS5_STORAGE_FOLDER is not a directory, nothing is mounted\n");
+        return {};
+    }
+    return {std::move(*volume)};
+}
+
+std::vector<HostVolume> ScanHostVolumes() {
+    auto volumes = HostFolderVolumes();
+    auto devices = ScanDeviceVolumes();
+    volumes.insert(volumes.end(), std::make_move_iterator(devices.begin()), std::make_move_iterator(devices.end()));
+    return volumes;
 }
 
 }

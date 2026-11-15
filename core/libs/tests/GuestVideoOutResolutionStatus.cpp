@@ -24,6 +24,15 @@ static bool Rejects(int handle, VideoOutResolutionStatus* status) {
     return false;
 }
 
+static bool RejectsOutputStatus(int handle, VideoOutOutputStatus* status) {
+    try {
+        sceVideoOutGetOutputStatus(handle, status);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 int main() {
     VideoOutTestEnvironment environment;
     int handle = 0;
@@ -47,6 +56,20 @@ int main() {
     VideoOutOutputStatus output{};
     Require(sceVideoOutGetOutputStatus(handle, &output) == 0);
     Require(status.refreshRate == output.refreshRate);
+    Require(status.refreshRate == 3 || status.refreshRate == 13);
+    Require(output.refreshRate == 3 || output.refreshRate == 13);
+    Require(output.resolution == 1 || output.resolution == 2);
+    Require(output.dynamicRange == 1 || output.dynamicRange == 2);
+    Require(output.flags == 0);
+    Require(output.reserved[0] == 0 && output.reserved[1] == 0 && output.reserved[2] == 0);
+
+    Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 0) == 0);
+    Require(sceVideoOutGetResolutionStatus(handle, &status) == 0);
+    Require(status.fullWidth == 1920 && status.fullHeight == 1080);
+    Require(status.paneWidth == status.fullWidth && status.paneHeight == status.fullHeight);
+    Require(status.refreshRate == 3);
+    Require(sceVideoOutGetOutputStatus(handle, &output) == 0);
+    Require(output.refreshRate == 3);
 
     std::array<std::byte, 96> vrr;
     vrr.fill(std::byte{0xff});
@@ -58,6 +81,14 @@ int main() {
     Require(sceVideoOutGetOutputStatusWithVrr(handle, nullptr) == static_cast<int>(0x80290002u));
     Require(sceVideoOutGetOutputStatusWithVrr(NEVER_OPENED_HANDLE, vrr.data()) == static_cast<int>(0x8029000Bu));
     Require(sceVideoOutGetOutputStatusWithVrr(-1, vrr.data()) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetOutputStatusWithVrr(0, vrr.data()) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetOutputStatusWithVrr(999, vrr.data()) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetOutputStatusWithVrr(0x7fffffff, vrr.data()) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetOutputStatusWithVrr(-1, nullptr) == static_cast<int>(0x80290002u));
+    Require(sceVideoOutGetOutputStatusWithVrr(0, nullptr) == static_cast<int>(0x80290002u));
+    Require(sceVideoOutGetOutputStatusWithVrr(NEVER_OPENED_HANDLE, nullptr) == static_cast<int>(0x80290002u));
+    Require(sceVideoOutGetOutputStatusWithVrr(999, nullptr) == static_cast<int>(0x80290002u));
+    Require(sceVideoOutGetOutputStatusWithVrr(0x7fffffff, nullptr) == static_cast<int>(0x80290002u));
     for (const auto byte : vrr) Require(byte == std::byte{0xff});
 
     Require(Rejects(handle, nullptr));
@@ -66,8 +97,16 @@ int main() {
     Require(Rejects(-1, &status));
     Require(Rejects(NEVER_OPENED_HANDLE, &status));
 
+    Require(RejectsOutputStatus(handle, nullptr));
+    Require(RejectsOutputStatus(-1, nullptr));
+    Require(RejectsOutputStatus(0, &output));
+    Require(RejectsOutputStatus(-1, &output));
+    Require(RejectsOutputStatus(NEVER_OPENED_HANDLE, &output));
+
     Require(sceVideoOutClose(handle) == 0);
     Require(Rejects(handle, &status));
+    Require(RejectsOutputStatus(handle, &output));
     Require(sceVideoOutGetOutputStatusWithVrr(handle, vrr.data()) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetOutputStatusWithVrr(handle, nullptr) == static_cast<int>(0x80290002u));
     LibcRunShutdown_nid_postfix();
 }
