@@ -1394,11 +1394,12 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
             input = 0;
         }
     }
-    *info = {};
-    info->matrix_id = matrix;
-    info->volume = volume;
-    info->dest_handle = dest;
-    info->dest_input_id = input;
+    Ngs2VoicePortInfo local{};
+    local.matrix_id = matrix;
+    local.volume = volume;
+    local.dest_handle = dest;
+    local.dest_input_id = input;
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -1412,7 +1413,7 @@ int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t voice_handle, uint32_t info_id, vo
     switch (info_id) {
         case SCE_NGS2_VOICE_INFO_CHANNELS: {
             if (info_size != sizeof(Ngs2VoiceChannelsInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            *static_cast<Ngs2VoiceChannelsInfo*>(info) = {voice.channels, 0};
+            if (!WriteGuest(static_cast<Ngs2VoiceChannelsInfo*>(info), Ngs2VoiceChannelsInfo{voice.channels, 0})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
             return SCE_NGS2_OK;
         }
         default: throw std::runtime_error("NGS2: voice info " + Ngs2Hex(info_id) + " is not implemented");
@@ -1425,11 +1426,12 @@ int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_
     const Ngs2VoiceAccess access(voice_handle);
     const auto* found = access.voice;
     if (found == nullptr && PS4_LIBRARY) {
-        *state_flags = 0;
+        if (!WriteGuest(state_flags, std::uint32_t{0})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
         return SCE_NGS2_ERROR_PS4_INVALID_VOICE_HANDLE;
     }
     if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
-    *state_flags = found->pendingPlay ? SCE_NGS2_VOICE_STATE_FLAG_INUSE : found->stateFlags;
+    const std::uint32_t flags = found->pendingPlay ? SCE_NGS2_VOICE_STATE_FLAG_INUSE : found->stateFlags;
+    if (!WriteGuest(state_flags, flags)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -1439,8 +1441,8 @@ int APS5_VABI sceNgs2VoiceGetOwner(uintptr_t voice_handle, uintptr_t* owner_rack
     const auto* found = access.voice;
     if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
     if (owner_rack == nullptr || voice_index == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *owner_rack = reinterpret_cast<Ngs2Handle>(found->rack);
-    *voice_index = static_cast<uint32_t>(found - found->rack->voices.data());
+    if (!WriteGuest(owner_rack, reinterpret_cast<Ngs2Handle>(found->rack))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (!WriteGuest(voice_index, static_cast<uint32_t>(found - found->rack->voices.data()))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -1455,9 +1457,11 @@ int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t voice_handle, uint32_t matrix_
     const auto* levels = &found->matrices[matrix_id];
     for (const auto& control : found->pendingControls)
         if (const auto* value = std::get_if<Ngs2MatrixControl>(&control); value && value->index == matrix_id) levels = &value->levels;
-    if (levels->empty()) *info = {};
-    info->num_levels = static_cast<std::uint32_t>(levels->size());
-    std::copy(levels->begin(), levels->end(), info->levels);
+    if (levels->empty()) {
+        if (!WriteGuest(info, Ngs2VoiceMatrixInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+        return SCE_NGS2_OK;
+    }
+    if (!WriteGuest(&info->num_levels, static_cast<std::uint32_t>(levels->size())) || !WriteGuestBytes(info->levels, levels->data(), levels->size() * sizeof(info->levels[0]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 

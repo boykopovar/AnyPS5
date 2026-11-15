@@ -18,8 +18,11 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -93,6 +96,105 @@ void TraceShaderRequestFailure(std::uint64_t token, const Submission& submission
     }
 }
 
+struct PendingMaterialize {
+    std::mutex mutex;
+    bool finished = false;
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
+    std::exception_ptr failure;
+};
+
+struct PendingMaterializes {
+    static constexpr std::size_t Limit = 4096;
+    static constexpr double CheapMs = 2.0;
+    std::mutex mutex;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, std::shared_ptr<PendingMaterialize>> byKey;
+    std::map<std::uint64_t, double> lastMs;
+};
+
+double ElapsedMs(std::chrono::steady_clock::time_point since) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - since).count();
+}
+
+PendingMaterializes& pendingMaterializes() {
+    static auto* pending = new PendingMaterializes();
+    return *pending;
+}
+
+}
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address) {
+    if (!AsyncDrawCompile()) return invocation.Materialize(*capture);
+    bool contended = false;
+    if (auto memoized = invocation.MaterializeIfMemoized(*capture, &contended)) return memoized;
+    auto& pending = pendingMaterializes();
+    bool cheap = false;
+    {
+        std::lock_guard lock(pending.mutex);
+        const auto found = pending.lastMs.find(address);
+        cheap = !contended && found != pending.lastMs.end() && found->second < PendingMaterializes::CheapMs;
+    }
+    if (cheap) {
+        const auto started = std::chrono::steady_clock::now();
+        auto result = invocation.Materialize(*capture);
+        const auto ms = ElapsedMs(started);
+        std::lock_guard lock(pending.mutex);
+        pending.lastMs[address] = ms;
+        return result;
+    }
+    const std::pair key{address, invocation.SnapshotKey(*capture)};
+    std::shared_ptr<PendingMaterialize> job;
+    bool started = false;
+    {
+        std::lock_guard lock(pending.mutex);
+        if (pending.byKey.size() >= PendingMaterializes::Limit) {
+            std::erase_if(pending.byKey, [](const auto& entry) {
+                std::lock_guard entryLock(entry.second->mutex);
+                return entry.second->finished;
+            });
+        }
+        auto& slot = pending.byKey[key];
+        if (slot == nullptr) {
+            slot = std::make_shared<PendingMaterialize>();
+            started = true;
+        }
+        job = slot;
+    }
+    if (started) {
+        const auto owned = OwnRecompileRequest(invocation.Request(), memory);
+        const auto rebound = std::make_shared<const ShaderRecompiler::PreparedShaderInvocation>(invocation.Rebound(owned->request));
+        SubmitLibraryPrebuild([job, owned, rebound, capture, address] {
+            std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
+            std::exception_ptr failure;
+            const auto started = std::chrono::steady_clock::now();
+            try {
+                result = rebound->Materialize(*capture);
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            {
+                const auto ms = ElapsedMs(started);
+                auto& registry = pendingMaterializes();
+                std::lock_guard lock(registry.mutex);
+                registry.lastMs[address] = ms;
+            }
+            {
+                std::lock_guard lock(job->mutex);
+                job->result = std::move(result);
+                job->failure = failure;
+                job->finished = true;
+            }
+        });
+    }
+    {
+        std::lock_guard lock(job->mutex);
+        if (!job->finished) throw DrawCompilePending("the draw's shader is still being specialized in the background");
+    }
+    {
+        std::lock_guard lock(pending.mutex);
+        if (const auto found = pending.byKey.find(key); found != pending.byKey.end() && found->second == job) pending.byKey.erase(found);
+    }
+    if (job->failure != nullptr) std::rethrow_exception(job->failure);
+    return job->result;
 }
 
 bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t i, const ShaderRecompiler::PreparedShaderInvocation& invocation, const ShaderRecompiler::RecompileRequest& request, PerformanceTimer& timing) {
@@ -192,7 +294,9 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     if (heapDraw) request.target.gpuResolvedImages = true;
     const auto invocationFor = [&] {
         try {
-            return InvocationFor(*program.snapshot, program.codeOffset, request);
+            return InvocationFor(*program.snapshot, program.codeOffset, request, AsyncDrawCompile());
+        } catch (const DrawCompilePending&) {
+            throw;
         } catch (...) {
             TraceShaderRequestFailure(context.traceToken, context.submission, context.packetOffset, program, std::current_exception());
             throw;
@@ -284,7 +388,9 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     }
     if (stageCapture.heapWords == nullptr) {
         try {
-            stageCapture.compiled = invocation.Materialize(*capture);
+            stageCapture.compiled = MaterializeInBackground(invocation, capture, request.context.memory, program.binary.codeAddress);
+        } catch (const DrawCompilePending&) {
+            throw;
         } catch (const std::exception& error) {
             TraceMaterializationFailure(context.traceToken, context.submission, context.packetOffset, i, "capture-or-materialize", std::current_exception());
             throw stageFailure(program, request, error, request.context.memory);
@@ -297,6 +403,8 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.userDataMask = capture->plan == nullptr || !capture->plan->srtPlanComplete ? ~std::uint64_t{0} : UserDataMask(program, context.vertexInfos[i], walked, *stageCapture.compiled);
     context.phaseTiming.Phase(DrawRowRecompile);
     return stageCapture.compiled;
+} catch (const DrawCompilePending&) {
+    throw;
 } catch (const std::exception& error) {
     if (!SkipRefusedDraws()) throw;
     throw RefusedDraw(context.programs[i].binary.codeAddress, error.what());

@@ -77,6 +77,7 @@ struct TextureCacheUse {
 };
 TextureCacheUse TextureCacheUsage();
 void OverrideCacheBudgetForTest(std::uint64_t bytes);
+void SampledFromStorageForTest(bool enabled);
 std::uint64_t SampledTextureCacheBudget(const Context& context);
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D);
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second);
@@ -199,6 +200,7 @@ struct HeapBufferPathCounts {
 };
 HeapBufferPathCounts HeapBufferPaths();
 std::uint64_t SampledTexturesCleared();
+std::uint64_t SampledTexturesImported();
 std::uint64_t SampledLookupKeyScans();
 std::uint64_t SampledLookupKeyProofs();
 std::uint64_t DrawInputCopies();
@@ -692,7 +694,7 @@ private:
         bool committedProved = false;
     };
     bool keepsTemplateRecords() const;
-    void captureValidation();
+    void captureValidation(bool spaceReusable);
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
     // the full walk's lookup (refreshOwnObjects). `viewUncompressed`: a storage-sourced view under

@@ -75,6 +75,9 @@ public:
     std::shared_ptr<const IrResourcePlan> LoadPlan() const;
     std::shared_ptr<const IrResourcePlan> PlanOrLoad() const;
     std::uint64_t VariantId() const;
+    [[nodiscard]] std::shared_ptr<const RecompileResult> MaterializeIfMemoized(const ResourceCapture& capture, bool* contended = nullptr) const;
+    [[nodiscard]] PreparedShaderInvocation Rebound(const RecompileRequest& request) const;
+    [[nodiscard]] std::uint64_t SnapshotKey(const ResourceCapture& capture) const;
 
 private:
     PreparedShaderInvocation(RecompileRequest request, const std::shared_ptr<const SourceHandle>& handle);

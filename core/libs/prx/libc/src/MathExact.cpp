@@ -634,7 +634,10 @@ long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quo
         result = std::remquo(x, y, &bits);
     }
     if (domain) errno = EDOM;
-    if (!std::isnan(result)) *quotient = bits < 0 ? -(-bits & 7) : (bits & 7);
+    if (!std::isnan(result)) {
+        const int low = bits < 0 ? -(-bits & 7) : (bits & 7);
+        GuestCopyOut_nid_no_patch(quotient, &low, sizeof(low));
+    }
     return result;
 }
 
@@ -672,11 +675,10 @@ long double APS5_VABI sqrtl_nid_postfix(long double x) {
 }
 
 long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
-    if (std::isnan(x)) {
-        *integral = x;
-        return x;
-    }
-    return std::modf(x, integral);
+    long double whole = x;
+    const long double fraction = std::isnan(x) ? x : std::modf(x, &whole);
+    GuestCopyOut_nid_no_patch(integral, &whole, sizeof(whole));
+    return fraction;
 }
 long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }
 
