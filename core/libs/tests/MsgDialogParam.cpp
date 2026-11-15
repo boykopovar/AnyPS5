@@ -113,6 +113,15 @@ int main() {
     param.setUserMessage(&boundaryText);
     parsed = MsgDialog::ParseParam(&param);
     Require(parsed.hasText && parsed.text == "ABCD", "text crossing into a guard page was not bounded");
+    guard[-1] = '\0';
+    UserMessage oneByteText{MsgDialog::ButtonTypeOk, 0, guard - 2};
+    param.setUserMessage(&oneByteText);
+    parsed = MsgDialog::ParseParam(&param);
+    Require(parsed.hasText && parsed.text == "C", "short NUL-terminated text at the readable page end was rejected");
+    UserMessage emptyBoundaryText{MsgDialog::ButtonTypeOk, 0, guard - 1};
+    param.setUserMessage(&emptyBoundaryText);
+    parsed = MsgDialog::ParseParam(&param);
+    Require(parsed.hasText && parsed.text.empty(), "empty text at the readable page end was rejected");
 
     UserMessage noText{MsgDialog::ButtonTypeOkCancel, 0, nullptr};
     param.setUserMessage(&noText);

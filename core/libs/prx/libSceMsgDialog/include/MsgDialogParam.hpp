@@ -59,13 +59,12 @@ inline ParsedParam ParseParam(const void* param) {
     std::memcpy(&msg, userBytes + 8, 8);
     parsed.hasUserMessage = true;
     parsed.buttonType = buttonType;
-    char firstBytes[4]{};
-    if (!ReadGuest(firstBytes, msg, sizeof(firstBytes))) return parsed;
-    parsed.hasText = true;
     const auto address = reinterpret_cast<std::uintptr_t>(msg);
     for (std::size_t i = 0; i < MaxMessageBytes && i <= UINTPTR_MAX - address; ++i) {
         char character = 0;
-        if (!ReadGuest(&character, reinterpret_cast<const void*>(address + i), sizeof(character)) || character == '\0') break;
+        if (!ReadGuest(&character, reinterpret_cast<const void*>(address + i), sizeof(character))) break;
+        parsed.hasText = true;
+        if (character == '\0') break;
         parsed.text.push_back(character);
     }
     return parsed;
