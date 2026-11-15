@@ -11016,11 +11016,6 @@ int APS5_VABI WKPageGetAddsVisitedLinks() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGetAllowsRemoteInspection() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI WKPageGetBackingScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11343,10 +11338,6 @@ int APS5_VABI WKPageSelectFindMatch() {
 }
 
 int APS5_VABI WKPageSetAddsVisitedLinks() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetAllowsRemoteInspection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
