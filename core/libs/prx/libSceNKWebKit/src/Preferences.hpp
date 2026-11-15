@@ -147,12 +147,14 @@ double APS5_VABI WKPreferencesGetInactiveMediaCaptureSteamRepromptIntervalInMinu
 double APS5_VABI WKPreferencesGetIncrementalRenderingSuppressionTimeout(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetInlineMediaPlaybackRequiresPlaysInlineAttribute(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetInspectorAdditionsEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetInspectorUsesWebKitUserInterface(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetInteractiveFormValidationEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetIntersectionObserverEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetInvisibleMediaAutoplayPermitted(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetIsAccessibilityIsolatedTreeEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetIsSecureContextAttributeEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetJavaEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetJavaEnabledForLocalFiles(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetJavaScriptCanAccessClipboard(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetJavaScriptCanOpenWindowsAutomatically(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetJavaScriptEnabled(const void* preferencesRef);
@@ -187,6 +189,7 @@ std::uint32_t APS5_VABI WKPreferencesGetMinimumFontSize(const void* preferencesR
 double APS5_VABI WKPreferencesGetMinimumZoomFontSize(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetMockCaptureDevicesEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetMockScrollbarsEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetModernMediaControlsEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetNeedsSiteSpecificQuirks(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetNeedsStorageAccessFromFileURLsQuirk(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetNewBlockInsideInlineModelEnabled(const void* preferencesRef);
@@ -214,6 +217,7 @@ bool APS5_VABI WKPreferencesGetResourceUsageOverlayVisible(const void* preferenc
 bool APS5_VABI WKPreferencesGetRestrictedHTTPResponseAccess(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetScrollingPerformanceLoggingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetSelectTrailingWhitespaceEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetSelectionPaintingWithoutSelectionGapsEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetServerTimingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetServiceControlsEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetShouldAllowUserInstalledFonts(const void* preferencesRef);
@@ -227,6 +231,8 @@ bool APS5_VABI WKPreferencesGetShouldSuppressKeyboardInputDuringProvisionalNavig
 bool APS5_VABI WKPreferencesGetShouldUseServiceWorkerShortTimeout(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetShowsToolTipOverTruncatedText(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetShowsURLsInToolTipsEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetSimpleLineLayoutDebugBordersEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetSimpleLineLayoutEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetSmartInsertDeleteEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetSnapshotAllPlugIns(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetSourceBufferChangeTypeEnabled(const void* preferencesRef);
@@ -253,10 +259,15 @@ bool APS5_VABI WKPreferencesGetUserTimingEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetVideoPlaybackRequiresUserGesture(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetViewGestureDebuggingEnabled(const void* preferencesRef);
 std::uint32_t APS5_VABI WKPreferencesGetVisibleDebugOverlayRegions(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetWebAnimationsCSSIntegrationEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetWebAnimationsEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetWebArchiveDebugModeEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetWebAudioEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetWebAuthenticationEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetWebAuthenticationLocalAuthenticatorEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetWebGLEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetWebRTCLegacyAPIEnabled(const void* preferencesRef);
+bool APS5_VABI WKPreferencesGetWebRTCMDNSICECandidatesEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetWebSQLDisabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetWebSecurityEnabled(const void* preferencesRef);
 bool APS5_VABI WKPreferencesGetWebShareEnabled(const void* preferencesRef);
@@ -346,6 +357,7 @@ void APS5_VABI WKPreferencesSetInactiveMediaCaptureSteamRepromptIntervalInMinute
 void APS5_VABI WKPreferencesSetIncrementalRenderingSuppressionTimeout(const void* preferencesRef, double timeout);
 void APS5_VABI WKPreferencesSetInlineMediaPlaybackRequiresPlaysInlineAttribute(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetInspectorAdditionsEnabled(const void* preferencesRef, bool enabled);
+void APS5_VABI WKPreferencesSetInspectorUsesWebKitUserInterface(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetInteractiveFormValidationEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetInternalDebugFeatureForKey(const void* preferencesRef, bool value, const void* internalDebugFeatureKey);
 void APS5_VABI WKPreferencesSetIntersectionObserverEnabled(const void* preferencesRef, bool flag);
@@ -353,6 +365,7 @@ void APS5_VABI WKPreferencesSetInvisibleMediaAutoplayPermitted(const void* prefe
 void APS5_VABI WKPreferencesSetIsAccessibilityIsolatedTreeEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetIsSecureContextAttributeEnabled(const void* preferencesRef, bool value);
 void APS5_VABI WKPreferencesSetJavaEnabled(const void* preferencesRef, bool value);
+void APS5_VABI WKPreferencesSetJavaEnabledForLocalFiles(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetJavaScriptCanAccessClipboard(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetJavaScriptCanOpenWindowsAutomatically(const void* preferencesRef, bool javaScriptCanOpenWindowsAutomatically);
 void APS5_VABI WKPreferencesSetJavaScriptEnabled(const void* preferencesRef, bool javaScriptEnabled);
@@ -388,6 +401,7 @@ void APS5_VABI WKPreferencesSetMinimumFontSize(const void* preferencesRef, std::
 void APS5_VABI WKPreferencesSetMinimumZoomFontSize(const void* preferencesRef, double size);
 void APS5_VABI WKPreferencesSetMockCaptureDevicesEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetMockScrollbarsEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetModernMediaControlsEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetNeedsSiteSpecificQuirks(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetNeedsStorageAccessFromFileURLsQuirk(const void* preferencesRef, bool needsQuirk);
 void APS5_VABI WKPreferencesSetNewBlockInsideInlineModelEnabled(const void* preferencesRef, bool value);
@@ -417,6 +431,7 @@ void APS5_VABI WKPreferencesSetRestrictedHTTPResponseAccess(const void* preferen
 void APS5_VABI WKPreferencesSetSansSerifFontFamily(const void* preferencesRef, const void* family);
 void APS5_VABI WKPreferencesSetScrollingPerformanceLoggingEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetSelectTrailingWhitespaceEnabled(const void* preferencesRef, bool enabled);
+void APS5_VABI WKPreferencesSetSelectionPaintingWithoutSelectionGapsEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetSerifFontFamily(const void* preferencesRef, const void* family);
 void APS5_VABI WKPreferencesSetServerTimingEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetServiceControlsEnabled(const void* preferencesRef, bool enabled);
@@ -431,6 +446,8 @@ void APS5_VABI WKPreferencesSetShouldSuppressKeyboardInputDuringProvisionalNavig
 void APS5_VABI WKPreferencesSetShouldUseServiceWorkerShortTimeout(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetShowsToolTipOverTruncatedText(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetShowsURLsInToolTipsEnabled(const void* preferencesRef, bool enabled);
+void APS5_VABI WKPreferencesSetSimpleLineLayoutDebugBordersEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetSimpleLineLayoutEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetSmartInsertDeleteEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetSnapshotAllPlugIns(const void* preferencesRef, bool value);
 void APS5_VABI WKPreferencesSetSourceBufferChangeTypeEnabled(const void* preferencesRef, bool enabled);
@@ -458,13 +475,29 @@ void APS5_VABI WKPreferencesSetUserTimingEnabled(const void* preferencesRef, boo
 void APS5_VABI WKPreferencesSetVideoPlaybackRequiresUserGesture(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetViewGestureDebuggingEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetVisibleDebugOverlayRegions(const void* preferencesRef, std::uint32_t visibleRegions);
+void APS5_VABI WKPreferencesSetWebAnimationsCSSIntegrationEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetWebAnimationsEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetWebArchiveDebugModeEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetWebAudioEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetWebAuthenticationEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetWebAuthenticationLocalAuthenticatorEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetWebGLEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetWebRTCLegacyAPIEnabled(const void* preferencesRef, bool flag);
+void APS5_VABI WKPreferencesSetWebRTCMDNSICECandidatesEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetWebSQLDisabled(const void* preferencesRef, bool value);
 void APS5_VABI WKPreferencesSetWebSecurityEnabled(const void* preferencesRef, bool enabled);
 void APS5_VABI WKPreferencesSetWebShareEnabled(const void* preferencesRef, bool flag);
 void APS5_VABI WKPreferencesSetXSSAuditorEnabled(const void* preferencesRef, bool value);
+bool APS5_VABI WKPreferencesGetAccessibilityObjectModelEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetAccessibilityObjectModelEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesGetAriaReflectionEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetAriaReflectionEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesGetIsITPDatabaseEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetIsITPDatabaseEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesGetIsNSURLSessionWebSocketEnabled(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetIsNSURLSessionWebSocketEnabled(const void* preferencesRef, bool enabled);
+bool APS5_VABI WKPreferencesUseLegacyTextAlignPositionedElementBehavior(const void* preferencesRef);
+void APS5_VABI WKPreferencesSetUseLegacyTextAlignPositionedElementBehavior(const void* preferencesRef, bool enabled);
+void APS5_VABI WKPreferencesSetApplicationChromeModeEnabled(const void* preferencesRef, bool enabled);
 
 }

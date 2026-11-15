@@ -1,5 +1,6 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdlib>
 
 static constexpr int ErrorArgument = static_cast<int>(0x80550003);
@@ -21,6 +22,8 @@ int main() {
     uint32_t state = 99;
     Require(sceNpGetNpReachabilityState(0, &state) == 0 && state == 0);
     Require(sceNpGetNpReachabilityState(0, nullptr) == ErrorArgument);
+    errno = 71;
+    Require(sceNpGetNpReachabilityState(0, reinterpret_cast<uint32_t*>(0x10)) == ErrorArgument && errno == 71);
     Require(sceNpCheckCallback() == 0);
     Require(sceNpUnregisterNpReachabilityStateCallback() == 0);
     Require(sceNpUnregisterNpReachabilityStateCallback() == ErrorNotRegistered);
@@ -38,6 +41,8 @@ int main() {
     Require(sceNpGetUserIdByAccountId(12345, nullptr) == ErrorArgument);
     bool isPlus = true;
     Require(sceNpIsPlusMember(0, nullptr) == ErrorArgument);
+    errno = 71;
+    Require(sceNpIsPlusMember(0, reinterpret_cast<bool*>(0x10)) == ErrorArgument && errno == 71);
     Require(sceNpIsPlusMember(0, &isPlus) == 0 && !isPlus);
     NpOnlineId onlineId{};
     onlineId.data[0] = 'p';
@@ -45,6 +50,9 @@ int main() {
     Require(sceNpGetGamePresenceStatus(nullptr, &presence) == ErrorArgument);
     Require(sceNpGetGamePresenceStatus(&onlineId, nullptr) == ErrorArgument);
     Require(sceNpGetGamePresenceStatus(&onlineId, &presence) == 0 && presence == 0);
+    Require(sceNpGetGamePresenceStatus(reinterpret_cast<const NpOnlineId*>(0x10), &presence) == ErrorArgument);
+    Require(sceNpGetGamePresenceStatus(&onlineId, reinterpret_cast<uint32_t*>(0x10)) == ErrorArgument);
+    Require(sceNpGetGamePresenceStatusA(1, reinterpret_cast<uint32_t*>(0x10)) == ErrorArgument);
     Require(sceNpCheckNpAvailability(1, &onlineId, nullptr) == ErrorUserNotFound);
     Require(sceNpCheckNpAvailability(1, nullptr, nullptr) == ErrorArgument);
     std::uint8_t available[3]{0x55, 0x55, 0x55};
