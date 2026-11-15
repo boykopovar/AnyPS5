@@ -1,11 +1,26 @@
+// https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucurr.cpp
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
+/*
+**********************************************************************
+* Copyright (c) 2002-2016, International Business Machines
+* Corporation and others.  All Rights Reserved.
+**********************************************************************
+*/
+
 #include "prx/libSceIcu/CurrencyBackend.hpp"
+#include "prx/libc/include/General.hpp"
 #include "unicode/ucurr.h"
 #include "unicode/uenum.h"
 #include "unicode/uloc.h"
+#include "unicode/ures.h"
 #include "ulocimp.h"
+#include "ureslocs.h"
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <type_traits>
+#include <utility>
 
 static_assert(sizeof(UBool) == 1);
 static_assert(sizeof(UErrorCode) == 4);
@@ -13,6 +28,99 @@ static_assert(sizeof(UDate) == 8);
 static_assert(std::is_same_v<UChar, char16_t>);
 
 namespace IcuCurrency {
+
+namespace {
+
+struct ResourceSet {
+    std::array<UResourceBundle*, 5> items{};
+    void Close() {
+        for (auto iterator = items.rbegin(); iterator != items.rend(); ++iterator) ures_close(std::exchange(*iterator, nullptr));
+    }
+};
+
+struct DateBound {
+    double value;
+    bool present;
+};
+
+DateBound ReadDate(ResourceSet& resources, const char* key, double absent, UErrorCode& status) {
+    if (U_FAILURE(status)) return {absent, false};
+    UErrorCode fieldStatus = U_ZERO_ERROR;
+    auto*& field = resources.items[4];
+    field = ures_getByKey(resources.items[3], key, nullptr, &fieldStatus);
+    DateBound result{absent, false};
+    if (fieldStatus != U_MISSING_RESOURCE_ERROR) {
+        if (U_SUCCESS(fieldStatus)) {
+            std::int32_t length = 0;
+            const auto* parts = ures_getIntVector(field, &length, &fieldStatus);
+            if (U_SUCCESS(fieldStatus) && parts && length == 2) {
+                const auto bits = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(parts[0])) << 32)
+                    | static_cast<std::uint32_t>(parts[1]);
+                result = {static_cast<double>(std::bit_cast<std::int64_t>(bits)), true};
+            } else if (U_SUCCESS(fieldStatus)) {
+                fieldStatus = U_INVALID_FORMAT_ERROR;
+            }
+        }
+        if (U_FAILURE(fieldStatus)) status = fieldStatus;
+    }
+    ures_close(std::exchange(field, nullptr));
+    return result;
+}
+
+struct HistoricalResult {
+    std::int32_t count = 0;
+    CodeResult selected;
+};
+
+HistoricalResult Historical(const char* locale, double date, std::int32_t index, std::int32_t capacity, bool select, UErrorCode& status) {
+    HistoricalResult result;
+    if (U_FAILURE(status)) return result;
+    auto region = ulocimp_getRegionForSupplementalData(locale, false, status);
+    if (U_FAILURE(status)) return result;
+    if (const auto delimiter = std::strchr(region.data(), '_')) region.truncate(delimiter - region.data());
+    UErrorCode localStatus = U_ZERO_ERROR;
+    ResourceSet resources;
+    try {
+        resources.items[0] = ures_openDirect(U_ICUDATA_CURR, "supplementalData", &localStatus);
+        resources.items[1] = ures_getByKey(resources.items[0], "CurrencyMap", nullptr, &localStatus);
+        resources.items[2] = ures_getByKey(resources.items[1], region.data(), nullptr, &localStatus);
+        const auto count = U_SUCCESS(localStatus) ? ures_getSize(resources.items[2]) : 0;
+        if (U_SUCCESS(localStatus) && select && (index <= 0 || index > count)) {
+            resources.Close();
+            return result;
+        }
+        for (std::int32_t item = 0; U_SUCCESS(localStatus) && item < count; ++item) {
+            resources.items[3] = ures_getByIndex(resources.items[2], item, nullptr, &localStatus);
+            const auto from = ReadDate(resources, "from", U_DATE_MIN, localStatus);
+            const auto to = ReadDate(resources, "to", U_DATE_MAX, localStatus);
+            if (U_SUCCESS(localStatus) && from.value <= date && (!to.present || date < to.value)) {
+                ++result.count;
+                if (select && result.count == index) {
+                    std::int32_t length = 0;
+                    const auto* code = ures_getStringByKey(resources.items[3], "id", &length, &localStatus);
+                    if (U_SUCCESS(localStatus)) {
+                        if (length != 3 || !code) NotImplemented_nid_no_patch("ucurr: non-ISO historical currency data");
+                        if (capacity > length) {
+                            std::copy_n(code, length, result.selected.text.data());
+                            result.selected.length = length;
+                            result.selected.written = length + 1;
+                        }
+                    }
+                    break;
+                }
+            }
+            ures_close(std::exchange(resources.items[3], nullptr));
+        }
+        if (status == U_ZERO_ERROR || localStatus != U_ZERO_ERROR) status = localStatus;
+        resources.Close();
+        return result;
+    } catch (...) {
+        resources.Close();
+        throw;
+    }
+}
+
+}
 
 void SetDefault_nid_no_patch(const char* locale, std::int32_t& error) {
     if (error > 0 || std::strcmp(uloc_getDefault(), locale) == 0) return;
@@ -38,9 +146,7 @@ CodeResult ForLocale_nid_no_patch(const char* locale, std::int32_t capacity, std
 
 CodeResult ForLocaleAndDate_nid_no_patch(const char* locale, double date, std::int32_t index, std::int32_t capacity, std::int32_t& error) {
     auto status = static_cast<UErrorCode>(error);
-    CodeResult result;
-    result.length = ucurr_forLocaleAndDate(locale, date, index, result.text.data(), std::min(capacity, 4), &status);
-    if (U_SUCCESS(status) && result.length > 0 && result.length < 4 && capacity > result.length) result.written = result.length + 1;
+    auto result = Historical(locale, date, index, capacity, true, status).selected;
     error = status;
     return result;
 }
@@ -89,9 +195,9 @@ std::int8_t IsAvailable_nid_no_patch(const char16_t* currency, double from, doub
 
 std::int32_t CountCurrencies_nid_no_patch(const char* locale, double date, std::int32_t& error) {
     auto status = static_cast<UErrorCode>(error);
-    const auto result = ucurr_countCurrencies(locale, date, &status);
+    const auto result = Historical(locale, date, 0, 0, false, status).count;
     error = status;
-    return result;
+    return U_SUCCESS(status) ? result : 0;
 }
 
 void* OpenISO_nid_no_patch(std::uint32_t type, std::int32_t& error) {
