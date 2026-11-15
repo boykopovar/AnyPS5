@@ -375,4 +375,22 @@ private:
     bool canShowMIMEType_ = true;
 };
 
+class AuthenticationDecisionListener final : public ObjectOf<ObjectType::AuthenticationDecisionListener> {
+public:
+    enum class Decision { None, Cancel, UseCredential, RejectProtectionSpace };
+    Decision decision = Decision::None;
+    Retained<Object> credential;
+};
+
+class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
+public:
+    std::string requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener;
+    int previousFailureCount = 0;
+    Retained<Object> proposedCredential;
+    Retained<Object> protectionSpace;
+    bool isForMainResource = false;
+    bool isInMainFrame = false;
+};
+
 }  // namespace NKWebKit

@@ -137,7 +137,7 @@ int main() {
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     KernelCpumask defaultAffinity = 0;
     Require(scePthreadAttrGetaffinity(&attr, &defaultAffinity) == SCE_OK);
-    Require(defaultAffinity == available);
+    Require(defaultAffinity == ~KernelCpumask{0});
 
     std::promise<void> release;
     auto released = release.get_future();

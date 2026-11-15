@@ -264,11 +264,14 @@ int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInfor
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
- if (SpecialHandle(handle)) {
-  std::memset(info, 0, sizeof(*info));
-  return PAD_OK;
+ PadTriggerEffectStateInformation localInfo{};
+ if (!SpecialHandle(handle)) {
+  PadGetTriggerEffectState_nid_postfix(PortOf(handle), localInfo.state);
  }
- PadGetTriggerEffectState_nid_postfix(PortOf(handle), info->state);
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(info, &localInfo, sizeof(localInfo));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return PAD_OK;
 }
 
@@ -409,11 +412,24 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
- WriteDefaultData(data);
+ PadData localData;
+ WriteDefaultData(&localData);
+ const int savedErrno = errno;
+ if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+  errno = savedErrno;
+  return PAD_ERROR_INVALID_ARG;
+ }
+ errno = savedErrno;
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
- *data = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
+ localData = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
+ const int savedErrno2 = errno;
+ if (!GuestCopyOut_nid_no_patch(data, &localData, sizeof(localData))) {
+  errno = savedErrno2;
+  return PAD_ERROR_INVALID_ARG;
+ }
+ errno = savedErrno2;
 
  return 0;
 }
@@ -571,7 +587,11 @@ int APS5_VABI scePadVrControllerSetTriggerEffects(std::int32_t leftHandle, std::
 int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (remote == nullptr) return PAD_ERROR_INVALID_ARG;
- *remote = false;
+ const bool isRemote = false;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(remote, &isRemote, sizeof(isRemote));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
  return 0;
 }
 
@@ -1133,7 +1153,13 @@ int APS5_VABI scePadResetOrientationForTracker(std::int32_t handle) {
 int APS5_VABI scePadGetMotionTimerUnit(std::int32_t handle, float* unit) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (unit == nullptr) return PAD_ERROR_INVALID_ARG;
-    *unit = 0.0f;
+    const float localUnit = 0.0f;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(unit, &localUnit, sizeof(localUnit))) {
+        errno = savedErrno;
+        return PAD_ERROR_INVALID_ARG;
+    }
+    errno = savedErrno;
     if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }

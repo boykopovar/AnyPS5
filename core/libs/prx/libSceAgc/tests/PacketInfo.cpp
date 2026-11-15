@@ -49,7 +49,7 @@ void testSystemSoftwareVersion() {
     expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, tooShort.data()); });
     expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(nullptr, packet.data()); });
     expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, nullptr); });
-    expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10000}), packet.data()); });
+    expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), packet.data()); });
     for (const auto header : {0x80000000u, 0x3fff1000u, 0x40001000u, 0x00027600u}) {
         std::array<std::uint32_t, 3> invalidHeader{header, 0xbeefcafeu, 0};
         expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, invalidHeader.data()); });
@@ -76,8 +76,8 @@ void testDataPacketPayloadAddress() {
 
     expectFailure([&] { sceAgcGetDataPacketPayloadAddress(nullptr, packet.data(), 1); });
     expectFailure([&] { sceAgcGetDataPacketPayloadAddress(&addr, nullptr, 1); });
-    expectFailure([&] { sceAgcGetDataPacketPayloadAddress(reinterpret_cast<std::uint32_t**>(std::uintptr_t{0x10000}), packet.data(), 1); });
-    expectFailure([&] { sceAgcGetDataPacketPayloadAddress_0090(reinterpret_cast<std::uint32_t**>(std::uintptr_t{0x10000}), packet.data(), 1); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadAddress(reinterpret_cast<std::uint32_t**>(std::uintptr_t{0x10}), packet.data(), 1); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadAddress_0090(reinterpret_cast<std::uint32_t**>(std::uintptr_t{0x10}), packet.data(), 1); });
 }
 
 void testDataPacketPayloadRange() {
@@ -97,7 +97,7 @@ void testDataPacketPayloadRange() {
 
     expectFailure([&] { sceAgcGetDataPacketPayloadRange(nullptr, packet.data(), 1); });
     expectFailure([&] { sceAgcGetDataPacketPayloadRange(&range, nullptr, 1); });
-    expectFailure([&] { sceAgcGetDataPacketPayloadRange(reinterpret_cast<SceAgcMemoryRange*>(std::uintptr_t{0x10000}), packet.data(), 1); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadRange(reinterpret_cast<SceAgcMemoryRange*>(std::uintptr_t{0x10}), packet.data(), 1); });
 }
 
 void testRejections() {

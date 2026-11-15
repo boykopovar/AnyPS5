@@ -10,6 +10,12 @@
 
 - [Png.cpp](../../../core/libs/prx/libcairo/Png.cpp) - console malformed-PNG status is unmeasured. Cairo 1.18.0 maps `CAIRO_STATUS_PNG_ERROR` to a no-memory error surface, so an invalid PNG CRC reports `CAIRO_STATUS_NO_MEMORY`. Later Cairo versions provide a distinct PNG-error surface; that change is not backported.
 
+- [SurfacePattern.cpp](../../../core/libs/prx/libcairo/SurfacePattern.cpp) - console behaviour of `cairo_pattern_create_for_surface`, `cairo_set_source` and `cairo_mask` is unmeasured. They forward to the bundled Cairo 1.18.0: a null or failed surface gives a pattern in that error, and a null or failed pattern puts the context in that error and draws nothing; a null context reaches Cairo unchanged. Sony's `CAIRO_STATUS_NULL_SURFACE_IMAGE` patch changes only the span renderer for a solid mask. `cairo_mask` never composites through it here: the mesh and surface patterns these exports create are not solid, and a surface pattern keeps `CAIRO_EXTEND_NONE` while `cairo_pattern_set_extend` is a stub, so Cairo does not turn the mask into a paint.
+
+- [GlyphDrawing.cpp](../../../core/libs/prx/libcairo/GlyphDrawing.cpp) - console behaviour of `cairo_show_glyphs` and `cairo_glyph_path` is unmeasured. They forward to the bundled Cairo 1.18.0, which draws or traces the glyphs with the context's current scaled font. Without an explicit `cairo_select_font_face` call that is Cairo's default toy face, and this build has no FreeType font backend: the toy face falls back to Cairo's built-in twin font, where the console's Cairo, which exports the FreeType and fontconfig `cairo_ft_*` functions, would resolve it through FreeType to a system font. Glyph shapes, coverage and paths therefore differ from the console. A glyph index above `ULONG_MAX` throws through `NotImplemented_nid_no_patch` on hosts whose `unsigned long` is 32 bits, because Cairo's `cairo_glyph_t` cannot hold it there.
+
+- [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) and [ContextFontOptions.cpp](../../../core/libs/prx/libcairo/ContextFontOptions.cpp) - console behaviour of `cairo_set_font_options` is unmeasured. It copies the four values these exports can set into a bundled Cairo 1.18.0 options object and forwards it; the fields no export sets keep Cairo's defaults. A null options pointer gives `CAIRO_STATUS_NULL_POINTER` and the failed-allocation object gives `CAIRO_STATUS_NO_MEMORY`, as Cairo answers; a null context reaches Cairo unchanged. With the twin font only antialiasing and hint style change the drawn glyphs.
+
 - [Mesh.cpp](../../../core/libs/prx/libcairo/Mesh.cpp) - console equivalence of mesh construction, automatic patch completion, error states and rasterization is unmeasured. The seven exports use the bundled Cairo 1.18.0 pattern objects and mesh implementation. Null or foreign pattern pointers reach Cairo unchanged.
 
 ### Functional font options
@@ -20,6 +26,10 @@
 
 - [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
 
+### Functional toy-font text
+
+- [ToyText.cpp](../../../core/libs/prx/libcairo/ToyText.cpp) implements `cairo_select_font_face`, `cairo_set_font_size` and `cairo_show_text` as guest-ABI thunks to the pinned Cairo 1.18.0 image backend. The public C prototypes use an opaque context pointer, optional NUL-terminated family name, 32-bit slant/weight enums, a double font size and UTF-8 text. Non-null guest strings are copied through `CopyGuestString_nid_no_patch`, with a 1 MiB limit; unreadable, oversized or unterminated strings use the existing `NotImplemented_nid_no_patch` guest failure path instead of crashing native Cairo, and the caller's errno is preserved. A null family or text is forwarded unchanged; font-face or text errors on otherwise valid inputs are Cairo's own. Other invalid context pointers still follow native Cairo's undefined behavior. Console behavior is unmeasured. Source-linked tests compare raster pixels and text advances with independent calls to the pinned backend.
+
 ### Callable exports
 
 - [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - The remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
@@ -28,25 +38,20 @@
 | --- | --- |
 | `cairo_scaled_font_get_font_face` | `+BL3-h8zGDo` |
 | `cairo_paint` | `+PEo5Z7DOlY` |
-| `cairo_set_font_options` | `-aqFIBn0h78` |
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
-| `cairo_glyph_path` | `54HrgUIQHOk` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
 | `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
 | `cairo_pattern_reference` | `6qRL52tLOII` |
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
-| `cairo_set_font_size` | `A-0StSi2AwA` |
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
-| `cairo_mask` | `D1KYCZ80Sac` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
-| `cairo_show_glyphs` | `FnhwGKKZOjU` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_font_face_destroy` | `IgBFcd4cF28` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
@@ -56,14 +61,12 @@
 | `cairo_fill` | `Ndvm8s28Gyc` |
 | `cairo_pop_group_to_source` | `Oyzf6kDk6Ns` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
-| `cairo_pattern_create_for_surface` | `Q6xyruheFCE` |
 | `cairo_arc` | `R0TePTSHd2k` |
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
-| `cairo_set_source` | `bU0QXekwNes` |
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
 | `cairo_fill_preserve` | `dewyjTlk+u8` |
@@ -74,12 +77,10 @@
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_push_group` | `hlh15JjNtWg` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
-| `cairo_select_font_face` | `ldk9m5h+-no` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
-| `cairo_show_text` | `psdqLsaPnkk` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
