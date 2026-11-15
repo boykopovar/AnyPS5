@@ -1,8 +1,11 @@
 #include "prx/libScePngDec/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
 #include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +17,19 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
+
+static void* gTamperContext = nullptr;
+static std::uintptr_t gWatchReadStart = 0;
+static std::uintptr_t gWatchReadEnd = 0;
+
+static void TamperContextOnRead(std::uintptr_t address, std::size_t) {
+    errno = 99;
+    if (gTamperContext && address >= gWatchReadStart && address < gWatchReadEnd) {
+        std::memset(static_cast<std::uint8_t*>(gTamperContext) + sizeof(void*), 0, 16);
+    }
+}
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
@@ -425,6 +441,8 @@ static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPn
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80690001);
     constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80690002);
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80690003);
@@ -434,10 +452,14 @@ int main() {
     constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80690012);
 
     const PngDecCreateParam param{sizeof(PngDecCreateParam), 0, 1920};
+    errno = 71;
     const std::int32_t memorySize = scePngDecQueryMemorySize(&param);
     Require(memorySize == 69264);
+    Require(errno == 71);
     Require(scePngDecQueryMemorySize(nullptr) == invalidAddr);
+    errno = 71;
     Require(scePngDecQueryMemorySize(reinterpret_cast<const PngDecCreateParam*>(0x10)) == invalidAddr);
+    Require(errno == 71);
     const PngDecCreateParam badSize{sizeof(PngDecCreateParam) - 1, 0, 1920};
     Require(scePngDecQueryMemorySize(&badSize) == invalidSize);
     const PngDecCreateParam badAttribute{sizeof(PngDecCreateParam), 2, 1920};
@@ -468,14 +490,18 @@ int main() {
     Require(scePngDecCreate(&param, reinterpret_cast<void*>(0x10), static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize) - 1, &handle) == invalidSize);
     Require(handle == nullptr);
+    errno = 71;
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == 0);
+    Require(errno == 71);
     Require(reinterpret_cast<std::uintptr_t>(handle) % 16 == 0);
     Require(static_cast<unsigned char*>(handle) >= unaligned && static_cast<unsigned char*>(handle) < unaligned + 16);
 
     const std::vector<std::uint8_t> rgbPng = RgbPng();
     PngDecImageInfo info{};
     const PngDecParseParam parse{rgbPng.data(), static_cast<std::uint32_t>(rgbPng.size()), 0};
+    errno = 71;
     Require(scePngDecParseHeader(&parse, &info) == 0);
+    Require(errno == 71);
     Require(info.image_width == 3 && info.image_height == 2 && info.color_space == 3 && info.bit_depth == 8 && info.image_flag == 0);
     const PngDecParseParam parsePalette{PALETTE_TRNS, sizeof(PALETTE_TRNS), 0};
     Require(scePngDecParseHeader(&parsePalette, &info) == 0);
@@ -681,14 +707,24 @@ int main() {
     Check16BitImage(handle, deepHandle, GRAY_ALPHA16, {0x12, 0x12, 0x12, 0xDE, 0xAB, 0xAB, 0xAB, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x80}, 18, 0);
     Check16BitImage(handle, deepHandle, RGBA16, {0x12, 0x56, 0x9A, 0x0D, 0xAB, 0x20, 0xEE, 0xFF, 0, 0x80, 0xFF, 0, 0xFF, 1, 0x7F, 0x80}, 19, 0);
     decode = DecodeParam(rgbPng, image);
+    errno = 71;
     Require(scePngDecDecode(deepHandle, &decode, &info) == (3 << 16 | 2));
+    Require(errno == 71);
+    errno = 71;
     Require(scePngDecDelete(deepHandle) == 0);
+    Require(errno == 71);
 
     CheckChunkRules(handle, rgbPng);
 
     Require(scePngDecDelete(nullptr) == invalidHandle);
     Require(scePngDecDelete(static_cast<unsigned char*>(handle) + 1) == invalidHandle);
     Require(scePngDecDelete(reinterpret_cast<void*>(0x20)) == invalidHandle);
+    errno = 71;
+    Require(scePngDecDecodeWithInputControl(handle, nullptr, &info) == invalidAddr);
+    Require(errno == 71);
+    errno = 71;
+    Require(scePngDecDecodeWithInputControl(handle, reinterpret_cast<const PngDecInputControlParam*>(0x10), &info) == invalidAddr);
+    Require(errno == 71);
     Require(scePngDecDelete(handle) == 0);
     Require(scePngDecDelete(handle) == invalidHandle);
     Require(scePngDecDecode(handle, &decode, &info) == invalidHandle);
@@ -697,5 +733,27 @@ int main() {
         CheckDimensionReporting(dimension, 1);
         CheckDimensionReporting(1, dimension);
     }
+    {
+        std::vector<unsigned char> tamperedMemory(static_cast<std::size_t>(memorySize) + 16);
+        void* tamperedHandle = nullptr;
+        Require(scePngDecCreate(&param, tamperedMemory.data(), static_cast<std::uint32_t>(memorySize), &tamperedHandle) == 0);
+        std::vector<std::uint8_t> tamperedImage(3 * 2 * 4, 0xCC);
+        const PngDecDecodeParam tamperedDecode = DecodeParam(rgbPng, tamperedImage);
+        gTamperContext = tamperedHandle;
+        gWatchReadStart = reinterpret_cast<std::uintptr_t>(rgbPng.data());
+        gWatchReadEnd = gWatchReadStart + rgbPng.size();
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(TamperContextOnRead);
+        info = {};
+        errno = 71;
+        Require(scePngDecDecode(tamperedHandle, &tamperedDecode, &info) == (3 << 16 | 2));
+        Require(errno == 71);
+        gTamperContext = nullptr;
+        gWatchReadStart = 0;
+        gWatchReadEnd = 0;
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        Require(scePngDecDelete(tamperedHandle) == 0);
+    }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

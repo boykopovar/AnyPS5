@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -43,6 +44,25 @@ static void RequireQueued(std::uint64_t reason, std::source_location location = 
 
 static int allocationsBeforeFailure = -1;
 static int liveBlocks = 0;
+struct LiveAllocation {
+    void* pointer;
+    std::size_t size;
+};
+static std::array<LiveAllocation, 64> liveAllocations{};
+static int recordedAllocations = 0;
+static int recordedReleases = 0;
+static bool checkReleasedData = false;
+static int throwReleaseAfter = 0;
+struct ReleaseFailure {};
+
+static void RecordAllocation(void* pointer, std::size_t size) {
+    if (!pointer) return;
+    auto slot = std::find_if(liveAllocations.begin(), liveAllocations.end(), [](const LiveAllocation& entry) { return !entry.pointer; });
+    Require(slot != liveAllocations.end());
+    *slot = {pointer, size};
+    ++liveBlocks;
+    ++recordedAllocations;
+}
 
 static bool FailAllocation() {
     if (allocationsBeforeFailure < 0) return false;
@@ -52,19 +72,30 @@ static bool FailAllocation() {
 static void* APS5_VABI Allocate(std::size_t bytes) {
     if (FailAllocation()) return nullptr;
     void* const block = std::malloc(bytes ? bytes : 1);
-    if (block) ++liveBlocks;
+    RecordAllocation(block, bytes ? bytes : 1);
     return block;
 }
 
 static void APS5_VABI Release(void* block) {
-    if (block) --liveBlocks;
+    if (block) {
+        const auto slot = std::find_if(liveAllocations.begin(), liveAllocations.end(), [block](const LiveAllocation& entry) { return entry.pointer == block; });
+        Require(slot != liveAllocations.end());
+        if (checkReleasedData) {
+            const auto* bytes = static_cast<const unsigned char*>(block);
+            Require(std::all_of(bytes, bytes + slot->size, [](unsigned char byte) { return byte == 0; }));
+        }
+        *slot = {};
+        --liveBlocks;
+        ++recordedReleases;
+    }
     std::free(block);
+    if (block && throwReleaseAfter > 0 && --throwReleaseAfter == 0) throw ReleaseFailure{};
 }
 
 static void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t bytes) {
     if (FailAllocation()) return nullptr;
     void* const block = std::calloc(count ? count : 1, bytes ? bytes : 1);
-    if (block) ++liveBlocks;
+    RecordAllocation(block, (count ? count : 1) * (bytes ? bytes : 1));
     return block;
 }
 
@@ -150,6 +181,135 @@ static int APS5_VABI CustomFinal(EvpMdContext* context, unsigned char* digest) {
 static int APS5_VABI CustomCleanup(EvpMdContext*) {
     ++customCleanups;
     return 1;
+}
+
+enum class FailureStage { None, Init, Update, Final, Cleanup };
+struct CallbackFailure {
+    FailureStage stage;
+};
+static FailureStage failureStage = FailureStage::None;
+static int failureCall = 0;
+static std::array<int, 5> stageCalls{};
+static EvpMdContext* failedCleanupContext = nullptr;
+static int repeatedFailedCleanup = 0;
+
+static void MaybeFail(FailureStage stage, EvpMdContext* context) {
+    const int call = ++stageCalls[static_cast<std::size_t>(stage)];
+    if (stage == FailureStage::Cleanup && context == failedCleanupContext) ++repeatedFailedCleanup;
+    if (stage != failureStage || call != failureCall) return;
+    if (stage == FailureStage::Cleanup) failedCleanupContext = context;
+    throw CallbackFailure{stage};
+}
+
+static int APS5_VABI FailingInit(EvpMdContext* context) {
+    CustomInit(context);
+    MaybeFail(FailureStage::Init, context);
+    return 1;
+}
+
+static int APS5_VABI FailingUpdate(EvpMdContext* context, const void* data, std::size_t length) {
+    MaybeFail(FailureStage::Update, context);
+    return CustomUpdate(context, data, length);
+}
+
+static int APS5_VABI FailingFinal(EvpMdContext* context, unsigned char* digest) {
+    MaybeFail(FailureStage::Final, context);
+    return CustomFinal(context, digest);
+}
+
+static int APS5_VABI FailingCleanup(EvpMdContext* context) {
+    MaybeFail(FailureStage::Cleanup, context);
+    return CustomCleanup(context);
+}
+
+static void CheckOneShotCleanup(bool hmac, FailureStage stage, int call, int releaseFailure = 0, bool invalidInput = false, bool longKey = false) {
+    Require(liveBlocks == 0);
+    recordedAllocations = recordedReleases = 0;
+    checkReleasedData = true;
+    throwReleaseAfter = releaseFailure;
+    failureStage = stage;
+    failureCall = call;
+    stageCalls = {};
+    failedCleanupContext = nullptr;
+    repeatedFailedCleanup = 0;
+    EvpMd custom{};
+    custom.type = 12345;
+    custom.mdSize = 4;
+    custom.init = FailingInit;
+    custom.update = FailingUpdate;
+    custom.finalize = FailingFinal;
+    custom.cleanup = FailingCleanup;
+    custom.blockSize = 64;
+    custom.contextSize = 16;
+    const EvpMd* method = invalidInput || (releaseFailure != 0 && stage == FailureStage::None) ? EVP_sha256_nid_postfix() : &custom;
+    std::array<unsigned char, 66> output;
+    output.fill(0xa5);
+    unsigned int length = 0x12345678;
+    const std::string key(longKey ? 131 : 1, 'k');
+    bool caughtCallback = false, caughtInput = false, caughtRelease = false;
+    try {
+        if (hmac) {
+            Require(HMAC_nid_postfix(method, key.data(), static_cast<int>(key.size()), invalidInput ? nullptr : reinterpret_cast<const unsigned char*>("x"),
+                1, output.data() + 1, &length) == output.data() + 1);
+        } else {
+            Require(EVP_Digest_nid_postfix(invalidInput ? nullptr : "x", 1, output.data() + 1, &length, method, nullptr) == 1);
+        }
+    } catch (const CallbackFailure& failure) {
+        Require(failure.stage == stage);
+        caughtCallback = true;
+    } catch (const std::invalid_argument&) {
+        caughtInput = true;
+    } catch (const ReleaseFailure&) {
+        caughtRelease = true;
+    }
+    checkReleasedData = false;
+    const int expected = !hmac ? 1 : longKey && call == 1 && (stage == FailureStage::Final || stage == FailureStage::Cleanup) ? 1
+        : invalidInput || releaseFailure != 0 ? 3
+        : stage == FailureStage::Init || stage == FailureStage::Update ? std::min(call, 3) : 3;
+    if (recordedAllocations != expected || recordedReleases != expected || liveBlocks != 0) {
+        std::fprintf(stderr, "one-shot digest cleanup failed: hmac=%d stage=%d call=%d allocations=%d releases=%d live=%d\n",
+            hmac, static_cast<int>(stage), call, recordedAllocations, recordedReleases, liveBlocks);
+        Require(false);
+    }
+    Require(std::all_of(liveAllocations.begin(), liveAllocations.end(), [](const LiveAllocation& entry) { return !entry.pointer; }));
+    Require(caughtInput == invalidInput);
+    Require(caughtCallback == (!invalidInput && stage != FailureStage::None));
+    Require(caughtRelease == (!invalidInput && stage == FailureStage::None && releaseFailure != 0));
+    Require(output.front() == 0xa5 && output.back() == 0xa5);
+    if (invalidInput || stage == FailureStage::Init || stage == FailureStage::Update) {
+        Require(std::all_of(output.begin(), output.end(), [](unsigned char byte) { return byte == 0xa5; }));
+        Require(length == 0x12345678);
+    }
+    Require(repeatedFailedCleanup == 0);
+    if (method == &custom) {
+        const int expectedCleanups = !hmac ? 1 : longKey ? stage == FailureStage::None ? 5
+            : stage == FailureStage::Update ? 4 : 1 : stage == FailureStage::Init || stage == FailureStage::Update ? std::min(call, 3)
+            : stage == FailureStage::Final ? call == 1 ? 3 : 4 : stage == FailureStage::Cleanup && call == 1 ? 3 : 4;
+        Require(stageCalls[4] == expectedCleanups);
+    }
+    if (releaseFailure != 0) Require(throwReleaseAfter == 0);
+    Require(ERR_peek_error_nid_postfix() == 0);
+}
+
+static void OneShotCleanup() {
+    CheckOneShotCleanup(true, FailureStage::None, 0, 0, false, true);
+    CheckOneShotCleanup(true, FailureStage::Update, 4, 0, false, true);
+    CheckOneShotCleanup(true, FailureStage::Final, 1, 0, false, true);
+    CheckOneShotCleanup(true, FailureStage::Cleanup, 1, 0, false, true);
+    for (const bool hmac : {false, true}) {
+        CheckOneShotCleanup(hmac, FailureStage::None, 0);
+        CheckOneShotCleanup(hmac, FailureStage::None, 0, 0, true);
+        CheckOneShotCleanup(hmac, FailureStage::None, 0, 1, true);
+        for (const auto stage : {FailureStage::Init, FailureStage::Update, FailureStage::Final, FailureStage::Cleanup}) {
+            const int calls = !hmac ? 1 : stage == FailureStage::Init ? 2 : stage == FailureStage::Update ? 3
+                : stage == FailureStage::Final ? 2 : 4;
+            for (int call = 1; call <= calls; ++call) CheckOneShotCleanup(hmac, stage, call);
+        }
+        CheckOneShotCleanup(hmac, FailureStage::Update, hmac ? 3 : 1, 1);
+        CheckOneShotCleanup(hmac, FailureStage::Cleanup, 1, 1);
+        for (int release = 1; release <= (hmac ? 3 : 1); ++release)
+            CheckOneShotCleanup(hmac, FailureStage::None, 0, release);
+    }
 }
 
 int main() {
@@ -433,5 +593,6 @@ int main() {
         RequireQueued(65);
         Require(allocationsBeforeFailure == -1 && liveBlocks == 0);
     }
+    OneShotCleanup();
     return 0;
 }

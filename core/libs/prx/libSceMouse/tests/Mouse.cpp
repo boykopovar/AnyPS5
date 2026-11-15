@@ -217,6 +217,7 @@ int main() {
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].buttons == 0);
 
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, nullptr) == MOUSE_ERROR_INVALID_ARG);
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, reinterpret_cast<std::int32_t*>(0x10)) == MOUSE_ERROR_INVALID_ARG);
     Require(sceMouseDebugGetDeviceId(42, &deviceId) == MOUSE_ERROR_INVALID_HANDLE && deviceId == -1);
     Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == MOUSE_DEVICE_ID);
     MouseInputEvent disconnectEvent{};

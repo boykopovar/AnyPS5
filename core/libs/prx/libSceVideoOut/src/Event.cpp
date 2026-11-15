@@ -3,6 +3,7 @@
 #include <chrono>
 #include <mutex>
 #include <stdexcept>
+#include <cerrno>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -197,12 +198,25 @@ int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
 
 int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data) {
     if (ev == nullptr || data == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
-    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
-    uint64_t eventData = static_cast<uint64_t>(ev->data) >> 16u;
-    if (ev->ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) && (static_cast<uint64_t>(ev->data) & 0x8000000000000000ULL) != 0) {
+    KernelEvent localEv{};
+    const int savedErrno = errno;
+    const bool evCopied = GuestCopyIn_nid_no_patch(&localEv, ev, sizeof(localEv));
+    if (!evCopied) {
+        errno = savedErrno;
+        return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    }
+    if (localEv.filter != EVFILT_VIDEO_OUT) {
+        errno = savedErrno;
+        return VIDEO_OUT_ERROR_INVALID_EVENT;
+    }
+    uint64_t eventData = static_cast<uint64_t>(localEv.data) >> 16u;
+    if (localEv.ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) && (static_cast<uint64_t>(localEv.data) & 0x8000000000000000ULL) != 0) {
         eventData |= 0xffff000000000000ULL;
     }
-    *data = static_cast<int64_t>(eventData);
+    const int64_t outVal = static_cast<int64_t>(eventData);
+    const bool dataCopied = GuestCopyOut_nid_no_patch(data, &outVal, sizeof(outVal));
+    errno = savedErrno;
+    if (!dataCopied) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     return 0;
 }
 

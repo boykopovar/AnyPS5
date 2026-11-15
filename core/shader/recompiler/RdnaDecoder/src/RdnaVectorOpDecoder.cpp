@@ -841,6 +841,7 @@ bool isVop1FloatSourceOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VExpF32:
         case RdnaOpcode::VLogF32:
         case RdnaOpcode::VRsqF32:
+        case RdnaOpcode::VRsqClampF32:
         case RdnaOpcode::VSqrtF32:
         case RdnaOpcode::VRcpF16:
         case RdnaOpcode::VSqrtF16:
@@ -897,6 +898,7 @@ bool isVop1FloatResultOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VExpF32:
         case RdnaOpcode::VLogF32:
         case RdnaOpcode::VRsqF32:
+        case RdnaOpcode::VRsqClampF32:
         case RdnaOpcode::VSqrtF32:
         case RdnaOpcode::VRcpF16:
         case RdnaOpcode::VSqrtF16:
@@ -1130,25 +1132,25 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VFfbhU32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VBfrevB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtF32F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtF16I16, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), false},
-    {RdnaOpcode::VCvtI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
+    {RdnaOpcode::VCvtI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VCvtNormU16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VRcpF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VSqrtF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VRsqF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VLogF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VExpF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VFloorF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VCeilF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VTruncF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VRndneF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VFractF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VSinF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
-    {RdnaOpcode::VCosF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
+    {RdnaOpcode::VRcpF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VSqrtF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VRsqF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VLogF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VExpF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VFloorF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VCeilF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VTruncF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VRndneF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VFractF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VSinF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
+    {RdnaOpcode::VCosF16, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VFrexpMantF16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VFrexpExpI16F16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), true},
     {RdnaOpcode::VSatPkU8I16, sdwaSelFull(), sdwaSelWords(), sdwaSelFull(), false},
