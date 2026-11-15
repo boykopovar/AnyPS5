@@ -1,17 +1,71 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
         std::fprintf(stderr, "check failed at line %u\n", location.line());
         std::abort();
     }
+}
+
+static void CheckRingBufCheckoutNullBlockSize() {
+    std::array<std::uint8_t, 16> storage{};
+    NpRingBuf ring{};
+    _ZN3sce2np7RingBufC1Ev(&ring);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, storage.data(), storage.size()) == 0);
+
+    bool writeThrew = false;
+    try {
+        (void)_ZN3sce2np7RingBuf16CheckoutForWriteEPm(&ring, nullptr);
+    } catch (const std::invalid_argument&) {
+        writeThrew = true;
+    }
+    Require(writeThrew);
+
+    bool emptyReadThrew = false;
+    try {
+        (void)_ZN3sce2np7RingBuf15CheckoutForReadEPm(&ring, nullptr);
+    } catch (const std::invalid_argument&) {
+        emptyReadThrew = true;
+    }
+    Require(emptyReadThrew);
+    Require(ring.size == 0 && ring.readPointer == storage.data() && ring.writePointer == storage.data());
+
+    const std::array<std::uint8_t, 5> payload{1, 2, 3, 4, 5};
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&ring, payload.data(), payload.size()) == 0);
+    const auto* const savedRead = ring.readPointer;
+    const auto* const savedWrite = ring.writePointer;
+    const std::size_t savedSize = ring.size;
+
+    bool nonEmptyReadThrew = false;
+    try {
+        (void)_ZN3sce2np7RingBuf15CheckoutForReadEPm(&ring, nullptr);
+    } catch (const std::invalid_argument&) {
+        nonEmptyReadThrew = true;
+    }
+    Require(nonEmptyReadThrew);
+    Require(ring.size == savedSize && ring.readPointer == savedRead && ring.writePointer == savedWrite &&
+            ring.buf == storage.data() && ring.bufSize == storage.size());
+
+    std::size_t blockSize = 0;
+    const auto* const checkedOut = static_cast<const std::uint8_t*>(_ZN3sce2np7RingBuf15CheckoutForReadEPm(&ring, &blockSize));
+    Require(checkedOut != nullptr && blockSize == payload.size() &&
+            std::memcmp(checkedOut, payload.data(), payload.size()) == 0);
+
+    std::array<std::uint8_t, 5> readBack{};
+    Require(_ZN3sce2np7RingBuf4ReadEPvm(&ring, readBack.data(), readBack.size()) == 0 &&
+            readBack == payload && ring.size == 0);
+
+    _ZN3sce2np7RingBuf7DestroyEv(&ring);
+    _ZN3sce2np7RingBufD1Ev(&ring);
 }
 
 int main() {
@@ -41,4 +95,5 @@ int main() {
             }
         }
     }
+    CheckRingBufCheckoutNullBlockSize();
 }
