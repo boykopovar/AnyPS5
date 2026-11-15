@@ -199,7 +199,7 @@ bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
 
 template <std::size_t N>
 void CopyRsaOutputs(const LibreSsl3Rsa* rsa, const char* function, const char* nullMessage,
-    const std::pair<const void**, const void* LibreSsl3Rsa::*> (&fields)[N]) {
+    const std::pair<const void**, void* LibreSsl3Rsa::*> (&fields)[N]) {
     bool anyOutput = false;
     for (const auto& entry : fields) {
         if (entry.first != nullptr) {
@@ -221,7 +221,8 @@ void CopyRsaOutputs(const LibreSsl3Rsa* rsa, const char* function, const char* n
         if (!out)
             continue;
         const bool hadPrior = CopyGuestInPreservingErrno(previous[i], out);
-        if (!CopyGuestOutPreservingErrno(out, guestRsa.*(fields[i].second))) {
+        const void* const memberValue = guestRsa.*(fields[i].second);
+        if (!CopyGuestOutPreservingErrno(out, memberValue)) {
             for (std::size_t j = i; j > 0; --j) {
                 if (written[j - 1])
                     CopyGuestOutPreservingErrno(fields[j - 1].first, previous[j - 1]);
@@ -285,13 +286,20 @@ int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl::Bio* bio) {
 }
 
 void APS5_VABI RSA_get0_factors_nid_postfix(const LibreSsl3Rsa* rsa, const void** p, const void** q) {
-    CopyRsaOutputs(rsa, __func__, "RSA_get0_factors requires a key when outputs are requested",
-        {{p, &LibreSsl3Rsa::p}, {q, &LibreSsl3Rsa::q}});
+    const std::pair<const void**, void* LibreSsl3Rsa::*> fields[] = {
+        {p, &LibreSsl3Rsa::p},
+        {q, &LibreSsl3Rsa::q},
+    };
+    CopyRsaOutputs(rsa, __func__, "RSA_get0_factors requires a key when outputs are requested", fields);
 }
 
 void APS5_VABI RSA_get0_crt_params_nid_postfix(const LibreSsl3Rsa* rsa, const void** dmp1, const void** dmq1, const void** iqmp) {
-    CopyRsaOutputs(rsa, __func__, "RSA_get0_crt_params requires a key when outputs are requested",
-        {{dmp1, &LibreSsl3Rsa::dmp1}, {dmq1, &LibreSsl3Rsa::dmq1}, {iqmp, &LibreSsl3Rsa::iqmp}});
+    const std::pair<const void**, void* LibreSsl3Rsa::*> fields[] = {
+        {dmp1, &LibreSsl3Rsa::dmp1},
+        {dmq1, &LibreSsl3Rsa::dmq1},
+        {iqmp, &LibreSsl3Rsa::iqmp},
+    };
+    CopyRsaOutputs(rsa, __func__, "RSA_get0_crt_params requires a key when outputs are requested", fields);
 }
 
 }
