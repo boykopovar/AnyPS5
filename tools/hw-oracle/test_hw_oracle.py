@@ -930,6 +930,26 @@ class VulkanRuntimeTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "coarse"):
             hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], coarse=True, **MODES)
 
+    def test_cli_reports_rejected_runtime_settings_as_usage_errors(self):
+        os.environ["HW_ORACLE_VULKAN_RUNNER"] = str(self.runner)
+        body, rows = self.root / "body.s", self.root / "rows.txt"
+        body.write_text("s_nop 0", encoding="utf-8")
+        rows.write_text("1 2 3 4\n", encoding="utf-8")
+        argv = ["hw_oracle.py", str(body), str(rows)]
+        argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+        for selected, options, message in (("vulkan", ["--coarse"], "coarse has no meaning for the vulkan runtime"),
+                                           ("rocm", [], "HW_ORACLE_RUNTIME must be one of hsa, hip, vulkan")):
+            with self.subTest(runtime=selected):
+                with patch.dict(os.environ, {"HW_ORACLE_RUNTIME": selected}), patch("sys.argv", argv + options), \
+                        patch.object(hw_oracle, "assemble", side_effect=AssertionError("assembler called")), \
+                        contextlib.redirect_stdout(io.StringIO()) as output, \
+                        contextlib.redirect_stderr(io.StringIO()) as errors, \
+                        self.assertRaises(SystemExit) as exited:
+                    hw_oracle.main()
+                self.assertEqual(exited.exception.code, 2)
+                self.assertIn(f"error: {message}", errors.getvalue())
+                self.assertEqual(output.getvalue(), "")
+
     def test_target_needs_override_off_windows_and_probes_hip_on_windows(self):
         with patch.object(hw_oracle.os, "name", "posix"), \
                 patch.object(hw_oracle, "hip_runtime", side_effect=AssertionError("HIP probe")), \

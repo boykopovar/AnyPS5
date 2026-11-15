@@ -134,6 +134,8 @@ void SetHostImportWindow(std::uint64_t bytes);
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);
 std::uint64_t HostImportBudgetFor(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t configured, std::uint64_t liveBytes);
+bool HostImportsInHeapUsage(VkDriverId driver);
+VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysicalDeviceMemoryProperties& memory, VkPhysicalDeviceMemoryBudgetPropertiesEXT reported, std::uint64_t liveBytes, bool importsInUsage);
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling);
 void SetAddressCopyLimit(std::uint64_t bytes);
 void SetHostImportDeferredSettles(bool enabled);
@@ -216,6 +218,7 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+std::uint64_t RetiredImportSerial();
 void SetDeviceLocalFullForTests(bool full);
 std::uint64_t StagingShadowsRefused();
 
@@ -237,12 +240,15 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 // when synced, and the waiter targets the newest of them. Under APS5_PROFILE_DRAW CountLeaseOutcome
 // prints the [address-sync] leases line every 10 s from LeaseCounters (cumulative).
 bool SyncLeaseWork();
-void CountLeaseOutcome(bool synced, std::uint64_t batchSerial);
+void CountLeaseOutcome(bool synced, std::uint64_t batchSerial, bool writes);
 void FinishLeaseWork();
+void FinishLeaseWrites();
 bool LeaseWorkPending();
+bool LeaseWritesMayBePending();
 struct LeaseStats {
     std::uint64_t deferred = 0;
     std::uint64_t synced = 0;
+    std::uint64_t writing = 0;
     // Pin-contention waits made by guest threads (the waiter calls), how many of them finished the
     // newest lease batch, how many had to drain the whole recorder instead (no lease batch noted),
     // how many only dropped the cached address space (no GPU wait, see AddressSpaceStats), and
@@ -437,6 +443,8 @@ public:
         return false;
     }
     void MarkStagedWrites() const;
+    void NoteCarriedShadows(const Recorder& recorder) const;
+    static std::uint64_t CarriedShadowCopies();
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }

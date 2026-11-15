@@ -37,9 +37,6 @@ int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch(FreeType::GuestLibrary* lib
     const FT_Color nativeColor{color.blue, color.green, color.red, color.alpha};
     const FT_Library host = library ? library->host : nullptr;
     if (!host || !source || !target || !targetOffset) return FT_Bitmap_Blend(nullptr, nullptr, {}, nullptr, nullptr, nativeColor);
-    for (const auto& face : library->faces) {
-        if (target == &face->slot.bitmap) NotImplemented_nid_no_patch(__func__);
-    }
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, sizeof(*source));
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(target, sizeof(*target));
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(targetOffset, sizeof(*targetOffset));
@@ -53,8 +50,10 @@ int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch(FreeType::GuestLibrary* lib
     GuestArena::HostWrite pixelWrite(target->buffer, PixelBytes(*target));
     if (!targetWrite.Open() || !offsetWrite.Open() || (target->buffer && !pixelWrite.Open())) return FT_Err_Invalid_Argument;
     const FT_Error error = FT_Bitmap_Blend(host, &nativeSource, nativeSourceOffset, &nativeTarget, &nativeTargetOffset, nativeColor);
-    *target = {nativeTarget.rows, nativeTarget.width, nativeTarget.pitch, nativeTarget.buffer, nativeTarget.num_grays, nativeTarget.pixel_mode,
-               nativeTarget.palette_mode, nativeTarget.palette};
+    for (const auto& face : library->faces) {
+        if (target == &face->slot.bitmap && face->host != nullptr && face->host->glyph != nullptr) face->host->glyph->bitmap = nativeTarget;
+    }
+    FreeTypeSyncBitmap_nid_no_patch(*target, nativeTarget);
     *targetOffset = {nativeTargetOffset.x, nativeTargetOffset.y};
     return error;
 }
