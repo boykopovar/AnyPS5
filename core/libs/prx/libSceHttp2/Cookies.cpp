@@ -407,17 +407,14 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
     std::string header;
     for (const Cookie* match : matches) AppendCookie(header, *match);
     const std::size_t size = header.size() + HEADER_SLACK;
-    if (!cookie) {
-        *required = size;
-        return 0;
-    }
+    if (!cookie) return Http2Guest::Store(required, size) ? 0 : ERROR_INVALID_VALUE;
     if (prepared < size) {
-        if (prepared != 0) cookie[0] = '\0';
+        if (prepared != 0 && !Http2Guest::Store(cookie, '\0')) return ERROR_INVALID_VALUE;
         return ERROR_OUT_OF_SIZE;
     }
     header.append({'\0', ' ', '\0'});
-    std::memcpy(cookie, header.data(), size);
-    if (required) *required = size;
+    if (!Http2Guest::CopyOut(cookie, header.data(), size)) return ERROR_INVALID_VALUE;
+    if (required && !Http2Guest::Store(required, size)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
