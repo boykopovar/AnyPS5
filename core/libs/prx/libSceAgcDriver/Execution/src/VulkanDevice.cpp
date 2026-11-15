@@ -2287,6 +2287,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->samplerAnisotropy = true;
     state->textureCompressionBC = true;
     deviceInfo.pEnabledFeatures = &enabled;
+    if (hasExtension("VK_NVX_binary_import")) deviceExtensions.push_back("VK_NVX_binary_import");
+    if (hasExtension("VK_NVX_image_view_handle")) deviceExtensions.push_back("VK_NVX_image_view_handle");
     const char* calibratedTimestamps = !PerformanceTrace::Configured() ? nullptr : hasExtension(VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) ? VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME : hasExtension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) ? VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME : nullptr;
     if (calibratedTimestamps != nullptr) deviceExtensions.push_back(calibratedTimestamps);
     deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
@@ -2537,6 +2539,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
         deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     }
+    deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
+    deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     deviceInfo.pNext = &bdaFeatures;
     auto shaderProfile = std::make_unique<const ShaderDeviceProfile>(buildTarget(), deviceInfo, state->properties.limits);
     check(state->InstanceFunction<PFN_vkCreateDevice>("vkCreateDevice")(selected, &deviceInfo, nullptr, &state->device), "vkCreateDevice");
@@ -2794,6 +2798,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (upscale.fsr) {
             state->upscaler = std::make_unique<PresentationUpscaler>(graphicsContext(), state->presentSlots.size(), upscale.sharpness);
             std::fprintf(stderr, "[present] ANYPS5_UPSCALE=fsr: FSR 1 EASU and RCAS when the window is larger than the display buffer, the normal scaler otherwise; RCAS sharpness %.2f\n", static_cast<double>(upscale.sharpness));
+        } else if (upscale.dlss) {
+            if (state->instance != VK_NULL_HANDLE && DlssUpscaler::SupportsDevice(state->instance, selected, state->device)) {
+                state->upscaler = std::make_unique<PresentationUpscaler>(graphicsContext(), state->presentSlots.size(), upscale, state->instance);
+                std::fprintf(stderr, "[present] ANYPS5_UPSCALE=dlss: NVIDIA DLSS Super Resolution when the window is larger than the display buffer, the normal scaler otherwise\n");
+            } else {
+                std::fprintf(stderr, "[present] ANYPS5_UPSCALE=dlss: NVIDIA DLSS is not supported or NGX is unavailable on this device; falling back to normal scaler\n");
+            }
         }
     }
     if (state->float32FlushToZeroCandidate) {
@@ -4807,6 +4818,10 @@ Graphics::Context VulkanDevice::graphicsContext() const {
     static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
     if (state->contextReady && !noCache) return state->context;
     return buildContext();
+}
+
+VkInstance VulkanDevice::Instance() const {
+    return state->instance;
 }
 
 Graphics::Context VulkanDevice::buildContext() const {
