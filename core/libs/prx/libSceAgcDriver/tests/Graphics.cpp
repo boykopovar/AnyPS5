@@ -5169,7 +5169,29 @@ void multisampledDepthTests() {
     queue = singleSampleScan();
     queue.context[0x292] = 3;
     for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0;
-    expectFailure([&] { DecodeState(queue); }, "the depth target's sample count differs from the rasterizer's");
+    requireCentered(DecodeState(queue), "a single-sample scan with MSAA_ENABLE into 4x depth and color targets");
+    const auto msaaDepthOnly = [&] {
+        auto queue = depthOnly();
+        queue.context[0x292] = 1;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0;
+        return queue;
+    };
+    queue = msaaDepthOnly();
+    state = DecodeState(queue);
+    Require(state.colors.empty(), "a depth-only single-sample scan with MSAA_ENABLE decoded a color target");
+    requireCentered(state, "a single-sample scan with MSAA_ENABLE into a 4x depth target (PPSA01859's registers)");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a single-sample scan with MSAA_ENABLE into a 4x depth target");
+    queue = msaaDepthOnly();
+    queue.context[0x201] = 0x00040000u;
+    expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled depth target with Z interpolation or overrasterization (DB_EQAA)");
+    for (const auto primitive : {2u, 3u}) {
+        queue = msaaDepthOnly();
+        queue.userConfig[0x242] = primitive;
+        expectFailure([&] { DecodeState(queue); }, "a single-sample scan into a multisampled depth target for primitives other than triangles and rectangles");
+    }
+    queue = msaaDepthOnly();
+    queue.context[0x2fe] = 0xcc44;
+    expectFailure([&] { DecodeState(queue); }, "MSAA_ENABLE on a single-sample target whose sample is off the pixel center");
     queue = singleSampleScan();
     queue.context[0x2f8] = 0x00100001;
     queue.context[0x292] = 3;
@@ -5829,11 +5851,14 @@ void InitialContextTests() {
     Require(queue.context.at(0x3) == 0 && queue.context.at(0x8) == 0 && queue.context.at(0x9) == 0x3f800000, "depth bounds overlap render override");
     Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x313) == 0x6000 && queue.context.at(0x2f9) == 0x2d, "initial raster controls are incomplete");
     Require(queue.context.at(0x30e) == 0xffffffff && queue.context.at(0x30f) == 0xffffffff, "initial sample mask excludes samples");
+    Require(queue.context.at(0x206) == 0, "the initial viewport control is not its reset value");
+    Require(queue.context.at(0x8e) == 0xffffffffu && queue.context.at(0x8f) == 0xffffffffu, "the initial color masks are not their reset values");
     queue.userConfig[0x242] = 4;
     for (const auto offset : {0x2d5u, 0x204u, 0x8eu, 0x8fu, 0x1c3u, 0x1c5u, 0x31cu, 0x3b0u, 0x3b8u, 0x318u, 0x390u, 0x10fu, 0x110u, 0x111u, 0x112u, 0x113u, 0x114u, 0xb4u, 0xb5u}) queue.context.at(offset) = configured.context.at(offset);
     const auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "sparse guest setup lost its render target");
-    Require(queue.context.at(0x206) == 0x43f, "initial homogeneous viewport mode changed");
+    Require(state.viewport.x == 0.0f && state.viewport.y == 0.0f && state.viewport.width == static_cast<float>(state.renderExtent.width) && state.viewport.height == static_cast<float>(state.renderExtent.height), "a draw without a viewport transform did not get a viewport covering its render target");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_CL_VTE_CNTL") == std::string::npos, "a draw with the reset viewport control was rejected for its viewport control");
     for (const auto control : {0x3fu, 0x43eu, 0x53fu, 0x63fu, 0x8000043fu}) {
         queue.context[0x206] = control;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_VTE_CNTL=0x");
@@ -5845,7 +5870,7 @@ void InitialContextTests() {
     queue.context.erase(0x2dc);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
     queue.ClearContext();
-    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0, "clear did not restore controls and discard target state");
+    Require(queue.context.at(0x2dc) == 0xaa00 && queue.context.at(0x318) == 0 && queue.context.at(0x8e) == 0xffffffffu && queue.context.at(0x206) == 0, "clear did not restore controls, color masks and viewport control");
     Require(!queue.context.contains(0xdead), "unknown context register acquired a default");
 }
 

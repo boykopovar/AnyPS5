@@ -18,6 +18,7 @@ constexpr std::uint32_t KernelExists = 0x80020011u;
 constexpr std::uint32_t KernelNoSuchFile = 0x80020002u;
 constexpr std::uint64_t NotFoundCodes = 0x2000000000140001ull;
 constexpr int OutOfMemory = 12;
+constexpr int BadAddress = 14;
 constexpr int NotSupported = 45;
 constexpr int NoSystemCall = 78;
 constexpr int TypeNotFound = -1;
@@ -66,10 +67,12 @@ int StatusType(const char* function, const char* path, int* perms, int* error) {
     if (NotFound(result)) {
         type = TypeNotFound;
     } else if (result == 0) {
-        if (perms) *perms = status.st_mode & 0xfff;
+        const int permissions = status.st_mode & 0xfff;
+        if (perms) GuestCopyOut_nid_no_patch(perms, &permissions, sizeof(permissions));
         type = TypeOf(status.st_mode);
     }
-    if (error) *error = StatusOf(result);
+    const int failure = StatusOf(result);
+    if (error) GuestCopyOut_nid_no_patch(error, &failure, sizeof(failure));
     return type;
 }
 
@@ -110,7 +113,7 @@ int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsE_nid_postfix(cons
 std::uint64_t APS5_VABI _ZNSt8__sce_v210filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error) {
     FileStat status{};
     const int result = Kernel(__func__).stat(path, &status);
-    if (result != 0 && error) *error = result;
+    if (result != 0 && error) GuestCopyOut_nid_no_patch(error, &result, sizeof(result));
     return result != 0 ? UINT64_MAX : static_cast<std::uint64_t>(status.st_size);
 }
 
@@ -128,8 +131,9 @@ int APS5_VABI _ZNSt8__sce_v210filesystem16_Last_write_timeEPKcPlS3__nid_postfix(
     FileStat status{};
     const int result = Kernel(__func__).stat(path, &status);
     if (result != 0) return ErrorOf(result);
-    *seconds = status.st_mtim.tv_sec;
-    *nanoseconds = status.st_mtim.tv_nsec;
+    const std::int64_t second = status.st_mtim.tv_sec;
+    const std::int64_t nanosecond = status.st_mtim.tv_nsec;
+    if (!GuestCopyOut_nid_no_patch(seconds, &second, sizeof(second)) || !GuestCopyOut_nid_no_patch(nanoseconds, &nanosecond, sizeof(nanosecond))) return BadAddress;
     return 0;
 }
 

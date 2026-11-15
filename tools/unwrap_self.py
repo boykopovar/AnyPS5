@@ -14,6 +14,9 @@ differ inside a container:
     mapping of the PT_LOAD that contains them, including a PT_PHDR at vaddr zero.
     A PT_TLS image that runs past the file bytes of its PT_LOAD gets the zeros
     the load maps there, the bytes a loader reads from p_vaddr.
+    A PT_DYNAMIC without a vaddr whose stale range lies inside a recorded
+    segment without a vaddr, as in a PS4 executable that keeps it in
+    PT_SCE_DYNLIBDATA, is read from that segment instead.
     Other segments without a vaddr that follow the last recorded one in the ELF
     are stored right after it, back to back in ELF order, except a PT_NOTE, which
     the container leaves out and which is emitted without file bytes. Some dumps
@@ -157,7 +160,7 @@ def parse_elf(data):
         headers.append({
             "index": index, "type": kind, "flags": flags, "offset": file_offset,
             "vaddr": vaddr, "size": file_size, "memory": memory_size,
-            "align": alignment, "source": file_offset, "host": None,
+            "align": alignment, "source": file_offset, "host": None, "container": None,
         })
     return inner, header, headers
 
@@ -184,6 +187,16 @@ def place_segments(data, headers, records):
         if containers:
             host = min(containers, key=lambda load: load["size"])
             header["host"] = host
+            placed.add(header["index"])
+    for header in headers:
+        if header["type"] != PT_DYNAMIC or header["vaddr"] != 0 or not header["size"] or header["index"] in placed:
+            continue
+        containers = [other for other in recorded if other["offset"] <= header["offset"]
+                      and header["offset"] + header["size"] <= other["offset"] + other["size"]]
+        if containers:
+            container = min(containers, key=lambda other: other["size"])
+            header["source"] = container["source"] + header["offset"] - container["offset"]
+            header["container"] = container
             placed.add(header["index"])
     if recorded:
         last = max(recorded, key=lambda header: header["offset"])
@@ -352,7 +365,7 @@ def unwrap(path, output, verbose=False):
         return None
 
     for header in headers:
-        if header["type"] == PT_LOAD or header["size"] == 0:
+        if header["type"] == PT_LOAD or header["size"] == 0 or header["container"] is not None:
             continue
         if region_for(header["source"], header["size"]) is None:
             regions.append({"old": header["source"], "size": header["size"],
