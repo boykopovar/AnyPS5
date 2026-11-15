@@ -160,6 +160,10 @@ int main() {
     Require(sceKeyboardOpen(InitialUserId, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
     Require(sceKeyboardOpen(InitialUserId, 0, 1, nullptr) == KEYBOARD_SECOND_PORT_HANDLE);
     Require(sceKeyboardOpen(InitialUserId, 0, 1, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_SECOND_PORT_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId + 1, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 1, 1) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
     bool secondConnected = true;
     Require(sceKeyboardGetConnection(KEYBOARD_SECOND_PORT_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetConnection(KEYBOARD_SECOND_PORT_HANDLE, &secondConnected) == KEYBOARD_OK && !secondConnected);
@@ -175,6 +179,8 @@ int main() {
     Require(sceKeyboardDebugGetDeviceId(KEYBOARD_SECOND_PORT_HANDLE, &secondDeviceId) == KEYBOARD_ERROR_INVALID_HANDLE && secondDeviceId == -1);
     Require(sceKeyboardClose(KEYBOARD_SECOND_PORT_HANDLE) == KEYBOARD_OK);
     Require(sceKeyboardClose(KEYBOARD_SECOND_PORT_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 1) == KEYBOARD_ERROR_NO_HANDLE);
+    Require(sceKeyboardGetHandle(InitialUserId, 0, 0) == KEYBOARD_HANDLE);
     Require(sceKeyboardReadState(KEYBOARD_SECOND_PORT_HANDLE, &secondData) == KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
     Require(sceKeyboardGetConnection(42, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);

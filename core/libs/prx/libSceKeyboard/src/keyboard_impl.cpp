@@ -15,6 +15,7 @@ int count = 0;
 bool initialized = false;
 bool opened = false;
 bool secondPortOpened = false;
+int secondPortUser = 0;
 int openedUser = 0;
 bool connected = true;
 std::uint32_t led = 0;
@@ -135,6 +136,7 @@ int Open(int userId, std::int32_t type, std::int32_t index) {
     if (index == 1) {
         if (secondPortOpened) return KEYBOARD_ERROR_ALREADY_OPENED;
         secondPortOpened = true;
+        secondPortUser = userId;
         return KEYBOARD_SECOND_PORT_HANDLE;
     }
     if (opened) return KEYBOARD_ERROR_ALREADY_OPENED;
@@ -152,6 +154,7 @@ int Close(std::int32_t handle) {
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
     if (openSecondPort(handle)) {
         secondPortOpened = false;
+        secondPortUser = 0;
         return KEYBOARD_OK;
     }
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
@@ -166,6 +169,7 @@ int Close(std::int32_t handle) {
 int GetHandle(std::int32_t userId, std::int32_t type, std::int32_t index) {
     std::lock_guard lock(keyboardMutex);
     if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (type == 0 && index == 1 && secondPortOpened && secondPortUser == userId) return KEYBOARD_SECOND_PORT_HANDLE;
     return opened && openedUser == userId && type == 0 && index == 0 ? KEYBOARD_HANDLE : KEYBOARD_ERROR_NO_HANDLE;
 }
 
