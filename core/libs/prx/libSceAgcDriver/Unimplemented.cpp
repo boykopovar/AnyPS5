@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -137,7 +138,11 @@ int APS5_VABI sceAgcDriverUserDataImmediateWritePacket() {
 
 int APS5_VABI sceAgcDriverGetCoredumpMode(uint32_t* mode) {
     if (mode == nullptr) return DRIVER_NULL_OUTPUT;
-    *mode = 0;
+    const uint32_t off = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(mode, &off, sizeof(off));
+    errno = savedErrno;
+    if (!copied) return DRIVER_NULL_OUTPUT;
     return 0;
 }
 
