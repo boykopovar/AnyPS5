@@ -167,6 +167,30 @@ void TestArguments() {
     ExpectThrow<std::invalid_argument>([] { unorm2_composePair_nid_postfix(nullptr, u'e', 0x0301); }, "unorm2_composePair(null)");
 }
 
+void TestFiltered() {
+    const auto* nfc = Nfc();
+    std::int32_t error = Success;
+    Expect(unorm2_openFiltered_nid_postfix(nfc, nullptr, &error) == nullptr && error == IllegalArgument,
+           "filtered normalizer requires a set");
+    auto* set = uset_openEmpty_nid_postfix();
+    Expect(set != nullptr, "allocate normalization set");
+    Expect(unorm2_openFiltered_nid_postfix(nfc, set, &error) == nullptr && error == IllegalArgument,
+           "filtered normalizer preserves incoming failure");
+    error = Success;
+    uset_add_nid_postfix(set, u'e');
+    uset_add_nid_postfix(set, 0x0301);
+    auto* filtered = unorm2_openFiltered_nid_postfix(nfc, set, &error);
+    Expect(filtered != nullptr && error == Success, "open filtered NFC");
+    char16_t result[16]{};
+    ExpectInt(unorm2_normalize_nid_postfix(filtered, u"e\u0301a\u0301", -1, result, 16, &error), 3, "filtered output length");
+    Expect(std::u16string(result) == u"\u00e9a\u0301", "only matching runs are normalized");
+    ExpectInt(unorm2_composePair_nid_postfix(filtered, u'e', 0x0301), 0x00e9, "included pair composes");
+    ExpectInt(unorm2_composePair_nid_postfix(filtered, u'a', 0x0301), -1, "excluded pair is unchanged");
+    unorm2_close_nid_postfix(filtered);
+    unorm2_close_nid_postfix(nullptr);
+    uset_close_nid_postfix(set);
+}
+
 std::int32_t Compare(const char16_t* first, std::int32_t firstLength, const char16_t* second, std::int32_t secondLength,
                      std::uint32_t options, const char* what) {
     std::int32_t error = Success;
@@ -214,6 +238,7 @@ int main() {
     TestDecompositions();
     TestAppend();
     TestArguments();
+    TestFiltered();
     TestCompare();
     return 0;
 }
