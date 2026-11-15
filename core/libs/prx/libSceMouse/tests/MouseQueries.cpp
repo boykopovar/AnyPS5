@@ -174,6 +174,10 @@ int main() {
 
     Require(setHandType(handle, 2) == InvalidArg, "SetHandType took a type above 1");
     Require(setPointerSpeed(handle, 9) == InvalidArg, "SetPointerSpeed took a speed above 8");
+    Require(setHandType(handle + 1, 0) == InvalidHandle, "SetHandType took an unopened handle");
+    Require(setPointerSpeed(handle + 1, 0) == InvalidHandle, "SetPointerSpeed took an unopened handle");
+    Require(setHandType(handle, 0) == Ok && setHandType(handle, 1) == Ok, "SetHandType refused a valid type");
+    Require(setPointerSpeed(handle, 0) == Ok && setPointerSpeed(handle, 8) == Ok, "SetPointerSpeed refused a valid speed");
     Require(getDeviceInfo(0, nullptr) == InvalidArg, "GetDeviceInfo took a null output");
 
     Require(extensionRead(handle, buffer.data(), 0x20, 1) == InvalidArg, "ExtensionRead took a record size other than 0x30");
@@ -202,6 +206,8 @@ int main() {
 
     Require(sceMouseClose(handle) == Ok, "sceMouseClose failed");
     Require(getHandle(1, 0, 0) == NoHandle, "GetHandle returned a closed handle");
+    Require(setHandType(handle, 0) == InvalidHandle && setPointerSpeed(handle, 0) == InvalidHandle,
+            "SetHandType or SetPointerSpeed answered after close");
     std::puts("Mouse query tests passed");
     return 0;
 }
