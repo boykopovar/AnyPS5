@@ -1,9 +1,4 @@
-set(ZLIB_BUILD_TESTING OFF)
-set(ZLIB_BUILD_SHARED OFF)
-set(ZLIB_BUILD_STATIC ON)
-set(ZLIB_INSTALL OFF)
-add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/zlib ${CMAKE_BINARY_DIR}/3rdparty/zlib EXCLUDE_FROM_ALL)
-set_target_properties(zlibstatic PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+include(${CMAKE_SOURCE_DIR}/cmake/Zlib.cmake)
 
 include(${CMAKE_SOURCE_DIR}/cmake/LibXml2.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/LibPsl.cmake)
