@@ -610,6 +610,10 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_list PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_icu_list PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_test_executable(guest_icu_invariant_chars_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuInvariantChars.cpp)
     target_include_directories(guest_icu_invariant_chars_tests PRIVATE ${LIBS_INCLUDE_DIR})
