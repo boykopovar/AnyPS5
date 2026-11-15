@@ -57,7 +57,15 @@ int main() {
     VbapParams misaligned = params;
     misaligned.memory = memory + 1;
     Require(RejectsArgument([&] { sceAudioOut2SpeakerArrayCreate(&array, &misaligned, nullptr); }), "misaligned memory was accepted");
+    Require(RejectsArgument([&] { sceAudioOut2SpeakerArrayCreate(&array, reinterpret_cast<const void*>(0x10), nullptr); }), "unreadable parameters were accepted");
+    VbapParams unreadablePositions = params;
+    unreadablePositions.positions = reinterpret_cast<const AudioOut2Position*>(0x10);
+    Require(RejectsArgument([&] { sceAudioOut2SpeakerArrayCreate(&array, &unreadablePositions, nullptr); }), "unreadable speaker positions were accepted");
+    VbapParams unwritableMemory = params;
+    unwritableMemory.memory = reinterpret_cast<void*>(0x10);
+    Require(RejectsArgument([&] { sceAudioOut2SpeakerArrayCreate(&array, &unwritableMemory, nullptr); }), "unwritable array memory was accepted");
     Require(array == nullptr, "a rejected creation wrote the handle");
+    Require(RejectsArgument([&] { sceAudioOut2SpeakerArrayCreate(reinterpret_cast<AudioOut2SpeakerArrayHandle*>(0x10), &params, nullptr); }), "an unwritable handle output was accepted");
     Require(sceAudioOut2SpeakerArrayCreate(&array, &params, nullptr) == 0 && array == memory, "the array was not placed in the given memory");
 
     constexpr std::uint32_t ambisonics = 0x40;
@@ -74,6 +82,7 @@ int main() {
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(array, ambisonics | 36, coefficients, 4); }), "a sixth-order channel was accepted");
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(array, ambisonics, coefficients, 3); }), "a coefficient count other than the speaker count was accepted");
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(array, ambisonics, nullptr, 4); }), "null coefficients were accepted");
+    Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(array, ambisonics, reinterpret_cast<float*>(0x10), 4); }), "unwritable coefficients were accepted");
     alignas(16) unsigned char notArray[512] = {};
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(notArray, ambisonics, coefficients, 4); }), "memory that holds no array was accepted");
 

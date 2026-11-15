@@ -217,7 +217,20 @@ void TestInvalidInputs() {
     result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, static_cast<char*>(buffer), nullptr, &status));
     Check(result == nullptr && status == -3, "missing length for a supplied buffer did not return status -3");
     Check(std::strcmp(buffer, "unchanged") == 0, "invalid supplied-buffer arguments modified the buffer");
+    status = 99;
+    result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, static_cast<char*>(buffer), reinterpret_cast<std::size_t*>(0x10), &status));
+    Check(result == nullptr && status == -3 && std::strcmp(buffer, "unchanged") == 0, "an unreadable length for a supplied buffer did not return status -3");
     free_nid_postfix(buffer);
+    std::size_t roomy = 128;
+    status = 99;
+    result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, reinterpret_cast<char*>(0x10), &roomy, &status));
+    Check(result == nullptr && status == -3 && roomy == 128, "an unwritable supplied buffer did not return status -3");
+    status = 99;
+    result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, nullptr, reinterpret_cast<std::size_t*>(0x10), &status));
+    Check(result == nullptr && status == -3, "an unwritable length output did not return status -3");
+    result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, nullptr, nullptr, reinterpret_cast<int*>(0x10)));
+    Check(result != nullptr && std::strcmp(result, DemangledName) == 0, "an unwritable status output stopped the demangling");
+    ReleaseIfReturned(result);
 
 }
 

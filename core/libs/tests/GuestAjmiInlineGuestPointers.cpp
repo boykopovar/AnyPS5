@@ -1,4 +1,5 @@
 #include "prx/libSceAjmi/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
 #include <cerrno>
@@ -24,6 +25,10 @@ void Require(bool ok, const char* description) {
     if (ok) return;
     std::fprintf(stderr, "AJMI inline guest pointer: %s\n", description);
     std::abort();
+}
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
 }
 
 template <typename Operation>
@@ -60,6 +65,8 @@ char* GuardedPageEnd() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::array<std::uint8_t, 32> job{};
     job.fill(0xA5);
     const std::array<std::uint8_t, 5> data{4, 6, 8, 10, 12};
@@ -88,5 +95,55 @@ int main() {
     std::memcpy(end - 4, data.data(), 4);
     RequireRejected([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(job.data(), end - 4, 5, nullptr); }, "input crossing page boundary was accepted");
 
+    std::array<std::uint8_t, 128> batchJob{};
+    batchJob.fill(0xA5);
+    std::array<std::uint8_t, 16> inputSample{};
+    std::array<std::uint8_t, 16> outputSample{};
+    std::array<std::uint8_t, 8> sidebandSample{};
+    for (void* badPosition : {static_cast<void*>(nullptr), reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10)), static_cast<void*>(end - 8)}) {
+        if (badPosition == end - 8) std::memset(end - 8, 0x5A, 8);
+        errno = 71;
+        RequireRejected([&] {
+            sceAjmBatchJobControlBufferRa_nid_disambig1(badPosition, 1, 0, inputSample.data(), inputSample.size(), sidebandSample.data(), sidebandSample.size(), nullptr);
+        }, "invalid ControlBufferRa position accepted");
+        Require(errno == 71, "ControlBufferRa bad position changed errno");
+        if (badPosition == end - 8) Require(static_cast<std::uint8_t>(end[-8]) == 0x5A, "ControlBufferRa partially wrote page end");
+        errno = 71;
+        RequireRejected([&] {
+            sceAjmBatchJobRunBufferRa_nid_disambig1(badPosition, 1, 0, inputSample.data(), inputSample.size(), outputSample.data(), outputSample.size(), nullptr, 0, nullptr);
+        }, "invalid RunBufferRa position accepted");
+        Require(errno == 71, "RunBufferRa bad position changed errno");
+    }
+
+    const AjmBuffer oneIn{inputSample.data(), inputSample.size()};
+    const AjmBuffer oneOut{outputSample.data(), outputSample.size()};
+    for (const AjmBuffer* badList : {static_cast<const AjmBuffer*>(nullptr), reinterpret_cast<const AjmBuffer*>(static_cast<std::uintptr_t>(0x10)), reinterpret_cast<const AjmBuffer*>(end - 8)}) {
+        errno = 71;
+        RequireRejected([&] {
+            sceAjmBatchJobRunSplitBufferRa_nid_disambig1(batchJob.data(), 1, 0, badList, 1, &oneOut, 1, nullptr, 0, nullptr);
+        }, "invalid SplitBufferRa input_buffers accepted");
+        Require(errno == 71 && batchJob[0] == 0xA5, "SplitBufferRa bad input_buffers changed errno or job");
+        errno = 71;
+        RequireRejected([&] {
+            sceAjmBatchJobRunSplitBufferRa_nid_disambig1(batchJob.data(), 1, 0, &oneIn, 1, badList, 1, nullptr, 0, nullptr);
+        }, "invalid SplitBufferRa output_buffers accepted");
+        Require(errno == 71 && batchJob[0] == 0xA5, "SplitBufferRa bad output_buffers changed errno or job");
+    }
+
+    batchJob.fill(0);
+    errno = 71;
+    void* ctrlEnd = sceAjmBatchJobControlBufferRa_nid_disambig1(batchJob.data(), 2, 1, inputSample.data(), inputSample.size(), sidebandSample.data(), sidebandSample.size(), nullptr);
+    Require(ctrlEnd == batchJob.data() + 48 && errno == 71, "valid ControlBufferRa failed or changed errno");
+    batchJob.fill(0);
+    errno = 71;
+    void* runEnd = sceAjmiBatchJobRunBufferRa_nid_no_patch(batchJob.data(), 3, 1, inputSample.data(), inputSample.size(), outputSample.data(), outputSample.size(), sidebandSample.data(), sidebandSample.size(), nullptr);
+    Require(runEnd == batchJob.data() + 64 && errno == 71, "valid RunBufferRa failed or changed errno");
+    batchJob.fill(0);
+    errno = 71;
+    void* splitEnd = sceAjmBatchJobRunSplitBufferRa_nid_disambig1(batchJob.data(), 4, 1, &oneIn, 1, &oneOut, 1, nullptr, 0, nullptr);
+    Require(splitEnd == batchJob.data() + 64 && errno == 71, "valid SplitBufferRa failed or changed errno");
+
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     std::puts("AJMI inline guest pointer tests passed");
 }

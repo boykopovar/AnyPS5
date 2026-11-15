@@ -28,8 +28,8 @@ std::uint32_t* WriteDma(CommandBuffer* buffer, bool compute, std::uint8_t engine
 }
 
 std::uint32_t* WriteCopyData(CommandBuffer* buffer, bool compute, std::uint8_t dst, std::uint8_t dstCachePolicy, std::uint64_t dstAddress, std::uint8_t src, std::uint8_t srcCachePolicy, std::uint64_t srcAddressOrImmediate, std::uint8_t itemSize, std::uint8_t writeConfirm, const char* function) {
-    CheckBits(dstCachePolicy, 3, function);
-    CheckBits(srcCachePolicy, 3, function);
+    dstCachePolicy &= 3u;
+    srcCachePolicy &= 3u;
     CheckBits(itemSize, 1, function);
     CheckBits(writeConfirm, 1, function);
     const auto srcSelect = compute ? static_cast<std::uint32_t>(src) & 0xfu : (static_cast<std::uint32_t>(src) >> 1u) & 0xfu;
@@ -40,14 +40,9 @@ std::uint32_t* WriteCopyData(CommandBuffer* buffer, bool compute, std::uint8_t d
     return Emit(buffer, 0x40u, {control, static_cast<std::uint32_t>(srcAddressOrImmediate), static_cast<std::uint32_t>(srcAddressOrImmediate >> 32u), static_cast<std::uint32_t>(dstAddress), static_cast<std::uint32_t>(dstAddress >> 32u)}, function);
 }
 
-std::uint32_t* WriteAtomicMem(CommandBuffer* buffer, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval, const char* function) {
-    CheckBits(atomicOp, 0x7fu, function);
-    CheckBits(command, 0xfu, function);
-    CheckBits(cachePolicy, 3, function);
-    CheckBits(loopInterval, 0x1fffu, function);
-    const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
-    CheckAddress(guestAddress, (atomicOp & 0x60u) == 0x60u ? 8 : 4, function);
-    return Emit(buffer, 0x1eu, {atomicOp | (static_cast<std::uint32_t>(command) << 8u) | (static_cast<std::uint32_t>(cachePolicy) << 25u), static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u), static_cast<std::uint32_t>(srcData), static_cast<std::uint32_t>(srcData >> 32u), static_cast<std::uint32_t>(compareData), static_cast<std::uint32_t>(compareData >> 32u), loopInterval}, function);
+std::uint32_t* WriteAtomicMem(CommandBuffer* buffer, std::uint8_t engine, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, std::uint64_t address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval, const char* function) {
+    const auto control = (atomicOp & 0x7fu) | ((static_cast<std::uint32_t>(command) & 0xfu) << 8u) | ((static_cast<std::uint32_t>(cachePolicy) & 3u) << 25u) | ((static_cast<std::uint32_t>(engine) & 3u) << 30u);
+    return Emit(buffer, 0x1eu, {control, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), static_cast<std::uint32_t>(srcData), static_cast<std::uint32_t>(srcData >> 32u), static_cast<std::uint32_t>(compareData), static_cast<std::uint32_t>(compareData >> 32u), loopInterval & 0x1fffu}, function);
 }
 
 std::uint32_t* WritePrimeUtcl2(CommandBuffer* buffer, const volatile void* address, std::uint32_t sizeInBytes, const char* function) {

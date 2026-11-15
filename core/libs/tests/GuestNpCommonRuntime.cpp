@@ -228,6 +228,9 @@ void TestHeaps() {
     UseAllocator(allocator);
     NpHeapStat stat {};
     Require(sceNpHeapGetStat(&heap, &stat) == 0 && stat.maxInuseSize >= stat.currentInuseSize, "heap statistics are reported");
+    errno = 71;
+    Require(sceNpHeapGetStat(reinterpret_cast<const NpHeap*>(0x10), &stat) == NpInvalidArgument && errno == 71, "an unreadable heap is refused and errno is kept");
+    Require(sceNpHeapGetStat(&heap, reinterpret_cast<NpHeapStat*>(0x10)) == NpInvalidArgument && errno == 71, "an unwritable heap statistics output is refused and errno is kept");
     sceNpHeapDestroy(&heap);
 
     Require(heap.mspace == nullptr, "destroying clears the heap");
@@ -1119,6 +1122,11 @@ void TestJsonText() {
     std::memset(guarded.buffer, 'x', sizeof(guarded.buffer));
     Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "a", 1) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
         "escaping into a buffer without a terminator is refused");
+    std::memset(&guarded, 0, sizeof(guarded));
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "abcdefghijkl", 12) == NpUtilBufferTooSmall &&
+                Equals(guarded.buffer, "abcdefghij") && guarded.canary[0] == 0,
+        "escaping that runs out of room keeps the text it appended");
+    Require(sceNpUtilJsonEscape(reinterpret_cast<char*>(0x10), 64, "a", 1) == NpUtilInvalid, "escaping into an unmapped buffer is refused");
 
     char text[32] = {};
     std::size_t length = 0;
@@ -1521,6 +1529,8 @@ void TestJid() {
     const NpJid shapes[] = {{"u", "a1.-2.np.playstation.net", nullptr, 0}, {"u", "a1.b2.np.playstation.network", nullptr, 0}};
     for (const NpJid& bad : shapes) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "the domain code is alphanumeric and the suffix exact");
     Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid &&sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
+    errno = 71;
+    Require(sceNpUtilJidToNpId(reinterpret_cast<NpIdFull*>(0x10), &psn) == NpUtilInvalid && errno == 71, "an unwritable npid is refused and errno is kept");
 }
 
 void TestLanguagesAndDebugIds() {
@@ -1904,6 +1914,9 @@ void TestCommIdObjects() {
     Require(sceNpUtilParseTitleId(&parts, "WXYZ54321-07") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, "WXYZ54321_007") == NpUtilParseOutOfRange
             && sceNpUtilParseTitleId(&parts, "WXYZ") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, nullptr) == NpUtilInvalid,
         "sceNpUtilParseTitleId needs an underscore at index 9 and at most 12 characters");
+    errno = 71;
+    Require(sceNpUtilParseTitleId(reinterpret_cast<NpCommunicationId*>(0x10), "WXYZ54321_07") == NpUtilInvalid && errno == 71,
+        "sceNpUtilParseTitleId refuses an unwritable output and keeps errno");
 
     NpCommIdObject commId {};
     std::memset(&commId, 0x77, sizeof(commId));

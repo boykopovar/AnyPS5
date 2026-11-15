@@ -1,4 +1,5 @@
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -8,6 +9,10 @@
 #include <array>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int InvalidArgument = static_cast<int>(0x80553303u);
 constexpr int Unavailable = static_cast<int>(0x80552D06u);
@@ -28,6 +33,8 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     alignas(8) unsigned char initializeParam[40] = {};
     Require(sceNpSessionSignalingTerminate() == NotInitialized, "terminate before initialize");
     Require(sceNpSessionSignalingCreateContext2(nullptr, nullptr) == NotInitialized, "initialization check precedes context arguments");
@@ -238,8 +245,15 @@ int main() {
     Require(sceNpSessionSignalingJoinActivate(nullptr, joinParam.data(), &requestGroup, nullptr) == InvalidArgument, "join activate accepted a null session id");
     Require(sceNpSessionSignalingJoinActivate(activateSessionId, nullptr, &requestGroup, nullptr) == InvalidArgument, "join activate accepted a null parameter");
     Require(sceNpSessionSignalingJoinActivate(activateSessionId, joinParam.data(), nullptr, nullptr) == InvalidArgument, "join activate accepted a null group id");
+    errno = 71;
     Require(sceNpSessionSignalingJoinActivate(activateSessionId, zeroMode.data(), &requestGroup, nullptr) == InvalidArgument, "join activate accepted a zero mode");
+    Require(errno == 71, "join activate zero mode clobbered errno");
+    errno = 71;
+    Require(sceNpSessionSignalingJoinActivate(activateSessionId, reinterpret_cast<const void*>(0x10), &requestGroup, nullptr) == InvalidArgument, "join activate accepted an unmapped parameter");
+    Require(errno == 71, "join activate unmapped parameter clobbered errno");
+    errno = 71;
     Require(sceNpSessionSignalingJoinActivate(activateSessionId, joinParam.data(), &requestGroup, &requestConnection) == Unavailable, "join activate without network");
+    Require(errno == 71, "join activate clobbered errno");
     Require(requestGroup == 0xa5a5a5a5u && requestConnection == 0xa5a5a5a5u, "a failed join activate wrote an output");
 
     const auto* peerAddressParam = reinterpret_cast<const SessionSignalingPeerAddress*>(peer);
@@ -292,4 +306,6 @@ int main() {
     Require(errno == 71, "errno preserved");
     Require(sceNpSessionSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.poolSize == poolSize && memoryInfo.usedSize == 0 && memoryInfo.peakUsedSize == 0, "memory info after initialize with port");
     Require(sceNpSessionSignalingTerminate() == 0, "final terminate after initialize with port");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
