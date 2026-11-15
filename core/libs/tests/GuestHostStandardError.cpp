@@ -149,8 +149,9 @@ int main() {
                 if (fprintf_nid_postfix(__stderrp_nid_postfix, "guest-fprintf\n") < 0) ::_exit(73);
                 *__error_nid_postfix() = 2;
                 perror_nid_postfix("guest-perror");
+                perror_nid_postfix(reinterpret_cast<const char*>(0x10));
                 if (fflush_nid_postfix(__stderrp_nid_postfix) != 0) ::_exit(73);
-                expected = "guest-fprintf\nguest-perror: No such file or directory\n";
+                expected = "guest-fprintf\nguest-perror: No such file or directory\nNo such file or directory\n";
             }
             std::string got;
             char buffer[64];

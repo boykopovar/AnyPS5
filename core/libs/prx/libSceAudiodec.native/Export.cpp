@@ -39,6 +39,14 @@ bool ReadGuest(T& value, const T* source) {
     return copied;
 }
 
+template <typename T>
+bool WriteGuest(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
+
 int DecodeInternal(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
     if (context == nullptr) return AudiodecErrorArgument;
     if (ctrl == nullptr) return AudiodecErrorInvalidCtrlPointer;
@@ -138,11 +146,14 @@ int APS5_VABI sceAudiodecDeleteDecoderEx(void* context, std::uint32_t handle) {
 int APS5_VABI sceAudiodecGetAjmContext(const void* context, std::uint32_t* ajmiContext, std::uint32_t* ajmContext) {
     if (context == nullptr) return AudiodecErrorArgument;
     std::uint32_t ids[2];
-    if (!GuestCopyIn_nid_no_patch(ids, context, sizeof(ids))) return AudiodecErrorArgument;
-    if (ajmiContext != nullptr && !GuestCopyOut_nid_no_patch(ajmiContext, &ids[0], sizeof(*ajmiContext))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(ids, context, sizeof(ids));
+    errno = savedErrno;
+    if (!copied) return AudiodecErrorArgument;
+    if (ajmiContext != nullptr && !WriteGuest(ajmiContext, ids[0])) {
         return AudiodecErrorArgument;
     }
-    if (ajmContext != nullptr && !GuestCopyOut_nid_no_patch(ajmContext, &ids[1], sizeof(*ajmContext))) {
+    if (ajmContext != nullptr && !WriteGuest(ajmContext, ids[1])) {
         return AudiodecErrorArgument;
     }
     return 0;

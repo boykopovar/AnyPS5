@@ -8,6 +8,7 @@
 #include "Invariant.hpp"
 #include "CaseProperties.hpp"
 #include "Iterator.hpp"
+#include "LocaleSyntax.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
 #include "Numeric.hpp"
@@ -31,6 +32,7 @@
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
+#include "prx/libSceIcu/Api.hpp"
 #include "prx/libSceIcu/include/Api.hpp"
 #include "Api.hpp"
 #include "Utf32.hpp"
