@@ -1,3 +1,4 @@
+#include "HeapStageSettled.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -90,7 +91,7 @@ void Work(const std::vector<std::unique_ptr<Variant>>& variants, std::size_t fir
         for (std::size_t round = 0; round < Rounds; ++round) {
             for (std::size_t step = 0; step < variants.size(); ++step) {
                 const auto& variant = *variants[(first + step * 7u) % variants.size()];
-                auto stage = AgcDriver::DriverDetail::MaterializeHeapStage(*variant.invocation, variant.userData, variant.request.shader.codeAddress);
+                auto stage = MaterializeHeapStageSettled(*variant.invocation, variant.userData, variant.request.context.memory, variant.request.shader.codeAddress);
                 Require(stage.result != nullptr && stage.words != nullptr, "a heap walk over valid buffer descriptors declined its stage");
                 {
                     std::lock_guard lock(peer.mutex);

@@ -47,7 +47,7 @@ void AppendWalkRead(std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, 
 void CoalesceWalkReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& runs, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
 
 HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
-                                           std::uint64_t shaderBase);
+                                           ShaderRecompiler::MemoryRegionView memory, std::uint64_t shaderBase);
 void NoteHeapDirect();
 void NoteHeapDirectVerify(const ShaderRecompiler::RecompileResult& direct, const ShaderRecompiler::RecompileResult& expected,
                           const ShaderRecompiler::ResourceCapture* expectedCapture = nullptr);

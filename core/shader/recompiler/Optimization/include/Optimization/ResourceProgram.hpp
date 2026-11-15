@@ -62,6 +62,10 @@ struct SourceHandle {
     std::vector<std::uint64_t> staticKey;
     bool imageTableBindings = false;
 };
+struct HeapTemplateMiss {
+    bool missing = false;
+    std::uint64_t key = 0;
+};
 class PreparedShaderInvocation {
 public:
     static std::optional<PreparedShaderInvocation> TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);
@@ -70,7 +74,7 @@ public:
     const RecompileRequest& Request() const { return request; }
     std::shared_ptr<const ResourceCapture> Capture(const SrtRuntime& runtime) const;
     std::shared_ptr<const RecompileResult> Materialize(const ResourceCapture& capture) const;
-    std::shared_ptr<const RecompileResult> MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words) const;
+    std::shared_ptr<const RecompileResult> MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words, HeapTemplateMiss* miss = nullptr) const;
     const std::shared_ptr<const IrResourcePlan>& Plan() const;
     std::shared_ptr<const IrResourcePlan> LoadPlan() const;
     std::shared_ptr<const IrResourcePlan> PlanOrLoad() const;

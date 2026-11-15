@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RecycledShared.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
@@ -575,7 +576,7 @@ std::shared_ptr<AddressRanges> takeRecycledRanges() {
 }
 
 HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
-                                           std::uint64_t shaderBase) {
+                                           ShaderRecompiler::MemoryRegionView memory, std::uint64_t shaderBase) {
     struct ReadsStorage {};
     auto& reads = HostThreadLocal<WalkReads, ReadsStorage>();
     auto sharedRanges = takeRecycledRanges();
@@ -601,8 +602,8 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
 
     guardRanges(ranges);
     auto words = recycledStageWords();
-    auto result = invocation.MaterializeHeap(*capture, *words);
-    if (result == nullptr) result = invocation.Materialize(*capture);
+    auto result = MaterializeHeapInBackground(invocation, capture, *words, memory, shaderBase);
+    if (result == nullptr) result = MaterializeInBackground(invocation, capture, memory, shaderBase);
     words->dataOrigin = NextHeapDataOrigin();
     const bool complete = !reads.failed && result != nullptr;
     HeapStageMaterialized materialized;

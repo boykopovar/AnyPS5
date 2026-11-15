@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <span>
@@ -122,26 +123,32 @@ PendingMaterializes& pendingMaterializes() {
 
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address) {
-    if (!AsyncDrawCompile()) return invocation.Materialize(*capture);
-    bool contended = false;
-    if (auto memoized = invocation.MaterializeIfMemoized(*capture, &contended)) return memoized;
+namespace {
+
+using MaterializeWork = std::function<std::shared_ptr<const ShaderRecompiler::RecompileResult>()>;
+
+std::atomic<std::uint64_t> heapTemplatesInBackground{0};
+
+bool cheapAt(std::uint64_t address, bool contended) {
     auto& pending = pendingMaterializes();
-    bool cheap = false;
-    {
-        std::lock_guard lock(pending.mutex);
-        const auto found = pending.lastMs.find(address);
-        cheap = !contended && found != pending.lastMs.end() && found->second < PendingMaterializes::CheapMs;
-    }
-    if (cheap) {
-        const auto started = std::chrono::steady_clock::now();
-        auto result = invocation.Materialize(*capture);
-        const auto ms = ElapsedMs(started);
-        std::lock_guard lock(pending.mutex);
-        pending.lastMs[address] = ms;
-        return result;
-    }
-    const std::pair key{address, invocation.SnapshotKey(*capture)};
+    std::lock_guard lock(pending.mutex);
+    const auto found = pending.lastMs.find(address);
+    return !contended && found != pending.lastMs.end() && found->second < PendingMaterializes::CheapMs;
+}
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> timedAt(std::uint64_t address, const MaterializeWork& work) {
+    const auto started = std::chrono::steady_clock::now();
+    auto result = work();
+    const auto ms = ElapsedMs(started);
+    auto& pending = pendingMaterializes();
+    std::lock_guard lock(pending.mutex);
+    pending.lastMs[address] = ms;
+    return result;
+}
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> finishedInBackground(std::uint64_t address, std::uint64_t snapshotKey, const std::function<MaterializeWork()>& makeWork, bool* created = nullptr) {
+    auto& pending = pendingMaterializes();
+    const std::pair key{address, snapshotKey};
     std::shared_ptr<PendingMaterialize> job;
     bool started = false;
     {
@@ -159,15 +166,14 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground
         }
         job = slot;
     }
+    if (created != nullptr) *created = started;
     if (started) {
-        const auto owned = OwnRecompileRequest(invocation.Request(), memory);
-        const auto rebound = std::make_shared<const ShaderRecompiler::PreparedShaderInvocation>(invocation.Rebound(owned->request));
-        SubmitLibraryPrebuild([job, owned, rebound, capture, address] {
+        SubmitLibraryPrebuild([job, work = makeWork(), address] {
             std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
             std::exception_ptr failure;
             const auto started = std::chrono::steady_clock::now();
             try {
-                result = rebound->Materialize(*capture);
+                result = work();
             } catch (...) {
                 failure = std::current_exception();
             }
@@ -197,12 +203,58 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground
     return job->result;
 }
 
+template <typename Run>
+std::function<MaterializeWork()> reboundWork(const ShaderRecompiler::PreparedShaderInvocation& invocation, ShaderRecompiler::MemoryRegionView memory, Run run) {
+    return [&invocation, memory, run] {
+        std::shared_ptr<const OwnedRecompileRequest> owned = OwnRecompileRequest(invocation.Request(), memory);
+        auto rebound = std::make_shared<const ShaderRecompiler::PreparedShaderInvocation>(invocation.Rebound(owned->request));
+        return MaterializeWork([owned, rebound, run] { return run(*rebound); });
+    };
+}
+
+constexpr std::uint64_t HeapTemplateJob = std::uint64_t{1} << 63u;
+
+}
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address) {
+    if (!AsyncDrawCompile()) return invocation.Materialize(*capture);
+    bool contended = false;
+    if (auto memoized = invocation.MaterializeIfMemoized(*capture, &contended)) return memoized;
+    if (cheapAt(address, contended)) return timedAt(address, [&] { return invocation.Materialize(*capture); });
+    return finishedInBackground(address, invocation.SnapshotKey(*capture), reboundWork(invocation, memory, [capture](const ShaderRecompiler::PreparedShaderInvocation& rebound) { return rebound.Materialize(*capture); }));
+}
+
+std::uint64_t HeapTemplatesBuiltInBackground() {
+    return heapTemplatesInBackground.load(std::memory_order_relaxed);
+}
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeHeapInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::HeapStageWords& words, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address) {
+    if (!AsyncDrawCompile()) return invocation.MaterializeHeap(*capture, words);
+    ShaderRecompiler::HeapTemplateMiss miss;
+    if (auto hit = invocation.MaterializeHeap(*capture, words, &miss); hit != nullptr || !miss.missing) return hit;
+    const auto job = address | HeapTemplateJob;
+    if (cheapAt(job, false)) return timedAt(job, [&] { return invocation.MaterializeHeap(*capture, words); });
+    bool created = false;
+    try {
+        static_cast<void>(finishedInBackground(job, miss.key, reboundWork(invocation, memory, [capture](const ShaderRecompiler::PreparedShaderInvocation& rebound) {
+            ShaderRecompiler::HeapStageWords built;
+            return rebound.MaterializeHeap(*capture, built);
+        }), &created));
+    } catch (const DrawCompilePending&) {
+        if (created) heapTemplatesInBackground.fetch_add(1, std::memory_order_relaxed);
+        throw;
+    }
+    return invocation.MaterializeHeap(*capture, words);
+}
+
 bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t i, const ShaderRecompiler::PreparedShaderInvocation& invocation, const ShaderRecompiler::RecompileRequest& request, PerformanceTimer& timing) {
     const auto& program = context.programs[i];
     auto& stageCapture = context.stageCaptures[i];
     HeapStageMaterialized materialized;
     try {
-        materialized = MaterializeHeapStage(invocation, program.userData, program.binary.codeAddress);
+        materialized = MaterializeHeapStage(invocation, program.userData, request.context.memory, program.binary.codeAddress);
+    } catch (const DrawCompilePending&) {
+        throw;
     } catch (const std::exception& error) {
         throw stageFailure(program, request, error, request.context.memory);
     }
@@ -378,7 +430,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.heapWords.reset();
     if (request.target.gpuResolvedImages) {
         auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
-        if (auto shared = invocation.MaterializeHeap(*capture, *words)) {
+        if (auto shared = MaterializeHeapInBackground(invocation, capture, *words, request.context.memory, program.binary.codeAddress)) {
             words->dataOrigin = NextHeapDataOrigin();
             stageCapture.compiled = std::move(shared);
             stageCapture.heapWords = std::move(words);

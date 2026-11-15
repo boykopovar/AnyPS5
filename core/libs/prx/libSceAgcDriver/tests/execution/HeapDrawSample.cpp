@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -12,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -24,6 +27,7 @@
 #include <stdexcept>
 #include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -377,6 +381,21 @@ std::span<const std::uint32_t> PixelProgram(Mode mode, bool buffer, bool vertexS
     return PixelCode;
 }
 
+template <typename Reset>
+void SubmitUntilDrawn(std::vector<std::uint32_t>& commands, std::span<const std::byte> colorMemory, const char* failure, Reset&& reset) {
+    const bool async = AgcDriver::DriverDetail::AsyncDrawCompile();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (true) {
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, failure);
+        AgcDriverWaitIdle_nid_postfix();
+        const bool covered = std::any_of(colorMemory.begin(), colorMemory.end(), [](std::byte value) { return value != Kept; });
+        if (covered || !async || std::chrono::steady_clock::now() >= deadline) return;
+        reset();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
 void DrawSamplesTheTexture(bool heap, Mode mode, bool repeated = false) {
     const bool buffer = mode == Mode::Buffer || mode == Mode::Bda || mode == Mode::MovedBuffer;
     const auto colorMemory = mode == Mode::MergedBlend ? MergedTarget(0) : mode == Mode::MergedBlendOther ? MergedTarget(1) : std::span<std::byte>(ColorMemory);
@@ -407,9 +426,10 @@ void DrawSamplesTheTexture(bool heap, Mode mode, bool repeated = false) {
     auto* gdsCounter = reinterpret_cast<volatile std::uint32_t*>(AgcDriver::Pm4::GdsAddress() + 0x10u);
     if (mode == Mode::Gds) *gdsCounter = 0u;
     auto commands = Draw(code, mode);
-    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
-    AgcDriverWaitIdle_nid_postfix();
+    SubmitUntilDrawn(commands, colorMemory, "the draw submission failed", [&] {
+        StorageMemory.fill(0u);
+        if (mode == Mode::Gds) *gdsCounter = 0u;
+    });
     std::size_t drawn = 0;
     for (std::size_t offset = 0; offset < colorMemory.size(); offset += 4) {
         if (std::all_of(colorMemory.begin() + static_cast<std::ptrdiff_t>(offset),
@@ -468,9 +488,7 @@ void UnpreparedPairTakesTheHeap() {
     const auto excludedBefore = HeapExcludedCount(HeapExcluded::Draw);
     ColorMemory.fill(Kept);
     auto commands = Draw(FreshPixelCode.data(), Mode::Vertex, FreshVertexCode.data());
-    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the unprepared pair's draw submission failed");
-    AgcDriverWaitIdle_nid_postfix();
+    SubmitUntilDrawn(commands, ColorMemory, "the unprepared pair's draw submission failed", [] {});
     std::size_t drawn = 0;
     for (std::size_t offset = 0; offset < ColorMemory.size(); offset += 4) {
         if (std::all_of(ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset),
@@ -545,6 +563,8 @@ int main() {
         for (const auto mode : {Mode::Table, Mode::VertexTable}) DrawSamplesTheTexture(heap, mode, true);
         const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
         if (heap && !capped) UnpreparedPairTakesTheHeap();
+        if (heap && AgcDriver::DriverDetail::AsyncDrawCompile() && ShaderRecompiler::HeapTemplateCounts().entries != 0u)
+            Require(AgcDriver::DriverDetail::HeapTemplatesBuiltInBackground() != 0u, "no heap draw waited for its template to be built in the background");
         if (heap) {
             OversizedStageFails();
             UnmappableStageFails();

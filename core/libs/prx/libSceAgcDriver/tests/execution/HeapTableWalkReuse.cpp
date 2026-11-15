@@ -1,3 +1,4 @@
+#include "HeapStageSettled.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -59,6 +60,17 @@ std::uint8_t* WatchedPages(std::size_t bytes) {
 #endif
 }
 
+const std::byte* NoAccessPage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr, "heap table walk reuse: cannot reserve a no-access page");
+#else
+    void* page = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "heap table walk reuse: cannot map a no-access page");
+#endif
+    return static_cast<const std::byte*>(page);
+}
+
 std::vector<std::vector<std::uint32_t>> Descriptors(const RecompileResult& result) {
     std::vector<std::vector<std::uint32_t>> descriptors;
     for (const auto& binding : result.bindings) descriptors.push_back(binding.guestDescriptor);
@@ -101,12 +113,13 @@ void Run(AgcDriver::VulkanDevice& device) {
     const ShaderComputeStageInfo compute{{std::min(32u, device.Target().subgroupSize), 1u, 1u}, 0u, {false, false, false}, false, 1u};
     auto target = device.Target();
     target.gpuResolvedImages = true;
-    RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(Code.data()), Code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, regions}, target, {0u, 0u, 0u, 128u}};
+    std::vector<MemoryRegion> prepared(regions.begin(), regions.end());
+    RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(Code.data()), Code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, prepared}, target, {0u, 0u, 0u, 128u}};
     const auto handle = PrepareShader(request);
     const auto invocation = PreparedShaderInvocation::TryCreate(request, handle);
     Require(invocation.has_value(), "heap table walk reuse: the prepared table shader refused its own request");
     const auto walk = [&] {
-        auto stage = AgcDriver::DriverDetail::MaterializeHeapStage(*invocation, userData, request.shader.codeAddress);
+        auto stage = MaterializeHeapStageSettled(*invocation, userData, regions, request.shader.codeAddress);
         Require(stage.result != nullptr && stage.reads.complete, "heap table walk reuse: the heap walk declined the table stage");
         return stage;
     };
@@ -119,7 +132,9 @@ void Run(AgcDriver::VulkanDevice& device) {
     };
     const auto changed = reinterpret_cast<std::uint64_t>(table + 5u * 8u);
 
+    prepared[0] = MemoryRegion{prepared[0].guestAddress, std::span(NoAccessPage(), prepared[0].bytes.size())};
     const auto first = walk();
+    prepared[0] = regions[0];
     const auto before = ResourceMaterializer::TableReuse();
     const auto second = walk();
     const auto reused = ResourceMaterializer::TableReuse();

@@ -1,3 +1,4 @@
+#include "HeapStageSettled.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -62,7 +63,7 @@ void UnsupportedTypeDeclines(AgcDriver::VulkanDevice& device) {
     Require(invocation.has_value(), "the prepared shader refused its own request");
     AgcDriver::DriverDetail::HeapStageMaterialized materialized;
     try {
-        materialized = AgcDriver::DriverDetail::MaterializeHeapStage(*invocation, userData, request.shader.codeAddress);
+        materialized = MaterializeHeapStageSettled(*invocation, userData, request.context.memory, request.shader.codeAddress);
     } catch (const std::exception& error) {
         Require(false, std::string("a heap walk that read words it cannot capture threw instead of leaving the stage to the synchronized capture: ") + error.what());
     }
@@ -84,7 +85,7 @@ void ValidTypeYieldsStage(AgcDriver::VulkanDevice& device) {
     const auto handle = ShaderRecompiler::PrepareShader(request);
     const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, handle);
     Require(invocation.has_value(), "the prepared shader refused its own request");
-    const auto materialized = AgcDriver::DriverDetail::MaterializeHeapStage(*invocation, userData, request.shader.codeAddress);
+    const auto materialized = MaterializeHeapStageSettled(*invocation, userData, request.context.memory, request.shader.codeAddress);
     Require(materialized.result != nullptr, "a heap walk over valid buffer descriptors declined its stage");
 }
 
@@ -96,7 +97,7 @@ void RepeatedWalksYieldStages(AgcDriver::VulkanDevice& device) {
     const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, handle);
     Require(invocation.has_value(), "the prepared shader refused its own request");
     for (int walk = 0; walk < 3; ++walk) {
-        const auto materialized = AgcDriver::DriverDetail::MaterializeHeapStage(*invocation, userData, request.shader.codeAddress);
+        const auto materialized = MaterializeHeapStageSettled(*invocation, userData, request.context.memory, request.shader.codeAddress);
         Require(materialized.result != nullptr && materialized.words != nullptr, "a repeated heap walk over valid buffer descriptors declined its stage");
     }
 }

@@ -2750,7 +2750,7 @@ void HeapBindingWords(const RecompileRequest& request, const CompiledVariant& va
 
 }
 
-std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words) const {
+std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words, HeapTemplateMiss* miss) const {
     if (capture.source != handle->source || capture.plan != handle->source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     const auto& variant = handle->artifact;
     if (!variant->artifact.gpuResolvedImages || !variant->artifact.registrationModule || variant->bindings.layout.UsesPushData()) return nullptr;
@@ -2801,6 +2801,11 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
             TouchHeapTemplate({source.id, key, hit->result->heapTemplateId});
         }
         return Sealed(hit->result);
+    }
+    if (miss != nullptr && templates) {
+        miss->missing = true;
+        miss->key = key ^ source.id * 0x9e3779b97f4a7c15ull;
+        return nullptr;
     }
     UsedBindingPlan usedPlan;
     auto built = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, &usedPlan, nullptr, &substitutes));
