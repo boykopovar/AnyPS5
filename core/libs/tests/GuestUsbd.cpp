@@ -492,12 +492,18 @@ int main(int argc, char** argv) {
     int foreign = 0;
     void* handle = &foreign;
     Require(sceUsbdOpen(&foreign, nullptr) == invalidArgument, "null handle output accepted");
+    errno = 71;
+    Require(sceUsbdOpen(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable handle output accepted");
     Require(Throws([&] { sceUsbdOpen(nullptr, &handle); }), "opening a null device did not throw");
     Require(Throws([&] { sceUsbdOpen(&foreign, &handle); }), "opening a device that was never listed did not throw");
     sceUsbdClose(nullptr);
 
     Require(Throws([&] { sceUsbdClose(&foreign); }), "closing a handle that was never opened did not throw");
     Require(sceUsbdRefDevice(nullptr) == nullptr, "null device was referenced");
+    errno = 71;
+    Require(sceUsbdGetActiveConfigDescriptor(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable active config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptor(&foreign, 0, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptorByValue(&foreign, 1, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor by value output accepted");
     sceUsbdUnrefDevice(nullptr);
 
     Require(Throws([&] { sceUsbdRefDevice(&foreign); }), "referencing a device that was never listed did not throw");
