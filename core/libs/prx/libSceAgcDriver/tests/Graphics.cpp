@@ -328,6 +328,25 @@ void retainedPixelStageTests() {
         Require(!PixelProgramSkipped(queue), "an enabled high render target lost its pixel program");
         queue.context[0x8e] = queue.context[0x8f] = 0;
     }
+    queue.context[0x8e] = queue.context[0x8f] = 0xffffffffu;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound color target was skipped");
+    const std::uint32_t boundInfo = queue.context.at(0x31c);
+    for (std::uint32_t slot = 0; slot < 8; ++slot) queue.context[0x31c + 0xfu * slot] = 0;
+    Require(PixelProgramSkipped(queue), "reset-value color masks ran an unused pixel program with no color target bound");
+    Require(DrawRejection(queue, true).empty(), "an unused pixel program under reset-value color masks with no color target bound was rejected");
+    queue.context[0x203] = 0x400;
+    Require(!PixelProgramSkipped(queue), "EXEC_ON_NOOP was skipped with no color target bound");
+    queue.context[0x203] = 0;
+    queue.context[0x31c + 0xfu * 7u] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing a bound high color target was skipped");
+    queue.context[0x31c + 0xfu * 7u] = 0;
+    queue.context[0x31c] = boundInfo;
+    queue.context[0x8e] = queue.context[0x8f] = 0xf0u;
+    Require(PixelProgramSkipped(queue), "color masks enabling only a target without a format ran an unused pixel program beside a bound target");
+    queue.context[0x31c + 0xfu] = boundInfo;
+    Require(!PixelProgramSkipped(queue), "a pixel program writing the second bound color target was skipped");
+    queue.context[0x31c + 0xfu] = 0;
+    queue.context[0x8e] = queue.context[0x8f] = 0;
     queue.context[0x3] = 0;
     queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.0f);
     queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);

@@ -2859,7 +2859,7 @@ bool PixelProgramSkipped(const QueueState& queue) {
     if (targetMask == cx.end() || shaderMask == cx.end() || shaderControl == cx.end()) return false;
     const auto alphaToMask = find(cx, 0x2dc);
     if (alphaToMask != cx.end() && (alphaToMask->second & 1u) != 0) return false;
-    return (targetMask->second & shaderMask->second) == 0 && (shaderControl->second & PixelStageRunsMask) == 0;
+    return ColorWriteMask(cx) == 0 && (shaderControl->second & PixelStageRunsMask) == 0;
 }
 
 std::string NullPixelProgramRejection(const QueueState& queue) {
