@@ -831,6 +831,13 @@ if(BUILD_TESTING)
         set_tests_properties(tools_seed_check PROPERTIES TIMEOUT 20)
         add_test(NAME tools_cmake_fuzzer_sanitizers COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_cmake_fuzzer_sanitizers.py)
         set_tests_properties(tools_cmake_fuzzer_sanitizers PROPERTIES TIMEOUT 120)
+
+        add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py)
+        set_tests_properties(title_run_paths PROPERTIES TIMEOUT 30)
+        add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)
+        set_tests_properties(title_run_identity PROPERTIES TIMEOUT 30)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
@@ -945,6 +952,9 @@ set(LIBUSB_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)
 set(LIBUSB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(LIBUSB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LIBUSB_ENABLE_UDEV OFF CACHE BOOL "" FORCE)
+if(APPLE)
+    set(HAVE_PIPE2 "" CACHE INTERNAL "")
+endif()
 add_subdirectory(3rdparty/libusb-cmake EXCLUDE_FROM_ALL)
 set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

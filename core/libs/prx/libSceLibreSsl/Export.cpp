@@ -636,11 +636,6 @@ int APS5_VABI UI_OpenSSL_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509V3_EXT_print_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension) {
     if (!extension) return 0;
     std::int32_t critical;

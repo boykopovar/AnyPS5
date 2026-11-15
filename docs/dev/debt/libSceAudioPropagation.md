@@ -44,3 +44,4 @@
 ### Functional
 
 - [sceAudioPropagationSystemQueryInfo](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning 0x8a700002 (ErrorInvalidHandle) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+- [sceAudioPropagationSystemCreate, sceAudioPropagationPortalCreate, sceAudioPropagationSourceRender and sceAudioPropagationSystemEnumHandles](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - now read their options/params/render-info records and write the handle array through `GuestCopyIn_nid_no_patch`/`GuestCopyOut_nid_no_patch`; returning ErrorNullPointer (0x8A700003) for an unreadable or unwritable pointer is a host-safety decision, console behavior unmeasured.
