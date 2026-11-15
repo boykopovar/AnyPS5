@@ -527,6 +527,16 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(binary == 0 && binaryEnd == 1 && std::strcmp(binaryRest, "b101") == 0);
     Require(ScanList(" -0B11", "%i", &binary) == 1 && binary == 0);
     Require(ScanListS("0b1", "%i", &binary) == 1 && binary == 0);
+    {
+        int count = -7;
+        int value = -9;
+        Require(ScanListS("\x80", "\x80%n", &count) == 0 && count == -7);
+        Require(ScanListS("\xc3\xa9", "\xc3\xa9%n", &count) == 0 && count == -7);
+        Require(ScanListS("", "\x80%n", &count) == 0 && count == -7);
+        Require(ScanListS(" \x80", " \x80%n", &count) == 0 && count == -7);
+        Require(ScanListS("5\x80", "%d\x80%n", &value, &count) == 1 && value == 5 && count == -7);
+        Require(ScanListS("\x7f", "\x7f%n", &count) == 0 && count == 1);
+    }
     unsigned int hexWrap = 0;
     unsigned short shortWrap = 0;
     unsigned char byteWrap = 0;
@@ -719,9 +729,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         Require(sscanf_nid_postfix("\xc3\xa9", "%*ls") == 0 && sscanf_nid_postfix("\x80", "%*ls") == EOF);
         Require(sscanf_nid_postfix("\xc3\xa9", "%*lc") == EOF && sscanf_nid_postfix("a\xc3", "%*ls") == EOF);
         char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
-        bool positional = false;
-        try { sscanf_nid_postfix("a b", "%2$ls", untouched); } catch (const std::runtime_error&) { positional = untouched[0] == u'!'; }
-        Require(positional);
+        Require(sscanf_nid_postfix("a b", "%2$ls", untouched) == 0 && untouched[0] == u'!');
+        Require(sscanf_nid_postfix("5 ab", "%d %1$ls", &number, untouched) == 1 && number == 5 && untouched[0] == u'!');
     }
 #ifndef _WIN32
     char narrow[8] = {};

@@ -790,14 +790,15 @@ int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid) {
     if (std::strcmp(label + 1, "playstation.net") != 0) return NP_UTIL_ERROR_INVALID_JID;
     const std::size_t resourceLength = jid->resource != nullptr ? std::strlen(jid->resource) : 0;
     if (resourceLength > NP_ID_RESOURCE_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
-    *npId = {};
-    std::memcpy(npId->handle.data, jid->user, userLength);
-    npId->opt[0] = static_cast<std::uint8_t>(domain[0]);
-    npId->opt[1] = static_cast<std::uint8_t>(domain[1]);
-    npId->opt[2] = static_cast<std::uint8_t>(domain[3]);
-    npId->opt[3] = static_cast<std::uint8_t>(domain[4]);
-    if (resourceLength != 0) std::memcpy(npId->opt + 4, jid->resource, resourceLength);
-    npId->reserved[0] = 1;
+    NpIdFull local{};
+    std::memcpy(local.handle.data, jid->user, userLength);
+    local.opt[0] = static_cast<std::uint8_t>(domain[0]);
+    local.opt[1] = static_cast<std::uint8_t>(domain[1]);
+    local.opt[2] = static_cast<std::uint8_t>(domain[3]);
+    local.opt[3] = static_cast<std::uint8_t>(domain[4]);
+    if (resourceLength != 0) std::memcpy(local.opt + 4, jid->resource, resourceLength);
+    local.reserved[0] = 1;
+    if (!GuestCopyOut_nid_no_patch(npId, &local, sizeof(local))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
