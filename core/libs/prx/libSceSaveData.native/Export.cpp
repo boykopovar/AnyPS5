@@ -1804,7 +1804,10 @@ static int getConvertProgress(float* progress) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     const float current = g_convertProgress.load();
-    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(progress, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
@@ -2144,7 +2147,10 @@ static int getProgress(float* progress) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const float current = g_backupProgress.load();
-    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(progress, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
