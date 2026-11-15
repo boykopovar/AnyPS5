@@ -526,16 +526,18 @@ int APS5_VABI sceFontDeleteGlyph(const FontMemory* memory, FontGlyph* pGlyph) {
 
 int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph glyph, std::int32_t attribute, std::int32_t* previousAttribute) {
     if (!glyph || glyph->magic != GLYPH_MAGIC) {
-        if (previousAttribute) *previousAttribute = 0;
+        if (previousAttribute) Font::CopyOutGuest(previousAttribute, 0);
         return SCE_FONT_ERROR_INVALID_GLYPH;
     }
     if (attribute != 0x10 && attribute != 0x11) {
-        if (previousAttribute) *previousAttribute = 0;
+        if (previousAttribute) Font::CopyOutGuest(previousAttribute, 0);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const std::int32_t previous = (glyph->flags & 2) ? 0x11 : 0x10;
+    if (previousAttribute != nullptr && !Font::CopyOutGuest(previousAttribute, previous)) {
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     glyph->flags = static_cast<std::uint16_t>((glyph->flags & ~2u) | ((attribute - 0x10) << 1));
-    if (previousAttribute) *previousAttribute = previous;
     return SCE_FONT_OK;
 }
 
@@ -560,8 +562,8 @@ int APS5_VABI sceFontGlyphGetMetricsForm(FontGlyph glyph) {
 
 int APS5_VABI sceFontGlyphGetScalePixel(FontGlyph glyph, float* w, float* h) {
     if (!glyph || glyph->magic != GLYPH_MAGIC || (!w && !h)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (w) *w = glyph->scale_x;
-    if (h) *h = glyph->base_scale;
+    if (w && !CopyOutGuest(w, glyph->scale_x)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, glyph->base_scale)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 

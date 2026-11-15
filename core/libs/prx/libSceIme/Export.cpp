@@ -518,13 +518,15 @@ int APS5_VABI sceImeKeyboardGetInfo(uint32_t resource_id, KeyboardInfo* info) {
 }
 
 int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids) {
+    {
+        std::lock_guard lock(g_keyboardMutex);
+        if (!g_openKeyboards.contains(user_id)) return ErrorNotOpened;
+    }
     if (!resource_ids) return ErrorInvalidAddress;
-    if (user_id == UserIdInvalid) return ErrorInvalidUserId;
     KeyboardResourceIdArray localIds{};
     localIds.user_id = user_id;
     if (!GuestCopyOut_nid_no_patch(resource_ids, &localIds, sizeof(localIds))) return ErrorInvalidAddress;
-    std::lock_guard lock(g_keyboardMutex);
-    return g_openKeyboards.contains(user_id) ? ErrorConnectionFailed : ErrorNotOpened;
+    return ErrorConnectionFailed;
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
