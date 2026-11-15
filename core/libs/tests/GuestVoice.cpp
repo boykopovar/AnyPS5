@@ -562,5 +562,25 @@ int main() {
     Require(sceVoiceDeviceInCustomerData(guestInput, guestData, 0, unreadableGain) == invalidArgument);
     Require(errno == 71);
 
+    auto* const unwritableVolume = reinterpret_cast<float*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceGetVolume(guestInput, unwritableVolume) == invalidArgument);
+    Require(errno == 71);
+
+    auto* const unwritableInfo = reinterpret_cast<VoicePortInfo*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceGetPortInfo(guestInput, unwritableInfo) == invalidArgument);
+    Require(errno == 71);
+
+    auto* const unwritableMemorySize = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceVoiceGetMemorySize(2, 0, 0, 0, 0, 0, 0, 0, 0, unwritableMemorySize) == invalidArgument);
+    Require(errno == 71);
+
+    Require(sceVoiceStart(&start) == 0);
+    errno = 71;
+    Require(sceVoiceGetPortInfo(guestInput, unwritableInfo) == invalidArgument);
+    Require(errno == 71);
+
     Require(sceVoiceEnd_nid_postfix() == 0);
 }

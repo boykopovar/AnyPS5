@@ -306,7 +306,7 @@ int APS5_VABI sceVoiceGetVolume(std::uint32_t portId, float* volume) {
     if (!volume) return InvalidArgument;
     const auto found = voice.ports.find(portId);
     if (found == voice.ports.end()) return PortNotFound;
-    *volume = found->second.volume;
+    if (!WriteGuest(volume, found->second.volume)) return InvalidArgument;
     return 0;
 }
 
@@ -318,13 +318,17 @@ int APS5_VABI sceVoiceGetPortInfo(uint32_t port_id, VoicePortInfo* info) {
     if (info == nullptr) return InvalidArgument;
     const auto& port = RequirePort(voice, port_id, __func__);
     if (!voice.everStarted) {
-        std::memset(info, 0, sizeof(*info));
+        const VoicePortInfo cleared{};
+        if (!WriteGuest(info, cleared)) return InvalidArgument;
         return NeverStarted;
     }
-    info->port_type = port.type;
-    info->state = PortStateReady;
-    info->byte_count = 0;
-    info->frame_size = port.bitrate != 0 ? port.frameSize : 2;
+    VoicePortInfo local{};
+    if (!ReadGuest(info, local)) return InvalidArgument;
+    local.port_type = port.type;
+    local.state = PortStateReady;
+    local.byte_count = 0;
+    local.frame_size = port.bitrate != 0 ? port.frameSize : 2;
+    if (!WriteGuest(info, local)) return InvalidArgument;
     return 0;
 }
 
@@ -499,7 +503,8 @@ int APS5_VABI sceVoiceGetMemorySize(std::uint32_t, std::uint32_t, std::uint32_t,
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return NotInitialized;
     if (!size) return InvalidArgument;
-    *size = 0;
+    const std::uint32_t zero = 0;
+    if (!WriteGuest(size, zero)) return InvalidArgument;
     return MemorySizeVersion;
 }
 
