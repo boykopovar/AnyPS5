@@ -44,7 +44,7 @@ def entry_call_target(elf):
     entry, = struct.unpack_from("<Q", elf, 24)
     segment = next(segment for segment in loads(elf) if segment[3] <= entry < segment[3] + segment[5])
     stub = segment[2] + entry - segment[3]
-    call = elf.index(0xE8, stub, stub + 32)
+    call = elf.index(0xE8, stub, stub + 64)
     displacement, = struct.unpack_from("<i", elf, call + 1)
     return entry + call - stub + 5 + displacement
 

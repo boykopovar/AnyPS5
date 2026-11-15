@@ -5,7 +5,7 @@
 #include <cstdint>
 
 extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::int64_t processHandle);
-extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status);
+extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, bool requireUsage = false);
 #endif
 
 #endif

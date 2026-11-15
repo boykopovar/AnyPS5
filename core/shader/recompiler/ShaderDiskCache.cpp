@@ -1,5 +1,6 @@
 #include "ShaderDiskCache.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
 #include "ShaderCacheDirectory.hpp"
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #endif
 #include "ShaderCacheSourceVersion.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -143,7 +145,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 50, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 51, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -816,6 +818,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.foldTexelOffsetsOnly);
         out.Value(image.convertedSamples);
         out.Value(image.remappedDepth1D);
+        out.Value(image.gathered);
         out.Value(image.layerRowsCompatible);
         out.Value(image.layerRows);
         out.Value(image.maxArrayLayers);
@@ -932,6 +935,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.foldTexelOffsetsOnly);
         in.Value(image.convertedSamples);
         in.Value(image.remappedDepth1D);
+        in.Value(image.gathered);
         in.Value(image.layerRowsCompatible);
         in.Value(image.layerRows);
         in.Value(image.maxArrayLayers);
@@ -1271,12 +1275,13 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             }
             const auto zigzag = code - 1u;
             const auto delta = static_cast<std::int64_t>(zigzag >> 1u) ^ -static_cast<std::int64_t>(zigzag & 1u);
-            const auto index = static_cast<std::int64_t>(current) + delta;
-            if (index < 0 || index >= static_cast<std::int64_t>(records.size())) {
+            const auto base = static_cast<std::int64_t>(current);
+            const auto limit = static_cast<std::int64_t>(records.size());
+            if (delta < -base || delta >= limit - base) {
                 in.Fail();
                 return;
             }
-            argument = static_cast<std::uint32_t>(index);
+            argument = static_cast<std::uint32_t>(base + delta);
         }
         if (record.opcode == IrOpcode::Phi) {
             record.phiBlocks.resize(record.arguments.size());
@@ -1424,6 +1429,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_RESULT_MEMO",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
+    "APS5_RESOURCE_PLAN_MB",
     "APS5_RESULT_MEMO_MB",
 };
 
@@ -1490,7 +1496,7 @@ public:
         discoverPrebuilt();
         stopping = stopped;
         if (stopping) return;
-        writer = std::thread([this] { run(); });
+        writer = Libc::StartHostThread([this] { run(); });
         runningWriters.fetch_add(1, std::memory_order_acq_rel);
     }
 
@@ -1537,6 +1543,7 @@ public:
         auto persisted = std::make_shared<CompiledVariant>();
         const auto bytes = mapped->Bytes();
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
+        ReleaseMapped(persisted->artifact.spirv);
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
         persisted->substitutes = variant.substitutes;
@@ -1829,7 +1836,7 @@ private:
             if (!used) used = lastWriteTime(it->path());
             if (used && now - *used > std::chrono::hours(24 * 14)) {
                 std::error_code removeError;
-                std::filesystem::remove_all(it->path(), removeError);
+                RemoveTree(it->path(), removeError);
             }
         }
         error.clear();
@@ -2074,6 +2081,20 @@ std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, c
 void Flush() {
     auto& instance = store();
     if (instance.Enabled()) instance.Flush();
+}
+
+void ReleaseMapped(const SharedSpirv& spirv) noexcept {
+    if (!spirv.Mapped()) return;
+    const auto words = spirv.Words();
+    if (words.empty()) return;
+#ifdef _WIN32
+    VirtualUnlock(const_cast<std::uint32_t*>(words.data()), words.size_bytes());
+#else
+    const auto page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    const auto first = reinterpret_cast<std::uintptr_t>(words.data());
+    const auto begin = first / page * page;
+    madvise(reinterpret_cast<void*>(begin), first + words.size_bytes() - begin, MADV_DONTNEED);
+#endif
 }
 
 void Shutdown() {

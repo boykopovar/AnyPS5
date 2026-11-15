@@ -3,6 +3,7 @@
 #include "prx/libSceIcu/Version.hpp"
 
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libc/include/General.hpp"
@@ -22,7 +23,9 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <source_location>
+#include <type_traits>
 
 namespace {
 
@@ -201,6 +204,83 @@ static void TestMemoryAllocations() {
     _ZN8Gigacage4freeENS_4KindEPv(0, cross2);
 }
 
+template <typename Function>
+bool ExpectBmallocOperatorStub(Function function, const char* name) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) == std::string(name) + " not implemented" &&
+            NotImplementedCalls_nid_no_patch() == before + 1) {
+            std::fprintf(stderr, "EXPECTED_BMALLOC_THROW %s\n", name);
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename ScalarNew, typename ScalarDelete, typename ArrayNew>
+bool TestBmallocOperatorClass(ScalarNew scalarNew, ScalarDelete scalarDelete, ArrayNew arrayNew,
+                              const char* scalarNewName, const char* scalarDeleteName,
+                              const char* arrayNewName) {
+    if constexpr (std::is_invocable_r_v<int, ScalarNew> &&
+                  std::is_invocable_r_v<int, ScalarDelete> &&
+                  std::is_invocable_r_v<int, ArrayNew>) {
+        ExpectBmallocOperatorStub(scalarNew, scalarNewName);
+        ExpectBmallocOperatorStub(scalarDelete, scalarDeleteName);
+        ExpectBmallocOperatorStub(arrayNew, arrayNewName);
+        return false;
+    } else {
+        static_assert(std::is_invocable_r_v<void*, ScalarNew, std::size_t>);
+        static_assert(std::is_invocable_r_v<void, ScalarDelete, void*>);
+        static_assert(std::is_invocable_r_v<void*, ArrayNew, std::size_t>);
+
+        void* scalarZero = scalarNew(0);
+        Require(scalarZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(scalarZero) % alignof(std::max_align_t)) == 0);
+        scalarDelete(scalarZero);
+        scalarDelete(nullptr);
+
+        auto* scalar = static_cast<unsigned char*>(scalarNew(128));
+        Require(scalar != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            scalar[i] = static_cast<unsigned char>(i ^ 0xA5);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(scalar[i] == static_cast<unsigned char>(i ^ 0xA5));
+        }
+        scalarDelete(scalar);
+
+        void* arrayZero = arrayNew(0);
+        Require(arrayZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(arrayZero) % alignof(std::max_align_t)) == 0);
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(arrayZero, 0);
+
+        auto* array = static_cast<unsigned char*>(arrayNew(128));
+        Require(array != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            array[i] = static_cast<unsigned char>(i ^ 0x5A);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(array[i] == static_cast<unsigned char>(i ^ 0x5A));
+        }
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(array, 0);
+        return true;
+    }
+}
+
+static bool TestBmallocHeapOperators() {
+    const bool isoTls = TestBmallocOperatorClass(
+        _ZN7bmalloc11IsoTLSEntrynwEm, _ZN7bmalloc11IsoTLSEntrydlEPv,
+        _ZN7bmalloc11IsoTLSEntrynaEm, "_ZN7bmalloc11IsoTLSEntrynwEm",
+        "_ZN7bmalloc11IsoTLSEntrydlEPv", "_ZN7bmalloc11IsoTLSEntrynaEm");
+    const bool isoHeap = TestBmallocOperatorClass(
+        _ZN7bmalloc15IsoHeapImplBasenwEm, _ZN7bmalloc15IsoHeapImplBasedlEPv,
+        _ZN7bmalloc15IsoHeapImplBasenaEm, "_ZN7bmalloc15IsoHeapImplBasenwEm",
+        "_ZN7bmalloc15IsoHeapImplBasedlEPv", "_ZN7bmalloc15IsoHeapImplBasenaEm");
+    return isoTls && isoHeap;
+}
+
 static void TestTime() {
     MonotonicTime mNow = _ZN3WTF13MonotonicTime3nowEv();
     Require(mNow.m_value > 0.0);
@@ -268,15 +348,160 @@ static void TestTime() {
     Require(threadCpu.m_value >= 0.0);
 }
 
-static void TestSystem() {
-    int cores = _ZN3WTF22numberOfProcessorCoresEv();
-    Require(cores >= 1);
+extern "C" void CurrentTimeClockForTest_nid_no_patch(int (*query)(int, KernelTimespec*));
 
-    std::uint64_t ram = _ZN3WTF7ramSizeEv();
+static int g_clockQueries = 0;
+static int g_lastClockId = -1;
+
+static int ClockWithTimes(int clockId, KernelTimespec* time) {
+    ++g_clockQueries;
+    g_lastClockId = clockId;
+    if (clockId == 0) {
+        *time = KernelTimespec{1700000000, 250000000};
+        return 0;
+    }
+    if (clockId == 4) {
+        *time = KernelTimespec{12345, 500000000};
+        return 0;
+    }
+    *time = KernelTimespec{99, 0};
+    return 0;
+}
+
+static int ClockFailing(int, KernelTimespec*) {
+    ++g_clockQueries;
+    return -1;
+}
+
+static double GuestClockSeconds(int clockId) {
+    KernelTimespec time{};
+    Require(clock_gettime_nid_postfix(clockId, &time) == 0);
+    return static_cast<double>(time.tv_sec) + time.tv_nsec / 1'000'000'000.0;
+}
+
+static void TestGuestClocks() {
+    CurrentTimeClockForTest_nid_no_patch(ClockWithTimes);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 1700000000.25);
+    Require(g_lastClockId == 0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 12345.5);
+    Require(g_lastClockId == 4);
+    Require(g_clockQueries == 2);
+
+    TimeWithDynamicClockType dynamicWall = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Wall);
+    Require(dynamicWall.m_type == ClockType::Wall && dynamicWall.m_value == 1700000000.25);
+    TimeWithDynamicClockType dynamicMonotonic = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+    Require(dynamicMonotonic.m_type == ClockType::Monotonic && dynamicMonotonic.m_value == 12345.5);
+
+    MonotonicTime monotonic{12346.5};
+    Require(_ZNK3WTF13MonotonicTime19approximateWallTimeEv(&monotonic).m_value == 1700000001.25);
+    WallTime wall{1700000002.25};
+    Require(_ZNK3WTF8WallTime24approximateMonotonicTimeEv(&wall).m_value == 12347.5);
+
+    CurrentTimeClockForTest_nid_no_patch(ClockFailing);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 0.0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 0.0);
+    Require(g_clockQueries == 2);
+
+    CurrentTimeClockForTest_nid_no_patch(nullptr);
+    const double monotonicBefore = GuestClockSeconds(4);
+    const double monotonicNow = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    Require(monotonicBefore <= monotonicNow && monotonicNow <= GuestClockSeconds(4));
+    const double wallBefore = GuestClockSeconds(0);
+    const double wallNow = _ZN3WTF8WallTime3nowEv().m_value;
+    Require(wallBefore <= wallNow && wallNow <= GuestClockSeconds(0));
+}
+
+extern "C" void NumberOfProcessorCoresSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static int g_sysconfQueries = 0;
+
+static std::int64_t SysconfWithProcessors(int name) {
+    ++g_sysconfQueries;
+    if (name == 58) return 37;
+    if (name == 57) return 41;
+    return -1;
+}
+
+static std::int64_t SysconfFailing(int) {
+    ++g_sysconfQueries;
+    return -1;
+}
+
+static void TestNumberOfProcessorCores() {
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfWithProcessors);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfFailing);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(nullptr);
+    const int cores = _ZN3WTF22numberOfProcessorCoresEv();
+    Require(cores >= 1);
+    Require(cores == sysconf_nid_postfix(58));
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == cores);
+}
+
+extern "C" void RamSizeSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static std::int64_t SysconfWithMemory(int name) {
+    ++g_sysconfQueries;
+    if (name == 121) return 139888;
+    if (name == 47) return 16384;
+    return -1;
+}
+
+static std::int64_t SysconfWithoutPhysPages(int name) {
+    ++g_sysconfQueries;
+    return name == 47 ? 16384 : -1;
+}
+
+static std::int64_t SysconfWithoutPageSize(int name) {
+    ++g_sysconfQueries;
+    return name == 121 ? 139888 : -1;
+}
+
+static void TestRamSize() {
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithMemory);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPhysPages);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPageSize);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfFailing);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(nullptr);
+    const std::uint64_t ram = _ZN3WTF7ramSizeEv();
+    Require(ram == static_cast<std::uint64_t>(sysconf_nid_postfix(121)) * static_cast<std::uint64_t>(sysconf_nid_postfix(47)));
     Require(ram >= 1024ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == ram);
+}
+
+static void TestSystem() {
+    TestNumberOfProcessorCores();
+    TestRamSize();
+    TestGuestClocks();
 
     std::size_t page = _ZN3WTF8pageSizeEv();
-    Require(page == 4096);
+    Require(page == 16384);
+    Require(_ZN3WTF8pageSizeEv() == page);
 
     _ZN3WTF6Config17permanentlyFreezeEv();
 
@@ -562,6 +787,9 @@ static void TestFileHandles() {
 }
 
 int main() {
+    if (!TestBmallocHeapOperators()) {
+        return 1;
+    }
     TestAdditionalWtf();
     TestMemoryAllocations();
     TestAllocationBoundaries();
@@ -1423,6 +1651,122 @@ void TestFileNameHelpers() {
     Throws([&] { LastComponent(nullptr); });
 }
 
+const auto ParserEqual = &_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_;
+const auto ParserConsistent = &_ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE;
+
+void TestURLParserChecks() {
+    constexpr unsigned valid = 1U;
+    constexpr unsigned http = 2U;
+    constexpr unsigned opaque = 4U;
+    auto text = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    const std::string raw = Bytes(UTF8(&text, 1));
+    const unsigned hostEnd = static_cast<unsigned>(raw.find(":8443"));
+    URL url{text.impl, valid | (5U << 3) | (5U << 6), 8, 12, 17, hostEnd,
+        static_cast<unsigned>(raw.rfind('/') + 1), static_cast<unsigned>(raw.find('?')), static_cast<unsigned>(raw.find('#'))};
+    Check(ParserEqual(&url, &url) && ParserConsistent(&url));
+
+    auto copy = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    Check(copy.impl != text.impl);
+    URL same = url;
+    same.impl = copy.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto wide = Create16(u"https://u%20:p%40@example.test:8443/a/b?q=1#frag", 48);
+    Check(!(wide.impl->hashAndFlags & 4));
+    same.impl = wide.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto other = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frog"));
+    same.impl = other.impl;
+    Check(!ParserEqual(&url, &same) && ParserConsistent(&same));
+    auto shorter = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#fra"));
+    same.impl = shorter.impl;
+    Check(!ParserEqual(&url, &same));
+
+    for (unsigned flip : {valid, http, opaque, 1U << 3, 4U << 3, 1U << 6, 1U << 31}) {
+        URL changed = url;
+        changed.bits ^= flip;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+    unsigned URL::* const offsets[] = {&URL::userStart, &URL::userEnd, &URL::passwordEnd, &URL::hostEnd,
+        &URL::pathAfterLastSlash, &URL::pathEnd, &URL::queryEnd};
+    for (auto offset : offsets) {
+        URL changed = url;
+        changed.*offset += 1;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+
+    URL absent{};
+    URL absentCopy{};
+    Check(ParserEqual(&absent, &absentCopy) && ParserConsistent(&absent));
+    auto empty = FromUTF8Z(U8(""));
+    Check(empty.impl && empty.impl->length == 0);
+    URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(!ParserEqual(&absent, &emptyURL) && !ParserEqual(&emptyURL, &absent));
+    Check(ParserConsistent(&emptyURL));
+    absent.queryEnd = 1;
+    Check(!ParserConsistent(&absent));
+
+    {
+        URL changed = url;
+        changed.bits = (changed.bits & 63U) | ((changed.userStart + 1) << 6);
+        Check(!ParserConsistent(&changed));
+        changed.bits = (changed.bits & 63U) | (changed.userStart << 6);
+        Check(ParserConsistent(&changed));
+    }
+    const std::pair<unsigned URL::*, unsigned URL::*> orders[] = {{&URL::userStart, &URL::userEnd},
+        {&URL::userEnd, &URL::passwordEnd}, {&URL::passwordEnd, &URL::hostEnd}, {&URL::pathAfterLastSlash, &URL::pathEnd},
+        {&URL::pathEnd, &URL::queryEnd}};
+    for (const auto& [lower, upper] : orders) {
+        URL changed = url;
+        changed.*lower = changed.*upper + 1;
+        Check(!ParserConsistent(&changed));
+        changed.*lower = changed.*upper;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.pathAfterLastSlash = changed.hostEnd + 4;
+        Check(!ParserConsistent(&changed));
+        changed.pathAfterLastSlash = changed.hostEnd + 5;
+        Check(ParserConsistent(&changed));
+        changed.bits &= ~(7U << 3);
+        changed.pathAfterLastSlash = changed.hostEnd;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.queryEnd = text.impl->length;
+        Check(ParserConsistent(&changed));
+        changed.queryEnd = text.impl->length + 1;
+        Check(!ParserConsistent(&changed));
+        changed.queryEnd = url.queryEnd;
+        changed.bits &= ~(valid | http | opaque);
+        Check(ParserConsistent(&changed));
+        changed.bits |= http | opaque;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        auto abc = FromUTF8Z(U8("abc"));
+        URL wrapped{abc.impl, valid | (1U << 3), 0, 0, 0, 0xFFFFFFFFU, 0, 0, 0};
+        Check(ParserConsistent(&wrapped));
+        wrapped.bits = valid | (2U << 3);
+        Check(!ParserConsistent(&wrapped));
+        wrapped.pathAfterLastSlash = 1;
+        wrapped.pathEnd = 1;
+        wrapped.queryEnd = 1;
+        Check(ParserConsistent(&wrapped));
+    }
+
+    StringImpl corrupt{2, 3, nullptr, 4};
+    StringImpl corruptCopy{2, 3, nullptr, 4};
+    URL broken{&corrupt, 0, 0, 0, 0, 0, 0, 0, 0};
+    URL brokenCopy{&corruptCopy, 0, 0, 0, 0, 0, 0, 0, 0};
+    Throws([&] { ParserEqual(&broken, &brokenCopy); });
+    Check(ParserEqual(&broken, &broken));
+    Throws([&] { ParserEqual(nullptr, &url); });
+    Throws([&] { ParserEqual(&url, nullptr); });
+    Throws([&] { ParserConsistent(nullptr); });
+}
+
 void TestURLsAndReallocation() {
     struct PinnedBits {
         unsigned valid : 1;
@@ -1873,6 +2217,7 @@ void TestURLsAndReallocation() {
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
     TestURLStringHelpers();
+    TestURLParserChecks();
 }
 
 void TestURLLastPathComponentAndReferrer() {

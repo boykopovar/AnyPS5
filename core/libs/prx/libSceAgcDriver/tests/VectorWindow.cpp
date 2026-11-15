@@ -47,6 +47,7 @@ constexpr std::uint32_t BranchForwardTwo = 0xbf820002u;
 constexpr std::uint32_t SubtractS16One = 0x80908110u;
 constexpr std::uint32_t CompareS16NotZero = 0xbf078010u;
 constexpr std::uint32_t BranchBackFourOnScc = 0xbf85fffcu;
+constexpr std::uint32_t BranchBackFiveOnScc = 0xbf85fffbu;
 
 struct Shape {
     std::size_t functionArrays = 0;
@@ -267,6 +268,21 @@ void RequireWindow(const IrProgram& program, std::uint32_t base, std::uint32_t l
     Require(bounded, "relative access did not use the final stage window bound");
 }
 
+IrProgram TranslateCompute(const std::vector<std::uint32_t>& code) {
+    ShaderComputeInputInfo compute{};
+    compute.threadIdsNum = 1;
+    compute.threadsNum[0] = 32u;
+    const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+    const SwappcInfo swappc{false, 0u, 8u};
+    const auto graph = GraphBuilder{}.Build(decoded, &swappc);
+    TranslateOptions options{};
+    options.stage = ShaderStageKind::Compute;
+    options.waveSize = 32u;
+    options.userDataCount = 8u;
+    options.inputInfo = {nullptr, nullptr, &compute};
+    return InstructionTranslator{}.Translate(decoded, graph, options);
+}
+
 template<typename TAction>
 bool RunStage(const char* name, TAction action) {
     try {
@@ -362,6 +378,22 @@ int main(int argc, char** argv) {
         const std::array<std::uint32_t, 7> code{MoveV4One, MoveV5Two, MoveV6Four, MoveV1V5, 0xe0700000u, 0x80000100u, EndProgram};
         const auto shape = Scan(RecompileProgram(code));
         return shape.functionArrays == 0 && shape.accessChains == 0;
+    });
+
+    passed &= run("relative writes confined to a loop keep the registers outside the loop out of the window", [] {
+        const std::vector<std::uint32_t> code{MoveV4One, MoveV5Two, MoveV6Four, MoveM0GroupX, MoveS16Two, MovrelsV1V4, MovreldV4V0, SubtractS16One, CompareS16NotZero, BranchBackFiveOnScc, MoveV1V5, 0xe0700000u, 0x80000100u, EndProgram};
+        const auto program = TranslateCompute(code);
+        const auto& metadata = program.Metadata();
+        std::size_t directWrites = 0;
+        std::size_t relativeReads = 0;
+        for (const auto& block : program.Blocks()) {
+            for (const auto* instruction : block->Instructions()) {
+                if (instruction->Opcode() == IrOpcode::SetVectorRegister && instruction->Argument(0)->Register().index >= metadata.vectorWindowBase) ++directWrites;
+                if (instruction->Opcode() == IrOpcode::LoadVectorWindow && !instruction->Argument(0)->Resolve()->HasImmediate()) ++relativeReads;
+            }
+        }
+        if (!metadata.vectorWindowIndexedWrites || directWrites < 3u || relativeReads == 0u) std::fprintf(stderr, "  window base %u, indexed writes %d, direct window register writes %zu, relative reads %zu\n", metadata.vectorWindowBase, metadata.vectorWindowIndexedWrites, directWrites, relativeReads);
+        return metadata.vectorWindowIndexedWrites && directWrites >= 3u && relativeReads != 0u;
     });
 
     passed &= run("a sampler dword spilled into a window register with ordinary writes keeps its definition past a relative write", [] {

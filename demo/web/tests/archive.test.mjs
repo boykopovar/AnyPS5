@@ -150,7 +150,7 @@ console.log("Multiple app packages append under separate roots in a single ZIP")
 
 for (const [entries, error] of [
   [[["one", executable], ["two", executable]], /exactly one/u],
-  [[["readme", new Uint8Array([1])]], /exactly one/u],
+  [[["readme", new Uint8Array([1])]], /doesn't look like a PS5 app/u],
   [[["eboot.bin", new Uint8Array([79, 21, 61, 29])]], /SELF container/u],
   [[["eboot.bin", new Uint8Array([84, 20, 245, 238])]], /SELF container/u],
   [[["app", executable], ["..\/escape", resource]], /Unsafe ZIP/u],
