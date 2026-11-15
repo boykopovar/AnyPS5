@@ -693,7 +693,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceIcu PRIVATE Currency.cpp)
+target_sources(libSceIcu PRIVATE Currency.cpp CurrencyBackend.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_icu_currency_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Currency.cpp)
     target_include_directories(guest_icu_currency_tests PRIVATE ${LIBS_INCLUDE_DIR})
