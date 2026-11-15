@@ -1135,7 +1135,11 @@ int APS5_VABI scePadGetActiveTime(std::int32_t handle, std::int32_t type, std::u
 int APS5_VABI scePadGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (deviceId == nullptr) return PAD_ERROR_INVALID_ARG;
-    *deviceId = -1;
+    const std::int32_t value = -1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(deviceId, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1473,7 +1477,11 @@ int APS5_VABI scePadControllerUpdateInit(void) {
 int APS5_VABI scePadControllerUpdateIsUpdateNeeded2(std::int32_t deviceId, const std::uint32_t* version, std::uint16_t* status) {
     (void)deviceId;
     if (status == nullptr) return PAD_ERROR_INVALID_ARG;
-    *status = 0;
+    const std::uint16_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
     if (version == nullptr) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch("scePadControllerUpdateIsUpdateNeeded2: the driver answer behind the controller-update ioctl");
     return 0;
