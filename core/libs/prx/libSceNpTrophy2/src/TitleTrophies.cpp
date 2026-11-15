@@ -148,8 +148,11 @@ int CopyIcon(int context, IconKind kind, std::int32_t id, void* buffer, std::siz
             if (const auto found = icons->find(id); found != icons->end()) icon = &found->second;
         }
     }
+    const auto writeSize = [size, caller](std::size_t value) {
+        if (!GuestCopyOut_nid_no_patch(size, &value, sizeof(value))) throw std::invalid_argument(std::string(caller) + ": invalid argument");
+    };
     if (icon == nullptr) {
-        if (size != nullptr) *size = NP_TROPHY2_ICON_SIZE_NONE;
+        if (size != nullptr) writeSize(NP_TROPHY2_ICON_SIZE_NONE);
         return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
     }
     if (size == nullptr) throw std::invalid_argument(std::string(caller) + ": invalid argument");
@@ -160,16 +163,18 @@ int CopyIcon(int context, IconKind kind, std::int32_t id, void* buffer, std::siz
         }
     }
     if (buffer == nullptr) {
-        *size = icon->size();
+        writeSize(icon->size());
         return SCE_NP_TROPHY2_OK;
     }
-    if (*size < icon->size()) {
-        throw std::runtime_error(std::string(caller) + ": the buffer holds " + std::to_string(*size) + " bytes and the icon " + std::to_string(icon->size()) + ", and the console's answer to that is not known");
+    std::size_t capacity = 0;
+    if (!GuestCopyIn_nid_no_patch(&capacity, size, sizeof(capacity))) throw std::invalid_argument(std::string(caller) + ": invalid argument");
+    if (capacity < icon->size()) {
+        throw std::runtime_error(std::string(caller) + ": the buffer holds " + std::to_string(capacity) + " bytes and the icon " + std::to_string(icon->size()) + ", and the console's answer to that is not known");
     }
     const GuestArena::HostWrite destination(buffer, icon->size());
     if (!destination.Open()) throw std::runtime_error(std::string(caller) + ": the icon buffer is not writable");
     std::memcpy(buffer, icon->data(), icon->size());
-    *size = icon->size();
+    writeSize(icon->size());
     return SCE_NP_TROPHY2_OK;
 }
 

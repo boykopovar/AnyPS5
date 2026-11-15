@@ -6,6 +6,7 @@
 #include "tests/ExportLookup.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -244,6 +245,14 @@ static void ReportIcons(int context) {
     std::size_t smallSize = sizeof(small);
     Require(ThrowsRuntimeError([context, &small, &smallSize] { sceNpTrophy2GetGameIcon(context, 1, small, &smallSize); }), "an icon was copied into a buffer too small for it");
     Require(ThrowsInvalidArgument([context] { sceNpTrophy2GetTrophyIcon(context, 1, 1, nullptr, nullptr); }), "an icon was reported without a size to write");
+    auto* const unwritable = reinterpret_cast<std::size_t*>(0x10);
+    char buffer[64] = {};
+    errno = 71;
+    Require(ThrowsInvalidArgument([context, unwritable] { sceNpTrophy2GetGameIcon(context, 1, nullptr, unwritable); }) &&
+                ThrowsInvalidArgument([context, unwritable] { sceNpTrophy2GetGroupIcon(context, 1, 7, nullptr, unwritable); }) &&
+                ThrowsInvalidArgument([context, unwritable, &buffer] { sceNpTrophy2GetTrophyIcon(context, 1, 1, buffer, unwritable); }) &&
+                ThrowsInvalidArgument([context, unwritable] { sceNpTrophy2GetRewardIcon(context, 1, 1, nullptr, unwritable); }) && errno == 71,
+            "an icon size was read or written through a pointer that is not guest memory, or errno changed");
     std::size_t hiddenSize = 0;
     Require(ThrowsRuntimeError([context, &hiddenSize] { sceNpTrophy2GetTrophyIcon(context, 1, 6, nullptr, &hiddenSize); }) &&
                 ThrowsRuntimeError([context, &hiddenSize] { sceNpTrophy2GetRewardIcon(context, 1, 6, nullptr, &hiddenSize); }),
