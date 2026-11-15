@@ -13,6 +13,22 @@ if(BUILD_TESTING)
             set_tests_properties(agc_driver_frame_capture_eop PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+        add_test(NAME agc_driver_frame_capture_waiting COMMAND agc_driver_frame_capture_eop_tests waiting)
+        set_tests_properties(agc_driver_frame_capture_waiting PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-waiting;APS5_FRAME_CAPTURE_TRIGGER=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-waiting-trigger-never-written;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 120)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_capture_waiting PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+        add_test(NAME agc_driver_frame_capture_startup COMMAND agc_driver_frame_capture_eop_tests startup)
+        set_tests_properties(agc_driver_frame_capture_startup PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-startup;APS5_FRAME_CAPTURE_TRIGGER=${CMAKE_CURRENT_BINARY_DIR}/frame-capture-startup-trigger;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 120)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_capture_startup PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
         foreach(mode IN ITEMS rewind rewind_held)
             add_test(NAME agc_driver_frame_capture_${mode} COMMAND agc_driver_frame_capture_eop_tests ${mode})
             set_tests_properties(agc_driver_frame_capture_${mode} PROPERTIES

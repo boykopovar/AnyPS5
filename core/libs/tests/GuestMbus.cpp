@@ -72,6 +72,9 @@ void CheckInit() {
 int main() {
     static_assert(sizeof(MbusEventCallbacks) == 16);
     sceMbusEventCallbackFuncsInit_(nullptr, sizeof(MbusEventCallbacks));
+    errno = 71;
+    sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(0x10), sizeof(MbusEventCallbacks));
+    Require(errno == 71, "unwritable callback initialization altered errno");
     alignas(MbusEventCallbacks) std::array<std::uint8_t, 24> callbackBytes{};
     callbackBytes.fill(0xa5);
     sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), 8);
@@ -85,6 +88,10 @@ int main() {
     callbackBytes.fill(0x5a);
     sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), 0);
     for (const auto byte : callbackBytes) Require(byte == 0x5a, "zero-size callback initialization changed memory");
+    std::array<std::uint8_t, 532> longCallbacks{};
+    longCallbacks.fill(0xa5);
+    sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(longCallbacks.data()), 516);
+    for (std::size_t i = 0; i < longCallbacks.size(); ++i) Require(longCallbacks[i] == (i < 516 ? 0 : 0xa5), "large callback initialization wrote outside the requested range");
 
     CheckDeviceIdConversion();
     CheckInit();
