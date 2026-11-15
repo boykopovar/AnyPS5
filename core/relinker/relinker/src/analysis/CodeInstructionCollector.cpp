@@ -545,28 +545,28 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     for (const auto& [begin, end] : functions) functionBytes += end - begin;
     std::uint64_t decodedBytes = 0;
     report(1000);
-    std::vector<std::uint64_t> decodedStarts;
-    const auto insideDecodedInstruction = [&](std::uint64_t address) {
-        if (decodedStarts.size() != instructionList.size()) {
-            decodedStarts = instructionList;
-            std::sort(decodedStarts.begin(), decodedStarts.end());
-            decodedStarts.erase(std::unique(decodedStarts.begin(), decodedStarts.end()), decodedStarts.end());
+    const auto insideEnclosingInstruction = [&](std::uint64_t begin, std::uint64_t end) {
+        for (auto outer = functions.lower_bound(begin); outer != functions.begin();) {
+            --outer;
+            const auto [outerBegin, outerEnd] = *outer;
+            if (outerEnd <= begin || end > outerEnd) continue;
+            const auto offset = fileOffset(outerBegin, outerEnd - outerBegin);
+            for (auto address = outerBegin; address < begin;) {
+                try {
+                    const auto length = decoder.DecodeInstruction(bytes.data() + offset + address - outerBegin, outerEnd - address).Length;
+                    if (length == 0 || length > outerEnd - address) break;
+                    address += length;
+                } catch (const Codegen::CodegenException&) {
+                    break;
+                }
+                if (address > begin) return true;
+            }
         }
-        const auto next = std::upper_bound(decodedStarts.begin(), decodedStarts.end(), address);
-        if (next == decodedStarts.begin()) return false;
-        const auto start = *std::prev(next);
-        if (start == address) return false;
-        const auto offset = fileOffset(start, 1);
-        try {
-            const auto length = decoder.DecodeInstruction(bytes.data() + offset, std::min<std::uint64_t>(15, bytes.size() - offset)).Length;
-            return start + length > address;
-        } catch (const Codegen::CodegenException&) {
-            return false;
-        }
+        return false;
     };
     std::uint64_t decodedEnd = 0;
     for (const auto& [begin, end] : functions) {
-        if (begin < decodedEnd && insideDecodedInstruction(begin)) {
+        if (begin < decodedEnd && insideEnclosingInstruction(begin, end)) {
             roots.erase(begin);
             continue;
         }

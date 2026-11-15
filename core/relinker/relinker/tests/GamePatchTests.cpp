@@ -523,6 +523,7 @@ void unwindRangeInsideInstruction() {
     for (const auto& ranges : {Ranges{{0x1200, 0x120f}, {0x1205, 0x1206}}, Ranges{{0x1200, 0x1209}, {0x1205, 0x1206}}, Ranges{{0x1200, 0x1209}, {0x1209, 0x120f}}})
         converter.Convert(conversionInput(unwindRangeFixture(ranges)), options);
     rejects([&] { converter.Convert(conversionInput(unwindRangeFixture({{0x1205, 0x1206}})), options); }, "Instruction truncated after prefixes");
+    rejects([&] { converter.Convert(conversionInput(unwindRangeFixture({{0x1200, 0x1209}, {0x1205, 0x120f}})), options); }, "overlapping instruction boundaries");
 }
 
 void framedLeafPatches() {
