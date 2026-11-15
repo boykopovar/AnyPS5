@@ -147,6 +147,7 @@ public:
     void SealPassWriteOnly();
     bool RecordedWritesSettled(std::uint64_t address, std::size_t bytes) const;
     bool StoresPendingOver(std::uint64_t address, std::size_t bytes) const;
+    void SyncRecordedWrites(std::uint64_t address, std::size_t bytes);
     // Fills [address, address + bytes) of host-imported guest memory with a repeating 16-byte pattern,
     // recorded behind the open batch; false when the range is not imported (the caller stores it).
     // Recorded GPU stores over the range are ordered before the fill by its barrier; finished

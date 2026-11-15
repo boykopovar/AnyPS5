@@ -1010,6 +1010,14 @@ std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect) {
     return count;
 }
 
+std::uint32_t ReadDrawCountUnsynced(const DrawParameters::IndirectDraw& indirect) {
+    require(indirect.countIndirect && indirect.countAddress != 0, "indirect draw has no count address");
+    std::uint32_t count = 0;
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::IndirectArguments);
+    GuestMemory::ReadCommittedUnsynced(indirect.countAddress, std::as_writable_bytes(std::span(&count, 1)));
+    return count;
+}
+
 DrawParameters ResolveDraw(std::span<const std::uint32_t> packet, const QueueState& queue) {
     Validate(packet, 0);
     if (IndirectDrawOpcode((packet[0] >> 8u) & 0xffu)) return resolveIndirectDraw(packet, queue);

@@ -3070,6 +3070,11 @@ bool VulkanDevice::RecordedWritesSettled(std::uint64_t address, std::size_t byte
     return Graphics::Recorder::PendingCompletionLabels() == 0 || !recorder.CompletionLabelIn(address, bytes);
 }
 
+void VulkanDevice::SyncRecordedWrites(std::uint64_t address, std::size_t bytes) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    if (state->recorder && state->recorder->PendingWriteOverlaps(address, bytes)) state->recorder->SyncThrough(address, bytes, true);
+}
+
 bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) const {
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
     if (Graphics::StorageTexture::AnyPendingOverlaps(range) || Graphics::AnyShadowedOverlaps(range) || state->CopiedWriterOverlaps(address, bytes)) return true;

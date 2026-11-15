@@ -202,6 +202,27 @@ void noteFinisherHandOff(bool handed) {
 
 namespace {
 
+bool UnderPendingImage(VulkanDevice& device, std::uint64_t address, std::size_t bytes) {
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
+    if (!Graphics::StorageTexture::AnyPendingOverlaps(range)) return false;
+    device.SyncRecordedWrites(address, bytes);
+    return true;
+}
+
+std::vector<Pm4::DrawArguments> ReadIndirectRecords(VulkanDevice& device, const Pm4::DrawParameters::IndirectDraw& indirect) {
+    auto count = indirect.count;
+    if (indirect.countIndirect) {
+        const auto value = UnderPendingImage(device, indirect.countAddress, sizeof(std::uint32_t)) ? Pm4::ReadDrawCountUnsynced(indirect) : Pm4::ReadDrawCount(indirect);
+        count = std::min(value, indirect.count);
+    }
+    std::vector<Pm4::DrawArguments> records;
+    if (count == 0) return records;
+    const bool unsynced = UnderPendingImage(device, indirect.arguments, static_cast<std::size_t>(static_cast<std::uint64_t>(count - 1) * indirect.stride + indirect.recordBytes));
+    records.reserve(count);
+    for (std::uint32_t record = 0; record < count; ++record) records.push_back(unsynced ? Pm4::ReadDrawArgumentsUnsynced(indirect, record) : Pm4::ReadDrawArguments(indirect, record));
+    return records;
+}
+
 enum class HeldReason : std::size_t { Known, NoDecode, Size, NullVertex, NullFragment, NullOther, Bda, Buffer, Storage, Count };
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeldReason::Count)> heldReasons{};
 
@@ -541,9 +562,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             const auto& indirect = *drawParameters.indirect;
             recordQueuedLabelsBeforeRead(submission.queue);
             const auto readStart = std::chrono::steady_clock::now();
-            const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
-            bool any = false;
-            for (std::uint32_t record = 0; record < count && !any; ++record) any = recordDraws(Pm4::ReadDrawArguments(indirect, record));
+            const auto records = ReadIndirectRecords(*localDevice, indirect);
+            const bool any = std::any_of(records.begin(), records.end(), recordDraws);
             if (!any) {
                 Graphics::CountEmptyIndirectDraw(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
                 timing.Mark("empty_indirect_skipped");
@@ -1159,9 +1179,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
-        const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
-        std::vector<Pm4::DrawArguments> records;
-        for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(indirect, record));
+        const auto records = ReadIndirectRecords(*localDevice, indirect);
         Graphics::CountIndirectDraw(*indirectCpu, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
         const auto baseVertexWords = UserDataWords(programs, roles, indirect.baseVertexLocation);
         const auto startInstanceWords = UserDataWords(programs, roles, indirect.startInstanceLocation);
@@ -1300,6 +1318,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 }
                 phaseTiming.Phase(DrawRowVectors);
                 auto writes = drawWriteRanges(graphics, stages);
+                auto reads = QueuedDrawReadRanges(direct, stages);
                 const auto commitQueue = submission.queue;
                 const auto commitPacket = tail.packetOpcode;
                 const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
@@ -1309,7 +1328,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                     commitDraw(localDevice, commitQueue, decode->state, direct, stages, snapshots, nullptr, {}, 0, nullptr);
                 };
                 auto held = std::make_shared<decltype(commit)>(std::move(commit));
-                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::IndirectDraw, [held] { (*held)(); }, std::move(writes));
+                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::IndirectDraw, [held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads));
                 phaseTiming.Phase(DrawRowLockWait);
                 countRecordWords();
                 timing.Mark("draw_enqueued");
