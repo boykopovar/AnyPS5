@@ -980,6 +980,10 @@ void CheckValueClasses() {
     Require(_ZN3sce2np4User7GetUserEiPS1_(123, &fetchedUser) == UserInvalid, "GetUser must refuse a user that is not registered");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, &fetchedUser) == 0 && fetchedUser.userId == USER_SERVICE_INITIAL_USER_ID, "GetUser must return the registered user");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, nullptr) == InvalidArgument, "GetUser must refuse a null output");
+    errno = 71;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&initialUser, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id output must be refused");
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&initialUser, reinterpret_cast<bool*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id flag must be refused");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<UserObject*>(0x10)) == InvalidArgument && errno == 71, "GetUser must refuse an unwritable output");
 
     SceNpOnlineId onlineIdOut {};
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
