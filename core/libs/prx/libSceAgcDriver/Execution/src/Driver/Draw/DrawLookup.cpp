@@ -260,7 +260,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 phaseMs[DrawRowValidateWait] += waited;
                 counters.validateUs += phaseMs[DrawRowKeyLookupValidate] * 1000;
             }
-        } else if (dataEntry != nullptr && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
+        } else if (dataEntry != nullptr && graphics.stages.path == Graphics::ShaderPath::Vertex && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
             std::uint64_t imagesFlushed = 0, runsSynced = 0;
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
             std::optional<SampledReadScope> sampling;

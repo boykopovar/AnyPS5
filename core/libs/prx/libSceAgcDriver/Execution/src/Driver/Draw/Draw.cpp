@@ -967,6 +967,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& program = programs[i];
         pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, localDevice->GraphicsPipelineLibraries());
         pushOffsets[i] = pushCursorBytes;
+        bool dataCandidate = false;
         const bool stageReused = !drawHit && !verifyHit && !(verifyDrawDataHits() && stageData[i].compiled != nullptr) && drawRelocationEnabled() && matched[i] != nullptr;
         if (stageReused) {
             fresh[i] = matched[i];
@@ -980,6 +981,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             const auto candidate = std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes; });
             if (candidate != dataCandidates[i].end() && !verifyDrawDataHits()) {
                 matched[i] = candidate->first;
+                dataCandidate = true;
                 stageCaptures[i].registeredViews = matched[i]->registeredViews;
                 matchedRegions[i] = std::move(candidate->second);
                 reused[i] = true;
@@ -1014,7 +1016,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
             require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
             stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].registeredViews.get()});
-            if ((drawHit || stageReused) && !matched[i]->patchedPushConstants.empty()) stages.back().pushConstants = matched[i]->patchedPushConstants;
+            if (matched[i] != nullptr && UsesPatchedPushConstants(drawHit, stageReused, dataCandidate, *matched[i])) stages.back().pushConstants = matched[i]->patchedPushConstants;
             pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
         } catch (...) {
             TraceMaterializationFailure(trace.token, submission, packetOffset, "push-constant-validation", completedSubdraws, std::current_exception());

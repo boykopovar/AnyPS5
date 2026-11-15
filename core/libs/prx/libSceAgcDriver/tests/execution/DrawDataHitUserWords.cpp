@@ -283,12 +283,13 @@ void UnreadPixelWordsKeepACompleteStage(bool verify) {
     const auto first = BrightestColorByte();
     const auto after = draw(0x22);
     const auto same = BrightestColorByte();
-    draw(0x22, 0.75f);
+    const auto read = draw(0x22, 0.75f);
     const auto changed = BrightestColorByte();
     const auto closeTo = [](unsigned actual, unsigned expected) { return actual + 2 >= expected && actual <= expected + 2; };
     Require(closeTo(first, 128) && closeTo(same, 128) && closeTo(changed, 191),
             "a direct user word wrote " + std::to_string(first) + "/" + std::to_string(same) + "/" + std::to_string(changed) + ", expected 128/128/191");
     Require(after.dataHits == before.dataHits + 1, "an unread pixel word did not produce a data-only hit: " + Counts(after));
+    Require(read.dataHits == after.dataHits + 1, "a read forwarded pixel word did not produce a data-only hit: " + Counts(read));
     if (verify) Require(after.dataStagesCompiled - before.dataStagesCompiled == 2 && after.dataVerified - before.dataVerified == 2,
                         "verify mode did not rebuild and compare a stage with no walked user data: " + Counts(before) + " -> " + Counts(after));
     else Require(after.dataStagesReused - before.dataStagesReused == 2 && after.dataStagesCompiled == before.dataStagesCompiled,

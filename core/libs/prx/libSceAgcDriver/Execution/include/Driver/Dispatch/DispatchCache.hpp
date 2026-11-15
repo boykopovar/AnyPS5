@@ -95,6 +95,10 @@ struct DispatchEntry {
     std::list<std::uint64_t>::iterator order;
 };
 
+inline bool UsesPatchedPushConstants(bool drawHit, bool stageReused, bool dataCandidate, const DispatchVariant& variant) {
+    return (drawHit || stageReused || dataCandidate) && !variant.patchedPushConstants.empty();
+}
+
 struct EntryCounters {
     std::uint64_t lookups = 0, absent = 0, equal = 0, differing = 0, queuedStores = 0, inaccessible = 0, queuedLabel = 0, flushingImage = 0, publishMoved = 0, pendingMoved = 0, forgetMoved = 0, imagesFlushed = 0, runsSynced = 0, forgetSinceInsert = 0, replaced = 0, inserts = 0, unstable = 0, touches = 0;
 
