@@ -8,10 +8,6 @@ int APS5_VABI cairo_scaled_font_get_font_face() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_set_font_options() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI cairo_font_face_set_user_data() {
     NotImplemented_nid_no_patch(__func__);
@@ -26,10 +22,6 @@ int APS5_VABI cairo_arc_negative() {
 
 
 int APS5_VABI cairo_ft_scaled_font_lock_face() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_glyph_path() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -49,20 +41,11 @@ int APS5_VABI cairo_scaled_font_get_ctm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_set_font_size() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI cairo_pattern_set_extend() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI cairo_ft_font_face_create_for_pattern() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_mask() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -72,10 +55,6 @@ int APS5_VABI cairo_mask() {
 
 
 int APS5_VABI cairo_scaled_font_extents() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_show_glyphs() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -108,10 +87,6 @@ int APS5_VABI cairo_set_scaled_font() {
 
 
 
-int APS5_VABI cairo_pattern_create_for_surface() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_arc() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -131,10 +106,6 @@ int APS5_VABI cairo_scaled_font_status() {
 }
 
 int APS5_VABI cairo_in_fill() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_set_source() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -167,11 +138,6 @@ int APS5_VABI cairo_ft_font_options_substitute() {
 }
 
 
-int APS5_VABI cairo_select_font_face() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI cairo_scaled_font_reference() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -186,10 +152,6 @@ int APS5_VABI cairo_scaled_font_text_to_glyphs() {
 }
 
 int APS5_VABI cairo_scaled_font_glyph_extents() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_show_text() {
     NotImplemented_nid_no_patch(__func__);
 }
 

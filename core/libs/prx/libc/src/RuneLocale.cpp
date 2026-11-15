@@ -119,7 +119,8 @@ int APS5_VABI _Iswctype_nid_postfix(std::uint32_t c, std::uint64_t type) {
         GuestRune::Graph, GuestRune::Lower, GuestRune::Print, GuestRune::Punct,
         GuestRune::Space, GuestRune::Upper, GuestRune::Hex, GuestRune::Blank,
     };
-    if (type == 0 || type > std::size(masks)) throw std::invalid_argument("_Iswctype: unknown class " + std::to_string(type));
+    if (type == 0 || type == std::size(masks) + 1) return 0;
+    if (type > std::size(masks)) throw std::invalid_argument("_Iswctype: unknown class " + std::to_string(type));
     return GuestRune::Is(c, masks[type - 1]);
 }
 

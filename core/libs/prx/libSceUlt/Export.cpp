@@ -25,11 +25,6 @@
 #include "SceUltTypes.hpp"
 #include "prx/libSceUlt/src/ReaderWriterLock.hpp"
 
-bool CurrentWaitRecord(UltWaitRecord& record, std::int32_t waitValue);
-void RemoveWaitRecord(std::vector<UltWaitRecord>& records, const UltWaitRecord& record);
-int ValidateWaitRecords(const UltWaitingThreadInfo* records, std::uint32_t capacity);
-int WriteWaitRecords(const std::vector<UltWaitRecord>& records, UltWaitingThreadInfo* destination, std::uint32_t capacity);
-
 namespace {
 
 std::mutex gMutex;
