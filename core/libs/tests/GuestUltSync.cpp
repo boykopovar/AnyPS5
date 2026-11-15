@@ -798,10 +798,19 @@ void InfoWaiters() {
         CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
     });
     WaitForInfoWaiters<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
-    CheckUnsupportedInfo<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 1);
-    CheckUnsupportedInfo<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
+    CheckWaiterRecord<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 1);
     CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
     reader.join();
+
+    CHECK(sceUltReaderWriterLockLockRead(&rwlock) == Ok);
+    std::thread writer([&] {
+        CHECK(sceUltReaderWriterLockLockWrite(&rwlock) == Ok);
+        CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
+    });
+    WaitForInfoWaiters<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock);
+    CheckWaiterRecord<UltReaderWriterLockInfo>(sceUltGetReaderWriterLockInfo, &rwlock, 2);
+    CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
+    writer.join();
 
     CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
     CHECK(sceUltSemaphoreDestroy(&semaphore) == Ok);

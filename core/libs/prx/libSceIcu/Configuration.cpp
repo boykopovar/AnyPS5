@@ -106,6 +106,10 @@ void APS5_VABI u_cleanup_nid_postfix() {
     TimeZoneDirectory.clear();
 }
 
+void IcuReleaseMemory_nid_no_patch(void* memory) {
+    if (memory != ZeroMemory) Release(memory);
+}
+
 void* APS5_VABI uprv_malloc_nid_postfix(std::size_t size) {
     return Allocate(size);
 }
