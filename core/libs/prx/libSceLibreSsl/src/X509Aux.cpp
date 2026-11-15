@@ -687,44 +687,49 @@ CertAux* DecodeAux(const unsigned char** in, std::int64_t limit) {
         return nullptr;
     };
     std::int64_t remaining = length;
-    for (int field = 0; field < FieldCount; ++field) {
-        if (remaining <= 0) break;
-        const unsigned char* q = p;
-        if (CheckEoc(&p, remaining)) {
-            if (!indefiniteContent) {
-                Queue(UnexpectedEoc);
-                return release();
+    try {
+        for (int field = 0; field < FieldCount; ++field) {
+            if (remaining <= 0) break;
+            const unsigned char* q = p;
+            if (CheckEoc(&p, remaining)) {
+                if (!indefiniteContent) {
+                    Queue(UnexpectedEoc);
+                    return release();
+                }
+                remaining -= p - q;
+                indefiniteContent = false;
+                break;
             }
-            remaining -= p - q;
-            indefiniteContent = false;
-            break;
-        }
-        const char optional = field == FieldCount - 1 ? 0 : 1;
-        int decoded = 0;
-        if (field == 0) decoded = DecodeObjectStack(&aux->trust, &p, remaining, Sequence, Universal, optional, &cache);
-        else if (field == 1) decoded = DecodeObjectStack(&aux->reject, &p, remaining, RejectTag, ContextClass, optional, &cache);
-        else if (field == 2) decoded = DecodeStringField(&aux->alias, &p, remaining, Utf8String, optional, &cache);
-        else if (field == 3) decoded = DecodeStringField(&aux->keyid, &p, remaining, OctetString, optional, &cache);
-        else {
-            std::int64_t otherLength = 0;
-            char otherIndefinite = 0;
-            if (CheckTagLength(&otherLength, nullptr, nullptr, &otherIndefinite, nullptr, &p, remaining, OtherTag, ContextClass, 0,
-                    &cache) != 1) {
-                Queue(NestedAsn1Error);
-                return release();
+            const char optional = field == FieldCount - 1 ? 0 : 1;
+            int decoded = 0;
+            if (field == 0) decoded = DecodeObjectStack(&aux->trust, &p, remaining, Sequence, Universal, optional, &cache);
+            else if (field == 1) decoded = DecodeObjectStack(&aux->reject, &p, remaining, RejectTag, ContextClass, optional, &cache);
+            else if (field == 2) decoded = DecodeStringField(&aux->alias, &p, remaining, Utf8String, optional, &cache);
+            else if (field == 3) decoded = DecodeStringField(&aux->keyid, &p, remaining, OctetString, optional, &cache);
+            else {
+                std::int64_t otherLength = 0;
+                char otherIndefinite = 0;
+                if (CheckTagLength(&otherLength, nullptr, nullptr, &otherIndefinite, nullptr, &p, remaining, OtherTag, ContextClass, 0,
+                        &cache) != 1) {
+                    Queue(NestedAsn1Error);
+                    return release();
+                }
+                NotImplemented_nid_no_patch("d2i_X509_AUX of a certificate with other auxiliary information");
             }
-            NotImplemented_nid_no_patch("d2i_X509_AUX of a certificate with other auxiliary information");
+            if (decoded == 0) return release();
+            if (decoded == 1) remaining -= p - q;
         }
-        if (decoded == 0) return release();
-        if (decoded == 1) remaining -= p - q;
-    }
-    if (indefiniteContent && !CheckEoc(&p, remaining)) {
-        Queue(MissingEoc);
-        return release();
-    }
-    if (!sequenceWithoutLength && remaining) {
-        Queue(SequenceLengthMismatch);
-        return release();
+        if (indefiniteContent && !CheckEoc(&p, remaining)) {
+            Queue(MissingEoc);
+            return release();
+        }
+        if (!sequenceWithoutLength && remaining) {
+            Queue(SequenceLengthMismatch);
+            return release();
+        }
+    } catch (...) {
+        AuxFree(aux);
+        throw;
     }
     *in = p;
     return aux;
@@ -732,13 +737,23 @@ CertAux* DecodeAux(const unsigned char** in, std::int64_t limit) {
 
 }  // namespace
 
+void X509AuxiliaryFree(void* auxiliary) {
+    AuxFree(static_cast<CertAux*>(auxiliary));
+}
+
 LibreSslX509* X509AuxRead_nid_no_patch(LibreSslX509** certificate, const unsigned char** input, std::int64_t length) {
     const unsigned char* p = *input;
     LibreSslX509* certificateRead = d2i_X509_nid_postfix(nullptr, &p, length);
     if (!certificateRead) return nullptr;
     length -= static_cast<std::int64_t>(p - *input);
     if (length > 0) {
-        CertAux* aux = DecodeAux(&p, length);
+        CertAux* aux = nullptr;
+        try {
+            aux = DecodeAux(&p, length);
+        } catch (...) {
+            X509_free_nid_postfix(certificateRead);
+            throw;
+        }
         if (!aux) {
             X509_free_nid_postfix(certificateRead);
             return nullptr;

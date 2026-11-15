@@ -132,6 +132,7 @@
 #include <string>
 #include <vector>
 #include "prx/libc/include/General.hpp"
+#include "X509Aux.hpp"
 
 static_assert(sizeof(LibreSslAsn1Type) == 16 && offsetof(LibreSslAsn1Type, value) == 8);
 static_assert(sizeof(LibreSslX509Algorithm) == 16 && offsetof(LibreSslX509Algorithm, parameter) == 8);
@@ -1759,9 +1760,9 @@ int CertificateCallback(Operation operation, Value* value) {
         certificate->exData.stack = nullptr;
         break;
     case FreePre:
-        if (certificate->exData.stack || certificate->auxiliary || certificate->subjectKeyId || certificate->authorityKeyId || certificate->crlDistributionPoints ||
+        if (certificate->exData.stack || certificate->subjectKeyId || certificate->authorityKeyId || certificate->crlDistributionPoints ||
             certificate->policyCache || certificate->alternativeNames || certificate->nameConstraints)
-            NotImplemented_nid_no_patch("X509_free of a certificate with ex_data, auxiliary data or cached extensions");
+            NotImplemented_nid_no_patch("X509_free of a certificate with ex_data or cached extensions");
         break;
     case DecodePost:
         free_nid_postfix(certificate->name);
@@ -1770,6 +1771,8 @@ int CertificateCallback(Operation operation, Value* value) {
     case FreePost:
         free_nid_postfix(certificate->name);
         certificate->name = nullptr;
+        LibreSsl::X509AuxiliaryFree(certificate->auxiliary);
+        certificate->auxiliary = nullptr;
         break;
     default:
         break;
@@ -1778,7 +1781,9 @@ int CertificateCallback(Operation operation, Value* value) {
 }
 
 int PublicKeyCallback(Operation operation, Value* value) {
-    if (operation == FreePre && static_cast<LibreSslX509PublicKey*>(*value)->key) NotImplemented_nid_no_patch("X509_PUBKEY_free of a decoded EVP_PKEY");
+    if (operation != FreePost) return 1;
+    auto* key = static_cast<LibreSslX509PublicKey*>(*value);
+    EVP_PKEY_free_nid_postfix(std::atomic_ref<void*>(key->key).exchange(nullptr, std::memory_order_acq_rel));
     return 1;
 }
 

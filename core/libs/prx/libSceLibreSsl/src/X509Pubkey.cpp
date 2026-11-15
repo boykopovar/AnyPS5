@@ -2,7 +2,9 @@
  * src/lib/libcrypto/asn1/x_pubkey.c (v 1.26) L177-224 and L414-427; src/lib/libcrypto/rsa/rsa_ameth.c (v 1.18) L89-104;
  * src/lib/libcrypto/rsa/rsa_asn1.c (v 1.13) L167-199 and L285-290; src/lib/libcrypto/asn1/x_bignum.c (v 1.8) L87-165;
  * src/lib/libcrypto/asn1/tasn_dec.c (v 1.34) L295-435, L652-770 and L1073-1140; src/lib/libcrypto/asn1/asn1_lib.c (v 1.38) L95-190;
- * src/lib/libcrypto/evp/p_lib.c (v 1.17) L211-258; src/lib/libcrypto/asn1/ameth_lib.c (v 1.20) L84-112 and L165-214 */
+ * src/lib/libcrypto/evp/p_lib.c (v 1.17) L211-258 and L267-275; src/lib/libcrypto/asn1/ameth_lib.c (v 1.20) L84-112 and L165-214;
+ * src/lib/libcrypto/ec/ec_ameth.c (v 1.18) L138-213; src/lib/libcrypto/ec/ec_asn1.c (v 1.23) L1539-1565;
+ * src/lib/libcrypto/x509/x_algor.c (v 1.14) L96-110 */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
  */
@@ -119,9 +121,10 @@
  */
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
-#include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "PkeyEc.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -134,14 +137,17 @@ namespace {
 
 constexpr int EvpLibrary = 6;
 constexpr int RsaLibrary = 4;
+constexpr int EcLibrary = 16;
 constexpr int X509Library = 11;
 constexpr int Asn1Library = 13;
 constexpr int AnyFunction = 0xfff;
 
 constexpr int NestedAsn1Error = 58;
 constexpr int RsaLibraryError = 4;
+constexpr int EcLibraryError = 16;
 constexpr int MallocFailure = 65;
 constexpr int BadObjectHeader = 102;
+constexpr int EcDecodeError = 142;
 constexpr int UnsupportedAlgorithm = 111;
 constexpr int MethodNotSupported = 124;
 constexpr int PublicKeyDecodeError = 125;
@@ -164,10 +170,13 @@ constexpr int Universal = 0;
 constexpr int Constructed = 0x20;
 constexpr int HighTag = 0x1f;
 constexpr int ClassMask = 0xc0;
+constexpr int Object = 6;
 constexpr int Integer = 2;
 constexpr int Sequence = 16;
 constexpr int MaximumStringNesting = 5;
 constexpr std::size_t GrowthLimit = 0x5ffffffc;
+
+constexpr int NamedCurveFlag = 1;
 
 struct Pkey {
     int type;
@@ -587,34 +596,134 @@ bool RsaPubDecode(void* pkey, LibreSslX509PublicKey* key) {
     return true;
 }
 
+bool EcType2Param(LibreSslX509PublicKey* key, EcKey** result) {
+    const LibreSslAsn1Type* parameter = key->algorithm->parameter;
+    if (!parameter) {
+        Queue(EcLibrary, EcDecodeError);
+        return false;
+    }
+    if (parameter->type == Sequence) NotImplemented_nid_no_patch("X509_get_pubkey: elliptic curve parameters given as an explicit SEQUENCE");
+    if (parameter->type != Object) {
+        Queue(EcLibrary, EcDecodeError);
+        return false;
+    }
+    EcKey* ecKey = EC_KEY_new_nid_postfix();
+    if (!ecKey) {
+        Queue(EcLibrary, MallocFailure);
+        return false;
+    }
+    EcGroup* group = nullptr;
+    try {
+        group = EC_GROUP_new_by_curve_name_nid_postfix(OBJ_obj2nid_nid_postfix(static_cast<const LibreSslAsn1Object*>(parameter->value)));
+        if (!group) {
+            EC_KEY_free_nid_postfix(ecKey);
+            return false;
+        }
+        group->asn1Flag = NamedCurveFlag;
+        if (EC_KEY_set_group_nid_postfix(ecKey, group) == 0) {
+            EC_GROUP_free_nid_postfix(group);
+            EC_KEY_free_nid_postfix(ecKey);
+            return false;
+        }
+        EC_GROUP_free_nid_postfix(group);
+        group = nullptr;
+    } catch (...) {
+        if (group) EC_GROUP_free_nid_postfix(group);
+        EC_KEY_free_nid_postfix(ecKey);
+        throw;
+    }
+    *result = ecKey;
+    return true;
+}
+
+bool EcPubDecode(void* pkey, LibreSslX509PublicKey* key) {
+    EcKey* ecKey = nullptr;
+    if (!EcType2Param(key, &ecKey)) {
+        Queue(EcLibrary, EcLibraryError);
+        return false;
+    }
+    const EcGroup* curve = EC_KEY_get0_group_nid_postfix(ecKey);
+    EcPoint* point = EC_POINT_new_nid_postfix(curve);
+    if (!point) {
+        Queue(EcLibrary, MallocFailure);
+        Queue(EcLibrary, EcLibraryError);
+        EC_KEY_free_nid_postfix(ecKey);
+        return false;
+    }
+    const unsigned char* data = key->publicKey->data;
+    const std::int64_t length = key->publicKey->length;
+    if (!data && length != 0) {
+        EC_POINT_free_nid_postfix(point);
+        EC_KEY_free_nid_postfix(ecKey);
+        throw std::invalid_argument("X509_get_pubkey: public key bits without content");
+    }
+    bool assigned = false;
+    try {
+        if (EC_POINT_oct2point_nid_postfix(curve, point, data, static_cast<std::size_t>(length), nullptr) != 1) {
+            EC_POINT_free_nid_postfix(point);
+            EC_KEY_free_nid_postfix(ecKey);
+            Queue(EcLibrary, EcLibraryError);
+            Queue(EcLibrary, EcDecodeError);
+            return false;
+        }
+        ecKey->conversionForm = data[0] & ~0x01;
+        assigned = EC_KEY_set_public_key_nid_postfix(ecKey, point) == 1 && LibreSsl::PkeyAssignEcKey_nid_no_patch(pkey, ecKey);
+    } catch (...) {
+        EC_POINT_free_nid_postfix(point);
+        EC_KEY_free_nid_postfix(ecKey);
+        throw;
+    }
+    EC_POINT_free_nid_postfix(point);
+    if (!assigned) {
+        EC_KEY_free_nid_postfix(ecKey);
+        Queue(EcLibrary, EcLibraryError);
+        return false;
+    }
+    return true;
+}
+
 void* PubkeyGet(LibreSslX509PublicKey* key) {
     if (!key) return nullptr;
-    if (key->key) {
-        AddReference(key->key);
-        return key->key;
+    std::atomic_ref<void*> cache(key->key);
+    void* cached = cache.load(std::memory_order_acquire);
+    if (cached) {
+        AddReference(cached);
+        return cached;
     }
     if (!key->publicKey) return nullptr;
+    if (!key->algorithm || !key->algorithm->algorithm) throw std::invalid_argument("X509_get_pubkey: public key without an algorithm");
     void* pkey = EVP_PKEY_new_nid_postfix();
     if (!pkey) {
         Queue(X509Library, MallocFailure);
         return nullptr;
     }
-    if (!key->algorithm || !key->algorithm->algorithm) throw std::invalid_argument("X509_get_pubkey: public key without an algorithm");
-    const int nid = LibreSslObjectNid_nid_no_patch(key->algorithm->algorithm);
-    if (nid == DsaEncryptionNid || nid == IdEcPublicKeyNid)
-        NotImplemented_nid_no_patch("X509_get_pubkey: an EVP_PKEY algorithm this library cannot hold");
-    if (nid != RsaEncryptionNid) {
-        Queue(EvpLibrary, EvpUnsupportedAlgorithm);
-        Queue(X509Library, UnsupportedAlgorithm);
+    try {
+        const int nid = OBJ_obj2nid_nid_postfix(key->algorithm->algorithm);
+        const bool rsaKey = nid == RsaEncryptionNid;
+        if (rsaKey || nid == IdEcPublicKeyNid) {
+            const bool decoded = rsaKey ? RsaPubDecode(pkey, key) : EcPubDecode(pkey, key);
+            if (!decoded) {
+                Queue(X509Library, PublicKeyDecodeError);
+                EVP_PKEY_free_nid_postfix(pkey);
+                return nullptr;
+            }
+        } else if (nid == DsaEncryptionNid) {
+            NotImplemented_nid_no_patch("X509_get_pubkey: a DSA public key this library cannot hold");
+        } else {
+            Queue(EvpLibrary, EvpUnsupportedAlgorithm);
+            Queue(X509Library, UnsupportedAlgorithm);
+            EVP_PKEY_free_nid_postfix(pkey);
+            return nullptr;
+        }
+    } catch (...) {
         EVP_PKEY_free_nid_postfix(pkey);
-        return nullptr;
+        throw;
     }
-    if (!RsaPubDecode(pkey, key)) {
-        Queue(X509Library, PublicKeyDecodeError);
+    void* expected = nullptr;
+    if (!cache.compare_exchange_strong(expected, pkey, std::memory_order_acq_rel, std::memory_order_acquire)) {
         EVP_PKEY_free_nid_postfix(pkey);
-        return nullptr;
+        pkey = expected;
     }
-    key->key = pkey;
     AddReference(pkey);
     return pkey;
 }
