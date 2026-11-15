@@ -139,6 +139,10 @@ class Module:
                     if next_offset - next_start == position - vaddr and next_start <= covered:
                         covered = max(covered, next_start + next_size)
                 if covered >= vaddr + length:
+                    if length and any(next_size and next_start < vaddr + length and vaddr < next_start + next_size
+                                      and next_offset - next_start != position - vaddr
+                                      for next_start, next_offset, next_size, _ in self.loads):
+                        raise ModuleError("range %#x+%#x has ambiguous PT_LOAD file mappings" % (vaddr, length))
                     return position
         raise ModuleError("range %#x+%#x is outside file-backed PT_LOAD data" % (vaddr, length))
 

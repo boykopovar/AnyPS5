@@ -35,8 +35,12 @@ int RefuseSet(std::int32_t handle, std::uint32_t channel, bool valid) {
 
 bool ValidTarget(const CameraAutoExposureGainTarget* option) {
     if (!option) return true;
-    if (option->sizeThis != sizeof(CameraAutoExposureGainTarget)) return false;
-    switch (option->target) {
+    CameraAutoExposureGainTarget local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, option, sizeof(local));
+    errno = savedErrno;
+    if (!copied || local.sizeThis != sizeof(CameraAutoExposureGainTarget)) return false;
+    switch (local.target) {
     case 0x0: case 0x2: case 0x4: case 0x6: case 0x8:
     case 0x10: case 0x12: case 0x14: case 0x16:
     case 0x20:
@@ -161,8 +165,13 @@ int APS5_VABI sceCameraGetGamma(std::int32_t handle, std::uint32_t channel, Came
 }
 
 int APS5_VABI sceCameraSetAttribute(std::int32_t handle, const CameraAttribute* attribute) {
-    if (!attribute || attribute->sizeThis != sizeof(CameraAttribute)) return SCE_CAMERA_ERROR_PARAM;
-    return RefuseSet(handle, attribute->channel, true);
+    if (!attribute) return SCE_CAMERA_ERROR_PARAM;
+    CameraAttribute localAttr{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attribute, sizeof(localAttr));
+    errno = savedErrno;
+    if (!copied || localAttr.sizeThis != sizeof(CameraAttribute)) return SCE_CAMERA_ERROR_PARAM;
+    return RefuseSet(handle, localAttr.channel, true);
 }
 
 int APS5_VABI sceCameraSetAutoExposureGain(std::int32_t handle, std::uint32_t channel, std::uint32_t, const CameraAutoExposureGainTarget* option) {
