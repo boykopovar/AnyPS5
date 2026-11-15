@@ -608,9 +608,12 @@ int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base) {
 }
 
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {
-    std::time_t t = std::time(nullptr);
-    if (timer != nullptr) *timer = static_cast<int64_t>(t);
-    return static_cast<int64_t>(t);
+    const auto t = static_cast<int64_t>(std::time(nullptr));
+    if (timer != nullptr && !GuestCopyOut_nid_no_patch(timer, &t, sizeof(t))) {
+        errno = EFAULT;
+        return -1;
+    }
+    return t;
 }
 
 int64_t APS5_VABI time_nid_postfix(int64_t* timer) {
@@ -636,15 +639,20 @@ int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {
     FILETIME ft{};
     GetSystemTimePreciseAsFileTime(&ft);
     const uint64_t hundredNs = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
-    ts->tv_sec = static_cast<std::int64_t>(hundredNs / 10000000ULL);
-    ts->tv_nsec = static_cast<std::int64_t>((hundredNs % 10000000ULL) * 100ULL);
+    KernelTimespec now{};
+    now.tv_sec = static_cast<std::int64_t>(hundredNs / 10000000ULL);
+    now.tv_nsec = static_cast<std::int64_t>((hundredNs % 10000000ULL) * 100ULL);
 #else
     timespec host{};
     if (clock_gettime(CLOCK_REALTIME, &host) != 0) return 0;
-    ts->tv_sec = host.tv_sec;
-    ts->tv_nsec = host.tv_nsec;
+    KernelTimespec now{};
+    now.tv_sec = host.tv_sec;
+    now.tv_nsec = host.tv_nsec;
 #endif
-    return TIME_UTC;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(ts, &now, sizeof(now));
+    errno = savedErrno;
+    return copied ? TIME_UTC : 0;
 }
 
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0) {
@@ -845,15 +853,9 @@ size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* forma
 }
 
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr) {
-    constexpr int GuestEinval = 22;
     if (format == nullptr) throw std::invalid_argument("wcsftime: null format");
     if (timeptr == nullptr) throw std::invalid_argument("wcsftime: null time");
     if (str == nullptr) return 0;
-    const auto maxCharacterBytes = static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
-    if (std::numeric_limits<std::size_t>::max() / maxCharacterBytes <= count) {
-        errno = GuestEinval;
-        return 0;
-    }
     const int callerError = errno;
     const ZoneScope zone;
     tzset_nid_postfix();

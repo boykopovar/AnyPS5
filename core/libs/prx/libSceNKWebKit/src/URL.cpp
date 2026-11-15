@@ -418,27 +418,22 @@ bool ProcessOriginHost(std::u16string& host) {
     return true;
 }
 
-class SecurityOrigin final : public NKWebKit::ObjectOf<NKWebKit::ObjectType::SecurityOrigin> {
-public:
-    SecurityOrigin(const NKWebKit::String& protocol, const NKWebKit::String& host, std::optional<std::uint16_t> port)
-        : protocol(protocol.characters), host(host.characters), port(port),
-          protocolNull(protocol.null), hostNull(host.null) {}
-    SecurityOrigin(std::u16string protocol, std::u16string host, std::optional<std::uint16_t> port)
-        : protocol(std::move(protocol)), host(std::move(host)), port(WithoutDefaultPort(this->protocol, port)) {}
+using NKWebKit::SecurityOrigin;
 
-    std::u16string protocol;
-    std::u16string host;
-    std::optional<std::uint16_t> port;
-    bool protocolNull = false;
-    bool hostNull = false;
-};
+NKWebKit::Retained<SecurityOrigin> MakeOrigin(std::u16string protocol, std::u16string host, std::optional<std::uint16_t> port) {
+    auto origin = NKWebKit::Make<SecurityOrigin>();
+    origin->port = WithoutDefaultPort(protocol, port);
+    origin->protocol = std::move(protocol);
+    origin->host = std::move(host);
+    return origin;
+}
 
 const void* CopyOriginString(std::u16string text) {
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::move(text)));
 }
 
 const void* CreateOpaqueOrigin() {
-    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
+    return NKWebKit::ToRef(MakeOrigin(std::u16string(), std::u16string(), std::nullopt));
 }
 
 std::u16string PortString(std::uint16_t port) {
@@ -554,7 +549,7 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
         if (host.empty()) return CreateOpaqueOrigin();
         if (!ProcessOriginHost(host)) return CreateOpaqueOrigin();
     }
-    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
+    return NKWebKit::ToRef(MakeOrigin(std::move(protocol), std::move(host), port));
 }
 
 const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* identifier) {
@@ -571,7 +566,7 @@ const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* i
 
     auto protocol = text.substr(0, separator1);
     auto host = text.substr(separator1 + 1, separator2 - separator1 - 1);
-    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
+    return NKWebKit::ToRef(MakeOrigin(std::move(protocol), std::move(host), port));
 }
 
 const void* APS5_VABI WKSecurityOriginCopyDatabaseIdentifier(const void* origin) {
