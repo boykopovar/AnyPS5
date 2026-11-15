@@ -1,6 +1,7 @@
 #include "prx/libSceAudiodec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -9,6 +10,18 @@
 #include <numbers>
 #include <stdexcept>
 #include <vector>
+
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(leak_sanitizer) || __has_feature(memory_sanitizer)
+#define AUDIODEC_SKIP_ADDRESS_LIMIT 1
+#endif
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -136,6 +149,15 @@ const std::uint8_t MP3_MONO[] = {
     0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
     0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
     0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+};
+
+const std::uint8_t MP3_STEREO[] = {
+    0xFF, 0xFB, 0x14, 0x64, 0x00, 0x00, 0x00, 0x66, 0x05, 0x54, 0x85, 0x24, 0x00, 0x0A, 0x00, 0x00,
+    0x0D, 0x20, 0xA0, 0x00, 0x01, 0x03, 0x84, 0x1D, 0x54, 0xB9, 0x91, 0x00, 0x00, 0x00, 0x00, 0x34,
+    0x83, 0x00, 0x00, 0x00, 0x15, 0x8A, 0xD1, 0xC8, 0x80, 0x10, 0x04, 0x01, 0x02, 0x4D, 0x8E, 0x1E,
+    0x3C, 0x09, 0x24, 0x00, 0x00, 0x19, 0x90, 0x05, 0xE8, 0x64, 0xC1, 0x96, 0x3E, 0x04, 0xAC, 0x59,
+    0x9A, 0xC4, 0x40, 0xF8, 0xB0, 0x7F, 0x2E, 0xA6, 0xC1, 0x5C, 0x24, 0x7B, 0x2C, 0xD5, 0x6B, 0x71,
+    0x91, 0x14, 0x67, 0xCC, 0xC5, 0xEA, 0x77, 0xAD, 0xEE, 0xC8, 0xA8, 0xC0, 0xD7, 0x00, 0x02, 0xB2,
 };
 
 const std::uint8_t HEAAC_V2_MONO[] = {
@@ -426,9 +448,101 @@ void TestDecodeCheckOrder() {
     Require(sceAudiodecDeleteDecoder(handle) == 0);
 }
 
+template <typename Param, typename Info>
+void TestOversizedPcmCapacity(std::uint32_t type, Param& param, Info& info,
+                              const std::uint8_t* data, std::size_t size, std::uint32_t consumed, std::uint32_t produced) {
+    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, type);
+    Require(handle > 0);
+    Streams streams;
+    streams.output.assign(65536, 0xA5);
+    errno = 71;
+    Require(Decode(handle, ctrl, streams, data, size, INT32_MAX - 1) == 0);
+    Require(errno == 71 && streams.au.ui_au_size == consumed && streams.pcm.ui_pcm_size == produced);
+    Require(std::all_of(streams.output.begin() + produced, streams.output.end(), [](std::uint8_t value) { return value == 0xA5; }));
+    Require(sceAudiodecClearContext(handle) == 0);
+    Require(Decode(handle, ctrl, streams, data, size, produced - 1) == errorInvalidPcmSize);
+    Require(streams.au.ui_au_size == size && streams.pcm.ui_pcm_size == produced - 1);
+    Require(sceAudiodecDeleteDecoder(handle) == 0);
 }
 
-int main() {
+void TestLargePcmCapacity() {
+    AudiodecParamMp3 mp3{sizeof(mp3), 1};
+    AudiodecMp3Info mp3Info{};
+    mp3Info.ui_size = sizeof(mp3Info);
+    const std::size_t mp3FrameSize = 144 * 32000 / 48000 + (MP3_MONO[2] >> 1 & 1);
+    TestOversizedPcmCapacity(2, mp3, mp3Info, MP3_MONO, sizeof(MP3_MONO), mp3FrameSize, 1152 * 2);
+    TestOversizedPcmCapacity(2, mp3, mp3Info, MP3_STEREO, sizeof(MP3_STEREO), sizeof(MP3_STEREO), 1152 * 2 * 2);
+
+    AudiodecParamM4aac aacAdts{sizeof(aacAdts), 1, 1, 3, 2, 0};
+    AudiodecM4aacInfo adtsInfo{sizeof(adtsInfo), 0, 0, 0, 0};
+    const std::size_t adtsSize = AdtsLength(AAC_ADTS);
+    TestOversizedPcmCapacity(3, aacAdts, adtsInfo, AAC_ADTS, adtsSize, adtsSize, 1024 * 2 * 2);
+
+    AudiodecParamM4aac aacRaw{sizeof(aacRaw), 1, 2, 3, 6, 0};
+    AudiodecM4aacInfo rawInfo{sizeof(rawInfo), 0, 0, 0, 0};
+    TestOversizedPcmCapacity(3, aacRaw, rawInfo, AAC_RAW_51, sizeof(AAC_RAW_51), sizeof(AAC_RAW_51), 1024 * 6 * 2);
+
+    AudiodecParamM4aac aacFloat{sizeof(aacFloat), 2, 2, 3, 8, 0};
+    AudiodecM4aacInfo floatInfo{sizeof(floatInfo), 0, 0, 0, 0};
+    TestOversizedPcmCapacity(3, aacFloat, floatInfo, AAC_RAW_51, sizeof(AAC_RAW_51), sizeof(AAC_RAW_51), 1024 * 6 * 4);
+
+    AudiodecParamM4aac aacHe{sizeof(aacHe), 1, 1, 6, 2, 1};
+    AudiodecM4aacInfo heInfo{sizeof(heInfo), 0, 0, 0, 0};
+    const std::size_t heSize = AdtsLength(HEAAC_STEREO);
+    TestOversizedPcmCapacity(3, aacHe, heInfo, HEAAC_STEREO, heSize, heSize, 2048 * 2 * 2);
+
+    AudiodecParamAt9 at9{sizeof(at9), 1, {0xFE, 0x72, 0x1F, 0xF0}};
+    AudiodecAt9Info at9Info{};
+    at9Info.ui_size = sizeof(at9Info);
+    AudiodecCtrl at9Ctrl{&at9, &at9Info, nullptr, nullptr};
+    const std::int32_t at9Handle = sceAudiodecCreateDecoder(&at9Ctrl, 1);
+    Require(at9Handle > 0);
+    const std::vector<std::uint8_t> silence(1024);
+    Streams streams;
+    Require(Decode(at9Handle, at9Ctrl, streams, silence.data(), silence.size(), 4095) == errorInvalidPcmSize);
+    Require(Decode(at9Handle, at9Ctrl, streams, silence.data(), silence.size(), INT32_MAX - 1) == errorApiFail);
+    Require(sceAudiodecDeleteDecoder(at9Handle) == 0);
+}
+
+#if defined(__linux__)
+int TestPcmCapacityAddressLimit() {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_LEAK__) || defined(AUDIODEC_SKIP_ADDRESS_LIMIT)
+    return 77;
+#else
+    const pid_t child = fork();
+    if (child < 0) return 1;
+    if (child == 0) {
+        constexpr rlim_t capacity = 256ull * 1024 * 1024;
+        const rlimit limit{capacity, capacity};
+        if (setrlimit(RLIMIT_AS, &limit) != 0) _exit(1);
+        if (sceAudiodecInitLibrary(2) != 0) _exit(2);
+        AudiodecParamMp3 param{sizeof(param), 1};
+        AudiodecMp3Info info{};
+        info.ui_size = sizeof(info);
+        AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+        const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
+        if (handle <= 0) _exit(3);
+        Streams streams;
+        errno = 71;
+        const std::size_t frameSize = 144 * 32000 / 48000 + (MP3_MONO[2] >> 1 & 1);
+        if (Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO), INT32_MAX - 1) != 0 ||
+            streams.au.ui_au_size != frameSize || streams.pcm.ui_pcm_size != 1152 * 2 || errno != 71) _exit(4);
+        if (sceAudiodecDeleteDecoder(handle) != 0 || sceAudiodecTermLibrary(2) != 0) _exit(5);
+        _exit(0);
+    }
+    int status = 0;
+    return waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 1;
+#endif
+}
+#endif
+
+}
+
+int main(int argc, char** argv) {
+#if defined(__linux__)
+    if (argc == 2 && std::strcmp(argv[1], "--pcm-capacity-rlimit") == 0) return TestPcmCapacityAddressLimit();
+#endif
     Require(sceAudiodecInitLibrary(0) == errorInvalidType);
     Require(sceAudiodecInitLibrary(4) == errorInvalidType);
     Require(sceAudiodecTermLibrary(0) == errorInvalidType);
@@ -568,5 +682,6 @@ int main() {
         Require(errno == 71);
         Require(sceAudiodecDeleteDecoder(copyHandle) == 0);
     }
+    TestLargePcmCapacity();
     for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecTermLibrary(type) == 0);
 }
