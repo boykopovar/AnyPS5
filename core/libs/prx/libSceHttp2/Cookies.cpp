@@ -86,6 +86,13 @@ std::string_view Trim(std::string_view text) {
     return text;
 }
 
+bool CopyUrl(const char* url, std::string& text) {
+    const int savedErrno = errno;
+    const bool copied = CopyGuestString_nid_no_patch(url, 65536, text) == 0;
+    errno = savedErrno;
+    return copied;
+}
+
 int ParseUrl(std::string_view text, Url& url) {
     const std::size_t separator = text.find("://");
     url.secure = separator != std::string_view::npos && EqualsIgnoreCase(text.substr(0, separator), "https");
@@ -388,9 +395,13 @@ int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* co
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     if (!url || !cookie || cookieLength == 0) return ERROR_INVALID_VALUE;
+    std::string urlText;
+    if (!CopyUrl(url, urlText)) return ERROR_INVALID_VALUE;
     Url parsed{};
-    if (const int result = ParseUrl(url, parsed); result != 0) return result;
-    return StoreCookie(*box, parsed, std::string_view(cookie, cookieLength), Now());
+    if (const int result = ParseUrl(urlText, parsed); result != 0) return result;
+    std::string cookieText(cookieLength, '\0');
+    if (!Http2Guest::CopyIn(cookieText.data(), cookie, cookieLength)) return ERROR_INVALID_VALUE;
+    return StoreCookie(*box, parsed, cookieText, Now());
 }
 
 int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, std::size_t* required, std::size_t prepared) {
@@ -398,8 +409,10 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     if (!url) return ERROR_INVALID_VALUE;
+    std::string urlText;
+    if (!CopyUrl(url, urlText)) return ERROR_INVALID_VALUE;
     Url parsed{};
-    if (const int result = ParseUrl(url, parsed); result == ERROR_REJECTED) return ERROR_NOT_FOUND;
+    if (const int result = ParseUrl(urlText, parsed); result == ERROR_REJECTED) return ERROR_NOT_FOUND;
     else if (result != 0) return result;
     const auto matches = Matches(*box, parsed);
     if (matches.empty()) return ERROR_NOT_FOUND;

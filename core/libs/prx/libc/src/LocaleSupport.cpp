@@ -1358,7 +1358,8 @@ void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self)
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName) {
     if (self == nullptr) throw std::invalid_argument("_Locinfo: null object");
     self->name = setlocale_nid_postfix(0x3f, nullptr);
-    if (localeName == nullptr || (*localeName != 0 && std::strcmp(localeName, "C") != 0))
+    std::string name;
+    if (localeName == nullptr || CopyGuestString_nid_no_patch(localeName, 2, name) != 0 || (!name.empty() && name != "C"))
         _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
     self->classicName = self->name;
 }
