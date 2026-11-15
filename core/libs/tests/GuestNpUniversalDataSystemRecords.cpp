@@ -60,6 +60,11 @@ int main() {
     Require(sceNpUniversalDataSystemIntInitialize(&param) == 0, "initialize failed");
     Require(sceNpUniversalDataSystemIntInitialize(&param) == kAlreadyInitialized, "second initialize");
     Require(sceNpUniversalDataSystemIntGetMemoryStat(nullptr) == kInvalidArgument, "null memory stat");
+    NpUniversalDataSystemMemoryStat initialStat{};
+    Require(sceNpUniversalDataSystemIntGetMemoryStat(&initialStat) == 0, "initial memory stat");
+    Require(initialStat.pool_size == 0, "initial pool size zero");
+    Require(initialStat.current_inuse_size == 0, "initial current inuse zero");
+    Require(initialStat.max_inuse_size == 0, "initial max inuse zero");
 
     void* array = nullptr;
     void* object = nullptr;
@@ -153,6 +158,11 @@ int main() {
     Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(nullptr, "key", 0) == kNullObject, "null object target");
     Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(reinterpret_cast<void*>(1), "key", 0) == kNullObject, "unknown object target");
 
+    NpUniversalDataSystemMemoryStat populatedStat{};
+    Require(sceNpUniversalDataSystemIntGetMemoryStat(&populatedStat) == 0, "populated memory stat");
+    Require(populatedStat.current_inuse_size > 0, "populated current inuse non-zero");
+    Require(populatedStat.max_inuse_size >= populatedStat.current_inuse_size, "populated max inuse tracked");
+
     Require(sceNpUniversalDataSystemIntRecordObjectSetString(data, "extra", "value") == 0, "set on record data");
     Require(static_cast<NpUniversalDataSystemEventPropertyObject*>(data)->Find("extra") != nullptr, "record data mutation stored");
 
@@ -176,6 +186,10 @@ int main() {
     Require(sceNpUniversalDataSystemIntDeleteAllRecord() == 0, "delete all records");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(array, &unused) == kNullRecord, "deleted array estimate");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(object, &unused) == kNullRecord, "deleted object estimate");
+    NpUniversalDataSystemMemoryStat postDeleteStat{};
+    Require(sceNpUniversalDataSystemIntGetMemoryStat(&postDeleteStat) == 0, "post-delete memory stat");
+    Require(postDeleteStat.current_inuse_size == 0, "post-delete current inuse zero");
+    Require(postDeleteStat.max_inuse_size > 0, "post-delete max inuse retained");
 
     for (int round = 0; round < 32; ++round) {
         Require(sceNpUniversalDataSystemIntTerminate() == 0, "contention terminate");

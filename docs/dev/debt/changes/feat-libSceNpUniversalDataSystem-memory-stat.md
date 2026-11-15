@@ -1,0 +1,5 @@
+# libSceNpUniversalDataSystem
+
+## change [Record builders]
+
+- [Record builders](../../../core/libs/prx/libSceNpUniversalDataSystem/src/Record.cpp) (libSceNpUniversalDataSystem) - the console record store, its serialization and the size estimate are not measured: the memory pool passed to `IntInitialize` (a 16-byte `{size, memory}` from the 11.00 wrapper, other sizes `0x80553112`) is ignored, and `IntGetMemoryStat` reports tracked record memory usage (`pool_size = 0`, `max_inuse_size`, `current_inuse_size`). `IntRecordDataEstimateSize` returns the host MessagePack size (`Uds::MessagePackSize`) of the object or array, not the console number. The record model (arrays append, objects set keys, nested values are cloned and returned through `value_ptr`, destruction invalidates children), the error codes `0x80553116`, `0x80553117` and `0x80553118`, and the check order are unverified; the other codes come from the 11.00 wrappers. `IntDestroyRecordData` forwards to `IntDestroyRecordObject`, so either frees records created by the other.

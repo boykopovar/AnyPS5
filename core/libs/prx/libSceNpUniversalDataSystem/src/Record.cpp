@@ -29,6 +29,7 @@ std::recursive_mutex g_recordsMutex;
 std::atomic<bool> g_initialized{false};
 Uds::Owned<NpUniversalDataSystemEventPropertyArray> g_arrays;
 Uds::Owned<NpUniversalDataSystemEventPropertyObject> g_objects;
+std::size_t g_maxInuseSize = 0;
 
 bool ValueContainsObject(const Uds::Value& value, const void* target);
 
@@ -138,6 +139,7 @@ int APS5_VABI sceNpUniversalDataSystemIntTerminate(void) {
     if (!g_initialized.exchange(false)) return kNotInitialized;
     g_arrays.Clear();
     g_objects.Clear();
+    g_maxInuseSize = 0;
     return 0;
 }
 
@@ -153,7 +155,21 @@ int APS5_VABI sceNpUniversalDataSystemIntGetMemoryStat(NpUniversalDataSystemMemo
     std::lock_guard<std::recursive_mutex> recordsLock(g_recordsMutex);
     if (!g_initialized.load()) return kNotInitialized;
     if (stat == nullptr) return kInvalidArgument;
-    NotImplemented_nid_no_patch(__func__);
+    std::size_t currentInuse = 0;
+    g_arrays.ForEach([&](auto* array) {
+        currentInuse += Uds::MessagePackSize(*array);
+    });
+    g_objects.ForEach([&](auto* object) {
+        currentInuse += Uds::MessagePackSize(*object);
+    });
+    if (currentInuse > g_maxInuseSize) {
+        g_maxInuseSize = currentInuse;
+    }
+    const NpUniversalDataSystemMemoryStat localStats{0, g_maxInuseSize, currentInuse};
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(stat, &localStats, sizeof(localStats));
+    errno = savedErrno;
+    return written ? 0 : kInvalidArgument;
 }
 
 int APS5_VABI sceNpUniversalDataSystemIntCreateRecordArray(void** record) {
