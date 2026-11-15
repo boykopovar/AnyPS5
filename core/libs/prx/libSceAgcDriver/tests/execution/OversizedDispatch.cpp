@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
@@ -160,7 +161,7 @@ alignas(256) constexpr std::array<std::uint32_t, 6> GroupYCode{
 constexpr std::uint32_t GroupYSplitCap = 1u << 20u;
 constexpr std::uint32_t GroupYTail = 4097u;
 
-bool CheckGroupYSplitCoverage(AgcDriver::VulkanDevice& device) {
+bool CheckGroupYSplitCoverage(AgcDriver::VulkanDevice& device, bool heap) {
     const auto limit = device.WorkGroupCountLimit()[1];
     if (limit >= GroupYSplitCap) {
         std::printf("oversized dispatch Y split: skipped, the device reports a %u Y workgroup limit\n", limit);
@@ -174,11 +175,14 @@ bool CheckGroupYSplitCoverage(AgcDriver::VulkanDevice& device) {
     const std::span<const std::uint32_t> code(GroupYCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, true, false}, false, 1};
+    auto target = device.Target();
+    target.gpuResolvedImages = heap;
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(), {0, 0, 0, 128}, std::nullopt, false};
+        target, {0, 0, 0, 128}, std::nullopt, false};
     const auto result = ShaderRecompiler::Recompile(request);
+    Require(result.gpuResolvedImages == heap, "oversized dispatch Y split: the program did not take the requested binding mode");
     device.Dispatch(result, 1, groups, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(guest.Data()), guest.Bytes);
@@ -195,7 +199,8 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         CheckLdsSplitThrows(*device);
-        bool split = CheckGroupYSplitCoverage(*device);
+        bool split = CheckGroupYSplitCoverage(*device, false);
+        if (split && AgcDriver::Graphics::DescriptorHeapEnabled()) static_cast<void>(CheckGroupYSplitCoverage(*device, true));
         if (device->WorkGroupCountLimit()[0] < Groups) {
             CheckSplitCoverage(*device);
             split = true;
