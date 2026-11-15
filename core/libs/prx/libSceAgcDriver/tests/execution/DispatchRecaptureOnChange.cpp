@@ -31,6 +31,7 @@ namespace {
 constexpr std::uint32_t Lanes = 32;
 constexpr std::uint32_t BufferBytes = Lanes * 4u;
 constexpr std::size_t BlockBytes = 65536;
+constexpr std::size_t LabelWord = 0x400;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> TableCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x34020082u, 0xe0301000u, 0x80020201u, 0xbf8c3f70u, 0x4a060481u, 0xe0701000u, 0x80010301u, 0xbf810000u};
 
@@ -78,9 +79,18 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data) {
 const GuestBlock* Table = nullptr;
 const GuestBlock* Moved = nullptr;
 std::atomic<bool> TableChangeArmed{false};
+std::atomic<bool> WaitArmed{false};
 std::atomic<int> TableChanges{0};
+std::array<std::uint32_t, 7> WaitPacket{};
+
+void ArmWait(const GuestBlock& block, std::uint32_t reference) {
+    const auto label = reinterpret_cast<std::uintptr_t>(block.Words() + LabelWord);
+    WaitPacket = {0xc0053c00u, 0x13u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), reference, 0xffffffffu, 10u};
+    WaitArmed.store(true);
+}
 
 void ChangeTableBeforeCheck() {
+    if (WaitArmed.exchange(false)) AgcDriver::DriverDetail::Driver::NotePendingWaitForTest(WaitPacket);
     if (!TableChangeArmed.exchange(false)) return;
     const auto descriptor = BufferDescriptor(Moved->Words());
     std::memcpy(Table->Words(), descriptor.data(), sizeof(descriptor));
@@ -104,8 +114,58 @@ void Dispatch(const GuestBlock& table, const GuestBlock& output) {
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(output.Words()), BufferBytes);
 }
 
+void SubmitWait(const GuestBlock& block, std::uint32_t reference) {
+    const auto label = reinterpret_cast<std::uintptr_t>(block.Words() + LabelWord);
+    std::vector<std::uint32_t> commands{0xc0053c00u, 0x13u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), reference, 0xffffffffu, 10u};
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Expect(sceAgcDriverSubmitDcb(&packet) == 0, "the wait submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 std::uint32_t Lane(const GuestBlock& output, std::uint32_t lane) {
     return output.Words()[lane];
+}
+
+struct Counts {
+    std::uint64_t retries, checks, skipped;
+};
+
+Counts CaptureCounts() {
+    return {AgcDriver::DriverDetail::captureChangeRetries.load(), AgcDriver::DriverDetail::captureChecks.load(), AgcDriver::DriverDetail::captureChecksSkipped.load()};
+}
+
+Counts Since(const Counts& before) {
+    const auto now = CaptureCounts();
+    return {now.retries - before.retries, now.checks - before.checks, now.skipped - before.skipped};
+}
+
+void ExpectSkipped(const GuestBlock& table, const GuestBlock& output, const std::string& what) {
+    const auto before = CaptureCounts();
+    Dispatch(table, output);
+    const auto counts = Since(before);
+    std::printf("%s: lane 0 stored 0x%x, %llu capture check(s) run, %llu skipped, %llu packet(s) prepared again\n", what.c_str(), Lane(output, 0), static_cast<unsigned long long>(counts.checks), static_cast<unsigned long long>(counts.skipped), static_cast<unsigned long long>(counts.retries));
+    Expect(counts.checks == 0, what + ": the dispatch compared its captured memory with no unsatisfied wait");
+    Expect(counts.skipped >= 1, what + ": the dispatch did not skip its capture check");
+    Expect(counts.retries == 0, what + ": a dispatch whose captured memory did not change was prepared again");
+}
+
+void ExpectCompared(const GuestBlock& table, const GuestBlock& output, std::uint32_t reference, const std::string& what) {
+    const auto before = CaptureCounts();
+    ArmWait(table, reference);
+    Dispatch(table, output);
+    const auto counts = Since(before);
+    std::printf("%s: lane 0 stored 0x%x, %llu capture check(s) run, %llu packet(s) prepared again\n", what.c_str(), Lane(output, 0), static_cast<unsigned long long>(counts.checks), static_cast<unsigned long long>(counts.retries));
+    Expect(counts.checks == 1, what + ": the dispatch ran " + std::to_string(counts.checks) + " capture checks, not one");
+    Expect(counts.retries == 0, what + ": a dispatch whose captured memory did not change was prepared again");
+}
+
+void ExpectStillCompared(const GuestBlock& table, const GuestBlock& output, const std::string& what) {
+    const auto before = CaptureCounts();
+    Dispatch(table, output);
+    const auto counts = Since(before);
+    std::printf("%s: lane 0 stored 0x%x, %llu capture check(s) run, %llu skipped\n", what.c_str(), Lane(output, 0), static_cast<unsigned long long>(counts.checks), static_cast<unsigned long long>(counts.skipped));
+    Expect(counts.checks == 1, what + ": the dispatch ran " + std::to_string(counts.checks) + " capture checks, not one");
+    Expect(counts.retries == 0, what + ": a dispatch whose captured memory did not change was prepared again");
 }
 
 void ExpectOutput(const GuestBlock& output, std::uint32_t base, const std::string& what) {
@@ -146,6 +206,7 @@ int main() {
         std::printf("the first dispatch stored 0x%x in lane 0 through the table's first V#\n", Lane(output, 0));
 
         const auto retries = AgcDriver::DriverDetail::captureChangeRetries.load();
+        ArmWait(table, 1);
         TableChangeArmed.store(true);
         Dispatch(table, output);
         const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
@@ -154,12 +215,28 @@ int main() {
         ExpectOutput(output, 0x2000u, "the dispatch whose table changed before it was recorded");
         Expect(redone == 1, "the dispatch was prepared again " + std::to_string(redone) + " times, not once");
 
-        const auto steady = AgcDriver::DriverDetail::captureChangeRetries.load();
-        Dispatch(table, output);
-        const auto again = AgcDriver::DriverDetail::captureChangeRetries.load() - steady;
-        std::printf("the same dispatch with its table unchanged: lane 0 stored 0x%x, %llu packet(s) prepared again\n", Lane(output, 0), static_cast<unsigned long long>(again));
+        ExpectCompared(table, output, 1, "the same dispatch behind the unsatisfied wait with its table unchanged");
+        ExpectOutput(output, 0x2000u, "the dispatch behind an unsatisfied wait with an unchanged table");
+
+        table.Words()[LabelWord] = 1;
+        ExpectSkipped(table, output, "the same dispatch after memory satisfied the wait, table unchanged");
         ExpectOutput(output, 0x2000u, "the dispatch with an unchanged table");
-        Expect(again == 0, "a dispatch whose captured memory did not change was prepared again");
+
+        table.Words()[LabelWord] = 0;
+        ExpectCompared(table, output, 1, "a dispatch behind a wait for 1 on a label holding 0");
+        ExpectCompared(table, output, 2, "a dispatch behind a later wait for 2 on the same label");
+        table.Words()[LabelWord] = 2;
+        ExpectSkipped(table, output, "the same dispatch after memory satisfied the later wait, which replaced the earlier one");
+        ExpectOutput(output, 0x2000u, "the dispatch after the later wait was satisfied");
+
+        table.Words()[LabelWord] = 0;
+        ExpectCompared(table, output, 2, "a dispatch behind a wait for 2 on a label holding 0");
+        table.Words()[LabelWord] = 1;
+        SubmitWait(table, 1);
+        ExpectStillCompared(table, output, "a dispatch after memory satisfied a graphics wait for 1 on that label but not the noted wait for 2");
+        ExpectOutput(output, 0x2000u, "the dispatch behind the wait for 2 memory has not satisfied");
+        table.Words()[LabelWord] = 2;
+        ExpectSkipped(table, output, "the same dispatch after memory satisfied the wait for 2");
 
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
         AgcDriverShutdown_nid_postfix();

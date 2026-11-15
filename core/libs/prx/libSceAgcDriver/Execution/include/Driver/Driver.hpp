@@ -130,6 +130,7 @@ public:
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
     static void SetCaptureCheckHook(void (*hook)());
+    static void NotePendingWaitForTest(std::span<const std::uint32_t> packet);
 
 private:
     class RecaptureScope {
@@ -353,9 +354,11 @@ private:
         std::array<std::uint32_t, 8> words;
         std::size_t count;
         std::uint64_t received;
+        bool landed = false;
     };
     static std::vector<PendingWait>& pendingWaits();
-    static void notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received);
+    static void notePendingWait(std::span<const std::uint32_t> packet, std::uint64_t received);
+    static void dropPendingWaits(std::uint64_t awaited, bool satisfiedOnly);
     void landPendingWaits(std::uint32_t queue);
     struct ResolvedDispatch {
         std::uint64_t address = 0, key = 0, indirectArguments = 0, forgetAtCapture = 0;
