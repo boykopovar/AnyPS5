@@ -293,6 +293,9 @@ static void VerifyUndrainedTriggersStayBounded() {
     for (int i = 1; i <= kFlood; ++i) {
         Require(EqueueTriggerEvent_nid_postfix(eq, 9, EVFILT_AMPR, data(static_cast<std::uintptr_t>(i))) == SCE_OK);
     }
+    const std::uint64_t expectedDropped = static_cast<std::uint64_t>(kFlood) - (1 + KernelEqueuePrivate::kMaxPendingEvents);
+    KernelEqueueRef bounded = EqueuePin_nid_postfix(eq);
+    Require(bounded && bounded->DroppedPendingEvents() == expectedDropped);
     const int kBound = static_cast<int>(1 + KernelEqueuePrivate::kMaxPendingEvents);
     int total = 0;
     intptr_t last = 0;
