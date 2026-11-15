@@ -245,6 +245,13 @@ void DecoderFromFile() {
     }
     Require(decoder == untouched, "missing file writes the decoder");
 
+    const auto missingCalls = NotImplementedCalls_nid_no_patch();
+    Require(factory->createDecoderFromFile("guest_jxr_factory_missing.jxr", nullptr) == FileError,
+            "missing .jxr with a null decoder is not a file-open error");
+    Require(NotImplementedCalls_nid_no_patch() == missingCalls, "missing .jxr reaches PKImageDecode_Create_WMP");
+    Require(liveBlocks == blocks + 1, "missing .jxr does not keep its stream");
+    liveBlocks = blocks;
+
     auto* file = std::fopen(DecoderPath, "wb");
     Require(file != nullptr && std::fputs("II", file) >= 0 && std::fclose(file) == 0, "decoder file setup");
     const auto calls = NotImplementedCalls_nid_no_patch();
