@@ -2298,6 +2298,9 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             auto array = mode;
             array.dimension = RdnaImageDimension::Dim2DArray;
             modes.push_back(array);
+            auto plane = mode;
+            plane.dimension = RdnaImageDimension::Dim2D;
+            modes.push_back(plane);
         }
         if (image.dimension == RdnaImageDimension::Dim2DMsaa && image.fmaskCompatible && image.cubeFaceCompatible && !table && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto plane = mode;

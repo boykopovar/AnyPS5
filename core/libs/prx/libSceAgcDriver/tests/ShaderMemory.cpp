@@ -3296,7 +3296,7 @@ void verifyGuardedDescriptorSources() {
         require(capture->snapshot.images.size() == 1u && std::ranges::all_of(capture->snapshot.images[0].dwords, [](std::uint32_t word) { return word == 0u; }), "guarded sources: a valid T# behind a skipped branch was read");
     }
 
-    const std::vector<std::uint32_t> storeCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850006u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f08u, 0x00010004u, 0xbf820005u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f10u, 0x00010004u, 0xbf810000u};
+    const std::vector<std::uint32_t> storeCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850006u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f08u, 0x00010004u, 0xbf820005u, 0xf40c0100u, 0xfa000000u, 0xbf8cc07fu, 0xf0200f20u, 0x00010004u, 0xbf810000u};
     auto storeRequest = request;
     storeRequest.shader = {ShaderStage::Compute, 0x23000u, storeCode, 0, {}};
     const auto compileStore = [&](std::uint32_t mode) {
@@ -12618,6 +12618,26 @@ void verifyArrayVolumeStoreMode() {
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, uintDescriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "3D image atomic on a 2D-array T# was accepted");
 }
 
+void verifyPlaneVolumeStoreMode() {
+    using namespace ShaderRecompiler;
+    const DescriptorValue descriptor{{0x11800100u, 0xc1600000u, 0x0001c001u, 0x90000facu, 0u, 0u, 0u, 0u}, 8u};
+    ImageResource store{};
+    store.resourceClass = ImageResourceClass::Storage;
+    store.dimension = RdnaImageDimension::Dim3D;
+    store.written = true;
+    store.fmaskCompatible = false;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(store);
+    require(modes.size() < ImageTableAbi::MaxModes, "3D image store reaches the image table mode limit");
+    require(modes[ResourceMaterializer::RuntimeImageMode(store, descriptor, modes)].dimension == RdnaImageDimension::Dim2D, "3D image store on a 2D T# did not select a plane runtime mode");
+    store.read = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, descriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "3D image load and store on a 2D T# was accepted");
+    store.read = false;
+    const DescriptorValue uintDescriptor{{0x11800100u, 0xc1400000u, 0x0001c001u, 0x90000facu, 0u, 0u, 0u, 0u}, 8u};
+    require(modes[ResourceMaterializer::RuntimeImageMode(store, uintDescriptor, modes)].dimension == RdnaImageDimension::Dim2D, "3D image store on a 2D UINT T# did not select a plane runtime mode");
+    store.atomic = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, uintDescriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "3D image atomic on a 2D UINT T# was accepted");
+}
+
 void verifySrgbDepthCompareModes() {
     using namespace ShaderRecompiler;
     for (const auto decodeFormats : {0u, 1u, 2u, 3u}) {
@@ -13043,6 +13063,7 @@ int main(int argc, char** argv) {
         verifyShortCubeMode();
         verifyVolumeArrayLoadMode();
         verifyArrayVolumeStoreMode();
+        verifyPlaneVolumeStoreMode();
         verifyMultisamplePlaneReadMode();
         verifyVolumeBiasTableRejection();
         verifySamplerTableDeduplication();
