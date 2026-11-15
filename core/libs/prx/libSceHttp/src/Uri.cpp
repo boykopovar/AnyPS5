@@ -412,12 +412,21 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         std::memset(out, 0, sizeof(*out));
         std::memset(pool, 0, prepare);
     }
-    const char* const fields[] = {src->scheme, src->hostname, src->path, src->username, src->password};
-    const uint16_t port = src->port;
+    SceHttpUriElement source{};
+    const int savedErrno = errno;
+    const bool copiedSource = GuestCopyIn_nid_no_patch(&source, src, sizeof(source));
+    errno = savedErrno;
+    if (!copiedSource) return ERROR_INVALID_URL;
+    const char* const fields[] = {source.scheme, source.hostname, source.path, source.username, source.password};
+    std::string values[5];
+    for (size_t i = 0; i < 5; ++i) {
+        if (fields[i] && !CopyGuestCString(fields[i], values[i])) return ERROR_INVALID_URL;
+    }
+    const uint16_t port = source.port;
     size_t lengths[5];
     size_t used = 0;
     for (size_t i = 0; i < 5; ++i) {
-        lengths[i] = fields[i] ? std::strlen(fields[i]) : 0;
+        lengths[i] = values[i].size();
         used += lengths[i] + 1;
     }
     if (!write) {
@@ -430,7 +439,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
     char* strings[5];
     for (size_t i = 0; i < 5; ++i) {
         strings[i] = next;
-        if (lengths[i] != 0) std::memcpy(next, fields[i], lengths[i]);
+        if (lengths[i] != 0) std::memcpy(next, values[i].data(), lengths[i]);
         next[lengths[i]] = '\0';
         next += lengths[i] + 1;
     }
