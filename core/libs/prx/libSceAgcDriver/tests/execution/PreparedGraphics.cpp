@@ -360,7 +360,7 @@ void PushBudgetBoundaries(AgcDriver::VulkanDevice& device) {
         auto target = device.Target();
         target.fixedPushSlots = fixedSlots;
         target.registrationModules = false;
-        auto stages = PrepareGraphicsStages(decoded, target);
+        auto stages = PreparePerDrawStages(decoded, target);
         Require(stages.size() == decoded.programs.size(), "push budget preparation lost a graphics stage");
         for (std::size_t index = 0u; index < stages.size(); ++index) {
             Require(stages[index].entry.handle != nullptr, "push budget preparation lost its source handle");
