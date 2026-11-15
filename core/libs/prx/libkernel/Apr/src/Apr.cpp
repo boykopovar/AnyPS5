@@ -45,6 +45,7 @@ namespace {
 
 constexpr int GUEST_ENOENT = 2;
 constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_ENOTSUP = 45;
 constexpr int GUEST_EINVAL = 22;
 
 struct AprFile {
@@ -146,6 +147,11 @@ AprFile _file(std::uint32_t id) {
     std::lock_guard lock(g_filesLock);
     if (id >= g_files.size()) throw std::runtime_error("APR: unknown file id " + std::to_string(id));
     return g_files[id];
+}
+
+bool _known(std::uint32_t id) {
+    std::lock_guard lock(g_filesLock);
+    return id < g_files.size();
 }
 
 constexpr std::uint32_t INVALID_FILE_ID = 0xFFFFFFFFu;
@@ -893,10 +899,16 @@ int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t cou
 int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
     if (!paths || !ids || !sizes) return _fail(GUEST_EINVAL);
     for (uint32_t index = 0; index < count; ++index) {
-        if (!_resolve(paths[index], &ids[index], &sizes[index])) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
-            if (error_index) *error_index = index;
+        uint32_t id = INVALID_FILE_ID;
+        uint64_t size = 0;
+        const bool resolved = _resolve(paths[index], &id, &size);
+        if (!resolved) {
+            id = INVALID_FILE_ID;
+            size = 0;
+        }
+        if (!GuestCopyOut_nid_no_patch(&ids[index], &id, sizeof(id)) || !GuestCopyOut_nid_no_patch(&sizes[index], &size, sizeof(size))) return _fail(GUEST_EFAULT);
+        if (!resolved) {
+            if (error_index && !GuestCopyOut_nid_no_patch(error_index, &index, sizeof(index))) return _fail(GUEST_EFAULT);
             return _fail(GUEST_ENOENT);
         }
     }
@@ -907,10 +919,16 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(const char
     if (!prefix || !paths || !ids) return _fail(GUEST_EINVAL);
     for (uint32_t index = 0; index < count; ++index) {
         const std::string path = paths[index] ? std::string(prefix) + paths[index] : std::string();
-        if (path.empty() || !_resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr)) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
-            if (error_index) *error_index = index;
+        uint32_t id = INVALID_FILE_ID;
+        uint64_t size = 0;
+        const bool resolved = !path.empty() && _resolve(path.c_str(), &id, sizes ? &size : nullptr);
+        if (!resolved) {
+            id = INVALID_FILE_ID;
+            size = 0;
+        }
+        if (!GuestCopyOut_nid_no_patch(&ids[index], &id, sizeof(id)) || (sizes && !GuestCopyOut_nid_no_patch(&sizes[index], &size, sizeof(size)))) return _fail(GUEST_EFAULT);
+        if (!resolved) {
+            if (error_index && !GuestCopyOut_nid_no_patch(error_index, &index, sizeof(index))) return _fail(GUEST_EFAULT);
             return _fail(GUEST_ENOENT);
         }
     }
@@ -922,6 +940,7 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, co
 }
 
 int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!size) return _fail(GUEST_EINVAL);
     const std::uint64_t bytes = _file(id).size;
     if (!GuestCopyOut_nid_no_patch(size, &bytes, sizeof(bytes))) return _fail(GUEST_EFAULT);
@@ -929,6 +948,7 @@ int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
 }
 
 int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!stat) return _fail(GUEST_EINVAL);
     FileStat result{};
     File::FillFileStat(_file(id).path, &result);

@@ -482,7 +482,10 @@ static bool FindHostIpv4Interface(HostIpv4Interface& found) {
     if (cache.interfaceFound) found = cache.interfaceValue;
     return cache.interfaceFound;
 #else
-    return QueryHostIpv4Interface(found);
+    const int savedErrno = errno;
+    const bool queried = QueryHostIpv4Interface(found);
+    errno = savedErrno;
+    return queried;
 #endif
 }
 
@@ -961,11 +964,14 @@ static HostIpv6Selection QueryHostIpv6Selection() {
 }
 #endif
 
-static void WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& address) {
-    char text[NET_CTL_IPV6_ADDR_STR_LEN] = {};
-    inet_ntop(AF_INET6, &address.address, text, sizeof(text));
-    std::memcpy(info->opaque, text, sizeof(text));
-    info->opaque[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<std::uint8_t>(address.prefix);
+static bool WriteInfoV6Address(NetCtlInfoV6* info, const HostIpv6Address& address) {
+    char buffer[NET_CTL_IPV6_ADDR_STR_LEN + 1] = {};
+    inet_ntop(AF_INET6, &address.address, buffer, NET_CTL_IPV6_ADDR_STR_LEN);
+    buffer[NET_CTL_IPV6_ADDR_STR_LEN] = static_cast<char>(static_cast<std::uint8_t>(address.prefix));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info->opaque, buffer, sizeof(buffer));
+    errno = savedErrno;
+    return copied;
 }
 
 extern "C" std::uint64_t NetCtlReadByteCounter_nid_no_patch(const char* path) {
@@ -1056,8 +1062,12 @@ int APS5_VABI sceNetCtlGetIfStat(NetCtlIfStat* stat) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!stat) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (!HostHasAddress(AF_UNSPEC)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
-    *stat = {};
-    HostTraffic(stat->tx_bytes, stat->rx_bytes);
+    NetCtlIfStat localStat{};
+    HostTraffic(localStat.tx_bytes, localStat.rx_bytes);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &localStat, sizeof(localStat));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -1203,7 +1213,7 @@ int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t code, NetCtlInfoV6* info) {
             chosen = selection.linkLocal;
         }
         if (!chosen.valid) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
-        WriteInfoV6Address(info, chosen);
+        if (!WriteInfoV6Address(info, chosen)) return SCE_NET_CTL_ERROR_INVALID_ADDR;
         return 0;
     }
     throw std::runtime_error("sceNetCtlGetInfoV6: info code " + std::to_string(code) + " is not implemented");
@@ -1366,7 +1376,11 @@ int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");
     }
-    *error_code = 0;
+    const int val = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(error_code, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 

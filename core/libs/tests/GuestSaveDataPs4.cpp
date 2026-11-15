@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -82,6 +83,10 @@ void TestDirNameSearchPs4() {
 
     Check(sceSaveDataDirNameSearchPs4(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearchPs4");
     Check(sceSaveDataDirNameSearchPs4(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    errno = 71;
+    Check(sceSaveDataDirNameSearchPs4(reinterpret_cast<const SaveDataDirNameSearchCond*>(0x10), &result) == SaveDataErrorParameter, "unmapped cond returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    Check(sceSaveDataDirNameSearchPs4(&cond, reinterpret_cast<SaveDataDirNameSearchResult*>(0x10)) == SaveDataErrorParameter, "unmapped result returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    Check(errno == 71, "sceSaveDataDirNameSearchPs4 preserves errno");
 }
 
 void TestMount2() {

@@ -13,6 +13,10 @@
 #include <iterator>
 #include <string>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 extern "C" {
 void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]);
 bool StorageDescriptorAllowsTemperatureQuery_nid_no_patch(const void* descriptor, std::size_t bytes);
@@ -65,9 +69,14 @@ int main() {
     std::ofstream(skipped / "hwmon" / "hwmonA" / "name") << "amdgpu\n";
     std::ofstream(skipped / "hwmon" / "hwmonA" / "temp1_input") << "55000\n";
     std::ofstream(skipped / "hwmon" / "hwmonB" / "name") << "BAT0\n";
-    std::ofstream(skipped / "hwmon" / "hwmonB" / "temp1_input") << "31600\n";
     std::ofstream(skipped / "hwmon" / "hwmonC" / "name") << "iwlwifi_1\n";
+#ifdef _WIN32
+    std::ofstream(skipped / "hwmon" / "hwmonB" / "temp1_input") << "31600\n";
     std::ofstream(skipped / "hwmon" / "hwmonC" / "temp1_input") << "57000\n";
+#else
+    Require(mkfifo((skipped / "hwmon" / "hwmonB" / "temp1_input").c_str(), 0600) == 0);
+    Require(mkfifo((skipped / "hwmon" / "hwmonC" / "temp1_input").c_str(), 0600) == 0);
+#endif
     int fallback[3] = {0, 0, 0};
     ReadThermalSensors_nid_no_patch(skipped.string().c_str(), fallback);
     Require(fallback[0] == 55 && fallback[1] == -1 && fallback[2] == -1);
@@ -84,7 +93,7 @@ int main() {
         *__error_nid_postfix() = 0;
         Require(sceKernelGetSocSensorTemperature(invalid, nullptr) == SCE_KERNEL_ERROR_EINVAL && *__error_nid_postfix() == 22);
     }
-    for (const int unmapped : {3, 15, 32}) {
+    for (const int unmapped : {3, 15, 32, 63}) {
         *__error_nid_postfix() = 0;
         Require(sceKernelGetSocSensorTemperature(unmapped, nullptr) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
     }
