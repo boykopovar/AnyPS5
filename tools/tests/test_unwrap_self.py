@@ -1330,6 +1330,35 @@ class UnwrapTest(unittest.TestCase):
         self.assertIn("looks encrypted", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_a_container_whose_large_loads_look_encrypted_beside_a_small_plain_one_is_refused(self):
+        random_like = bytes(range(256)) * 0x100
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x10000, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x40, PAGE)]
+        records = [(0x2804, 0x800, 0x10000), (0x102804, 0x10800, 0x40)]
+        payloads = {0x800: random_like, 0x10800: pattern(9, 0x40)}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("looks encrypted", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_a_small_high_entropy_load_beside_a_large_plain_one_is_accepted(self):
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x10000, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x100, PAGE)]
+        records = [(0x2804, 0x800, 0x10000), (0x102804, 0x10800, 0x100)]
+        payloads = {0x800: bytes([1, 2, 3, 4]) * 0x4000, 0x10800: bytes(range(256))}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def test_a_large_high_entropy_load_beside_a_larger_plain_one_is_accepted(self):
+        segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x10000, PAGE), (PT_LOAD, 4, 0x1500, 0x10000, 0x30000, PAGE)]
+        records = [(0x2804, 0x800, 0x10000), (0x102804, 0x10800, 0x30000)]
+        payloads = {0x800: bytes(range(256)) * 0x100, 0x10800: bytes([1, 2, 3, 4]) * 0xC000}
+        container = build_container(segments, records, payloads)
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
     def test_the_kernel_magic_is_accepted(self):
         container = build_container(default_segments(), default_records(), default_payloads(),
                                     magic=unwrap_self.SELF_MAGIC_KERNEL)

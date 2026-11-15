@@ -30,8 +30,9 @@ differ inside a container:
     present. A PT_PHDR mapping different bytes from the input table is refused.
 
 Only decrypted containers are handled. A container whose load segments all look
-encrypted is refused instead of copied: the entropy of each load segment is
-measured and a run of segments near eight bits per byte is reported.
+encrypted, or whose full-sample segments near eight bits per byte hold more than
+half of the load bytes, is refused instead of copied: the entropy of each load
+segment is measured and the segments near eight bits per byte are reported.
 
 usage: unwrap_self.py <input.self> <output.elf> [--verbose]
 """
@@ -301,14 +302,20 @@ def place_segments(data, headers, records):
 
 def check_decrypted(data, headers):
     encrypted = []
+    encrypted_large = 0
+    total = 0
     for header in headers:
         if header["type"] != PT_LOAD or header["size"] == 0:
             continue
+        total += header["size"]
         sample = data[header["source"]:header["source"] + min(header["size"], ENTROPY_SAMPLE)]
         value = entropy(sample)
         if value >= ENTROPY_LIMIT:
             encrypted.append((header["index"], header["source"], value))
-    if encrypted and len(encrypted) == len([h for h in headers if h["type"] == PT_LOAD and h["size"]]):
+            if header["size"] >= ENTROPY_SAMPLE:
+                encrypted_large += header["size"]
+    every = len(encrypted) == len([h for h in headers if h["type"] == PT_LOAD and h["size"]])
+    if encrypted and (every or encrypted_large * 2 > total):
         listed = ", ".join("segment %d at %#x (%.2f bits per byte)" % item for item in encrypted)
         raise Refused("every load segment looks encrypted: " + listed)
 
