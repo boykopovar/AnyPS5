@@ -220,6 +220,7 @@ const void* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities14User
 
 static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
 static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
+static constexpr int VectorOutOfMemory = static_cast<int>(0x80553504);
 
 static_assert(sizeof(CommonIterator) == 0x10 && offsetof(CommonIterator, element) == 0x08);
 
@@ -6682,7 +6683,9 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi(Intrusi
     if (count < 0) return 0;
     auto* body = VectorBodyFor(self, 2, __func__);
     if (body == nullptr) return 0;
-    return VectorReserve(body, sizeof(CommonString), static_cast<std::uint64_t>(count)) ? 1 : 0;
+    if (body->size > static_cast<std::uint64_t>(count)) return 0;
+    if (!VectorReserve(body, sizeof(CommonString), static_cast<std::uint64_t>(count))) return VectorOutOfMemory;
+    return 0;
 }
 
 

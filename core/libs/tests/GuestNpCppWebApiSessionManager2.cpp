@@ -49,8 +49,8 @@ void TestInvitationVectorIteration() {
 
 void TestStringVectorReserve() {
     IntrusivePtr vector{};
-    Require(StringVectorReserve(&vector, 8) == 1);
-    Require(StringVectorReserve(&vector, 2) == 1);
+    Require(StringVectorReserve(&vector, 8) == 0);
+    Require(StringVectorReserve(&vector, 2) == 0);
     Require(StringVectorReserve(&vector, -1) == 0);
     Require(vector.object != nullptr);
 }
