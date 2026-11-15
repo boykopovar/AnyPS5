@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -6,32 +7,7 @@
 #include <cstring>
 #include <source_location>
 
-struct Ctypevec {
-    const short* table;
-    std::int32_t deleteFlag;
-};
-struct Collvec {
-    std::uint64_t handle;
-    std::uint64_t page;
-};
-struct Cvtvec {
-    std::uint32_t page;
-    std::uint32_t maxBytes;
-    std::uint8_t reserved[32];
-};
-static_assert(sizeof(Ctypevec) == 16 && offsetof(Ctypevec, deleteFlag) == 8);
-static_assert(sizeof(Collvec) == 16);
-static_assert(sizeof(Cvtvec) == 40 && offsetof(Cvtvec, reserved) == 8);
-
-extern "C" {
-const short* APS5_VABI _Getpctype_nid_postfix();
-Ctypevec APS5_VABI _Getctype_nid_postfix();
-Collvec APS5_VABI _Getcoll_nid_postfix();
-Cvtvec APS5_VABI _Getcvt_nid_postfix();
-int APS5_VABI _Getdateorder_nid_postfix();
-int APS5_VABI _Strcoll_nid_postfix(const char*, const char*, const char*, const char*, const void*);
-std::size_t APS5_VABI _Strxfrm_nid_postfix(char*, char*, const char*, const char*, const void*);
-}
+using namespace GuestCLocale;
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
