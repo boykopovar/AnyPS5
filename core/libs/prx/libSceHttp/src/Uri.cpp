@@ -1,5 +1,6 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cstdint>
 #include <cstddef>
@@ -164,14 +165,37 @@ size_t poolSize(const UriParts& parts) {
     return size;
 }
 
+bool ProbeText(const std::string& value, char* out) {
+    if (out == nullptr) return true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, value.data(), value.size() + 1);
+    errno = savedErrno;
+    return copied;
+}
+
+bool ProbeTextRaw(const std::string& value, char* out, size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(out, value.data(), bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool ProbeSize(size_t bytes, size_t* require) {
+    if (require == nullptr) return true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(require, &bytes, sizeof(bytes));
+    errno = savedErrno;
+    return copied;
+}
+
 int copyOut(const std::string& value, char* out, size_t* require, size_t prepare) {
-    if (out && prepare < value.size() + 1) {
-        std::memcpy(out, value.data(), prepare);
+    if (out != nullptr && prepare < value.size() + 1) {
+        if (!ProbeTextRaw(value, out, prepare)) return ERROR_INVALID_VALUE;
         return ERROR_OUT_OF_MEMORY;
     }
-    if (require) *require = value.size() + 1;
-    if (out) std::memcpy(out, value.c_str(), value.size() + 1);
-    return 0;
+    if (!ProbeSize(value.size() + 1, require)) return ERROR_INVALID_VALUE;
+    if (out == nullptr) return 0;
+    return ProbeText(value, out) ? 0 : ERROR_INVALID_VALUE;
 }
 
 }
@@ -209,10 +233,10 @@ int APS5_VABI sceHttpUriBuild(char* out, size_t* requiredSize, size_t capacity, 
     if (option & URI_BUILD_WITH_QUERY) uri.append(field(element->query, URI_MAX_LENGTH));
     if (option & URI_BUILD_WITH_FRAGMENT) uri.append(field(element->fragment, URI_MAX_LENGTH));
     const size_t size = uri.size() + 1 + ((option & URI_BUILD_WITH_SCHEME) && element->scheme && scheme.empty());
-    if (requiredSize) *requiredSize = size;
+    if (!ProbeSize(size, requiredSize)) return ERROR_INVALID_VALUE;
     if (!out) return 0;
     if (capacity < size) return ERROR_OUT_OF_MEMORY;
-    std::memcpy(out, uri.c_str(), uri.size() + 1);
+    if (!ProbeText(uri, out)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -301,14 +325,16 @@ int APS5_VABI sceHttpUriMerge(char* merged_url, const char* url, const char* rel
     const size_t urlLength = strnlen(url, URI_MAX_LENGTH);
     const size_t relativeLength = strnlen(relative_uri, URI_MAX_LENGTH);
     const size_t size = poolSize(base) + 2 + (urlLength + relativeLength) * 2;
-    if (require) *require = size;
+    if (!ProbeSize(size, require)) return ERROR_INVALID_VALUE;
     if (!merged_url) return 0;
     if (prepare < size) return ERROR_OUT_OF_MEMORY;
 
     if (!relativeOpaque) {
-        std::strncpy(merged_url, relative_uri, size);
-        merged_url[size - 1] = '\0';
-        if (require) *require = relativeLength + 1;
+        std::string padded(relative_uri, std::min(relativeLength, size));
+        padded.resize(size, '\0');
+        padded[size - 1] = '\0';
+        if (!ProbeTextRaw(padded, merged_url, size)) return ERROR_INVALID_VALUE;
+        if (!ProbeSize(relativeLength + 1, require)) return ERROR_INVALID_VALUE;
         return 0;
     }
 
