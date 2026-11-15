@@ -203,6 +203,7 @@ static int APS5_VABI DestroyScheduler(std::uintptr_t handle) {
 
 static void CheckResetScheduler() {
     Require(sceNgs2JobSchedulerResetOption(nullptr) == static_cast<int>(0x804A8012u));
+    Require(sceNgs2JobSchedulerResetOption(reinterpret_cast<Ngs2JobSchedulerOption*>(0x10)) == static_cast<int>(0x804A8012u));
     Ngs2JobSchedulerOption option{};
     Require(sceNgs2JobSchedulerResetOption(&option) == SCE_NGS2_OK);
     Require(option.size == 112 && option.user_data == 0 && option.num_workers == 4 && option.max_jobs == 1024);
@@ -307,6 +308,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {CreateCase{&valid, nullptr, true, bufferError, "a null buffer info"},
                           CreateCase{&valid, &noHost, true, bufferError, "a null host buffer"},
+                          CreateCase{&valid, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), true, bufferError, "an unreadable buffer info"},
                           CreateCase{&badRate, nullptr, false, bufferError, "a null buffer info, handle and bad option"},
                           CreateCase{&badRate, &noHost, false, bufferError, "a null host buffer, handle and bad option"},
                           CreateCase{&badRate, &buffer, false, outputError, "a null handle and bad option"},
@@ -328,6 +330,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {AllocatorCase{&valid, nullptr, true, allocatorError, "a null allocator"},
                           AllocatorCase{&valid, &noAlloc, true, allocatorError, "a null alloc handler"},
+                          AllocatorCase{&valid, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), true, allocatorError, "an unreadable allocator"},
                           AllocatorCase{&badRate, nullptr, false, allocatorError, "a null allocator, handle and bad option"},
                           AllocatorCase{&badRate, &noAlloc, false, allocatorError, "a null alloc handler, handle and bad option"},
                           AllocatorCase{&badRate, &allocator, false, outputError, "a null handle and bad option"},
@@ -488,6 +491,23 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void CheckRackCreateGuestPointers() {
+    constexpr uintptr_t sentinel = 0x5a5a;
+    const auto system = CreateSystem();
+    uintptr_t created = sentinel;
+    Returned(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), &created), static_cast<int>(0x804A8020u), "sceNgs2RackCreate", "an unreadable buffer info");
+    Require(created == sentinel);
+
+    const int allocationsBefore = allocations;
+    Returned(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), &created), static_cast<int>(0x804A8023u), "sceNgs2RackCreateWithAllocator", "an unreadable allocator");
+    Require(created == sentinel && allocations == allocationsBefore);
+
+    Ngs2ContextBufferInfo query{};
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackQueryBufferSize", "an unwritable buffer info");
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, &query), SCE_NGS2_OK, "sceNgs2RackQueryBufferSize", "a writable buffer info");
+    Require(query.host_buffer_size != 0 && query.host_buffer == nullptr);
+}
+
 int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -521,6 +541,7 @@ int main(int argc, char** argv) {
         Status(sceNgs2SystemGetUserData(system, &value), systemError, "retired system returned the wrong error");
         Require(value == sentinel);
         CheckCreateArguments();
+        CheckRackCreateGuestPointers();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -94,11 +95,13 @@ void APS5_VABI _ZN3sce2np10NpOnlineId5ClearEv(NpOnlineIdObject* self) {
 
 int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(NpOnlineIdObject* self, const char* text) {
     if (text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    const std::size_t length = std::strlen(text);
-    if (length > NP_ONLINE_ID_SIZE) return NP_ERROR_ONLINE_ID_TOO_LONG;
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_ONLINE_ID_SIZE + 1, copy);
+    if (error == 63) return NP_ERROR_ONLINE_ID_TOO_LONG;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
     std::memset(self->data, 0, sizeof(self->data));
     self->term = 0;
-    std::memcpy(self->data, text, length);
+    std::memcpy(self->data, copy.data(), copy.size());
     return 0;
 }
 

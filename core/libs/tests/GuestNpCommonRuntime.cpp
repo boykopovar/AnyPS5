@@ -1122,6 +1122,11 @@ void TestJsonText() {
     std::memset(guarded.buffer, 'x', sizeof(guarded.buffer));
     Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "a", 1) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
         "escaping into a buffer without a terminator is refused");
+    std::memset(&guarded, 0, sizeof(guarded));
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "abcdefghijkl", 12) == NpUtilBufferTooSmall &&
+                Equals(guarded.buffer, "abcdefghij") && guarded.canary[0] == 0,
+        "escaping that runs out of room keeps the text it appended");
+    Require(sceNpUtilJsonEscape(reinterpret_cast<char*>(0x10), 64, "a", 1) == NpUtilInvalid, "escaping into an unmapped buffer is refused");
 
     char text[32] = {};
     std::size_t length = 0;
