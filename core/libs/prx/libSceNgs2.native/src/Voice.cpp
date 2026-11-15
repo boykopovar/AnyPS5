@@ -1333,8 +1333,9 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
         }
         case SCE_NGS2_RACK_ID_REVERB: {
             if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            *state = {};
-            state->state_flags = voice.stateFlags;
+            Ngs2VoiceState reverb{};
+            reverb.state_flags = voice.stateFlags;
+            if (!WriteGuest(state, reverb)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_SUBMIXER: {
