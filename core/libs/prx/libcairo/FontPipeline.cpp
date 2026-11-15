@@ -47,8 +47,6 @@ void Writable(T* destination, const char* function) {
 }
 
 int NullArguments(int* numGlyphs, int* numClusters, const char* function) {
-    Writable(numGlyphs, function);
-    Writable(numClusters, function);
     if (numGlyphs) Write(numGlyphs, 0, function);
     if (numClusters) Write(numClusters, 0, function);
     return CAIRO_STATUS_NULL_POINTER;
@@ -57,11 +55,17 @@ int NullArguments(int* numGlyphs, int* numClusters, const char* function) {
 }
 
 CairoScaledFont* CairoScaledFontCreate_nid_no_patch(CairoFontFace* face,
-    const CairoMatrix& fontMatrix, const CairoMatrix& ctm,
+    const CairoMatrix* fontMatrix, const CairoMatrix* ctm,
     const CairoContextFontOptions* options, bool failedOptions) {
-    if (!face) NotImplemented_nid_no_patch("cairo_scaled_font_create");
-    const auto matrix = std::bit_cast<cairo_matrix_t>(fontMatrix);
-    const auto transform = std::bit_cast<cairo_matrix_t>(ctm);
+    const cairo_matrix_t identity{1, 0, 0, 1, 0, 0};
+    if (!face || !fontMatrix || !ctm) {
+        auto* native = face ? reinterpret_cast<cairo_font_face_t*>(face) :
+            aps5_cairo_toy_font_face_create(nullptr, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+        const auto matrix = fontMatrix ? std::bit_cast<cairo_matrix_t>(*fontMatrix) : identity;
+        return reinterpret_cast<CairoScaledFont*>(aps5_cairo_scaled_font_create(native, &matrix, &identity, nullptr));
+    }
+    const auto matrix = std::bit_cast<cairo_matrix_t>(*fontMatrix);
+    const auto transform = std::bit_cast<cairo_matrix_t>(*ctm);
     std::unique_ptr<cairo_font_options_t, decltype(&aps5_cairo_font_options_destroy)> native(
         failedOptions ? aps5_cairo_font_options_copy(nullptr) :
         options ? aps5_cairo_font_options_create() : nullptr, aps5_cairo_font_options_destroy);
@@ -126,13 +130,14 @@ int APS5_VABI cairo_scaled_font_text_to_glyphs(CairoScaledFont* scaledFont, doub
     auto* font = Backend(scaledFont, __func__);
     const auto status = aps5_cairo_scaled_font_status(font);
     if (status) return status;
-    if (!glyphs || !numGlyphs || (!utf8 && utf8Length != 0 && utf8Length != -1) ||
-        (clusters && (!numClusters || !clusterFlags))) return NullArguments(numGlyphs, numClusters, __func__);
+    const bool missing = !glyphs || !numGlyphs || (!utf8 && utf8Length != 0 && utf8Length != -1) ||
+        (clusters && (!numClusters || !clusterFlags));
+    Writable(numGlyphs, __func__);
+    if (missing || clusters) Writable(numClusters, __func__);
+    if (missing) return NullArguments(numGlyphs, numClusters, __func__);
 
     Writable(glyphs, __func__);
-    Writable(numGlyphs, __func__);
     Writable(clusters, __func__);
-    if (clusters) Writable(numClusters, __func__);
     Writable(clusterFlags, __func__);
     auto* originalGlyphs = Read(glyphs, __func__);
     int glyphCount = originalGlyphs ? Read(numGlyphs, __func__) : 0;

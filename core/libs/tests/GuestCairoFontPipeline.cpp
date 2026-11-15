@@ -94,7 +94,21 @@ void Creation() {
     auto degenerate = Create(zero);
     Check(cairo_scaled_font_status(degenerate.get()) == 0, "zero font matrix remains valid");
     auto* options = Options();
+    Font nullFace(cairo_scaled_font_create(nullptr, &matrix, &ctm, options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(nullFace.get()) == 7, "null face produces null-pointer font");
+    Font nullMatrix(cairo_scaled_font_create(face, nullptr, &ctm, options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(nullMatrix.get()) == 7, "null font matrix produces null-pointer font");
+    Font nullCtm(cairo_scaled_font_create(face, &matrix, nullptr, options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(nullCtm.get()) == 7, "null ctm produces null-pointer font");
+    CairoMatrix undefined = matrix;
+    undefined.xx = std::numeric_limits<double>::quiet_NaN();
+    Font invalidBeforeNull(cairo_scaled_font_create(face, &undefined, nullptr, options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(invalidBeforeNull.get()) == 5, "font matrix is validated before ctm");
+    Font faceBeforeNull(cairo_scaled_font_create(cairo_scaled_font_get_font_face(bad.get()), nullptr, nullptr,
+        options), cairo_scaled_font_destroy);
+    Check(cairo_scaled_font_status(faceBeforeNull.get()) == 1, "face status precedes null arguments");
     Rejects([&] { cairo_scaled_font_create(face, reinterpret_cast<const CairoMatrix*>(1), &ctm, options); });
+    Rejects([&] { cairo_scaled_font_create(face, &matrix, reinterpret_cast<const CairoMatrix*>(1), options); });
     cairo_font_options_destroy(options);
 }
 
@@ -208,6 +222,19 @@ void Errors() {
         reinterpret_cast<const char*>(1), -1, &glyphs, &glyphCount, nullptr, nullptr, nullptr); });
     Rejects([&] { cairo_scaled_font_text_to_glyphs(font.get(), 0, 0,
         "A", 1, reinterpret_cast<CairoGlyph**>(1), &glyphCount, nullptr, nullptr, nullptr); });
+    Rejects([&] { cairo_scaled_font_text_to_glyphs(font.get(), 0, 0,
+        "A", -1, nullptr, reinterpret_cast<int*>(1), nullptr, nullptr, nullptr); });
+    Rejects([&] { cairo_scaled_font_text_to_glyphs(font.get(), 0, 0,
+        "A", -1, &glyphs, reinterpret_cast<int*>(1), nullptr, nullptr, nullptr); });
+    Rejects([&] { cairo_scaled_font_text_to_glyphs(font.get(), 0, 0,
+        "A", -1, nullptr, &glyphCount, nullptr, reinterpret_cast<int*>(1), nullptr); });
+    glyphs = nullptr;
+    glyphCount = 0;
+    Check(cairo_scaled_font_text_to_glyphs(font.get(), 0, 0, "A", -1, &glyphs, &glyphCount,
+        nullptr, reinterpret_cast<int*>(1), nullptr) == 0 && glyphCount == 1,
+        "cluster count is ignored without clusters");
+    cairo_glyph_free(glyphs);
+    glyphs = nullptr;
     Rejects([&] { cairo_scaled_font_glyph_extents(font.get(), reinterpret_cast<const CairoGlyph*>(1), 1,
         reinterpret_cast<CairoTextExtents*>(1)); });
     auto failed = Create(CairoMatrix{std::numeric_limits<double>::infinity(), 0, 0, 1, 0, 0});
