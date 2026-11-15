@@ -14,6 +14,7 @@
 #include <limits>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <xmmintrin.h>
 
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32);
@@ -252,6 +253,22 @@ static void CheckFegetenv() {
     bool threw = false;
     try { fegetenv_nid_postfix(nullptr); } catch (...) { threw = true; }
     Require(threw);
+
+    auto* const unmapped = reinterpret_cast<GuestFloatingPointEnvironment*>(0x10);
+    const unsigned csrBefore = _mm_getcsr();
+    const std::uint16_t controlBefore = X87ControlWord();
+    threw = false;
+    try { fegetenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { feholdexcept_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
+    threw = false;
+    try { fesetenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
+    threw = false;
+    try { feupdateenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
 }
 
 template<typename Bits>
@@ -2727,6 +2744,13 @@ static void CheckHyperbolic() {
     Require(Near(_Cosh_nid_postfix(711.0, 1e-300), 0x1.2190c08e2f1a4p+28, 1e-15));
     Require(_Cosh_nid_postfix(720.0, 0.0) == 0.0 && !std::signbit(_Cosh_nid_postfix(720.0, 0.0)));
     Require(_Cosh_nid_postfix(720.0, -0.0) == 0.0 && std::signbit(_Cosh_nid_postfix(720.0, -0.0)));
+    errno = 0;
+    Require(std::isinf(_Cosh_nid_postfix(710.0, 2.0)) && errno == ERANGE);
+    errno = 0;
+    Require(std::isnan(_Cosh_nid_postfix(infinity, 0.0)) && errno == EDOM);
+    errno = 0;
+    Require(std::isinf(_Cosh_nid_postfix(infinity, 1.0)) && std::isnan(_Cosh_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && errno == 0);
+    Require(Near(_Cosh_nid_postfix(710.0, 1.0), std::bit_cast<double>(0x7fe3e21a464507f9ull), 1e-15) && errno == 0);
     Require(sinh_nid_postfix(0.) == 0. && std::signbit(sinh_nid_postfix(-0.)));
     Require(cosh_nid_postfix(0.) == 1. && coshf_nid_postfix(0.f) == 1.f);
     Require(asinh_nid_postfix(0.) == 0. && std::signbit(asinh_nid_postfix(-0.)) && std::signbit(asinhf_nid_postfix(-0.f)));
@@ -4470,6 +4494,16 @@ int main() {
     rSign = 7;
     lgamma_r_nid_postfix(1., &rSign);
     Require(errno == 0 && rSign == 1);
+    for (const auto& [x, expected] : {std::pair{0x1.e97d6b65a9a8p-6, 0x1.bf4123529a945p+1}, std::pair{-0x1.29785f8d2e515p-18, 0x1.8a72cff372f2dp+3},
+             std::pair{0x1.cc45ed4a1ad64p+4, 0x1.0c710c7554999p+6}, std::pair{-0x1.1dc0db2702a34p+4, -0x1.0fec7b0f2460fp+5},
+             std::pair{0x1.88ee17a02fb5dp+6, 0x1.5f04eea9d0cb8p+8}, std::pair{-0x1.64cad57bc7f78p+19, -0x1.16c8a26d71699p+23},
+             std::pair{0x1.861b7e0ac7da2p+24, 0x1.877de051bc34ep+28}}) {
+        Require(std::bit_cast<std::uint64_t>(lgamma_nid_postfix(x)) == std::bit_cast<std::uint64_t>(expected));
+    }
+    for (const auto& [x, error] : {std::pair{0.0, ERANGE}, std::pair{-3.0, ERANGE}, std::pair{-1e308, ERANGE}, std::pair{1e308, 0}, std::pair{-std::numeric_limits<double>::infinity(), 0}}) {
+        errno = 0;
+        Require(std::isinf(lgamma_nid_postfix(x)) && errno == error);
+    }
     for (const double sign : {1.0, -1.0}) {
         std::feclearexcept(FE_ALL_EXCEPT);
         Require(std::abs(lgamma_nid_postfix(sign * std::numeric_limits<double>::denorm_min()) - 744.44007192138122) < 1e-12);

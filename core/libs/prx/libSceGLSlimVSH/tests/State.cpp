@@ -1,5 +1,6 @@
 #include "prx/libSceGLSlimVSH/libSceGLSlimVSH.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -944,6 +945,200 @@ static void CopySubImage() {
     Error(0);
 }
 
+static void GuestPointerFaults(EGLDisplay display, EGLConfig config, EGLContext context) {
+    void* unmapped = reinterpret_cast<void*>(0x10);
+
+    Require(!eglGetConfigAttrib_nid_postfix(display, config, 0x3029, static_cast<EGLint*>(unmapped)));
+    Require(eglGetError_nid_postfix() == 0x300c);
+    Require(!eglChooseConfig_nid_postfix(display, nullptr, nullptr, 0, static_cast<EGLint*>(unmapped)));
+    Require(eglGetError_nid_postfix() == 0x300c);
+    const EGLint matchingCriteria[]{0x3033, 1, 0x3040, 4, 0x3038};
+    EGLint count = -99;
+    Require(!eglChooseConfig_nid_postfix(display, matchingCriteria, static_cast<EGLConfig*>(unmapped), 1, &count));
+    Require(eglGetError_nid_postfix() == 0x300c);
+    Require(!eglQueryContext_nid_postfix(display, context, 0x3086, static_cast<EGLint*>(unmapped)));
+    Require(eglGetError_nid_postfix() == 0x300c);
+    Require(eglGetProcAddress_nid_postfix(static_cast<const char*>(unmapped)) == nullptr);
+
+    errno = 71;
+    glGetIntegerv_nid_postfix(0x0b74, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetFloatv_nid_postfix(0x0b21, static_cast<GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetBooleanv_nid_postfix(0x0bd0, static_cast<GLboolean*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+
+    glVertexAttribPointer_nid_postfix(6, 3, 0x1406, 0, 12, nullptr);
+    errno = 71;
+    glGetVertexAttribfv_nid_postfix(6, 0x8626, static_cast<GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetVertexAttribiv_nid_postfix(6, 0x8622, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetVertexAttribPointerv_nid_postfix(6, 0x8645, static_cast<void**>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glVertexAttrib1fv_nid_postfix(6, static_cast<const GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glVertexAttrib2fv_nid_postfix(6, static_cast<const GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glVertexAttrib3fv_nid_postfix(6, static_cast<const GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glVertexAttrib4fv_nid_postfix(6, static_cast<const GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+
+    GLuint buffer;
+    glGenBuffers_nid_postfix(1, &buffer);
+    glBindBuffer_nid_postfix(0x8892, buffer);
+    const unsigned char seed[4]{1, 2, 3, 4};
+    glBufferData_nid_postfix(0x8892, sizeof(seed), seed, 0x88e4);
+    errno = 71;
+    glBufferData_nid_postfix(0x8892, 4, unmapped, 0x88e4);
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glBufferSubData_nid_postfix(0x8892, 0, 4, unmapped);
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetBufferParameteriv_nid_postfix(0x8892, 0x8764, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glDeleteBuffers_nid_postfix(1, static_cast<const GLuint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    Require(glIsBuffer_nid_postfix(buffer));
+    glBindBuffer_nid_postfix(0x8892, 0);
+    glDeleteBuffers_nid_postfix(1, &buffer);
+
+    GLuint shader = glCreateShader_nid_postfix(0x8b31);
+    GLuint program = glCreateProgram_nid_postfix();
+    errno = 71;
+    glShaderSource_nid_postfix(shader, 1, static_cast<const GLchar* const*>(unmapped), nullptr);
+    Error(0x0501);
+    Require(errno == 71);
+    const char* validString = "ok";
+    errno = 71;
+    glShaderSource_nid_postfix(shader, 1, &validString, static_cast<const GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    const char* unmappedString = static_cast<const char*>(unmapped);
+    errno = 71;
+    glShaderSource_nid_postfix(shader, 1, &unmappedString, nullptr);
+    Error(0x0501);
+    Require(errno == 71);
+    const GLint badLength[]{4};
+    errno = 71;
+    glShaderSource_nid_postfix(shader, 1, &unmappedString, badLength);
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetShaderiv_nid_postfix(shader, 0x8b4f, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetProgramiv_nid_postfix(program, 0x8b85, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    GLuint attached[1]{};
+    errno = 71;
+    glGetAttachedShaders_nid_postfix(program, 0, static_cast<GLsizei*>(unmapped), attached);
+    Error(0x0501);
+    Require(errno == 71);
+    glAttachShader_nid_postfix(program, shader);
+    errno = 71;
+    glGetAttachedShaders_nid_postfix(program, 1, nullptr, static_cast<GLuint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glBindAttribLocation_nid_postfix(program, 0, static_cast<const GLchar*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    glDetachShader_nid_postfix(program, shader);
+    glDeleteShader_nid_postfix(shader);
+    glDeleteProgram_nid_postfix(program);
+
+    GLuint texture;
+    glGenTextures_nid_postfix(1, &texture);
+    glBindTexture_nid_postfix(0x0de1, texture);
+    errno = 71;
+    glTexParameteriv_nid_postfix(0x0de1, 0x2802, static_cast<const GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glTexParameterfv_nid_postfix(0x0de1, 0x2802, static_cast<const GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetTexParameteriv_nid_postfix(0x0de1, 0x2802, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    errno = 71;
+    glGetTexParameterfv_nid_postfix(0x0de1, 0x2802, static_cast<GLfloat*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    glBindTexture_nid_postfix(0x0de1, 0);
+    errno = 71;
+    glDeleteTextures_nid_postfix(1, static_cast<const GLuint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    glDeleteTextures_nid_postfix(1, &texture);
+
+    GLuint renderbuffer;
+    glGenRenderbuffers_nid_postfix(1, &renderbuffer);
+    glBindRenderbuffer_nid_postfix(0x8d41, renderbuffer);
+    errno = 71;
+    glGetRenderbufferParameteriv_nid_postfix(0x8d41, 0x8d42, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    glBindRenderbuffer_nid_postfix(0x8d41, 0);
+    errno = 71;
+    glDeleteRenderbuffers_nid_postfix(1, static_cast<const GLuint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    glDeleteRenderbuffers_nid_postfix(1, &renderbuffer);
+
+    GLuint framebuffer;
+    glGenFramebuffers_nid_postfix(1, &framebuffer);
+    glBindFramebuffer_nid_postfix(0x8d40, framebuffer);
+    errno = 71;
+    glGetFramebufferAttachmentParameteriv_nid_postfix(0x8d40, 0x8ce0, 0x8cd0, static_cast<GLint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    glBindFramebuffer_nid_postfix(0x8d40, 0);
+    errno = 71;
+    glDeleteFramebuffers_nid_postfix(1, static_cast<const GLuint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    glDeleteFramebuffers_nid_postfix(1, &framebuffer);
+
+    errno = 71;
+    glDeleteTextures_nid_postfix(0x7fffffff, static_cast<const GLuint*>(unmapped));
+    Error(0x0501);
+    Require(errno == 71);
+    GLuint oversized = 0;
+    glGenBuffers_nid_postfix(0x7fffffff, &oversized);
+    Error(0x0505);
+    Require(oversized == 0);
+}
+
 int main() {
     Require(eglGetCurrentContext_nid_postfix() == nullptr);
     Require(eglQueryAPI_nid_postfix() == 0x30a0);
@@ -998,6 +1193,7 @@ int main() {
     FramebufferAttachments();
     ShaderObjects();
     CopySubImage();
+    GuestPointerFaults(display, config, context);
     GLuint sharedBuffer;
     glGenBuffers_nid_postfix(1, &sharedBuffer);
     glBindBuffer_nid_postfix(0x8892, sharedBuffer);

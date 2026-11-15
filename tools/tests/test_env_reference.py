@@ -108,6 +108,26 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_POOL_CONSTANT_MIB"], [(source.as_posix(), 4, "integer", "")])
         self.assertNotIn("APS5_NOT_A_MEBIBYTE_READ", found)
 
+    def test_hexadecimal_and_digit_separated_defaults_are_read_whole(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        lines = (('kibSetting("ANYPS5_A_KIB", 0x400)', "integer", "0x400"),
+                 ('EnvInt("ANYPS5_B", 1\'000)', "integer", "1'000"),
+                 ('kibSetting("ANYPS5_C_KIB", 0X20)', "integer", "0X20"),
+                 ('kibSetting("ANYPS5_D_KIB", 1024)', "integer", "1024"),
+                 ('EnvInt("ANYPS5_E", -0x10)', "integer", "-0x10"),
+                 ('configured("ANYPS5_F", 0xFF\'FFu)', "integer", "0xFF'FF"),
+                 ('environmentCount("ANYPS5_G", 0x10, Maximum, "message")', "integer", "0x10"),
+                 ('MebibytesFromEnvironment("ANYPS5_H_MIB", 1\'024)', "integer", "1'024"),
+                 ('std::getenv("ANYPS5_I") ? 1 : 0x2A', "string", "0x2A"),
+                 ('std::getenv("ANYPS5_J") ? 1 : 4\'096', "string", "4'096"))
+        source.write_text("".join(f"static auto value{index} = {line[0]};\n" for index, line in enumerate(lines)), encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        for index, (line, kind, default) in enumerate(lines):
+            with self.subTest(line=line):
+                name = line[line.index('"') + 1:line.index('"', line.index('"') + 1)]
+                self.assertEqual(found[name], [(source.as_posix(), index + 1, kind, default)])
+
     def test_long_multiline_reads_are_checked_and_keep_their_locations(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"
