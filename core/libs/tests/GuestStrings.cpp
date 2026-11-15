@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <climits>
 #include <cstring>
@@ -440,6 +441,8 @@ int main() {
     Require(basename_r_nid_postfix(("/a/" + longest).c_str(), baseBuffer) == baseBuffer && std::strlen(baseBuffer) == 1023);
     *__error_nid_postfix() = 0;
     Require(basename_r_nid_postfix(longName.c_str(), baseBuffer) == nullptr && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(basename_r_nid_postfix("/one/plain", reinterpret_cast<char*>(0x10)) == nullptr && *__error_nid_postfix() == 14);
     const unsigned char loopbackBytes[4] = {127, 0, 0, 1};
     unsigned int loopback;
     std::memcpy(&loopback, loopbackBytes, sizeof(loopback));
@@ -549,6 +552,8 @@ int main() {
     Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
     Require(inetAton("1.2.3.4\n", "1.2.3.4"));
     Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    errno = 71;
+    Require(__inet_aton_nid_postfix("1.2.3.4", reinterpret_cast<void*>(0x10)) == 0 && errno == 71);
     bool atonNullThrew = false;
     try {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
@@ -845,5 +850,12 @@ int main() {
     Require(modeBuffer[0] == 'w');
     strmode_nid_postfix(0, modeBuffer);
     Require(std::memcmp(modeBuffer, "?--------- ", 11) == 0);
+    *__error_nid_postfix() = 71;
+    strmode_nid_postfix(0100644, reinterpret_cast<char*>(std::uintptr_t{0x10}));
+    Require(*__error_nid_postfix() == 71);
+    char modeRow[16];
+    std::memset(modeRow, '!', sizeof(modeRow));
+    strmode_nid_postfix(0106755, modeRow + 1);
+    Require(modeRow[0] == '!' && std::memcmp(modeRow + 1, "-rwsr-sr-x ", 12) == 0 && modeRow[13] == '!');
     return CheckMemcpyOverlap() ? 0 : 1;
 }

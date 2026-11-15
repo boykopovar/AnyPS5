@@ -1332,8 +1332,19 @@ int APS5_VABI sceUserServiceGetHomeDirectory(std::uint32_t user_id, char* path, 
     if (path == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    const int result = std::snprintf(path, size, "/user/home/%08x", user_id);
-    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    char local[64];
+    const int result = std::snprintf(local, sizeof(local), "/user/home/%08x", user_id);
+    if (result < 0 || static_cast<std::size_t>(result) >= size) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    const std::size_t copyLength = static_cast<std::size_t>(result) + 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(path, local, copyLength);
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceSetPbtcSundayDuration(void) {
