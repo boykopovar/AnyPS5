@@ -129,6 +129,9 @@ void CheckInit() {
     bad.work_memory = g_work;
     bad.direct_memory_garlic_alignment = 0x1000;
     Require(sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(&bad)) == ArgumentInvalid);
+    errno = 71;
+    Require(sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(0x10)) == ArgumentInvalid);
+    Require(errno == 71);
     Require(sceVrTrackerInit(nullptr) == ArgumentInvalid);
     Require(sceVrTrackerTerm() == NotInit);
 
@@ -155,6 +158,9 @@ void CheckDevices() {
     Require(Recalibrate(4) == ArgumentInvalid);
     Require(Recalibrate(Pad, sizeof(VrTrackerLegacy::RecalibrateParam) + 4) == ArgumentInvalid);
     Require(sceVrTrackerRecalibrate(nullptr) == ArgumentInvalid);
+    errno = 71;
+    Require(sceVrTrackerRecalibrate(reinterpret_cast<const void*>(0x10)) == ArgumentInvalid);
+    Require(errno == 71);
 
     Require(sceVrTrackerSetDurationUntilStatusNotTracking(Gun, 10) == 0);
     Require(sceVrTrackerSetDurationUntilStatusNotTracking(4, 10) == ArgumentInvalid);
