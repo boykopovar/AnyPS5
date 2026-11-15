@@ -188,10 +188,16 @@ struct Pair {
 };
 
 static void TestNew(GuestLibrary& library, FT_Library native) {
-    void* guest = reinterpret_cast<void*>(1);
-    FT_Stroker expected = nullptr;
+    void* const sentinel = reinterpret_cast<void*>(1);
+    void* guest = sentinel;
+    FT_Stroker expected = static_cast<FT_Stroker>(sentinel);
     Require(FT_Stroker_New_nid_postfix(nullptr, &guest) == FT_Stroker_New(nullptr, &expected));
-    Require(guest == nullptr && expected == nullptr);
+    Require(guest == sentinel && expected == sentinel);
+    GuestLibrary empty;
+    Require(FT_Stroker_New_nid_postfix(&empty, &guest) == FT_Stroker_New(nullptr, &expected));
+    Require(guest == sentinel && expected == sentinel);
+    guest = nullptr;
+    expected = nullptr;
     Require(FT_Stroker_New_nid_postfix(&library, nullptr) == FT_Stroker_New(native, nullptr));
     Require(FT_Stroker_New_nid_postfix(&library, &guest) == FT_Stroker_New(native, &expected));
     Require(guest != nullptr && expected != nullptr);

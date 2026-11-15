@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <cerrno>
 
 namespace {
 
@@ -34,6 +35,9 @@ void TestShellCalls(std::intptr_t expectedHandle) {
     Require(sceShellCoreUtilActivateGetStatus(0, &status, nullptr) == shellInvalidArgument && status == static_cast<std::int32_t>(untouchedStatus));
     Require(sceShellCoreUtilActivateGetStatus(0, &status, &result) == 0 && status == 2 && result == 0);
     Require(sceShellCoreUtilActivateIsActivated(7, nullptr) == shellInvalidArgument);
+    errno = 71;
+    Require(sceShellCoreUtilActivateIsActivated(7, reinterpret_cast<bool*>(0x10)) == shellInvalidArgument);
+    Require(errno == 71);
     bool activated = false;
     Require(sceShellCoreUtilActivateIsActivated(-1, &activated) == 0 && activated);
     for (std::intptr_t value : {std::intptr_t{0}, handle, std::intptr_t{-1}}) {
