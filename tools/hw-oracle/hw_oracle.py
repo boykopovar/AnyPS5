@@ -184,7 +184,10 @@ def run(body, rows, extra=b"", wave64=False, coarse=False, *, ieee, denorm32, de
         rows_per_dispatch = ROWS_PER_DISPATCH // 2 if wave64 else ROWS_PER_DISPATCH
         for start in range(0, len(padded), rows_per_dispatch):
             chunk = padded[start:start + rows_per_dispatch]
-            payload = b"".join(struct.pack("<4I", *r) for r in chunk) + extra
+            payload = b"".join(struct.pack("<4I", *r) for r in chunk)
+            if extra and len(padded) > rows_per_dispatch:
+                payload += bytes((rows_per_dispatch - len(chunk)) * 16)
+            payload += extra
             if runtime() == "hip":
                 data = hip_runtime().dispatch(Path(code).read_bytes(), len(chunk), payload, 16, coarse)
             else:
@@ -250,7 +253,10 @@ def main():
               f"Validated {len(rows)} input rows, {padded} padded rows, {report['dispatches']} dispatches. "
               "Assembly and GPU execution were not checked.")
         return 0
-    results = run(body, rows, extra, args.wave64, args.coarse, **modes, lds=args.lds)
+    try:
+        results = run(body, rows, extra, args.wave64, args.coarse, **modes, lds=args.lds)
+    except ValueError as error:
+        parser.error(str(error))
     if args.json:
         report = {
             "schema_version": 1,

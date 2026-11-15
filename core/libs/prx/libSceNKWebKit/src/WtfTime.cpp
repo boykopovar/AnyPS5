@@ -1,12 +1,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <limits>
 #include <thread>
 
@@ -16,16 +18,19 @@
 #include <time.h>
 #endif
 
+namespace NKWebKit {
+double CurrentWallTime();
+double CurrentMonotonicTime();
+}  // namespace NKWebKit
+
 namespace WTF {
 
 static double currentWallTimeSeconds() {
-    auto now = std::chrono::system_clock::now();
-    return std::chrono::duration<double>(now.time_since_epoch()).count();
+    return NKWebKit::CurrentWallTime();
 }
 
 static double currentMonotonicTimeSeconds() {
-    auto now = std::chrono::steady_clock::now();
-    return std::chrono::duration<double>(now.time_since_epoch()).count();
+    return NKWebKit::CurrentMonotonicTime();
 }
 
 static bool isLeapYear(int year) {
@@ -351,34 +356,11 @@ double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUT
 }
 
 void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::GregorianDateTime* self) {
-#ifdef _WIN32
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    TIME_ZONE_INFORMATION tzi;
-    DWORD tzId = GetTimeZoneInformation(&tzi);
-    LONG bias = 0;
-    if (tzId != TIME_ZONE_ID_INVALID) {
-        bias = tzi.Bias;
-        if (tzId == TIME_ZONE_ID_DAYLIGHT) {
-            bias += tzi.DaylightBias;
-        } else if (tzId == TIME_ZONE_ID_STANDARD || tzId == TIME_ZONE_ID_UNKNOWN) {
-            bias += tzi.StandardBias;
-        }
+    const std::int64_t localTime = time_nid_postfix(nullptr);
+    GuestTm localTM{};
+    if (localtime_r_nid_postfix(&localTime, &localTM) == nullptr) {
+        throw std::overflow_error("setToCurrentLocalTime: localtime_r failed");
     }
-    self->m_year = st.wYear;
-    self->m_month = st.wMonth - 1;
-    self->m_monthDay = st.wDay;
-    self->m_yearDay = WTF::dayInYear(self->m_year, self->m_month, self->m_monthDay);
-    self->m_weekDay = st.wDayOfWeek;
-    self->m_hour = st.wHour;
-    self->m_minute = st.wMinute;
-    self->m_second = st.wSecond;
-    self->m_utcOffsetInMinute = -bias;
-    self->m_isDST = (tzId == TIME_ZONE_ID_DAYLIGHT) ? 1 : 0;
-#else
-    time_t raw = time(nullptr);
-    struct tm localTM;
-    localtime_r(&raw, &localTM);
     self->m_year = localTM.tm_year + 1900;
     self->m_month = localTM.tm_mon;
     self->m_monthDay = localTM.tm_mday;
@@ -388,40 +370,42 @@ void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::Gregoria
     self->m_minute = localTM.tm_min;
     self->m_second = localTM.tm_sec;
     self->m_isDST = localTM.tm_isdst;
-#if defined(HAVE_TM_GMTOFF) || defined(__GLIBC__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
     self->m_utcOffsetInMinute = static_cast<int>(localTM.tm_gmtoff / 60);
-#else
-    self->m_utcOffsetInMinute = 0;
-#endif
-#endif
 }
 
-WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(double, WTF::TimeType) {
-#ifdef _WIN32
-    TIME_ZONE_INFORMATION tzi;
-    DWORD tzId = GetTimeZoneInformation(&tzi);
-    LONG bias = 0;
-    bool isDST = false;
-    if (tzId != TIME_ZONE_ID_INVALID) {
-        bias = tzi.Bias;
-        if (tzId == TIME_ZONE_ID_DAYLIGHT) {
-            bias += tzi.DaylightBias;
-            isDST = true;
-        } else if (tzId == TIME_ZONE_ID_STANDARD || tzId == TIME_ZONE_ID_UNKNOWN) {
-            bias += tzi.StandardBias;
-        }
+static int32_t calculateUTCOffset() {
+    GuestTm localt{};
+    localt.tm_mday = 1;
+    localt.tm_year = 119;
+    const std::int64_t localTimestamp = mktime_nid_postfix(&localt);
+    if (localTimestamp == -1) {
+        throw std::runtime_error("calculateUTCOffset: mktime failed");
     }
-    return WTF::LocalTimeOffset{isDST, -static_cast<int>(bias * 60 * 1000)};
-#else
-    time_t now = time(nullptr);
-    struct tm localTM;
-    localtime_r(&now, &localTM);
-#if defined(HAVE_TM_GMTOFF) || defined(__GLIBC__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
+    return static_cast<int32_t>((1546300800 - localTimestamp) * 1000);
+}
+
+WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(double ms, WTF::TimeType inputTimeType) {
+    if (std::isnan(ms) || std::isinf(ms)) {
+        throw std::invalid_argument("calculateLocalTimeOffset: NaN or Inf timestamp");
+    }
+    double localToUTCTimeOffset = (inputTimeType == WTF::TimeType::LocalTime) ? calculateUTCOffset() : 0.0;
+    double localTimeSeconds = (ms - localToUTCTimeOffset) / 1000.0;
+    constexpr double maxUnixTime = 4102444740.0;
+    if (localTimeSeconds > maxUnixTime) {
+        localTimeSeconds = maxUnixTime;
+    } else if (localTimeSeconds < 0.0) {
+        localTimeSeconds += 86400.0;
+    }
+    constexpr double minRepresentableTimeT = -9223372036854775808.0;
+    if (localTimeSeconds < minRepresentableTimeT) {
+        throw std::overflow_error("calculateLocalTimeOffset: timestamp out of representable time_t range");
+    }
+    const std::int64_t localTime = static_cast<std::int64_t>(localTimeSeconds);
+    GuestTm localTM{};
+    if (localtime_r_nid_postfix(&localTime, &localTM) == nullptr) {
+        throw std::overflow_error("calculateLocalTimeOffset: localtime_r failed");
+    }
     return WTF::LocalTimeOffset{localTM.tm_isdst > 0, static_cast<int>(localTM.tm_gmtoff * 1000)};
-#else
-    return WTF::LocalTimeOffset{localTM.tm_isdst > 0, 0};
-#endif
-#endif
 }
 
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime) {

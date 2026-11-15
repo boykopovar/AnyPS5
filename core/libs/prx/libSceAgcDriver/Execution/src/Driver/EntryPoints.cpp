@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <mutex>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
@@ -20,6 +21,7 @@ void Submit(const Packet* packet, std::uint32_t queue) try {
         return;
     }
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
+    recorder->RewindTailFlips(driver.RewindTailFlips());
     const auto flips = driver.FlipSubmissions();
     recorder->Submit(*packet, queue, [&] { driver.Submit(packet, queue); });
     if (driver.FlipSubmissions() != flips) recorder->FrameBoundary();
@@ -122,10 +124,23 @@ extern "C" void AgcDriverRequestScreenshot_nid_postfix() {
     AgcDriver::Screenshot::Request();
 }
 
+extern "C" void AgcDriverTracePresent_nid_postfix(std::uint32_t width, std::uint32_t height) {
+    AgcDriver::DriverDetail::Driver::Get().TracePresent(width, height);
+}
+
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
     AgcDriver::RegisterShader(shader);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
+}
+
+extern "C" std::uint32_t AgcDriverInstructionWords_nid_postfix(std::span<const std::uint32_t> code, std::uint32_t index) {
+    try {
+        return ShaderRecompiler::DecodeRdnaInstruction(index * 4u, code, index).wordCount;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[agc] instruction at word %u of a fused front half cannot be decoded: %s\n", index, error.what());
+        return 0;
+    }
 }
 
 extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
@@ -136,7 +151,10 @@ extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
 
 extern "C" std::uint32_t AgcDriverReserveEopFlip_nid_postfix(const AgcDriver::FlipInfo& info) {
     const auto token = AgcDriver::DriverDetail::Driver::Get().ReserveEopFlip(info);
-    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) recorder->ReserveEopFlip(info, token);
+    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) {
+        recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
+        recorder->ReserveEopFlip(info, token);
+    }
     return token;
 }
 
@@ -151,10 +169,30 @@ extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait*
     return count;
 }
 
+extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
+}
+
 extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std::uint64_t* completed) {
     const auto [submitted, done] = AgcDriver::DriverDetail::Driver::Get().SerialProgress();
     *accepted = submitted;
     *completed = done;
+}
+
+extern "C" bool AgcDriverHoldSettled_nid_postfix(std::int64_t milliseconds) {
+    return AgcDriver::DriverDetail::Driver::Get().WaitSettledFor(std::chrono::milliseconds(milliseconds));
+}
+
+extern "C" void AgcDriverReleaseSettled_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().ReleaseSettled();
+}
+
+extern "C" bool AgcDriverSettledHeld_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().SettledHeld();
+}
+
+extern "C" bool AgcDriverSettled_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().Settled();
 }
 
 extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info) try {
@@ -163,6 +201,7 @@ extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info)
         AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
         return;
     }
+    recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
     recorder->Flip(info, [&] { AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info); });
     recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {

@@ -111,7 +111,7 @@ class EncodingTests(unittest.TestCase):
             source = repo / "core" / "libs" / "prx" / "x" / "a.cpp"
             source.parent.mkdir(parents=True)
             ident = ["-c", "user.name=t", "-c", "user.email=t@example.test"]
-            for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]):
+            for args in (["init", "-q"], ["config", "core.safecrlf", "false"], ["commit", "-q", "--allow-empty", "-m", "base"]):
                 subprocess.run(["git", *ident, *args], cwd=repo, check=True, capture_output=True)
             source.write_bytes(b"int APS5_VABI f() {} // caf\xe9\n")
             for args in (["add", "."], ["commit", "-q", "-m", "add"]):

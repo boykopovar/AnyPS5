@@ -111,7 +111,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
     if (DrawPipeline::Active()) {
         auto& pipeline = DrawPipeline::Queue0();
         if (pipeline.Busy() && pipeline.OverlapsAny(variant.runs)) {
-            if (!knownValueVerify() && QueuedWritesOver(pipeline, regions) == QueuedOverlap::Stored) return EntryOutcome::Differing;
+            if (!knownValueVerify() && QueuedWritesOver(pipeline, regions) == QueuedOverlap::Stored) return EntryOutcome::QueuedStores;
             pipeline.Drain(DrawPipeline::DrainReason::Capture);
         }
     }

@@ -13,11 +13,12 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace {
 
 constexpr int ThreadNameInvalid = 22;
-constexpr int ThreadNameTooLong = 63;
 constexpr std::size_t ThreadNameCapacity = 32;
 
 constexpr int FnmNomatch = 1;
@@ -232,29 +233,28 @@ void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, i
 
 
 
-int APS5_VABI clock_gettime_np() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI clock_gettime_np(int clockId, KernelTimespec* tp) {
+    return clock_gettime_nid_postfix(clockId, tp);
 }
 
-int APS5_VABI getenv_np() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
+    if (!name || !buffer)
+        throw std::invalid_argument("getenv_np requires a name and a buffer");
+    const char* value = getenv_nid_postfix(name);
+    if (!value)
+        return -1;
+    const std::size_t length = std::strlen(value);
+    if (length >= size)
+        throw std::runtime_error("getenv_np: the console's handling of a value longer than the buffer is unknown");
+    std::memcpy(buffer, value, length + 1);
     return 0;
 }
 
 APS5_EXPORT("dt8ermYp-Wc", scePosixForWebKit_gethostbyname_r);
-int APS5_VABI scePosixForWebKit_gethostbyname_r() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI mmap_np() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
-}
-
-int APS5_VABI mkostemp_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI msetname() {
@@ -280,9 +280,10 @@ int APS5_VABI scePosixForWebKit_sysinfo() {
 
 int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
     if (thread == nullptr || name == nullptr) return ThreadNameInvalid;
-    if (std::strlen(name) >= ThreadNameCapacity) return ThreadNameTooLong;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, ThreadNameCapacity, copy)) return error;
     std::lock_guard lock(thread->nameLock);
-    thread->name = name;
+    thread->name = std::move(copy);
     return 0;
 }
 

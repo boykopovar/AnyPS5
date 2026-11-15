@@ -13,6 +13,11 @@ namespace ShaderRecompiler {
 inline constexpr std::uint32_t ModeRoundBits = 0xfu;
 inline constexpr std::uint32_t ModeRound32Bits = 0x3u;
 inline constexpr std::uint32_t ModeRound1664Bits = 0xcu;
+inline constexpr std::uint32_t ModeDenormBits = 0xf0u;
+inline constexpr std::uint32_t ModeDenorm32Bits = 0x30u;
+inline constexpr std::uint32_t ModeDenorm1664Bits = 0xc0u;
+inline constexpr std::uint32_t ModeTrackedBits = 0xffu;
+inline constexpr std::uint32_t ModeUndeclaredSeed = ModeDenorm1664Bits;
 
 struct RoundingState {
     std::uint8_t value = 0;
@@ -31,6 +36,7 @@ enum class RoundingUseKind {
     Directed32,
     Directed16,
     SelfChecked,
+    Denormal,
     Unmodelled
 };
 

@@ -21,10 +21,10 @@ template<typename TAction> static void RequireThrows(TAction action, std::source
 
 int main() {
     void* oid = reinterpret_cast<void*>(0x1234);
-    void* parameter = reinterpret_cast<void*>(0x5678);
+    LibreSsl3Asn1Type parameter{5, nullptr};
     unsigned char keyBytes[] = {0x30, 0x03, 0x02, 0x01, 0x01};
     LibreSsl3Asn1String bitString{5, 3, keyBytes, 0};
-    LibreSsl3X509Algor algorithmInfo{oid, parameter};
+    LibreSsl3X509Algor algorithmInfo{oid, &parameter};
     LibreSsl3X509Pubkey pubkey{&algorithmInfo, &bitString, nullptr};
 
     void* returnedOid = nullptr;

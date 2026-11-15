@@ -43,4 +43,78 @@ int main() {
     try { bsearch_nid_postfix(&key, records.data(), std::numeric_limits<std::size_t>::max(), sizeof(Record), Compare); }
     catch (const std::overflow_error&) { rejected = true; }
     Require(rejected);
+
+    {
+        std::array<Record, 6> table = records;
+        std::size_t nel = table.size();
+        calls = 0;
+        int probe = 5;
+        auto* hit = static_cast<Record*>(lfind_nid_postfix(&probe, table.data(), &nel, sizeof(Record), Compare));
+        Require(hit && hit == table.data() + 2 && calls == 3);
+        Require(nel == table.size());
+        Require(std::strcmp(hit->payload, "five") == 0);
+        probe = 4;
+        calls = 0;
+        Require(lfind_nid_postfix(&probe, table.data(), &nel, sizeof(Record), Compare) == nullptr);
+        Require(calls == static_cast<int>(table.size()));
+        std::size_t empty = 0;
+        calls = 0;
+        Require(lfind_nid_postfix(&probe, table.data(), &empty, sizeof(Record), Compare) == nullptr);
+        Require(calls == 0);
+        calls = 0;
+        Require(lfind_nid_postfix(&probe, nullptr, &empty, sizeof(Record), Compare) == nullptr);
+        Require(calls == 0);
+    }
+
+    {
+        std::array<Record, 8> buffer{};
+        for (std::size_t index = 0; index < records.size(); ++index) buffer[index] = records[index];
+        const auto before_lsearch = buffer;
+        std::size_t nel = records.size();
+        Record present{5, "already"};
+        calls = 0;
+        auto* found = static_cast<Record*>(lsearch_nid_postfix(&present.key, buffer.data(), &nel, sizeof(Record), Compare));
+        Require(found == buffer.data() + 2 && nel == records.size() && calls == 3);
+        Require(std::memcmp(buffer.data(), before_lsearch.data(), sizeof(buffer)) == 0);
+        Record fresh{4, "appended"};
+        calls = 0;
+        auto* appended = static_cast<Record*>(lsearch_nid_postfix(&fresh.key, buffer.data(), &nel, sizeof(Record), Compare));
+        Require(appended == buffer.data() + records.size());
+        Require(appended->key == 4 && nel == records.size() + 1);
+        Require(calls == static_cast<int>(records.size()));
+        Require(std::memcmp(appended, &fresh, sizeof(Record)) == 0);
+        std::size_t zero = 0;
+        Record first{42, "first"};
+        calls = 0;
+        auto* seeded = static_cast<Record*>(lsearch_nid_postfix(&first.key, buffer.data() + 7, &zero, sizeof(Record), Compare));
+        Require(seeded == buffer.data() + 7 && zero == 1 && calls == 0);
+        Require(std::memcmp(seeded, &first, sizeof(Record)) == 0);
+    }
+
+    {
+        bool caught = false;
+        std::size_t nel = 1;
+        try { lfind_nid_postfix(nullptr, records.data(), &nel, sizeof(Record), Compare); }
+        catch (const std::invalid_argument&) { caught = true; }
+        Require(caught);
+        caught = false;
+        try { lsearch_nid_postfix(&key, nullptr, &nel, sizeof(Record), Compare); }
+        catch (const std::invalid_argument&) { caught = true; }
+        Require(caught);
+        caught = false;
+        try { lfind_nid_postfix(&key, records.data(), nullptr, sizeof(Record), Compare); }
+        catch (const std::invalid_argument&) { caught = true; }
+        Require(caught);
+        std::size_t huge = std::numeric_limits<std::size_t>::max();
+        calls = 0;
+        caught = false;
+        try { lfind_nid_postfix(&key, records.data(), &huge, sizeof(Record), Compare); }
+        catch (const std::overflow_error&) { caught = true; }
+        Require(caught && calls == 0 && huge == std::numeric_limits<std::size_t>::max());
+        caught = false;
+        Record scratch{};
+        try { lsearch_nid_postfix(&key, &scratch, &huge, sizeof(Record), Compare); }
+        catch (const std::overflow_error&) { caught = true; }
+        Require(caught && calls == 0 && huge == std::numeric_limits<std::size_t>::max());
+    }
 }

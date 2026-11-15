@@ -991,9 +991,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
     const auto addr = word1 & 0xFFu;
     const auto& info = lookupOpcode(dsOpcodes, opcode, "DS opcode is not supported");
     const auto combinedOffset = offset0 | (offset1 << 8u);
-    if (info.opcode == RdnaOpcode::DsSwizzleB32 && combinedOffset >= 0xE000u) {
-        throw std::runtime_error("DS swizzle FFT mode is not supported");
-    }
     if (gds && (info.opcode == RdnaOpcode::DsSwizzleB32 || info.opcode == RdnaOpcode::DsBpermuteB32 || info.opcode == RdnaOpcode::DsPermuteB32 || info.opcode == RdnaOpcode::DsWriteAddtidB32 || info.opcode == RdnaOpcode::DsReadAddtidB32)) {
         throw std::runtime_error("DS lane operation is available only for LDS");
     }
@@ -1005,9 +1002,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
             throw std::runtime_error("DS write exchange destination register range overflow");
         }
     }
-    if (info.opcode == RdnaOpcode::DsWriteAddtidB32 && data1 != 0u) {
-        throw std::runtime_error("DS write addtid data1 operand is not supported");
-    }
     if (info.opcode == RdnaOpcode::DsCondxchg32RtnB64) {
         if (data0 + 2u > 256u) {
             throw std::runtime_error("DS conditional exchange source register range overflow");
@@ -1015,9 +1009,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
         if (vdst + 2u > 256u) {
             throw std::runtime_error("DS conditional exchange destination register range overflow");
         }
-    }
-    if (info.opcode == RdnaOpcode::DsReadAddtidB32 && (data0 != 0u || data1 != 0u)) {
-        throw std::runtime_error("DS read addtid data operands are not supported");
     }
 
     RdnaInstruction instruction{};

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <atomic>
@@ -226,6 +227,9 @@ void Device() {
     const int speed = sceUsbdGetDeviceSpeed(device);
     Require(speed >= 1 && speed <= 4, "the device speed is not low, full, high or super speed");
     std::printf("device speed %d\n", speed);
+    errno = 71;
+    Require(sceUsbdGetConfiguration(handle, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument, "unwritable configuration rejected");
+    Require(errno == 71, "errno preserved");
     std::int32_t configuration = -1;
     Require(sceUsbdGetConfiguration(handle, &configuration) == 0 && configuration == activeValue, "configuration differs from the active config descriptor");
     std::uint8_t text[256] = {};
@@ -426,6 +430,9 @@ void CheckTransferFillers() {
     for (int packet = 0; packet < 3; ++packet) Require(transfer->isoPacketDescriptors[packet].length == 16, "iso packet length not set");
     Require(sceUsbdGetIsoPacketBuffer(transfer, 0) == data && sceUsbdGetIsoPacketBuffer(transfer, 1) == data + 16 && sceUsbdGetIsoPacketBuffer(transfer, 2) == data + 32, "iso packet buffers do not follow the packet lengths");
     Require(sceUsbdGetIsoPacketBuffer(transfer, 3) == nullptr, "a packet past the last one has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 17);
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 2) == nullptr, "a packet that runs past the transfer buffer has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 16);
     std::uint8_t control[12] = {};
     sceUsbdFillControlSetup(control, 0x80, 6, 0x0100, 0x0409, 4);
     Require(control[0] == 0x80 && control[1] == 6 && control[2] == 0x00 && control[3] == 0x01 && control[4] == 0x09 && control[5] == 0x04 && control[6] == 4 && control[7] == 0, "control setup not packed little-endian");
@@ -436,7 +443,28 @@ void CheckTransferFillers() {
     Require(transfer->length == 0 && sceUsbdControlTransferGetData(transfer) == nullptr, "a control transfer without a buffer has data");
     Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
+    Require(Throws([] { sceUsbdFillControlSetup(reinterpret_cast<std::uint8_t*>(0x10), 0x80, 6, 0x0100, 0, 18); }), "filling an unwritable control setup did not throw");
+    transfer->length = 77;
+    Require(Throws([&] { sceUsbdFillControlTransfer(transfer, &device, reinterpret_cast<std::uint8_t*>(0x10), &MarkDone, &user, 100); }) && transfer->length == 77,
+        "filling a control transfer from an unreadable setup did not throw before touching the transfer");
     Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
+    auto* bulk = sceUsbdAllocTransfer(0);
+    Require(bulk != nullptr, "transfer allocation failed");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, nullptr, 16, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a null buffer and a length was accepted");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, data, -1, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a negative length was accepted");
+    sceUsbdFreeTransfer(bulk);
+    Require(Throws([&] { sceUsbdFillIsoTransfer(transfer, &device, 0x83, data, 64, 4, &MarkDone, &user, 0); }), "an iso fill beyond the allocated packets did not throw");
+    auto* small = sceUsbdAllocTransfer(1);
+    Require(small != nullptr, "transfer allocation failed");
+    Require(Throws([&] { sceUsbdFillIsoTransfer(small, &device, 0x83, data, 64, 2, &MarkDone, &user, 0); }), "an iso fill beyond a one packet transfer did not throw");
+    sceUsbdFillIsoTransfer(small, &device, 0x83, data, 16, 1, &MarkDone, &user, 0);
+    small->numIsoPackets = 2;
+    Require(sceUsbdGetIsoPacketBuffer(small, 0) == nullptr, "the packet buffer of a count above the allocation was returned");
+    Require(sceUsbdSubmitTransfer(small) == invalidArgument, "a submit above the allocated packet count was accepted");
+    Require(Throws([&] { sceUsbdSetIsoPacketLengths(small, 8); }), "setting iso packet lengths above the allocated packet count did not throw");
+    sceUsbdFreeTransfer(small);
     sceUsbdFreeTransfer(transfer);
 }
 
@@ -468,12 +496,18 @@ int main(int argc, char** argv) {
     int foreign = 0;
     void* handle = &foreign;
     Require(sceUsbdOpen(&foreign, nullptr) == invalidArgument, "null handle output accepted");
+    errno = 71;
+    Require(sceUsbdOpen(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable handle output accepted");
     Require(Throws([&] { sceUsbdOpen(nullptr, &handle); }), "opening a null device did not throw");
     Require(Throws([&] { sceUsbdOpen(&foreign, &handle); }), "opening a device that was never listed did not throw");
     sceUsbdClose(nullptr);
 
     Require(Throws([&] { sceUsbdClose(&foreign); }), "closing a handle that was never opened did not throw");
     Require(sceUsbdRefDevice(nullptr) == nullptr, "null device was referenced");
+    errno = 71;
+    Require(sceUsbdGetActiveConfigDescriptor(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable active config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptor(&foreign, 0, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptorByValue(&foreign, 1, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor by value output accepted");
     sceUsbdUnrefDevice(nullptr);
 
     Require(Throws([&] { sceUsbdRefDevice(&foreign); }), "referencing a device that was never listed did not throw");
@@ -495,6 +529,14 @@ int main(int argc, char** argv) {
     Require(sceUsbdControlTransfer(nullptr, 0x80, 6, 0x100, 0, descriptor, 18, 1000) == invalidArgument, "null handle control transfer accepted");
     Require(sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, nullptr, 18, 1000) == invalidArgument, "control transfer without data accepted");
     Require(Throws([&] { sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, descriptor, 18, 1000); }), "control transfer on a handle that was never opened did not throw");
+    std::int32_t transferred = 0x5A5A;
+    Require(sceUsbdBulkTransfer(nullptr, 0x81, descriptor, 18, &transferred, 1000) == invalidArgument && transferred == 0x5A5A, "null handle bulk transfer accepted");
+    Require(Throws([&] { sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, &transferred, 1000); }) && transferred == 0, "bulk transfer on a handle that was never opened did not throw after clearing the count");
+    transferred = 0x5A5A;
+    Require(Throws([&] { sceUsbdInterruptTransfer(&foreign, 0x81, descriptor, 18, &transferred, 1000); }) && transferred == 0, "interrupt transfer on a handle that was never opened did not throw after clearing the count");
+    errno = 71;
+    Require(sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable bulk transfer count accepted");
+    Require(sceUsbdInterruptTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable interrupt transfer count accepted");
     Require(sceUsbdGetStringDescriptor(nullptr, 1, 0x409, descriptor, 18) == invalidArgument, "null handle string descriptor accepted");
     Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, descriptor, 0) == invalidArgument, "empty string descriptor buffer accepted");
     descriptor[0] = 0x55;

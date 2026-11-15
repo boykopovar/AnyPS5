@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | **Italiano** | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md)
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md) | [Català](README.ca.md) | **Italiano** | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md) | [Polski](README.pl.md) | [日本語](README.ja.md)
 
 # Informazioni
 
@@ -12,11 +12,11 @@ La compilazione del solo relinker funziona su macOS, inclusi i chip Apple Silico
 
 Include un [relinker](../../core/relinker) che converte l'eseguibile nel formato nativo del sistema di destinazione e implementazioni delle [librerie prx di sistema](../../core/libs/prx) adatte al linking dinamico. Nessuna emulazione o processo di runtime separato.
 
-[**Discord**](https://discord.gg/BHFztBPUe), [Utilizzo](USAGE.md), [Istruzioni di compilazione](../dev/BUILD.md), [Architettura](../dev/ARCHITECTURE.md), [Debito tecnico del progetto](../dev/TechnicalDebt.md), [convenzioni sullo stile del codice](../dev/CONVENTIONS.md), [come contribuire](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Utilizzo](USAGE.md), [Istruzioni di compilazione](../dev/BUILD.md), [Architettura](../dev/ARCHITECTURE.md), [Debito tecnico del progetto](../dev/TechnicalDebt.md), [convenzioni sullo stile del codice](../dev/CONVENTIONS.md), [come contribuire](../../CONTRIBUTING.md)
 
 ## Stato
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shader forms decoded, counted from the code](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
 
 [![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
 
@@ -24,7 +24,7 @@ Include un [relinker](../../core/relinker) che converte l'eseguibile nel formato
 
 <sub>* Librerie di sistema: percentuale delle funzioni note al progetto fino ad ora (dichiarate in [core/libs/prx](../../core/libs/prx)), non di tutte le funzioni di sistema di PS5. Il totale cresce man mano che vengono dichiarate più funzioni.</sub>
 
-Gli stati non supportati o imprevisti lanciano rigorosamente `std::runtime_error`. Il messaggio `what()` viene stampato su stderr e il processo termina.
+Gli stati non supportati o imprevisti lanciano un'eccezione C++, di solito `std::runtime_error`. Un'eccezione che nessuno cattura stampa il suo `what()` su stderr e termina il processo.
 
 Il [recompilatore di shader](../../core/shader/recompiler/Recompiler.cpp) genera con successo codice SPIR-V (validato tramite [Spirv-Tools](../../3rdparty/SPIRV-Tools) se compilato con `ANYPS5_ENABLE_SPIRV_TOOLS`).
 

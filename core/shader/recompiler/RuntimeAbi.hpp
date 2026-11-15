@@ -110,6 +110,13 @@ inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
     return group * count + index;
 }
 
+inline bool UintStorageImageBinding(std::uint32_t number) {
+    const auto count = static_cast<std::uint32_t>(Binding::Count);
+    if (number >= StageCount * count) return false;
+    const auto local = number % count;
+    return local >= FirstStorageImageBinding + 7u && local < FirstStorageImageBinding + 14u;
+}
+
 static_assert(FirstImageBinding + ImageBindingCount == static_cast<std::uint32_t>(Binding::Samplers));
 static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageStorageTableBinding == 260u && ImageTableBinding == 261u);
 

@@ -12,6 +12,12 @@ namespace ShaderRecompiler {
 class UnsupportedInstructionError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
+    UnsupportedInstructionError(const std::string& message, const char* encodingName, long long opcode, const char* sourceFile, int sourceLine)
+        : std::runtime_error(message), encoding(encodingName), opcodeValue(opcode), file(sourceFile), line(sourceLine) {}
+    const char* encoding = nullptr;
+    long long opcodeValue = -1;
+    const char* file = nullptr;
+    int line = 0;
 };
 
 enum class RdnaInstructionFamily {

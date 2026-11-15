@@ -40,8 +40,8 @@ struct BindTrace {
     explicit BindTrace(const AgcDriver::VulkanDevice& device) {
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
         functions = const_cast<AgcDriver::Graphics::DeviceFunctions*>(context.functions);
-        Require(functions != nullptr && functions->cmdBindPipeline != nullptr, "native pipeline bind table is unavailable");
-        NativeBind = functions->cmdBindPipeline;
+        Require(functions != nullptr, "native pipeline bind table is unavailable");
+        NativeBind = reinterpret_cast<PFN_vkCmdBindPipeline>(context.deviceProc(context.device, "vkCmdBindPipeline"));
         functions->cmdBindPipeline = CountBind;
     }
     ~BindTrace() { functions->cmdBindPipeline = NativeBind; }

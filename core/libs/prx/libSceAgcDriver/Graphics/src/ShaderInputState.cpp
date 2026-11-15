@@ -22,7 +22,9 @@ namespace {
 constexpr std::uint32_t computeNumThreadX = 0x207;
 constexpr std::uint32_t computeNumThreadY = 0x208;
 constexpr std::uint32_t computeNumThreadZ = 0x209;
+constexpr std::uint32_t computePgmRsrc1 = 0x212;
 constexpr std::uint32_t computePgmRsrc2 = 0x213;
+constexpr std::uint32_t computePgmRsrc3 = 0x228;
 
 constexpr std::uint32_t spiPsInputCntl0 = 0x191;
 constexpr std::uint32_t spiPsInputEna = 0x1B3;
@@ -87,6 +89,10 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
         scratchDwords = agcShader.scratch_size_dw_per_thread;
         if (scratchDwords == 0) throw std::runtime_error("AGC graphics: COMPUTE_PGM_RSRC2.SCRATCH_EN with a zero scratch size");
     }
+    NoteRegisterRead(RegisterBank::Shader, computePgmRsrc3);
+    const auto rsrc3 = shader.find(computePgmRsrc3);
+    const std::uint32_t sharedVgprBlocks = rsrc3 == shader.end() ? 0u : rsrc3->second & 0xfu;
+    const std::uint32_t granulatedVgprCount = sharedVgprBlocks == 0u ? 0u : read(shader, computePgmRsrc1, RegisterBank::Shader) & 0x3fu;
     // Debug aid: APS5_LDS_SLACK=<dwords> grows every dispatch's LDS allocation by that much, to tell
     // whether a program depends on addresses past its declared allocation.
     static const std::uint32_t ldsSlack = [] { const char* text = std::getenv("APS5_LDS_SLACK"); return text ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 0)) : 0u; }();
@@ -97,7 +103,9 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
         ((rsrc2 >> 10u) & 0x1u) != 0,
         ((rsrc2 >> 11u) & 0x3u) + 1u,
         {},
-        scratchDwords
+        scratchDwords,
+        granulatedVgprCount,
+        sharedVgprBlocks
     };
 }
 
