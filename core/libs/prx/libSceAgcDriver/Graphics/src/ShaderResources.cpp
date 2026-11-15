@@ -2516,7 +2516,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         if (fallback) allocations[index].oversized = true;
                         const bool classified = element < binding.bufferWritten.size() && element < binding.bufferRead.size() && element < binding.bufferAtomic.size();
                         allocations[index].writeOnly = classified && allocations[index].guest && allocations[index].written && binding.bufferWritten[element] && !read && !atomic;
-                        if (element < binding.firstTableBuffer && element < binding.bufferExtent.size()) {
+                        if (element < binding.firstTableBuffer) {
                             const auto& push = shader.program->pushConstants;
                             const auto pushDataBytes = shader.program->stencilReferences.empty() ? push.size() : shader.program->stencilReferenceDword * sizeof(std::uint32_t);
                             if (pushDataBytes != 0u) {

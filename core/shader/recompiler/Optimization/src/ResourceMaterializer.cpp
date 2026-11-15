@@ -725,7 +725,6 @@ private:
 struct WordsIndexTag {};
 struct ElementIndexTag {};
 struct SamplerIndexTag {};
-struct BufferIndexTag {};
 struct PoisonIndexTag {};
 struct TableRecordsTag {};
 struct NestedRecordsTag {};
@@ -2033,7 +2032,6 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
     HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
-    HashScratchIndex bufferIndex{threadScratch<HashSlot, BufferIndexTag>()};
     const auto staticBufferCount = static_cast<std::uint32_t>(std::count_if(info.buffers.begin(), info.buffers.end(), [](const auto& b) { return b.table == NoTable; }));
     std::vector<std::uint64_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
@@ -2152,14 +2150,14 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         } else {
             const std::array<std::uint32_t, 4> elementWords{words.dwords[0], words.dwords[1], words.dwords[2], words.dwords[3]};
             const auto hash = hashWords(elementWords, 0);
-            auto index = bufferIndex.Find(hash, [&](std::uint32_t known) { return out.bufferElements[known].words == elementWords; });
+            auto index = elementIndex.Find(hash, [&](std::uint32_t known) { return out.bufferElements[known].words == elementWords; });
             if (!index.has_value() && out.bufferElements.size() >= BufferTableAbi::MaxBufferElements) {
                 record[BufferTableAbi::BufferRecordFlags] = BufferTableAbi::BdaFallbackFlag;
             } else {
                 if (!index.has_value()) {
                     index = static_cast<std::uint32_t>(out.bufferElements.size());
                     out.bufferElements.push_back({elementWords, buffer.maxByteExtent});
-                    bufferIndex.Insert(hash, *index);
+                    elementIndex.Insert(hash, *index);
                 } else {
                     out.bufferElements[*index].maxByteExtent = std::max(out.bufferElements[*index].maxByteExtent, buffer.maxByteExtent);
                 }
@@ -2266,6 +2264,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     for (std::uint32_t resource = 0; resource < info.samplers.size(); resource++) {
         if (info.samplers[resource].table != NoTable) fill(fill, resource, info.samplers[resource].table, 1u, tables.tables.at(info.samplers[resource].table), Abi::TableHeader(info.samplers[resource].table));
     }
+    if (std::ranges::any_of(info.buffers, [](const auto& b) { return b.table != NoTable; })) elementIndex.Clear();
     for (std::uint32_t resource = 0; resource < info.buffers.size(); resource++) {
         if (info.buffers[resource].table != NoTable) fill(fill, resource, info.buffers[resource].table, 2u, tables.tables.at(info.buffers[resource].table), Abi::TableHeader(info.buffers[resource].table));
     }
