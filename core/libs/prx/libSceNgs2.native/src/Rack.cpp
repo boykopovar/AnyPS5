@@ -259,8 +259,9 @@ int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption*
     const int result = CheckedRackOption(rack_id, option, options);
     if (result == SCE_NGS2_ERROR_INVALID_NUM_WAVEFORM_BLOCKS) return result;
     if (result != SCE_NGS2_OK) throw std::invalid_argument("NGS2: invalid rack option, rejected at creation with " + Ngs2Hex(static_cast<std::uint32_t>(result)));
-    *buffer_info = {};
-    buffer_info->host_buffer_size = sizeof(Ngs2Rack);
+    Ngs2ContextBufferInfo cleared{};
+    cleared.host_buffer_size = sizeof(Ngs2Rack);
+    if (!WriteGuest(buffer_info, cleared)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
