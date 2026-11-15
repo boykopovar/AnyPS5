@@ -26,7 +26,7 @@ alignas(256) constexpr std::array<std::uint32_t, 12> DataOnlyPixelCode = PixelCo
 alignas(16) std::array<std::uint32_t, 4> Table{};
 alignas(16) std::array<float, 4> First{1.0f, 0.0f, 0.0f, 0.0f};
 alignas(16) std::array<float, 4> Moved{1.0f, 0.0f, 0.0f, 0.0f};
-alignas(16) std::array<float, 4> Other{0.5f, 0.0f, 0.0f, 0.0f};
+alignas(16) std::array<float, 4> Other{0.25f, 0.0f, 0.0f, 0.0f};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 
 struct Header {
@@ -168,7 +168,7 @@ void DataOnlyMovedTableAndBufferHitTheCache(bool libraries) {
         return AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     };
     First = {1.0f, 0.0f, 0.0f, 0.0f};
-    Other = {0.5f, 0.0f, 0.0f, 0.0f};
+    Other = {0.25f, 0.0f, 0.0f, 0.0f};
     const bool verify = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
     draw(First.data(), Table.data());
     const auto before = draw(First.data(), Table.data());
