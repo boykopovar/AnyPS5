@@ -220,6 +220,8 @@ bool APS5_VABI WKPageCanGoForward(const void* page);
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
 const void* APS5_VABI WKPageGetInspector(const void* pageRef);
 std::uint32_t APS5_VABI WKPageGetTypeID();
+double APS5_VABI WKPageGetTextZoomFactor(const void* pageRef);
+void APS5_VABI WKPageSetTextZoomFactor(const void* pageRef, double value);
 bool APS5_VABI WKPageIsPinnedToLeftSide(const void* pageRef);
 bool APS5_VABI WKPageIsPinnedToRightSide(const void* pageRef);
 bool APS5_VABI WKPageIsPinnedToTopSide(const void* pageRef);
