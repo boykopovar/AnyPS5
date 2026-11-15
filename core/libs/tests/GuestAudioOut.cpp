@@ -88,6 +88,7 @@ void TestClosedPortHandleBounds() {
     errno = 71;
     Require(sceAudioOutGetPortState(handle, reinterpret_cast<AudioOutPortState*>(0x10)) == invalidPointer);
     Require(sceAudioOutGetLastOutputTime(handle, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
+    Require(sceAudioOutSetVolume(handle, 0xFF, reinterpret_cast<int*>(0x10)) == invalidPointer);
     Require(errno == 71);
 
     Require(sceAudioOutClose(handle) == 0);
