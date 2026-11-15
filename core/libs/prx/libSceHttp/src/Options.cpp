@@ -8,6 +8,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <cerrno>
 
 namespace {
 
@@ -138,7 +139,11 @@ int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->acceptEncodingGzip ? 1 : 0;
+    const int localEnable = options->acceptEncodingGzip ? 1 : 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable));
+    errno = savedErrno;
+    if (!copied) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -152,8 +157,17 @@ int APS5_VABI sceHttpGetEpoll(int id, HttpEpollHandle* epoll, void** argument) {
     if (!epoll) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *epoll = options->epoll;
-    if (argument) *argument = options->epollArgument;
+    const auto localEpoll = options->epoll;
+    const auto localArg = options->epollArgument;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(epoll, sizeof(*epoll)) ||
+        (argument && !GuestWritable_nid_no_patch(argument, sizeof(*argument)))) {
+        errno = savedErrno;
+        return ERROR_INVALID_VALUE;
+    }
+    GuestCopyOut_nid_no_patch(epoll, &localEpoll, sizeof(localEpoll));
+    if (argument) GuestCopyOut_nid_no_patch(argument, &localArg, sizeof(localArg));
+    errno = savedErrno;
     return 0;
 }
 

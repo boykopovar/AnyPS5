@@ -160,6 +160,8 @@ void CheckAcceptEncodingGzip(int context) {
     Require(Get(sceHttpGetAcceptEncodingGZIPEnabled, otherTemplate) == 0, "one context's gzip default reached another context");
     int value = 0;
     Require(sceHttpGetAcceptEncodingGZIPEnabled(connection, nullptr) == InvalidValue, "a null output was not refused");
+    auto* unmappedGzip = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    Require(sceHttpGetAcceptEncodingGZIPEnabled(connection, unmappedGzip) == InvalidValue, "an unmapped gzip output was not refused");
     Require(sceHttpGetAcceptEncodingGZIPEnabled(UnknownId, &value) == InvalidId && sceHttpSetAcceptEncodingGZIPEnabled(UnknownId, 1) == InvalidId, "an unknown id was not refused");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(UnknownId, 1) == InvalidId, "an unknown context was not refused");
     Require(sceHttpDeleteTemplate(otherTemplate) == 0 && sceHttpTerm_nid_postfix(other) == 0, "the second context did not close");
@@ -185,6 +187,10 @@ void CheckEpoll(int context) {
     Require(sceHttpGetEpoll(connection, &bound, &argument) == 0 && bound == nullptr, "binding a request bound its connection");
     Require(sceHttpUnsetEpoll(request) == 0 && sceHttpGetEpoll(request, &bound, &argument) == 0 && bound == nullptr && argument == nullptr, "sceHttpUnsetEpoll left the binding");
     Require(sceHttpGetEpoll(request, nullptr, &argument) == InvalidValue, "a null epoll output was not refused");
+    auto* unmappedEpoll = reinterpret_cast<HttpEpollHandle*>(std::uintptr_t{0x10});
+    auto* unmappedArg = reinterpret_cast<void**>(std::uintptr_t{0x10});
+    Require(sceHttpGetEpoll(request, unmappedEpoll, &argument) == InvalidValue, "an unmapped epoll output was not refused");
+    Require(sceHttpGetEpoll(request, &bound, unmappedArg) == InvalidValue, "an unmapped argument output was not refused");
     Require(sceHttpGetEpoll(UnknownId, &bound, &argument) == InvalidId && sceHttpSetEpoll(UnknownId, epoll, nullptr) == InvalidId && sceHttpUnsetEpoll(UnknownId) == InvalidId, "an unknown id was not refused");
     const auto unknownEpoll = reinterpret_cast<HttpEpollHandle>(std::uintptr_t{0x1234});
     Require(sceHttpSetEpoll(request, nullptr, &marker) == InvalidId && sceHttpSetEpoll(request, unknownEpoll, &marker) == InvalidId, "sceHttpSetEpoll took a handle that is not an epoll");
