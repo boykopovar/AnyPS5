@@ -124,7 +124,7 @@ void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, 
 
 std::string vteMessage(std::uint32_t viewportControl) {
     std::ostringstream message;
-    message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl << ": expected 0x43f for homogeneous positions and all viewport transforms; pre-divided coordinates, reciprocal W or disabled transforms are unsupported";
+    message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl << ": expected 0x43f for homogeneous positions and all viewport transforms, or 0 for positions without a viewport transform; other combinations are unsupported";
     return message.str();
 }
 
@@ -1359,9 +1359,10 @@ std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const 
 
 std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap) {
     const bool preRasterization = pushOffset < PipelinePushSlotBytes;
-    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) return ShaderRecompiler::MeshDrawPushOffsetBytes;
-    if (stages.tessellation && preRasterization) return ShaderRecompiler::TessellationLevelPushOffsetBytes;
-    return depthRemap ? ShaderRecompiler::DepthRemapPushOffsetBytes : PipelinePushSlotBytes;
+    auto limit = PipelinePushSlotBytes;
+    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) limit = ShaderRecompiler::MeshDrawPushOffsetBytes;
+    else if (stages.tessellation && preRasterization) limit = ShaderRecompiler::TessellationLevelPushOffsetBytes;
+    return depthRemap ? std::min(limit, ShaderRecompiler::DepthRemapPushOffsetBytes) : limit;
 }
 
 bool DepthResummarizeDrawsNothing(const QueueState& queue) {
@@ -1721,7 +1722,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         Require(rasterizesSampleZeroOnly(cx, result), "the depth target's sample count differs from the rasterizer's");
         rasterizeSampleZero(result);
     }
-    if (result.depth && result.depth->samples > 1 && result.samples == 1 && (read(cx, 0x292) & 1u) == 0) {
+    if (result.depth && result.depth->samples > 1 && result.samples == 1) {
         Require(!result.alphaToCoverage, "a single-sample scan into a multisampled depth target with alpha-to-coverage is unsupported");
         if (auto reason = singleSampleDepthScanRejection(queue); !reason.empty()) throw std::runtime_error(reason);
         result.samples = result.depth->samples;
@@ -1736,7 +1737,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     Require(read(cx, 0x2f9) == 0x2du, "nonstandard pixel center or vertex quantization is unsupported");
     if (auto reason = sampleMaskRejection(queue, read(cx, 0x2f8), read(cx, 0x30e), read(cx, 0x30f)); !reason.empty()) throw std::runtime_error(reason);
     const auto viewportControl = read(cx, 0x206);
-    if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
+    if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
     zero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag");
     result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
@@ -1853,28 +1854,33 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n", read(cx, 0x207));
         }
     }
-    const auto xs = readFloat(cx, 0x10f);
-    const auto xo = readFloat(cx, 0x110);
-    const auto ys = readFloat(cx, 0x111);
-    const auto yo = readFloat(cx, 0x112);
-    const auto zs = readFloat(cx, 0x113);
-    const auto zo = readFloat(cx, 0x114);
-    const auto minDepth = result.negativeOneToOne ? zo - zs : zo;
-    const auto maxDepth = zo + zs;
-    APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo, minDepth, maxDepth);
-    const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
-    const bool collapsed = (xs == 0 || ys == 0) && xs >= 0 && areaFree && std::isfinite(xo) && std::isfinite(yo) && std::isfinite(minDepth) && std::isfinite(maxDepth);
-    if (!collapsed && !(xs > 0 && ys != 0 && std::isfinite(minDepth) && std::isfinite(maxDepth))) {
-        std::ostringstream message;
-        message << "AGC graphics: unsupported viewport transform: scale=(" << xs << ", " << ys << ", " << zs << "), offset=(" << xo << ", " << yo << ", " << zo << "), depth=(" << minDepth << ", " << maxDepth << "), negativeOneToOne=" << result.negativeOneToOne;
-        throw std::runtime_error(message.str());
+    bool collapsed = false;
+    if (viewportControl == 0u) {
+        result.viewport = VkViewport{0.0f, 0.0f, static_cast<float>(result.renderExtent.width), static_cast<float>(result.renderExtent.height), result.negativeOneToOne ? -1.0f : 0.0f, 1.0f};
+    } else {
+        const auto xs = readFloat(cx, 0x10f);
+        const auto xo = readFloat(cx, 0x110);
+        const auto ys = readFloat(cx, 0x111);
+        const auto yo = readFloat(cx, 0x112);
+        const auto zs = readFloat(cx, 0x113);
+        const auto zo = readFloat(cx, 0x114);
+        const auto minDepth = result.negativeOneToOne ? zo - zs : zo;
+        const auto maxDepth = zo + zs;
+        APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo, minDepth, maxDepth);
+        const bool areaFree = result.stages.path == ShaderPath::Vertex && (result.rectList || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN || result.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+        collapsed = (xs == 0 || ys == 0) && xs >= 0 && areaFree && std::isfinite(xo) && std::isfinite(yo) && std::isfinite(minDepth) && std::isfinite(maxDepth);
+        if (!collapsed && !(xs > 0 && ys != 0 && std::isfinite(minDepth) && std::isfinite(maxDepth))) {
+            std::ostringstream message;
+            message << "AGC graphics: unsupported viewport transform: scale=(" << xs << ", " << ys << ", " << zs << "), offset=(" << xo << ", " << yo << ", " << zo << "), depth=(" << minDepth << ", " << maxDepth << "), negativeOneToOne=" << result.negativeOneToOne;
+            throw std::runtime_error(message.str());
+        }
+        Require(readFloat(cx, 0xb4) <= readFloat(cx, 0xb5), "inverted viewport depth clamp bounds");
+        result.depthScale = zs;
+        result.depthOffset = zo;
+        result.depthClampMin = readFloat(cx, 0xb4);
+        result.depthClampMax = readFloat(cx, 0xb5);
+        result.viewport = collapsed ? VkViewport{xo, yo, 1, 1, minDepth, maxDepth} : VkViewport{xo - xs, yo - ys, 2 * xs, 2 * ys, minDepth, maxDepth};
     }
-    Require(readFloat(cx, 0xb4) <= readFloat(cx, 0xb5), "inverted viewport depth clamp bounds");
-    result.depthScale = zs;
-    result.depthOffset = zo;
-    result.depthClampMin = readFloat(cx, 0xb4);
-    result.depthClampMax = readFloat(cx, 0xb5);
-    result.viewport = collapsed ? VkViewport{xo, yo, 1, 1, minDepth, maxDepth} : VkViewport{xo - xs, yo - ys, 2 * xs, 2 * ys, minDepth, maxDepth};
     if (const auto renderControl = find(cx, 0x000); result.depth && renderControl != cx.end() && (renderControl->second & 1u) != 0) {
         result.viewport.minDepth = result.depth->clearDepth;
         result.viewport.maxDepth = result.depth->clearDepth;
@@ -2580,7 +2586,7 @@ namespace {
 
 bool drawCovers(const Registers& cx, VkExtent2D extent, const ColorTarget* gcnTarget = nullptr) {
     const auto viewportControl = read(cx, 0x206);
-    if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
+    if (viewportControl != 0x43fu && viewportControl != 0u) throw std::runtime_error(vteMessage(viewportControl));
     const auto xs = std::fabs(readFloat(cx, 0x10f));
     const auto xo = readFloat(cx, 0x110);
     const auto ys = std::fabs(readFloat(cx, 0x111));
@@ -2596,7 +2602,7 @@ bool drawCovers(const Registers& cx, VkExtent2D extent, const ColorTarget* gcnTa
     }
     const auto width = static_cast<float>(extent.width);
     const auto height = static_cast<float>(extent.height);
-    const bool viewportCovers = xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height;
+    const bool viewportCovers = viewportControl == 0u || (xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height);
     const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= extent.width && covered.extent.height >= extent.height;
     return viewportCovers && scissorCovers;
 }
@@ -2819,7 +2825,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (value(cx, 0x2f8, config) && value(cx, 0x30e, word) && value(cx, 0x30f, other)) {
         if (auto reason = sampleMaskRejection(queue, config, word, other); !reason.empty()) return reason;
     }
-    if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
+    if (value(cx, 0x206, word) && word != 0x43fu && word != 0u) return vteMessage(word);
     if (auto reason = nonzero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {

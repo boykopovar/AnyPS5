@@ -12,6 +12,7 @@
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -597,8 +598,10 @@ const char* APS5_VABI _getprogname_nid_postfix() {
 
 void APS5_VABI setprogname_nid_postfix(const char* name) {
     if (name == nullptr) throw std::invalid_argument("setprogname: null name");
-    const char* slash = std::strrchr(name, '/');
-    __progname_nid_postfix = (slash != nullptr) ? slash + 1 : name;
+    std::string copied;
+    if (CopyGuestString_nid_no_patch(name, 65536, copied) != 0) throw std::invalid_argument("setprogname: unreadable name");
+    const std::size_t slash = copied.rfind('/');
+    __progname_nid_postfix = slash != std::string::npos ? name + slash + 1 : name;
 }
 
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
@@ -860,16 +863,6 @@ int APS5_VABI _Getgloballocale_nid_postfix() {
 }
 
 int APS5_VABI _Getint_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Getpcostate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Getpwcostate_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

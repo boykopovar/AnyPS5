@@ -4,9 +4,11 @@
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/GuestTimeZoneName.hpp"
 #include "prx/libc/include/General.hpp"
+#include "SceTypes.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -155,6 +157,20 @@ struct DifferenceCase {
 static void CheckDifference(const DifferenceCase& expected) {
     Require(libc_difftime_nid_postfix(expected.time1, expected.time0) == expected.seconds
         && difftime_nid_postfix(expected.time1, expected.time0) == expected.seconds, "difftime did not return time1 - time0");
+}
+
+static void CheckTimeOutputs() {
+    std::int64_t stored = 0;
+    const std::int64_t now = time_nid_postfix(&stored);
+    Require(now > 0 && stored == now, "time did not store the time it returned");
+    errno = 0;
+    Require(time_nid_postfix(reinterpret_cast<std::int64_t*>(0x10)) == -1 && errno == EFAULT, "time accepted an unwritable timer");
+    KernelTimespec current{-1, -1};
+    Require(timespec_get_nid_postfix(&current, TIME_UTC) == TIME_UTC && current.tv_sec >= now && current.tv_nsec >= 0 && current.tv_nsec < 1000000000,
+        "timespec_get did not store the current time");
+    errno = 71;
+    Require(timespec_get_nid_postfix(reinterpret_cast<KernelTimespec*>(0x10), TIME_UTC) == 0 && errno == 71,
+        "timespec_get accepted an unwritable timespec or changed errno");
 }
 
 static void CheckFormat(const GuestTm& guest, const char* format, const char* expected) {
@@ -526,6 +542,7 @@ int main() {
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not set the guest time zone");
     tzset_nid_postfix();
     CheckNullArguments();
+    CheckTimeOutputs();
 
     constexpr std::array<UtcCase, 7> utcCases{{
         {0, 70, 0, 1, 0, 0, 0, 4, 0},
