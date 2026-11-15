@@ -4117,13 +4117,13 @@ static bool surfaceFootprintOverlaps(const DepthSurface& surface, std::uint64_t 
     return overlaps(target.address, planeBytes(d16 ? 2u : 4u)) || overlaps(target.stencilAddress, planeBytes(1u)) || overlaps(target.htileAddress, HtileMetadataBytes(target.extent));
 }
 
-void InvalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes) {
+static void invalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes, bool invalidateCopies) {
     Require(GuestMemory::GpuMutex().HeldByThisThread(), "depth metadata invalidation requires the guest memory transaction lock");
     if (bytes == 0u) return;
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "depth metadata invalidation range overflows");
     const auto end = address + bytes;
     std::lock_guard lock(surfacesMutex());
-    {
+    if (invalidateCopies) {
         std::lock_guard copyLock(copyDestinationsMutex());
         auto& ranges = copyDestinations();
         std::vector<std::pair<std::uint64_t, std::uint64_t>> remaining;
@@ -4140,6 +4140,10 @@ void InvalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes) 
     }
     forgetHtileReads(address, bytes);
     std::erase_if(clearedHtiles(), [&](const auto& cleared) { return cleared.second != 0u && cleared.first < end && (cleared.first >= address || cleared.second > address - cleared.first); });
+}
+
+void InvalidateDepthMetadataForReplay(std::uint64_t address, std::size_t bytes) {
+    invalidateDepthMetadataForReplay(address, bytes, true);
 }
 
 RetiredDepth RetireReplacedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
@@ -4192,7 +4196,7 @@ RetiredDepth DiscardDepthSurfacesForReplay(VkDevice device) {
         surface->hostWritten->store(false, std::memory_order_release);
         if (surface->retired) continue;
         if (surface->target.htileAddress != 0u) {
-            InvalidateDepthMetadataForReplay(surface->target.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(surface->target.extent)));
+            invalidateDepthMetadataForReplay(surface->target.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(surface->target.extent)), false);
         }
         retired.planes += surface->AnyStale() || surface->stencilStale;
         ++retired.surfaces;
