@@ -3460,7 +3460,9 @@ int APS5_VABI sceNetGetsockoptEx(int socketId, int level, int option, void* valu
 }
 
 void APS5_VABI sceNetGetSystemTime(std::uint64_t* output) {
-    if (output != nullptr) *output = sceKernelGetProcessTime();
+    if (output == nullptr) return;
+    const std::uint64_t time = sceKernelGetProcessTime();
+    GuestCopyOut_nid_no_patch(output, &time, sizeof(time));
 }
 
 int APS5_VABI sceNetGetSystemMemInfo(NetSystemMemoryInfo* info, std::uint32_t flags) {
@@ -3671,8 +3673,7 @@ int APS5_VABI sceNetShowNetstatForBuffer(char* buffer, std::int32_t bufferSize, 
 }
 
 int APS5_VABI sceNetShowNetstatEx(std::uint32_t flags) {
-    (void)flags;
-    return 0;
+    return (flags & 0x10000) != 0 ? fail(NET_EINVAL) : 0;
 }
 
 int APS5_VABI sceNetShowNetstatExForBuffer(char* buffer, std::int32_t bufferSize, std::int32_t poolId, std::uint32_t flags) {

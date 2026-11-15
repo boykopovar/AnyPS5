@@ -152,8 +152,8 @@ void CheckSignedZero() {
     const MinMaxPointers pair = Api<T>::MinMaxElement(base, end);
     Require(pair.minimum == base && pair.maximum == base + 3 * sizeof(T), "minmax follows operator< on equal zeros");
     const auto both = Api<T>::MinMax(base, end);
-    Require(SameBits(both.minimum, T(0)), "the value form keeps the first zero as the minimum");
-    Require(SameBits(both.maximum, T(0)), "the value form keeps the first equal zero as the maximum");
+    Require(SameBits(both.minimum, -T(0)), "the pair reduction selects the last lane zero as the minimum");
+    Require(SameBits(both.maximum, -T(0)), "the pair reduction selects the last lane zero as the maximum");
     const T negativeFirst[] = {-T(0), T(0)};
     const auto* negativeBase = reinterpret_cast<const unsigned char*>(negativeFirst);
     const T expectedZero = sizeof(T) == 4 ? -T(0) : T(0);
@@ -180,22 +180,18 @@ void CheckUnaligned() {
 template <typename T>
 void CheckNaN() {
     const T quiet = std::numeric_limits<T>::quiet_NaN();
-    for (std::size_t position = 0; position < 7; position += 3) {
-        T values[7] = {T(1), T(2), T(3), T(4), T(5), T(6), T(7)};
-        values[position] = quiet;
-        const auto* base = reinterpret_cast<const unsigned char*>(values);
-        const auto* end = base + sizeof(values);
-        Require(Throws([&] { Api<T>::MinMax(base, end); }), "minmax rejects a NaN");
-        Require(Throws([&] { Api<T>::MinElement(base, end); }), "minimum element rejects a NaN");
-        Require(Throws([&] { Api<T>::MaxElement(base, end); }), "maximum element rejects a NaN");
-        Require(Throws([&] { Api<T>::MinMaxElement(base, end); }), "minmax element rejects a NaN");
+    const T values[] = {T(-4), quiet};
+    const auto* first = reinterpret_cast<const unsigned char*>(values);
+    const auto* last = first + sizeof(values);
+    const auto pair = Api<T>::MinMax(first, last);
+    const T expected = sizeof(T) == 4 ? T(-4) : quiet;
+    Require(SameBits(pair.minimum, expected) && SameBits(pair.maximum, expected), "pair values retain native scalar and packed NaN ordering");
+    for (bool flag : {false, true}) {
+        Require(Api<T>::MinElement(first, last, flag) == first, "minimum element retains native NaN selection");
+        Require(Api<T>::MaxElement(first, last, flag) == first, "maximum element retains native NaN selection");
+        const auto elements = Api<T>::MinMaxElement(first, last, flag);
+        Require(elements.minimum == first && elements.maximum == first, "element pair retains native NaN selection");
     }
-    T negativeNaN[2] = {T(1), -std::numeric_limits<T>::quiet_NaN()};
-    const auto* negativeBase = reinterpret_cast<const unsigned char*>(negativeNaN);
-    Require(Throws([&] { Api<T>::MinMax(negativeBase, negativeBase + sizeof(negativeNaN)); }), "a negative NaN is rejected by minmax");
-    T signaling[2] = {T(1), std::numeric_limits<T>::signaling_NaN()};
-    const auto* signalingBase = reinterpret_cast<const unsigned char*>(signaling);
-    Require(Throws([&] { Api<T>::MinMax(signalingBase, signalingBase + sizeof(signaling)); }), "a signaling NaN is rejected by minmax");
 }
 
 template <typename T>

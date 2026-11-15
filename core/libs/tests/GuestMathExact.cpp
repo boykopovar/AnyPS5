@@ -106,6 +106,10 @@ static void CheckErrno() {
 
     Require(errno == 0);
     Require(remquol_nid_postfix(-7.0L, 2.0L, &quotient) == 1.0L && quotient == -4);
+    Require(remquol_nid_postfix(-7.0L, 2.0L, reinterpret_cast<int*>(0x10)) == 1.0L);
+    long double whole = 0.0L;
+    Require(modfl_nid_postfix(2.5L, &whole) == 0.5L && whole == 2.0L);
+    Require(modfl_nid_postfix(2.5L, reinterpret_cast<long double*>(0x10)) == 0.5L);
     errno = 0;
     Require(std::isnan(scalb_nid_postfix(1.0, 2.5)) && errno == 0);
     Require(scalb_nid_postfix(1.0, 3.0) == 8.0 && scalb_nid_postfix(4.0, -INFINITY) == 0.0);

@@ -137,7 +137,7 @@ int APS5_VABI sceFontMemoryTerm(FontMemory* memory) {
 }
 
 int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const void* createParams, std::uint64_t edition, FontLibrary* pLibrary) {
-    if (pLibrary) *pLibrary = nullptr;
+    if (pLibrary && !CopyOutGuest(pLibrary, FontLibrary{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (memory->mem_kind != MEMORY_MAGIC || !memory->iface || !memory->iface->alloc || !memory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (!createParams || !pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
@@ -183,7 +183,12 @@ int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const vo
         }
     }
     lib->magic = LIBRARY_MAGIC;
-    *pLibrary = lib;
+    if (!CopyOutGuest(pLibrary, static_cast<FontLibrary>(lib))) {
+        if (lib->sys_driver && lib->sys_driver->term) lib->sys_driver->term(lib);
+        freeFn(memory->mspace_handle, workspace);
+        freeFn(memory->mspace_handle, lib);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     return SCE_FONT_OK;
 }
 

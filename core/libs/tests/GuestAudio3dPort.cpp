@@ -255,8 +255,10 @@ void CheckAttributes() {
     Require(sceAudio3dPortSetAttribute(0, 0x10004, unreadable, 4) == INVALID_PARAMETER, "unknown attribute precedes the float pointer");
     Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 8) == INVALID_PARAMETER, "float size precedes the pointer read");
     Require(sceAudio3dPortSetAttribute(0, 0x10003, unreadable, 4) == 0, "height aware does not read the value");
+    errno = 71;
     Require(sceAudio3dPortSetAttribute(0, 0x10001, unreadable, 4) == INVALID_PARAMETER, "unreadable reverb value");
     Require(sceAudio3dPortSetAttribute(0, 0x10002, unreadable, 4) == INVALID_PARAMETER, "unreadable spread radius");
+    Require(errno == 71, "float attribute copy failure preserves errno");
     const auto set_float = [](std::uint32_t attribute_id, float level) {
         return sceAudio3dPortSetAttribute(0, attribute_id, &level, sizeof(level));
     };
@@ -572,6 +574,10 @@ void CheckBed() {
     consume();
     Require(sceAudio3dBedWrite(0, 1, 0, samples, 4) == INVALID_PARAMETER, "1 channel bed write");
     Require(sceAudio3dBedWrite(0, 2, 0, nullptr, 4) == INVALID_PARAMETER, "null bed buffer");
+    errno = 71;
+    Require(sceAudio3dBedWrite(0, 2, 0, reinterpret_cast<const void*>(0x10), 4) == INVALID_PARAMETER, "unreadable bed buffer");
+    Require(sceAudio3dBedWrite2(0, 2, 1, reinterpret_cast<const void*>(0x10), 4, 0, false) == INVALID_PARAMETER, "unreadable float bed buffer");
+    Require(errno == 71, "unreadable bed buffer preserves errno");
     Require(sceAudio3dBedWrite2(0, 2, 0, samples, 4, 0, false) == 0, "bed write2 route both");
     consume();
     Require(sceAudio3dBedWrite2(0, 2, 0, samples, 4, 1, false) == INVALID_PARAMETER, "bed write2 route hmu only is a PS4 route");
