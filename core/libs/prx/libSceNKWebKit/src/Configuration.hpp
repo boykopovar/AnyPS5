@@ -20,6 +20,7 @@ public:
     bool isPinnedToTopSide = true;
     bool isPinnedToBottomSide = true;
     std::optional<std::u16string> customTextEncodingName;
+    bool addsVisitedLinks = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
