@@ -8,6 +8,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <cerrno>
 
 namespace {
 
@@ -116,7 +117,11 @@ int APS5_VABI sceHttpGetAutoRedirect(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->autoRedirect ? 1 : 0;
+    const int localEnable = options->autoRedirect ? 1 : 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable));
+    errno = savedErrno;
+    if (!copied) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -125,7 +130,11 @@ int APS5_VABI sceHttpGetNonblock(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->nonblock ? 1 : 0;
+    const int localEnable = options->nonblock ? 1 : 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable));
+    errno = savedErrno;
+    if (!copied) return ERROR_INVALID_VALUE;
     return 0;
 }
 

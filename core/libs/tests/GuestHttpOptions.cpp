@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -43,6 +44,9 @@ void CheckAutoRedirect(int context) {
     Require(Get(sceHttpGetAutoRedirect, connection) == 0, "setting a request changed its connection");
     Require(sceHttpSetAutoRedirect(pattern, 1) == 0 && Get(sceHttpGetAutoRedirect, connection) == 0, "an existing connection followed a later template change");
     Require(sceHttpGetAutoRedirect(request, nullptr) == InvalidValue, "a null output was not refused");
+    errno = 71;
+    Require(sceHttpGetAutoRedirect(request, reinterpret_cast<int*>(0x10)) == InvalidValue, "an unwritable redirect pointer was not refused");
+    Require(errno == 71, "errno was not preserved");
     Require(sceHttpGetAutoRedirect(UnknownId, nullptr) == InvalidValue, "the output pointer is not checked before the id");
     int value = 0;
     Require(sceHttpGetAutoRedirect(UnknownId, &value) == InvalidId && sceHttpSetAutoRedirect(UnknownId, 1) == InvalidId, "an unknown id was not refused");
@@ -95,6 +99,9 @@ void CheckNonblock(int context) {
     Require(Get(sceHttpGetNonblock, pattern) == 1, "setting a connection changed its template");
     int value = 0;
     Require(sceHttpGetNonblock(connection, nullptr) == InvalidValue && sceHttpTryGetNonblock(connection, nullptr) == InvalidValue, "a null output was not refused");
+    errno = 71;
+    Require(sceHttpGetNonblock(connection, reinterpret_cast<int*>(0x10)) == InvalidValue, "an unwritable nonblock pointer was not refused");
+    Require(errno == 71, "errno was not preserved");
     Require(sceHttpGetNonblock(UnknownId, &value) == InvalidId && sceHttpTryGetNonblock(UnknownId, &value) == InvalidId, "an unknown id was not refused by the getters");
     Require(sceHttpSetNonblock(UnknownId, 1) == InvalidId && sceHttpTrySetNonblock(UnknownId, 1) == InvalidId, "an unknown id was not refused by the setters");
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");
