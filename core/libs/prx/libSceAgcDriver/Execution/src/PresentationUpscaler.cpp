@@ -314,8 +314,10 @@ const PresentationUpscaler::Target& PresentationUpscaler::target(VkFormat format
         pipelineInfo.pDynamicState = &dynamic;
         pipelineInfo.layout = pipelineLayout;
         pipelineInfo.renderPass = created.renderPass;
-        const auto lock = context.LockPipelineCacheForUse();
-        Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.pipeline), "vkCreateGraphicsPipelines presentation upscaler");
+        {
+            const auto lock = context.LockPipelineCacheForUse();
+            Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.pipeline), "vkCreateGraphicsPipelines presentation upscaler");
+        }
         if (heap) {
             const auto mapping = Graphics::HeapPushSampledImageMapping(Graphics::BindlessHeap::For(context), 0, 0, offsetof(HeapPush, slot), samplerInfo);
             created.heapPipeline = Graphics::CreateHeapStagePipeline(context, pipelineInfo, 1, std::span(&mapping, 1), "vkCreateGraphicsPipelines presentation upscaler heap");

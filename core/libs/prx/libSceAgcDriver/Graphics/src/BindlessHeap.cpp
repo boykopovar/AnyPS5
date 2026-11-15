@@ -1499,6 +1499,7 @@ VkPipeline CreateHeapStagePipeline(const Context& context, VkGraphicsPipelineCre
     info.pNext = &heapFlags;
     info.layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    auto pipelineCacheLock = context.LockPipelineCacheForUse();
     Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &pipeline), what);
     return pipeline;
 }
