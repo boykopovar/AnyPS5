@@ -42,6 +42,12 @@ std::uint64_t UuidTime() {
     return ticks & UuidTimeMask;
 }
 
+std::uint64_t UnixMilliseconds() {
+    KernelTimespec now{};
+    if (clock_gettime_nid_postfix(GuestClockRealtime, &now) != 0) throw std::runtime_error("sceKernelCreateUuidV7: clock_gettime(CLOCK_REALTIME) failed");
+    return static_cast<std::uint64_t>(now.tv_sec) * 1000ULL + static_cast<std::uint64_t>(now.tv_nsec) / 1000000ULL;
+}
+
 void GenerateUuidV1(GuestUuid* destination, int count) {
     std::uint64_t time = 0;
     std::uint16_t sequence = 0;
@@ -107,6 +113,20 @@ int APS5_VABI sceKernelCreateUuidV1(std::uint8_t* uuid) {
     bytes[8] = generated.clockSeqHiAndReserved;
     bytes[9] = generated.clockSeqLow;
     std::memcpy(&bytes[10], generated.node, sizeof(generated.node));
+    if (!GuestCopyOut_nid_no_patch(uuid, bytes.data(), bytes.size())) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    return 0;
+}
+
+int APS5_VABI sceKernelCreateUuidV7(std::uint8_t* uuid) {
+    if (!uuid) return SCE_KERNEL_ERROR_EINVAL;
+    std::array<std::uint8_t, 16> bytes{};
+    HostEntropy_nid_no_patch(bytes.data() + 6, bytes.size() - 6);
+    const std::uint64_t milliseconds = UnixMilliseconds();
+    for (int index = 0; index < 6; ++index) bytes[index] = static_cast<std::uint8_t>(milliseconds >> (40 - 8 * index));
+    bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0f) | 0x70);
+    bytes[8] = static_cast<std::uint8_t>((bytes[8] & 0x3f) | 0x80);
     if (!GuestCopyOut_nid_no_patch(uuid, bytes.data(), bytes.size())) {
         return SCE_KERNEL_ERROR_EFAULT;
     }
