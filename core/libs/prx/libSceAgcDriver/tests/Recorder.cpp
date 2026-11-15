@@ -6311,6 +6311,16 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
     if (copied) {
         Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "an imported draw input was bound in place where draw inputs are copied");
         Require(!recorder.PendingReadOverlaps(vertices, 256), "a copied draw input's read was noted as an in-place read");
+        bool behind = false;
+        Require(InPlaceDrawInput(context, vertices, 256, 4, &behind) == nullptr && !behind, "a vertex input free of pending GPU writes was bound in place where draw inputs are copied");
+        recorder.NotePendingWrite(vertices, 16);
+        Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "an index input under a pending GPU write was bound in place where draw inputs are copied");
+        const auto* behindImport = InPlaceDrawInput(context, vertices, 256, 4, &behind);
+        Require(behindImport != nullptr && behind && recorder.PendingWriteOverlaps(vertices, 256), "a vertex input under a pending GPU write was copied where draw inputs are copied, instead of being bound in place behind the write");
+        const auto read = recorder.DescribePendingRead(vertices, 256);
+        Require(read.has_value() && read->kind == Recorder::ReadKind::DrawInput, "a vertex input bound in place behind a GPU write did not note its read");
+        recorder.Sync();
+        Require(!recorder.PendingReadOverlaps(vertices, 256), "an in-place vertex input's read outlived its batch");
         return;
     }
     const auto* import = InPlaceDrawInput(context, vertices, 256, 4);
