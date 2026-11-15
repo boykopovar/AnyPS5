@@ -900,6 +900,166 @@ void testGateSettled(const std::filesystem::path& directory) {
     check(delta == 0, "the replay restored a delta read in flight although the submission it waits for never completed");
 }
 
+struct HeldDrained {
+    std::string failure;
+    std::uint32_t target = 0;
+    std::uint32_t out = 0;
+    std::uint32_t flag = 0;
+    std::uint32_t label = 0;
+    std::uint32_t restored = 0;
+    std::uint64_t parkRestores = 0;
+    std::uint64_t deltaReleases = 0;
+    std::uint64_t synthesized = 0;
+    std::uint64_t unfinished = 0;
+};
+
+std::uint32_t low(const void* pointer) {
+    return static_cast<std::uint32_t>(address(pointer));
+}
+
+std::uint32_t high(const void* pointer) {
+    return static_cast<std::uint32_t>(address(pointer) >> 32u);
+}
+
+HeldDrained replayHeldDrained(const std::filesystem::path& directory, bool release, bool parkedAtSettle) {
+    constexpr std::uint64_t Base = 50;
+    constexpr std::uint32_t Pattern = 0x5a5a1234u;
+    auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
+    auto* waiter = reinterpret_cast<std::uint32_t*>(bytes);
+    auto* behind = reinterpret_cast<std::uint32_t*>(bytes + 1024);
+    auto* flag = reinterpret_cast<std::uint32_t*>(bytes + 4096);
+    auto* source = flag + 1;
+    auto* target = flag + 2;
+    auto* out = flag + 3;
+    auto* label = flag + 4;
+    auto* restored = reinterpret_cast<std::uint32_t*>(bytes + 8192);
+    for (auto* word : {flag, source, target, out, label, restored}) *word = 0;
+    const std::array<std::uint32_t, 18> waiting{0xc0053c00u, 0x13u, low(flag), high(flag), 1u, 0xffffffffu, 4u, 0xc0044000u, 0x00100101u, low(source), high(source), low(target), high(target), 0xc0033700u, 0x00100200u, low(out), high(out), 9u};
+    std::copy(waiting.begin(), waiting.end(), waiter);
+    const std::array<std::uint32_t, 5> labelled{0xc0033700u, 0x00100200u, low(label), high(label), 5u};
+    std::copy(labelled.begin(), labelled.end(), behind);
+    const std::uint32_t pattern = Pattern;
+    const std::uint32_t zero = 0;
+    const std::uint32_t three = 3;
+    const std::uint32_t seven = 7;
+    FrameCaptureWriter writer(directory);
+    writer.WriteDelta(1, Base + 1, address(source), std::as_bytes(std::span(&pattern, 1)));
+    writer.WriteDelta(1, Base + 1, address(flag), std::as_bytes(std::span(&zero, 1)));
+    writer.WriteDelta(1, Base + 1, address(out), std::as_bytes(std::span(&three, 1)));
+    writer.WriteDelta(2, Base + 1, address(restored), std::as_bytes(std::span(&seven, 1)));
+    writer.WriteCall(frameStart(Base));
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    Options options;
+    options.release = release;
+    options.releaseAfter = std::chrono::milliseconds(2000);
+    options.paceTimeout = std::chrono::milliseconds(300);
+    options.busyTimeout = std::chrono::milliseconds(5000);
+    Replay replay{options, reader};
+    replay.recording = true;
+    collectGroups(replay);
+    auto held = memoryCall(1, 1);
+    held.ordinal = 2;
+    held.accepted = Base + 1;
+    held.completed = parkedAtSettle ? Base : Base + 1;
+    held.values = parkedAtSettle ? std::vector<std::uint64_t>{1, 1, address(flag), 2, 0xffffffffu, 3u | (std::uint64_t{4} << 32u)} : std::vector<std::uint64_t>{1, 0};
+    auto second = parkedSubmit(behind, labelled.size(), Base);
+    second.ordinal = 3;
+    second.accepted = Base + 1;
+    second.completed = Base;
+    second.values = {Base + 2};
+    auto read = inFlightDelta(4, Base + 1);
+    read.values = {2, Base + 2};
+    const std::array calls{parkedSubmit(waiter, waiting.size(), Base), held, second, read};
+    HeldDrained result;
+    try {
+        replay.runWindow(calls);
+    } catch (const std::runtime_error& error) {
+        result.failure = error.what();
+    }
+    result.target = std::atomic_ref<std::uint32_t>(*target).load(std::memory_order_acquire);
+    result.out = std::atomic_ref<std::uint32_t>(*out).load(std::memory_order_acquire);
+    result.flag = std::atomic_ref<std::uint32_t>(*flag).load(std::memory_order_acquire);
+    result.label = std::atomic_ref<std::uint32_t>(*label).load(std::memory_order_acquire);
+    result.restored = std::atomic_ref<std::uint32_t>(*restored).load(std::memory_order_acquire);
+    result.parkRestores = replay.parkRestores.load();
+    result.deltaReleases = replay.deltaReleases.load();
+    result.synthesized = replay.syntheticReleases.load();
+    result.unfinished = replay.unfinished;
+    std::atomic_ref<std::uint32_t>(*flag).store(1, std::memory_order_release);
+    AgcDriverWaitIdle_nid_postfix();
+    return result;
+}
+
+void testHeldDrainedRelease(const std::filesystem::path& directory) {
+    const auto result = replayHeldDrained(directory, true, false);
+    check(result.failure.empty(), ("a delta held with nothing in flight did not release the wait its capture had completed, so the next delta read in flight waited behind it: " + result.failure).c_str());
+    check(result.target == 0x5a5a1234u, "the wait was released before the held delta's first apply, so the waiter copied a source the delta had not restored");
+    check(result.out == 3 && result.flag == 0, "the held delta was not applied again after the released waiter ran, so the waiter's stores and the released value replaced the recorded bytes");
+    check(result.label == 5 && result.restored == 7, "the submission behind the released waiter or the delta read in flight after it did not replay");
+    check(result.parkRestores == 1 && result.deltaReleases == 1 && result.synthesized == 1 && result.unfinished == 0, "the held delta's release was not counted once as a release at a delta, a synthesized value and a second apply");
+}
+
+void expectHeldGateThrow(const HeldDrained& result) {
+    check(result.failure.find("no queue runs and the serials stopped") != std::string::npos, ("the delta read in flight behind a waiter the replay may not release did not end at its gate: " + result.failure).c_str());
+    check(result.restored == 0 && result.deltaReleases == 0 && result.label == 0, "the replay released a wait that its capture had not shown completed, or applied the delta read in flight anyway");
+}
+
+void testHeldParkedNoRelease(const std::filesystem::path& directory) {
+    expectHeldGateThrow(replayHeldDrained(directory, true, true));
+}
+
+void testHeldDrainedNoRelease(const std::filesystem::path& directory) {
+    expectHeldGateThrow(replayHeldDrained(directory, false, false));
+}
+
+void testHeldShaderNoRelease(const std::filesystem::path& directory) {
+    std::filesystem::create_directories(directory);
+    FrameCaptureWriter writer(directory);
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    Options options;
+    Replay replay{options, reader};
+    auto held = memoryCall(1, 1);
+    held.ordinal = 2;
+    held.accepted = 51;
+    held.completed = 51;
+    FrameCall submit;
+    submit.kind = FrameCallKind::Submit;
+    submit.ordinal = 3;
+    submit.thread = 1;
+    FrameCall shader = submit;
+    shader.kind = FrameCallKind::RegisterShader;
+    const std::array plain{submit, held, submit};
+    const std::array registered{submit, held, shader};
+    replay.singleThreadOrdinal = 3;
+    replay.window = plain;
+    check(replay.releasesAtDelta(plain[1]), "a delta held with nothing in flight and followed by a submission is not one at which the replay releases waits");
+    replay.window = registered;
+    check(!replay.releasesAtDelta(registered[1]), "a shader registration's delta, held with nothing in flight, is one at which the replay releases waits");
+    for (const auto kind : {FrameCallKind::ResolveShaderAbi, FrameCallKind::ResolveGraphicsAbi, FrameCallKind::ResolveGraphicsStagesAbi}) {
+        auto resolved = registered;
+        resolved[2].kind = kind;
+        replay.window = resolved;
+        check(!replay.releasesAtDelta(resolved[1]), "a delta followed by an ABI resolution, held with nothing in flight, is one at which the replay releases waits");
+    }
+    const std::array last{submit, held};
+    replay.window = last;
+    check(replay.releasesAtDelta(last[1]), "a delta held with nothing in flight at the end of the window is not one at which the replay releases waits");
+    replay.singleThreadOrdinal = 1;
+    replay.window = plain;
+    check(!replay.releasesAtDelta(plain[1]), "a delta after a second thread's first call is one at which the replay releases waits");
+    const auto earlier = directory / "previous";
+    std::filesystem::create_directories(earlier);
+    FrameCaptureWriter(earlier).Finish("{}");
+    rewriteCallsVersion(earlier, AgcDriver::InFlightCallsVersion - 1);
+    const FrameCaptureReader previous(earlier);
+    Replay older{options, previous};
+    older.singleThreadOrdinal = 3;
+    older.window = plain;
+    check(!older.releasesAtDelta(plain[1]), "a delta of a capture without deltas read in flight is one at which the replay releases waits");
+}
+
 void testDepthAfterSubmits(const std::filesystem::path& directory) {
     auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
     auto* label = reinterpret_cast<std::uint32_t*>(bytes);
@@ -2016,6 +2176,10 @@ int main(int argc, char** argv) {
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "gate_settled") testGateSettled(directory);
+        else if (mode == "held_drained_release") testHeldDrainedRelease(directory);
+        else if (mode == "held_parked_no_release") testHeldParkedNoRelease(directory);
+        else if (mode == "held_drained_no_release") testHeldDrainedNoRelease(directory);
+        else if (mode == "held_shader_no_release") testHeldShaderNoRelease(directory);
         else if (mode == "depth_submits") testDepthAfterSubmits(directory);
         else if (mode == "depth_passes") testDepthOfTimedPasses(directory);
         else if (mode == "gate_failure") testGateFailure(directory);

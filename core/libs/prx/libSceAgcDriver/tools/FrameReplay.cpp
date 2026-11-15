@@ -23,6 +23,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <limits>
 #include <map>
@@ -432,6 +433,8 @@ struct Replay {
     std::atomic<std::uint64_t> earlyReleases{0};
     std::atomic<std::uint64_t> lateReleases{0};
     std::atomic<std::uint64_t> syntheticReleases{0};
+    std::atomic<std::uint64_t> deltaReleases{0};
+    std::span<const FrameCall> window;
     std::atomic<std::uint64_t> keptReservations{0};
     std::atomic<std::size_t> sequenced{0};
     std::uint64_t unfinished = 0;
@@ -690,6 +693,21 @@ struct Replay {
         return accepted - completed == call.accepted - call.completed && std::ranges::equal(flat, std::span(call.values).subspan(2));
     }
 
+    bool releasesAtDelta(const FrameCall& call) const {
+        const std::less<const FrameCall*> before;
+        if (!options.release || reader.Version() < AgcDriver::InFlightCallsVersion || call.accepted != call.completed || call.ordinal > singleThreadOrdinal || window.empty() || before(&call, window.data()) || !before(&call, window.data() + window.size())) return false;
+        const auto next = static_cast<std::size_t>(&call - window.data()) + 1;
+        if (next >= window.size()) return true;
+        const auto kind = window[next].kind;
+        return kind != FrameCallKind::RegisterShader && kind != FrameCallKind::ResolveShaderAbi && kind != FrameCallKind::ResolveGraphicsAbi && kind != FrameCallKind::ResolveGraphicsStagesAbi;
+    }
+
+    static std::size_t parkedQueues() {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        return static_cast<std::size_t>(std::count_if(awaited.begin(), awaited.begin() + static_cast<std::ptrdiff_t>(count), [](const AgcDriver::AwaitedWait& wait) { return wait.address != 0; }));
+    }
+
     void restoreAtCapturedPark(const FrameCall& call) {
         const auto began = Clock::now();
         const auto deadline = began + options.busyTimeout;
@@ -701,7 +719,25 @@ struct Replay {
                 ++parkRestores;
                 break;
             }
-            if (AgcDriverSettled_nid_postfix() && !atCapturedPark(call)) break;
+            if (AgcDriverSettled_nid_postfix() && !atCapturedPark(call)) {
+                if (!releasesAtDelta(call)) break;
+                if (!AgcDriverHoldSettled_nid_postfix(0)) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(50));
+                    continue;
+                }
+                bool released = false;
+                {
+                    const SettledHold hold{true};
+                    if (atCapturedPark(call)) continue;
+                    if (parkedQueues() != 1) break;
+                    const auto before = earlyReleases.load();
+                    releaseAwaited(window, sequenced.load());
+                    released = earlyReleases.load() != before && !AgcDriverSettled_nid_postfix();
+                }
+                if (!released) break;
+                ++deltaReleases;
+                continue;
+            }
             std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
         paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
@@ -881,6 +917,7 @@ struct Replay {
         std::map<std::uint64_t, std::vector<std::size_t>> byThread;
         for (std::size_t index = 0; index < calls.size(); ++index) byThread[calls[index].thread].push_back(index);
         threads = byThread.size();
+        window = calls;
         singleThreadOrdinal = calls.empty() ? 0 : calls.back().ordinal;
         for (const auto& call : calls) {
             if (call.thread == calls.front().thread) continue;
@@ -1537,14 +1574,14 @@ int run(const Options& options) {
         frames += measured.frames;
     }
     const auto slowest = frameMs.empty() ? 0.0 : *std::max_element(frameMs.begin(), frameMs.end());
-    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"memory_held_wait_s\":%.3f,\"memory_in_flight_wait_s\":%.3f,\"restore_s\":%.3f,\"in_flight_max\":%llu,\"in_flight_mean\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
+    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"memory_held_wait_s\":%.3f,\"memory_in_flight_wait_s\":%.3f,\"restore_s\":%.3f,\"in_flight_max\":%llu,\"in_flight_mean\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"of_them_at_deltas\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
                 frames, seconds, seconds > 0 ? static_cast<double>(frames) / seconds : 0.0, percentile(frameMs, 0.5), percentile(frameMs, 0.9), slowest, frameList.c_str(), passList.c_str(),
                 static_cast<unsigned long long>(replay.keptReservations.load()),
                 static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
                 replay.paceWaitedSeconds(), Replay::secondsOf(replay.heldWaitedNs), Replay::secondsOf(replay.inFlightWaitedNs), Replay::secondsOf(replay.restoredNs), static_cast<unsigned long long>(replay.depthMax.load()), replay.depthMean(),
                 static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
                 static_cast<double>(replay.skipped.bytes) / (1024.0 * 1024.0), replay.threads, static_cast<unsigned long long>(replay.earlyReleases.load()), static_cast<unsigned long long>(replay.lateReleases.load()),
-                static_cast<unsigned long long>(replay.syntheticReleases.load()),
+                static_cast<unsigned long long>(replay.syntheticReleases.load()), static_cast<unsigned long long>(replay.deltaReleases.load()),
                 static_cast<unsigned long long>(replay.unfinished), check.compared, check.identical, check.maxDifference, std::chrono::duration<double>(loaded - loadStart).count(), journalSeconds);
     std::fflush(stdout);
     return replay.unfinished == 0 ? 0 : 3;
