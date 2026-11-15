@@ -1,5 +1,7 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/LibTls.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "tests/SslCertificateFixture.hpp"
 
@@ -19,11 +21,15 @@
 #include <mbedtls/x509_crt.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -43,6 +49,7 @@ namespace {
 constexpr std::int64_t WantPollIn = -2;
 constexpr std::int64_t WantPollOut = -3;
 constexpr int GuestSocketLevel = 0xffff;
+constexpr int GuestSocketType = 0x1008;
 constexpr int GuestNonBlocking = 0x1200;
 constexpr short PollIn = 1;
 constexpr short PollOut = 4;
@@ -80,6 +87,7 @@ struct Server {
             sizeof(ServerKey), nullptr, 0, mbedtls_ctr_drbg_random, &drbg) == 0);
         Check(mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_SERVER,
             MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) == 0);
+        mbedtls_ssl_conf_read_timeout(&config, 5000);
         mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &drbg);
         Check(mbedtls_ssl_conf_own_cert(&config, &certificate, &key) == 0);
         Check(mbedtls_net_bind(&listener, "127.0.0.1", "0", MBEDTLS_NET_PROTO_TCP) == 0);
@@ -108,9 +116,10 @@ struct Server {
             mbedtls_ssl_context ssl;
             mbedtls_net_init(&client);
             mbedtls_ssl_init(&ssl);
-            if (mbedtls_net_accept(&listener, &client, nullptr, 0, nullptr) == 0 &&
+            if (mbedtls_net_poll(&listener, MBEDTLS_NET_POLL_READ, 5000) == 1 &&
+                mbedtls_net_accept(&listener, &client, nullptr, 0, nullptr) == 0 &&
                 mbedtls_ssl_setup(&ssl, &config) == 0) {
-                mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, mbedtls_net_recv, nullptr);
+                mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, nullptr, mbedtls_net_recv_timeout);
                 if (mode == ServerMode::DelayedExchange) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(30));
                 }
@@ -326,6 +335,204 @@ void TestErrors(Server& server) {
     }
 }
 
+class ScopedSystemCaDir {
+public:
+    ScopedSystemCaDir() {
+        static std::atomic<std::uint64_t> counter{0};
+        guestDir_ = std::string("/") + sceKernelGetFsSandboxRandomWord() + "/common/cert";
+        const auto stamp = static_cast<std::uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto id = counter.fetch_add(1, std::memory_order_relaxed);
+        hostDir_ = std::filesystem::temp_directory_path() /
+            ("anyps5_libtls_sys_ca_" + std::to_string(stamp) + "_" + std::to_string(id));
+        Check(std::filesystem::create_directories(hostDir_));
+        AddPathAlias_nid_no_patch(guestDir_.c_str(), hostDir_.string().c_str());
+    }
+
+    ~ScopedSystemCaDir() {
+        RemovePathAlias_nid_no_patch(guestDir_.c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(hostDir_, ec);
+    }
+
+    ScopedSystemCaDir(const ScopedSystemCaDir&) = delete;
+    ScopedSystemCaDir& operator=(const ScopedSystemCaDir&) = delete;
+
+    void Block() {
+        BlockPathAlias_nid_no_patch(guestDir_.c_str());
+    }
+
+    void ClearFile() {
+        AddPathAlias_nid_no_patch(guestDir_.c_str(), hostDir_.string().c_str());
+        std::error_code ec;
+        std::filesystem::remove(hostDir_ / "CA_LIST.cer", ec);
+    }
+
+    void WriteFile(const char* data, std::size_t size) {
+        AddPathAlias_nid_no_patch(guestDir_.c_str(), hostDir_.string().c_str());
+        std::ofstream stream(hostDir_ / "CA_LIST.cer", std::ios::binary | std::ios::trunc);
+        Check(stream.is_open());
+        if (size > 0) {
+            stream.write(data, static_cast<std::streamsize>(size));
+            Check(stream.good());
+        }
+        stream.close();
+        Check(!stream.fail());
+    }
+
+private:
+    std::string guestDir_;
+    std::filesystem::path hostDir_;
+};
+
+void CheckCallerOwnsSocket(int sock, bool expectedOwned) {
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    const bool found = KernelLookupSocketNative_nid_no_patch(sock, &owner, &native);
+    Check(found == expectedOwned);
+    if (expectedOwned) {
+        Check(native != 0);
+        int sockType = 0;
+        std::uint32_t length = sizeof(sockType);
+        Check(getsockopt_nid_postfix(sock, GuestSocketLevel, GuestSocketType, &sockType, &length) == 0);
+        Check(length == sizeof(sockType) && sockType == 1);
+    }
+}
+
+void RunPingPongWithConfig(Server& server, TlsConfig* config) {
+    const int sock = OpenGuestSocket(server.port);
+    auto thread = server.Spawn(ServerMode::Exchange);
+    TlsContext* client = tls_client_nid_postfix();
+    Check(client != nullptr);
+    Check(tls_configure_nid_postfix(client, config) == 0);
+    Check(tls_connect_socket_nid_postfix(client, sock, "localhost") == 0);
+    Check(tls_error_nid_postfix(client) == nullptr);
+    Check(tls_handshake_nid_postfix(client) == 0);
+    Check(tls_error_nid_postfix(client) == nullptr);
+    Check(tls_write_nid_postfix(client, "ping", 4) == 4);
+
+    std::array<char, 8> reply{};
+    std::size_t total = 0;
+    while (total < 4) {
+        const auto count = tls_read_nid_postfix(client, reply.data() + total, reply.size() - total);
+        Check(count > 0);
+        total += static_cast<std::size_t>(count);
+    }
+    Check(total == 4 && std::memcmp(reply.data(), "pong", 4) == 0);
+    Check(tls_read_nid_postfix(client, reply.data(), reply.size()) == 0);
+    Check(tls_close_nid_postfix(client) == 0);
+
+    tls_free_nid_postfix(client);
+    CheckCallerOwnsSocket(sock, true);
+    Check(close_nid_postfix(sock) == 0);
+    CheckCallerOwnsSocket(sock, false);
+    thread.join();
+}
+
+void RunSystemCaSuccess(Server& server) {
+    TlsConfig* config = tls_config_new_nid_postfix();
+    Check(config != nullptr);
+    RunPingPongWithConfig(server, config);
+    tls_config_free_nid_postfix(config);
+}
+
+void RunSystemCaSetupFailure(Server* server) {
+    int sock = -1;
+    std::thread thread;
+    if (server != nullptr) {
+        sock = OpenGuestSocket(server->port);
+        thread = server->Spawn(ServerMode::HandshakeOnly);
+    } else {
+        sock = socket_nid_postfix(2, 1, 6);
+        Check(sock >= 0);
+    }
+
+    TlsConfig* config = tls_config_new_nid_postfix();
+    Check(config != nullptr);
+    TlsContext* client = tls_client_nid_postfix();
+    Check(client != nullptr);
+    Check(tls_configure_nid_postfix(client, config) == 0);
+    Check(tls_connect_socket_nid_postfix(client, sock, "localhost") == -1);
+    const char* err = tls_error_nid_postfix(client);
+    Check(err != nullptr && std::strncmp(err, "TLS setup:", 10) == 0);
+    Check(tls_handshake_nid_postfix(client) == -1);
+    Check(tls_error_nid_postfix(client) != nullptr);
+
+    tls_free_nid_postfix(client);
+    tls_config_free_nid_postfix(config);
+    CheckCallerOwnsSocket(sock, true);
+    Check(close_nid_postfix(sock) == 0);
+    CheckCallerOwnsSocket(sock, false);
+    if (thread.joinable()) thread.join();
+}
+
+void RunSystemCaVerifyFailure(Server& server) {
+    const int sock = OpenGuestSocket(server.port);
+    auto thread = server.Spawn(ServerMode::HandshakeOnly);
+    TlsConfig* config = tls_config_new_nid_postfix();
+    Check(config != nullptr);
+    TlsContext* client = tls_client_nid_postfix();
+    Check(client != nullptr);
+    Check(tls_configure_nid_postfix(client, config) == 0);
+    Check(tls_connect_socket_nid_postfix(client, sock, "localhost") == 0);
+    Check(tls_error_nid_postfix(client) == nullptr);
+    Check(tls_handshake_nid_postfix(client) == -1);
+    const char* err = tls_error_nid_postfix(client);
+    Check(err != nullptr && std::strncmp(err, "handshake:", 10) == 0);
+
+    tls_free_nid_postfix(client);
+    tls_config_free_nid_postfix(config);
+    CheckCallerOwnsSocket(sock, true);
+    Check(close_nid_postfix(sock) == 0);
+    CheckCallerOwnsSocket(sock, false);
+    thread.join();
+}
+
+void RunExplicitCaPrecedence(Server& server) {
+    TlsConfig* config = MakeConfig(RootPem, sizeof(RootPem) - 1);
+    RunPingPongWithConfig(server, config);
+    tls_config_free_nid_postfix(config);
+}
+
+void TestSystemCaFallback(Server& server) {
+    ScopedSystemCaDir sandboxCa;
+
+    sandboxCa.WriteFile(RootPem, sizeof(RootPem) - 1);
+    RunSystemCaSuccess(server);
+
+    sandboxCa.Block();
+    RunSystemCaSetupFailure(nullptr);
+    RunSystemCaSetupFailure(&server);
+    RunExplicitCaPrecedence(server);
+
+    sandboxCa.ClearFile();
+    RunSystemCaSetupFailure(nullptr);
+    RunSystemCaSetupFailure(&server);
+    RunExplicitCaPrecedence(server);
+
+    sandboxCa.WriteFile("", 0);
+    RunSystemCaSetupFailure(nullptr);
+    RunSystemCaSetupFailure(&server);
+
+    constexpr char invalidPem[] = "not a certificate\n";
+    sandboxCa.WriteFile(invalidPem, sizeof(invalidPem) - 1);
+    RunSystemCaSetupFailure(&server);
+    RunExplicitCaPrecedence(server);
+
+    sandboxCa.WriteFile(ClientPem, sizeof(ClientPem) - 1);
+    RunSystemCaVerifyFailure(server);
+    RunExplicitCaPrecedence(server);
+
+    for (int round = 0; round < 3; ++round) {
+        sandboxCa.ClearFile();
+        RunSystemCaSetupFailure(nullptr);
+        sandboxCa.WriteFile(ClientPem, sizeof(ClientPem) - 1);
+        RunSystemCaVerifyFailure(server);
+        sandboxCa.WriteFile(RootPem, sizeof(RootPem) - 1);
+        RunSystemCaSuccess(server);
+    }
+}
+
 }
 
 int main() {
@@ -335,6 +542,7 @@ int main() {
     TestImplicitHandshakeAndNoVerifyName(server, nullptr);
     TestNonBlockingPoll(server);
     TestErrors(server);
+    TestSystemCaFallback(server);
     std::puts("libtls transport tests passed");
     return 0;
 }
