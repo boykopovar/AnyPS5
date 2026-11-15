@@ -14,6 +14,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <stdexcept>
 #include <system_error>
 #include <vector>
@@ -51,6 +52,25 @@ void Error(const char* message) {
     LoaderError() = message;
     pendingError = true;
 }
+struct ModulePaths {
+    std::filesystem::path source;
+    std::filesystem::path resolved;
+};
+
+ModulePaths ResolveModulePaths(const char* path) {
+    ModulePaths paths{ResolvePath_nid_no_patch(path)};
+    paths.resolved = RelinkedModulePath_nid_no_patch(paths.source);
+    std::error_code error;
+    if (std::filesystem::is_regular_file(paths.resolved, error) || std::string_view(path).find_first_of("/\\") != std::string_view::npos) return paths;
+    try {
+        ModulePaths app{ResolvePath_nid_no_patch(("/app0/" + std::string(path)).c_str())};
+        app.resolved = RelinkedModulePath_nid_no_patch(app.source);
+        return std::filesystem::is_regular_file(app.resolved, error) ? app : paths;
+    } catch (const std::filesystem::filesystem_error&) {
+        return paths;
+    }
+}
+
 void LoadFailure(const std::filesystem::path& source, const std::filesystem::path& resolved, const std::string& reason) {
     std::error_code status;
     const auto message = resolved == source && std::filesystem::is_regular_file(source, status)
@@ -457,8 +477,7 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             module->owned = false;
         } else {
             if (!*path) { Error("dlopen: empty module path"); return nullptr; }
-            const auto source = ResolvePath_nid_no_patch(path);
-            const auto resolved = RelinkedModulePath_nid_no_patch(source);
+            const auto [source, resolved] = ResolveModulePaths(path);
             module->native = LoadWithoutErrorDialog(resolved);
             if (!module->native) {
                 const auto error = GetLastError();
@@ -473,8 +492,7 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             Error(message); return nullptr;
         }
 #else
-        const auto source = path ? ResolvePath_nid_no_patch(path) : std::filesystem::path{};
-        const auto resolved = path ? RelinkedModulePath_nid_no_patch(source) : std::filesystem::path{};
+        const auto [source, resolved] = path ? ResolveModulePaths(path) : ModulePaths{};
 #ifdef __APPLE__
         const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) | RTLD_GLOBAL;
 #else
