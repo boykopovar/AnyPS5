@@ -1674,9 +1674,14 @@ int APS5_VABI sceSaveDataTerminate(void) {
 static int transferringMount(const SaveDataTransferringMount* mount, SaveDataMountResult* mount_result) {
     (void)mount;
     if (mount_result != nullptr) {
-        std::memset(mount_result, 0, sizeof(*mount_result));
+        SaveDataMountResult localResult{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(mount_result, &localResult, sizeof(localResult));
+        errno = savedErrno;
+        if (!copied) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
-    // No PS4-to-PS5 transfer data exists on this console.
     return SAVE_DATA_ERROR_NOT_FOUND;
 }
 
