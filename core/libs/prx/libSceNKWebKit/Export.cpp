@@ -11046,9 +11046,7 @@ int APS5_VABI WKPageGetEstimatedProgress() {
 }
 
 
-int APS5_VABI WKPageGetGapBetweenPages() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageGetImageForFindMatch() {
     NotImplemented_nid_no_patch(__func__);
@@ -11386,9 +11384,7 @@ int APS5_VABI WKPageSetFixedLayoutSize() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetGapBetweenPages() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetIgnoresViewportScaleLimits() {
     NotImplemented_nid_no_patch(__func__);
