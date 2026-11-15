@@ -1,4 +1,5 @@
 #include "prx/libSceNpWebApi2/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cerrno>
@@ -12,7 +13,13 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int invalidContext = static_cast<int>(0x80553404);
     constexpr int invalidHandle = static_cast<int>(0x8055340D);
     const int context = sceNpWebApi2Initialize(1, 0x20000);
@@ -110,15 +117,49 @@ int main() {
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", nullptr, "POST", &multipart) == invalidArgument);
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", nullptr, &multipart) == invalidArgument);
     Require(multipart == 0);
+    errno = 71;
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &multipart) == 0 && multipart > 0);
+    Require(errno == 71);
     std::int64_t nextMultipart = 0;
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &nextMultipart) == 0 && nextMultipart > multipart);
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", nullptr) == 0);
     errno = 71;
     Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
     Require(errno == 71);
-    unsigned char part[4]{1, 2, 3, 4};
-    Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
+    int multipartIndex = 0;
+    const std::uint64_t partParameter[3]{0, 0, 16};
+    Require(sceNpWebApi2AddMultipartPart(multipart, nullptr, &multipartIndex) == invalidArgument);
+    errno = 71;
+    Require(sceNpWebApi2AddMultipartPart(multipart, reinterpret_cast<const void*>(0x10), &multipartIndex) == invalidArgument);
+    Require(errno == 71);
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, &multipartIndex) == 0 && multipartIndex == 1);
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, &multipartIndex) == 0 && multipartIndex == 2);
+    Require(sceNpWebApi2AddMultipartPart(multipart + 100000, partParameter, &multipartIndex) == invalidHandle);
+    errno = 71;
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    Require(sceNpWebApi2AddMultipartPart(multipart, partParameter, &multipartIndex) == 0 && multipartIndex == 3);
+    const std::uint64_t missingHeaders[3]{0, 1, 8};
+    bool threw = false;
+    try {
+        sceNpWebApi2AddMultipartPart(multipart, missingHeaders, &multipartIndex);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(sceNpWebApi2SetMultipartContentType(multipart, nullptr, nullptr) == invalidArgument);
+    Require(sceNpWebApi2SetMultipartContentType(multipart + 100000, "multipart/form-data", "boundary") == invalidHandle);
+    errno = 71;
+    Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", "boundary") == 0);
+    Require(errno == 71);
+    Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", nullptr) == 0);
+    errno = 71;
+    Require(sceNpWebApi2SetMultipartContentType(multipart, reinterpret_cast<const char*>(0x10), nullptr) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", reinterpret_cast<const char*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    unsigned char part[4]{1, 2, 3, 4};    Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, -1, part, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, 1, nullptr, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, 0, nullptr) == invalidArgument);
@@ -135,7 +176,12 @@ int main() {
     Require(pushLibrary > 0 && pushUser > 0 && otherUser > 0 && otherUser != pushUser);
     std::int64_t sent = 0;
     Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, nullptr) == invalidArgument);
+    errno = 71;
     Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, &sent) == 0 && sent > 0);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceNpWebApi2AddHttpRequestHeader(sent, "Accept", "application/json") == 0);
     Require(sceNpWebApi2SendRequest(sent, nullptr, 0, nullptr) == unavailable);
     Require(sceNpWebApi2AbortRequest(sent) == 0);
@@ -210,5 +256,12 @@ int main() {
         const auto* dataBytes = reinterpret_cast<const unsigned char*>(readBuffer);
         for (std::size_t index = 0; index < sizeof(readBuffer); ++index) Require(dataBytes[index] == 0xb7);
     }
+    errno = 71;
+    Require(sceNpWebApi2IntInitialize(reinterpret_cast<const NpWebApi2IntInitializeArgs*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    Require(sceNpWebApi2IntInitialize2(reinterpret_cast<const NpWebApi2IntInitialize2Args*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }
