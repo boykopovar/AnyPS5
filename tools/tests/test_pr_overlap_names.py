@@ -1,9 +1,11 @@
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
@@ -76,6 +78,19 @@ class NamesLookupTests(unittest.TestCase):
         self.assertEqual(status["pending"], {library: "stub"})
         self.assertEqual(status["legacy_target"], {library: "stub"})
         self.assertEqual(status["absent"], {})
+
+    def test_reports_the_state_on_the_base_without_tar_extraction_filters(self):
+        extract = tarfile.TarFile.extractall
+
+        def extract_without_filters(archive, path=".", members=None, *, numeric_owner=False):
+            return extract(archive, path, members, numeric_owner=numeric_owner)
+
+        with mock.patch.dict(tarfile.__dict__), mock.patch.object(tarfile.TarFile, "extractall", extract_without_filters):
+            tarfile.__dict__.pop("data_filter", None)
+            status = pr_overlap.main_status(["done", "pending"], "refs/pr/base")
+        library = "core/libs/prx/libSceExample"
+        self.assertEqual(status["done"], {library: "implemented"})
+        self.assertEqual(status["pending"], {library: "stub"})
 
     def test_report_lists_state_and_pull_requests(self):
         names = ["pending", "absent"]
