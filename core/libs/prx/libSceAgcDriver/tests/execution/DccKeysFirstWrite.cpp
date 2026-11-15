@@ -1061,7 +1061,10 @@ int main(int argc, char** argv) {
         std::optional<GuestBlock> hinted;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (argc == 3 && std::string_view(argv[1]) == "--epoch-proof-gate") {
+        if (argc == 4 && std::string_view(argv[1]) == "--epoch-proof-gate") {
+            const bool memo = std::string_view(argv[3]) == "memo-on";
+            Require(AgcDriver::Graphics::PassAttachmentMemoEnabled() == memo, memo ? "the pass attachment memo is off where APS5_DRAW_PIPELINE and epoch proofs turn it on" : "the pass attachment memo is on where it stays off: it needs APS5_DRAW_PIPELINE as well as epoch proofs");
+            std::printf("epoch proof gate: pass attachment memo %s\n", memo ? "on" : "off");
             if (!AgcDriver::GuestMemory::WriteWatched()) {
                 std::puts("epoch proof gate: no write watching: skipped");
                 return VulkanTestSkipped;

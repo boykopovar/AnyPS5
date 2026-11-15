@@ -3399,9 +3399,13 @@ AttachmentMemo& attachmentMemo() {
     return HostThreadLocal<AttachmentMemo, AttachmentMemoStorage>();
 }
 
-bool PassAttachmentMemoEnabled() {
-    return !RuntimeSwitches::Set(RuntimeSwitch::NoPassAttachmentMemo) && ShaderResources::EpochProofs();
 }
+
+bool PassAttachmentMemoEnabled() {
+    return !RuntimeSwitches::Set(RuntimeSwitch::NoPassAttachmentMemo) && DrawPipelineEnabled() && ShaderResources::EpochProofs();
+}
+
+namespace {
 
 bool VerifyPassAttachments() {
     static const bool verify = std::getenv("APS5_VERIFY_PASS_ATTACHMENTS") != nullptr;
