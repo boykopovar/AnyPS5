@@ -64,7 +64,11 @@ def repository():
     result = capture(["git", "rev-parse", "--show-toplevel"])
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "not a git checkout")
-    return Path(result.stdout.strip())
+    root = Path(result.stdout.strip())
+    if os.name == "nt" and not root.is_dir():
+        relative = capture(["git", "rev-parse", "--show-cdup"]).stdout.strip()
+        root = (Path.cwd() / relative).resolve()
+    return root
 
 
 def validate_arguments(arguments):
