@@ -22,11 +22,11 @@
 #include <cstring>
 #include <cstdlib>
 #include <cerrno>
-#include <limits>
 #include <new>
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <limits>
 #include "GuestResolver.hpp"
 
 namespace {
