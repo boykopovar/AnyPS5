@@ -377,13 +377,15 @@ int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2C
 }
 
 int APS5_VABI sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
-    if (buffer_info == nullptr || buffer_info->host_buffer == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
+    if (buffer_info == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
+    Ngs2ContextBufferInfo localBufferInfo{};
+    if (!ReadGuest(buffer_info, localBufferInfo) || localBufferInfo.host_buffer == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     Ngs2SystemOption checked{};
     const int result = CheckSystemOption(option, checked);
     if (result != SCE_NGS2_OK) return result;
     const Ngs2Lock lock;
-    return CreateSystem(checked, *buffer_info, {}, handle);
+    return CreateSystem(checked, localBufferInfo, {}, handle);
 }
 
 int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
