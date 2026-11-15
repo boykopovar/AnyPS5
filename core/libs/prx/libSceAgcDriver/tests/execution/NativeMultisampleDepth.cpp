@@ -1833,6 +1833,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                                 try { AgcDriverShutdown_nid_postfix(); } catch (...) {}
                             }
                         } shutdownDriver;
+                        const auto discardedClears = DiscardedHtileDepthClearCount();
                         Recorder::FailNextSubmitsForTest(1u);
                         std::string failure;
                         try { static_cast<void>(SubmitDriverHtileClear(target.htileAddress, gpuLock, false)); }
@@ -1848,8 +1849,9 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                             gpuLock.lock();
                             Require(false, "the HTILE clear dispatch's batch was not discarded by the wait ('" + failure + "'; serials accepted " + std::to_string(accepted) + " completed " + std::to_string(completed) + ", failure latched after the wait: '" + late + "')");
                         }
+                        Require(DiscardedHtileDepthClearCount() == discardedClears + 1u, "the discarded HTILE clear dispatch did not undo its clear exactly once (" + std::to_string(DiscardedHtileDepthClearCount() - discardedClears) + " undone)");
                         if (!AgcDriver::GuestMemory::Watched(target.htileAddress, metadataBytes)) {
-                            std::puts("skipped native HTILE discarded dispatch: the write tracker does not cover the imported metadata range, so the clear was never armed");
+                            std::puts("Native HTILE clear dispatch discarded and undone; its refusal not checked: the write tracker does not cover the imported metadata range, so the clear was never armed");
                             return;
                         }
                         TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth clear dispatch was discarded before it ran");
