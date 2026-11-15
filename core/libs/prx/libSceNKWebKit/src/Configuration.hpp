@@ -19,6 +19,7 @@ public:
     bool isPinnedToRightSide = true;
     bool isPinnedToTopSide = true;
     bool isPinnedToBottomSide = true;
+    double pageZoomFactor = 1.0;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};

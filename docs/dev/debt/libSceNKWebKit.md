@@ -193,6 +193,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
 - [Process pool URL scheme registration](../../../core/libs/prx/libSceNKWebKit/src/ContextURLSchemes.cpp) (libSceNKWebKit) - `WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy`, `WKContextRegisterURLSchemeAsCachePartitioned`, `WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest`, `WKContextRegisterURLSchemeAsEmptyDocument` and `WKContextRegisterURLSchemeAsSecure` record registered scheme names on the host `ProcessPool` without network-process or policy enforcement.
+- [WKPage page zoom factor controls](../../../core/libs/prx/libSceNKWebKit/src/PagePageZoomFactor.cpp) (libSceNKWebKit) - WKPageGetPageZoomFactor and WKPageSetPageZoomFactor read and set the page zoom factor on the host Page object without page zoom rendering updates.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5934 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - the inventory declarations listed below throw through NotImplemented_nid_no_patch, and a pull request that implements one removes its row; signatures and behavior are unverified. The [generated progress report](https://boykopovar.github.io/AnyPS5/progress.html) counts the throwing exports. The later 13.60-labelled image contains all 8703 inventory declarations; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
@@ -526,7 +527,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageGetMediaCaptureEnabled` | `c4qOBt1+nO8` |
 | `WKPageGetMediaState` | `F4AnS9A-OSc` |
 | `WKPageGetPageLength` | `FeYrnuEZxkI` |
-| `WKPageGetPageZoomFactor` | `fPJ3h4AHMkU` |
 | `WKPageGetPaginationBehavesLikeColumns` | `QyAWkI0ffLQ` |
 | `WKPageGetPaginationMode` | `kk2zHgt--8E` |
 | `WKPageGetProcessIdentifier` | `llISO4CgRb8` |
@@ -625,7 +625,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetPagePolicyClient` | `pJ4iBZ6LEA0` |
 | `WKPageSetPageStateClient` | `8dbxlsbVzdY` |
 | `WKPageSetPageUIClient` | `6RXuTZIVqIg` |
-| `WKPageSetPageZoomFactor` | `pCJUJOonjAM` |
 | `WKPageSetPaginationBehavesLikeColumns` | `iUarLNk0Dkg` |
 | `WKPageSetPaginationLineGridEnabled` | `uqcmh9mV7sI` |
 | `WKPageSetPaginationMode` | `JjOoUWau3hA` |
