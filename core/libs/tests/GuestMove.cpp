@@ -159,6 +159,8 @@ int main() {
 
     Buffer buffer;
     std::int32_t count = -7;
+    std::uint64_t address = 0x5a5a5a5a5a5a5a5a;
+    std::uint32_t deviceId = 0x5a5a5a5a;
     Require(sceMoveReadStateRecent(first, -1, buffer.bytes, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, nullptr, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, buffer.bytes, nullptr) == kInvalidArg);
@@ -190,6 +192,9 @@ int main() {
     Require(sceMoveGetBluetoothAddress(first, nullptr) == kInvalidArg);
     Require(sceMoveGetCalibrationInfo(first, nullptr) == kInvalidArg);
     Require(sceMoveGetDeviceId(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetBluetoothAddress(first, &address) == kNoControllerConnected && address == 0x5a5a5a5a5a5a5a5a);
+    Require(sceMoveGetCalibrationInfo(first, buffer.bytes) == kNoControllerConnected && buffer.Untouched());
+    Require(sceMoveGetDeviceId(first, &deviceId) == kNoControllerConnected && deviceId == 0x5a5a5a5a);
 
     Require(sceMoveClose(first) == kOk);
     RequireUnknownHandle(first);
