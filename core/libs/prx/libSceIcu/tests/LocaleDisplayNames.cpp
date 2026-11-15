@@ -1,11 +1,13 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <source_location>
+#include <stdexcept>
 #include <type_traits>
 
 namespace UldnClose {
@@ -72,7 +74,23 @@ void Run() {
 
 } // namespace UldnOpenForContext
 
+namespace LocaleDisplayNamesGuestPointers {
+
+void Run() {
+    errno = 71;
+    bool threw = false;
+    try {
+        uldn_openForContext_nid_postfix("en", nullptr, 0, reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    IcuRecoveredTest::Require(threw && errno == 71);
+}
+
+}
+
 void CheckIcuLocaleDisplayNames() {
     UldnClose::Run();
     UldnOpenForContext::Run();
+    LocaleDisplayNamesGuestPointers::Run();
 }

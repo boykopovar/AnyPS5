@@ -189,22 +189,22 @@ std::uint32_t SpirvValueEmitContext::ShuffleInHalf(const IrValue& inst, std::siz
 }
 
 std::uint32_t SpirvValueEmitContext::Result(const IrValue& inst) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        return found->second;
+    if (const auto* found = definitions.Find(&inst)) {
+        return *found;
     }
     const auto id = state.module.AllocateId();
-    definitions.emplace(&inst, id);
+    definitions.Emplace(&inst, id);
     return id;
 }
 
 std::uint32_t SpirvValueEmitContext::Define(const IrValue& inst, std::uint32_t value) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        if (found->second != value) {
-            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), found->second, value);
+    if (const auto* found = definitions.Find(&inst)) {
+        if (*found != value) {
+            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), *found, value);
         }
-        return found->second;
+        return *found;
     }
-    definitions.emplace(&inst, value);
+    definitions.Emplace(&inst, value);
     return value;
 }
 
@@ -333,6 +333,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     // Stopped invocations would leave the wave LDS barriers incomplete.
     state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.spannedWave && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
     state.meshWindowBuffer = target.meshWindowBuffer && program.Resources().stage == IrShaderStage::Mesh && program.Metadata().vectorWindowSize != 0u && state.laneCount * MeshWindowInvocations(state) * program.Metadata().vectorWindowSize <= MeshWindowSlotDwords;
+    if (target.meshInlineFunctions && program.Resources().stage == IrShaderStage::Mesh) state.module.InlineFunctions();
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);

@@ -451,6 +451,38 @@ void UnknownRequestsFail() {
     Require(close_nid_postfix(stream) == 0, "close failed");
 }
 
+void UnknownLevelsFollowFreeBsd() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    const int stream6 = socket_nid_postfix(28, Stream, 0);
+    const int datagram6 = socket_nid_postfix(28, Datagram, 0);
+    Require(stream >= 0 && datagram >= 0 && stream6 >= 0 && datagram6 >= 0, "socket failed");
+    const int one = 1;
+    int value = 0;
+    std::uint32_t size = sizeof(value);
+    for (const int level : {999, 17, -1}) {
+        Require(SetFails(stream, level, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on a stream socket must fail with EINVAL (22), ip_ctloutput");
+        size = sizeof(value);
+        Require(getsockopt_nid_postfix(stream, level, 1, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt with an unknown protocol level must fail with EINVAL (22)");
+    }
+    Require(SetFails(datagram, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on a datagram socket must fail with EINVAL (22)");
+    Require(SetFails(stream6, 0, 1, &one, sizeof(one), ErrorInvalid), "the IP level on an AF_INET6 socket must fail with EINVAL (22), ip6_ctloutput");
+    Require(SetFails(stream6, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_INET6 socket must fail with EINVAL (22)");
+    Require(SetFails(stream, 0, 0x7777, &one, sizeof(one), ErrorNoProtocolOption), "an unknown IP-level option must fail with ENOPROTOOPT (42)");
+    Require(SetFails(datagram, 17, 77, &one, sizeof(one), ErrorNoProtocolOption), "a UDP-level option with no case in udp_ctloutput must fail with ENOPROTOOPT (42)");
+    Require(SetFails(datagram6, 17, 77, &one, sizeof(one), ErrorInvalid), "the UDP level on an AF_INET6 datagram socket must fail with EINVAL (22), ip6_ctloutput");
+    size = sizeof(value);
+    Require(getsockopt_nid_postfix(datagram6, 17, 77, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt with the UDP level on an AF_INET6 datagram socket must fail with EINVAL (22)");
+    int pair[2]{-1, -1};
+    Require(socketpair_nid_postfix(1, Stream, 0, pair) == 0, "socketpair failed");
+    Require(SetFails(pair[0], 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_UNIX socket must fail with EINVAL (22), uipc_ctloutput");
+    Require(SetFails(pair[0], 0, 77, &one, sizeof(one), 45), "an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45), uipc_ctloutput");
+    size = sizeof(value);
+    Require(getsockopt_nid_postfix(pair[0], 0, 77, &value, &size) == -1 && *__error_nid_postfix() == 45, "getsockopt of an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
+    Require(SetFails(pair[0], 0, 1, &one, sizeof(one), 45), "setting LOCAL_PEERCRED on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
+    for (const int descriptor : {stream, datagram, stream6, datagram6, pair[0], pair[1]}) Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+
 }
 
 constexpr int ErrorFault = 14;
@@ -542,6 +574,46 @@ void BadPointersFail() {
     UnmapPage(readOnly);
 }
 
+void TimestampOptionBounds() {
+    const int descriptor = socket_nid_postfix(2, Datagram, 0);
+    Require(descriptor >= 0, "socket failed");
+
+    int one = 1;
+    for (const int option : {SoTimestamp, 0x2000}) {
+        Require(setsockopt_nid_postfix(-1, SolSocket, option, &one, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorBadDescriptor, "setsockopt on bad fd must fail with EBADF");
+        int value = 0;
+        std::uint32_t length = sizeof(value);
+        Require(getsockopt_nid_postfix(-1, SolSocket, option, &value, &length) == -1 && *__error_nid_postfix() == ErrorBadDescriptor, "getsockopt on bad fd must fail with EBADF");
+
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, nullptr, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt with null value must fail with EFAULT");
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, reinterpret_cast<void*>(0x10), sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt with invalid pointer value must fail with EFAULT");
+
+        for (const std::uint32_t badLength : {0u, 2u, 3u}) {
+            Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &one, badLength) == -1 && *__error_nid_postfix() == ErrorInvalid, "setsockopt with invalid length must fail with EINVAL");
+        }
+
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, nullptr) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with null length pointer must fail with EFAULT");
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with invalid length pointer must fail with EFAULT");
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, reinterpret_cast<void*>(0x10), &length) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with invalid value pointer must fail with EFAULT");
+
+        std::int64_t wide = 1;
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &wide, sizeof(wide)) == 0, "8-byte wide setsockopt must succeed");
+        value = 0;
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, &length) == 0 && value == option && length == sizeof(int), "getsockopt reads back option value");
+
+        wide = 0;
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &wide, sizeof(wide)) == 0, "8-byte wide setsockopt clear must succeed");
+        value = -1;
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, &length) == 0 && value == 0 && length == sizeof(int), "getsockopt reads back 0 after clear");
+    }
+
+    Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "multicast") == 0) {
         return MulticastOnTheHost() ? 0 : 77;
@@ -557,8 +629,10 @@ int main(int argc, char** argv) {
     BuffersFollowThePs5();
     NullValues();
     BadPointersFail();
+    TimestampOptionBounds();
     IpLevelFollowsThePs5();
     MulticastMembership();
     UnknownRequestsFail();
+    UnknownLevelsFollowFreeBsd();
     return 0;
 }
