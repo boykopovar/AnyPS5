@@ -213,6 +213,17 @@ void Enumeration() {
     Require(std::find(values.begin(), values.end(), "USD") != values.end() && status == 0);
 }
 
+void MissingHistoricalDate(bool from) {
+    const char* locale = from ? "en_US" : "zh_CN";
+    const std::u16string_view expected = from ? u"USN" : u"CNH";
+    std::array<char16_t, 6> result;
+    result.fill(0x5a5a);
+    std::int32_t status = 0;
+    Require(ucurr_forLocaleAndDate_nid_postfix(locale, CurrentDate, 2, result.data(), 4, &status) == 3);
+    Require(std::u16string_view(result.data()) == expected && status == 0 && result[4] == 0x5a5a && result[5] == 0x5a5a);
+    Require(ucurr_countCurrencies_nid_postfix(locale, CurrentDate, &status) == 2 && status == 0);
+}
+
 void Registration() {
     Api(13);
     std::int32_t status = 0;
@@ -298,6 +309,8 @@ int main(int argc, char** argv) {
         else if (mode == "locale") Locale();
         else if (mode == "names") Names();
         else if (mode == "historical") Historical();
+        else if (mode == "historical_missing_from") MissingHistoricalDate(true);
+        else if (mode == "historical_missing_to") MissingHistoricalDate(false);
         else if (mode == "enumeration") Enumeration();
         else if (mode == "registration") Registration();
         else if (mode == "guarded") GuardedInputs();
