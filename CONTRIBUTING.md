@@ -30,7 +30,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Python 3 is optional; without it some relinker tests are not registered.
+The full build requires Python 3, which builds ICU's data and runs glslang's scripts. The relinker-only build does not require it; without it some relinker tests are not registered.
 
 Every push to `main`, including a merged pull request, automatically runs full Linux and Windows builds and tests, which include the relinker tests, using the pushed commit without contributor checks. The relinker-only build and tests run separately on macOS, for arm64 and x86_64, and the relinker-only build with the address sanitizer runs on Linux, only when the push changes a file the relinker-only build uses.
 
