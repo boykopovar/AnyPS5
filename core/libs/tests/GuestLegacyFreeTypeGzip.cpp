@@ -308,6 +308,15 @@ void CheckFailedAllocation() {
     output.close(&output);
     Require(counter.allocations == 0 && counter.frees == 0);
 
+    Counter recordOnly;
+    recordOnly.limit = 1;
+    FreeType::GuestMemoryRec failsSecond{&recordOnly, GuestAlloc, GuestFree, GuestRealloc};
+    source = MemorySource(small.data(), small.size(), &failsSecond);
+    output = Filled();
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == InvalidFileFormat);
+    Require(output.read == nullptr && output.close == nullptr && output.descriptor.pointer == nullptr && output.memory == &failsSecond);
+    Require(recordOnly.allocations == 1 && recordOnly.frees == 1 && recordOnly.live.empty());
+
     Counter once;
     once.failures = 1;
     FreeType::GuestMemoryRec failsOnce{&once, GuestAlloc, GuestFree, GuestRealloc};
@@ -315,8 +324,16 @@ void CheckFailedAllocation() {
     output = Filled();
     const auto untouched = output;
     Require(Throws([&] { FT_Stream_OpenGzip_nid_postfix(&output, &source); }));
-    Require(Same(output, untouched) && once.allocations == 1);
-    ReleaseLeaks(once);
+    Require(Same(output, untouched) && once.allocations == 1 && once.frees == 1 && once.live.empty());
+
+    Counter kept;
+    kept.failures = 1;
+    FreeType::GuestMemoryRec cannotFree{&kept, GuestAlloc, nullptr, GuestRealloc};
+    source = MemorySource(small.data(), small.size(), &cannotFree);
+    output = Filled();
+    Require(Throws([&] { FT_Stream_OpenGzip_nid_postfix(&output, &source); }));
+    Require(Same(output, untouched) && kept.allocations == 1 && kept.frees == 0 && kept.live.size() == 1);
+    ReleaseLeaks(kept);
 }
 
 void CheckSourceReads() {

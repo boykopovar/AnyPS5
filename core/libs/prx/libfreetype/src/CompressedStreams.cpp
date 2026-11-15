@@ -51,6 +51,7 @@ void* Allocate(FT_Memory memory, long size) {
     if (state.opening && state.openAllocations++ == 0) {
         state.fileMissing = !block;
     } else if (state.opening && state.fileMissing && block) {
+        if (guest->free) guest->free(guest, block);
         state.fault = true;
         return nullptr;
     }
