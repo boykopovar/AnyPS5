@@ -9672,9 +9672,7 @@ int APS5_VABI _ZN7WebCore19ResourceRequestBase17removeCredentialsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetCustomTextEncodingName() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30stopAllMediaPlaybackForProcessEv() {
     NotImplemented_nid_no_patch(__func__);
@@ -10936,9 +10934,7 @@ int APS5_VABI WKPageCopyCommittedURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageCopyCustomTextEncodingName() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageCopyCustomUserAgent() {
     NotImplemented_nid_no_patch(__func__);

@@ -370,7 +370,6 @@ int APS5_VABI WKPageComputePagesForPrinting();
 int APS5_VABI WKPageCopyActiveURL();
 int APS5_VABI WKPageCopyApplicationNameForUserAgent();
 int APS5_VABI WKPageCopyCommittedURL();
-int APS5_VABI WKPageCopyCustomTextEncodingName();
 int APS5_VABI WKPageCopyCustomUserAgent();
 int APS5_VABI WKPageCopyPageConfiguration();
 int APS5_VABI WKPageCopyPendingAPIRequestURL();
