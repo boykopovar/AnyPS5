@@ -232,8 +232,10 @@ int main() {
     std::string largeChunk(8193, 'x');
     largeChunk.back() = 'z';
     Require(sceContentExportFromData(first, &fromData, largeChunk.size(), SingleChunk, &largeChunk, nullptr, 0) == 0);
-    std::ifstream largeFile(exportedHostPath, std::ios::binary);
-    Require(std::string((std::istreambuf_iterator<char>(largeFile)), std::istreambuf_iterator<char>()) == largeChunk);
+    {
+        std::ifstream largeFile(exportedHostPath, std::ios::binary);
+        Require(std::string((std::istreambuf_iterator<char>(largeFile)), std::istreambuf_iterator<char>()) == largeChunk);
+    }
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, nullptr, 0) == 0);
     chunks = DataChunks{};
