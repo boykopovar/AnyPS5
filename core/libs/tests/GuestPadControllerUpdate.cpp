@@ -35,5 +35,8 @@ int main() {
     Require(scePadControllerUpdateStart(-1, nullptr) == PAD_ERROR_INVALID_ARG);
     PadUpdateData wrong{};
     Require(scePadControllerUpdateSendData(0, &wrong) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadControllerUpdateSendData(0, reinterpret_cast<const PadUpdateData*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     return 0;
 }
