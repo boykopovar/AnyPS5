@@ -1,4 +1,5 @@
 #include "prx/libSceFace/include/Api.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -60,22 +61,11 @@ int APS5_VABI sceFaceDetectionGetDefaultParam(void *param) {
     if (param == nullptr) {
         return 0x808b0002;
     }
-    auto *out = static_cast<uint32_t *>(param);
-    out[0x0] = 56;
-    out[0x1] = 0x3f800000;
-    out[0x2] = 0x3f574bc7;
-    out[0x3] = 13200;
-    out[0x4] = 0;
-    out[0x5] = 0;
-    out[0x6] = 0;
-    out[0x7] = 2;
-    out[0x8] = 2;
-    out[0x9] = 0;
-    out[0xa] = 0;
-    out[0xb] = 0x3f000000;
-    out[0xc] = 1;
-    out[0xd] = 0;
-    return 0;
+    const std::uint32_t defaults[14] = {56u, 0x3f800000u, 0x3f574bc7u, 13200u, 0u, 0u, 0u, 2u, 2u, 0u, 0u, 0x3f000000u, 1u, 0u};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(param, defaults, sizeof(defaults));
+    errno = savedErrno;
+    return copied ? 0 : static_cast<int>(0x808b0002u);
 }
 
 int APS5_VABI sceFaceDetectionGetWorkingMemorySize() {
