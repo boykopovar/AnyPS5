@@ -508,6 +508,15 @@ static void CheckRackCreateGuestPointers() {
     Require(query.host_buffer_size != 0 && query.host_buffer == nullptr);
 }
 
+static void CheckRackInfoGuestPointers() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Returned(sceNgs2RackGetInfo(rack, reinterpret_cast<Ngs2RackInfo*>(0x10), sizeof(Ngs2RackInfo)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackGetInfo", "an unwritable info");
+    Ngs2RackInfo info{};
+    Returned(sceNgs2RackGetInfo(rack, &info, sizeof(info)), SCE_NGS2_OK, "sceNgs2RackGetInfo", "a writable info");
+    Require(info.rack_handle == rack && info.rack_id == SCE_NGS2_RACK_ID_REVERB);
+}
+
 int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -542,6 +551,7 @@ int main(int argc, char** argv) {
         Require(value == sentinel);
         CheckCreateArguments();
         CheckRackCreateGuestPointers();
+        CheckRackInfoGuestPointers();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();
