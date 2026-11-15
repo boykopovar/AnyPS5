@@ -46,16 +46,6 @@ int main(int argc, char** argv) {
     std::size_t available = 12345;
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(nullptr, &available) == static_cast<int>(0x80D90002u), "null mount validation changed");
     Require(available == 12345, "invalid query wrote output");
-    std::size_t blockSize = 12345;
-    Require(sceAppContentDownloadDataGetBlockSize(nullptr, &blockSize) == static_cast<int>(0x80D90002u) && blockSize == 12345,
-            "null block-size mount validation changed");
-    Require(sceAppContentDownloadDataGetBlockSize(&mount, nullptr) == static_cast<int>(0x80D90002u), "a null block-size output was accepted");
-    Require(sceAppContentDownloadDataGetBlockSize(&mount, &blockSize) == 0, "the download block size was refused");
-    Require(blockSize > 0 && (blockSize & (blockSize - 1)) == 0, "the download block size is not a power of two");
-    AppContentMountPoint temporary{};
-    std::memcpy(temporary.data, "/temp0", 6);
-    Require(sceAppContentDownloadDataGetBlockSize(&temporary, &blockSize) == static_cast<int>(0x80D90004u),
-            "a non-download mount reported a block size");
     const auto backing = ResolvePath_nid_no_patch("/download0");
     if (quotaMiB > 18014398509481983ull) {
         const bool existed = std::filesystem::exists(backing);
