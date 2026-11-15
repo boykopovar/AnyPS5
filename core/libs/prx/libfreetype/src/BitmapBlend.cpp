@@ -50,6 +50,9 @@ int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch(FreeType::GuestLibrary* lib
     GuestArena::HostWrite pixelWrite(target->buffer, PixelBytes(*target));
     if (!targetWrite.Open() || !offsetWrite.Open() || (target->buffer && !pixelWrite.Open())) return FT_Err_Invalid_Argument;
     const FT_Error error = FT_Bitmap_Blend(host, &nativeSource, nativeSourceOffset, &nativeTarget, &nativeTargetOffset, nativeColor);
+    for (const auto& face : library->faces) {
+        if (target == &face->slot.bitmap && face->host != nullptr && face->host->glyph != nullptr) face->host->glyph->bitmap = nativeTarget;
+    }
     FreeTypeSyncBitmap_nid_no_patch(*target, nativeTarget);
     *targetOffset = {nativeTargetOffset.x, nativeTargetOffset.y};
     return error;
