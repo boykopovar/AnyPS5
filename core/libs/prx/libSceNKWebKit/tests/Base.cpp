@@ -1891,6 +1891,14 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
+static void TestEmptyFrameLoaderResourceCallbacks() {
+    _ZN7WebCore22EmptyFrameLoaderClient11prefetchDNSERKN3WTF6StringE();
+    _ZN7WebCore22EmptyFrameLoaderClient13startDownloadERKNS_15ResourceRequestERKN3WTF6StringE();
+    _ZN7WebCore22EmptyFrameLoaderClient18makeRepresentationEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient19dispatchDidFailLoadERKNS_13ResourceErrorE();
+    _ZN7WebCore22EmptyFrameLoaderClient33convertMainResourceLoadToDownloadEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseE();
+}
+
 static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
     _ZN7WebCore22EmptyFrameLoaderClient14didChangeTitleEPNS_14DocumentLoaderE();
@@ -2286,6 +2294,65 @@ static void TestImage() {
     Require(threwOutOfRange);
 }
 
+static void TestAuthentication() {
+    Require(WKAuthenticationChallengeGetTypeID() == 2);
+    Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
+
+    auto challenge = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+    challenge->requestURL = "https://auth.example.com/login";
+    challenge->previousFailureCount = 2;
+    challenge->isForMainResource = true;
+    challenge->isInMainFrame = true;
+
+    auto listener = NKWebKit::Make<NKWebKit::AuthenticationDecisionListener>();
+    challenge->decisionListener = NKWebKit::Retained<NKWebKit::AuthenticationDecisionListener>::Share(listener.Get());
+
+    auto cred = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::Credential>>();
+    challenge->proposedCredential = NKWebKit::Retained<NKWebKit::Object>::Share(cred.Get());
+
+    auto space = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::ProtectionSpace>>();
+    challenge->protectionSpace = NKWebKit::Retained<NKWebKit::Object>::Share(space.Get());
+
+    const void* challengeRef = challenge.Get();
+    auto* reqUrl = WKAuthenticationChallengCopyRequestURL(challengeRef);
+    Require(reqUrl != nullptr);
+    WKRelease(reqUrl);
+
+    Require(WKAuthenticationChallengeGetDecisionListener(challengeRef) == listener.Get());
+    Require(WKAuthenticationChallengeGetPreviousFailureCount(challengeRef) == 2);
+    Require(WKAuthenticationChallengeGetProposedCredential(challengeRef) == cred.Get());
+    Require(WKAuthenticationChallengeGetProtectionSpace(challengeRef) == space.Get());
+    Require(WKAuthenticationChallengeIsForMainResource(challengeRef));
+    Require(WKAuthenticationChallengeIsInMainFrame(challengeRef));
+
+    const void* listenerRef = listener.Get();
+    WKAuthenticationDecisionListenerCancel(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::Cancel);
+
+    WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::RejectProtectionSpace);
+
+    WKAuthenticationDecisionListenerUseCredential(listenerRef, cred.Get());
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::UseCredential);
+    Require(listener->credential.Get() == cred.Get());
+
+    bool threw = false;
+    try {
+        WKAuthenticationChallengeGetDecisionListener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationDecisionListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static int s_runLoopCallCount = 0;
 static void* s_runLoopReceivedContext = nullptr;
 
@@ -2654,9 +2721,11 @@ int main() {
     TestOpenPanelParameters();
     TestNotification();
     TestImage();
+    TestAuthentication();
     TestCertificateInfo();
     try {
         TestEmptyFrameLoaderClient();
+        TestEmptyFrameLoaderResourceCallbacks();
     } catch (const std::runtime_error& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
