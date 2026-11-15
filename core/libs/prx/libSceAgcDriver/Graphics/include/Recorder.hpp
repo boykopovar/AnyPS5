@@ -260,6 +260,7 @@ public:
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
     void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void NoteStampedWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static constexpr std::int16_t ReachValue = -2;
     void NotePendingReach(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
@@ -269,6 +270,8 @@ public:
     // memory; its completion stores are the caller's business, see VulkanDevice::CopyBuffer).
     bool PendingWriteSettled(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t LastWriteNote(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t WriteNoteCount() const { return writeNoteCount; }
+    std::vector<std::uint64_t> StampedNotesSince(std::uint64_t note) const;
     std::uint64_t NewestWriteNote(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t NewestStoreNote(std::uint64_t address, std::size_t bytes) const;
     struct PendingWrite {
@@ -359,6 +362,11 @@ public:
     bool CountingSamples() const { return countingSamples; }
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
     bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
+    struct BoundWords {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+    };
+    bool RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords result, BoundWords snapshot, BoundWords target, std::uint32_t dwords, VkBuffer counter = VK_NULL_HANDLE);
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
@@ -730,6 +738,7 @@ private:
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
+        std::vector<std::uint64_t> stampedNotes;
         std::vector<std::int16_t> writeValues;
         std::vector<std::int64_t> writeWords;
         // In-place reads (see NotePendingRead), dying with the batch: a finished batch's reads are done.
@@ -908,6 +917,11 @@ private:
     int changedCopyState = 0;
     VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
     VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
+    int boundChangedCopyState = 0;
+    VkDescriptorSetLayout boundChangedCopySetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout boundChangedCopyLayout = VK_NULL_HANDLE;
+    VkPipeline boundChangedCopyPipeline = VK_NULL_HANDLE;
+    PFN_vkCmdPushDescriptorSetKHR cmdPushChangedCopySet = nullptr;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;

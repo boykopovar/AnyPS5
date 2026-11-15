@@ -1437,6 +1437,15 @@ Texture::~Texture() {
 }
 
 void Texture::createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo) {
+    if (descriptor.dimension == TextureDimension::k2D && viewInfo.viewType == VK_IMAGE_VIEW_TYPE_2D && viewInfo.subresourceRange.layerCount == 1u) {
+        for (auto* next = static_cast<const VkBaseInStructure*>(viewInfo.pNext); next != nullptr; next = next->pNext) {
+            if (next->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT) arrayMinLod = reinterpret_cast<const VkImageViewMinLodCreateInfoEXT*>(next)->minLod;
+        }
+        auto info = viewInfo;
+        info.pNext = nullptr;
+        info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        arrayInfo = info;
+    }
     if (descriptor.dimension != TextureDimension::k2DArray && (viewInfo.viewType != VK_IMAGE_VIEW_TYPE_2D_ARRAY || descriptor.dimension != TextureDimension::k1DArray)) return;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.subresourceRange.layerCount = 1;
@@ -1493,6 +1502,25 @@ VkImageView Texture::SrgbView(bool firstLayer, bool baseLevel) const {
     return slot;
 }
 
+VkImageView Texture::ArrayView() const {
+    Require(arrayInfo.has_value(), "a 2D array view of a texture needs a single-layer 2D texture");
+    std::lock_guard lock(arrayMutex);
+    if (arrayView == VK_NULL_HANDLE) {
+        auto info = *arrayInfo;
+        VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+        usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        info.pNext = &usage;
+        VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
+        if (arrayMinLod != 0.0f) {
+            minLod.minLod = arrayMinLod;
+            minLod.pNext = info.pNext;
+            info.pNext = &minLod;
+        }
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &arrayView), "vkCreateImageView 2D array");
+    }
+    return arrayView;
+}
+
 VkImageView Texture::BaseLevelView() const {
     Require(baseLevelInfo.has_value(), "a base-level view needs a mipmapped 1D, 2D or 2D array texture");
     std::lock_guard lock(baseLevelMutex);
@@ -1514,6 +1542,8 @@ void Texture::release() noexcept {
     firstLayerView = VK_NULL_HANDLE;
     if (baseLevelView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, baseLevelView, nullptr);
     baseLevelView = VK_NULL_HANDLE;
+    if (arrayView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, arrayView, nullptr);
+    arrayView = VK_NULL_HANDLE;
     for (auto& srgbView : srgbViews) {
         if (srgbView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, srgbView, nullptr);
         srgbView = VK_NULL_HANDLE;
@@ -1547,6 +1577,7 @@ VkFormat PackedStorageViewFormat(VkFormat format) {
     switch (format) {
         case VK_FORMAT_R5G6B5_UNORM_PACK16:
         case VK_FORMAT_A1R5G5B5_UNORM_PACK16:
+        case VK_FORMAT_R5G5B5A1_UNORM_PACK16:
         case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
             return VK_FORMAT_R16_UINT;
         default:
@@ -4346,7 +4377,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         recorder->MarkCovered(storedAccess);
         // Only the pieces written into the import are stores a CPU reader must wait for; the
         // shadowed ones reach it through a publish, which notes its own.
-        if (!imported.empty()) recorder->NotePendingWrites(imported);
+        if (!imported.empty()) recorder->NoteStampedWrites(imported);
     }
     partialWriteBacks.fetch_add(1, std::memory_order_relaxed);
     partialWriteBackBytes.fetch_add(storedBytes, std::memory_order_relaxed);
@@ -5059,6 +5090,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (!flush.empty()) BumpPendingSerial();
         for (const auto& texture : flush) {
             if (texture->drawnListed) ownNotes.insert(ownNotes.end(), texture->storeNotes.begin(), texture->storeNotes.end());
+            ownNotes.insert(ownNotes.end(), texture->flushNotes.begin(), texture->flushNotes.end());
         }
     }
     if (flush.empty()) {
@@ -5160,6 +5192,8 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             throw;
         }
     }
+    const auto* noting = Recorder::Active();
+    const auto firstNote = noting != nullptr ? noting->WriteNoteCount() : 0;
     std::exception_ptr failure;
     const auto previousReason = std::exchange(flushReason, reason);
     for (const auto& texture : flush) {
@@ -5179,6 +5213,15 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         const auto units = PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited);
         if (units != 0) waitForIdlePublish(reason);
         if (published != nullptr) *published = units != 0;
+    }
+    if (flush.size() == 1 && noting != nullptr && noting == Recorder::Active()) {
+        if (const auto notes = noting->StampedNotesSince(firstNote); !notes.empty()) {
+            auto& pending = Pending();
+            std::lock_guard lock(pending.mutex);
+            auto& own = flush.front()->flushNotes;
+            own.insert(own.end(), notes.begin(), notes.end());
+            if (own.size() > 32) own.erase(own.begin(), own.end() - 32);
+        }
     }
     return true;
 }
@@ -7472,7 +7515,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         } else {
             recorder->EndGpuTiming(timing, storedBytes);
             recorder->MarkShaderReadsCovered();
-            recorder->NotePendingWrite(firstStored, static_cast<std::size_t>(lastStored - firstStored));
+            const std::array stamped{std::pair{firstStored, lastStored}};
+            recorder->NoteStampedWrites(stamped);
             if (drawn.drawn) noteStore(recorder->LastWriteNote(firstStored, static_cast<std::size_t>(lastStored - firstStored)));
         }
         countStorageWriteBack(storedBytes, true, drawn.drawn);
