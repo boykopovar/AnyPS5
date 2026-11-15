@@ -1,14 +1,20 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 constexpr int StatusNone = 0;
 constexpr int StatusRunning = 1;
@@ -37,6 +43,32 @@ void Type(const char* utf8) {
     g_window.HandleEvent(event, WindowId);
 }
 
+constexpr std::uint32_t PadCross = 0x4000;
+constexpr std::uint32_t PadCircle = 0x2000;
+constexpr std::uint32_t PadTriangle = 0x1000;
+constexpr std::uint32_t PadSquare = 0x8000;
+constexpr std::uint32_t PadR2 = 0x0200;
+constexpr std::uint32_t PadL1 = 0x0400;
+constexpr std::uint32_t PadRight = 0x0020;
+
+void Pad(std::uint32_t buttons) {
+    ImePublishPad_nid_postfix({buttons, 128, 128, 0});
+}
+
+void Tap(std::uint32_t button) {
+    Pad(button);
+    Pad(0);
+}
+
+std::u16string SelectedKey() {
+    ImeKeyboardView view;
+    Require(ImeReadKeyboardView_nid_postfix(view));
+    for (const auto& key : view.keys) {
+        if (key.selected) return key.label;
+    }
+    return {};
+}
+
 void Press(SDL_Scancode scancode) {
     SDL_Event event{};
     event.type = SDL_KEYDOWN;
@@ -53,6 +85,8 @@ Param DialogParam(char16_t* buffer, std::uint32_t maxLength) {
 }
 
 std::uint32_t EndStatus() {
+    Require(sceImeDialogGetResult(nullptr) == ErrorNotOpened);
+    Require(sceImeDialogGetResult(reinterpret_cast<Result*>(0x10)) == ErrorNotOpened);
     Result result{};
     Require(sceImeDialogGetResult(&result) == 0);
     return result.endstatus;
@@ -72,11 +106,22 @@ void Close() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     char16_t buffer[16] = u"Hi";
     const Param param = DialogParam(buffer, 8);
     Require(!ImeCapturesKeyboard_nid_postfix());
     Require(sceImeDialogGetStatus() == StatusNone);
-    Require(sceImeDialogTerm() == ErrorNotOpened);
+    Require(sceImeDialogTerm() == ErrorNotInUse);
+    Require(sceImeDialogAbort() == ErrorNotInUse);
+    Result earlyResult;
+    std::memset(&earlyResult, 0xcc, sizeof(earlyResult));
+    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotInUse);
+    Result untouched;
+    std::memset(&untouched, 0xcc, sizeof(untouched));
+    Require(std::memcmp(&earlyResult, &untouched, sizeof(earlyResult)) == 0);
+    Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
+    Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
 
     Open(param);
     for (int poll = 0; poll < 8; ++poll) Require(sceImeDialogGetStatus() == StatusRunning);
@@ -87,13 +132,20 @@ int main() {
     Type("\xf0\x9f\x98\x80");
     Require(std::u16string(buffer) == u"Hi");
     Press(SDL_SCANCODE_RETURN);
+    errno = 71;
     Require(sceImeDialogGetStatus() == StatusFinished);
+    Require(errno == 71);
     Require(!ImeCapturesKeyboard_nid_postfix());
+    errno = 71;
+    Require(sceImeDialogGetResult(reinterpret_cast<Result*>(1)) == ErrorNotOpened);
+    Require(errno == 71);
+    errno = 71;
     Require(EndStatus() == EndStatusOk);
+    Require(errno == 71);
     Require(std::u16string(buffer) == u"Hi\u00e9\U0001F600");
     Require(sceImeDialogAbort() == ErrorNotOpened);
     Close();
-    Require(sceImeDialogTerm() == ErrorNotOpened);
+    Require(sceImeDialogTerm() == ErrorNotInUse);
 
     buffer[0] = u'\0';
     Open(param);
@@ -151,8 +203,8 @@ int main() {
     Press(SDL_SCANCODE_RETURN);
     Require(std::u16string(buffer) == u"keep");
     Result closed{};
-    Require(sceImeDialogGetResult(&closed) == ErrorNotOpened);
-    Require(sceImeDialogTerm() == ErrorNotOpened);
+    Require(sceImeDialogGetResult(&closed) == ErrorNotInUse);
+    Require(sceImeDialogTerm() == ErrorNotInUse);
     Require(sceImeDialogForceClose() == ErrorNotInUse);
 
     Open(param);
@@ -168,9 +220,16 @@ int main() {
     Require(sceImeDialogForceClose() == 0);
     Require(sceImeDialogGetStatus() == StatusNone);
     Open(param);
+    PositionAndForm form{};
+    Require(sceImeDialogGetPanelPositionAndForm(&form) == 0 && form.width == 1920 && form.height == 1080);
     Close();
 
     Require(sceImeDialogGetPanelPositionAndForm(nullptr) == ErrorNotOpened);
+    errno = 71;
+    Require(sceImeDialogGetPanelPositionAndForm(reinterpret_cast<PositionAndForm*>(0x10)) == ErrorNotOpened);
+    Require(errno == 71);
+    form = PositionAndForm{};
+    Require(sceImeDialogGetPanelPositionAndForm(&form) == ErrorNotOpened);
     std::uint32_t panelWidth = 0;
     std::uint32_t panelHeight = 0;
     Require(sceImeDialogGetPanelSize(nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
@@ -203,4 +262,125 @@ int main() {
     Require(sceImeDialogAbort() == 0);
     Require(sceImeDialogSetPanelPosition(0, 0) == ErrorSuspending);
     Close();
+
+    Require(!ImeCapturesPad_nid_postfix());
+    buffer[0] = u'\0';
+    Open(param);
+    Require(ImeCapturesPad_nid_postfix());
+    Pad(0);
+    Require(SelectedKey() == u"g");
+    Tap(PadCross);
+    Tap(PadRight);
+    Require(SelectedKey() == u"h");
+    Tap(PadCross);
+    Tap(PadTriangle);
+    Tap(PadSquare);
+    Tap(PadL1);
+    Tap(PadCross);
+    ImeKeyboardView view;
+    Require(ImeReadKeyboardView_nid_postfix(view) && view.text == u"ghh" && view.caret == 2 && view.rows == 6 && view.columns == 10);
+    Require(std::u16string(buffer).empty());
+    Tap(PadR2);
+    Require(sceImeDialogGetStatus() == StatusFinished);
+    Require(EndStatus() == EndStatusOk);
+    Require(std::u16string(buffer) == u"ghh");
+    Require(!ImeCapturesPad_nid_postfix() && !ImeCapturesKeyboard_nid_postfix());
+    Require(!ImeReadKeyboardView_nid_postfix(view));
+    Close();
+
+    std::memcpy(buffer, u"Old", sizeof(u"Old"));
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Tap(PadCircle);
+    Require(sceImeDialogGetStatus() == StatusFinished);
+    Require(EndStatus() == EndStatusUserCanceled);
+    Require(std::u16string(buffer) == u"Old");
+    Require(!ImeCapturesPad_nid_postfix());
+    Close();
+
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Require(sceImeDialogAbort() == 0);
+    Require(EndStatus() == EndStatusAborted && !ImeCapturesPad_nid_postfix());
+    Tap(PadR2);
+    Require(std::u16string(buffer) == u"Old");
+    Close();
+
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Require(sceImeDialogTerm() == 0);
+    Require(sceImeDialogGetStatus() == StatusNone && !ImeCapturesPad_nid_postfix());
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Require(sceImeDialogForceClose() == 0);
+    Require(sceImeDialogGetStatus() == StatusNone && !ImeCapturesPad_nid_postfix());
+    Tap(PadR2);
+    Require(std::u16string(buffer) == u"Old");
+
+    buffer[0] = u'\0';
+    Open(param);
+    Pad(PadCross | PadR2);
+    Pad(PadCross | PadR2);
+    Require(sceImeDialogGetStatus() == StatusRunning);
+    Pad(0);
+    Tap(PadCross);
+    Type("ab");
+    Tap(PadCross);
+    Press(SDL_SCANCODE_RETURN);
+    Require(EndStatus() == EndStatusOk);
+    Require(std::u16string(buffer) == u"gabg");
+    Close();
+
+    std::memcpy(buffer, u"a", sizeof(u"a"));
+    const Param narrow = DialogParam(buffer, 2);
+    Open(narrow);
+    Pad(0);
+    Type("\xf0\x9f\x98\x80");
+    Tap(PadCross);
+    Tap(PadCross);
+    Tap(PadR2);
+    Require(EndStatus() == EndStatusOk);
+    Require(std::u16string(buffer) == u"ag");
+    Close();
+
+    buffer[0] = u'\0';
+    ExtendedParam noController{};
+    noController.disable_device = 0x00000001;
+    errno = 71;
+    Require(sceImeDialogInit(&param, &noController) == 0);
+    Require(errno == 71);
+    Require(ImeCapturesPad_nid_postfix());
+    Pad(0);
+    Tap(PadCross);
+    Tap(PadR2);
+    Require(sceImeDialogGetStatus() == StatusRunning);
+    Press(SDL_SCANCODE_RETURN);
+    Require(EndStatus() == EndStatusOk && buffer[0] == u'\0');
+    Close();
+
+    ExtendedParam symbols{};
+    symbols.option = 0x00000002;
+    symbols.priority = 2;
+    Require(sceImeDialogInit(&param, &symbols) == 0);
+    Pad(0);
+    Require(SelectedKey() == u"!");
+    Tap(PadCross);
+    Tap(PadR2);
+    Require(std::u16string(buffer) == u"!");
+    Close();
+
+    Require(sceImeDialogTerm() == ErrorNotInUse);
+    Require(sceImeDialogAbort() == ErrorNotInUse);
+    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotInUse);
+    Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
+    Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
+    errno = 71;
+    Require(sceImeDialogInit(reinterpret_cast<const Param*>(1), nullptr) == ErrorInvalidAddress);
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

@@ -47,13 +47,13 @@ inline std::vector<unsigned char> BitmapFont() {
 }
 
 inline std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string, std::vector<unsigned char>> tables) {
-    tables["glyf"] = Words({0, 0});
+    tables.try_emplace("glyf", Words({0, 0}));
     tables["head"] = Words({1, 0, 1, 0, 0, 0, 0x5F0F, 0x3CF5, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 2, 0, 0});
     tables["hhea"] = Words({1, 0, 800, -200, 0, 500, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1});
     tables["hmtx"] = Words({500});
     tables["hmtx"].resize(2 + 2 * static_cast<std::size_t>(glyphCount));
-    tables["loca"].assign(2 * (static_cast<std::size_t>(glyphCount) + 1), 0);
-    tables["maxp"] = Words({1, 0, glyphCount, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0});
+    tables.try_emplace("loca", 2 * (static_cast<std::size_t>(glyphCount) + 1), 0);
+    tables.try_emplace("maxp", Words({1, 0, glyphCount, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0}));
     const int tableCount = static_cast<int>(tables.size());
     int entrySelector = 0;
     while ((2 << entrySelector) <= tableCount) ++entrySelector;

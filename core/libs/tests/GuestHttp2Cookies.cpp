@@ -1,9 +1,18 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -36,6 +45,77 @@ static bool NoMatch(int box, const char* url) {
            sceHttp2GetCookie(box, url, buffer, &required, sizeof(buffer)) == NotFound && required == 7 && buffer[0] == 'x';
 }
 
+static void CheckUnmappedOutputs(int box) {
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(clobberErrno);
+    const char* url = "http://example.com/a/b";
+    auto* badSize = reinterpret_cast<std::size_t*>(0x10);
+    auto* badCookie = reinterpret_cast<char*>(0x10);
+    std::size_t required = 0;
+    char header[0x1000];
+    std::memset(header, 'Z', sizeof(header));
+    errno = 71;
+    Require(sceHttp2GetCookie(box, url, nullptr, badSize, 0) == InvalidValue);
+    Require(sceHttp2GetCookie(box, url, badCookie, &required, 1) == InvalidValue);
+    Require(sceHttp2GetCookie(box, url, badCookie, &required, sizeof(header)) == InvalidValue && required == 0);
+    Require(sceHttp2GetCookie(box, url, header, badSize, sizeof(header)) == InvalidValue);
+    for (char ch : header) Require(ch == 'Z');
+
+    std::size_t pageSize = 4096u;
+    void* roSizePage = nullptr;
+    void* roCookiePage = nullptr;
+    const std::size_t roSizeInitial = 0x55u;
+    char roCookieInitial[16];
+    std::memset(roCookieInitial, 'Q', sizeof(roCookieInitial));
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    if (info.dwPageSize != 0) pageSize = info.dwPageSize;
+    roSizePage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    roCookiePage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(roSizePage != nullptr && roCookiePage != nullptr);
+    std::memcpy(roSizePage, &roSizeInitial, sizeof(roSizeInitial));
+    std::memcpy(roCookiePage, roCookieInitial, sizeof(roCookieInitial));
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(roSizePage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    Require(VirtualProtect(roCookiePage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const long sysPage = sysconf(_SC_PAGESIZE);
+    if (sysPage > 0) pageSize = static_cast<std::size_t>(sysPage);
+    roSizePage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    roCookiePage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(roSizePage != MAP_FAILED && roCookiePage != MAP_FAILED);
+    std::memcpy(roSizePage, &roSizeInitial, sizeof(roSizeInitial));
+    std::memcpy(roCookiePage, roCookieInitial, sizeof(roCookieInitial));
+    Require(mprotect(roSizePage, pageSize, PROT_READ) == 0);
+    Require(mprotect(roCookiePage, pageSize, PROT_READ) == 0);
+#endif
+    Require(sceHttp2GetCookie(box, url, header, static_cast<std::size_t*>(roSizePage), sizeof(header)) == InvalidValue);
+    for (char ch : header) Require(ch == 'Z');
+    Require(std::memcmp(roSizePage, &roSizeInitial, sizeof(roSizeInitial)) == 0);
+
+    std::size_t untouchedRequired = 0x77u;
+    Require(sceHttp2GetCookie(box, url, static_cast<char*>(roCookiePage), &untouchedRequired, sizeof(header)) == InvalidValue);
+    Require(untouchedRequired == 0x77u);
+    Require(std::memcmp(roCookiePage, roCookieInitial, sizeof(roCookieInitial)) == 0);
+#ifdef _WIN32
+    VirtualFree(roSizePage, 0, MEM_RELEASE);
+    VirtualFree(roCookiePage, 0, MEM_RELEASE);
+#else
+    munmap(roSizePage, pageSize);
+    munmap(roCookiePage, pageSize);
+#endif
+
+    const char* const badText = reinterpret_cast<const char*>(0x10);
+    Require(sceHttp2GetCookie(box, badText, header, &required, sizeof(header)) == InvalidValue);
+    Require(sceHttp2AddCookie(box, badText, "a=b", 3) == InvalidValue);
+    Require(sceHttp2AddCookie(box, url, badText, 3) == InvalidValue);
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+}
+
 static Http2CookieStats Stats(int box) {
     alignas(8) unsigned char raw[40];
     std::memset(raw, 0xff, sizeof(raw));
@@ -54,10 +134,52 @@ static int FillDomain(int box, int count) {
     return 0;
 }
 
+static void CheckDateTokens(int box) {
+    const std::string longDigits(256, '9');
+    const struct {
+        std::string date;
+        bool expired;
+    } cases[] = {
+        {"31 Dec 1999 23:59:59", true},
+        {"01 Jan 70 00:00:00", true},
+        {"01 Jan 1970 00:00:00; Expires=01 Jan 9999 00:00:00", false},
+        {"01suffix Jan 1970 00:00:00GMT", true},
+        {"001 Jan 1970 00:00:00", false},
+        {"01 Jan 01970 00:00:00", false},
+        {"01 Jan 1970 000:00:00", false},
+        {"01 Jan 1970 00:000:00", false},
+        {"01 Jan 1970 00:00:000", false},
+        {"4294967297 Jan 1970 00:00:00", false},
+        {"01 Jan 4294969266 00:00:00", false},
+        {"01 Jan 1970 4294967296:00:00", false},
+        {"01 Jan 1970 00:4294967296:00", false},
+        {"01 Jan 1970 00:00:4294967296", false},
+        {longDigits + " Jan 1970 00:00:00", false},
+        {"01 Jan " + longDigits + " 00:00:00", false},
+        {"01 Jan 1970 " + longDigits + ":00:00", false},
+        {"01 Jan 1970 00:" + longDigits + ":00", false},
+        {"01 Jan 1970 00:00:" + longDigits, false},
+        {longDigits + " 01 Jan 1970 00:00:00", true},
+    };
+    for (std::size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        const auto& entry = cases[index];
+        const std::string url = "http://date" + std::to_string(index) + ".test/";
+        Require(Add(box, url.c_str(), "value=1; Expires=" + entry.date) == 0);
+        const bool matched = !NoMatch(box, url.c_str());
+        if (matched == entry.expired) std::fprintf(stderr, "Unexpected cookie expiry for %s\n", entry.date.c_str());
+        Require(matched != entry.expired);
+        if (matched) Require(Get(box, url.c_str()) == "value=1");
+    }
+}
+
 int main() {
     static_assert(sizeof(Http2CookieStats) == 32);
     static_assert(offsetof(Http2CookieStats, currentInuseNum) == 8 && offsetof(Http2CookieStats, maxInuseSize) == 16);
     static_assert(offsetof(Http2CookieStats, maxInuseNum) == 24 && offsetof(Http2CookieStats, removedNum) == 28);
+    const int dates = sceHttp2CreateCookieBox(0x10000);
+    Require(dates > 0);
+    CheckDateTokens(dates);
+    Require(sceHttp2DeleteCookieBox(dates) == 0);
     constexpr std::size_t maxSize = static_cast<std::size_t>(-1);
     Require(sceHttp2CreateCookieBox(maxSize) < 0);
     Require(sceHttp2CreateCookieBox(maxSize - 0x3fff) < 0);
@@ -71,6 +193,7 @@ int main() {
     Require(Add(box, "http://Example.COM:8080/", "lang=fr; Path=/; Domain=.example.com") == 0);
     Require(Add(box, "https://example.com/", "token=x; Secure; HttpOnly; Path=/") == 0);
     Require(Add(box, "http://example.com/", "wide=1; Path=/a; Max-Age=3600") == 0);
+    CheckUnmappedOutputs(box);
     Require(Get(box, "http://example.com/a/c") == "sid=1; wide=1; lang=fr");
     Require(Get(box, "https://example.com/a/b?q#f") == "sid=1; wide=1; token=x; lang=fr");
     Require(Get(box, "HTTPS://example.com/") == "token=x; lang=fr");

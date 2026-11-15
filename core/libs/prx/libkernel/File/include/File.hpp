@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #ifdef __APPLE__
@@ -13,6 +14,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+struct KernelStatfs;
+
 extern "C" {
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
@@ -20,9 +23,12 @@ int APS5_VABI sceKernelClose(int d);
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes);
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes);
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
+int PosixStatfs_nid_no_patch(const char* path, KernelStatfs* buf);
+int PosixUtimesAt_nid_no_patch(int directory, const char* path, const KernelTimeval* times);
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
 int APS5_VABI sceKernelUnlink(const char* path);
 int APS5_VABI sceKernelFcntl(int d, int command, ...);
+std::int64_t PosixPwrite_nid_no_patch(int d, const void* buf, std::size_t nbytes, std::int64_t offset);
 #ifdef _WIN32
 std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write);
 #endif
@@ -36,7 +42,19 @@ namespace File {
 std::optional<std::filesystem::path> WindowsDescriptorPath_nid_no_patch(int descriptor);
 #endif
 int HostStandardError();
-[[nodiscard]] std::unique_lock<std::mutex> LockPositionedTransfer(int descriptor);
+void ForgetClosedDescriptor(int descriptor);
+class PositionedTransferLock {
+public:
+    explicit PositionedTransferLock(std::shared_ptr<std::mutex> mutex) : _mutex(std::move(mutex)), _lock(*_mutex) {}
+    PositionedTransferLock(PositionedTransferLock&&) = default;
+    PositionedTransferLock& operator=(PositionedTransferLock&&) = delete;
+    void unlock() { _lock.unlock(); }
+
+private:
+    std::shared_ptr<std::mutex> _mutex;
+    std::unique_lock<std::mutex> _lock;
+};
+[[nodiscard]] PositionedTransferLock LockPositionedTransfer(int descriptor);
 void SharePositionedTransfer(int from, int to);
 #ifdef _WIN32
 std::int64_t WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes);

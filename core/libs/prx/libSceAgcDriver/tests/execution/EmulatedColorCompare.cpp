@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -35,7 +37,10 @@ constexpr std::uint32_t Format8_8Srgb = 129;
 constexpr std::uint32_t Format8888Srgb = 130;
 constexpr std::uint32_t Format8888UInt = 60;
 constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format16161616Float = 71;
+constexpr std::uint32_t Format111110UNorm = 30;
 constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t Type2DArray = 13;
 constexpr std::uint32_t TypeCube = 11;
 constexpr std::uint32_t LessEqual = 3;
 constexpr std::uint32_t GreaterEqual = 6;
@@ -55,11 +60,12 @@ constexpr std::uint32_t ReductionMin = 1;
 constexpr std::array<std::uint8_t, 4> Red{0, 64, 128, 255};
 
 alignas(256) std::array<float, Threads * 3> Input{};
+alignas(256) std::array<float, Threads * 4> InputArray{};
 alignas(256) std::array<float, Threads * 4> CubeInput{};
 alignas(256) std::array<float, Threads * 4> Output{};
 std::uint32_t Swizzle = 0xfacu;
 alignas(256) std::array<std::uint32_t, Threads * 3> Extra{};
-alignas(4096) std::array<std::uint8_t, 4096> Texels{};
+alignas(4096) std::array<std::uint8_t, 65536> Texels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 13> Code{
     0x1614008c, 0xe03c1000, 0x8000010a, 0xbf8c3f70, 0xf0bc0108, 0x00820401, 0xbf8c3f70,
@@ -74,6 +80,16 @@ alignas(256) constexpr std::array<std::uint32_t, 13> ArrayCode{
 alignas(256) constexpr std::array<std::uint32_t, 13> CubeCode{
     0x16140090, 0xe0381000, 0x8000010a, 0xbf8c3f70, 0xf0bc0118, 0x00820401, 0xbf8c3f70,
     0x34160082, 0xe0701000, 0x8001040b, 0xbf810000, 0xbf810000, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 13> LayerCode{
+    0x16140090, 0xe0381000, 0x8000010a, 0xbf8c3f70, 0xf0bc0128, 0x00820501, 0xbf8c3f70,
+    0x34160082, 0xe0701000, 0x8001050b, 0xbf810000, 0xbf810000, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 13> LayerSampleCode{
+    0x16140090, 0xe0381000, 0x8000010a, 0xbf8c3f70, 0xf09c0128, 0x00820502, 0xbf8c3f70,
+    0x34160082, 0xe0701000, 0x8001050b, 0xbf810000, 0xbf810000, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 16> OffsetCode{
@@ -97,6 +113,7 @@ struct Sampler {
     std::uint32_t lodBias = 0;
     bool disableCubeWrap = false;
     std::uint32_t function = LessEqual;
+    bool truncCoord = false;
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -104,20 +121,20 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format, bool cube = false) {
+std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format, bool cube = false, bool layered = false) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
-        Swizzle | ((cube ? TypeCube : Type2D) << 28u),
-        cube ? 5u : 0u, 0u, 0u, 0u,
+        Swizzle | ((cube ? TypeCube : layered ? Type2DArray : Type2D) << 28u),
+        cube ? 5u : layered ? 3u : 0u, 0u, 0u, 0u,
     };
 }
 
 std::array<std::uint32_t, 4> SamplerDescriptor(const Sampler& sampler) {
     return {
-        sampler.clamp | (sampler.clamp << 3u) | (ClampEdge << 6u) | (sampler.function << 12u) | (sampler.reduction << 29u) | (sampler.disableCubeWrap ? (1u << 28u) : 0u),
+        sampler.clamp | (sampler.clamp << 3u) | (ClampEdge << 6u) | (sampler.function << 12u) | (sampler.reduction << 29u) | (sampler.disableCubeWrap ? (1u << 28u) : 0u) | (sampler.truncCoord ? (1u << 27u) : 0u),
         0u,
         sampler.lodBias | (sampler.filter << 20u) | (sampler.filter << 22u),
         sampler.border << 30u,
@@ -179,11 +196,11 @@ void FillInput() {
     Extra[0] = 0x00001f20u;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, bool useCache = false, bool nativeSampleOffsets = true, bool cube = false) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, bool useCache = false, bool nativeSampleOffsets = true, bool cube = false, bool layered = false) {
     std::vector<std::uint32_t> userData(24, 0u);
-    const auto input = cube ? BufferDescriptor(CubeInput.data(), static_cast<std::uint32_t>(sizeof(CubeInput))) : BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
+    const auto input = layered ? BufferDescriptor(InputArray.data(), static_cast<std::uint32_t>(sizeof(InputArray))) : cube ? BufferDescriptor(CubeInput.data(), static_cast<std::uint32_t>(sizeof(CubeInput))) : BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
-    const auto texture = TextureDescriptor(format, cube);
+    const auto texture = TextureDescriptor(format, cube, layered);
     const auto samplerWords = SamplerDescriptor(sampler);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
@@ -223,6 +240,41 @@ std::uint64_t Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const
 
 constexpr std::uint32_t Select(std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint32_t w) {
     return x | (y << 3u) | (z << 6u) | (w << 9u);
+}
+
+void RunLayers(AgcDriver::VulkanDevice& device, bool converted) {
+    constexpr std::array<float, 12> coordinates{-0.4f, 0.0f, 0.49999997f, 0.5f, 0.99f, 1.0f, 1.5f, 2.5f, 2.49f, 3.5f, 3.7f, 7.0f};
+    constexpr std::array<std::uint32_t, 12> expectedLayers{0, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3};
+    const auto format = converted ? Format111110UNorm : Format1616UNorm;
+    Swizzle = Select(4, 5, 6, 1);
+    const auto surface = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(format, false, true)));
+    Require(surface.layers == 4u && surface.guestBytes <= Texels.size(), "array descriptor exceeds texture storage");
+    Texels.fill(0);
+    const auto& mip = surface.mips.at(0);
+    for (std::uint32_t layer = 0; layer < 4u; ++layer) {
+        const std::uint32_t value = layer * 512u;
+        for (std::uint32_t y = 0; y < Side; ++y) {
+            for (std::uint32_t x = 0; x < Side; ++x) {
+                std::memcpy(Texels.data() + surface.GuestLayerOffset(layer) + mip.tiledOffset + y * mip.pitchBytes + x * 4u, &value, sizeof(value));
+            }
+        }
+    }
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        InputArray[tid * 4u] = 0.25f;
+        InputArray[tid * 4u + 1u] = 0.5f;
+        InputArray[tid * 4u + 2u] = 0.5f;
+        InputArray[tid * 4u + 3u] = coordinates[tid % coordinates.size()];
+    }
+    const auto& code = converted ? LayerSampleCode : LayerCode;
+    const auto result = Compile(device, format, {ClampEdge, FilterPoint}, code, false, true, false, true);
+    Swizzle = 0xfacu;
+    Output.fill(-1.0f);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto expected = converted ? static_cast<float>(expectedLayers[tid % expectedLayers.size()] * 512u) / 2047.0f : 0.0f;
+        Require(std::fabs(Output[tid] - expected) <= 1e-5f, "array layer " + std::to_string(coordinates[tid % coordinates.size()]) + " returned " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
+    }
 }
 
 void RunChannels(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::array<std::uint32_t, 4> channels, std::uint32_t registers, std::uint32_t firstChannel, const char* name) {
@@ -400,6 +452,9 @@ int main() {
             Run(*device, {ClampEdge, FilterPoint}, "cached point comparison", false, true);
             if (lodClamp) Run(*device, {ClampWrap, FilterBilinear}, "cached bilinear comparison with offsets", true, true);
         }
+        RunLayers(*device, false);
+        RunLayers(*device, true);
+        FillTexels();
         Reject(*device, Format32Float, {ClampEdge, FilterPoint}, "native comparison with a nonconstant texel offset requires", OffsetCode, false);
         RunChannels(*device, QuadCode, {4, 5, 6, 7}, 4, 0, "view R,G,B,A");
         RunChannels(*device, QuadCode, {0, 0, 0, 0}, 4, 0, "view 0,0,0,0");
@@ -419,6 +474,29 @@ int main() {
         Reject(*device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampBorder, FilterPoint, BorderTable}, "border color table");
         Reject(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, ReductionMin}, "min or max reduction");
+        const auto half = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(Format16161616Float)));
+        Require(half.guestBytes <= Texels.size(), "half-float descriptor exceeds texture storage");
+        Texels.fill(0);
+        constexpr std::array<std::uint16_t, 4> values{0x7e00u, 0x0000u, 0x8000u, 0x3800u};
+        for (std::uint32_t y = 0; y < Side; ++y) {
+            for (std::uint32_t x = 0; x < Side; ++x) {
+                const auto value = values[y * Side + x];
+                std::memcpy(Texels.data() + half.mips[0].tiledOffset + y * half.mips[0].pitchBytes + x * 8u, &value, sizeof(value));
+            }
+        }
+        constexpr std::array<float, 4> references{std::numeric_limits<float>::quiet_NaN(), 0.0f, -0.0f, 0.5f};
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            Input[tid * 3u] = references[(tid / 4u) % references.size()];
+            Input[tid * 3u + 1u] = (static_cast<float>(tid % Side) + 0.5f) / Side;
+            Input[tid * 3u + 2u] = (static_cast<float>((tid / Side) % Side) + 0.5f) / Side;
+        }
+        for (const auto function : {3u, 4u, 5u}) {
+            for (const auto filter : {FilterPoint, FilterBilinear}) {
+                for (const bool truncate : {false, true}) {
+                    RunZero(*device, Format16161616Float, {ClampEdge, filter, BorderBlack, 0u, 0u, false, function, truncate}, "half-float comparison with NaN, signed zero and TRUNC_COORD", false, 0u);
+                }
+            }
+        }
         std::puts(lodClamp ? "emulated color compare tests passed" : "emulated color compare tests passed, the offset and LOD clamp cases were skipped without shaderResourceMinLod");
         return 0;
     } catch (const std::exception& error) {

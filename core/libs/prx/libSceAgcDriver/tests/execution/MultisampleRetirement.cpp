@@ -466,6 +466,10 @@ public:
     void StorageRemap() {
         GuestBlock block;
         const auto target = Target(block);
+        if (MayReorderSamples(context, target.samples) && SampleOrderStorageFormat(context, target.format, target.elementBytes, target.samples) != VK_FORMAT_UNDEFINED) {
+            std::puts("the device stores a multisampled color target in the guest sample order, so it is born storable with no promotion to retire; the MSAA storage-promotion remap is skipped");
+            return;
+        }
         const auto resource = Resource(block);
         std::shared_ptr<Texture> held;
         VkImageView sampledView = VK_NULL_HANDLE, storageView = VK_NULL_HANDLE;
@@ -530,6 +534,7 @@ public:
         const auto target = Target(block);
         auto twin = target;
         twin.format = VK_FORMAT_R8G8B8A8_SRGB;
+        const bool bornStorable = MayReorderSamples(context, target.samples) && SampleOrderStorageFormat(context, target.format, target.elementBytes, target.samples) != VK_FORMAT_UNDEFINED;
         const auto resource = Resource(block);
         VkImage renderedImage = VK_NULL_HANDLE, twinImage = VK_NULL_HANDLE, promotedImage = VK_NULL_HANDLE, promotedTwinImage = VK_NULL_HANDLE;
         Image rendered{}, promoted{};
@@ -545,7 +550,7 @@ public:
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             promoted = ImageFor(MultisampleTargetStorageView(context, resource), &promotedImage);
-            Require(promoted.generation != rendered.generation, "MSAA storage promotion kept the rendered image");
+            Require(bornStorable == (promoted.generation == rendered.generation), bornStorable ? "a born-storable MSAA target was promoted to a new image" : "MSAA storage promotion kept the rendered image");
             const auto promotedTwin = MultisampleTargetView(context, twin);
             ImageFor(promotedTwin, &promotedTwinImage);
             Require(promotedTwinImage == promotedImage, "after storage promotion an sRGB use of the MSAA surface still views the retired image");
@@ -586,6 +591,34 @@ public:
         AwaitImages(0, "the sRGB storage twin targets were not fully released");
     }
 
+    void SampledReinterpretation() {
+        VkImageFormatProperties supported{};
+        if (context.imageFormatProperties(context.physical, VK_FORMAT_R32_UINT, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &supported) != VK_SUCCESS || (supported.sampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0) {
+            std::puts("the device cannot sample a 4x R32_UINT image; the same-size reinterpretation case is skipped");
+            return;
+        }
+        GuestBlock block;
+        const auto target = Target(block, VK_FORMAT_B10G11R11_UFLOAT_PACK32);
+        auto resource = Resource(block);
+        resource.format = 20;
+        VkImage renderedImage = VK_NULL_HANDLE, copyImage = VK_NULL_HANDLE, againImage = VK_NULL_HANDLE;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            ImageFor(MultisampleTargetView(context, target), &renderedImage);
+            const auto texture = MultisampleTargetTexture(context, resource, {});
+            Require(texture != nullptr, "a 4x B10G11R11 target sampled as R32_UINT has no texture");
+            ImageFor(texture->View(), &copyImage);
+            Require(copyImage != renderedImage, "a 4x B10G11R11 target sampled as R32_UINT was viewed in place instead of copied into an image of that format");
+            const auto again = MultisampleTargetTexture(context, resource, {});
+            ImageFor(again->View(), &againImage);
+            Require(againImage == copyImage, "a repeated R32_UINT read of a 4x B10G11R11 target made another copy image");
+        }
+        Sync();
+        block.Unmap();
+        Clear();
+        AwaitImages(0, "a reinterpreted MSAA target and its copy were not fully released");
+    }
+
 private:
     AgcDriver::VulkanDevice& device;
     Context context;
@@ -603,10 +636,16 @@ int main() {
         run.IdleRemaps();
         run.RecordedRemap();
         run.SampledRemap();
-        run.StorageRemap();
+        run.SampledReinterpretation();
+        const bool storage = context.storageImageMultisample;
+        if (storage) run.StorageRemap();
         run.StorageSrgbTwin();
         run.OrderRemap();
         if (context.storageImageMultisample) run.StorageTwin();
+        if (!storage) {
+            std::puts("storage promotion skipped, the device has no shaderStorageImageMultisample");
+            return VulkanTestSkipped;
+        }
         std::puts("retired MSAA allocations stay bounded, recorded clears and storage promotions retain their images, sampled aliases release their parents after the last batch, and sample-order targets keep their retired images until their batch completes");
         return 0;
     } catch (const std::exception& error) {

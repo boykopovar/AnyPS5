@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
-#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <new>
@@ -31,11 +30,6 @@ constexpr std::int32_t WRITING_MASK_NONE = 0;
 constexpr std::int32_t WRITING_MASK_FORMAT_CHARACTERS = 1;
 constexpr std::uint64_t CHARACTER_FLAG_FORMAT = 1ull << 42;
 
-struct CharacterStorage {
-    std::atomic<std::uint32_t> refCount{1};
-    std::vector<FontTextCharacter> characters;
-};
-
 struct FontStringData {
     std::uint16_t magic = FONT_STRING_MAGIC;
     std::uint8_t flags = 0;
@@ -48,7 +42,7 @@ struct FontStringData {
     void* terminateOrder = nullptr;
     std::uint32_t textCount = 0;
     std::uint32_t renderCount = 0;
-    CharacterStorage* storage = nullptr;
+    FontTextCharacter* characters = nullptr;
 };
 
 struct FontWritingData {
@@ -56,7 +50,6 @@ struct FontWritingData {
     std::uint16_t reserved0 = 0;
     std::uint32_t writingForm = WRITING_FORM_HORIZONTAL;
     FontString string = nullptr;
-    CharacterStorage* storage = nullptr;
     FontHandle defaultFont = nullptr;
     std::size_t nextIndex = 0;
     std::size_t currentIndex = 0;
@@ -66,7 +59,6 @@ struct FontWritingData {
     bool hasCurrentStep = false;
     bool hasCurrentCharacter = false;
     bool maskFormatCharacters = true;
-    bool ownsStorage = false;
     bool hasRawGlyphMetrics = false;
     FontWritingStep step{};
     FontWritingMetrics metrics{};
@@ -85,18 +77,6 @@ FontWritingData* GetWritingData(FontWriting* fontWriting) {
     if (!fontWriting) return nullptr;
     auto* data = reinterpret_cast<FontWritingData*>(fontWriting->systemUse);
     return data->magic == FONT_WRITING_MAGIC ? data : nullptr;
-}
-
-void ReleaseStorage(CharacterStorage*& storage) {
-    if (!storage) return;
-    if (storage->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) delete storage;
-    storage = nullptr;
-}
-
-void ReleaseWritingStorage(FontWritingData& writing) {
-    if (!writing.ownsStorage) return;
-    ReleaseStorage(writing.storage);
-    writing.ownsStorage = false;
 }
 
 std::uint16_t TextSourceMagic(const FontTextSource* source) {
@@ -135,15 +115,15 @@ FontTextCharacter MakeCharacter(FontHandle font, std::uint32_t code, void* textO
     return character;
 }
 
-void LinkCharacters(std::vector<FontTextCharacter>& characters) {
-    for (std::size_t i = 0; i < characters.size(); ++i) {
+void LinkCharacters(FontTextCharacter* characters, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) {
         characters[i].prev = i == 0 ? nullptr : &characters[i - 1];
-        characters[i].next = i + 1 < characters.size() ? &characters[i + 1] : nullptr;
+        characters[i].next = i + 1 < count ? &characters[i + 1] : nullptr;
     }
 }
 
 FontTextCharacter* TextCharacters(FontStringData* data) {
-    return data && data->storage && !data->storage->characters.empty() ? data->storage->characters.data() : nullptr;
+    return data && data->textCount != 0 ? data->characters : nullptr;
 }
 
 bool IsRightToLeftLetter(std::uint32_t code) {
@@ -185,17 +165,16 @@ void FillWritingMetricsFromGlyph(FontWritingData& writing, const FontGlyphMetric
     writing.rawGlyphMetrics = glyphMetrics;
     writing.hasRawGlyphMetrics = true;
     writing.step.advanceX = glyphMetrics.Horizontal.advance;
-    writing.step.advanceY = glyphMetrics.Vertical.advance;
+    writing.step.advanceY = 0.0f;
     writing.step.GlyphMetrics = glyphMetrics;
     writing.step.Positioning.x = writing.step.x;
     writing.step.Positioning.y = writing.step.y;
-    writing.step.GlyphMetrics.width = writing.step.x;
-    writing.step.GlyphMetrics.height = writing.step.y;
 }
 
 bool PopulateWritingStep(FontWritingData& writing, std::size_t index) {
-    if (!writing.storage || index >= writing.storage->characters.size()) return false;
-    const FontTextCharacter& character = writing.storage->characters[index];
+    const FontStringData* data = GetStringData(writing.string);
+    if (!data || index >= data->textCount) return false;
+    const FontTextCharacter& character = data->characters[index];
     const FontHandle font = character.font ? character.font : writing.defaultFont;
     writing.step.x = writing.penX;
     writing.step.y = writing.penY;
@@ -312,10 +291,10 @@ int APS5_VABI sceFontTextSourceSetWritingForm(FontTextSource* textSource, std::i
 
 int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* textSource, const FontCreateStringDetail* detail, FontString* pFontString) {
     if (!fontMemory || !textSource || !pFontString || !textSource->textParser) {
-        if (pFontString) *pFontString = nullptr;
+        if (pFontString) CopyOutGuest(pFontString, static_cast<FontString>(nullptr));
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    *pFontString = nullptr;
+    if (!CopyOutGuest(pFontString, static_cast<FontString>(nullptr))) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     if (fontMemory->mem_kind != MEMORY_MAGIC || !fontMemory->iface || !fontMemory->iface->alloc || !fontMemory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (detail) {
@@ -328,9 +307,9 @@ int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* 
     data->memory = fontMemory;
     data->source = textSource;
     data->defaultFont = textSource->defaultFont;
-    data->storage = new CharacterStorage{};
     if (!data->defaultFont && detail) data->defaultFont = detail->defaultFont;
     data->writingForm = static_cast<std::uint32_t>(textSource->systemUse0 >> 32);
+    std::vector<FontTextCharacter> characters;
     std::int32_t state = SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     void* textOrder = nullptr;
     for (std::size_t parsed = 0; parsed < MAX_PARSED_CHARACTERS; ++parsed) {
@@ -342,7 +321,7 @@ int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* 
                 state = SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
                 break;
             }
-            data->storage->characters.push_back(MakeCharacter(font, result.FontCode.code, textOrder));
+            characters.push_back(MakeCharacter(font, result.FontCode.code, textOrder));
             continue;
         }
         if (state == PARSER_RESULT_TERMINATE) {
@@ -357,17 +336,26 @@ int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* 
         break;
     }
     if (state == PARSER_RESULT_FONT_CODE) state = SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
+    if (state == SCE_FONT_OK && !characters.empty()) {
+        data->characters = static_cast<FontTextCharacter*>(fontMemory->iface->alloc(fontMemory->mspace_handle, static_cast<std::uint32_t>(characters.size() * sizeof(FontTextCharacter))));
+        if (!data->characters) state = SCE_FONT_ERROR_ALLOCATION_FAILED;
+    }
     if (state != SCE_FONT_OK) {
-        ReleaseStorage(data->storage);
-        data->~FontStringData();
+        data->magic = 0;
         fontMemory->iface->dealloc(fontMemory->mspace_handle, raw);
         return state;
     }
-    if (data->writingForm == WRITING_FORM_HORIZONTAL) data->writingForm = DefaultStringForm(data->storage->characters);
-    LinkCharacters(data->storage->characters);
-    data->textCount = static_cast<std::uint32_t>(data->storage->characters.size());
+    if (data->writingForm == WRITING_FORM_HORIZONTAL) data->writingForm = DefaultStringForm(characters);
+    std::copy(characters.begin(), characters.end(), data->characters);
+    LinkCharacters(data->characters, characters.size());
+    data->textCount = static_cast<std::uint32_t>(characters.size());
     data->renderCount = data->textCount;
-    *pFontString = reinterpret_cast<FontString>(data);
+    if (!CopyOutGuest(pFontString, reinterpret_cast<FontString>(data))) {
+        data->magic = 0;
+        if (data->characters) fontMemory->iface->dealloc(fontMemory->mspace_handle, data->characters);
+        fontMemory->iface->dealloc(fontMemory->mspace_handle, raw);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     return SCE_FONT_OK;
 }
 
@@ -379,8 +367,8 @@ int APS5_VABI sceFontDestroyString(FontString* pFontString) {
         return SCE_FONT_ERROR_INVALID_STRING;
     }
     const FontMemory* memory = data->memory;
-    ReleaseStorage(data->storage);
-    data->~FontStringData();
+    data->magic = 0;
+    if (data->characters) memory->iface->dealloc(memory->mspace_handle, data->characters);
     memory->iface->dealloc(memory->mspace_handle, data);
     *pFontString = nullptr;
     return SCE_FONT_OK;
@@ -412,22 +400,24 @@ FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString fontSt
 }
 
 const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontString fontString, FontTextCharacter* startCharacter, FontTextCharacter* lastCharacter, std::uint32_t* characterCount) {
+    const auto none = [characterCount]() -> const FontTextCharacter* {
+        const std::uint32_t zero = 0;
+        GuestCopyOut_nid_no_patch(characterCount, &zero, sizeof(zero));
+        return nullptr;
+    };
     auto* data = GetStringData(fontString);
     if (!data || !characterCount || data->renderCount == 0) {
-        if (characterCount) *characterCount = 0;
-        return nullptr;
+        return characterCount ? none() : nullptr;
     }
     FontTextCharacter* characters = TextCharacters(data);
     if (!characters) {
-        *characterCount = 0;
-        return nullptr;
+        return none();
     }
     const FontTextCharacter* begin = characters;
     const FontTextCharacter* end = characters + data->renderCount;
     if (!startCharacter) startCharacter = characters;
     if (startCharacter < begin || startCharacter >= end || (lastCharacter && (lastCharacter < begin || lastCharacter >= end))) {
-        *characterCount = 0;
-        return nullptr;
+        return none();
     }
     FontTextCharacter* probe = startCharacter;
     if (startCharacter->clusterKind > 1) {
@@ -452,8 +442,7 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
         probe = probe->next;
         if (!probe) {
             if (lastCharacter) {
-                *characterCount = 0;
-                return nullptr;
+                return none();
             }
             break;
         }
@@ -535,7 +524,7 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
         }
     }
     if (!startCharacter) count = 0;
-    *characterCount = count;
+    if (!GuestCopyOut_nid_no_patch(characterCount, &count, sizeof(count))) return nullptr;
     return startCharacter;
 }
 
@@ -547,11 +536,11 @@ int APS5_VABI sceFontCharacterGetBidiLevel(const FontTextCharacter* textCharacte
 
 int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter* textCharacter, int* syllableStringState) {
     if (!textCharacter || !syllableStringState) {
-        if (syllableStringState) *syllableStringState = 0;
+        if (syllableStringState) CopyOutGuest(syllableStringState, 0);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (textCharacter->characterCode >= 0x0E00 && textCharacter->characterCode <= 0x0E7F) throw std::runtime_error("libSceFont: sceFontCharacterGetSyllableStringState for Thai syllable clusters is not implemented");
-    *syllableStringState = 0;
+    if (!CopyOutGuest(syllableStringState, 0)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -640,25 +629,21 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
     if (!fontWriting || !fontString || !fontCharacter) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* data = GetStringData(fontString);
     if (!data) return SCE_FONT_ERROR_INVALID_STRING;
-    if (auto* previous = GetWritingData(fontWriting)) ReleaseWritingStorage(*previous);
     std::memset(fontWriting, 0, sizeof(*fontWriting));
     auto* writing = new (fontWriting->systemUse) FontWritingData{};
     writing->string = fontString;
-    writing->storage = data->storage;
     writing->defaultFont = data->defaultFont;
-    if (writing->storage) writing->storage->refCount.fetch_add(1, std::memory_order_relaxed);
-    writing->ownsStorage = true;
     writing->writingForm = data->writingForm;
     const FontTextCharacter* characters = TextCharacters(data);
-    if (!characters || fontCharacter < characters || fontCharacter >= characters + data->storage->characters.size()) {
-        ReleaseWritingStorage(*writing);
+    if (!characters || fontCharacter < characters || fontCharacter >= characters + data->textCount) {
+        writing->string = nullptr;
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     writing->nextIndex = static_cast<std::size_t>(fontCharacter - characters);
     writing->currentIndex = writing->nextIndex;
     writing->hasCurrentStep = false;
     if (!PopulateWritingStep(*writing, writing->nextIndex)) {
-        ReleaseWritingStorage(*writing);
+        writing->string = nullptr;
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     writing->penX = 0.0f;
@@ -670,22 +655,21 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
 
 int APS5_VABI sceFontWritingGetRenderMetrics(FontWriting* fontWriting, FontWritingMetrics* writingMetrics) {
     if (!fontWriting || !writingMetrics) {
-        if (writingMetrics) *writingMetrics = {};
+        if (writingMetrics) CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const auto* writing = GetWritingData(fontWriting);
     if (!writing) {
-        *writingMetrics = {};
+        CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_WRITING;
     }
-    *writingMetrics = writing->metrics;
+    if (!CopyOutGuest(writingMetrics, writing->metrics)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* fontWriting) {
     auto* writing = GetWritingData(fontWriting);
-    if (!writing || !writing->storage || writing->nextIndex >= writing->storage->characters.size()) return nullptr;
-    if (!PopulateWritingStep(*writing, writing->nextIndex)) return nullptr;
+    if (!writing || !PopulateWritingStep(*writing, writing->nextIndex)) return nullptr;
     writing->currentIndex = writing->nextIndex;
     writing->hasCurrentStep = true;
     writing->hasCurrentCharacter = true;
@@ -697,7 +681,9 @@ const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* fon
 FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting* fontWriting, const FontWritingLetterStep** pLetterStep) {
     if (pLetterStep) *pLetterStep = nullptr;
     auto* writing = GetWritingData(fontWriting);
-    if (!writing || !writing->hasCurrentStep || !writing->hasCurrentCharacter || !writing->storage || writing->currentIndex >= writing->storage->characters.size()) return nullptr;
+    if (!writing || !writing->hasCurrentStep || !writing->hasCurrentCharacter) return nullptr;
+    auto* data = GetStringData(writing->string);
+    if (!data || writing->currentIndex >= data->textCount) return nullptr;
     writing->hasCurrentCharacter = false;
     auto& letterStep = writing->letterStep;
     letterStep = {};
@@ -711,7 +697,7 @@ FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting
     letterStep.Components.glyphsIndex = static_cast<std::uint32_t>(writing->currentIndex);
     letterStep.Components.characterTextCount = static_cast<std::uint8_t>(std::max<std::uint32_t>(writing->step.Profile.characterCount, 1));
     if (pLetterStep) *pLetterStep = &letterStep;
-    return &writing->storage->characters[writing->currentIndex];
+    return &data->characters[writing->currentIndex];
 }
 
 int APS5_VABI sceFontWritingSetMaskInvisible(FontWriting* fontWriting, std::int32_t mask) {

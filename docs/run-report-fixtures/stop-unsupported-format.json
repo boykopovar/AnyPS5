@@ -1,0 +1,104 @@
+{
+  "format": "anyps5-report",
+  "version": 1,
+  "generated": "2026-10-29T12:00:00Z",
+  "anyps5": {
+    "commit": "40f2a9c3d1b7e5864a0c9d2e7f13b5a8c6d49e01",
+    "release": "v0.1.3",
+    "modified": false
+  },
+  "game": {
+    "titleId": "PPSA12345",
+    "contentId": "UP9000-PPSA12345_00-EXAMPLE00000000A",
+    "contentVersion": "01.002.000",
+    "name": "Example Game"
+  },
+  "system": {
+    "os": "linux",
+    "osVersion": "Arch Linux (kernel 6.11)",
+    "cpu": "AMD Ryzen 7 5800X",
+    "ramGiB": 32,
+    "gpu": {
+      "vendor": "AMD",
+      "name": "Radeon RX 6800",
+      "driver": "Mesa 24.2.3 (RADV)",
+      "vulkan": "1.3.289"
+    }
+  },
+  "run": {
+    "id": "c19e8a3f7d4b4026a5f1e0b93d8c6a24",
+    "seconds": 77.0,
+    "exit": "abort",
+    "exitCode": 134,
+    "stage": "first-draw",
+    "milestones": {
+      "loaded": 1.3,
+      "started": 1.6,
+      "firstDraw": 52.4
+    },
+    "framesPresented": 0,
+    "averageFps": null,
+    "fpsWindowSeconds": null,
+    "recovered": false,
+    "incomplete": false
+  },
+  "coverage": {
+    "milestones": true,
+    "missing": true,
+    "shaders": true,
+    "unsupported": true,
+    "imageFormats": true,
+    "descriptors": true
+  },
+  "truncated": {
+    "functions": 0,
+    "unsupported": 0,
+    "imageFormats": 0,
+    "descriptors": 0
+  },
+  "missing": {
+    "functions": []
+  },
+  "shaders": {
+    "compiled": 1234,
+    "failed": 0,
+    "cacheHits": 5120,
+    "unsupported": [],
+    "imageFormats": [
+      {
+        "format": 10,
+        "name": "Format8_8_8_8UNorm",
+        "status": "accepted",
+        "usage": "sampled",
+        "count": 211
+      },
+      {
+        "format": 37,
+        "name": "Format8_8_8_8Srgb",
+        "status": "rejected",
+        "usage": "storage",
+        "count": 3
+      }
+    ],
+    "descriptors": [
+      {
+        "type": "SampledImage",
+        "status": "accepted",
+        "usage": "read",
+        "count": 920
+      },
+      {
+        "type": "StorageImage",
+        "status": "rejected",
+        "usage": "write",
+        "count": 3
+      }
+    ]
+  },
+  "stop": {
+    "kind": "unsupported-format",
+    "reason": "runtime-stop",
+    "message": "Format8_8_8_8Srgb is not supported for storage image use on this GPU.",
+    "source": "core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp:1906"
+  }
+}

@@ -37,16 +37,19 @@ struct UserMcontext {
     std::uint64_t len;
     std::uint64_t fpformat;
     std::uint64_t ownedfp;
-    alignas(16) std::uint64_t fpstate[64];
+    std::uint64_t lbrfrom;
+    std::uint64_t lbrto;
+    std::uint64_t aux1;
+    std::uint64_t aux2;
+    std::uint64_t fpstate[104];
     std::uint64_t fsbase;
     std::uint64_t gsbase;
-    std::uint64_t xfpustate;
-    std::uint64_t xfpustateLength;
-    std::uint64_t spare[4];
+    std::uint64_t spare[6];
 };
 
-struct UserUcontext {
+struct alignas(16) UserUcontext {
     std::uint32_t sigmask[4];
+    std::int32_t reserved[12];
     UserMcontext mcontext;
     UserUcontext* link;
     void* stackPointer;
@@ -55,16 +58,21 @@ struct UserUcontext {
     std::int32_t stackAlign;
     std::int32_t flags;
     std::int32_t spare[4];
+    std::int32_t tail[3];
 };
 
 static_assert(offsetof(UserMcontext, rsp) == 0xb8 && offsetof(UserMcontext, len) == 0xc8);
-static_assert(offsetof(UserMcontext, fpstate) == 0xe0 && offsetof(UserMcontext, fsbase) == 0x2e0);
-static_assert(sizeof(UserMcontext) == 0x320);
-static_assert(offsetof(UserUcontext, mcontext) == 0x10);
-static_assert(offsetof(UserUcontext, link) == 0x330);
-static_assert(offsetof(UserUcontext, stackPointer) == 0x338);
-static_assert(offsetof(UserUcontext, stackSize) == 0x340);
-static_assert(offsetof(UserUcontext, flags) == 0x350);
-static_assert(sizeof(UserUcontext) == 0x370);
+static_assert(offsetof(UserMcontext, fpstate) == 0x100 && offsetof(UserMcontext, fsbase) == 0x440);
+static_assert(sizeof(UserMcontext) == 0x480);
+static_assert(offsetof(UserUcontext, mcontext) == 0x40);
+static_assert(offsetof(UserUcontext, mcontext) + offsetof(UserMcontext, rip) == 0xe0);
+static_assert(offsetof(UserUcontext, mcontext) + offsetof(UserMcontext, rsp) == 0xf8);
+static_assert(offsetof(UserUcontext, link) == 0x4c0);
+static_assert(offsetof(UserUcontext, stackPointer) == 0x4c8);
+static_assert(offsetof(UserUcontext, stackSize) == 0x4d0);
+static_assert(offsetof(UserUcontext, flags) == 0x4e0);
+static_assert(sizeof(UserUcontext) == 0x500);
+
+extern "C" int SigreturnContext_nid_no_patch(const UserUcontext* context);
 
 #endif

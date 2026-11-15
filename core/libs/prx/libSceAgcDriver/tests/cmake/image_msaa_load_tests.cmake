@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(image_msaa_load_tests ${LIBS_INCLUDE_DIR}/tests/ImageMsaaLoad.cpp)
+    target_link_libraries(image_msaa_load_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(image_msaa_load_tests)
+    add_test(NAME image_msaa_load COMMAND image_msaa_load_tests)
+    if(WIN32)
+        set_tests_properties(image_msaa_load PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

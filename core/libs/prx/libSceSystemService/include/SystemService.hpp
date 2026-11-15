@@ -20,7 +20,11 @@ struct ShellCoreErrorDialogParam {
 
 struct SystemServiceDaemonEvent;
 struct SystemServiceLocalProcessStatus;
-struct SystemServicePSButtonEvent;
+struct SystemServicePSButtonEvent {
+    std::int32_t eventType;
+    std::uint32_t dataAt8;
+    std::uint64_t dataAt0;
+};
 struct SystemServicePrivacyDefinitionData;
 struct SystemServicePrivacyDefinitionVersion;
 struct SystemServiceTitleWorkaroundInfo;
@@ -176,7 +180,7 @@ int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDu
 int APS5_VABI sceLncUtilKillApp(uint32_t appId);
 int APS5_VABI sceLncUtilKillAppWithReason(uint32_t appId, int reason);
 int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void);
-int APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void);
+void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param);
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void);
 int APS5_VABI sceSystemServiceTelemetrySetData2WithUserId(void);
 int APS5_VABI sceShellCoreUtilStartUmmDictation(void);
@@ -234,7 +238,7 @@ int APS5_VABI sceShellCoreUtilGetStreamingClientInfo(void);
 int APS5_VABI sceShellCoreUtilRequestCffUpdate(void);
 int APS5_VABI sceShellCoreUtilGetCffConfig(void);
 int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void);
-int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(void);
+int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count);
 int APS5_VABI sceShellCoreUtilDebugGetCffInfo(void);
 int APS5_VABI sceShellCoreUtilDebugSetCffStatus(void);
 int APS5_VABI sceShellCoreUtilGetPeripheralConnectionSessionId(void);
@@ -255,6 +259,7 @@ int APS5_VABI sceCoredumpSequenceHandlerGetCoredumpStatusByAppId(void);
 int APS5_VABI sceCoredumpSequenceHandlerCancelCoredump(void);
 int APS5_VABI sceSystemServiceIsBgmPlaying(void);
 int APS5_VABI sceShellCoreUtilIsBgmPlaying(void);
+int APS5_VABI sceSystemServiceUnknown_M_KwxF0amiw(void);
 int APS5_VABI sceAppMessagingClearEventFlag(std::int32_t appId, std::uint64_t flags);
 int APS5_VABI sceAppMessagingReceiveMsg(AppMessagingMessage* message);
 int APS5_VABI sceAppMessagingSendMsg(std::uint32_t appId, std::uint32_t messageId, const void* data, std::size_t size, std::uint32_t flags);
@@ -353,7 +358,7 @@ int APS5_VABI sceShellCoreUtilAcquireSharePlayCpuBudget();
 int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t handle);
 int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32_t* status, std::int32_t* result);
 int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* handle);
-int APS5_VABI sceShellCoreUtilActivateIsActivated(std::intptr_t handle, bool* activated);
+int APS5_VABI sceShellCoreUtilActivateIsActivated(std::int32_t type, bool* activated);
 int APS5_VABI sceShellCoreUtilActivateRecordActivation();
 int APS5_VABI sceShellCoreUtilActivateStart(std::intptr_t handle);
 int APS5_VABI sceShellCoreUtilActivateStartAsync(std::intptr_t handle);

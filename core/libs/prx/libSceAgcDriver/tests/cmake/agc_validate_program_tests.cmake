@@ -1,0 +1,8 @@
+add_test_executable(agc_validate_program_tests EXCLUDE_FROM_ALL tests/ValidateProgram.cpp)
+target_link_libraries(agc_validate_program_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_validate_program_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_validate_program_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_validate_program_tests)
+endif()

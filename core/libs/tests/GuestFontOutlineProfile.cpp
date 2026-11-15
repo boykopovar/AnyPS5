@@ -114,6 +114,12 @@ int main() {
     Require(sceFontGetFontGlyphsOutlineProfile(plain, &profile) == SCE_FONT_OK && Zero(profile));
 
     for (FontHandle font : {profiled, plain, shortMaxp}) Require(sceFontCloseFont(font) == SCE_FONT_OK);
+    Require(sceFontDestroyLibrary(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontLibrary nullLib = nullptr;
+    Require(sceFontDestroyLibrary(&nullLib) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontMemoryTerm(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontMemory badMem{};
+    Require(sceFontMemoryTerm(&badMem) == SCE_FONT_ERROR_INVALID_MEMORY);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
     std::puts("Font outline profile tests passed");

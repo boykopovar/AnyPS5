@@ -10,8 +10,19 @@ const codes = {
     NumpadDivide: 'Keypad /', NumpadMultiply: 'Keypad *', NumpadSubtract: 'Keypad -',
     NumpadAdd: 'Keypad +', NumpadEnter: 'Keypad Enter', NumpadDecimal: 'Keypad .',
     NumpadEqual: 'Keypad =', NumpadComma: 'Keypad ,', ContextMenu: 'Application',
+    NumpadBackspace: 'Keypad Backspace', NumpadClear: 'Keypad Clear', NumpadClearEntry: 'Keypad ClearEntry',
+    NumpadParenLeft: 'Keypad (', NumpadParenRight: 'Keypad )',
+    NumpadMemoryAdd: 'Keypad MemAdd', NumpadMemoryClear: 'Keypad MemClear',
+    NumpadMemoryRecall: 'Keypad MemRecall', NumpadMemoryStore: 'Keypad MemStore',
+    NumpadMemorySubtract: 'Keypad MemSubtract',
     ControlLeft: 'Left Ctrl', ControlRight: 'Right Ctrl', ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift',
-    AltLeft: 'Left Alt', AltRight: 'Right Alt', MetaLeft: 'Left GUI', MetaRight: 'Right GUI'
+    AltLeft: 'Left Alt', AltRight: 'Right Alt', MetaLeft: 'Left GUI', MetaRight: 'Right GUI',
+    MediaTrackNext: 'AudioNext', MediaTrackPrevious: 'AudioPrev', MediaStop: 'AudioStop',
+    MediaPlayPause: 'AudioPlay', MediaSelect: 'MediaSelect',
+    AudioVolumeMute: 'Mute', AudioVolumeUp: 'VolumeUp', AudioVolumeDown: 'VolumeDown',
+    BrowserSearch: 'AC Search', BrowserHome: 'AC Home', BrowserBack: 'AC Back',
+    BrowserForward: 'AC Forward', BrowserStop: 'AC Stop', BrowserRefresh: 'AC Refresh',
+    BrowserFavorites: 'AC Bookmarks'
 };
 
 export function captureKey(event) {

@@ -26,6 +26,12 @@ int main() {
         Require(ValidateVideoOutOutputMode_nid_no_patch(mode, &options, 240) == unsupported, "unimplemented output mode was accepted on a fast display");
     }
     Require(ValidateVideoOutOutputMode_nid_no_patch(0xd000000a, &options, 240) == unknownMode, "unknown output mode was accepted");
+    for (int refresh : {59, 60, 119, 120, 144}) {
+        Require(VideoOutOutputSupport_nid_no_patch(15, &options, refresh) == (refresh < 120 ? 0 : 1), "mode 15 support did not answer 0 or 1 for the display");
+        Require(VideoOutOutputSupport_nid_no_patch(1, &options, refresh) == 1, "default mode was not supported");
+        Require(VideoOutOutputSupport_nid_no_patch(4, &options, refresh) == unsupported, "mode 4 did not stay unsupported");
+        Require(VideoOutOutputSupport_nid_no_patch(0xd000000a, &options, refresh) == unknownMode, "unknown mode did not stay unknown");
+    }
     VideoOutOutputOptions changed = options;
     changed.internalData[0] = 0;
     Require(ValidateVideoOutOutputMode_nid_no_patch(15, &changed, 120) == invalidValue, "mode 15 accepted invalid output options");
@@ -33,12 +39,5 @@ int main() {
     changed = options;
     changed.internalData[3] = 0xffffffff;
     Require(ValidateVideoOutOutputMode_nid_no_patch(15, &changed, 120) == 0, "mode 15 rejected the free options word");
-    bool thrown = false;
-    try {
-        ValidateVideoOutOutputMode_nid_no_patch(18, &options, 120);
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-    Require(thrown, "unsettled mode 18 did not throw");
-
+    Require(ValidateVideoOutOutputMode_nid_no_patch(18, &options, 120) == unknownMode, "mode 18 was not answered with the unknown-mode code");
 }

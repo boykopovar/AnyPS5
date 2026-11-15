@@ -66,6 +66,17 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::PackFloat2x16Rtz:
         case IrOpcode::FPAdd16x2:
         case IrOpcode::FPMul16x2:
+        case IrOpcode::FPFma16x2:
+        case IrOpcode::IAdd16x2:
+        case IrOpcode::ISub16x2:
+        case IrOpcode::IMul16x2:
+        case IrOpcode::ShiftLeftLogical16x2:
+        case IrOpcode::ShiftRightLogical16x2:
+        case IrOpcode::ShiftRightArithmetic16x2:
+        case IrOpcode::SMin16x2:
+        case IrOpcode::SMax16x2:
+        case IrOpcode::UMin16x2:
+        case IrOpcode::UMax16x2:
         case IrOpcode::BitFieldInsert:
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract:
@@ -165,6 +176,7 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::FPAdd64:
         case IrOpcode::FPMul64:
         case IrOpcode::FPFma64:
+        case IrOpcode::FPFmaScale32:
         case IrOpcode::FPMin64:
         case IrOpcode::FPMax64:
         case IrOpcode::FPSaturate64:
@@ -409,19 +421,18 @@ public:
         if (left == right || right == None) return left;
         if (left == None) return right;
         if (left == All || right == All) return All;
-        std::vector<std::uint32_t> merged;
-        merged.reserve(sets[left].size() + sets[right].size());
-        std::set_union(sets[left].begin(), sets[left].end(), sets[right].begin(), sets[right].end(), std::back_inserter(merged));
-        return keep(left, right, std::move(merged));
+        scratch.clear();
+        std::set_union(sets[left].begin(), sets[left].end(), sets[right].begin(), sets[right].end(), std::back_inserter(scratch));
+        return keep(left, right);
     }
 
     MaskSet Intersection(MaskSet left, MaskSet right) {
         if (left == right || right == All) return left;
         if (left == All) return right;
         if (left == None || right == None) return None;
-        std::vector<std::uint32_t> common;
-        std::set_intersection(sets[left].begin(), sets[left].end(), sets[right].begin(), sets[right].end(), std::back_inserter(common));
-        return keep(left, right, std::move(common));
+        scratch.clear();
+        std::set_intersection(sets[left].begin(), sets[left].end(), sets[right].begin(), sets[right].end(), std::back_inserter(scratch));
+        return keep(left, right);
     }
 
     [[nodiscard]] bool Contains(MaskSet set, std::uint32_t mask) const {
@@ -433,17 +444,18 @@ public:
     }
 
 private:
-    MaskSet keep(MaskSet left, MaskSet right, std::vector<std::uint32_t>&& result) {
+    MaskSet keep(MaskSet left, MaskSet right) {
         steps += sets[left].size() + sets[right].size();
-        if (result.empty()) return None;
-        if (result.size() == sets[left].size()) return left;
-        if (result.size() == sets[right].size()) return right;
-        sets.push_back(std::move(result));
+        if (scratch.empty()) return None;
+        if (scratch.size() == sets[left].size()) return left;
+        if (scratch.size() == sets[right].size()) return right;
+        sets.push_back(scratch);
         return static_cast<MaskSet>(sets.size() - 1u);
     }
 
     std::uint64_t& steps;
     std::vector<std::vector<std::uint32_t>> sets;
+    std::vector<std::uint32_t> scratch;
 };
 
 class Components {

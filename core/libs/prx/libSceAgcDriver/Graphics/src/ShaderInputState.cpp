@@ -6,6 +6,9 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -19,7 +22,9 @@ namespace {
 constexpr std::uint32_t computeNumThreadX = 0x207;
 constexpr std::uint32_t computeNumThreadY = 0x208;
 constexpr std::uint32_t computeNumThreadZ = 0x209;
+constexpr std::uint32_t computePgmRsrc1 = 0x212;
 constexpr std::uint32_t computePgmRsrc2 = 0x213;
+constexpr std::uint32_t computePgmRsrc3 = 0x228;
 
 constexpr std::uint32_t spiPsInputCntl0 = 0x191;
 constexpr std::uint32_t spiPsInputEna = 0x1B3;
@@ -27,6 +32,9 @@ constexpr std::uint32_t spiPsInputAddr = 0x1B4;
 constexpr std::uint32_t spiPsInControl = 0x1B6;
 constexpr std::uint32_t spiBarycCntl = 0x1B8;
 constexpr std::uint32_t dbShaderControl = 0x203;
+constexpr std::uint32_t dbRenderOverride = 0x003;
+constexpr std::uint32_t paScVportZmin0 = 0x0B4;
+constexpr std::uint32_t paScVportZmax0 = 0x0B5;
 constexpr std::uint32_t spiShaderColFormat = 0x1C5;
 constexpr std::uint32_t defaultPixelInputs = 0x2u;
 
@@ -81,6 +89,10 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
         scratchDwords = agcShader.scratch_size_dw_per_thread;
         if (scratchDwords == 0) throw std::runtime_error("AGC graphics: COMPUTE_PGM_RSRC2.SCRATCH_EN with a zero scratch size");
     }
+    NoteRegisterRead(RegisterBank::Shader, computePgmRsrc3);
+    const auto rsrc3 = shader.find(computePgmRsrc3);
+    const std::uint32_t sharedVgprBlocks = rsrc3 == shader.end() ? 0u : rsrc3->second & 0xfu;
+    const std::uint32_t granulatedVgprCount = sharedVgprBlocks == 0u ? 0u : read(shader, computePgmRsrc1, RegisterBank::Shader) & 0x3fu;
     // Debug aid: APS5_LDS_SLACK=<dwords> grows every dispatch's LDS allocation by that much, to tell
     // whether a program depends on addresses past its declared allocation.
     static const std::uint32_t ldsSlack = [] { const char* text = std::getenv("APS5_LDS_SLACK"); return text ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 0)) : 0u; }();
@@ -91,7 +103,9 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
         ((rsrc2 >> 10u) & 0x1u) != 0,
         ((rsrc2 >> 11u) & 0x3u) + 1u,
         {},
-        scratchDwords
+        scratchDwords,
+        granulatedVgprCount,
+        sharedVgprBlocks
     };
 }
 
@@ -105,11 +119,25 @@ ShaderRecompiler::ShaderPixelStageInfo DefaultUnexportedInputs(ShaderRecompiler:
     return pixel;
 }
 
-ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram) {
+ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram, std::span<const std::byte> shaderHeader) {
     const auto inControl = nullProgram ? 0u : read(context, spiPsInControl, RegisterBank::Context);
-    const auto inputNum = inControl & 0x3Fu;
-    if (inputNum > 32u) {
+    const auto stateInputNum = inControl & 0x3Fu;
+    if (stateInputNum > 32u) {
         throw std::runtime_error("AGC graphics: SPI_PS_IN_CONTROL input count exceeds 32");
+    }
+    const auto primitiveInputNum = (inControl >> 9u) & 0x1Fu;
+    if (primitiveInputNum != 0) {
+        throw std::runtime_error("AGC graphics: SPI_PS_IN_CONTROL declares per-primitive pixel inputs");
+    }
+    std::uint32_t headerInputNum = 0;
+    if (!nullProgram && shaderHeader.size() >= sizeof(Shader)) {
+        Shader shader;
+        std::memcpy(&shader, shaderHeader.data(), sizeof(Shader));
+        headerInputNum = shader.num_input_semantics;
+    }
+    const auto inputNum = std::max(stateInputNum, headerInputNum);
+    if (inputNum > 32u) {
+        throw std::runtime_error("AGC graphics: pixel shader input count exceeds 32");
     }
     const auto ena = nullProgram ? defaultPixelInputs : read(context, spiPsInputEna, RegisterBank::Context);
     const auto addr = nullProgram ? defaultPixelInputs : read(context, spiPsInputAddr, RegisterBank::Context);
@@ -127,7 +155,13 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     }
     std::array<std::uint32_t, 32> interpolatorSettings{};
     for (std::uint32_t i = 0; i < inputNum; ++i) {
-        interpolatorSettings[i] = read(context, spiPsInputCntl0 + i, RegisterBank::Context);
+        if (i < stateInputNum) {
+            interpolatorSettings[i] = read(context, spiPsInputCntl0 + i, RegisterBank::Context);
+            continue;
+        }
+        NoteRegisterRead(RegisterBank::Context, spiPsInputCntl0 + i);
+        const auto control = context.find(spiPsInputCntl0 + i);
+        interpolatorSettings[i] = control == context.end() ? i : control->second;
     }
     const auto shaderControl = nullProgram ? 0u : read(context, dbShaderControl, RegisterBank::Context);
     // Bits 9 and 11 are EXEC_ON_HIER_FAIL and ALPHA_TO_MASK_DISABLE on GFX10; neither changes what the
@@ -143,6 +177,20 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     }
     const bool pixelKillEnable = ((shaderControl >> 6u) & 0x1u) != 0;
     const bool depthExportEnable = (shaderControl & 0x1u) != 0;
+    float depthExportMin = 0.0f;
+    float depthExportMax = 1.0f;
+    if (depthExportEnable) {
+        if ((read(context, dbRenderOverride, RegisterBank::Context) & 0x10000u) != 0) {
+            depthExportMin = -std::numeric_limits<float>::infinity();
+            depthExportMax = std::numeric_limits<float>::infinity();
+        } else {
+            depthExportMin = std::bit_cast<float>(read(context, paScVportZmin0, RegisterBank::Context));
+            depthExportMax = std::bit_cast<float>(read(context, paScVportZmax0, RegisterBank::Context));
+            if (!std::isfinite(depthExportMin) || !std::isfinite(depthExportMax) || depthExportMin > depthExportMax) {
+                throw std::runtime_error("AGC graphics: invalid viewport depth clamp bounds for depth export");
+            }
+        }
+    }
     const bool sampleMaskExportEnable = ((shaderControl >> 8u) & 0x1u) != 0;
     const bool stencilOperationValue = !nullProgram && StencilOperationValueReplaces(context);
     const bool stencilRefExportEnable = ((shaderControl >> 1u) & 0x1u) != 0 || stencilOperationValue;
@@ -176,6 +224,8 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .linearCentroid = loaded(PixelInput::LinearCentroid),
         .pixelKillEnable = pixelKillEnable,
         .depthExportEnable = depthExportEnable,
+        .depthExportMin = depthExportMin,
+        .depthExportMax = depthExportMax,
         .sampleMaskExportEnable = sampleMaskExportEnable,
         .earlyZ = PixelEarlyZ(shaderControl),
         .executeOnNoop = ((shaderControl >> 10u) & 0x1u) != 0,

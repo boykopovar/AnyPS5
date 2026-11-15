@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <array>
@@ -84,7 +85,7 @@ void runJobs(LibraryStore& store) {
 void enqueue(LibraryStore& store, VkDevice device, std::function<void()> job) {
     if (store.stopping) return;
     if (!store.worker.joinable()) {
-        store.worker = std::thread(runJobs, std::ref(store));
+        store.worker = Libc::StartHostThread(runJobs, std::ref(store));
         runningWorkers.fetch_add(1, std::memory_order_acq_rel);
     }
     auto& pending = store.pending[device];
@@ -260,7 +261,9 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     for (auto* next = static_cast<const VkBaseInStructure*>(rendering.pNext); next != nullptr; next = next->pNext) {
         if (next->sType != VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_NV) continue;
         const auto& counts = *reinterpret_cast<const VkAttachmentSampleCountInfoNV*>(next);
-        sampleCounts.emplace(std::vector<VkSampleCountFlagBits>(counts.pColorAttachmentSamples, counts.pColorAttachmentSamples + counts.colorAttachmentCount), counts.depthStencilAttachmentSamples);
+        std::vector<VkSampleCountFlagBits> colors;
+        if (counts.colorAttachmentCount != 0) colors.assign(counts.pColorAttachmentSamples, counts.pColorAttachmentSamples + counts.colorAttachmentCount);
+        sampleCounts.emplace(std::move(colors), counts.depthStencilAttachmentSamples);
     }
     const auto attachmentSamples = [](const std::pair<std::vector<VkSampleCountFlagBits>, VkSampleCountFlagBits>& counts) {
         return VkAttachmentSampleCountInfoNV{VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_NV, nullptr, static_cast<std::uint32_t>(counts.first.size()), counts.first.empty() ? nullptr : counts.first.data(), counts.second};

@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(linear_display_buffer_tests ${LIBS_INCLUDE_DIR}/tests/LinearDisplayBuffer.cpp)
+    target_include_directories(linear_display_buffer_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_link_libraries(linear_display_buffer_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(linear_display_buffer_tests)
+    add_test(NAME linear_display_buffer COMMAND linear_display_buffer_tests)
+    if(WIN32)
+        set_tests_properties(linear_display_buffer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

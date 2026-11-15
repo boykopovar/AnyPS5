@@ -1,0 +1,112 @@
+name: Sanitizers
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CONFIGURE: >-
+    -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+    -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    -DANYPS5_ENABLE_ASAN=ON
+  SANITIZER_FLAGS: -g1 -fsanitize=undefined -fno-sanitize=vptr
+
+jobs:
+  address-undefined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: submodules
+        name: Key the submodules on their commits
+        run: |
+          echo "key=$(git ls-files -s | awk '$1 == "160000" { print $2, $4 }' | cat - .gitmodules | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "ffmpeg=$(git rev-parse HEAD:3rdparty/ffmpeg-core)" >> "$GITHUB_OUTPUT"
+      - id: submodule-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/submodule-gitdirs.tar
+          key: submodule-gitdirs-${{ runner.os }}-${{ steps.submodules.outputs.key }}
+      - name: Check out the submodules
+        run: |
+          if [ -f "$RUNNER_TEMP/submodule-gitdirs.tar" ]; then tar -xf "$RUNNER_TEMP/submodule-gitdirs.tar"; fi
+          git submodule update --init --recursive --depth 1 --jobs 8
+      - if: steps.submodule-cache.outputs.cache-hit != 'true'
+        run: tar -cf "$RUNNER_TEMP/submodule-gitdirs.tar" .git/modules
+      - if: steps.submodule-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/submodule-gitdirs.tar
+          key: submodule-gitdirs-${{ runner.os }}-${{ steps.submodules.outputs.key }}
+      - name: Install the build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libx11-dev libxext-dev libxrandr-dev libasound2-dev libpulse-dev mesa-vulkan-drivers
+      - name: Free disk space for the sanitizer build
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: hendrikmuhs/ccache-action@v1.2.24
+        with:
+          key: sanitizers
+          max-size: 2G
+          save: ${{ github.ref == 'refs/heads/main' }}
+          evict-old-files: job
+      - id: ffmpeg-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: build/externals
+          key: ffmpeg-sanitizers-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
+      - id: configure
+        run: cmake -S . -B build $CONFIGURE "-DCMAKE_C_FLAGS=$SANITIZER_FLAGS" "-DCMAKE_CXX_FLAGS=$SANITIZER_FLAGS" "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown"
+      - if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: build/externals
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+      - name: Check that every test executable is registered with ctest
+        run: python3 tools/check_test_registration.py build
+      - name: Build, keeping on after a target fails so its tests report as not run
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        continue-on-error: true
+        run: cmake --build build -- -k 0
+      - if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        continue-on-error: true
+        run: cmake --build build --target libs -- -k 0
+      - name: Run every test under ASan and UBSan
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        working-directory: build
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          APS5_SKIP_TIMING_TESTS: 1
+        run: ctest --output-on-failure --timeout 300 --parallel 4 --output-log ctest.log --output-junit ctest.xml || true
+      - name: Summarize the sanitizer findings
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        run: >-
+          python3 tools/sanitizer_report.py build/ctest.xml --title "ASan and UBSan"
+          --known .github/sanitizer-known-failures.txt --sanitizer address --sanitizer undefined
+          --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: sanitizer-tests
+          path: |
+            build/ctest.log
+            build/ctest.xml
+          if-no-files-found: ignore

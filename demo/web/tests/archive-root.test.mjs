@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 register("./cdn-loader.mjs", import.meta.url, { data: { url: process.env.ANYPS5_TEST_ZIP_URL, path: process.env.ANYPS5_TEST_ZIP_PATH } });
-const { Archive, DirectoryWriter } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const webRoot = process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url));
+const { Archive, DirectoryWriter } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const { BlobWriter, Uint8ArrayReader, ZipWriter } = await import(process.env.ANYPS5_TEST_ZIP_URL);
 const header = new Uint8Array([127, 69, 76, 70]);
 
@@ -14,8 +15,66 @@ async function zipped(entries) {
   return writer.close();
 }
 
-const { packageArchive } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
+const { packageArchive } = await import(pathToFileURL(path.join(webRoot, "archive.mjs")));
 const libraryBundle = await zipped([["libs/provider.prx", false]]);
+for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"], ["sce_modules", "prx"]]) {
+  const entries = [["title/main.elf", false], ...moduleDirectories.map((name, index) => [`title/${name}/module${index}.prx`, false])];
+  const folder = entries.map(([name, , bytes = header]) => ({path: name, file: new Blob([bytes])}));
+  for (const selection of [await zipped(entries), folder]) {
+    const archive = new Archive(selection);
+    try {
+      const summary = await archive.inspect(() => {});
+      assert.equal(summary.root, "title/");
+      assert.equal(summary.modules, moduleDirectories.length);
+      assert.equal(summary.warnings.some(warning => warning.includes("module folder")), false);
+      const input = await archive.conversionInput("linux", false, () => {});
+      assert.deepEqual(input.modules.map(module => module.name).sort(), moduleDirectories.map((name, index) => `${name}/module${index}.prx`).sort());
+      const written = [];
+      const modules = input.modules.map(module => ({name: `app0/${module.name}.guest.prx`, bytes: header}));
+      await packageArchive(archive, {executable: header, modules}, "main", libraryBundle, {
+        async directory(name) { written.push(name); },
+        async file(name) { written.push(name); return new WritableStream(); }
+      }, () => {}, true);
+      for (const module of modules) assert(written.includes(module.name));
+    } finally { await archive.close(); }
+  }
+}
+for (const directory of ["Media/Modules", "Media/Plugins"]) {
+  for (const suffix of ["prx", "sprx", "suprx", "debug_prx", "bin"]) {
+    const name = `title/${directory}/provider.${suffix}`;
+    const entries = [["title/main.elf", false], [name, false]];
+    for (const selection of [await zipped(entries), entries.map(([path, , bytes = header]) => ({ path, file: new Blob([bytes]) }))]) {
+      const archive = new Archive(selection);
+      try {
+        await assert.rejects(archive.inspect(() => {}), {
+          message: `${directory}/provider.${suffix} is a Unity ELF module the web converter cannot relink. Use the native relinker with --module-dir ${directory}.`
+        });
+      } finally { await archive.close(); }
+    }
+  }
+}
+for (const directory of ["Media/Modules", "Media/Plugins"]) {
+  const archive = new Archive(await zipped([
+    ["title/main.elf", false],
+    [`title/${directory}/readme.txt`, false, new TextEncoder().encode("Unity asset")],
+    [`title/${directory}/provider.guest.prx`, false],
+    [`title/${directory}/encrypted.prx`, false, new Uint8Array([0x4f, 0x15, 0x3d, 0x1d])]
+  ]));
+  try {
+    const summary = await archive.inspect(() => {});
+    assert.equal(summary.root, "title/");
+    assert.equal(summary.modules, 0);
+    assert(summary.warnings.some(warning => warning.includes(`${directory}/encrypted.prx`) && warning.includes("SELF container")));
+  } finally { await archive.close(); }
+}
+for (const entries of [
+  [["main.elf", false], ["sce_module/a.prx", false], ["sce_modules/b.prx", false]],
+  [["main.elf", false], ["sce_module/", true], ["sce_modules/", true]]
+]) {
+  const archive = new Archive(await zipped(entries));
+  try { await assert.rejects(archive.inspect(() => {}), /Both sce_module and sce_modules/); }
+  finally { await archive.close(); }
+}
 for (const conflict of ["sce_module/provider.guest.prx/child", "sce_module/PROVIDER.GUEST.PRX/child", "sce_module/provider.guest.prx/"]) {
   const input = new Archive(await zipped([["main.elf", false], ["sce_module/provider.prx", false], [conflict, conflict.endsWith("/")]]));
   try {
@@ -112,7 +171,7 @@ for (const extra of [
   [...sidecars, ["other/resource", false, new Uint8Array([1])]]
 ]) {
   const archive = new Archive(await zipped([...app, ...extra]));
-  try { await assert.rejects(archive.inspect(() => {}), /exactly one executable ELF/); }
+  try { await assert.rejects(archive.inspect(() => {}), /This doesn't look like a PS5 app/); }
   finally { await archive.close(); }
 }
 
@@ -186,10 +245,10 @@ for (const directories of [[], parents, [...parents].reverse()]) {
   const originalSelf = globalThis.self;
   globalThis.self = { postMessage() {} };
   try {
-    const { downloadLibraries } = await import(pathToFileURL(path.join(process.argv[2], "worker.mjs")));
+    const { downloadLibraries } = await import(pathToFileURL(path.join(webRoot, "worker.mjs")));
     const bytes = Uint8Array.from({ length: 32 }, (_, index) => index);
     const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
-    const asset = { path: "libraries/linux-1234.zip", size: bytes.length, expandedBytes: 100, sha256 };
+    const asset = { path: `libraries/linux-${sha256}.zip`, size: bytes.length, expandedBytes: 100, sha256 };
     let cancelled = false;
     let pulled = 0;
     const configureDownload = (chunks, size = bytes.length) => {
@@ -236,8 +295,18 @@ try { assert.equal((await folder.inspect(() => {})).root, "outer/inner/title/");
 finally { await folder.close(); }
 
 const siblings = new Archive(await zipped([["outer/", true], ["outer/main.elf", false], ["other/resource", false]]));
-try { await assert.rejects(siblings.inspect(() => {}), /exactly one executable ELF/); }
+try { await assert.rejects(siblings.inspect(() => {}), /This doesn't look like a PS5 app/); }
 finally { await siblings.close(); }
+
+for (const [entries, message] of [
+  [[["photo.jpg", false, new Uint8Array([255, 216, 255])]], "This doesn't look like a PS5 app. Choose the dumped game folder (the one containing sce_sys and sce_module), or a ZIP of it."],
+  [[["sce_sys/param.json", false, new TextEncoder().encode("{}")]], "No game executable (eboot.bin) was found next to sce_sys. Make sure the dump is complete and decrypted."],
+  [[["main.elf", false], ["other.elf", false], ["sce_sys/param.json", false, new TextEncoder().encode("{}")]], "Found 2 executables next to sce_sys (main.elf, other.elf). The app folder should contain exactly one, usually eboot.bin."]
+]) {
+  const archive = new Archive(await zipped(entries));
+  try { await assert.rejects(archive.inspect(() => {}), { message }); }
+  finally { await archive.close(); }
+}
 
 for (const cleanupRejects of [false, true]) {
   const failure = new Error("input read failed");

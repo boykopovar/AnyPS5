@@ -1,9 +1,11 @@
+#include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MODULE_H
+#include FT_DRIVER_H
 
 #include <algorithm>
 #include <array>
@@ -15,6 +17,7 @@
 #include <filesystem>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 
 #ifdef _WIN32
@@ -30,6 +33,8 @@ struct Api {
     int (APS5_VABI *done)(GuestLibrary*);
     int (APS5_VABI *get)(GuestLibrary*, const char*, const char*, void*);
     int (APS5_VABI *set)(GuestLibrary*, const char*, const char*, const void*);
+    int (APS5_VABI *newMemoryFace)(GuestLibrary*, const unsigned char*, std::int64_t, std::int64_t, FreeType::GuestFaceRec**);
+    int (APS5_VABI *doneFace)(FreeType::GuestFaceRec*);
 };
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -63,8 +68,8 @@ static void Query(const Api& api, GuestLibrary* library, FT_Library native, cons
     }
 }
 
-template <typename TValue>
-static void Change(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+template <typename TResult, typename TValue>
+static void ChangeAs(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
     FT_Library nativeOther, const char* module, const char* property, TValue value) {
     std::array<unsigned char, 64> input{};
     input.fill(0xCC);
@@ -73,8 +78,116 @@ static void Change(const Api& api, GuestLibrary* library, FT_Library native, Gue
     const int expectedError = FT_Property_Set(native, module, property, NativePointer(value));
     Require(api.set(library, module, property, input.data() + 5) == expectedError);
     Require(input == before);
-    Query<TValue>(api, library, native, module, property);
-    Query<TValue>(api, other, nativeOther, module, property);
+    Query<TResult>(api, library, native, module, property);
+    Query<TResult>(api, other, nativeOther, module, property);
+}
+
+template <typename TValue>
+static void Change(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther, const char* module, const char* property, TValue value) {
+    ChangeAs<TValue>(api, library, native, other, nativeOther, module, property, value);
+}
+
+static void DistanceFieldProperties(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther) {
+    const std::array<std::int32_t, 9> integers{0, 1, 2, 8, 32, 33, -1, std::numeric_limits<std::int32_t>::min(),
+        std::numeric_limits<std::int32_t>::max()};
+    for (const char* module : {"sdf", "bsdf"}) {
+        Query<std::uint32_t>(api, library, native, module, "spread");
+        for (const auto value : integers) {
+            ChangeAs<std::uint32_t>(api, library, native, other, nativeOther, module, "spread", value);
+        }
+        for (const char* property : {"flip_sign", "flip_y"}) {
+            Query<std::int32_t>(api, library, native, module, property);
+            for (const auto value : integers) Change(api, library, native, other, nativeOther, module, property, value);
+        }
+        Query<std::int32_t>(api, library, native, module, "overlaps");
+        for (const auto value : {0u, 1u, 2u, 255u}) {
+            ChangeAs<std::int32_t>(api, library, native, other, nativeOther, module, "overlaps", static_cast<std::uint8_t>(value));
+        }
+    }
+}
+
+static void RendererHooks(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther) {
+    using Hooks = std::array<std::uint64_t, 4>;
+    Query<Hooks>(api, library, native, "ot-svg", "svg-hooks");
+    for (const auto& hooks : {Hooks{}, Hooks{1, 1, 1, 0}, Hooks{0, 1, 1, 1}, Hooks{1, 0, 1, 1}, Hooks{1, 1, 0, 1}}) {
+        Change(api, library, native, other, nativeOther, "ot-svg", "svg-hooks", hooks);
+    }
+    Hooks current{};
+    const bool supported = FT_Property_Get(native, "ot-svg", "svg-hooks", current.data()) == 0;
+    std::array<unsigned char, 64> input{};
+    input.fill(0xCC);
+    const Hooks installed{1, 1, 1, 1};
+    std::memcpy(input.data() + 5, installed.data(), sizeof(installed));
+    const auto before = input;
+    bool threw = false;
+    int error = 0;
+    try {
+        error = api.set(library, "ot-svg", "svg-hooks", input.data() + 5);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    if (!supported) Require(!threw && error == FT_Property_Set(native, "ot-svg", "svg-hooks", installed.data()));
+    Require(input == before);
+    Query<Hooks>(api, library, native, "ot-svg", "svg-hooks");
+    Query<Hooks>(api, other, nativeOther, "ot-svg", "svg-hooks");
+}
+
+static void UnknownProperties(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther) {
+    using Bytes = std::array<std::uint8_t, 32>;
+    Bytes value{};
+    value.fill(0x5A);
+    const std::array<std::array<const char*, 2>, 14> pairs{{
+        {"pcf", "no-long-family-names"}, {"pcf", "spread"}, {"sdf", "no-stem-darkening"}, {"bsdf", "svg-hooks"},
+        {"ot-svg", "spread"}, {"truetype", "hinting-engine"}, {"cff", "fallback-script"}, {"autofitter", "random-seed"},
+        {"autofitter", "spread"}, {"smooth", "spread"}, {"pfr", "no-stem-darkening"}, {"missing", "spread"},
+        {"", ""}, {"truetype", ""}
+    }};
+    for (const auto& pair : pairs) {
+        Query<Bytes>(api, library, native, pair[0], pair[1]);
+        Change(api, library, native, other, nativeOther, pair[0], pair[1], value);
+    }
+    Change(api, library, native, other, nativeOther, "pcf", "no-long-family-names", static_cast<std::uint8_t>(1));
+}
+
+static void QueryIncreaseXHeight(const Api& api, GuestLibrary* library, FT_Library native,
+    FreeType::GuestFaceRec* guestFace, FT_Face nativeFace) {
+    FT_Prop_IncreaseXHeight expected{};
+    expected.face = nativeFace;
+    expected.limit = 0xA5A5A5A5u;
+    const int expectedError = FT_Property_Get(native, "autofitter", "increase-x-height", &expected);
+    std::array<unsigned char, 64> storage{};
+    storage.fill(0xA5);
+    auto* carrier = storage.data() + 8;
+    std::memcpy(carrier, &guestFace, sizeof(guestFace));
+    auto expectedStorage = storage;
+    if (!expectedError) {
+        std::memcpy(expectedStorage.data() + 8 + offsetof(FreeType::GuestPropIncreaseXHeight, limit),
+            &expected.limit, sizeof(expected.limit));
+    }
+    const int actualError = api.get(library, "autofitter", "increase-x-height", carrier);
+    Require(actualError == expectedError);
+    Require(storage == expectedStorage);
+}
+
+static void ChangeIncreaseXHeight(const Api& api, GuestLibrary* library, FT_Library native,
+    FreeType::GuestFaceRec* guestFace, FT_Face nativeFace, std::uint32_t limit) {
+    std::array<unsigned char, 64> input{};
+    input.fill(0xCC);
+    auto* carrier = input.data() + 8;
+    std::memcpy(carrier, &guestFace, sizeof(guestFace));
+    std::memcpy(carrier + offsetof(FreeType::GuestPropIncreaseXHeight, limit), &limit, sizeof(limit));
+    const auto before = input;
+    FT_Prop_IncreaseXHeight nativeProp{};
+    nativeProp.face = nativeFace;
+    nativeProp.limit = limit;
+    const int expectedError = FT_Property_Set(native, "autofitter", "increase-x-height", &nativeProp);
+    const int actualError = api.set(library, "autofitter", "increase-x-height", carrier);
+    Require(actualError == expectedError);
+    Require(input == before);
 }
 
 static void Run(const Api& api) {
@@ -110,6 +223,22 @@ static void Run(const Api& api) {
             Change(api, library, native, other, nativeOther, module, "random-seed", value);
         }
     }
+    for (const auto* property : {"fallback-script", "default-script"}) {
+        Query<std::uint32_t>(api, library, native, "autofitter", property);
+        for (const auto script : {
+            999u,
+            0xFFFFFFFFu,
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_NONE),
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_LATIN),
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_CJK),
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_INDIC)
+        }) {
+            Change(api, library, native, other, nativeOther, "autofitter", property, script);
+        }
+    }
+    DistanceFieldProperties(api, library, native, other, nativeOther);
+    RendererHooks(api, library, native, other, nativeOther);
+    UnknownProperties(api, library, native, other, nativeOther);
     std::array<unsigned char, 64> output{};
     output.fill(0xA5);
     const auto before = output;
@@ -128,6 +257,40 @@ static void Run(const Api& api) {
     Require(output == before);
     Query<std::uint32_t>(api, library, native, "truetype", "interpreter-version");
     Query<std::uint32_t>(api, other, nativeOther, "truetype", "interpreter-version");
+    const auto fontBytes = SquareGlyphFont(65, 600);
+    FreeType::GuestFaceRec* face1 = nullptr;
+    FT_Face nativeFace1 = nullptr;
+    Require(api.newMemoryFace(library, fontBytes.data(), static_cast<std::int64_t>(fontBytes.size()), 0, &face1) == 0);
+    Require(FT_New_Memory_Face(native, fontBytes.data(), static_cast<FT_Long>(fontBytes.size()), 0, &nativeFace1) == 0);
+    FreeType::GuestFaceRec* face2 = nullptr;
+    FT_Face nativeFace2 = nullptr;
+    Require(api.newMemoryFace(library, fontBytes.data(), static_cast<std::int64_t>(fontBytes.size()), 0, &face2) == 0);
+    Require(FT_New_Memory_Face(native, fontBytes.data(), static_cast<FT_Long>(fontBytes.size()), 0, &nativeFace2) == 0);
+    FreeType::GuestFaceRec* face3 = nullptr;
+    FT_Face nativeFace3 = nullptr;
+    Require(api.newMemoryFace(other, fontBytes.data(), static_cast<std::int64_t>(fontBytes.size()), 0, &face3) == 0);
+    Require(FT_New_Memory_Face(nativeOther, fontBytes.data(), static_cast<FT_Long>(fontBytes.size()), 0, &nativeFace3) == 0);
+    QueryIncreaseXHeight(api, library, native, face1, nativeFace1);
+    QueryIncreaseXHeight(api, library, native, face2, nativeFace2);
+    QueryIncreaseXHeight(api, other, nativeOther, face3, nativeFace3);
+    for (const auto limit : {0u, 6u, 20u, 42u, std::numeric_limits<std::uint32_t>::max()}) {
+        ChangeIncreaseXHeight(api, library, native, face1, nativeFace1, limit);
+        QueryIncreaseXHeight(api, library, native, face1, nativeFace1);
+        QueryIncreaseXHeight(api, library, native, face2, nativeFace2);
+    }
+    ChangeIncreaseXHeight(api, library, native, face2, nativeFace2, 20u);
+    QueryIncreaseXHeight(api, library, native, face2, nativeFace2);
+    QueryIncreaseXHeight(api, library, native, face1, nativeFace1);
+    ChangeIncreaseXHeight(api, library, native, face3, nativeFace3, 42u);
+    QueryIncreaseXHeight(api, library, native, face3, nativeFace3);
+    QueryIncreaseXHeight(api, other, nativeOther, face3, nativeFace3);
+    QueryIncreaseXHeight(api, library, native, face1, nativeFace1);
+    QueryIncreaseXHeight(api, library, native, face2, nativeFace2);
+    ChangeIncreaseXHeight(api, library, native, nullptr, nullptr, 99u);
+    QueryIncreaseXHeight(api, library, native, nullptr, nullptr);
+    Require(api.doneFace(face1) == 0 && FT_Done_Face(nativeFace1) == 0);
+    Require(api.doneFace(face2) == 0 && FT_Done_Face(nativeFace2) == 0);
+    Require(api.doneFace(face3) == 0 && FT_Done_Face(nativeFace3) == 0);
     Require(api.done(library) == 0 && api.done(other) == 0);
     Require(FT_Done_FreeType(native) == 0 && FT_Done_FreeType(nativeOther) == 0);
 }
@@ -161,6 +324,8 @@ int main(int argc, char** argv) {
     api.done = Import<decltype(api.done)>(module, "FT_Done_FreeType", "dH02CpEEcYk", patched);
     api.get = Import<decltype(api.get)>(module, "FT_Property_Get", "8fAMdZCnewA", patched);
     api.set = Import<decltype(api.set)>(module, "FT_Property_Set", "LsB538+IPrE", patched);
+    api.newMemoryFace = Import<decltype(api.newMemoryFace)>(module, "FT_New_Memory_Face", "40Wa2neSLM0", patched);
+    api.doneFace = Import<decltype(api.doneFace)>(module, "FT_Done_Face", "OgFczHko0w8", patched);
     Run(api);
 #ifdef _WIN32
     Require(FreeLibrary(module) != 0);

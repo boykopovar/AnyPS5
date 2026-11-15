@@ -6,10 +6,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver {
@@ -77,7 +79,8 @@ public:
     static constexpr std::string_view CallsName = "calls.bin";
     static constexpr std::string_view MemoryName = "memory.bin";
     static constexpr std::string_view HeaderName = "capture.json";
-    static constexpr std::string_view CallsMagic = "aps5-frame-calls 1\n";
+    static constexpr std::string_view CallsMagic = "aps5-frame-calls 2\n";
+    static constexpr std::string_view CallsMagicV1 = "aps5-frame-calls 1\n";
     static constexpr std::string_view MemoryMagic = "aps5-frame-memory 1\n";
     static constexpr std::size_t BlockBytes = 64u * 1024u;
     static constexpr std::size_t ChunkBytes = 4u * 1024u * 1024u;
@@ -114,24 +117,36 @@ private:
 class FrameCaptureReader {
 public:
     explicit FrameCaptureReader(const std::filesystem::path& directory);
+    ~FrameCaptureReader();
 
     const std::vector<FrameCall>& Calls() const;
     const std::vector<FrameMemoryChunk>& Chunks() const;
     const std::string& Header() const;
+    std::uint32_t Version() const;
     bool Truncated() const;
     void Read(const FrameMemoryChunk& chunk, std::span<std::byte> destination) const;
     std::vector<std::byte> Read(const FrameMemoryChunk& chunk) const;
 
 private:
-    std::filesystem::path directory;
+    struct Stream;
+
+    std::unique_ptr<Stream> takeStream() const;
+    void returnStream(std::unique_ptr<Stream> stream) const;
+
+    std::filesystem::path memoryPath;
+    mutable std::mutex streamMutex;
+    mutable std::vector<std::unique_ptr<Stream>> streams;
     std::vector<FrameCall> calls;
     std::vector<FrameMemoryChunk> chunks;
     std::string header;
+    std::uint32_t version = 2;
     bool truncated = false;
 };
 
 std::string_view FrameCallName(FrameCallKind kind);
 bool AllZero(std::span<const std::byte> bytes);
+using GuestRead = void (*)(std::uint64_t address, std::span<std::byte> destination);
+std::uint64_t ReadAroundRanges(std::uint64_t address, std::span<std::byte> bytes, std::span<const std::pair<std::uint64_t, std::uint64_t>> skipped, GuestRead read);
 
 }
 

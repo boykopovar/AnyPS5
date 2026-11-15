@@ -1,5 +1,6 @@
 import argparse
 import collections
+import functools
 import importlib.util
 import json
 import os
@@ -37,7 +38,12 @@ class Build:
                               encoding=self.encoding, check=True).stdout
 
     def absolute(self, path):
-        return os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        absolute = os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        for root in (self.path, self.source):
+            real = real_path(root)
+            if inside(absolute, real) and not inside(absolute, root):
+                return root.rstrip(os.sep) + absolute[len(real.rstrip(os.sep)):]
+        return absolute
 
     def key(self, path):
         return os.path.normcase(self.absolute(path))
@@ -76,17 +82,13 @@ class Build:
         return nodes
 
     def leaves(self):
-        nodes = self.walk(["all"])
         leaves, todo, seen = set(), ["all"], set()
         while todo:
-            name = todo.pop()
-            if name in seen or name not in nodes:
-                continue
-            seen.add(name)
-            if nodes[name]["phony"]:
-                todo.extend(nodes[name]["inputs"])
-            else:
-                leaves.add(name)
+            batch = sorted(set(todo) - seen)
+            seen.update(batch)
+            nodes = self.query(batch) if batch else {}
+            todo = [i for t in batch if nodes.get(t, {}).get("phony") for i in nodes[t]["inputs"]]
+            leaves.update(t for t in batch if t in nodes and not nodes[t]["phony"])
         return sorted(leaves)
 
     def outputs(self, paths):
@@ -110,7 +112,10 @@ class Build:
     def test_commands(self, names):
         found, visited, pending = collections.defaultdict(set), set(), [Path(self.path)]
         while pending:
-            directory = pending.pop().resolve()
+            try:
+                directory = pending.pop().resolve()
+            except RuntimeError:
+                continue
             file = directory / "CTestTestfile.cmake"
             if directory in visited or not file.is_file():
                 continue
@@ -135,6 +140,11 @@ class Build:
     def target(self, test):
         command = test.get("command") or []
         return self.output(command[0]) if command else None
+
+
+@functools.lru_cache(maxsize=None)
+def real_path(path):
+    return os.path.realpath(path)
 
 
 def inside(path, root):
@@ -162,6 +172,24 @@ def changed_paths(path):
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def dependency_path(data, base):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        if sys.platform != "win32":
+            raise
+        return data.decode("mbcs")
+    if sys.platform != "win32":
+        return text
+    try:
+        ansi = data.decode("mbcs")
+    except UnicodeDecodeError:
+        return text
+    if ansi != text and os.path.exists(os.path.join(base, ansi)) and not os.path.exists(os.path.join(base, text)):
+        return ansi
+    return text
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
@@ -178,7 +206,10 @@ def chunks(names):
 
 
 def load_graph(path):
-    graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    try:
+        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: test graph is nested too deeply") from error
     if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
         raise ValueError(f"{path}: invalid test graph (expected tests and closures objects)")
     fields = ("registered", "arguments", "sets", "requires", "depends")
@@ -191,6 +222,9 @@ def load_graph(path):
     for name, paths in graph["closures"].items():
         if not isinstance(name, str) or not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
             raise ValueError(f"{path}: invalid test graph closure {name!r}")
+    for name, test in graph["tests"].items():
+        if test["target"] is not None and test["target"] not in graph["closures"]:
+            raise ValueError(f"{path}: invalid test graph entry {name!r}: missing closure for {test['target']!r}")
     return graph
 
 
@@ -202,12 +236,15 @@ def dump(build, out):
         if not line.startswith(b" ") and b": #deps" in line:
             current = build.key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(line.strip().decode("utf-8"))
+            path = build.repo(dependency_path(line.strip(), build.path))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()
     graph = listing["backtraceGraph"]
-    targets = {build.target(t) for t in listed} - {None}
+    arguments = {test["name"]: {build.output(path) for path in paths((test.get("command") or [])[1:])} - {None}
+                 for test in listed}
+    outputs = set(build.outputs(sorted(set().union(*arguments.values()))))
+    targets = ({build.target(t) for t in listed} - {None}) | outputs
     nodes = build.walk(sorted(targets))
     closures = {}
     for target in sorted(targets):
@@ -230,13 +267,14 @@ def dump(build, out):
             registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        arguments = sorted({build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None})
-        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": arguments,
+        inputs = {build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
+        inputs.update(path for target in arguments[test["name"]] & outputs for path in closures[target])
+        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": sorted(inputs),
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
                                "depends": props.get("DEPENDS", []), "target": build.target(test)}
     with open(out, "w", encoding="utf-8") as file:
         json.dump({"tests": tests, "closures": closures}, file)
-    print(f"{len(tests)} tests, {len(closures)} test executables, {len(deps)} objects with header deps")
+    print(f"{len(tests)} tests, {len(closures)} build targets, {len(deps)} objects with header deps")
 
 
 def select(graph, changed, reasons=None):
@@ -259,20 +297,27 @@ def select(graph, changed, reasons=None):
                 reasons[name] += ["registration: " + path for path in sorted(files & set(test["registered"]))]
                 reasons[name] += ["directory: " + directory for directory in dirs
                                   if any(path.startswith(directory) for path in scope | set(test["registered"]))]
-    setups = collections.defaultdict(set)
+    setups, consumers = collections.defaultdict(set), collections.defaultdict(set)
     for name, test in tests.items():
         for fixture in test["sets"]:
             setups[fixture].add(name)
+        for fixture in test["requires"]:
+            consumers[fixture].add(name)
     todo = list(picked)
     while todo:
         name = todo.pop()
         test = tests[name]
-        for extra in set(test["depends"]).union(*(setups[f] for f in test["requires"])):
+        for extra in set(test["depends"]).union(*(setups[f] for f in test["requires"]),
+                                               *(consumers[f] for f in test["sets"])):
             if extra not in tests:
                 continue
             if reasons is not None:
-                fixture = set(test["requires"]) & set(tests[extra]["sets"])
-                kind = "fixture setup for: " if fixture else "dependency of: "
+                if set(test["requires"]) & set(tests[extra]["sets"]):
+                    kind = "fixture setup for: "
+                elif set(test["sets"]) & set(tests[extra]["requires"]):
+                    kind = "fixture consumer of: "
+                else:
+                    kind = "dependency of: "
                 reasons.setdefault(extra, []).append(kind + name)
             if extra not in picked:
                 picked.add(extra)
@@ -323,7 +368,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        try:
+            extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        except (OSError, UnicodeDecodeError) as error:
+            parser.error(f"{selected}: {error}")
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
     if args.command == "explain":
         try:

@@ -3,6 +3,7 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
 #endif
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -171,6 +172,32 @@ std::vector<std::string> MissingHostCpuFeatures(const HostCpuRegisters& register
     for (const auto& feature : HostCpuFeatures(registers))
         if (feature.Required && !feature.Present) missing.emplace_back(feature.Name);
     return missing;
+}
+
+namespace {
+
+HostCpuText PackText(const std::string& text) {
+    HostCpuText packed{};
+    std::memcpy(packed.value, text.data(), std::min(text.size(), sizeof(packed.value) - 1));
+    return packed;
+}
+
+}
+
+extern "C" {
+
+HostCpuRegisters ReadHostCpuRegisters_nid_no_patch() {
+    return ReadHostCpuRegisters();
+}
+
+HostCpuText HostCpuModel_nid_no_patch() {
+    return PackText(HostCpuModel());
+}
+
+HostCpuText MissingHostCpuFeatures_nid_no_patch(const HostCpuRegisters* registers) {
+    return PackText(Join(MissingHostCpuFeatures(*registers)));
+}
+
 }
 
 void CheckHostCpu(const HostCpuRegisters& registers, const std::string& model) {

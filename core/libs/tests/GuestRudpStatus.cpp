@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -32,6 +33,13 @@ int main() {
     Require(sceRudpGetStatus(nullptr, 0) == notInitialized);
     Require(sceRudpGetStatus(status.data(), statusSize + 1) == notInitialized);
     Require(status == untouched);
+    std::uint16_t mss = 0x5a5a;
+    Require(sceRudpGetMaxSegmentSize(&mss) == notInitialized);
+    Require(mss == 0x5a5a);
+    Require(sceRudpGetMaxSegmentSize(nullptr) == notInitialized);
+    Require(sceRudpProcessEvents(0) == notInitialized);
+    Require(sceRudpNetFlush() == notInitialized);
+    Require(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == notInitialized);
     Require(sceRudpEnd() == notInitialized);
     Require(sceRudpTerminate(0) == notInitialized);
 
@@ -42,11 +50,21 @@ int main() {
     for (std::size_t offset : {1u, 2u, 4u}) Require(sceRudpInit_nid_postfix(pool + offset, 0x1000) == memory);
     Require(sceRudpInit_nid_postfix(pool + 8, 0xC58) == 0);
     Require(sceRudpInit_nid_postfix(nullptr, 0) == alreadyInitialized);
+    Require(sceRudpGetMaxSegmentSize(nullptr) == invalidArgument);
+    Require(sceRudpGetMaxSegmentSize(reinterpret_cast<std::uint16_t*>(0x10)) == invalidArgument);
+    Require(sceRudpGetMaxSegmentSize(&mss) == 0);
+    Require(mss == 1410);
+    Require(sceRudpProcessEvents(0) == 0);
+    Require(sceRudpNetFlush() == 0);
+    Require(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == 0);
 
     Require(sceRudpGetStatus(nullptr, statusSize) == invalidArgument);
     Require(sceRudpGetStatus(nullptr, 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), 0) == invalidArgument);
     Require(sceRudpGetStatus(status.data(), statusSize + 1) == invalidArgument);
+    errno = 71;
+    Require(sceRudpGetStatus(reinterpret_cast<void*>(0x10), statusSize) == invalidArgument);
+    Require(errno == 71);
     Require(status == untouched);
 
     Require(sceRudpGetStatus(status.data(), statusSize) == 0);
@@ -56,7 +74,9 @@ int main() {
     int first = -1;
     int second = -1;
     Require(sceRudpCreateContext(Handler, nullptr, &first) == 0);
+    Require(sceRudpCreateContext(Handler, nullptr, reinterpret_cast<int*>(0x10)) == invalidArgument);
     Require(sceRudpCreateContext(Handler, nullptr, &second) == 0);
+    Require(second == first + 1);
     status.fill(0x5a);
     Require(sceRudpGetStatus(status.data(), statusSize) == 0);
     std::uint32_t contexts = 0;
@@ -81,6 +101,10 @@ int main() {
     Require(sceRudpEnd() == notInitialized);
     Require(sceRudpTerminate(second) == notInitialized);
     Require(sceRudpGetStatus(status.data(), statusSize) == notInitialized);
+    Require(sceRudpGetMaxSegmentSize(&mss) == notInitialized);
+    Require(sceRudpProcessEvents(0) == notInitialized);
+    Require(sceRudpNetFlush() == notInitialized);
+    Require(sceRudpNetReceived(0, nullptr, 0, nullptr, 0) == notInitialized);
     Require(sceRudpInit_nid_postfix(pool + 8, 0xC58) == 0);
     Require(sceRudpTerminate(second) == invalidContextId);
     Require(sceRudpEnd() == 0);

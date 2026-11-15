@@ -19,7 +19,12 @@ from test_guest_symbol_names import guest_module, imported_symbols, module_symbo
 from test_linux_load_alignment import fixture
 from test_windows_import_modules import consumer
 
-PROVIDER = "int provided(void) __asm__(\"\\\"%s\\\"\");\nint provided(void) { return 22; }\n"
+PROVIDER = "int provided(void) __asm__(\"\\\"%s\\\"\");\nint provided(void) { return %d; }\n"
+
+
+def padded(image):
+    image[9:16] = bytes(range(1, 8))
+    return image
 
 
 def guest_with_needed(symbols, needed):
@@ -48,17 +53,20 @@ def exporting_executable(name, info=0x12, other=0):
     return image
 
 
-def provider(work, name, symbol):
+def provider(work, name, symbol, value=22, host_libc=False):
     source = work / (name + ".c")
-    source.write_text(PROVIDER % symbol)
+    code = PROVIDER % (symbol, value)
+    if host_libc:
+        code = "#include <unistd.h>\n" + code + "int FixtureHostPid(void) { return getpid(); }\n"
+    source.write_text(code)
     library = work / (name + ".so")
     subprocess.run([os.environ.get("CC", "cc"), "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
     return library
 
 
-def run_consumer(relinker, host, case, library):
+def run_consumer(relinker, host, case, library, symbol="shared", expected=22):
     (case / "sce_module").mkdir(parents=True)
-    (case / "sce_module" / "consumer.prx").write_bytes(page_aligned(consumer("available.sprx", symbol="shared")))
+    (case / "sce_module" / "consumer.prx").write_bytes(padded(page_aligned(consumer("available.sprx", symbol=symbol, expected=expected))))
     image = main_fixture()
     code = bytes.fromhex("b83c000000bf2a0000000f05")
     image[0x4000:0x4000 + len(code)] = code
@@ -70,7 +78,7 @@ def run_consumer(relinker, host, case, library):
     assert result.returncode == 0, (result.stdout, result.stderr)
     module = case / "app0" / "sce_module" / "consumer.prx.guest.prx"
     assert "available.prx" in needed_libraries(module.read_bytes()), needed_libraries(module.read_bytes())
-    assert nid("shared") in module_symbols(module.read_bytes()), module_symbols(module.read_bytes())
+    assert nid(symbol) in imported_symbols(module.read_bytes()), imported_symbols(module.read_bytes())
     libraries = case / "libs"
     libraries.mkdir()
     for name in ("libc.prx", "libkernel.prx"):
@@ -90,7 +98,7 @@ def main():
 
         guest = relink(relinker, work / "guest", executable("libkernel_web.sprx", "shared"), {
             "user.sprx": guest_with_needed([("shared", True), ("BBBBBBBBBBB", False), ("CCCCCCCCCCC#C#C", False)], "libkernel_web.sprx"),
-            "plain.prx": guest_module([("DDDDDDDDDDD", False)]),
+            "plain.prx": padded(guest_module([("DDDDDDDDDDD", False)])),
         })
         assert imported_symbols(guest.read_bytes()) == {"shared#guest"}, imported_symbols(guest.read_bytes())
         modules = guest.parent / "app0" / "sce_module"
@@ -98,6 +106,8 @@ def main():
         assert symbols == ["shared#guest", nid("BBBBBBBBBBB"), "CCCCCCCCCCC"], symbols
         symbols = module_symbols((modules / "plain.prx.guest.prx").read_bytes())
         assert symbols == ["DDDDDDDDDDD"], symbols
+        header = (modules / "plain.prx.guest.prx").read_bytes()[:16]
+        assert header[7:16] == bytes(9), header.hex()
 
         dependencies = relink(relinker, work / "dependencies", executable("available.prx"), {
             "user.prx": module_with_needed((b"libSceLibcInternal.sprx", b"libkernel_web.sprx"), (0, 1)),
@@ -121,6 +131,18 @@ def main():
             assert result.returncode == 42, (result.returncode, result.stdout, result.stderr)
             result = run_consumer(relinker, host, work / "by-name", provider(work, "by-name", "shared"))
             assert result.returncode != 0 and nid("shared") in result.stderr, (result.returncode, result.stdout, result.stderr)
+            for label, symbol, expected in (("libc-nid", nid("getpid"), 42), ("libc-only", "FixtureUnrelated", 127)):
+                library = provider(work, label, symbol, value=0, host_libc=True)
+                assert needed_libraries(library.read_bytes()), "the host-libc control has no dynamic dependency"
+                control = subprocess.run([sys.executable, "-c",
+                                          "import ctypes,sys; library=ctypes.CDLL(sys.argv[1]); "
+                                          "assert library.FixtureHostPid() > 0; assert library.getpid() > 0",
+                                          str(library)], capture_output=True, text=True, timeout=30)
+                assert control.returncode == 0, (control.returncode, control.stdout, control.stderr)
+                result = run_consumer(relinker, host, work / (label + "-consumer"), library, symbol="getpid", expected=0)
+                assert result.returncode == expected, (label, result.returncode, result.stdout, result.stderr)
+                if expected == 127:
+                    assert "undefined symbol: " + nid("getpid") in result.stderr, result.stderr
     print("Linux guest named import tests passed")
 
 

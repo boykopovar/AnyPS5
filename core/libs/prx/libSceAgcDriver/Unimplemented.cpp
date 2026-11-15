@@ -11,6 +11,7 @@ constexpr int DEBUG_UNAVAILABLE = static_cast<int>(0x8A6C1000);
 constexpr int DRIVER_FEATURE_UNAVAILABLE = static_cast<int>(0x8A6D0001);
 constexpr int DRIVER_NULL_OUTPUT = static_cast<int>(0x8A6D0003);
 constexpr int GPU_RESET_UNAVAILABLE = static_cast<int>(0x8A6C0045);
+constexpr int MODULE_REGISTRATION_FAILED = static_cast<int>(0x8A6D0003);
 constexpr std::size_t TOOL_MEMORY_RANGE_SIZE = 12;
 
 }
@@ -49,13 +50,6 @@ int APS5_VABI sceAgcDriverGetSubmitValidationMode(uint32_t* mode) {
 int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void* config) {
     (void)config;
     return DEBUG_UNAVAILABLE;
-}
-
-int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* first, uint16_t* second) {
-    (void)first;
-    (void)second;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes) {
@@ -157,6 +151,46 @@ int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* rang
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 
+int APS5_VABI sceAgcDriverIsCoredumpValid() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSetTFRingDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverIsSuspendPointInFlightDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverReleaseRazorACQ() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSdmaCopyLinearBlocking() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverRegisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverDeregisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdSetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetSystemGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
 extern "C" {
 
@@ -191,6 +225,34 @@ int APS5_VABI sceAgcDriverReleaseHDRScopesACQ() {
 
 int APS5_VABI sceAgcDriverSetTargetRingForDiag() {
     return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverAcquireRazorACQ() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverGetPaDebugInterfaceVersion() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSetHsOffchipParamDirect() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSubmitMultiCommandBuffersDirect() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSubmitToRazorACQ() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSuspendPointSubmitDirect() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverModuleRegistration() {
+    return MODULE_REGISTRATION_FAILED;
 }
 
 int APS5_VABI sceAgcDriverSetValueToSharedGds() {

@@ -1,0 +1,3 @@
+add_library(libSceCustomMusicPlayReady4 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceCustomMusicPlayReady4 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceCustomMusicPlayReady4)

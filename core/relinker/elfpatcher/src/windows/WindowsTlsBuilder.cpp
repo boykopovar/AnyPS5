@@ -113,7 +113,7 @@ void trapInstruction(std::vector<PeSection>& sections, const std::uint32_t rva, 
 
 }
 
-PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva, const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::function<void(std::string_view)>& message) const {
+PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva, const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::function<void(std::string_view)>& message, const bool functionSymbolRoots) const {
     const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
@@ -122,7 +122,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     std::vector<GsTrap> gsTraps;
     std::vector<std::uint32_t> branchTargets;
     std::set<Domain::VirtualAddress> entryRoots;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots, message);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots, message, functionSymbolRoots);
     std::uint64_t scanned = 0;
 
     for (const auto& header : headers) {
@@ -134,7 +134,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         if (header.Type != 1 || (header.Flags & 1) == 0)
             continue;
         std::uint64_t decodedEnd = 0;
-        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+        for (auto instruction = std::lower_bound(instructions.begin(), instructions.end(), header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             if (scanned % 4096 == 0) report(7000 + 2000 * scanned / std::max<std::size_t>(instructions.size(), 1));
             ++scanned;
             const auto offset = *instruction - header.MappedAddress;
@@ -429,9 +429,10 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             if (instruction.RipDisplacement) {
                 const auto target = static_cast<std::int64_t>(instruction.Rva) + static_cast<std::int64_t>(bytes.size()) + std::bit_cast<std::int32_t>(Io::ReadU32(bytes, *instruction.RipDisplacement));
                 const auto displacement = target - (static_cast<std::int64_t>(code.GetRva()) + static_cast<std::int64_t>(bytes.size()));
-                if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                const bool addressSize32 = Codegen::X64InstructionDecoder{}.DecodeInstruction(bytes.data(), bytes.size()).AddressSize32;
+                if (!addressSize32 && (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()))
                     throw Domain::RelinkerException("Moved RIP-relative instruction exceeds rel32 range from its TLS stub", access.FileOffset);
-                Io::WriteU32(bytes, *instruction.RipDisplacement, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+                Io::WriteU32(bytes, *instruction.RipDisplacement, static_cast<std::uint32_t>(displacement));
             }
             if (instruction.BranchTarget) {
                 const auto displacement = static_cast<std::int64_t>(*instruction.BranchTarget) - (static_cast<std::int64_t>(code.GetRva()) + static_cast<std::int64_t>(bytes.size()));

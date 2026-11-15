@@ -742,6 +742,21 @@ def main():
                 assert offset >= 0, (name, stub.hex())
                 displacement = struct.unpack_from("<i", stub, offset + len(encoding))[0]
                 assert displacement == (0x10000 + target) - (stub_address + offset + len(encoding) + 4), (name, displacement)
+            eip_lea = bytes.fromhex("67 48 8d 0d 00 00 00 80")
+            eip_body = prologue + bytes.fromhex("64 48 33 03") + eip_lea + bytes.fromhex("b8 2a 00 00 00 5b c3")
+            convert("moved-eip-relative-lea", make_image("register", "unwind", body=eip_body), tls_address=0x124B)
+            pe = (work / "moved-eip-relative-lea.exe").read_bytes()
+            patched = pe_bytes_at(pe, 0x10000 + 0x124B, 5)
+            stub_address = 0x10000 + 0x124B + 5 + struct.unpack_from("<i", patched, 1)[0]
+            stub = pe_bytes_at(pe, stub_address, 128)
+            offset = stub.find(eip_lea[:4])
+            assert offset >= 0, stub.hex()
+            end = stub_address + offset + len(eip_lea)
+            effective = (end + struct.unpack_from("<i", stub, offset + 4)[0]) & 0xffffffff
+            assert effective == (0x10000 + 0x124F + len(eip_lea) - 0x80000000) & 0xffffffff, hex(effective)
+            rip_body = prologue + bytes.fromhex("64 48 33 03 48 8d 0d 00 00 00 80 b8 2a 00 00 00 5b c3")
+            convert("moved-rip-relative-lea-out-of-range", make_image("register", "unwind", body=rip_body),
+                    "Moved RIP-relative instruction exceeds rel32 range from its TLS stub", error_offset=0x124B)
         if args.group in ("all", "rejected"):
             for name, instruction in {
                 "short-before-return": bytes.fromhex("64 48 8b 03 c3"),

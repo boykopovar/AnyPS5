@@ -30,11 +30,11 @@ def executable_with_dependencies(libraries):
     return image
 
 
-def executable_needing(name):
+def executable_needing(name, leading=b"\0"):
     image = importing_executable([])
-    strings = b"\0" + name.encode() + b"\0"
+    strings = leading + name.encode() + b"\0"
     image[STRINGS:STRINGS + len(strings)] = strings
-    tags = [(1, 1), (5, STRINGS), (10, len(strings)), (6, SYMBOLS), (11, 24),
+    tags = [(1, len(leading)), (5, STRINGS), (10, len(strings)), (6, SYMBOLS), (11, 24),
             (7, RELOCATIONS), (8, 0), (9, 24), (0, 0)]
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, DYNAMIC + index * 16, *tag)
@@ -60,6 +60,19 @@ def dependency_names(relinker, work):
                 name, flags, result.returncode, stderr)
 
 
+def string_table_without_leading_nul(relinker, work):
+    source = work / "leading-name.elf"
+    source.write_bytes(executable_needing("Party.prx", b""))
+    for target, flags in enumerate(([], ["--lazy-binding"], ["--windows"], ["--macos"])):
+        output = work / f"leading-name-{target}.out"
+        result = subprocess.run([str(relinker), "--skip-sce-module", *flags, str(source), str(output)],
+                                capture_output=True, timeout=20)
+        stderr = result.stderr.replace(b"\r\n", b"\n")
+        expected = f"FAIL: Dynamic string table does not begin with a NUL byte (offset {STRINGS:#x})\n".encode()
+        assert result.returncode == 2 and stderr.startswith(expected) and not output.exists(), (
+            flags, result.returncode, stderr)
+
+
 def slash_dependency(relinker, work):
     for target, flags in enumerate(([], ["--windows"], ["--macos"])):
         case = work / f"slash-{target}"
@@ -79,6 +92,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-libraries-") as directory:
         work = Path(directory)
         dependency_names(relinker, work)
+        string_table_without_leading_nul(relinker, work)
         slash_dependency(relinker, work)
         for windows in (False, True):
             for bundled in (False, True):

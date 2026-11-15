@@ -1,5 +1,8 @@
 #include "prx/libSceAgc/Misc/include/StaticBuffer.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#ifdef __APPLE__
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
+#endif
 
 #include <array>
 #include <cstdint>
@@ -9,7 +12,11 @@
 
 namespace {
 
+#ifdef __APPLE__
+constexpr std::uintptr_t StaticTable = AgcDriver::DriverDetail::RetargetPs5DriverMemory(0xfe0040000ull) + GuestArena::GuestAddressOffset;
+#else
 constexpr std::uintptr_t StaticTable = 0xfe0040000ull + GuestArena::GuestAddressOffset;
+#endif
 constexpr int InvalidStaticBuffer = static_cast<int>(0x8a6c000bu);
 
 void check(bool condition, const char* message) {
@@ -44,6 +51,15 @@ void testQwords() {
     check(sceAgcGetStaticQword(3, &value) == 0 && value == 0xfedcba9876543210ull, "static qword 3 did not read back");
     std::array<std::uint64_t, 2> buffer{};
     check(sceAgcGetStaticBuffer(1, buffer.data()) == 0 && buffer[0] == 0x0123456789abcdefull, "static qword 0 is not the first half of static buffer 1");
+    std::uint64_t routine = 0;
+    std::memcpy(&routine, reinterpret_cast<const void*>(StaticTable + 96u), sizeof(routine));
+    check(sceAgcSetStaticQword(9, 0x5a5a5a5a5a5a5a5aull) == 0, "static qword 9, the last one inside the table, was rejected");
+    check(sceAgcSetStaticQword(10, 0xa5a5a5a5a5a5a5a5ull) == InvalidStaticBuffer, "static qword index 10 was accepted");
+    check(sceAgcGetStaticQword(10, &value) == InvalidStaticBuffer, "static qword index 10 was read");
+    check(sceAgcSetStaticQword(0xffffffffu, 0) == InvalidStaticBuffer, "static qword index 0xffffffff was accepted");
+    std::uint64_t after = 0;
+    std::memcpy(&after, reinterpret_cast<const void*>(StaticTable + 96u), sizeof(after));
+    check(after == routine, "rejected static qword writes changed the FS routine table");
 }
 
 }

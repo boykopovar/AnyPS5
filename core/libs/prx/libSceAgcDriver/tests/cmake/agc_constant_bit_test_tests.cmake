@@ -1,0 +1,8 @@
+add_test_executable(agc_constant_bit_test_tests EXCLUDE_FROM_ALL tests/ConstantBitTest.cpp)
+target_link_libraries(agc_constant_bit_test_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_constant_bit_test_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_constant_bit_test_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_constant_bit_test_tests)
+endif()

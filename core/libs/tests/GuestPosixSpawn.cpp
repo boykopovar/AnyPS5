@@ -12,6 +12,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -22,8 +23,11 @@
 #else
 extern "C" int kill(int, int);
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
-#if defined(__linux__)
+#ifndef _WIN32
 extern char** environ;
 #endif
 
@@ -103,6 +107,23 @@ static void CheckAttributes() {
     Check(ThrowsInvalidArgument([&] { posix_spawnattr_setsigdefault_nid_postfix(&attributes, nullptr); }));
     Check(ThrowsInvalidArgument([] { posix_spawnattr_init_nid_postfix(nullptr); }));
 
+    auto* const unmapped = reinterpret_cast<PosixSpawnAttributes**>(0x10);
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_init_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_destroy_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setflags_nid_postfix(unmapped, 1); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getflags_nid_postfix(unmapped, &flags); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getflags_nid_postfix(&attributes, reinterpret_cast<std::int16_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getpgroup_nid_postfix(&attributes, reinterpret_cast<std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getschedparam_nid_postfix(&attributes, reinterpret_cast<std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getschedpolicy_nid_postfix(&attributes, reinterpret_cast<std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getsigdefault_nid_postfix(&attributes, reinterpret_cast<GuestSignalSet*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getsigmask_nid_postfix(&attributes, reinterpret_cast<GuestSignalSet*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setsigdefault_nid_postfix(&attributes, reinterpret_cast<const GuestSignalSet*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setschedparam_nid_postfix(&attributes, reinterpret_cast<const std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setsigmask_nid_postfix(&attributes, reinterpret_cast<const GuestSignalSet*>(0x10)); }));
+    Check(attributes->schedulingPriority == 450 && std::memcmp(&attributes->signalMask, &mask, sizeof(mask)) == 0
+          && std::memcmp(&attributes->signalDefault, &defaults, sizeof(defaults)) == 0);
+
     Check(posix_spawnattr_destroy_nid_postfix(&attributes) == 0);
     Check(posix_spawnattr_destroy_nid_postfix(&uninitialized) == 0);
 }
@@ -139,6 +160,12 @@ static void CheckFileActions() {
     Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addopen_nid_postfix(&actions, 1, nullptr, 0, 0); }));
     Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_destroy_nid_postfix(&uninitialized); }));
     Check(ThrowsInvalidArgument([] { posix_spawn_file_actions_init_nid_postfix(nullptr); }));
+    auto* const unmapped = reinterpret_cast<PosixSpawnFileActions**>(0x10);
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_init_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_destroy_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addclose_nid_postfix(unmapped, 1); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_adddup2_nid_postfix(unmapped, 1, 2); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addopen_nid_postfix(unmapped, 1, "/app0/a", 0, 0); }));
     Check(actions->actions.size() == 4);
 
     Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0);
@@ -200,6 +227,10 @@ static void CheckSpawn() {
     Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, "missing.elf", nullptr, &uninitializedAttributes, arguments, nullptr); }));
     Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
     Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
+    Check(posix_spawn_nid_postfix(nullptr, missing.c_str(), &actions, &attributes, arguments, environment) == NoSuchFile);
+    Check(posix_spawnp_nid_postfix(nullptr, "missing.elf", &actions, &attributes, arguments, nullptr) == NoSuchFile);
+    Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(nullptr, nullptr, nullptr, nullptr, arguments, nullptr); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(nullptr, nullptr, nullptr, nullptr, arguments, nullptr); }));
 
     Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0 && posix_spawnattr_destroy_nid_postfix(&attributes) == 0);
     std::filesystem::remove_all(directory);
@@ -211,13 +242,21 @@ static std::filesystem::path OwnExecutablePath() {
     const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
     own.resize(length);
     return std::filesystem::path(own);
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    std::error_code error;
+    if (_NSGetExecutablePath(executable.data(), &size) != 0) return {};
+    return std::filesystem::canonical(executable.data(), error);
 #else
     std::error_code error;
     return std::filesystem::read_symlink("/proc/self/exe", error);
 #endif
 }
 
-static std::int32_t SpawnChild(const char* role) {
+static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId, bool usePath = false,
+    PosixSpawnFileActions** actions = nullptr, int expectedResult = 0) {
     const auto own = OwnExecutablePath();
     const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
     std::error_code error;
@@ -251,9 +290,17 @@ static std::int32_t SpawnChild(const char* role) {
     for (auto& entry : entries)
         environment.push_back(entry.data());
     environment.push_back(nullptr);
+    if (usePath) {
+        Check(posix_spawnp_nid_postfix(processId, program, actions, nullptr, arguments, environment.data()) == expectedResult);
+    } else {
+        Check(posix_spawn_nid_postfix(processId, program, actions, nullptr, arguments, environment.data()) == expectedResult);
+    }
+    return processId != nullptr ? *processId : 0;
+}
+
+static std::int32_t SpawnChild(const char* role) {
     std::int32_t processId = 0;
-    Check(posix_spawn_nid_postfix(&processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
-    Check(processId > 0);
+    Check(SpawnChildExplicit(role, &processId) > 0);
     return processId;
 }
 
@@ -261,6 +308,72 @@ static void CleanupChild() {
     std::error_code error;
     std::filesystem::remove(OwnExecutablePath().parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + OwnExecutablePath().extension().string()).c_str())), error);
     std::filesystem::remove_all(std::filesystem::current_path() / "app0", error);
+}
+
+static void CheckOrderedFileActions(const std::string& order) {
+    std::fprintf(stderr, "Checking spawn file actions: %s\n", order.c_str());
+    const auto app0 = std::filesystem::current_path() / "app0";
+    Check(std::filesystem::create_directories(app0) || std::filesystem::exists(app0));
+    PosixSpawnFileActions* actions = nullptr;
+    Check(posix_spawn_file_actions_init_nid_postfix(&actions) == 0);
+    const int savedOutput = dup_nid_postfix(1);
+    Check(savedOutput >= 0);
+    const int parentOutput = open_nid_postfix("/app0/spawn-parent.txt", 0x601, 0600);
+    Check(parentOutput >= 0);
+    Check(dup2_nid_postfix(parentOutput, 1) == 1);
+    Check(close_nid_postfix(parentOutput) == 0);
+    const bool closed = order == "close-dup" || order == "close-self-dup";
+    const bool reverse = order == "dup-open";
+    const bool self = order == "open-self-dup" || order == "close-self-dup";
+    const bool chain = order == "dup-replace-dup";
+    const bool untouched = order == "untouched-self-dup";
+    if (reverse || chain)
+        Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
+    if (closed) {
+        Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 1) == 0);
+    } else if (!untouched) {
+        Check(posix_spawn_file_actions_addopen_nid_postfix(&actions, 1, "/app0/spawn-child.txt", 0x601, 0600) == 0);
+    }
+    if (chain) {
+        Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 2, 1) == 0);
+        Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 2) == 0);
+        Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
+    } else if (!reverse) {
+        if (self || untouched)
+            Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 1) == 0);
+        if (!closed || !self)
+            Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
+    }
+    std::int32_t processId = 0;
+    SpawnChildExplicit("child-streams", &processId, false, &actions, closed ? BadDescriptor : 0);
+    Check(dup2_nid_postfix(savedOutput, 1) == 1);
+    Check(close_nid_postfix(savedOutput) == 0);
+    Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0);
+    if (closed) {
+        Check(processId == 0);
+    } else {
+        int status = -1;
+        Check(waitpid_nid_postfix(processId, &status, 0) == processId);
+        Check(status == 0);
+        std::ifstream child(app0 / "spawn-child.txt", std::ios::binary);
+        const std::string childOutput((std::istreambuf_iterator<char>(child)), std::istreambuf_iterator<char>());
+        Check((childOutput.find("spawn-stdout") != std::string::npos) == (!chain && !untouched));
+        Check((childOutput.find("spawn-stderr") != std::string::npos) == (!reverse && !chain && !untouched));
+        std::ifstream parent(app0 / "spawn-parent.txt", std::ios::binary);
+        const std::string originalOutput((std::istreambuf_iterator<char>(parent)), std::istreambuf_iterator<char>());
+        Check((originalOutput.find("spawn-stdout") != std::string::npos) == (chain || untouched));
+        Check((originalOutput.find("spawn-stderr") != std::string::npos) == (reverse || chain || untouched));
+    }
+    CleanupChild();
+}
+
+static void CheckSpawnNullProcessId(bool usePath) {
+    Check(SpawnChildExplicit("child-exit-42", nullptr, usePath) == 0);
+    int status = -1;
+    const int reaped = waitpid_nid_postfix(-1, &status, 0);
+    Check(reaped > 0);
+    Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 42);
+    CleanupChild();
 }
 
 static void CheckSpawnedChild(const char* role, int expectedCode) {
@@ -341,15 +454,24 @@ static void CheckTerminatedChild(const char* role, unsigned code, int guestSigna
 
 int main() {
     if (const char* role = std::getenv("ANYPS5_POSIX_SPAWN_ROLE")) {
+        if (std::strcmp(role, "child-streams") == 0) {
+            constexpr char output[] = "spawn-stdout";
+            constexpr char error[] = "spawn-stderr";
+            Check(write_nid_postfix(1, output, sizeof(output) - 1) == sizeof(output) - 1);
+            Check(write_nid_postfix(2, error, sizeof(error) - 1) == sizeof(error) - 1);
+            std::_Exit(0);
+        }
         if (std::strcmp(role, "child-exit-42") == 0) std::_Exit(42);
         if (std::strcmp(role, "child-exit-neg") == 0) std::exit(-1);
 #ifndef _WIN32
         if (std::strcmp(role, "child-stop") == 0) {
             std::raise(SIGSTOP);
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             std::_Exit(44);
         }
         if (std::strcmp(role, "child-kill-bus") == 0) std::raise(SIGBUS);
         if (std::strcmp(role, "child-kill-sys") == 0) std::raise(SIGSYS);
+        if (std::strcmp(role, "child-kill-usr1") == 0) std::raise(SIGUSR1);
 #endif
         if (std::strcmp(role, "child-sleep") == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -364,6 +486,10 @@ int main() {
     CheckAttributes();
     CheckFileActions();
     CheckSpawn();
+    for (const char* order : {"open-dup", "close-dup", "dup-open", "open-self-dup", "close-self-dup", "dup-replace-dup", "untouched-self-dup"})
+        CheckOrderedFileActions(order);
+    CheckSpawnNullProcessId(false);
+    CheckSpawnNullProcessId(true);
     CheckSpawnedChild("child-exit-42", 42);
     CheckSpawnedChild("child-sleep", 43);
     CheckSpawnedChild("child-exit-neg", 255);
@@ -372,6 +498,7 @@ int main() {
     CheckStoppedChild();
     CheckKilledChild("child-kill-bus", 10);
     CheckKilledChild("child-kill-sys", 12);
+    CheckKilledChild("child-kill-usr1", 30);
 #else
     CheckTerminatedChild("child-laze", 0xC0000005u, 11);
     CheckTerminatedChild("child-laze", 0xC0000096u, 4);

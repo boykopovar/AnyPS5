@@ -1,0 +1,56 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libScePlayReady4Unknown_2OZeMccOeho_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_3fo8fAvHn9A_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_HNB_minus_eWVwwng_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_LL9r9r4cCdQ_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_OqSN3eUfHMY_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_XawoudE54JE_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_asAQ9li6_plus_mo_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_o2H2P7xoLec_nid_no_patch();
+int APS5_VABI libScePlayReady4Unknown_sK0jAAnbbiI_nid_no_patch();
+
+int APS5_VABI libScePlayReady4LegacyUnknown__plus_YmG2s3DvCk_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown__minus_gF0zOwGz9E_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_04KqHETjgSM_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_0VUjhKU8MuM_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_0y6EouMfHdc_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_1exu5Xgmk_minus_M_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_4DC6ObdGHnM_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_4Y2U8T8qLK8_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_5QciIg5fiEU_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_5sj70SoNZk4_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_7xpxheSYUGc_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_9VmAjxwffnw_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_C7YeAC1DT_minus_8_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_C7ukQ505fng_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_E_plus_PJjXu_plus_ldo_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_FN34vyYimhw_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_Fjp5yC5nra4_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_HQFs7qCzusw_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_JitxfgFD8fY_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_SDoU52cLUdM_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_SO8bKPwYC9w_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_SRJvxiIfRgc_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_VIZHbSOKjCY_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_X1XN0nxTrB0_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_Z7uUgRiNaUA_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_aCSc_plus_gFPhTk_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_aMlr7G9NwEc_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_hGDkBn_plus_wW24_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_i1ZfbPUs1hY_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_mo83jp_plus_TDf4_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_tIqisAWtdsc_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_tdqGjUK6t4A_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_uyPYr3M0e88_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_vItDz4CEogs_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_wvdUsNr4oio_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_y8e4ucs2eZ0_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_yaXM3FQJV1E_nid_no_patch();
+int APS5_VABI libScePlayReady4LegacyUnknown_zGW9LWmm1vI_nid_no_patch();
+
+}

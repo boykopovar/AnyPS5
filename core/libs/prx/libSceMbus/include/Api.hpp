@@ -68,6 +68,8 @@ struct MbusPriorityInfo;
 
 extern "C" {
 
+int APS5_VABI sceMbusDebugGetStringToShow();
+
 std::int32_t APS5_VABI sceDeviceServiceInitialize(std::int32_t mode, const DeviceServiceInitParam* param);
 std::int32_t APS5_VABI sceDeviceServiceTerminate();
 std::int32_t APS5_VABI sceDeviceServiceGetEventState(std::int32_t clear);
@@ -136,7 +138,7 @@ int APS5_VABI sceMbusEnableChat(std::uint32_t deviceClass);
 int APS5_VABI sceMbusEnterAudioOutAutoAttenuation(std::int32_t first, std::int32_t second);
 int APS5_VABI sceMbusEventBusStatusChangeSubscribe(std::int32_t eventHandle, std::uint32_t first, std::uint32_t second, std::uint64_t firstValue, std::uint64_t secondValue);
 int APS5_VABI sceMbusEventBusStatusChangeUnsubscribe(std::uint64_t unusedSlot, std::int32_t subscription);
-int APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size);
+void APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size);
 int APS5_VABI sceMbusEventCreate_(std::uint32_t flags, MbusEvent* buffer, std::uint32_t capacity, const MbusEventCallbacks* callbacks, void* userData);
 int APS5_VABI sceMbusEventDestroy(std::int32_t eventHandle);
 int APS5_VABI sceMbusEventReceive(std::int32_t eventHandle, MbusEvent* events, std::int32_t capacity, std::int32_t wait);
@@ -188,5 +190,16 @@ int APS5_VABI sceMbusTerm();
 int APS5_VABI sceMbusUnregisterDriver(std::int32_t driverId);
 int APS5_VABI sceMbusUserLogin(std::int32_t userId);
 int APS5_VABI sceMbusUserLogout(std::int32_t userId);
+int APS5_VABI sceMbusGetCurrentChatBalanceId();
+int APS5_VABI sceMbusGetInitialUser();
+int APS5_VABI sceMbusGetSimulatedBusUsableStatusByBusType2();
+int APS5_VABI sceMbusSetChatBalance();
+int APS5_VABI sceMbusSetCronosOutputMode();
+int APS5_VABI sceMbusSetCronosPrimaryUser();
+int APS5_VABI sceMbusSetHmd2SocialScreenAudioMode();
+int APS5_VABI sceMbusSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse();
+int APS5_VABI sceMbusSetVolumeDownForDiscPlayerFG();
+int APS5_VABI sceMbusStartAudioOutScreenShare();
+int APS5_VABI sceMbusStopAudioOutScreenShare();
 
 }

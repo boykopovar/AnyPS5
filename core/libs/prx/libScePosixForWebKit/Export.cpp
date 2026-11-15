@@ -7,17 +7,19 @@
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include <cerrno>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace {
 
 constexpr int ThreadNameInvalid = 22;
-constexpr int ThreadNameTooLong = 63;
 constexpr std::size_t ThreadNameCapacity = 32;
 
 constexpr int FnmNomatch = 1;
@@ -193,6 +195,16 @@ std::uint32_t APS5_VABI arc4random_nid_postfix() {
     return value;
 }
 
+std::uint32_t APS5_VABI arc4random_uniform_nid_postfix(std::uint32_t upper_bound) {
+    if (upper_bound < 2) return 0;
+    const std::uint32_t min = -upper_bound % upper_bound;
+    std::uint32_t value;
+    do {
+        value = arc4random_nid_postfix();
+    } while (value < min);
+    return value % upper_bound;
+}
+
 int APS5_VABI __wrap_access(const char* path, int mode) {
     return access_nid_postfix(path, mode);
 }
@@ -222,21 +234,27 @@ void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, i
 
 
 
-int APS5_VABI clock_gettime_np() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI clock_gettime_np(int clockId, KernelTimespec* tp) {
+    return clock_gettime_nid_postfix(clockId, tp);
 }
 
-int APS5_VABI getenv_np() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
+    if (!name || !buffer)
+        throw std::invalid_argument("getenv_np requires a name and a buffer");
+    const char* value = getenv_nid_postfix(name);
+    if (!value)
+        return -1;
+    const std::size_t length = std::strlen(value);
+    if (length >= size)
+        throw std::runtime_error("getenv_np: the console's handling of a value longer than the buffer is unknown");
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(buffer, value, length + 1);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("getenv_np requires a writable buffer");
     return 0;
 }
 
 APS5_EXPORT("dt8ermYp-Wc", scePosixForWebKit_gethostbyname_r);
-int APS5_VABI scePosixForWebKit_gethostbyname_r() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI mmap_np() {
     NotImplemented_nid_no_patch(__func__);
@@ -266,10 +284,26 @@ int APS5_VABI scePosixForWebKit_sysinfo() {
 
 int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
     if (thread == nullptr || name == nullptr) return ThreadNameInvalid;
-    if (std::strlen(name) >= ThreadNameCapacity) return ThreadNameTooLong;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, ThreadNameCapacity, copy)) return error;
     std::lock_guard lock(thread->nameLock);
-    thread->name = name;
+    thread->name = std::move(copy);
     return 0;
 }
 
+void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path) {
+    return opendir_nid_postfix(path);
+}
+
+int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle) {
+    return closedir_nid_postfix(handle);
+}
+
+GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle) {
+    return readdir_nid_postfix(handle);
+}
+
+int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
+    return readdir_r_nid_postfix(handle, entry, result);
+}
 }

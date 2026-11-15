@@ -1,14 +1,46 @@
 #include "prx/libSceSysUtil/include/Api.hpp"
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+
+namespace {
+
+constexpr std::size_t NotificationRequestSize = 0xc30;
+constexpr std::int32_t TextNotificationKind = 5;
+constexpr std::size_t TypeOffset = 0xc;
+constexpr std::size_t TextOffset = 0x2d;
+constexpr std::size_t TextLimit = 0xb3;
+
+}
 
 extern "C" {
 
 int APS5_VABI sceSysUtilSendSystemNotificationWithText(int32_t type, const char* message) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::array<unsigned char, NotificationRequestSize> request{};
+    std::memcpy(request.data(), &TextNotificationKind, sizeof(TextNotificationKind));
+    std::memcpy(request.data() + TypeOffset, &type, sizeof(type));
+    if (message != nullptr) {
+        const int savedErrno = errno;
+        std::size_t length = 0;
+        char c = 0;
+        while (length < TextLimit) {
+            const bool copied = GuestCopyIn_nid_no_patch(&c, message + length, sizeof(c));
+            errno = savedErrno;
+            if (!copied) {
+                return SCE_KERNEL_ERROR_EFAULT;
+            }
+            if (c == '\0') break;
+            request[TextOffset + length] = static_cast<unsigned char>(c);
+            ++length;
+        }
+    }
+    return sceKernelSendNotificationRequest(0, request.data(), request.size(), 0);
 }
 
 int APS5_VABI sceSysUtilSendAddressingSystemNotification() {

@@ -17,6 +17,8 @@ static inline bool GuestMemoryLifetimeHasHostImports(VkDevice device) {
     }
 #ifdef _WIN32
     constexpr const char* libraryName = "vulkan-1.dll";
+#elif defined(__APPLE__)
+    constexpr const char* libraryName = "libvulkan.1.dylib";
 #else
     constexpr const char* libraryName = "libvulkan.so.1";
 #endif

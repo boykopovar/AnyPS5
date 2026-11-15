@@ -68,6 +68,10 @@ int main() {
     Require(sceNetEmulationGet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationGet did not return EOPNOTSUPP");
     *sceNetErrnoLoc() = 0;
     Require(sceNetEmulationSet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationSet did not return EOPNOTSUPP");
+    *sceNetErrnoLoc() = 0;
+    Require(sceNetEmulationDebugSettingsGet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationDebugSettingsGet did not return EOPNOTSUPP");
+    *sceNetErrnoLoc() = 0;
+    Require(sceNetEmulationDebugSettingsSet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationDebugSettingsSet did not return EOPNOTSUPP");
     std::puts("net thread tests passed");
     return 0;
 }

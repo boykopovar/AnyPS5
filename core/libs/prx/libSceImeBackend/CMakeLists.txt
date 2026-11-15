@@ -1,0 +1,15 @@
+add_library(libSceImeBackend SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceImeBackend PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceImeBackend)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_ime_backend_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeBackend.cpp)
+    target_include_directories(guest_ime_backend_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_backend_tests PRIVATE libSceImeBackend libc)
+    configure_windows_unwind(guest_ime_backend_tests)
+    add_test(NAME guest_ime_backend COMMAND guest_ime_backend_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_backend PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeBackend>")
+    endif()
+endif()

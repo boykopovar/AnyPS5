@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(image_pck_n_tests ${LIBS_INCLUDE_DIR}/tests/ImagePckN.cpp)
+    target_link_libraries(image_pck_n_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(image_pck_n_tests)
+    add_test(NAME image_pck_n COMMAND image_pck_n_tests)
+    if(WIN32)
+        set_tests_properties(image_pck_n PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

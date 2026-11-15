@@ -3,6 +3,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -45,7 +46,7 @@ class Capture {
     long consumed = 0;
 
 public:
-    Capture() : stream(std::tmpfile()) { err_set_file_nid_postfix(&stream); }
+    Capture() : stream(TemporaryFile::Open()) { err_set_file_nid_postfix(&stream); }
     ~Capture() {
         err_set_file_nid_postfix(nullptr);
 
@@ -67,7 +68,7 @@ public:
 template <typename TCall>
 std::string DescriptorTwoOutput(TCall call) {
     std::fflush(stderr);
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     const int saved = dup(2);
     dup2(fileno(capture), 2);
     call();
@@ -195,5 +196,7 @@ int main() {
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(2, "tag"); }) == std::string("tag: ") + sys_siglist_nid_postfix[2] + "\n", "psignal with prefix");
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(11, ""); }) == std::string(sys_siglist_nid_postfix[11]) + "\n", "psignal empty prefix");
     Require(DescriptorTwoOutput([] { psignal_nid_postfix(32, nullptr); }) == "Unknown signal\n", "psignal unknown signal");
+    Require(DescriptorTwoOutput([] { psignal_nid_postfix(2, reinterpret_cast<const char*>(0x10)); }) == std::string(sys_siglist_nid_postfix[2]) + "\n",
+        "psignal unreadable prefix");
     return 0;
 }

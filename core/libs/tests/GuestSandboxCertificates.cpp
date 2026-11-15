@@ -87,6 +87,10 @@ int main() {
     Require(text == expected);
 #endif
     Require(ReadStream(path) == text);
+    Require(ReadKernel("/system/common/cert/CA_LIST.cer") == text);
+    Require(ReadStream("/system/common/cert/CA_LIST.cer") == text);
+    Require(ReadKernel("/common/cert/CA_LIST.cer") == text);
+    Require(ReadStream("/common/cert/CA_LIST.cer") == text);
     Require(ReadKernel(directory + "/./ca_list.cer") == text);
     FileStat status{};
     Require(sceKernelStat(path.c_str(), &status) == 0);

@@ -63,7 +63,7 @@ namespace ShaderRecompiler
         for (const auto& input : program.Info().inputs) {
             if (input.kind != StageInputKind::Parameter) continue;
             const auto location = PixelInputLocation(pixel, input.location);
-            const bool flat = PixelInputIsFlat(pixel, input.location);
+            const bool flat = PixelInputIsFlat(pixel, input.location) || (input.location < 32u && (program.Metadata().pixelFirstVertexInputs >> input.location & 1u) != 0u);
             const bool flatP10 = flat && !input.perVertex && input.location < readsP10.size() && readsP10[input.location];
             const bool flatP20 = flat && !input.perVertex && input.location < readsP20.size() && readsP20[input.location];
             const bool vertexOrder = input.perVertex && (input.location >= 32u || (program.Metadata().pixelVertexOrderInputs >> input.location & 1u) != 0u);
@@ -87,7 +87,7 @@ namespace ShaderRecompiler
     }
 
     bool PixelParameterIsFlat(const SpirvEmitterState& state, std::uint32_t attr) {
-        return StageOf(state) == IrShaderStage::Pixel && PixelInputIsFlat(PixelInfo(state), attr);
+        return StageOf(state) == IrShaderStage::Pixel && (PixelInputIsFlat(PixelInfo(state), attr) || (attr < 32u && (state.program.Metadata().pixelFirstVertexInputs >> attr & 1u) != 0u));
     }
 
     bool PixelParameterIsCustom(const SpirvEmitterState& state, std::uint32_t attr) {
@@ -156,7 +156,7 @@ namespace ShaderRecompiler
     }
 
     bool OrderedPixelShader(const SpirvEmitterState& state) {
-        return state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && (state.inputInfo.pixel->psOrderedPixelShader || state.inputInfo.pixel->mergeMask != 0u);
+        return state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && (state.inputInfo.pixel->psOrderedPixelShader || !state.inputInfo.pixel->merges.empty());
     }
 
     const SpirvInputBinding* SpirvInputBindingForParameter(const SpirvEmitterState& state, std::uint32_t location) {

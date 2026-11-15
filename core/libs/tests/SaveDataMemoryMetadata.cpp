@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -92,6 +93,9 @@ int main() {
     Require(sceSaveDataDeleteTransactionResource(1) == kSaveDataNotInitialized);
     const std::uint32_t syncParamUninit[2] = {7531u, 0u};
     Require(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000u));
+    errno = 71;
+    Require(sceSaveDataSyncSaveDataMemory(reinterpret_cast<const void*>(0x10)) == static_cast<int>(0x809F0000u));
+    Require(errno == 71);
     Require(sceSaveDataSyncSaveDataMemory(syncParamUninit) == static_cast<int>(0x809F0001u));
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() /
@@ -176,6 +180,9 @@ int main() {
     std::copy(third.begin(), third.end(), memoryExpected.begin());
     std::copy(fourth.begin(), fourth.end(), memoryExpected.begin() + 16);
     Require(Read(memoryPath) == memoryExpected);
+    const std::uint32_t syncWritten[2] = {7531u, 0u};
+    Require(sceSaveDataSyncSaveDataMemory(syncWritten) == 0);
+    Require(Read(memoryPath) == memoryExpected);
     const auto setupParamPath = std::filesystem::path("_sd_mem/u42/slot0.param");
     const auto setupBinPath = std::filesystem::path("_sd_mem/u42/slot0.bin");
     Require(std::filesystem::create_directories(setupParamPath.parent_path()));
@@ -195,6 +202,9 @@ int main() {
     Require(!std::filesystem::exists(setupParamPath));
     Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
     Require(setupResult.existed_memory_size == 0);
+    Require(Read(setupBinPath) == std::vector<char>(128, 0));
+    const std::uint32_t syncSetup[2] = {42u, 0u};
+    Require(sceSaveDataSyncSaveDataMemory(syncSetup) == 0);
     Require(Read(setupBinPath) == std::vector<char>(128, 0));
     const auto* setupBytes = reinterpret_cast<const char*>(&setupParam);
     Require(Read(setupParamPath) == std::vector<char>(setupBytes, setupBytes + sizeof(setupParam)));

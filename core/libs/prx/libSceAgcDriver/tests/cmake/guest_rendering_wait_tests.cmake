@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_rendering_wait_tests ${LIBS_INCLUDE_DIR}/tests/GuestRenderingWait.cpp)
+    target_include_directories(guest_rendering_wait_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_rendering_wait_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(guest_rendering_wait_tests)
+    add_test(NAME guest_rendering_wait COMMAND guest_rendering_wait_tests)
+    if(WIN32)
+        set_tests_properties(guest_rendering_wait PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

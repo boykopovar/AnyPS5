@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 import platform
-import shutil
 import struct
 import subprocess
 import sys
@@ -103,7 +102,7 @@ def main():
                     command, kernel, consumer, controls = native
                     libraries = case / 'libs'
                     libraries.mkdir()
-                    shutil.copyfile(kernel, libraries / 'libkernel.prx')
+                    os.link(kernel, libraries / 'libkernel.prx')
                     results = []
                     for provider in (controls[binding], converted):
                         probe = subprocess.run([*command, str(provider), str(consumer)],

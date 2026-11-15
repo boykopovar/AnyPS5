@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -8,6 +9,22 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import progress
+
+
+def excessive_nesting():
+    depth = sys.getrecursionlimit() + 64
+    for _ in range(8):
+        try:
+            json.loads("[" * depth + "]" * depth)
+        except RecursionError:
+            return "[" * (depth + 128) + "]" * (depth + 128)
+        depth *= 2
+    raise AssertionError("JSON decoder accepted every bounded nesting probe")
+
+
+SHADER_SOURCE = {"isa": "AMD RDNA 2", "instructions": {"total": 5, "decoded": 3, "translated": 1},
+                 "dpp": {"total": 2, "decoded": 1}, "unsupported_throws": 3, "forms": [], "untranslated": [],
+                 "throw_areas": [], "throw_sites": [], "formats": {"total": 0, "sampled": 0, "buffer": 0, "host": 0}}
 
 
 class ProgressSnapshotTests(unittest.TestCase):
@@ -57,6 +74,23 @@ class ProgressSnapshotTests(unittest.TestCase):
                 self.assertEqual(stdout.getvalue(), "")
                 self.assertIn(str(paths[position]), stderr.getvalue())
                 self.assertIn(message, stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_deeply_nested_snapshots_are_usage_errors(self):
+        for position in (0, 1):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                paths = [Path(directory) / "base snapshot.json", Path(directory) / "head snapshot.json"]
+                for path in paths:
+                    path.write_text(json.dumps(self.snapshot()), encoding="utf-8")
+                paths[position].write_text(excessive_nesting(), encoding="utf-8")
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        progress.main(["--compare", *map(str, paths)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn(str(paths[position]), stderr.getvalue())
+                self.assertNotIn("must be an object", stderr.getvalue())
                 self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_non_object_snapshots_are_usage_errors(self):
@@ -133,6 +167,20 @@ class ProgressSnapshotTests(unittest.TestCase):
             self.assertEqual(stdout.getvalue(), expected)
 
 
+    def test_duplicate_names_are_rejected_within_each_section(self):
+        for section in ("libraries", "shaders"):
+            with self.subTest(section=section):
+                snapshot = self.snapshot()
+                snapshot[section]["groups"] = [{"name": "Repeated"}, {"name": "other"}, {"name": "Repeated"}]
+                self.assert_rejected(snapshot, section + ".groups[2].name duplicates 'Repeated'")
+
+    def test_group_names_are_case_sensitive_and_local_to_each_section(self):
+        snapshot = self.snapshot()
+        for section in ("libraries", "shaders"):
+            snapshot[section]["groups"] = [{"name": "same"}, {"name": "Same"}]
+        progress.validate_snapshot(snapshot)
+
+
 class ProgressTests(unittest.TestCase):
     def report_library(self, name, done=(), todo=(), **extra):
         return {"name": name, "label": name, "done": len(done), "todo": len(todo),
@@ -151,8 +199,8 @@ class ProgressTests(unittest.TestCase):
         report = progress.report(base, head)
         self.assertIn("**System libraries**", report)
         self.assertIn("| Library | Name |", report)
-        self.assertIn("| libScePad | 1/2 (50.00%) | 2/2 (100.00%) | +50.00 pp |", report)
-        self.assertIn("| libSceVideoOut | 3/4 (75.00%) | 2/4 (50.00%) | -25.00 pp |", report)
+        self.assertIn("| libScePad | 1/2 (50.00%) | 2/2 (100.00%) | +50.00% |", report)
+        self.assertIn("| libSceVideoOut | 3/4 (75.00%) | 2/4 (50.00%) | -25.00% |", report)
         table = report.split("#### Changed libraries (implemented exports)")[1]
         self.assertNotIn("libSceUnused", table)
         self.assertLess(table.index("libScePad"), table.index("libSceVideoOut"))
@@ -160,7 +208,7 @@ class ProgressTests(unittest.TestCase):
     def test_report_includes_changed_function_names_when_counts_stay_equal(self):
         base = self.report_snapshot(self.report_library("libScePad", ["Old"], ["Pending"]))
         head = self.report_snapshot(self.report_library("libScePad", ["New"], ["Pending"]))
-        self.assertIn("| libScePad | 1/2 (50.00%) | 1/2 (50.00%) | +0.00 pp |", progress.report(base, head))
+        self.assertIn("| libScePad | 1/2 (50.00%) | 1/2 (50.00%) | +0.00% |", progress.report(base, head))
 
     def test_report_marks_new_removed_and_empty_libraries_without_percentages(self):
         base = self.report_snapshot(self.report_library("libSceRemoved", ["Ready"]),
@@ -223,7 +271,7 @@ class ProgressTests(unittest.TestCase):
         after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=50001, todo=50000)
         self.assertEqual(progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
                                           self.report_snapshot(after)["libraries"])[0],
-                         "\U0001f4c8 **System libraries**: 50.0% (+0.001%, +1 implemented functions)")
+                         "\U0001f4c8 **System libraries**: 50.0% (+0.001%, +1 implemented function)")
         reverted = progress.compare("System libraries", "Library", "functions", self.report_snapshot(after)["libraries"],
                                     self.report_snapshot(before)["libraries"])[0]
         self.assertTrue(reverted.startswith("\U0001f4c9 **System libraries**: 50.0% (-0.001%, "))
@@ -240,15 +288,74 @@ class ProgressTests(unittest.TestCase):
         after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=2, todo=10000000)
         headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
                                     self.report_snapshot(after)["libraries"])[0]
-        self.assertIn("(+<0.0001%, +1 implemented functions)", headline)
+        self.assertIn("(+<0.0001%, +1 implemented function)", headline)
 
-    def test_report_rounds_percentage_point_change_without_negative_zero(self):
+    def test_report_keeps_plural_unit_for_two_changed_functions(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=1, todo=10000000)
+        after = dict(self.report_library("libScePad", ["A", "B", "C"], ["T"]), done=3, todo=10000000)
+        headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                    self.report_snapshot(after)["libraries"])[0]
+        self.assertIn("+2 implemented functions)", headline)
+
+    def test_percent_change_is_n_a_when_a_percentage_is_missing(self):
+        self.assertEqual(progress.percent_change(None, 50), "n/a")
+        self.assertEqual(progress.percent_change(50, None), "n/a")
+        self.assertEqual(progress.percent_change(None, None), "n/a")
+
+    def test_percent_change_keeps_the_sign_and_two_decimals(self):
+        self.assertEqual(progress.percent_change(50, 100), "+50.00%")
+        self.assertEqual(progress.percent_change(75, 50), "-25.00%")
+        self.assertEqual(progress.percent_change(0, 100), "+100.00%")
+        self.assertEqual(progress.percent_change(100, 0), "-100.00%")
+        self.assertEqual(progress.percent_change(33.33, 66.67), "+33.34%")
+
+    def test_percent_change_never_prints_a_negative_zero(self):
+        self.assertEqual(progress.percent_change(50, 50), "+0.00%")
+        self.assertEqual(progress.percent_change(50, 49.996), "+0.00%")
+        self.assertEqual(progress.percent_change(49.996, 50), "+0.00%")
+
+    def test_report_headline_writes_its_change_in_percent_for_gains_and_losses(self):
+        gain = progress.report(self.report_snapshot(self.report_library("libScePad", ["R"], ["A", "B"])),
+                               self.report_snapshot(self.report_library("libScePad", ["R", "A"], ["B"])))
+        loss = progress.report(self.report_snapshot(self.report_library("libScePad", ["R", "A"], ["B"])),
+                               self.report_snapshot(self.report_library("libScePad", ["R"], ["A", "B"])))
+        self.assertRegex(gain.splitlines()[0], r"\*\*: [0-9.]+% \(\+[0-9.]+%[,)]")
+        self.assertRegex(loss.splitlines()[0], r"\*\*: [0-9.]+% \(-[0-9.]+%[,)]")
+
+    def test_report_table_writes_its_change_in_percent_and_never_in_pp(self):
         base = self.report_snapshot(self.report_library("libScePad", ["Ready"], ["A", "B"]))
         head = self.report_snapshot(self.report_library("libScePad", ["Ready", "A"], ["B"]))
-        self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33 pp |", progress.report(base, head))
+        report = progress.report(base, head)
+        row = next(line for line in report.splitlines() if line.startswith("| libScePad | 1/3"))
+        self.assertTrue(row.endswith("| +33.33% |"), row)
+        self.assertNotIn(" pp", report)
+
+    def test_report_rounds_percentage_change_without_negative_zero(self):
+        base = self.report_snapshot(self.report_library("libScePad", ["Ready"], ["A", "B"]))
+        head = self.report_snapshot(self.report_library("libScePad", ["Ready", "A"], ["B"]))
+        self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33% |", progress.report(base, head))
         before = dict(self.report_library("libSceLarge", ["Ready"]), todo=100000)
         after = dict(before, todo=100001)
-        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertIn("| -<0.0001% |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertNotIn("-0.00%", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+
+    def test_report_shows_a_library_change_that_two_decimals_would_hide(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1340, todo=11)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=1341, todo=11)
+        self.assertIn("| libc | 1340/1351 (99.19%) | 1341/1352 (99.19%) | +0.0006% |",
+                      progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        same = dict(self.report_library("libc", ["B"], ["T"]), done=1340, todo=11)
+        self.assertIn("| +0.00% |", progress.report(self.report_snapshot(before), self.report_snapshot(same)))
+
+    def test_report_compares_libraries_whose_counts_are_floats(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1.0, todo=2.0)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=2.0, todo=3.0)
+        report = progress.report(self.report_snapshot(before), self.report_snapshot(after))
+        self.assertIn("| libc | 1.0/3.0 (33.33%) | 2.0/5.0 (40.00%) | +6.67% |", report)
+        tiny_before = dict(before, done=1340.0, todo=11.0)
+        tiny_after = dict(after, done=1341.0, todo=11.0)
+        report = progress.report(self.report_snapshot(tiny_before), self.report_snapshot(tiny_after))
+        self.assertIn("| +0.00% |", report)
 
     def test_report_limits_library_rows(self):
         head = self.report_snapshot(*(self.report_library(f"libSce{i:03}", ["Ready"]) for i in range(103)))
@@ -256,6 +363,18 @@ class ProgressTests(unittest.TestCase):
         table = report.split("#### Changed libraries (implemented exports)")[1]
         self.assertEqual(sum(line.startswith("| libSce") for line in table.splitlines()), progress.REPORT_ROWS)
         self.assertIn("3 more libraries", table)
+
+    def test_opcodes_counted_through_variants_are_not_listed_as_uncounted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            opcodes = Path(directory) / "RdnaOpcode.hpp"
+            opcodes.write_text("enum class RdnaOpcode : int {\n    VAddI32,\n    VMulLoI32,\n    Count,\n};\n",
+                               encoding="utf-8")
+            isa = Path(directory) / "rdna_isa.txt"
+            isa.write_text("V_ADD_CO_U32 VOP3\n", encoding="utf-8")
+            with patch.multiple(progress, OPCODES=opcodes, ISA=isa):
+                shaders = progress.collect_shaders()
+        self.assertEqual(shaders["done"], 1)
+        self.assertEqual(shaders["extra"], ["VMulLoI32"])
 
     def test_raw_string_example_does_not_declare_an_export(self):
         source = 'const char* example = R"help(\nint APS5_VABI Fake() { return 0; }\n)help";\n'
@@ -267,6 +386,33 @@ class ProgressTests(unittest.TestCase):
             group = progress.scan_library(library)
         self.assertEqual(group["done_names"], ["Real"])
         self.assertEqual(group["todo_names"], [])
+
+    def test_assembly_definitions_are_implementations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "#ifdef __EMSCRIPTEN__\n"
+                "int APS5_VABI capture_nid_postfix(void* context) { NotImplemented_nid_no_patch(__func__); }\n"
+                "#else\n"
+                "asm(\".text\\n\"\n"
+                "    APS5_ASM_FUNCTION(\"capture_nid_postfix\")\n"
+                "    \"    call \" APS5_ASM_SYMBOL(\"Finish_nid_no_patch\") \"\\n\"\n"
+                "    APS5_ASM_FUNCTION( \"restore_nid_postfix\" )\n"
+                "    APS5_ASM_FUNCTION(\"Helper_nid_no_patch\")\n"
+                "    APS5_SIGNAL_ASM_FUNCTION(\"signal_nid_postfix\")\n"
+                "    APS5_ASM_FUNCTION(\"Forward_nid_no_patch\")\n"
+                "    \"    ret\\n\");\n"
+                "#endif\n"
+                "APS5_EXPORT(\"AAAAAAAAAAA\", Forward_nid_no_patch);\n"
+                "// APS5_ASM_FUNCTION(\"Comment_nid_postfix\")\n"
+                "/* APS5_ASM_FUNCTION(\"BlockComment_nid_postfix\") */\n"
+                "const char* note = R\"(APS5_ASM_FUNCTION(\"Literal_nid_postfix\"))\";\n",
+                encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["Forward_nid_no_patch", "capture_nid_postfix", "restore_nid_postfix", "signal_nid_postfix"])
+        self.assertEqual(group["todo_names"], [])
+        self.assertEqual(group["inert_names"], [])
 
     def test_stub_marker_inside_raw_literals_does_not_mark_implementation_as_stub(self):
         for prefix in ("", "u8", "u", "U", "L"):
@@ -575,6 +721,7 @@ class ProgressTests(unittest.TestCase):
         stdout = io.StringIO()
         with patch.object(progress, "collect_libraries", return_value=libraries), \
              patch.object(progress, "collect_shaders", return_value=shaders), \
+             patch.object(progress, "collect_shader_source", return_value=SHADER_SOURCE), \
              patch("sys.stdout", stdout):
             code = progress.main(argv)
         return code, stdout.getvalue()
@@ -601,7 +748,8 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(payload["shaders"], shaders)
         self.assertNotIn("libraries 1/2", output)
         code, output = self.run_main(["--module", "libScePad"], libraries, shaders)
-        self.assertEqual(output, "libraries 1/2 (50.0%)\nshaders 2/4 (50.0%)\n")
+        self.assertEqual(output, "libraries 1/2 (50.0%)\nshader opcode names declared 2/4 (50.0%)\n"
+                                 "shader forms decoded 3/5 (60.0%), translated 1, unsupported throws 3\n")
         stderr = io.StringIO()
         with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
             progress.main([])
@@ -665,6 +813,21 @@ class ProgressTests(unittest.TestCase):
                     self.assertEqual(raised.exception.code, 2)
                     self.assertIn(str(path), stderr.getvalue())
 
+    def test_snapshots_with_a_duplicate_json_key_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "good.json"
+            good.write_text("{}", encoding="utf-8")
+            repeated = Path(directory) / "repeated.json"
+            repeated.write_text('{"libraries": {}, "nested": {"done_names": ["a", "b"], "done_names": ["a"]}}', encoding="utf-8")
+            for arguments in (["--compare", str(good), str(repeated)], ["--compare", str(repeated), str(good)],
+                              ["--open-pr-estimate", str(repeated), str(Path(directory) / "output")]):
+                with self.subTest(arguments[0], first=arguments[1] == str(repeated)):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(arguments)
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(f"{repeated}: duplicate JSON key 'done_names'", stderr.getvalue())
+
     def test_output_directory_that_cannot_be_written_is_named(self):
         libraries, shaders = self.library_snapshot()
         with tempfile.TemporaryDirectory() as directory:
@@ -676,6 +839,67 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn(str(blocked), stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_aliased_reports_are_refused_and_left_unchanged(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            first, second = output / "progress.json", output / "progress.html"
+            first.write_text("json report", encoding="utf-8")
+            try:
+                os.link(first, second)
+            except OSError:
+                self.skipTest("hard links are not available")
+            others = {name: output / name for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg")}
+            for name, path in others.items():
+                path.write_text(name, encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("progress.json and progress.html", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(first.read_text(encoding="utf-8"), "json report")
+            self.assertEqual(second.read_text(encoding="utf-8"), "json report")
+            for name, path in others.items():
+                self.assertEqual(path.read_text(encoding="utf-8"), name)
+
+    def test_adjacent_aliased_reports_are_refused_when_others_are_missing(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            first, second = output / "badge-libraries.svg", output / "badge-shaders.svg"
+            first.write_text("badge", encoding="utf-8")
+            try:
+                os.link(first, second)
+            except OSError:
+                self.skipTest("hard links are not available")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("badge-libraries.svg and badge-shaders.svg", stderr.getvalue())
+            self.assertEqual(first.read_text(encoding="utf-8"), "badge")
+            self.assertFalse((output / "progress.json").exists())
+
+    def test_reports_linked_to_one_missing_target_are_refused(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            try:
+                os.symlink("shared", output / "progress.json")
+                os.symlink("shared", output / "progress.html")
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("progress.json and progress.html", stderr.getvalue())
+            self.assertFalse((output / "shared").exists())
 
     def test_root_must_be_a_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -735,6 +959,86 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class ProgressConstantReturnTests(unittest.TestCase):
+    def scan(self, source):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            return progress.scan_library(library)
+
+    def test_parameter_returns_are_not_behaviourally_empty(self):
+        for name in ("value", "size", "resultCode", "_value", "VALUE", "Failure"):
+            with self.subTest(name=name):
+                group = self.scan(f"int APS5_VABI Echo(int {name}) {{ return {name}; }}\n")
+                self.assertEqual(group["done_names"], ["Echo"])
+                self.assertEqual(group["todo_names"], [])
+                self.assertEqual(group["inert_names"], [])
+
+    def test_constant_returns_remain_behaviourally_empty(self):
+        for value in ("0", "-1", "+2", "0x8A810001u", "true", "false", "nullptr",
+                      "SCE_KERNEL_ERROR_EOPNOTSUPP", "Failure", "CryptoNumLocks", "kErrUnexpectedFatal",
+                      '"constant text"'):
+            with self.subTest(value=value):
+                group = self.scan(
+                    "constexpr int Failure = -1;\n"
+                    "constexpr int CryptoNumLocks = 41;\n"
+                    "constexpr int kErrUnexpectedFatal = -2;\n"
+                    f"auto APS5_VABI Constant() {{ return {value}; }}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_constants_in_parameter_types_and_defaults_still_return_constants(self):
+        for declaration in ("int value = Failure", "int = Failure", "Array<Failure, 2> value",
+                            "int value[Failure]", "int (*callback)(int)"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(
+                    "constexpr int Failure = -1;\n"
+                    f"int APS5_VABI Constant({declaration}) {{ return Failure; }}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_template_defaults_do_not_add_parameters(self):
+        for declaration in ("std::array<int, Failure> value = std::array<int, Failure>()",
+                            "Array<Array<int, Failure>, 2> value = Array<Array<int, Failure>, 2>()",
+                            "int value = Pick<int, Failure>()"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(
+                    "#include <array>\n"
+                    "constexpr int Failure = 2;\n"
+                    f"int APS5_VABI Constant({declaration}) {{\n"
+                    "    return Failure;\n"
+                    "}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_parameters_after_operator_defaults_are_parameters(self):
+        for default in ("1 << 2", "Shift << 2", "1 < 2", "Limit <= 2"):
+            with self.subTest(default=default):
+                group = self.scan(f"int APS5_VABI Echo(int flags = {default}, int value) {{ return value; }}\n")
+                self.assertEqual(group["inert_names"], [])
+
+    def test_pointer_and_function_pointer_parameters_are_not_constants(self):
+        for declaration in ("const void* value", "int (*value)(int)", "Array<int, 2>& value"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(f"auto APS5_VABI Echo({declaration}) {{ return value; }}\n")
+                self.assertEqual(group["inert_names"], [])
+
+    def test_empty_wrappers_remain_behaviourally_empty(self):
+        group = self.scan(
+            "static int Empty(int value) { (void)value; return 0; }\n"
+            "int APS5_VABI Wrapped(int value) { return Empty(value); }\n")
+        self.assertEqual(group["inert_names"], ["Wrapped"])
+        group = self.scan(
+            "static int Identity(int value) { return value; }\n"
+            "int APS5_VABI Wrapped(int value) { return Identity(value); }\n")
+        self.assertEqual(group["inert_names"], [])
+
+    def test_multiple_statements_do_not_hide_work(self):
+        group = self.scan(
+            "int APS5_VABI Discarded(int value) { (void)value; return 0; }\n"
+            "int APS5_VABI Updated(int value) { ++value; return 0; }\n")
+        self.assertEqual(group["done_names"], ["Discarded", "Updated"])
+        self.assertEqual(group["inert_names"], ["Discarded"])
 
 
 if __name__ == "__main__":

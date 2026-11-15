@@ -35,9 +35,10 @@ class DebtLengthTests(unittest.TestCase):
 
             def write(text):
                 (root / DEBT).parent.mkdir(parents=True, exist_ok=True)
-                (root / DEBT).write_text(text, encoding="utf-8")
+                (root / DEBT).write_bytes(text.encode("utf-8"))
 
             git("init", "-q")
+            git("config", "core.safecrlf", "false")
             write(f"# libSceExample technical debt\n\n### Functional\n\n{SHORT}\n")
             git("add", ".")
             git("commit", "-qm", "docs: add base")

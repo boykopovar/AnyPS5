@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -87,7 +88,7 @@ class StderrCapture {
 public:
     StderrCapture() {
         std::fflush(stderr);
-        file = std::tmpfile();
+        file = TemporaryFile::Open();
         Require(file != nullptr, "cannot open a temporary file for stderr");
 #ifdef _WIN32
         saved = _dup(_fileno(stderr));

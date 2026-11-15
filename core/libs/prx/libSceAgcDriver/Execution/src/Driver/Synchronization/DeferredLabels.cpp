@@ -89,7 +89,7 @@ bool Driver::reapEachPacket() {
 std::uint64_t Driver::batchCap() {
     static const std::uint64_t value = [] {
         const char* text = std::getenv("APS5_BATCH_CAP");
-        return text ? std::strtoull(text, nullptr, 10) : 64ull;
+        return text ? std::strtoull(text, nullptr, 10) : 512ull;
     }();
     return value;
 }
@@ -187,6 +187,45 @@ bool Driver::recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const
     recordDeferredLabels(localDevice.get(), queue);
     ++captureTryRecords;
     return false;
+}
+
+namespace {
+
+std::atomic<void (*)()> captureCheckHook{nullptr};
+
+bool& recapturing() {
+    static thread_local bool active = false;
+    return active;
+}
+
+}
+
+void Driver::SetCaptureCheckHook(void (*hook)()) {
+    captureCheckHook.store(hook, std::memory_order_release);
+}
+
+void Driver::runCaptureCheckHook() {
+    if (const auto hook = captureCheckHook.load(std::memory_order_acquire)) hook();
+}
+
+bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared) {
+    if (recapturing()) return false;
+    const bool mark = compared.size() == regions.size();
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+        const auto outcome = GuestMemory::CompareMapped(regions[i].guestAddress, regions[i].bytes);
+        if (outcome == GuestMemory::Compare::Differs) return true;
+        if (mark && outcome == GuestMemory::Compare::Equal) compared[i].compared = true;
+    }
+    return false;
+}
+
+Driver::RecaptureScope::RecaptureScope() {
+    recapturing() = true;
+    ++captureChangeRetries;
+}
+
+Driver::RecaptureScope::~RecaptureScope() {
+    recapturing() = false;
 }
 
 void Driver::noteQueuedLabels(std::uint32_t queue) {

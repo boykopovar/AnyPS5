@@ -6,9 +6,12 @@
 #include <chrono>
 #include <limits>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 
 namespace PosixThread {
 
+constexpr int GUEST_EPERM = 1;
 constexpr int GUEST_ESRCH = 3;
 constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;
@@ -24,8 +27,11 @@ inline int ToSce(int error) {
 }
 
 // Converts an absolute deadline on the guest clock into a relative wait, clamped to what the sce layer accepts.
-inline bool RelativeMicroseconds(int clockId, const KernelTimespec* abstime, KernelUseconds* usec) {
-    if (!abstime || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return false;
+inline bool RelativeMicroseconds(int clockId, const KernelTimespec* guestDeadline, KernelUseconds* usec) {
+    KernelTimespec deadline{};
+    if (!guestDeadline || !GuestCopyIn_nid_no_patch(&deadline, guestDeadline, sizeof(deadline))) return false;
+    const KernelTimespec* const abstime = &deadline;
+    if (abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return false;
     KernelTimespec now{};
     clock_gettime_nid_postfix(clockId, &now);
 
@@ -41,6 +47,26 @@ inline bool RelativeMicroseconds(int clockId, const KernelTimespec* abstime, Ker
     }
     const std::int64_t remaining = (seconds * 1000000000 + abstime->tv_nsec - now.tv_nsec) / 1000;
     *usec = remaining <= 0 ? 0 : remaining >= maximum ? maximum : static_cast<KernelUseconds>(remaining);
+    return true;
+}
+
+inline bool AbsoluteDeadlineNanos(int clockId, const KernelTimespec* abstime, std::uint64_t* deadline) {
+    if (!abstime || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return false;
+    KernelTimespec now{};
+    clock_gettime_nid_postfix(clockId, &now);
+
+    constexpr std::int64_t horizonSeconds = 365LL * 24 * 3600;
+    if (abstime->tv_sec < now.tv_sec - 1) {
+        *deadline = TimedWait::DeadlineNanos(0);
+        return true;
+    }
+    const std::int64_t seconds = abstime->tv_sec - now.tv_sec;
+    if (seconds > horizonSeconds) {
+        *deadline = TimedWait::DeadlineNanos(static_cast<std::uint64_t>(horizonSeconds) * 1000000ULL);
+        return true;
+    }
+    const std::int64_t remaining = seconds * 1000000000 + abstime->tv_nsec - now.tv_nsec;
+    *deadline = TimedWait::DeadlineNanos(remaining <= 0 ? 0 : static_cast<std::uint64_t>(remaining / 1000));
     return true;
 }
 

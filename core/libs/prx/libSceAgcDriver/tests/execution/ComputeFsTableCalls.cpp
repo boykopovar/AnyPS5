@@ -99,6 +99,10 @@ int main() {
     std::puts("skipped: the shader calls through the FS table at the PS5's fixed 0xfe0040000, which an ANYPS5_ENABLE_ASAN build cannot map");
     return VulkanTestSkipped;
 #endif
+#ifdef __APPLE__
+    std::puts("skipped: the shader calls through the FS table at the PS5's fixed 0xfe0040000, which macOS reserves; the AGC driver block is moved on macOS (DriverMemory.hpp)");
+    return VulkanTestSkipped;
+#endif
     try {
         {
             const auto device = OpenVulkanTestDevice();

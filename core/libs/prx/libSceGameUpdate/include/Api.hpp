@@ -11,5 +11,6 @@ int APS5_VABI sceGameUpdateDeleteRequest(int requestId);
 int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, GameUpdateAddcontVersionInfo* info);
 int APS5_VABI sceGameUpdateInitialize(void);
 int APS5_VABI sceGameUpdateTerminate(void);
+int APS5_VABI sceGameUpdateCheckTitle();
 
 }

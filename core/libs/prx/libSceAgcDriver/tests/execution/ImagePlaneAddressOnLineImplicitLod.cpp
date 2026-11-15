@@ -86,7 +86,7 @@ void FillTexture() {
     }
 }
 
-void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, float firstCoordinateScale) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, float firstCoordinateScale, std::uint32_t swizzle = 0xfacu) {
     const auto& target = device.Target();
     Pixels.fill(std::byte{0});
 
@@ -112,7 +112,8 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(18, 0u);
-    const auto texture = LineDescriptor();
+    auto texture = LineDescriptor();
+    texture[3] = (texture[3] & ~0xfffu) | swizzle;
     const auto sampler = SamplerDescriptor();
     std::copy(texture.begin(), texture.end(), pixelUserData.begin() + 4);
     std::copy(sampler.begin(), sampler.end(), pixelUserData.begin() + 12);
@@ -125,8 +126,8 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
         target,
         PixelPushLayout(vertexPush, target)
     };
-    fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    Require(!target.registrationModules || pixelResult.registrationModule, "line swizzle did not exercise its requested registration module");
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
@@ -150,13 +151,19 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+    return pixelResult.variantId;
 }
 
-void Check(std::uint32_t level) {
+void Check(std::uint32_t level, std::uint32_t swizzle = 0xfacu) {
     const auto what = "image_sample 2d on a 1D texture with the first coordinate advancing " + std::to_string(1u << level) + " texels per pixel";
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
-            const std::array<std::uint32_t, 4> expected{LevelMark(level), (x % (Size >> level)) * 8u, 99u, 255u};
+            const std::array<std::uint32_t, 4> source{LevelMark(level), (x % (Size >> level)) * 8u, 99u, 255u};
+            std::array<std::uint32_t, 4> expected{};
+            for (std::uint32_t component = 0; component < 4u; ++component) {
+                const auto selector = (swizzle >> (component * 3u)) & 7u;
+                expected[component] = selector == 0u ? 0u : selector == 1u ? 255u : source.at(selector - 4u);
+            }
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 const auto value = std::to_integer<std::uint32_t>(Pixels[(y * Width + x) * 4u + component]);
                 Require(value == expected[component], what + ": pixel " + std::to_string(x) + "," + std::to_string(y) + " component " + std::to_string(component) + " is " + std::to_string(value) + ", expected " + std::to_string(expected[component]));
@@ -186,6 +193,27 @@ int main() {
             Draw(*device, PixelCode, static_cast<float>(1u << level) / static_cast<float>(Size));
             Check(level);
         }
+        const float scale = 1.0f / static_cast<float>(Size);
+        const auto original = Draw(*device, PixelCode, scale);
+        Check(0u);
+        constexpr std::array<std::uint32_t, 6> selectors{0u, 1u, 4u, 5u, 6u, 7u};
+        for (std::uint32_t rotation = 0; rotation < selectors.size(); ++rotation) {
+            std::uint32_t swizzle = 0u;
+            for (std::uint32_t component = 0; component < 4u; ++component) swizzle |= selectors[(rotation + component) % selectors.size()] << (component * 3u);
+            const auto artifact = Draw(*device, PixelCode, scale, swizzle);
+            Require(!device->Target().registrationModules || artifact == original, "line swizzle changes did not reuse their registered fragment artifact");
+            Check(0u, swizzle);
+        }
+        for (std::uint32_t pattern = 0; pattern < 16u; ++pattern) {
+            std::uint32_t swizzle = 0u;
+            for (std::uint32_t component = 0; component < 4u; ++component) swizzle |= ((pattern >> component) & 1u) << (component * 3u);
+            const auto artifact = Draw(*device, PixelCode, scale, swizzle);
+            Require(!device->Target().registrationModules || artifact == original, "constant swizzle changes did not reuse their registered fragment artifact");
+            Check(0u, swizzle);
+        }
+        const auto restored = Draw(*device, PixelCode, scale);
+        Require(!device->Target().registrationModules || restored == original, "line swizzle did not restore its original registered artifact");
+        Check(0u);
         RequireRefused(*device);
         std::puts("image plane address on line implicit LOD tests passed");
         return 0;

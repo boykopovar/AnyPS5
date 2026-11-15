@@ -1,6 +1,7 @@
 #include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
+#include <cerrno>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -65,18 +66,21 @@ static void MatrixInfo() {
     const auto voice = Voice(rack);
     Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info)), SCE_NGS2_OK, "GetMatrixInfo failed for a matrix without levels");
     Require(info.num_levels == 0 && std::all_of(std::begin(info.levels), std::end(info.levels), [](float level) { return level == 0.0f; }));
+    Status(sceNgs2VoiceGetMatrixInfo(voice, 0, reinterpret_cast<Ngs2VoiceMatrixInfo*>(0x10), sizeof(info)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetMatrixInfo accepted an unwritable output for a matrix without levels");
     const float levels[4] = {1.0f, 0.5f, -5.0f, 6.0f};
     Control(voice, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 4, levels});
     std::memset(&info, 0xa5, sizeof(info));
     Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info)), SCE_NGS2_OK, "GetMatrixInfo failed for a matrix with levels");
     Require(info.num_levels == 4 && info.levels[0] == 1.0f && info.levels[1] == 0.5f && info.levels[2] == -4.0f && info.levels[3] == 4.0f);
-    Require(std::all_of(std::begin(info.levels) + 4, std::end(info.levels), [](float level) { return level == 0.0f; }));
+    Status(sceNgs2VoiceGetMatrixInfo(voice, 0, reinterpret_cast<Ngs2VoiceMatrixInfo*>(0x10), sizeof(info)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetMatrixInfo accepted an unwritable output for a matrix with levels");
+    const auto* unused = reinterpret_cast<const unsigned char*>(info.levels + 4);
+    Require(std::all_of(unused, bytes + sizeof(info), [](auto byte) { return byte == 0xa5; }));
     std::array<float, 64> full{};
     for (std::size_t i = 0; i < full.size(); i++) full[i] = static_cast<float>(i) / 64.0f;
     Control(voice, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 64, full.data()});
     Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info)), SCE_NGS2_OK, "GetMatrixInfo failed for 64 levels");
     Require(info.num_levels == 64 && std::equal(full.begin(), full.end(), info.levels));
-    Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info) + 1), SCE_NGS2_ERROR_INVALID_OUT_SIZE, "GetMatrixInfo accepted a larger output");
+    Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info) + 1), SCE_NGS2_OK, "GetMatrixInfo rejected a larger output");
     Require(MatrixInfoThrows<std::invalid_argument>(voice, 1));
     const auto master = Voice(CreateRack(system, SCE_NGS2_RACK_ID_MASTERING));
     Require(MatrixInfoThrows<std::invalid_argument>(master, 0));
@@ -108,6 +112,19 @@ int main(int argc, char** argv) {
         Status(sceNgs2VoiceGetOwner(voice, nullptr, &index), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner lost null-rack validation");
         Status(sceNgs2VoiceGetOwner(voice, &owner, nullptr), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner lost null-index validation");
         Require(owner == 0x5a5a && index == 0x5a5a);
+        errno = 71;
+        Status(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2SamplerVoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable sampler output");
+        const auto reverbVoice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_REVERB));
+        Status(sceNgs2VoiceGetState(reverbVoice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2VoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable reverb output");
+        const auto submixerVoice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+        Status(sceNgs2VoiceGetState(submixerVoice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2SubmixerVoiceState)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetState accepted an unwritable submixer output");
+        Require(errno == 71);
+        Status(sceNgs2VoiceGetStateFlags(voice, reinterpret_cast<std::uint32_t*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetStateFlags accepted an unwritable output");
+        Status(sceNgs2VoiceGetOwner(voice, reinterpret_cast<uintptr_t*>(0x10), &index), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner accepted an unwritable rack output");
+        Status(sceNgs2VoiceGetOwner(voice, &owner, reinterpret_cast<std::uint32_t*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetOwner accepted an unwritable index output");
+        Status(sceNgs2VoiceGetPortInfo(voice, 0, reinterpret_cast<Ngs2VoicePortInfo*>(0x10), sizeof(Ngs2VoicePortInfo)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "GetPortInfo accepted an unwritable output");
+        Status(sceNgs2VoiceQueryInfo(voice, SCE_NGS2_VOICE_INFO_CHANNELS, reinterpret_cast<void*>(0x10), sizeof(Ngs2VoiceChannelsInfo)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "QueryInfo accepted an unwritable output");
+        Require(errno == 71);
         const auto other = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
         for (const auto owned : {rack, other}) {
             Ngs2RackInfo info{};
@@ -121,6 +138,9 @@ int main(int argc, char** argv) {
             }
         }
         Require(sceNgs2RackDestroy(other, nullptr) == SCE_NGS2_OK);
+        errno = 71;
+        Status(sceNgs2RackGetVoiceHandle(rack, 0, reinterpret_cast<uintptr_t*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "RackGetVoiceHandle accepted an unwritable output");
+        Require(errno == 71);
         std::uint32_t flags = 0;
         Status(sceNgs2VoiceGetStateFlags(voice, &flags), SCE_NGS2_OK, "valid state-flags lookup failed");
         Ngs2SamplerVoiceState state{};

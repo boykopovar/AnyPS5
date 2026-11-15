@@ -49,7 +49,7 @@ namespace AgcDriver::Graphics {
         // leaving the other elements of both buffers alone.
         void Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, bool thick = false, const DetileWindow& window = {});
         void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
-        void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes);
+        void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat = false);
         static VkFormat ImageElementFormat(std::uint32_t elementBytes);
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
@@ -79,6 +79,8 @@ namespace AgcDriver::Graphics {
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
+        std::vector<std::pair<std::uint32_t, GcnTileGeometry>> gcnGeometries;
+        std::uint32_t layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer);
         DescriptorRing descriptorSets;
         VkDescriptorSetLayout cmaskDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout cmaskPipelineLayout = VK_NULL_HANDLE;
@@ -90,6 +92,8 @@ namespace AgcDriver::Graphics {
         VkShaderModule imageModule = VK_NULL_HANDLE;
         VkShaderModule repackModule = VK_NULL_HANDLE;
         VkPipeline repackPipeline = VK_NULL_HANDLE;
+        VkShaderModule imageWordModule = VK_NULL_HANDLE;
+        VkShaderModule wordModule = VK_NULL_HANDLE;
         DescriptorRing imageDescriptorSets;
         VkDescriptorSetLayout readbackDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout readbackPipelineLayout = VK_NULL_HANDLE;

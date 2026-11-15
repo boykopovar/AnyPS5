@@ -187,10 +187,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const bool hasFloat64 = TargetHasCapability(device->Target(), spv::CapabilityFloat64);
-        if (!hasFloat64) std::puts("v_cvt_f64_f32 skipped, the device has no shaderFloat64");
         for (const bool float64 : {false, true}) {
-            if (float64 && !hasFloat64) continue;
             for (const bool ieee : {false, true}) {
                 const auto flushed = Run(*device, float64, Mode(0u, ieee));
                 CheckFlushed(flushed, float64, 0u, ieee);

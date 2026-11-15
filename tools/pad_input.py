@@ -17,27 +17,70 @@ BUTTONS = {
 }
 
 
+def timeline_sequence(command, header):
+    if len(header.rstrip(b"\n")) > 127 or (os.name == "nt" and b"\x1a" in header):
+        return 0
+    header = header.split(b"\0", 1)[0]
+    fields = re.fullmatch(rb"\s*APS5_PAD_TIMELINE\s+(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)\s*", header)
+    if fields is None:
+        return 0
+    version, sequence, count = [int(token) for token in fields.groups()]
+    if version != 1 or not 1 <= sequence <= 2**64 - 1 or not 1 <= count <= 4096:
+        return 0
+    previous_end = 0
+    for _ in range(count):
+        line = command.readline(129)
+        if os.name == "nt":
+            if b"\x1a" in line:
+                line = line.split(b"\x1a", 1)[0]
+                command.seek(0, os.SEEK_END)
+            if line.endswith(b"\r\n"):
+                line = line[:-2] + b"\n"
+        if not line or len(line.rstrip(b"\n")) > 127:
+            return 0
+        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)((?:(?:\s+|(?=\+))\+?[0-9]+){4})?\s*", line.split(b"\0", 1)[0])
+        if fields is None:
+            return 0
+        start, duration, buttons = [int(token) for token in fields.groups()[:3]]
+        if buttons & ~0x70fffe or not 1 <= duration <= 5000 or start < previous_end or start + duration > 3600000:
+            return 0
+        if fields.group(4) and any(int(axis) > 255 for axis in re.findall(rb"\+?[0-9]+", fields.group(4))):
+            return 0
+        previous_end = start + duration
+    while tail := command.read(4096):
+        if os.name == "nt" and b"\x1a" in tail:
+            return sequence if not tail.split(b"\x1a", 1)[0].strip() else 0
+        if tail.strip():
+            return 0
+    return sequence
+
+
 def previous_sequence(path):
     try:
         with path.open("rb") as command:
             line = command.readline(129)
+            if os.name == "nt" and line.endswith(b"\r\n"):
+                line = line[:-2] + b"\n"
+            if line.split()[:1] == [b"APS5_PAD_TIMELINE"]:
+                return timeline_sequence(command, line)
     except FileNotFoundError:
         return 0
-    if os.name == "nt" and line.endswith(b"\r\n"):
-        line = line[:-2] + b"\n"
-    tokens = line.split()
-    timeline = tokens[:1] == [b"APS5_PAD_TIMELINE"]
-    if timeline:
-        tokens = tokens[1:]
-    if len(line.rstrip(b"\n")) > 127 or len(tokens) not in ((3,) if timeline else (3, 7)):
+    if os.name == "nt":
+        line = line.split(b"\x1a", 1)[0]
+    if len(line.rstrip(b"\n")) > 127:
+        return 0
+    tokens = line.split(b"\0", 1)[0].split()
+    if len(tokens) in (4, 8):
+        touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
+        if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
+            return 0
+    if len(tokens) not in (3, 7):
         return 0
     if any(re.fullmatch(rb"\+?[0-9]+", token) is None for token in tokens):
         return 0
     values = [int(token) for token in tokens]
     if any(value > 2**64 - 1 for value in values):
         return 0
-    if timeline:
-        return values[1] if values[0] == 1 and 1 <= values[2] <= 4096 else 0
     if values[0] == 0 or values[1] & ~0x70fffe or not 1 <= values[2] <= 5000:
         return 0
     if any(axis > 255 for axis in values[3:]):
@@ -69,6 +112,8 @@ def main():
     parser.add_argument("--hold-ms", type=int, default=300)
     parser.add_argument("--left-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
+    parser.add_argument("--touch", type=int, nargs=4, metavar=("X", "Y", "ID", "ACTIVE"),
+                        help="touch contact: X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
     args = parser.parse_args()
     try:
         mask = button_mask(args.button)
@@ -80,6 +125,11 @@ def main():
         parser.error(f"directory does not exist: {args.path.parent}")
     if not 1 <= args.hold_ms <= 5000:
         parser.error("--hold-ms must be between 1 and 5000")
+    touch = ""
+    if args.touch is not None:
+        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 942, 127, 1))):
+            parser.error("--touch requires X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1")
+        touch = " touch(" + ",".join(str(value) for value in args.touch) + ")"
     sticks = ""
     if args.left_stick is not None or args.right_stick is not None:
         axes = (args.left_stick or [128, 128]) + (args.right_stick or [128, 128])
@@ -104,7 +154,7 @@ def main():
                 if os.geteuid() == 0:
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
-            output.write(f"{sequence} {mask} {args.hold_ms}{sticks}\n")
+            output.write(f"{sequence} {mask} {args.hold_ms}{sticks}{touch}\n")
         os.replace(temporary, args.path)
     finally:
         if temporary is not None:

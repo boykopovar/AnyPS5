@@ -21,6 +21,7 @@ def fixture():
 def strict_fixture():
     image = optional_plt_fixture([(4, 0x6a0)])
     struct.pack_into("<I", image, 64 + 4, 5)
+    struct.pack_into("<Q", image, 0x400 + 5 * 16 + 8, 0)
     struct.pack_into("<IIII", image, 0x6a0, 1, 1, 0, 0)
     return image
 
@@ -96,6 +97,20 @@ def main():
         strict = strict_fixture()
         struct.pack_into("<QQ", strict, 120 + 32, strict_size - 8, strict_size - 8)
         convert("strict-partial-terminator", strict, "Unterminated dynamic segment", strict_modes)
+
+        strict = strict_fixture()
+        extra_tags = ((4, 0x6a0), (21, 0), (21, 0))
+        expanded_size = strict_size + 16 * len(extra_tags)
+        struct.pack_into("<QQ", strict, 120 + 32, expanded_size, expanded_size)
+        terminator = 0x400 + strict_size - 16
+        for index, entry in enumerate((*extra_tags, (0, 0))):
+            struct.pack_into("<qQ", strict, terminator + index * 16, *entry)
+        convert("strict-identical-tags", strict, modes=(["unused-filter=2"],))
+        repeated_debug = terminator + 16 * (len(extra_tags) - 1)
+        struct.pack_into("<Q", strict, repeated_debug + 8, 1)
+        convert("strict-conflicting-tags", strict,
+                f"Strict filter: conflicting duplicate dynamic tag (offset 0x{repeated_debug:x})",
+                modes=(["unused-filter=2"],))
 
         for name, delta, error in (("module-trailing-bytes", 8, None),
                                    ("module-partial-terminator", -8, "Unterminated dynamic segment")):
