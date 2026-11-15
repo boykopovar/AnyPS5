@@ -236,6 +236,9 @@ void TestQueries() {
     sizes = {1, 1};
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing prefixed path");
     Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing prefixed path");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, reinterpret_cast<std::uint32_t*>(0x10), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed id array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, ids.data(), reinterpret_cast<std::uint64_t*>(0x10), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed size array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed error index");
     std::uint64_t size = 0;
     Require(sceKernelAprGetFileSize(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file size");
     Require(sceKernelAprGetFileSize(id, &size) == 0 && size == FileBytes, "APR reported a wrong file size");
