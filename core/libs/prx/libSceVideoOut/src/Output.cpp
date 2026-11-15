@@ -256,9 +256,12 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     LibcAwaitExit_nid_postfix();
 }
 
+static bool isFreshHandle(int handle);
+
 int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) try {
     if (status == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (isFreshHandle(handle)) return VIDEO_OUT_ERROR_0x8029001C;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
