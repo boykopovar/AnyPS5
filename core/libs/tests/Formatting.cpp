@@ -499,11 +499,15 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(snprintf_nid_postfix(nullptr, 0, "%s:%d", "abcdef", 123) == 10);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%s]", static_cast<const char*>(nullptr)) == 8 && std::strcmp(buffer, "[(null)]") == 0);
     const char* none = nullptr;
-    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.0s][%8.2s][%-6.1s]", none, none, none, none) == 25 &&
-        std::strcmp(buffer, "[(nu][][      (n][(     ]") == 0);
-    Require(FormatList(buffer, sizeof(buffer), "[%.*s]", 4, none) == 6 && std::strcmp(buffer, "[(nul]") == 0);
-    Require(FormatList(buffer, sizeof(buffer), "%2$.3s:%1$d", 7, none) == 5 && std::strcmp(buffer, "(nu:7") == 0);
-    Require(sprintf_nid_postfix(buffer, "%.2s", none) == 2 && std::strcmp(buffer, "(n") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.0s][%8.2s][%-8.2s]", none, none, none, none) == 36 &&
+        std::strcmp(buffer, "[(null)][(null)][  (null)][(null)  ]") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.*s][%.*s][%.10s]", 0, none, 2, none, none) == 24 &&
+        std::strcmp(buffer, "[(null)][(null)][(null)]") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%.3s][%.*s][%8.2s]", "abcdef", 0, "abcdef", "abcdef") == 17 &&
+        std::strcmp(buffer, "[abc][][      ab]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "[%.*s]", 4, none) == 8 && std::strcmp(buffer, "[(null)]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "%2$.3s:%1$d", 7, none) == 8 && std::strcmp(buffer, "(null):7") == 0);
+    Require(sprintf_nid_postfix(buffer, "%.2s", none) == 6 && std::strcmp(buffer, "(null)") == 0);
     buffer[0] = 'x';
     Require(snprintf_nid_postfix(buffer, 1, "%d", 123) == 3 && buffer[0] == 0);
     Require(sprintf_nid_postfix(buffer, "%hhd %hhu %hd %hu %%", 255, 257, 65535, 65537) == 11);
