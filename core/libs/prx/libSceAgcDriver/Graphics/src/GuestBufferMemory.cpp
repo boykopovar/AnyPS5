@@ -7861,6 +7861,11 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
     return mirror != nullptr && !mirror->writable ? mirror->serial : 0;
 }
 
+static std::uint64_t NextHostImportSerial() {
+    static std::uint64_t serials = 0;
+    return ++serials;
+}
+
 std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, std::size_t bytes, bool reconcile) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
     auto& state = Imports();
@@ -7875,8 +7880,7 @@ std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, st
     if (address < entry.base || address + bytes > entry.base + entry.bytes) return 0;
     // Serials are handed out on first use: a fresh import starts at 0, so one made after an earlier
     // import of the same range was dropped can never repeat that import's serial.
-    static std::uint64_t serials = 0;
-    if (entry.serial == 0) entry.serial = ++serials;
+    if (entry.serial == 0) entry.serial = NextHostImportSerial();
     return entry.serial;
 }
 
@@ -7892,10 +7896,7 @@ bool HostImportView(const Context& context, std::uint64_t address, std::size_t b
     const auto offset = address - (entry.base - entry.lead);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     if (offset % alignment != 0) return false;
-    if (entry.serial == 0) {
-        static std::uint64_t serials = 0;
-        entry.serial = ++serials;
-    }
+    if (entry.serial == 0) entry.serial = NextHostImportSerial();
     serial = entry.serial;
     view = {entry.buffer, static_cast<VkDeviceSize>(offset), static_cast<VkDeviceSize>(bytes)};
     return true;
