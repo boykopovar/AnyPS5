@@ -300,12 +300,8 @@ Stack* ReadInfoBio(LibreSsl::Bio* bio, Stack* list) {
     if (!info) return release();
     for (;;) {
         LibreSsl::PemBuffers buffers;
-        if (!buffers.Allocate()) {
-            InfoFree(info);
-            return release();
-        }
-        std::size_t length = 0;
-        if (!LibreSsl::ReadRecord(bio, buffers, length)) {
+        long length = 0;
+        if (!LibreSsl::ReadPem(bio, buffers, length)) {
             if (Reason(LibreSslPeekLastError_nid_no_patch()) == NoStartLine) {
                 ERR_clear_error_nid_postfix();
                 break;
@@ -326,7 +322,7 @@ Stack* ReadInfoBio(LibreSsl::Bio* bio, Stack* list) {
                     if (!info) return release();
                     continue;
                 }
-                if (!LibreSsl::CipherInfo(buffers.header->data)) {
+                if (!LibreSsl::ReadCipherInfo(buffers.header->data, "PEM_X509_INFO_read_bio")) {
                     InfoFree(info);
                     return release();
                 }

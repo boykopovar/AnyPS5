@@ -259,9 +259,13 @@ std::int64_t APS5_VABI aio_return_nid_postfix(GuestAiocb* aiocb) {
 int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, const KernelTimespec* timeout) {
     if (count < 0 || count > static_cast<int>(QueuePerProcess)) return Fail(GuestEinval);
     if (count > 0 && list == nullptr) return Fail(GuestEfault);
+    const GuestAiocb* jobs[QueuePerProcess] = {};
+    if (count > 0 && !GuestCopyIn_nid_no_patch(jobs, list, static_cast<std::size_t>(count) * sizeof(jobs[0]))) return Fail(GuestEfault);
     std::optional<std::uint64_t> deadline;
     if (timeout != nullptr) {
-        const auto wait = WaitTime(*timeout);
+        KernelTimespec localTimeout{};
+        if (!GuestCopyIn_nid_no_patch(&localTimeout, timeout, sizeof(localTimeout))) return Fail(GuestEfault);
+        const auto wait = WaitTime(localTimeout);
         if (!wait) return Fail(GuestEinval);
         deadline = TimedWait::NowNanos() + static_cast<std::uint64_t>(wait->count());
     }
@@ -273,7 +277,7 @@ int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, 
         bool listed = false;
         for (const auto& job : aio.all) {
             for (int index = 0; index < count; ++index) {
-                if (job->user != list[index]) continue;
+                if (job->user != jobs[index]) continue;
                 listed = true;
                 if (job->state == State::Done) return 0;
             }

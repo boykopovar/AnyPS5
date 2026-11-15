@@ -1086,6 +1086,27 @@ void TestPemReadX509FileWrapper() {
             "a missing END line frees only the borrowed BIO and preserves stream and output");
     RequireError(0x09fff066);
     Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after the missing END line");
+
+    std::FILE* undecodable = std::tmpfile();
+    Require(undecodable != nullptr, "open a temporary PEM file holding an undecodable record");
+    FileStream undecodableStream(undecodable);
+    constexpr char record[] = "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+    Require(fwrite_nid_postfix(record, 1, sizeof(record) - 1, &undecodableStream) == sizeof(record) - 1,
+            "write a certificate record to the borrowed PEM file");
+    Require(fflush_nid_postfix(&undecodableStream) == 0, "flush the certificate record before reading it back");
+    Require(fseek_nid_postfix(&undecodableStream, 0, SEEK_SET) == 0, "rewind the certificate record file");
+    LibreSslX509* decoded = nullptr;
+    Require(PEM_read_X509_nid_postfix(&undecodableStream, &decoded, nullptr, nullptr) == nullptr,
+            "a record that is not a certificate returns null through the reader");
+    Require(allocations == 0 && undecodableStream.IsOpen() && output == sentinel,
+            "an undecodable record frees only the borrowed BIO and preserves stream and output");
+    Require(ERR_get_error_nid_postfix() == 0x0dfff07b, "the record header queues the ASN1 header reason");
+    Require(ERR_get_error_nid_postfix() == 0x0dfff066, "the record header queues the ASN1 object reason");
+    Require(ERR_get_error_nid_postfix() == 0x0dfff03a, "the record header queues the nested ASN1 reason");
+    Require(ERR_get_error_nid_postfix() == 0x09fff00d, "the undecodable record queues the PEM ASN1 reason");
+    Require(ERR_get_error_nid_postfix() == 0, "the undecodable record queues no further error");
+    Require(decoded == nullptr, "the undecodable record leaves the output null");
+    Require(fclose_nid_postfix(&undecodableStream) == 0, "close borrowed PEM file after the undecodable record");
 }
 
 std::uint64_t ErrorCode(int library, int reason) {
