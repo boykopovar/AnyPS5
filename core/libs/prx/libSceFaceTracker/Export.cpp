@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -39,68 +40,6 @@ constexpr int kMaxFeatureSize = 0x4100;
 constexpr std::size_t kFeatureElementStride = 0x410;
 constexpr int kFeatureElementCount = 0x10;
 
-uint8_t *ctxByte(void *context, std::size_t off) {
-    return static_cast<uint8_t *>(context) + off;
-}
-
-int32_t ctxI32(void *context, std::size_t off) {
-    int32_t v;
-    std::memcpy(&v, ctxByte(context, off), sizeof(v));
-    return v;
-}
-
-void ctxStore(void *context, std::size_t off, void *value) {
-    std::memcpy(ctxByte(context, off), &value, sizeof(value));
-}
-
-uint8_t *userDb(void *context) {
-    return ctxByte(context, kUserDb);
-}
-
-int32_t userDbCount(void *context) {
-    int32_t v;
-    std::memcpy(&v, userDb(context) + kUserDbCount, sizeof(v));
-    return v;
-}
-
-uint8_t *userDbEntries(void *context) {
-    uint8_t *p;
-    std::memcpy(&p, userDb(context) + kUserDbEntries, sizeof(p));
-    return p;
-}
-
-uint8_t *userDbFeatures(void *context) {
-    uint8_t *p;
-    std::memcpy(&p, userDb(context) + kUserDbFeatures, sizeof(p));
-    return p;
-}
-
-bool entryUsed(uint8_t *entry) {
-    return entry[0] != 0;
-}
-
-int32_t entryUserId(uint8_t *entry) {
-    int32_t v;
-    std::memcpy(&v, entry + 8, sizeof(v));
-    return v;
-}
-
-int32_t trackCount(void *context) {
-    return ctxI32(context, kTrackCount);
-}
-
-uint8_t *trackRecord(void *context, int32_t index) {
-    uint8_t *base;
-    std::memcpy(&base, ctxByte(context, kTrackBase), sizeof(base));
-    return base + static_cast<std::size_t>(index) * kRecordStride;
-}
-
-int32_t recordI32(uint8_t *record, std::size_t off) {
-    int32_t v;
-    std::memcpy(&v, record + off, sizeof(v));
-    return v;
-}
-
 bool CopyIn(void *destination, const void *source, std::size_t bytes) {
     const int savedErrno = errno;
     const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
@@ -115,13 +54,73 @@ bool CopyOut(void *destination, const void *source, std::size_t bytes) {
     return ok;
 }
 
+bool ValidSpan(const void *base, std::size_t bytes) {
+    const auto addr = reinterpret_cast<std::uintptr_t>(base);
+    return addr != 0 && (bytes == 0 || bytes - 1 <= std::numeric_limits<std::uintptr_t>::max() - addr);
+}
+
+bool WritableSpan(void *base, std::size_t bytes) {
+    if (!ValidSpan(base, bytes)) {
+        return false;
+    }
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(base, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+bool OffsetAddress(const void *base, std::size_t offset, T *&out) {
+    const auto addr = reinterpret_cast<std::uintptr_t>(base);
+    if (addr == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - addr) {
+        return false;
+    }
+    out = reinterpret_cast<T *>(addr + offset);
+    return true;
+}
+
+bool ElementAddress(void *base, std::int32_t index, std::size_t stride, std::size_t elemSize, void *&out) {
+    const auto addr = reinterpret_cast<std::uintptr_t>(base);
+    if (addr == 0 || index < 0) {
+        return false;
+    }
+    const auto uindex = static_cast<std::size_t>(index);
+    if (uindex > (std::numeric_limits<std::uintptr_t>::max() - addr) / stride) {
+        return false;
+    }
+    const auto elemAddr = addr + uindex * stride;
+    if (elemSize > 0 && elemSize - 1 > std::numeric_limits<std::uintptr_t>::max() - elemAddr) {
+        return false;
+    }
+    out = reinterpret_cast<void *>(elemAddr);
+    return true;
+}
+
+template <typename T>
+bool ReadAt(const void *base, std::size_t offset, T &value) {
+    const void *src = nullptr;
+    if (!OffsetAddress(base, offset, src) || !ValidSpan(src, sizeof(T))) {
+        return false;
+    }
+    return CopyIn(&value, src, sizeof(T));
+}
+
+template <typename T>
+bool WriteAt(void *base, std::size_t offset, const T &value) {
+    void *dst = nullptr;
+    if (!OffsetAddress(base, offset, dst) || !ValidSpan(dst, sizeof(T))) {
+        return false;
+    }
+    return CopyOut(dst, &value, sizeof(T));
+}
+
 bool CheckContext(const void *context, int &error) {
     if (context == nullptr) {
         error = kErrNullContext;
         return false;
     }
     std::uint8_t initFlag = 0;
-    if (!CopyIn(&initFlag, static_cast<const std::uint8_t *>(context) + kInitFlag, sizeof(initFlag))) {
+    if (!ReadAt(context, kInitFlag, initFlag)) {
         error = kErrInvalid;
         return false;
     }
@@ -137,8 +136,15 @@ int registerCallback(void *callback, void *userArg, void *context,
     if (int error = 0; !CheckContext(context, error)) {
         return error;
     }
-    ctxStore(context, cbOff, callback);
-    ctxStore(context, argOff, userArg);
+    void *cbDst = nullptr;
+    void *argDst = nullptr;
+    if (!OffsetAddress(context, cbOff, cbDst) || !OffsetAddress(context, argOff, argDst) ||
+        !WritableSpan(cbDst, sizeof(callback)) || !WritableSpan(argDst, sizeof(userArg))) {
+        return kErrInvalid;
+    }
+    if (!CopyOut(cbDst, &callback, sizeof(callback)) || !CopyOut(argDst, &userArg, sizeof(userArg))) {
+        return kErrInvalid;
+    }
     return 0;
 }
 
@@ -151,65 +157,144 @@ int userDbRegister(void *context, int userId, const void *feature, int featureSi
     if (!CopyIn(localFeature.data(), feature, localFeature.size())) {
         return kErrInvalid;
     }
-    const int32_t count = userDbCount(context);
+    int32_t count = 0;
+    if (!ReadAt(context, kUserDb + kUserDbCount, count)) {
+        return kErrInvalid;
+    }
     if (count <= 0) {
         return kErrFull;
     }
-    uint8_t *entries = userDbEntries(context);
+    void *entries = nullptr;
+    if (!ReadAt(context, kUserDb + kUserDbEntries, entries) || entries == nullptr) {
+        return kErrInvalid;
+    }
     int32_t freeIndex = -1;
     bool haveFree = false;
     for (int32_t i = 0; i < count; ++i) {
-        uint8_t *entry = entries + static_cast<std::size_t>(i) * kUserEntryStride;
-        if (!haveFree && !entryUsed(entry)) {
+        void *entry = nullptr;
+        std::uint8_t used = 0;
+        std::int32_t existingUserId = 0;
+        if (!ElementAddress(entries, i, kUserEntryStride, kUserEntryStride, entry) ||
+            !ReadAt(entry, 0, used) || !ReadAt(entry, 8, existingUserId)) {
+            return kErrInvalid;
+        }
+        if (!haveFree && used == 0) {
             freeIndex = i;
             haveFree = true;
         }
-        if (entryUserId(entry) == userId) {
+        if (existingUserId == userId) {
             return kErrInvalid;
         }
     }
     if (freeIndex < 0) {
         return kErrFull;
     }
-    std::memcpy(userDbFeatures(context) + static_cast<std::size_t>(freeIndex) * kFeatureStride,
-                localFeature.data(), localFeature.size());
-    uint8_t *entry = entries + static_cast<std::size_t>(freeIndex) * kUserEntryStride;
-    entry[0] = 1;
-    std::memcpy(entry + 8, &userId, sizeof(userId));
+    void *features = nullptr;
+    if (!ReadAt(context, kUserDb + kUserDbFeatures, features) || features == nullptr) {
+        return kErrInvalid;
+    }
+    void *featureDest = nullptr;
+    void *entryDest = nullptr;
+    if (!ElementAddress(features, freeIndex, kFeatureStride, localFeature.size(), featureDest) ||
+        !ElementAddress(entries, freeIndex, kUserEntryStride, kUserEntryStride, entryDest)) {
+        return kErrInvalid;
+    }
+    if (!WritableSpan(featureDest, localFeature.size()) || !WritableSpan(entryDest, kUserEntryStride)) {
+        return kErrInvalid;
+    }
+    const std::uint8_t occupied = 1;
+    if (!CopyOut(featureDest, localFeature.data(), localFeature.size()) ||
+        !WriteAt(entryDest, 0, occupied) ||
+        !WriteAt(entryDest, 8, userId)) {
+        return kErrInvalid;
+    }
     return 0;
 }
 
-void wipeFeature(uint8_t *block) {
+bool wipeFeature(void *block) {
     const uint64_t sentinel = 0x1ffffffff;
     const uint64_t zero = 0;
+    std::vector<std::uint8_t> wiped(kFeatureStride, 0);
     for (int i = 0; i < kFeatureElementCount; ++i) {
-        uint8_t *element = block + static_cast<std::size_t>(i) * kFeatureElementStride;
-        std::memset(element, 0, kFeatureElementStride);
+        std::uint8_t *element = wiped.data() + static_cast<std::size_t>(i) * kFeatureElementStride;
         std::memcpy(element + 0x400, &sentinel, sizeof(sentinel));
         std::memcpy(element + 0x408, &zero, sizeof(zero));
     }
+    return CopyOut(block, wiped.data(), wiped.size());
 }
 
 int userDbUnregister(void *context, int userId) {
     if (userId <= 0) {
         return kErrInvalid;
     }
-    const int32_t count = userDbCount(context);
+    int32_t count = 0;
+    if (!ReadAt(context, kUserDb + kUserDbCount, count)) {
+        return kErrInvalid;
+    }
     if (count <= 0) {
         return kErrNotFound;
     }
-    uint8_t *entries = userDbEntries(context);
+    void *entries = nullptr;
+    if (!ReadAt(context, kUserDb + kUserDbEntries, entries) || entries == nullptr) {
+        return kErrInvalid;
+    }
     for (int32_t i = 0; i < count; ++i) {
-        uint8_t *entry = entries + static_cast<std::size_t>(i) * kUserEntryStride;
-        if (!entryUsed(entry) || entryUserId(entry) != userId) {
+        void *entry = nullptr;
+        std::uint8_t used = 0;
+        std::int32_t existingUserId = 0;
+        if (!ElementAddress(entries, i, kUserEntryStride, kUserEntryStride, entry) ||
+            !ReadAt(entry, 0, used) || !ReadAt(entry, 8, existingUserId)) {
+            return kErrInvalid;
+        }
+        if (used == 0 || existingUserId != userId) {
             continue;
         }
+        void *features = nullptr;
+        void *featureBlock = nullptr;
+        if (!ReadAt(context, kUserDb + kUserDbFeatures, features) || features == nullptr ||
+            !ElementAddress(features, i, kFeatureStride, kFeatureStride, featureBlock)) {
+            return kErrInvalid;
+        }
+        if (!WritableSpan(entry, kUserEntryStride) || !WritableSpan(featureBlock, kFeatureStride)) {
+            return kErrInvalid;
+        }
         const int32_t neg = -1;
-        std::memcpy(entry + 4, &neg, sizeof(neg));
-        std::memcpy(entry + 8, &neg, sizeof(neg));
-        entry[0] = 0;
-        wipeFeature(userDbFeatures(context) + static_cast<std::size_t>(i) * kFeatureStride);
+        const std::uint8_t cleared = 0;
+        if (!WriteAt(entry, 4, neg) || !WriteAt(entry, 8, neg) ||
+            !WriteAt(entry, 0, cleared) || !wipeFeature(featureBlock)) {
+            return kErrInvalid;
+        }
         return 0;
+    }
+    return kErrNotFound;
+}
+
+int lookupTrackField(void *context, std::size_t matchOffset, std::int32_t matchValue, std::size_t resultOffset) {
+    int32_t count = 0;
+    if (!ReadAt(context, kTrackCount, count)) {
+        return kErrInvalid;
+    }
+    if (count <= 0) {
+        return kErrNotFound;
+    }
+    void *base = nullptr;
+    if (!ReadAt(context, kTrackBase, base) || base == nullptr) {
+        return kErrInvalid;
+    }
+    for (int32_t i = 0; i < count; ++i) {
+        void *record = nullptr;
+        std::int32_t candidate = 0;
+        if (!ElementAddress(base, i, kRecordStride, kRecordStride, record) ||
+            !ReadAt(record, matchOffset, candidate)) {
+            return kErrInvalid;
+        }
+        if (candidate == matchValue) {
+            std::int32_t value = 0;
+            if (!ReadAt(record, resultOffset, value)) {
+                return kErrInvalid;
+            }
+            return value;
+        }
     }
     return kErrNotFound;
 }
@@ -267,12 +352,29 @@ int APS5_VABI sceFaceTrackerUnregisterUser(int userId, void *context) {
     if (ret != 0) {
         return ret;
     }
-    const int32_t count = trackCount(context);
+    int32_t count = 0;
+    if (!ReadAt(context, kTrackCount, count)) {
+        return kErrInvalid;
+    }
+    if (count <= 0) {
+        return 0;
+    }
+    void *base = nullptr;
+    if (!ReadAt(context, kTrackBase, base) || base == nullptr) {
+        return kErrInvalid;
+    }
     for (int32_t i = 0; i < count; ++i) {
-        uint8_t *record = trackRecord(context, i);
-        if (recordI32(record, kRecordUserId) == userId) {
+        void *record = nullptr;
+        std::int32_t recordUser = 0;
+        if (!ElementAddress(base, i, kRecordStride, kRecordStride, record) ||
+            !ReadAt(record, kRecordUserId, recordUser)) {
+            return kErrInvalid;
+        }
+        if (recordUser == userId) {
             const int32_t neg = -1;
-            std::memcpy(record + kRecordUserId, &neg, sizeof(neg));
+            if (!WriteAt(record, kRecordUserId, neg)) {
+                return kErrInvalid;
+            }
         }
     }
     return 0;
@@ -290,32 +392,43 @@ int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *feat
     if (userId <= 0 || !feature || !featureSize) {
         return kErrInvalid;
     }
-    const int savedErrno = errno;
     void *probeFeature = nullptr;
     int probeSize = 0;
-    const bool probedFeature = GuestCopyIn_nid_no_patch(&probeFeature, feature, sizeof(probeFeature));
-    const bool probedSize = GuestCopyIn_nid_no_patch(&probeSize, featureSize, sizeof(probeSize));
-    errno = savedErrno;
-    if (!probedFeature || !probedSize) {
+    if (!CopyIn(&probeFeature, feature, sizeof(probeFeature)) ||
+        !CopyIn(&probeSize, featureSize, sizeof(probeSize))) {
         return kErrInvalid;
     }
-    const int32_t count = userDbCount(context);
+    int32_t count = 0;
+    if (!ReadAt(context, kUserDb + kUserDbCount, count)) {
+        return kErrInvalid;
+    }
     if (count <= 0) {
         return kErrNotFound;
     }
-    uint8_t *entries = userDbEntries(context);
+    void *entries = nullptr;
+    if (!ReadAt(context, kUserDb + kUserDbEntries, entries) || entries == nullptr) {
+        return kErrInvalid;
+    }
     for (int32_t i = 0; i < count; ++i) {
-        uint8_t *entry = entries + static_cast<std::size_t>(i) * kUserEntryStride;
-        if (!entryUsed(entry) || entryUserId(entry) != userId) {
+        void *entry = nullptr;
+        std::uint8_t used = 0;
+        std::int32_t existingUserId = 0;
+        if (!ElementAddress(entries, i, kUserEntryStride, kUserEntryStride, entry) ||
+            !ReadAt(entry, 0, used) || !ReadAt(entry, 8, existingUserId)) {
+            return kErrInvalid;
+        }
+        if (used == 0 || existingUserId != userId) {
             continue;
         }
-        uint8_t *block = userDbFeatures(context) + static_cast<std::size_t>(i) * kFeatureStride;
+        void *features = nullptr;
+        void *block = nullptr;
+        if (!ReadAt(context, kUserDb + kUserDbFeatures, features) || features == nullptr ||
+            !ElementAddress(features, i, kFeatureStride, kFeatureStride, block)) {
+            return kErrInvalid;
+        }
         const int32_t size = kMaxFeatureSize;
-        const int savedErrno = errno;
-        const bool copiedFeature = GuestCopyOut_nid_no_patch(feature, &block, sizeof(block));
-        const bool copiedSize = GuestCopyOut_nid_no_patch(featureSize, &size, sizeof(size));
-        errno = savedErrno;
-        if (!copiedFeature || !copiedSize) {
+        if (!WritableSpan(feature, sizeof(block)) || !WritableSpan(featureSize, sizeof(size)) ||
+            !CopyOut(feature, &block, sizeof(block)) || !CopyOut(featureSize, &size, sizeof(size))) {
             return kErrInvalid;
         }
         return 0;
@@ -330,17 +443,7 @@ int APS5_VABI sceFaceTrackerGetUserIdByTrackId(int trackId, void *context) {
     if (trackId < 0) {
         return kErrInvalid;
     }
-    const int32_t count = trackCount(context);
-    if (count <= 0) {
-        return kErrNotFound;
-    }
-    for (int32_t i = 0; i < count; ++i) {
-        uint8_t *record = trackRecord(context, i);
-        if (recordI32(record, kRecordTrackId) == trackId) {
-            return recordI32(record, kRecordUserId);
-        }
-    }
-    return kErrNotFound;
+    return lookupTrackField(context, kRecordTrackId, trackId, kRecordUserId);
 }
 
 int APS5_VABI sceFaceTrackerGetTrackIdByUserId(int userId, void *context) {
@@ -350,17 +453,7 @@ int APS5_VABI sceFaceTrackerGetTrackIdByUserId(int userId, void *context) {
     if (userId <= 0) {
         return kErrInvalid;
     }
-    const int32_t count = trackCount(context);
-    if (count <= 0) {
-        return kErrNotFound;
-    }
-    for (int32_t i = 0; i < count; ++i) {
-        uint8_t *record = trackRecord(context, i);
-        if (recordI32(record, kRecordUserId) == userId) {
-            return recordI32(record, kRecordTrackId);
-        }
-    }
-    return kErrNotFound;
+    return lookupTrackField(context, kRecordUserId, userId, kRecordTrackId);
 }
 
 int APS5_VABI sceFaceTrackerGetDefaultConfig(void *config) {
