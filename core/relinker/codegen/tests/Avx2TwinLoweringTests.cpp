@@ -38,7 +38,27 @@ std::vector<Case> cases(std::uint8_t imm) {
     };
 }
 
+std::vector<Case> maskedMoves() {
+    return {
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x75, 0x8C, 0x00}, {0xC4, 0xE2, 0x75, 0x2C, 0x00}},
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x71, 0x8C, 0x00}, {0xC4, 0xE2, 0x71, 0x2C, 0x00}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF5, 0x8C, 0x00}, {0xC4, 0xE2, 0x75, 0x2D, 0x00}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF1, 0x8C, 0x00}, {0xC4, 0xE2, 0x71, 0x2D, 0x00}},
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x75, 0x8E, 0x00}, {0xC4, 0xE2, 0x75, 0x2E, 0x00}},
+        {"VPMASKMOVD", {0xC4, 0xE2, 0x71, 0x8E, 0x00}, {0xC4, 0xE2, 0x71, 0x2E, 0x00}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF5, 0x8E, 0x00}, {0xC4, 0xE2, 0x75, 0x2F, 0x00}},
+        {"VPMASKMOVQ", {0xC4, 0xE2, 0xF1, 0x8E, 0x00}, {0xC4, 0xE2, 0x71, 0x2F, 0x00}},
+    };
+}
+
 void decoding() {
+    for (const auto& item : maskedMoves()) {
+        const auto twin = Codegen::DecodeAvx2Twin(item.Site.data(), item.Site.size());
+        require(twin && std::string(twin->Name) == item.Name && twin->Replacement == item.Replacement, std::string(item.Name) + " was not rewritten to VMASKMOVPS or VMASKMOVPD");
+    }
+    const Bytes extendedMasked{0x65, 0xC4, 0x02, 0x8D, 0x8E, 0x4C, 0x88, 0x10};
+    const auto extendedTwin = Codegen::DecodeAvx2Twin(extendedMasked.data(), extendedMasked.size());
+    require(extendedTwin && extendedTwin->Replacement == Bytes{0x65, 0xC4, 0x02, 0x0D, 0x2F, 0x4C, 0x88, 0x10}, "A prefixed or extended VPMASKMOVQ store lost a byte");
     for (const auto& item : cases(0x5B)) {
         const auto twin = Codegen::DecodeAvx2Twin(item.Site.data(), item.Site.size());
         require(twin && std::string(twin->Name) == item.Name && twin->Replacement == item.Replacement, std::string(item.Name) + " was not rewritten to its AVX1 twin");
@@ -61,6 +81,9 @@ void decoding() {
              Bytes{0xC4, 0xE3, 0x74, 0x02, 0xC2, 0x01},
              Bytes{0xC5, 0xFD, 0xFE, 0xC1},
              Bytes{0xC4, 0xE2, 0x7D, 0x78, 0x00},
+             Bytes{0xC4, 0xE2, 0x75, 0x8C, 0xC2},
+             Bytes{0xC4, 0xE2, 0x75, 0x8E, 0xC2},
+             Bytes{0xC4, 0xE2, 0x75, 0x8D, 0x00},
              Bytes{0xC4, 0xE3},
              Bytes{0x90}})
         require(!Codegen::DecodeAvx2Twin(bytes.data(), bytes.size()), "An instruction without an AVX1 twin was rewritten");
@@ -78,6 +101,11 @@ void matching() {
         avx->EmitOutOfLine(body, item.Site);
         const auto lowered = body.Finish();
         require(Bytes(lowered.Bytes.begin(), lowered.Bytes.begin() + static_cast<std::ptrdiff_t>(lowered.ReturnBranchOffset)) == item.Replacement, std::string("A moved ") + item.Name + " was not emitted as its twin");
+    }
+    for (const auto& item : maskedMoves()) {
+        require(!intel->Match(item.Site.data(), item.Site.size()), std::string("Intel mode rewrote ") + item.Name);
+        const auto match = avx->Match(item.Site.data(), item.Site.size());
+        require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace && match->ReplacementBytes == item.Replacement && match->InstructionName == item.Name, std::string("AVX mode did not rewrite ") + item.Name + " in place");
     }
 }
 
@@ -137,6 +165,22 @@ Vector expected(const std::string& name, const Bytes& site, const Registers& in,
     return out;
 }
 
+Registers maskedExpected(const Bytes& site, const Registers& in) {
+    const bool wide = (site[2] & 4) != 0;
+    const bool quadword = (site[2] & 0x80) != 0;
+    const bool store = site[3] == 0x8E;
+    auto out = in;
+    if (!store) out.Ymm0 = Vector{};
+    const unsigned dwords = wide ? 8u : 4u;
+    for (unsigned i = 0; i < dwords; ++i) {
+        const auto maskDword = quadword ? (i | 1u) : i;
+        if ((in.Ymm1[maskDword] & 0x80000000u) == 0) continue;
+        if (store) out.Memory[i] = in.Ymm0[i];
+        else out.Ymm0[i] = in.Memory[i];
+    }
+    return out;
+}
+
 void execution() {
     Registers input{};
     for (unsigned i = 0; i < 8; ++i) {
@@ -151,6 +195,16 @@ void execution() {
             const auto wanted = expected(item.Name, item.Site, input, imm);
             if (output.Ymm0 != wanted)
                 throw std::runtime_error(std::string(item.Name) + (((item.Site[2] & 4) != 0) ? " ymm" : " xmm") + " with immediate " + std::to_string(imm) + " does not match the AVX2 instruction's result");
+        }
+    }
+    for (const std::uint32_t pattern : {0x00u, 0xFFu, 0xA5u, 0x5Au, 0x0Fu, 0xC3u}) {
+        auto masked = input;
+        for (unsigned i = 0; i < 8; ++i) masked.Ymm1[i] = ((pattern >> i) & 1) != 0 ? 0x80000000u | i : 0x7FFFFFFFu - i;
+        for (const auto& item : maskedMoves()) {
+            const auto output = run(item.Replacement, masked);
+            const auto wanted = maskedExpected(item.Site, masked);
+            if (output.Ymm0 != wanted.Ymm0 || output.Memory != wanted.Memory)
+                throw std::runtime_error(std::string(item.Name) + (item.Site[3] == 0x8E ? " store" : " load") + (((item.Site[2] & 4) != 0) ? " ymm" : " xmm") + " with mask pattern " + std::to_string(pattern) + " does not match the AVX2 instruction's result");
         }
     }
 }
