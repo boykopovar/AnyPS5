@@ -59,24 +59,41 @@ void APS5_VABI glGetIntegerv_nid_postfix(GLenum name, GLint* values) {
     if (values == nullptr) return;
     std::vector<double> data;
     if (!Query_nid_no_patch(name, data)) return;
+    std::vector<GLint> local(data.size());
     for (std::size_t i = 0; i < data.size(); ++i) {
-        if (name == 0x0b93 || name == 0x0b98 || name == 0x8ca4 || name == 0x8ca5) values[i] = static_cast<GLint>(static_cast<GLuint>(data[i]));
-        else if (name == 0x0b70 || name == 0x0b73 || name == 0x0c22 || name == 0x8005) values[i] = Integer(std::floor((data[i] * 4294967295.0 - 1.0) / 2.0 + 0.5));
-        else values[i] = Integer(data[i]);
+        if (name == 0x0b93 || name == 0x0b98 || name == 0x8ca4 || name == 0x8ca5) local[i] = static_cast<GLint>(static_cast<GLuint>(data[i]));
+        else if (name == 0x0b70 || name == 0x0b73 || name == 0x0c22 || name == 0x8005) local[i] = Integer(std::floor((data[i] * 4294967295.0 - 1.0) / 2.0 + 0.5));
+        else local[i] = Integer(data[i]);
     }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, local.data(), local.size() * sizeof(GLint));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetFloatv_nid_postfix(GLenum name, GLfloat* values) {
     std::lock_guard lock(mutex);
+    if (values == nullptr) return;
     std::vector<double> data;
-    if (Query_nid_no_patch(name, data)) std::copy(data.begin(), data.end(), values);
+    if (!Query_nid_no_patch(name, data)) return;
+    std::vector<GLfloat> local(data.begin(), data.end());
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, local.data(), local.size() * sizeof(GLfloat));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetBooleanv_nid_postfix(GLenum name, GLboolean* values) {
     std::lock_guard lock(mutex);
     if (values == nullptr) return;
     std::vector<double> data;
-    if (Query_nid_no_patch(name, data)) for (std::size_t i = 0; i < data.size(); ++i) values[i] = data[i] != 0;
+    if (!Query_nid_no_patch(name, data)) return;
+    std::vector<GLboolean> local(data.size());
+    for (std::size_t i = 0; i < data.size(); ++i) local[i] = data[i] != 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, local.data(), local.size() * sizeof(GLboolean));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glEnable_nid_postfix(GLenum cap) {
@@ -189,20 +206,36 @@ void APS5_VABI glGetVertexAttribPointerv_nid_postfix(GLuint index, GLenum name, 
     if (!a) return;
     if (!pointer) { Error_nid_no_patch(0x0500); return; }
     if (name != 0x8645) { Error_nid_no_patch(0x0500); return; }
-    *pointer = const_cast<void*>(a->pointer);
+    void* value = const_cast<void*>(a->pointer);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(pointer, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetVertexAttribfv_nid_postfix(GLuint index, GLenum name, GLfloat* values) {
     std::lock_guard lock(mutex);
     if (!values) return;
     std::vector<double> data;
-    if (AttribQuery(index, name, data)) std::copy(data.begin(), data.end(), values);
+    if (!AttribQuery(index, name, data)) return;
+    std::vector<GLfloat> local(data.begin(), data.end());
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, local.data(), local.size() * sizeof(GLfloat));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glGetVertexAttribiv_nid_postfix(GLuint index, GLenum name, GLint* values) {
     std::lock_guard lock(mutex);
+    if (!values) return;
     std::vector<double> data;
-    if (AttribQuery(index, name, data)) for (std::size_t i = 0; i < data.size(); ++i) values[i] = Integer(data[i]);
+    if (!AttribQuery(index, name, data)) return;
+    std::vector<GLint> local(data.size());
+    for (std::size_t i = 0; i < data.size(); ++i) local[i] = Integer(data[i]);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(values, local.data(), local.size() * sizeof(GLint));
+    errno = savedErrno;
+    if (!copied) Error_nid_no_patch(0x0501);
 }
 
 void APS5_VABI glFinish_nid_postfix() { std::lock_guard lock(mutex); Current_nid_no_patch(); }
@@ -298,7 +331,12 @@ void APS5_VABI glVertexAttrib1f_nid_postfix(GLuint index, GLfloat x) {
 }
 
 void APS5_VABI glVertexAttrib1fv_nid_postfix(GLuint index, const GLfloat* values) {
-    glVertexAttrib1f_nid_postfix(index, values[0]);
+    GLfloat local;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, values, sizeof(local));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glVertexAttrib1f_nid_postfix(index, local);
 }
 
 void APS5_VABI glVertexAttrib2f_nid_postfix(GLuint index, GLfloat x, GLfloat y) {
@@ -307,7 +345,12 @@ void APS5_VABI glVertexAttrib2f_nid_postfix(GLuint index, GLfloat x, GLfloat y) 
 }
 
 void APS5_VABI glVertexAttrib2fv_nid_postfix(GLuint index, const GLfloat* values) {
-    glVertexAttrib2f_nid_postfix(index, values[0], values[1]);
+    GLfloat local[2];
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local, values, sizeof(local));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glVertexAttrib2f_nid_postfix(index, local[0], local[1]);
 }
 
 void APS5_VABI glVertexAttrib3f_nid_postfix(GLuint index, GLfloat x, GLfloat y, GLfloat z) {
@@ -316,7 +359,12 @@ void APS5_VABI glVertexAttrib3f_nid_postfix(GLuint index, GLfloat x, GLfloat y, 
 }
 
 void APS5_VABI glVertexAttrib3fv_nid_postfix(GLuint index, const GLfloat* values) {
-    glVertexAttrib3f_nid_postfix(index, values[0], values[1], values[2]);
+    GLfloat local[3];
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local, values, sizeof(local));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glVertexAttrib3f_nid_postfix(index, local[0], local[1], local[2]);
 }
 
 void APS5_VABI glVertexAttrib4f_nid_postfix(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w) {
@@ -325,7 +373,12 @@ void APS5_VABI glVertexAttrib4f_nid_postfix(GLuint index, GLfloat x, GLfloat y, 
 }
 
 void APS5_VABI glVertexAttrib4fv_nid_postfix(GLuint index, const GLfloat* values) {
-    glVertexAttrib4f_nid_postfix(index, values[0], values[1], values[2], values[3]);
+    GLfloat local[4];
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local, values, sizeof(local));
+    errno = savedErrno;
+    if (!copied) { std::lock_guard lock(mutex); Error_nid_no_patch(0x0501); return; }
+    glVertexAttrib4f_nid_postfix(index, local[0], local[1], local[2], local[3]);
 }
 
 }

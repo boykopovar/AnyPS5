@@ -42,6 +42,13 @@ int CreateRequest(bool isAsync) {
  return reqId;
 }
 
+bool CopyOutResult(int* result, int value) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+ errno = savedErrno;
+ return copied;
+}
+
 }
 
 extern "C" {
@@ -142,7 +149,7 @@ int APS5_VABI sceNpAuthPollAsync(int req_id, int* result) {
   }
   res = it->second.result;
  }
- if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (!CopyOutResult(result, res)) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
 
@@ -171,7 +178,7 @@ int APS5_VABI sceNpAuthWaitAsync(int req_id, int* result) {
   if (!it->second.isAsync || !it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ID;
   res = it->second.result;
  }
- if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
+ if (!CopyOutResult(result, res)) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
 

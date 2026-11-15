@@ -25,10 +25,6 @@ int APS5_VABI SSL_set_accept_state_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_EXTENSION_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_STORE_load_locations_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -172,10 +168,6 @@ int APS5_VABI X509_set_issuer_name_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_add_ext_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_connect_socket_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -226,10 +218,6 @@ int APS5_VABI ECDSA_do_verify_nid_postfix() {
 }
 
 int APS5_VABI X509_add1_ext_i2d_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EC_GROUP_cmp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

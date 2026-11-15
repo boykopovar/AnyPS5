@@ -1,12 +1,21 @@
 #include "prx/libcairo/include/Region.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <type_traits>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static_assert(sizeof(CairoRectangleInt) == 16);
 static_assert(std::is_standard_layout_v<CairoRectangleInt>);
@@ -19,6 +28,65 @@ static void Check(bool value, int line) {
 }
 
 #define Require(value) Check((value), __LINE__)
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+static void Rejects(TCall callback) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        callback();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected);
+}
 
 static bool Equal(const CairoRectangleInt& a, const CairoRectangleInt& b) {
     return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
@@ -157,9 +225,29 @@ static void TestRandomUnions() {
     cairo_region_destroy(region);
 }
 
+static void TestGuestPointers() {
+    CairoRegion* region = cairo_region_create();
+    Union(region, {1, 2, 3, 4});
+    const auto* badIn = reinterpret_cast<const CairoRectangleInt*>(0x10);
+    auto* badOut = reinterpret_cast<CairoRectangleInt*>(0x10);
+    ReadOnlyPage page;
+    auto* readOnlyRect = page.Set(CairoRectangleInt{8, 9, 10, 11});
+    page.Protect();
+
+    Rejects([&] { cairo_region_union_rectangle(region, badIn); });
+    Rejects([&] { cairo_region_get_rectangle(region, 0, badOut); });
+    Rejects([&] { cairo_region_get_rectangle(region, 0, readOnlyRect); });
+    Rejects([&] { cairo_region_get_rectangle(region, -1, readOnlyRect); });
+    Rejects([&] { cairo_region_get_rectangle(nullptr, 0, readOnlyRect); });
+    Require(readOnlyRect->x == 8 && readOnlyRect->y == 9 && readOnlyRect->width == 10 && readOnlyRect->height == 11);
+    Verify(region, {{1, 2, 3, 4}});
+    cairo_region_destroy(region);
+}
+
 int main() {
     TestLifecycle();
     TestGeometry();
     TestBounds();
     TestRandomUnions();
+    TestGuestPointers();
 }

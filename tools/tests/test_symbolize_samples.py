@@ -71,6 +71,47 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
 
 
 class SymbolizeSamplesTests(unittest.TestCase):
+    def test_exports_can_mix_headers_and_section_data(self):
+        path = self.libs / "header-exports.dll"
+        for placement in range(8):
+            with self.subTest(placement=placement):
+                build_pe(path, with_symbols=False, with_exports=True)
+                image = bytearray(path.read_bytes())
+                image[0x200:0x400] = image[0x600:0x800]
+                struct.pack_into("<I", image, 0x58 + 60, 0x400)
+                directory_rva, directory_offset = (0x200, 0x200) if placement & 1 else (0x2000, 0x600)
+                arrays_rva, arrays_offset = (0x240, 0x240) if placement & 2 else (0x2040, 0x640)
+                strings_rva = 0x260 if placement & 4 else 0x2060
+                struct.pack_into("<II", image, 0x58 + 112, directory_rva, 0x100)
+                struct.pack_into("<III", image, directory_offset + 28, arrays_rva, arrays_rva + 8, arrays_rva + 16)
+                struct.pack_into("<II", image, arrays_offset + 8, strings_rva, strings_rva + 16)
+                path.write_bytes(image)
+                module = symbolize_samples.PeModule(path)
+                self.assertEqual(module.name(0x1020), "~first_func")
+                self.assertEqual(module.name(0x1060), "~second_func")
+                self.assertIsNone(module.name(0x260))
+
+    def test_header_reads_stop_at_unmapped_or_ambiguous_ranges(self):
+        path = self.libs / "header-bounds.dll"
+        build_pe(path, with_symbols=False)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<I", image, 0x58 + 60, 0x400)
+        image[0x3FC:0x400] = b"name"
+        path.write_bytes(image)
+        module = symbolize_samples.PeModule(path)
+        self.assertEqual(module.read_bytes(image, 0x3FC, 4), b"name")
+        with self.assertRaisesRegex(ValueError, "no section"):
+            module.read_bytes(image, 0x3FC, 5)
+        with self.assertRaisesRegex(ValueError, "no section"):
+            module.read_string(image, 0x3FC)
+        struct.pack_into("<I", image, 0x58 + 240 + 40 + 12, 0x300)
+        path.write_bytes(image)
+        overlapping = symbolize_samples.PeModule(path)
+        with self.assertRaisesRegex(ValueError, "overlapping"):
+            overlapping.read_bytes(image, 0x2FC, 8)
+        with self.assertRaisesRegex(ValueError, "overlapping"):
+            overlapping.read_string(image, 0x300)
+
     def test_json_loop_errors_preserve_files_with_matching_window(self):
         self.check_loop_errors_preserve_files("--json")
         self.check_loop_errors_preserve_files("--json", "--require-matching-window")
