@@ -7,7 +7,7 @@ if(BUILD_TESTING)
     add_test_executable(msg_dialog_param_tests ${LIBS_INCLUDE_DIR}/tests/MsgDialogParam.cpp)
     target_include_directories(msg_dialog_param_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(msg_dialog_param_tests PRIVATE libc)
-    configure_host_test_executable(msg_dialog_param_tests)
+    configure_windows_unwind(msg_dialog_param_tests)
     add_test(NAME msg_dialog_param COMMAND msg_dialog_param_tests)
     if(WIN32)
         set_tests_properties(msg_dialog_param PROPERTIES ENVIRONMENT_MODIFICATION
