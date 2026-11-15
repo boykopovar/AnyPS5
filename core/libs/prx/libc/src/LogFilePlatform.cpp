@@ -123,7 +123,7 @@ bool Divert(int standard, Handle write) {
         return false;
     }
     const int result = _dup2(descriptor, standard);
-    _close(descriptor);
+    if (descriptor != standard) _close(descriptor);
     if (result != 0) return false;
     _setmode(standard, translation);
     const HANDLE installed = reinterpret_cast<HANDLE>(_get_osfhandle(standard));
