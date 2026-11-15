@@ -883,6 +883,9 @@ int ReleaseRobustMutex(std::uintptr_t address, std::uintptr_t* next, bool inacti
     if ((mutex.owner & ~UMUTEX_CONTESTED) != CurrentOwnerId()) {
         return inactive ? 0 : GUEST_EINVAL;
     }
+    if (!IsAlignedAddress<std::uint32_t>(address)) {
+        return GUEST_EINVAL;
+    }
     return MutexUnlock(reinterpret_cast<UserMutex*>(address), true);
 }
 

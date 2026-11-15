@@ -7,6 +7,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -740,6 +741,43 @@ static void ExitDoesNotReleaseANonRobustMutex() {
     Require(FailsWith(Umtx(&robust, UMTX_OP_MUTEX_TRYLOCK, 0), GUEST_EBUSY));
 }
 
+struct MisalignedRobustOwner {
+    Umutex robust;
+    alignas(8) unsigned char bytes[sizeof(Umutex) + 1]{};
+    std::uintptr_t listHead = 0;
+    std::uintptr_t privateListHead = 0;
+    std::uintptr_t inactiveMutex = 0;
+    std::uint32_t id = 0;
+};
+
+static void* APS5_VABI ExitWithAMisalignedRobustEntry(void* opaque) {
+    auto& owner = *static_cast<MisalignedRobustOwner*>(opaque);
+    RobustListsParams params{reinterpret_cast<std::uintptr_t>(&owner.listHead), reinterpret_cast<std::uintptr_t>(&owner.privateListHead), reinterpret_cast<std::uintptr_t>(&owner.inactiveMutex)};
+    Require(Umtx(nullptr, UMTX_OP_ROBUST_LISTS, sizeof(params), &params) == 0);
+    Require(Umtx(&owner.robust, UMTX_OP_MUTEX_LOCK, 0) == 0);
+    owner.id = Self();
+    Umutex odd;
+    odd.owner = owner.id;
+    odd.flags = ROBUST;
+    std::memcpy(owner.bytes + 1, &odd, sizeof(odd));
+    owner.robust.robustLink = reinterpret_cast<std::uintptr_t>(owner.bytes + 1);
+    owner.listHead = reinterpret_cast<std::uintptr_t>(&owner.robust);
+    return nullptr;
+}
+
+static void ExitStopsAtAMisalignedRobustEntry() {
+    MisalignedRobustOwner owner;
+    owner.robust.flags = ROBUST;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, ExitWithAMisalignedRobustEntry, &owner, "robust-misaligned") == SCE_OK);
+    void* result = nullptr;
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+    Require(owner.robust.owner == RB_OWNERDEAD);
+    Umutex odd;
+    std::memcpy(&odd, owner.bytes + 1, sizeof(odd));
+    Require(odd.owner == owner.id && odd.flags == ROBUST);
+}
+
 int main() {
     ReturnsWhenTheValueDiffers();
     WaitComparesALongAndWaitUintAnInt();
@@ -768,4 +806,5 @@ int main() {
     RobustMutexWaiterGetsOwnerDeadWhenTheOwnerExits();
     MutexWakeReleasesAWaiterOnAnOwnerDeadMutex();
     ExitDoesNotReleaseANonRobustMutex();
+    ExitStopsAtAMisalignedRobustEntry();
 }
