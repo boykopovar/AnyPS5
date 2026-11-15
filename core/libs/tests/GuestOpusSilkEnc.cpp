@@ -188,7 +188,18 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusSilkEncGetAjmContext(nullptr, nullptr) == EncoderError(0x01));
     Require(sceOpusSilkEncGetAjmContext(ToState(blank), nullptr) == 0);
     Require(sceOpusSilkEncGetAjmContext(ToState(marked), nullptr) == 0);
+    Require(sceOpusSilkEncGetAjmContext(reinterpret_cast<const OpusSilkEncoder*>(0x10), nullptr) == 0);
     Require(ajmContext == 0x12345678u);
+    Require(sceOpusSilkEncGetAjmContext(ToState(blank), &ajmContext) == 0);
+    Require(ajmContext == 0);
+    SetWord(marked.data(), 0xF0, 0x6B7C8D9Eu);
+    std::array<std::uint32_t, 3> contextWords{0xBAD0C0DEu, 0u, 0xBAD0C0DEu};
+    Require(sceOpusSilkEncGetAjmContext(ToState(marked), &contextWords[1]) == 0);
+    Require(contextWords == std::array<std::uint32_t, 3>{0xBAD0C0DEu, 0x6B7C8D9Eu, 0xBAD0C0DEu});
+    errno = 71;
+    RequireThrows([&] { sceOpusSilkEncGetAjmContext(reinterpret_cast<const OpusSilkEncoder*>(0x10), &ajmContext); });
+    RequireThrows([&] { sceOpusSilkEncGetAjmContext(ToState(marked), reinterpret_cast<std::uint32_t*>(0x10)); });
+    Require(errno == 71);
 }
 
 } // namespace

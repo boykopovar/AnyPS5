@@ -113,6 +113,12 @@ void require(bool condition, const char* function) {
     if (!condition) throw std::invalid_argument(std::string(function) + ": invalid argument");
 }
 
+template <typename T>
+bool copyGuestIn(T& dst, const T* src);
+
+template <typename T>
+bool copyGuestOut(T* dst, const T& src);
+
 void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32_t id, std::size_t size, const char* function) {
     require(desc != nullptr && desc->id == id && desc->size == size, function);
 }
@@ -143,8 +149,8 @@ AudioPropagationHandle createObjectLocked(Registry& state, AudioPropagationHandl
     require(out != nullptr, function);
     requireSystem(state, system, function);
     const auto handle = state.next++;
+    if (!copyGuestOut(out, handle)) return 0;
     state.objects.emplace(handle, Object{kind, system});
-    *out = handle;
     return handle;
 }
 
@@ -173,9 +179,9 @@ void destroyObject(AudioPropagationHandle system, AudioPropagationHandle handle,
     state.objects.erase(handle);
 }
 
-void requireRaysOutput(std::uint32_t* count, const char* function) {
+std::int32_t writeRaysCount(std::uint32_t* count, const char* function) {
     require(count != nullptr, function);
-    *count = 0;
+    return copyGuestOut(count, std::uint32_t{0}) ? 0 : ErrorNullPointer;
 }
 
 void requireNoPropagation(bool none, const char* function) {
@@ -243,35 +249,39 @@ std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const SystemOptions*
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const SystemOptions* options, const AudioPropagationSystemMemory* memory, AudioPropagationHandle* outSystem) {
-    require(options != nullptr && outSystem != nullptr, __func__);
-    requireDescriptor(memory != nullptr ? &memory->desc : nullptr, SystemMemoryId, SystemMemorySize, __func__);
-    auto requiredMemory = *memory;
-    const auto result = sceAudioPropagationSystemQueryMemory(options, &requiredMemory);
+    require(options != nullptr && memory != nullptr && outSystem != nullptr, __func__);
+    SystemOptions localOptions{};
+    if (!copyGuestIn(localOptions, options)) return ErrorNullPointer;
+    AudioPropagationSystemMemory localMemory{};
+    if (!copyGuestIn(localMemory, memory)) return ErrorNullPointer;
+    requireDescriptor(&localMemory.desc, SystemMemoryId, SystemMemorySize, __func__);
+    auto requiredMemory = localMemory;
+    const auto result = sceAudioPropagationSystemQueryMemory(&localOptions, &requiredMemory);
     if (result != 0) return result;
-    const auto address = reinterpret_cast<std::uintptr_t>(memory->p_cpu_mem);
-    require(address != 0 && address % alignof(SystemState) == 0 && memory->size_cpu_mem >= requiredMemory.size_cpu_mem && memory->size_gpu_mem == 0, __func__);
+    const auto address = reinterpret_cast<std::uintptr_t>(localMemory.p_cpu_mem);
+    require(address != 0 && address % alignof(SystemState) == 0 && localMemory.size_cpu_mem >= requiredMemory.size_cpu_mem && localMemory.size_gpu_mem == 0, __func__);
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     require(!state.systems.contains(address), __func__);
     const auto freeIndex = std::find(state.systemIndices.begin(), state.systemIndices.end(), false);
     if (freeIndex == state.systemIndices.end()) return static_cast<std::int32_t>(0x8A700006);
     const auto index = static_cast<std::uint32_t>(freeIndex - state.systemIndices.begin());
-    *static_cast<SystemState*>(memory->p_cpu_mem) = SystemState{
+    if (!copyGuestOut(outSystem, static_cast<AudioPropagationHandle>(address))) return ErrorNullPointer;
+    if (!copyGuestOut(static_cast<SystemState*>(localMemory.p_cpu_mem), SystemState{
         SystemMagic,
-        memory->p_cpu_mem,
-        memory->size_cpu_mem,
+        localMemory.p_cpu_mem,
+        localMemory.size_cpu_mem,
         index,
-        options->frameSamples,
-        options->maxSources,
-        options->maxMaterials,
-        options->reflectionOrder == 1 ? 6u : 36u,
-        options->propagationSpeed,
-    };
+        localOptions.frameSamples,
+        localOptions.maxSources,
+        localOptions.maxMaterials,
+        localOptions.reflectionOrder == 1 ? 6u : 36u,
+        localOptions.propagationSpeed,
+    })) return ErrorNullPointer;
     state.systems.insert(address);
     state.systemOrder.push_back(address);
     state.systemIndices[index] = true;
     state.systemLocks.emplace(address, std::make_shared<SystemLockState>());
-    *outSystem = address;
     return 0;
 }
 
@@ -320,8 +330,7 @@ std::int32_t APS5_VABI sceAudioPropagationSystemSetAttributes(AudioPropagationHa
 
 std::int32_t APS5_VABI sceAudioPropagationSystemRegisterMaterial(AudioPropagationHandle system, const AudioPropagationStructDescriptor* material, AudioPropagationHandle* outMaterial) {
     requireDescriptor(material, MaterialId, MaterialSize, __func__);
-    createObject(system, Kind::Material, outMaterial, __func__);
-    return 0;
+    return createObject(system, Kind::Material, outMaterial, __func__) != 0 ? 0 : ErrorNullPointer;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSystemUnregisterMaterial(AudioPropagationHandle material) {
@@ -342,8 +351,7 @@ std::int32_t APS5_VABI sceAudioPropagationSystemGetRays(AudioPropagationHandle s
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
     require(rays != nullptr, __func__);
-    requireRaysOutput(count, __func__);
-    return 0;
+    return writeRaysCount(count, __func__);
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSystemSetRays(AudioPropagationHandle system, const void* rays, std::uint32_t count) {
@@ -356,8 +364,7 @@ std::int32_t APS5_VABI sceAudioPropagationSystemSetRays(AudioPropagationHandle s
 }
 
 std::int32_t APS5_VABI sceAudioPropagationRoomCreate(AudioPropagationHandle system, AudioPropagationHandle* outRoom) {
-    createObject(system, Kind::Room, outRoom, __func__);
-    return 0;
+    return createObject(system, Kind::Room, outRoom, __func__) != 0 ? 0 : ErrorNullPointer;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationRoomDestroy(AudioPropagationHandle system, AudioPropagationHandle room) {
@@ -366,12 +373,14 @@ std::int32_t APS5_VABI sceAudioPropagationRoomDestroy(AudioPropagationHandle sys
 }
 
 std::int32_t APS5_VABI sceAudioPropagationPortalCreate(AudioPropagationHandle system, const PortalParams* params, AudioPropagationHandle* outPortal) {
-    requireDescriptor(params != nullptr ? &params->desc : nullptr, PortalParamsId, PortalParamsSize, __func__);
+    require(params != nullptr, __func__);
+    PortalParams localParams{};
+    if (!copyGuestIn(localParams, params)) return ErrorNullPointer;
+    requireDescriptor(&localParams.desc, PortalParamsId, PortalParamsSize, __func__);
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    for (const auto room : params->rooms) require(requireObject(state, room, Kind::Room, __func__).system == system, __func__);
-    createObjectLocked(state, system, Kind::Portal, outPortal, __func__);
-    return 0;
+    for (const auto room : localParams.rooms) require(requireObject(state, room, Kind::Room, __func__).system == system, __func__);
+    return createObjectLocked(state, system, Kind::Portal, outPortal, __func__) != 0 ? 0 : ErrorNullPointer;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationPortalDestroy(AudioPropagationHandle system, AudioPropagationHandle portal) {
@@ -393,6 +402,10 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle sy
     std::lock_guard lock(state.mutex);
     AudioPropagationHandle source = 0;
     createObjectLocked(state, system, Kind::Source, &source, __func__);
+    if (!copyGuestOut(outSource, source)) {
+        state.objects.erase(source);
+        return ErrorNullPointer;
+    }
     std::array<AudioPropagationHandle, MaxPaths> handles{};
     try {
         for (auto& handle : handles) {
@@ -411,7 +424,6 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle sy
         state.objects.erase(source);
         throw;
     }
-    *outSource = source;
     return 0;
 }
 
@@ -462,8 +474,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle s
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
     require(rays != nullptr, __func__);
-    requireRaysOutput(count, __func__);
-    return 0;
+    return writeRaysCount(count, __func__);
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropagationHandle source, const void* rays, std::uint32_t rayCount, std::uint32_t reflectionOrder, void* paths, std::uint32_t pathCount) {
@@ -511,7 +522,8 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
     const auto& configuration = *reinterpret_cast<const SystemState*>(system);
     require(count <= configuration.maxSources, __func__);
     for (std::uint32_t index = 0; index < count; ++index) {
-        const auto& info = infos[index];
+        RenderInfo info{};
+        if (!copyGuestIn(info, infos + index)) return ErrorNullPointer;
         requireDescriptor(&info.desc, RenderInfoId, RenderInfoSize, __func__);
         require(requireObject(state, info.source, Kind::Source, __func__).system == system, __func__);
         require(info.output != nullptr && info.outputSize != 0, __func__);
@@ -534,7 +546,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
         }
     }
     for (std::uint32_t index = 0; index < count; ++index) {
-        infos[index].channelCount = 0;
+        if (!copyGuestOut(&(infos + index)->channelCount, std::uint32_t{0})) return ErrorNullPointer;
     }
     return 0;
 }
@@ -745,7 +757,7 @@ int APS5_VABI sceAudioPropagationSystemEnumHandles(AudioPropagationHandle* handl
     if (handles) {
         const auto copied = std::min(capacity, total);
         for (std::uint32_t index = 0; index < copied; ++index) {
-            handles[index] = state.systemOrder[state.systemOrder.size() - index - 1];
+            if (!copyGuestOut(handles + index, state.systemOrder[state.systemOrder.size() - index - 1])) return ErrorNullPointer;
         }
     }
     return static_cast<int>(total);
