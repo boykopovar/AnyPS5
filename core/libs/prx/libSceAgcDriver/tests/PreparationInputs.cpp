@@ -133,7 +133,7 @@ namespace ShaderRecompiler {
 std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext*) {
     ++entered;
     const auto inputs = Inputs(request.shader.codeAddress);
-    const bool expected = mode != "disabled" && (mode != "selected" || request.shader.codeAddress == 0x12340000u);
+    const bool expected = mode != "disabled" && mode != "failure-only" && (mode != "selected" || request.shader.codeAddress == 0x12340000u);
     bool found = false;
     for (const auto& path : inputs) {
         try {
@@ -143,7 +143,7 @@ std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& reques
     }
     const bool blocked = mode == "capture-write-failure" && request.context.userData[0] == 2u;
     Require(found == (expected && !blocked), "capture state at compiler entry is wrong");
-    if (mode == "failure") throw std::runtime_error("compiler sentinel");
+    if (mode == "failure" || mode == "failure-only") throw std::runtime_error("compiler sentinel");
     return {};
 }
 
@@ -155,10 +155,10 @@ int main(int argc, char** argv) {
         mode = argv[1];
         Directory directory;
         SetEnvironment("APS5_DUMP_PREPARE_INPUTS", mode == "disabled" ? "" : "1");
-        SetEnvironment("APS5_DUMP_SHADERS", mode == "selected" ? "12340000" : mode == "failure" ? "1" : "");
+        SetEnvironment("APS5_DUMP_SHADERS", mode == "selected" ? "12340000" : mode == "failure" ? "1" : mode == "failure-only" ? "failed" : "");
 #ifndef _WIN32
         if (mode == "disabled") SetEnvironment("APS5_DUMP_PREPARE_INPUTS", nullptr);
-        if (mode != "selected" && mode != "failure") SetEnvironment("APS5_DUMP_SHADERS", nullptr);
+        if (mode != "selected" && mode != "failure" && mode != "failure-only") SetEnvironment("APS5_DUMP_SHADERS", nullptr);
 #endif
         unsigned expected = 0;
         if (mode == "write-failure") {
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
             Require(std::filesystem::remove(blocked), "cannot unblock next capture");
             Invoke(3);
             expected = 2;
-        } else if (mode == "failure") {
+        } else if (mode == "failure" || mode == "failure-only") {
             try {
                 Invoke(1);
                 throw std::runtime_error("compiler failure was swallowed");
@@ -184,8 +184,15 @@ int main(int argc, char** argv) {
                 Require(std::string(error.what()).find("compiler sentinel") != std::string::npos, "compiler error was changed");
                 Require(std::string(error.what()).find("shader_12340000.prepare.req") != std::string::npos, "existing failure dump context was lost");
                 Require(Read("shader_12340000.prepare.req").request.context.userData[0] == 1u, "existing failure dump changed");
+                if (mode == "failure-only") {
+                    auto saved = Read("shader_12340000.prepare.req");
+                    Require(AgcDriver::DriverDetail::Driver::dumpRequest(0x12340000u, saved.request).empty(), "failure-only mode wrote a normal request");
+                    Require(!std::filesystem::exists("shader_12340000.req"), "failure-only mode created a normal file");
+                    Require(AgcDriver::DriverDetail::Driver::dumpRequest(0x12340000u, saved.request, "_failed") == "shader_12340000_failed.req", "failure-only mode lost a resource-capture failure");
+                    Require(Read("shader_12340000_failed.req").request.context.userData[0] == 1u, "failure-only capture lost its input");
+                }
             }
-            expected = 1;
+            expected = mode == "failure" ? 1 : 0;
         } else if (mode == "concurrent") {
             std::vector<std::future<void>> futures;
             for (unsigned i = 1; i <= 8; ++i) futures.push_back(std::async(std::launch::async, [i] { Invoke(i); }));
@@ -209,7 +216,7 @@ int main(int argc, char** argv) {
             Require(saved.request.context.userData.size() == 2, "saved user data missing");
             Require(ids.insert(saved.request.context.userData[0]).second, "concurrent capture input was overwritten");
         }
-        Require(entered == (mode == "write-failure" ? 0u : mode == "capture-write-failure" ? 3u : mode == "concurrent" ? 8u : mode == "failure" ? 1u : 2u), "compiler invocation count changed");
+        Require(entered == (mode == "write-failure" ? 0u : mode == "capture-write-failure" ? 3u : mode == "concurrent" ? 8u : (mode == "failure" || mode == "failure-only") ? 1u : 2u), "compiler invocation count changed");
         std::printf("preparation input %s: passed\n", mode.c_str());
         return 0;
     } catch (const std::exception& error) {
