@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 using namespace Icu::Abi;
@@ -611,14 +613,12 @@ void* APS5_VABI _ZN6icu_6817StringTrieBuilder17makeBranchSubNodeEiiiiR10UErrorCo
     auto getElemVal = Virtual_nid_no_patch<std::int32_t (APS5_VABI*)(const void*, std::int32_t)>(self, 5);
     auto indexOfElemWithNextUnit = Virtual_nid_no_patch<std::int32_t (APS5_VABI*)(const void*, std::int32_t, std::int32_t, char16_t)>(self, 9);
 
-    char16_t middleUnits[14];
-    Node* lessThan[14];
-    std::int32_t ltLength = 0;
+    std::vector<char16_t> middleUnits;
+    std::vector<Node*> lessThan;
     while (length > getMaxBranchLinearSubNodeLen(self)) {
         std::int32_t i = skipElementsBySomeUnits(self, start, unitIndex, length / 2);
-        middleUnits[ltLength] = getElemUnit(self, i, unitIndex);
-        lessThan[ltLength] = static_cast<Node*>(_ZN6icu_6817StringTrieBuilder17makeBranchSubNodeEiiiiR10UErrorCode_nid_postfix(self, start, i, unitIndex, length / 2, errorCode));
-        ++ltLength;
+        middleUnits.push_back(getElemUnit(self, i, unitIndex));
+        lessThan.push_back(static_cast<Node*>(_ZN6icu_6817StringTrieBuilder17makeBranchSubNodeEiiiiR10UErrorCode_nid_postfix(self, start, i, unitIndex, length / 2, errorCode)));
         start = i;
         length = length - length / 2;
     }
@@ -648,11 +648,14 @@ void* APS5_VABI _ZN6icu_6817StringTrieBuilder17makeBranchSubNodeEiiiiR10UErrorCo
         listNode->add(unit, static_cast<Node*>(_ZN6icu_6817StringTrieBuilder8makeNodeEiiiR10UErrorCode_nid_postfix(self, start, limit, unitIndex + 1, errorCode)));
     }
     auto* node = static_cast<Node*>(_ZN6icu_6817StringTrieBuilder12registerNodeEPNS0_4NodeER10UErrorCode_nid_postfix(self, listNode, errorCode));
-    while (ltLength > 0) {
-        --ltLength;
+    while (!middleUnits.empty()) {
+        const auto middleUnit = middleUnits.back();
+        auto* lessThanNode = lessThan.back();
+        middleUnits.pop_back();
+        lessThan.pop_back();
         node = static_cast<Node*>(_ZN6icu_6817StringTrieBuilder12registerNodeEPNS0_4NodeER10UErrorCode_nid_postfix(
             self,
-            new (std::nothrow) SplitBranchNode(middleUnits[ltLength], lessThan[ltLength], node),
+            new (std::nothrow) SplitBranchNode(middleUnit, lessThanNode, node),
             errorCode
         ));
     }
@@ -822,6 +825,10 @@ Icu::Abi::UCharsTrieBuilder* APS5_VABI _ZN6icu_6817UCharsTrieBuilder3addERKNS_13
         return self;
     }
     if (b.elementsLength == b.elementsCapacity) {
+        if (b.elementsCapacity < 0 || b.elementsCapacity > std::numeric_limits<std::int32_t>::max() / 4) {
+            code = 7;
+            return self;
+        }
         std::int32_t newCapacity = b.elementsCapacity == 0 ? 1024 : 4 * b.elementsCapacity;
         auto* newElements = new (std::nothrow) UCharsTrieElement[newCapacity];
         if (!newElements) {
