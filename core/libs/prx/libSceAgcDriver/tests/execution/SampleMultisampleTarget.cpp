@@ -214,7 +214,7 @@ private:
 };
 
 struct Block {
-    explicit Block(std::size_t bytes, bool watched = false) : bytes(bytes), watched(watched) {
+    explicit Block(std::size_t bytes, bool watched = false, bool initialise = true) : bytes(bytes), watched(watched) {
 #ifdef _WIN32
         if (watched) {
             data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, BlockBytes));
@@ -237,7 +237,7 @@ struct Block {
         }
 #endif
         Require(data != nullptr, "cannot allocate the color target");
-        std::memset(data, 0, bytes);
+        if (initialise) std::memset(data, 0, bytes);
         Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "the color target is not write-watched");
         GuestAllocations::Mutation mutation;
         mutation.Add(data, bytes, true, true, true);
@@ -1913,6 +1913,39 @@ void DispatchNativeFmask(AgcDriver::VulkanDevice& device, const std::array<std::
     device.WaitIdle();
 }
 
+void ColdTextureDcc(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const std::uint8_t stored : {0u, 1u}) {
+        Block color(8u * BlockBytes, true, false), metadata(BlockBytes, true);
+        std::memset(metadata.data, 0x40, metadata.bytes);
+        auto target = DecodeTarget(color.Address(), static_cast<std::uint32_t>(std::countr_zero(samples)));
+        target.dccAddress = metadata.Address();
+        target.dccPipeAligned = true;
+        target.dccAlphaOnMsb = true;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            MaterializeMultisampleTargetClear(context, target);
+        }
+        auto words = TargetDescriptor(color, static_cast<std::uint32_t>(std::countr_zero(samples)));
+        words[6] = (1u << 19u) | (1u << 21u) | (1u << 22u) | (static_cast<std::uint32_t>(metadata.Address() >> 8u) << 24u);
+        words[7] = static_cast<std::uint32_t>(metadata.Address() >> 16u);
+        const std::array<float, 4> expected{0.0f, 0.0f, 0.0f, 1.0f};
+        CheckUniform(LoadSamples(device, words, samples), expected, "a DCC texture over untouched color pages");
+        Require(AgcDriver::GuestMemory::ImportWatched(color.Address(), color.bytes, [] { return true; }), "the overlapping watched import failed");
+        CheckUniform(LoadSamples(device, words, samples), expected, "a cold DCC texture after an overlapping import");
+        static_cast<volatile std::uint8_t*>(color.data)[color.bytes - 1u] = 7u;
+        CheckUniform(LoadSamples(device, words, samples), expected, "a cold DCC texture after an adjacent store");
+        *static_cast<volatile std::uint8_t*>(color.data) = stored;
+        RequireRefused(device, words, "writes to a resident multisampled DCC", stored == 0u ? "a real zero store over cold DCC color" : "a real nonzero store over cold DCC color");
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        ClearCachedTextures(context.device);
+        ClearMultisampleTargets(context.device);
+    }
+    std::printf("Cold DCC color: %u samples preserve clears across overlapping imports and adjacent stores, and refuse real zero and nonzero stores\n", samples);
+}
+
 void NativeFmask(std::unique_ptr<AgcDriver::VulkanDevice>& device, std::uint32_t samples) {
     using namespace AgcDriver::Graphics;
     const auto shift = static_cast<std::uint32_t>(std::countr_zero(samples));
@@ -2075,6 +2108,14 @@ int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 3 && std::string_view(argv[1]) == "--cold-texture-dcc") {
+            const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
+            Require(samples == 2u || samples == 4u || samples == 8u, "the cold DCC probe requires two, four or eight samples");
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            if ((context.limits.framebufferColorSampleCounts & samples) == 0u || (context.limits.sampledImageColorSampleCounts & samples) == 0u) return VulkanTestSkipped;
+            ColdTextureDcc(*device, samples);
+            return 0;
+        }
         if (argc == 3 && std::string_view(argv[1]) == "--native-fmask") {
             const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
             {
