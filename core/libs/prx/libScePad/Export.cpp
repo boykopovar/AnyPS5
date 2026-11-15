@@ -1449,10 +1449,19 @@ int APS5_VABI scePadBondUpdateGetStatus(std::int32_t deviceId, std::int32_t* sta
     return 0;
 }
 
+static bool ReadPadUpdateSize(const PadUpdateData* data, std::size_t& size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, &data->size, sizeof(size));
+    errno = savedErrno;
+    return copied;
+}
+
 int APS5_VABI scePadBondUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
     (void)deviceId;
     if (!g_initialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
-    if (data == nullptr || data->size != 0x8000) return PAD_ERROR_INVALID_ARG;
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    std::size_t size = 0;
+    if (!ReadPadUpdateSize(data, size) || size != 0x8000) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch("scePadBondUpdateSendData: the bond-update ioctl");
     return 0;
 }
