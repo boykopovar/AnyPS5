@@ -386,6 +386,7 @@ static void CheckOpWaitUntilDelegation(const std::string& file) {
     REQUIRE(sceFiosIsInitialized(nullptr));
     const SceFiosOp op = sceFiosFileGetSize(nullptr, file.c_str());
     REQUIRE(op > 0);
+    REQUIRE(sceFiosOpWait(op) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpIsDone(op));
     REQUIRE(sceFiosOpWaitUntil(op, 0) == SCE_FIOS_OK);
     REQUIRE(sceFiosOpWaitUntil(op, 1000000000000000000LL) == SCE_FIOS_OK);
@@ -1704,6 +1705,7 @@ int main(int argc, char** argv) {
     CheckNestedAncestorWait(file);
     CheckDeferredDeleteExternalWaitBarrier(file);
     CheckConcurrentTermination(file);
+    CheckInitialization();
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
     CheckOpenFlagsAndVectors(directory.generic_string(), file);
