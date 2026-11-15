@@ -214,15 +214,21 @@ private:
 };
 
 struct Block {
-    explicit Block(std::size_t bytes, bool watched = false, bool initialise = true) : bytes(bytes), watched(watched) {
+    explicit Block(std::size_t bytes, bool watched = false, bool initialise = true, bool direct = false) : bytes(bytes), watched(watched) {
+        Require(!direct || watched, "direct test memory must be write-watched");
 #ifdef _WIN32
         if (watched) {
-            data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, BlockBytes));
-            GuestArena::GuestArenaCommit_nid_postfix(data, bytes, PAGE_READWRITE, bytes);
+            data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, direct ? 2u * 1024u * 1024u : BlockBytes));
+            if (direct) {
+                section.reset(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, static_cast<DWORD>(static_cast<std::uint64_t>(bytes) >> 32u), static_cast<DWORD>(bytes), nullptr));
+                Require(section != nullptr, "cannot create direct test memory");
+                GuestArena::GuestArenaMapDirect_nid_postfix(data, bytes, section.get(), 0, PAGE_READWRITE);
+            } else GuestArena::GuestArenaCommit_nid_postfix(data, bytes, PAGE_READWRITE, bytes);
         } else {
             data = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         }
 #else
+        Require(!direct, "direct test memory requires Windows");
         if (watched) {
             void* raw = mmap(nullptr, bytes + BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             Require(raw != MAP_FAILED, "cannot map the color target");
@@ -251,6 +257,7 @@ struct Block {
         if (watched) {
             GuestArena::GuestArenaReset_nid_postfix(data, bytes);
             GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
+            if (section != nullptr) GuestArena::GuestArenaForgetSection_nid_postfix(section.get());
         } else {
             VirtualFree(data, 0, MEM_RELEASE);
         }
@@ -269,6 +276,9 @@ struct Block {
     std::size_t bytes;
     bool watched;
     std::uint8_t* data = nullptr;
+#ifdef _WIN32
+    std::unique_ptr<void, decltype(&CloseHandle)> section{nullptr, CloseHandle};
+#endif
 };
 
 AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32_t sampleShift = SampleShift, VkExtent2D extent = {Side, Side}) {
@@ -1946,6 +1956,51 @@ void ColdTextureDcc(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
     std::printf("Cold DCC color: %u samples preserve clears across overlapping imports and adjacent stores, and refuse real zero and nonzero stores\n", samples);
 }
 
+void ImportedRunTextureDcc(AgcDriver::VulkanDevice& device) {
+#ifdef _WIN32
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    for (const std::uint8_t stored : {0u, 1u}) {
+        Block color(2u * 1024u * 1024u, true, false, true), metadata(BlockBytes, true);
+        std::memset(metadata.data, 0x40, metadata.bytes);
+        std::uintptr_t first = 0, end = 0;
+        Require(GuestArena::GuestArenaResidentSpan_nid_postfix(color.Address(), color.bytes, &first, &end) && first == color.Address() && end == color.Address() + color.bytes, "the imported-run fixture is not a single resident run");
+        const auto neighbor = color.Address() + BlockBytes;
+        Require(AgcDriver::GuestMemory::ImportWatched(neighbor, BlockBytes, [&] {
+            GuestArena::HostImportAccess access(reinterpret_cast<void*>(neighbor), BlockBytes);
+            return true;
+        }), "the neighboring resident-run import failed");
+        auto target = DecodePackedFloatTarget(color);
+        Require(MultisampledColorBytes(target) <= BlockBytes, "the imported-run color overlaps its neighboring import");
+        target.dccAddress = metadata.Address();
+        target.dccPipeAligned = true;
+        target.dccAlphaOnMsb = true;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            MaterializeMultisampleTargetClear(context, target);
+        }
+        auto words = TargetDescriptor(color, SampleShift, Format11_11_10Float);
+        words[6] = (1u << 19u) | (1u << 21u) | (1u << 22u) | (static_cast<std::uint32_t>(metadata.Address() >> 8u) << 24u);
+        words[7] = static_cast<std::uint32_t>(metadata.Address() >> 16u);
+        const std::array<float, 4> expected{0.0f, 0.0f, 0.0f, 1.0f};
+        CheckUniform(LoadSamples(device, words, Samples), expected, "a DCC texture beside an imported resident-run subrange");
+        Require(AgcDriver::GuestMemory::ImportWatched(color.Address(), BlockBytes, [] { return true; }), "the overlapping resident-run import failed");
+        CheckUniform(LoadSamples(device, words, Samples), expected, "an imported-run DCC texture after an overlapping import");
+        static_cast<volatile std::uint8_t*>(color.data)[color.bytes - 1u] = 7u;
+        CheckUniform(LoadSamples(device, words, Samples), expected, "an imported-run DCC texture after an adjacent store");
+        *static_cast<volatile std::uint8_t*>(color.data) = stored;
+        RequireRefused(device, words, "writes to a resident multisampled DCC", stored == 0u ? "a real zero store over imported-run DCC color" : "a real nonzero store over imported-run DCC color");
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        ClearCachedTextures(context.device);
+        ClearMultisampleTargets(context.device);
+    }
+    std::puts("Imported-run DCC color preserves samples across imports and adjacent stores, and refuses real zero and nonzero stores");
+#else
+    static_cast<void>(device);
+#endif
+}
+
 void NativeFmask(std::unique_ptr<AgcDriver::VulkanDevice>& device, std::uint32_t samples) {
     using namespace AgcDriver::Graphics;
     const auto shift = static_cast<std::uint32_t>(std::countr_zero(samples));
@@ -2115,6 +2170,14 @@ int main(int argc, char** argv) {
             if ((context.limits.framebufferColorSampleCounts & samples) == 0u || (context.limits.sampledImageColorSampleCounts & samples) == 0u) return VulkanTestSkipped;
             ColdTextureDcc(*device, samples);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--imported-run-texture-dcc") {
+#ifdef _WIN32
+            ImportedRunTextureDcc(*device);
+            return 0;
+#else
+            return VulkanTestSkipped;
+#endif
         }
         if (argc == 3 && std::string_view(argv[1]) == "--native-fmask") {
             const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
