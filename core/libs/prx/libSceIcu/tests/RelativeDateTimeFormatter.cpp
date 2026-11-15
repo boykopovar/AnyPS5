@@ -154,7 +154,7 @@ void Run() {
 
 } // namespace UreldatefmtOpen
 
-namespace UreldatefmtGuestPointers {
+namespace RelativeDateTimeFormatterGuestPointers {
 
 void Run() {
     auto rejectsRuntime = [](auto&& call) {
@@ -211,11 +211,11 @@ void Run() {
 #endif
 }
 
-} // namespace UreldatefmtGuestPointers
+}
 
 void CheckIcuRelativeDateTimeFormatter() {
     UreldatefmtClose::Run();
     UreldatefmtFormat::Run();
     UreldatefmtOpen::Run();
-    UreldatefmtGuestPointers::Run();
+    RelativeDateTimeFormatterGuestPointers::Run();
 }

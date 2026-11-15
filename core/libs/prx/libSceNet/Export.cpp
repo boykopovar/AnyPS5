@@ -2895,9 +2895,12 @@ int APS5_VABI sceNetEtherNtostr(const NetEtherAddr* n, char* str, size_t len) {
 int APS5_VABI sceNetEtherStrton(const char* text, NetEtherAddr* address) {
     if (text == nullptr || address == nullptr) return fail(NET_EINVAL);
     std::array<char, 17> input{};
-    for (std::size_t index = 0; index < input.size(); ++index) {
-        if (!GuestCopyIn_nid_no_patch(&input[index], text + index, 1)) return fail(NET_EFAULT);
-        if (input[index] == '\0') return fail(NET_EINVAL);
+    for (std::size_t copied = 0; copied < input.size();) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + copied;
+        const std::size_t count = std::min<std::size_t>(input.size() - copied, 4096 - address % 4096);
+        if (!GuestCopyIn_nid_no_patch(input.data() + copied, text + copied, count)) return fail(NET_EFAULT);
+        if (std::memchr(input.data() + copied, '\0', count) != nullptr) return fail(NET_EINVAL);
+        copied += count;
     }
     const auto hexDigit = [](char character) {
         if (character >= '0' && character <= '9') return character - '0';
