@@ -8,6 +8,7 @@
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -1711,6 +1712,10 @@ void TestKernelWriteCommands() {
     Require(sceAmprAmmCommandBufferModifyMtypeProtect(&sibling.buffer, target, 2 * page, 5, 0x13, 0x10) == 0);
     Require(std::memcmp(written.data(), sibling.memory.data(), sizeof(Apr::AmmProtectCommand)) == 0);
     Require(sceKernelWriteModifyMtypeProtectCommand(written.data(), target, 2 * page, 5, 0x13, 0x10, nullptr) == 0);
+    constexpr int kernelEfault = static_cast<int>(0x8002000E);
+    errno = 71;
+    Require(sceKernelWriteModifyMtypeProtectCommand(reinterpret_cast<void*>(0x10), target, 2 * page, 5, 0x13, 0x10, &reported) == kernelEfault && errno == 71);
+    Require(sceKernelWriteModifyMtypeProtectCommand(written.data(), target, 2 * page, 5, 0x13, 0x10, reinterpret_cast<std::uint64_t*>(0x10)) == kernelEfault && errno == 71);
     std::uint32_t id = 0;
     Require(sceAmprAmmSubmitCommandBuffer3(written.data(), static_cast<std::uint32_t>(reported), 0, &id) == 0);
     Require(sceAmprAmmWaitCommandBufferCompletion(id) == 0);
@@ -1728,6 +1733,8 @@ void TestKernelWriteCommands() {
     Require(remap.header.opcode == Apr::Opcode::AmmRemapIntoPrt && remap.header.bytes == sizeof(remap));
     Require(remap.address == prt + page && remap.source == source && remap.size == page && remap.protection == cpuReadWrite && remap.reserved == 1011);
     Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(prtWritten.data()), prt + page, source, page, cpuReadWrite, 42, &prtMeasured) == 0);
+    Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(0x10), prt + page, source, page, cpuReadWrite, 0, &prtMeasured) == kernelEfault && errno == 71);
+    Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(prtWritten.data()), prt + page, source, page, cpuReadWrite, 42, reinterpret_cast<std::uint64_t*>(0x10)) == kernelEfault && errno == 71);
     std::memcpy(&remap, prtWritten.data(), sizeof(remap));
     Require(remap.reserved == 42);
     Recorder prtSibling;
