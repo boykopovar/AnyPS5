@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -63,6 +64,17 @@ namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
+template <typename TCall>
+bool RejectsInvalid(TCall call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return errno == 71;
+    }
+    return false;
+}
+
 }
 
 int main() {
@@ -80,7 +92,14 @@ int main() {
     }).join();
     Require(other != own && seen == Initial && *own == 7);
     *own = Initial;
-    bool threw = false;
-    try { __tls_get_addr_nid_postfix(nullptr); } catch (const std::invalid_argument&) { threw = true; }
-    Require(threw);
+    Require(RejectsInvalid([&] { __tls_get_addr_nid_postfix(nullptr); }));
+    Require(RejectsInvalid([&] {
+        __tls_get_addr_nid_postfix(reinterpret_cast<const KernelTlsIndex*>(0x10));
+    }));
+#if defined(_WIN32)
+    Require(RejectsInvalid([&] {
+        const KernelTlsIndex unreadableModule{0x10, 0};
+        __tls_get_addr_nid_postfix(&unreadableModule);
+    }));
+#endif
 }
