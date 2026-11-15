@@ -4463,7 +4463,9 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const auto pending = StorageTexture::PendingSerial();
         const auto releases = textureReleases.load(std::memory_order_acquire);
         const auto unwatch = GuestMemory::UnwatchSerial();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases && provedUnwatch == unwatch && refreshPerUseCopies()) {
+        const auto importSet = directRegions.empty() ? 0 : HostImportSetGeneration();
+        const auto allocations = directRegions.empty() ? 0 : GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases && provedUnwatch == unwatch && provedImportSet == importSet && provedAllocations == allocations && refreshPerUseCopies()) {
             static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
             if (verify) {
                 const bool ok = revalidateFull(shaders, report);
@@ -4482,6 +4484,8 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             provedPending = pending;
             provedReleases = releases;
             provedUnwatch = unwatch;
+            provedImportSet = importSet;
+            provedAllocations = allocations;
         } else {
             provedEpoch = 0;
         }

@@ -4550,6 +4550,90 @@ bool stagedEpochReuseTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool importedEpochReuseTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (context.hostImportAlignment == 0 || !context.nullDescriptors) {
+        std::cout << "host imports or null descriptors unavailable: a replaced import under the epoch exit not tested\n";
+        return false;
+    }
+    Require(ShaderResources::EpochProofs(), "the imported epoch reuse test needs epoch proofs on");
+    AgcDriver::GuestMemory::MarkProofThread();
+    recorder.Sync();
+    constexpr std::size_t bytes = 4u << 20u;
+    constexpr std::size_t elementBytes = 1u << 20u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the imported epoch reuse block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import of the imported epoch reuse block refused: not tested\n";
+        return false;
+    }
+    const auto element = address + 65536u;
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, static_cast<std::uint32_t>(elementBytes), 0x31000000u};
+    binding.bufferWritten = {false};
+    binding.bufferRead = {true};
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, compute);
+    const auto reads = resources->InPlaceReads();
+    const bool inPlace = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return range.first <= element && range.second >= element + elementBytes; });
+    if (!resources->Reusable() || !inPlace) {
+        std::cout << "the read-only element was not bound in place from its import in a reusable build: not tested\n";
+        resources.reset();
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+        return false;
+    }
+    Require(resources->Revalidate(compute), "the imported build did not prove current after it was built");
+    const auto reusesBefore = EpochProofCounts().resourceReuses.Sum();
+    Require(resources->Revalidate(compute), "the imported build did not prove current through the epoch exit");
+    Require(EpochProofCounts().resourceReuses.Sum() == reusesBefore + 1, "the imported build did not take the epoch exit before its import was replaced");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    static_cast<void>(HostImportFor(context, address, bytes));
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    const auto importAfter = HostImportFor(context, element, elementBytes);
+    const auto exitBefore = EpochProofCounts().resourceReuses.Sum();
+    const bool exitProved = resources->Revalidate(compute);
+    const bool exited = EpochProofCounts().resourceReuses.Sum() != exitBefore;
+    AgcDriver::GuestMemory::BreakProofs();
+    const bool fullProved = resources->Revalidate(compute);
+    std::cout << "imported epoch reuse: after the block's import was retired and remade the exit " << (exited ? "was taken and " : "was not taken and ") << (exitProved ? "proved" : "refused") << " the build, the full proof " << (fullProved ? "proved" : "refused") << " it\n";
+    Require(importAfter != nullptr, "the block's import was not remade after its allocation was added again");
+    Require(!exitProved || fullProved, "the epoch exit reused a build bound to an import the full proof refuses");
+    resources.reset();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    static_cast<void>(HostImportFor(context, address, bytes));
+    recorder.Sync();
+    return true;
+}
+
 bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
@@ -16637,6 +16721,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--staged-epoch-reuse-only") {
             if (!stagedEpochReuseTests(device, recorder)) return 77;
             std::cout << "staged epoch reuse tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--imported-epoch-reuse-only") {
+            if (!importedEpochReuseTests(device, recorder)) return 77;
+            std::cout << "imported epoch reuse tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--read-written-staging-only") {

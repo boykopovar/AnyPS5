@@ -781,6 +781,8 @@ private:
     std::uint64_t provedPending = 0;
     std::uint64_t provedReleases = 0;
     std::uint64_t provedUnwatch = 0;
+    std::uint64_t provedImportSet = 0;
+    std::uint64_t provedAllocations = 0;
     bool refreshPerUseCopies();
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
