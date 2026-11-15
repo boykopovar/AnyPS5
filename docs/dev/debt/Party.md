@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [Party](../../../core/libs/prx/Party/Export.cpp) (Party) - 26 functions that titles import from the `Party` module, taken from the imports of PPSA02632 (01.000.000). Each name is the PlayFab Party flat C function whose name hashes to the NID; all 26 are declared in the pinned [Party_c.h](https://github.com/PlayFab/PlayFabParty/blob/dcf63eb9daf691bf6e0094652b0bb50c0a3b0535/include/Party_c.h). Which Party release a title bundles is not known, so the parameterless `int` declarations stay placeholders, not verified signatures, and each function throws through `NotImplemented_nid_no_patch`; how the library behaves without the PlayFab service is not documented or measured. 16 of them are also exported by libkernel as `sceKernelUnknown03` to `sceKernelUnknown19` (without `sceKernelUnknown16`); a Windows import is bound to the library it names, so those copies do not resolve imports from `Party`
+- [Party](../../../core/libs/prx/Party/Export.cpp) (Party) - 26 functions that titles import from the `Party` module, taken from the imports of PPSA02632 (01.000.000). Each name is the PlayFab Party flat C function whose name hashes to the NID; all 26 are declared in the pinned [Party_c.h](https://github.com/PlayFab/PlayFabParty/blob/dcf63eb9daf691bf6e0094652b0bb50c0a3b0535/include/Party_c.h). Which Party release a title bundles is not known, so the parameterless `int` declarations stay placeholders, not verified signatures, and each function throws through `NotImplemented_nid_no_patch`; how the library behaves without the PlayFab service is not documented or measured
 
 | Name | NID |
 | --- | --- |
