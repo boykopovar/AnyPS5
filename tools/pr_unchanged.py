@@ -67,9 +67,20 @@ def candidate(node):
     return {"number": node["number"], "labels": labels, "base": parents[0]["oid"]}
 
 
+def pagination_cursor(connection, seen, label):
+    cursor = connection["pageInfo"]["endCursor"]
+    if not isinstance(cursor, str) or not cursor:
+        raise ValueError(f"{label} page has no cursor")
+    if cursor in seen:
+        raise ValueError(f"{label} pagination did not advance")
+    seen.add(cursor)
+    return cursor
+
+
 def fetch(repo):
     owner, name = repo.split("/", 1)
     prs, after, main = [], None, None
+    seen = set()
     while True:
         variables = {"owner": owner, "name": name, "size": PAGE_SIZE}
         if after:
@@ -80,7 +91,7 @@ def fetch(repo):
         prs += [candidate(node) for node in listed(connection)]
         if not connection["pageInfo"]["hasNextPage"]:
             return main, prs
-        after = connection["pageInfo"]["endCursor"]
+        after = pagination_cursor(connection, seen, "open pull request")
 
 
 def touched(repo, number):

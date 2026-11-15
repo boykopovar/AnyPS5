@@ -1353,12 +1353,7 @@ struct Recorder::ProgressWatcher {
 Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFunctions* encodedFunctions, std::uint32_t queueFamily) : context(context), id(nextRecorderId.fetch_add(1)) {
     if (encodedFunctions != nullptr && CommandEncoder::Enabled()) encoder = CommandEncoder::Attach(context.device, *encodedFunctions);
     if (encoder != nullptr) encodedQueries = encodedFunctions;
-    if (encoder != nullptr) {
-        VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        poolInfo.queueFamilyIndex = queueFamily;
-        Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &poolInfo, nullptr, &encoderPool), "vkCreateCommandPool recorder encoder");
-    }
+    if (encoder != nullptr) encoderPool.Create(context, queueFamily);
     {
         std::lock_guard lock(liveRecordersMutex);
         liveRecorders.push_back(id);
@@ -1401,6 +1396,25 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFuncti
         std::fprintf(stderr, "[gpu] timeline semaphore creation failed (Vulkan result %d); drains wait under the GPU mutex\n", static_cast<int>(result));
         timeline = VK_NULL_HANDLE;
     }
+}
+
+void Recorder::OwnedCommandPool::Create(const Context& context, std::uint32_t queueFamily) {
+    const auto create = context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool");
+    const auto destroyPool = context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool");
+    VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = queueFamily;
+    VkCommandPool created = VK_NULL_HANDLE;
+    Check(create(context.device, &poolInfo, nullptr, &created), "vkCreateCommandPool recorder encoder");
+    Reset();
+    device = context.device;
+    destroy = destroyPool;
+    pool = created;
+}
+
+void Recorder::OwnedCommandPool::Reset() noexcept {
+    if (pool != VK_NULL_HANDLE) destroy(device, pool, nullptr);
+    pool = VK_NULL_HANDLE;
 }
 
 Recorder::~Recorder() {
@@ -1477,8 +1491,7 @@ Recorder::~Recorder() {
     // Sync() above waited for every batch, so no submission still signals the timeline.
     if (timeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, timeline, nullptr);
     timeline = VK_NULL_HANDLE;
-    if (encoderPool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, encoderPool, nullptr);
-    encoderPool = VK_NULL_HANDLE;
+    encoderPool.Reset();
 }
 
 std::optional<std::chrono::steady_clock::time_point> Recorder::PendingLabelSince() {
@@ -2110,7 +2123,12 @@ void Recorder::SealPassWriteOnly() {
     if (open != nullptr) open->passHazards.SealWriteOnly();
 }
 
+bool Recorder::RenderPassOpen() const {
+    return open != nullptr && open->renderPass.open;
+}
+
 void Recorder::endOpenRenderPass(PassBreak by, bool barrier, std::source_location where) {
+    ++passGeneration;
     auto& pass = open->renderPass;
     if (open->segmentActive) endSegment(*open, where);
     EndRenderPass(context, live(where));
@@ -2202,11 +2220,12 @@ void Recorder::recordKeyStores(bool forWriter) {
 void Recorder::ensureOpen() {
     GuestMemory::AssertGpuLockHeld("Recorder::Commands");
     if (open == nullptr) {
+        ++passGeneration;
         auto batch = std::make_unique<Batch>();
         batch->sampleBatch = ++sampleBatches;
         try {
             VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-            allocation.commandPool = encoderPool != VK_NULL_HANDLE ? encoderPool : context.pool;
+            allocation.commandPool = encoderPool.Get() != VK_NULL_HANDLE ? encoderPool.Get() : context.pool;
             allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             allocation.commandBufferCount = 1;
             {
@@ -2476,9 +2495,9 @@ namespace {
 
 constexpr std::uint32_t MaxTimedRanges = 512;
 constexpr std::size_t CommandClasses = static_cast<std::size_t>(Recorder::CommandClass::Count);
-constexpr const char* CommandClassNames[CommandClasses] = {"dispatch-lead", "dispatch-trail", "indirect-args", "label-run", "fill", "fill-clear", "copy", "staging-in", "staging-out", "draw", "storage-upload", "storage-writeback", "dcc-clear", "dcc-keys", "present-blit", "shadow-publish", "template-refresh"};
-constexpr const char* BarrierScopes[CommandClasses] = {"Graphics.Barrier.dispatch-lead", "Graphics.Barrier.dispatch-trail", "Graphics.Barrier.indirect-args", "Graphics.Barrier.label-run", "Graphics.Barrier.fill", "Graphics.Barrier.fill-clear", "Graphics.Barrier.copy", "Graphics.Barrier.staging-in", "Graphics.Barrier.staging-out", "Graphics.Barrier.draw", "Graphics.Barrier.storage-upload", "Graphics.Barrier.storage-writeback", "Graphics.Barrier.dcc-clear", "Graphics.Barrier.dcc-keys", "Graphics.Barrier.present-blit", "Graphics.Barrier.shadow-publish", "Graphics.Barrier.template-refresh"};
-constexpr const char* BarrierMergedScopes[CommandClasses] = {"Graphics.BarrierMerged.dispatch-lead", "Graphics.BarrierMerged.dispatch-trail", "Graphics.BarrierMerged.indirect-args", "Graphics.BarrierMerged.label-run", "Graphics.BarrierMerged.fill", "Graphics.BarrierMerged.fill-clear", "Graphics.BarrierMerged.copy", "Graphics.BarrierMerged.staging-in", "Graphics.BarrierMerged.staging-out", "Graphics.BarrierMerged.draw", "Graphics.BarrierMerged.storage-upload", "Graphics.BarrierMerged.storage-writeback", "Graphics.BarrierMerged.dcc-clear", "Graphics.BarrierMerged.dcc-keys", "Graphics.BarrierMerged.present-blit", "Graphics.BarrierMerged.shadow-publish", "Graphics.BarrierMerged.template-refresh"};
+constexpr const char* CommandClassNames[CommandClasses] = {"dispatch-lead", "dispatch-trail", "indirect-args", "label-run", "fill", "fill-clear", "copy", "staging-in", "staging-out", "draw", "storage-upload", "storage-writeback", "dcc-clear", "dcc-keys", "present-blit", "shadow-publish", "template-refresh", "input-mirror"};
+constexpr const char* BarrierScopes[CommandClasses] = {"Graphics.Barrier.dispatch-lead", "Graphics.Barrier.dispatch-trail", "Graphics.Barrier.indirect-args", "Graphics.Barrier.label-run", "Graphics.Barrier.fill", "Graphics.Barrier.fill-clear", "Graphics.Barrier.copy", "Graphics.Barrier.staging-in", "Graphics.Barrier.staging-out", "Graphics.Barrier.draw", "Graphics.Barrier.storage-upload", "Graphics.Barrier.storage-writeback", "Graphics.Barrier.dcc-clear", "Graphics.Barrier.dcc-keys", "Graphics.Barrier.present-blit", "Graphics.Barrier.shadow-publish", "Graphics.Barrier.template-refresh", "Graphics.Barrier.input-mirror"};
+constexpr const char* BarrierMergedScopes[CommandClasses] = {"Graphics.BarrierMerged.dispatch-lead", "Graphics.BarrierMerged.dispatch-trail", "Graphics.BarrierMerged.indirect-args", "Graphics.BarrierMerged.label-run", "Graphics.BarrierMerged.fill", "Graphics.BarrierMerged.fill-clear", "Graphics.BarrierMerged.copy", "Graphics.BarrierMerged.staging-in", "Graphics.BarrierMerged.staging-out", "Graphics.BarrierMerged.draw", "Graphics.BarrierMerged.storage-upload", "Graphics.BarrierMerged.storage-writeback", "Graphics.BarrierMerged.dcc-clear", "Graphics.BarrierMerged.dcc-keys", "Graphics.BarrierMerged.present-blit", "Graphics.BarrierMerged.shadow-publish", "Graphics.BarrierMerged.template-refresh", "Graphics.BarrierMerged.input-mirror"};
 // [barriers] counters by class (relaxed: only reported) and the [gputime] totals, which the
 // presenter's thread adds to without the GPU mutex (AddGpuTiming).
 std::atomic<std::uint64_t> classBarriers[CommandClasses]{};
@@ -3362,7 +3381,6 @@ bool Recorder::RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords resul
         boundChangedCopyState = -1;
         VkShaderModule module = VK_NULL_HANDLE;
         try {
-            cmdPushChangedCopySet = context.Function<PFN_vkCmdPushDescriptorSetKHR>("vkCmdPushDescriptorSetKHR");
             std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
             for (std::uint32_t binding = 0; binding < bindings.size(); ++binding) bindings[binding] = {binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
             VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -3422,7 +3440,7 @@ bool Recorder::RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords resul
             writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[binding].pBufferInfo = &infos[binding];
         }
-        cmdPushChangedCopySet(commands, VK_PIPELINE_BIND_POINT_COMPUTE, boundChangedCopyLayout, 0, static_cast<std::uint32_t>(writes.size()), writes.data());
+        context.Function<PFN_vkCmdPushDescriptorSetKHR>("vkCmdPushDescriptorSetKHR")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, boundChangedCopyLayout, 0, static_cast<std::uint32_t>(writes.size()), writes.data());
         const Parameters parameters{bases[0], bases[1], bases[2], count, alwaysCopy ? 1u : 0u, counter != VK_NULL_HANDLE ? 1u : 0u};
         function(cmdPushConstants, "vkCmdPushConstants")(commands, boundChangedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), &parameters);
         function(cmdDispatch, "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);
@@ -3636,12 +3654,54 @@ std::size_t SnapshotPool(Recorder::SnapshotUse use) {
 }
 }
 
+void Recorder::dropDrawInputMirror(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    if (entry->second.mirror == nullptr) return;
+    drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))].bytes -= std::get<2>(entry->first);
+    drawInputMirrorBytes -= std::get<2>(entry->first);
+    entry->second.mirror.reset();
+}
+
 void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    dropDrawInputMirror(entry);
     auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
     pool.bytes -= std::get<2>(entry->first);
     pool.recency.erase(entry->second.recent);
     if (!entry->second.owned.words.empty()) --ownedDrawInputs;
     drawSnapshots.erase(entry);
+}
+
+bool Recorder::DrawInputMirrors() {
+    static const bool enabled = std::getenv("APS5_NO_INPUT_MIRRORS") == nullptr;
+    return enabled;
+}
+
+std::pair<std::size_t, std::size_t> Recorder::DrawInputBytes() const {
+    return {drawSnapshotPools[SnapshotPool(SnapshotUse::Vertex)].bytes, drawInputMirrorBytes};
+}
+
+std::shared_ptr<Buffer> Recorder::mirrorDrawInput(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry) {
+    const auto bytes = std::get<2>(entry->first);
+    auto& pool = drawSnapshotPools[SnapshotPool(std::get<1>(entry->first))];
+    if (bytes > DrawInputMirrorBudget || 2 * bytes > DrawInputBudget || !context.HostMemoryType(~0u)) return {};
+    const auto host = entry->second.buffer;
+    const auto copied = host->Bytes().size();
+    auto mirror = Buffer::WithinDeviceLocalHeadroom(context, copied, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    if (mirror == nullptr) return {};
+    for (auto oldest = pool.recency.begin(); drawInputMirrorBytes + bytes > DrawInputMirrorBudget && oldest != pool.recency.end(); ++oldest) {
+        if (*oldest != entry->first) dropDrawInputMirror(drawSnapshots.find(*oldest));
+    }
+    while (pool.bytes + bytes > DrawInputBudget && pool.recency.front() != entry->first) eraseDrawSnapshot(drawSnapshots.find(pool.recency.front()));
+    const auto commands = Commands();
+    const auto timing = BeginGpuTiming(CommandClass::InputMirror);
+    CopyBuffer(context, commands, host->Handle(), 0, mirror->Handle(), 0, copied);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT);
+    CountBarriers(CommandClass::InputMirror);
+    EndGpuTiming(timing, copied);
+    Keep(host);
+    Keep(mirror);
+    pool.bytes += bytes;
+    drawInputMirrorBytes += bytes;
+    return mirror;
 }
 
 Recorder::UploadSlice Recorder::DrawUpload(std::size_t bytes) {
@@ -3681,7 +3741,7 @@ void Recorder::NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t byte
     unwrittenBytes += bytes;
 }
 
-std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation, VkDeviceSize* offset, std::size_t from, std::uint32_t* lowest) {
+std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation, VkDeviceSize* offset, std::size_t from, std::uint32_t* lowest, bool mirrored) {
     Require(from == 0 || (use == SnapshotUse::Vertex && from < bytes), "only a vertex snapshot starts past its address");
     auto found = use == SnapshotUse::Vertex ? drawSnapshots.lower_bound({address, use, bytes}) : drawSnapshots.find({address, use, bytes});
     if (found == drawSnapshots.end() || std::get<0>(found->first) != address || std::get<1>(found->first) != use) {
@@ -3707,12 +3767,15 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
         const auto start = from - std::min(from, std::get<2>(found->first) - found->second.from);
         GuestMemory::Read(address + start, found->second.buffer->Bytes().subspan(start, found->second.from - start), 1);
         found->second.from = start;
+        dropDrawInputMirror(found);
     }
     auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
     recency.splice(recency.end(), recency, found->second.recent);
     if (derived != nullptr) *derived = found->second.derived;
     if (lowest != nullptr) *lowest = found->second.lowest;
-    return found->second.buffer;
+    if (!mirrored || use == SnapshotUse::Storage || !DrawInputMirrors()) return found->second.buffer;
+    if (found->second.mirror == nullptr) found->second.mirror = mirrorDrawInput(found);
+    return found->second.mirror != nullptr ? found->second.mirror : found->second.buffer;
 }
 
 std::shared_ptr<Buffer> Recorder::containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset) {
@@ -3807,7 +3870,7 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
     const DrawSnapshotKey key{address, use, bytes};
     pool.recency.push_back(key);
     try {
-        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived, from, lowest});
+        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived, from, lowest, nullptr});
     } catch (...) {
         pool.recency.pop_back();
         throw;
@@ -4035,6 +4098,13 @@ void Recorder::notePendingRanges(std::span<const std::pair<std::uint64_t, std::u
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
+void Recorder::NoteStampedWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    const auto first = writeNoteCount + 1;
+    NotePendingWrites(ranges);
+    if (open == nullptr) return;
+    for (auto note = first; note <= writeNoteCount; ++note) open->stampedNotes.push_back(note);
+}
+
 void Recorder::publishPendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> additions) const {
     if (activeRecorder != this) {
         publishedWriteRangesValid = false;
@@ -4177,6 +4247,18 @@ bool Recorder::PendingWriteSettled(std::uint64_t address, std::size_t bytes) con
         if (overlaps(*batch, address, end) && !signaled(*batch)) return false;
     }
     return true;
+}
+
+std::vector<std::uint64_t> Recorder::StampedNotesSince(std::uint64_t note) const {
+    std::vector<std::uint64_t> notes;
+    const auto collect = [&](const Batch& batch) {
+        for (const auto stamped : batch.stampedNotes) {
+            if (stamped > note) notes.push_back(stamped);
+        }
+    };
+    for (const auto& batch : inFlight) collect(*batch);
+    if (open != nullptr) collect(*open);
+    return notes;
 }
 
 std::uint64_t Recorder::LastWriteNote(std::uint64_t address, std::size_t bytes) const {

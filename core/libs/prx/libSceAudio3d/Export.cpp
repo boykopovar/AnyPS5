@@ -253,7 +253,10 @@ std::uint32_t QueueLevel() {
 int CheckFloatAttribute(const void* attribute, std::size_t attribute_size, float minimum, float maximum) {
     if (attribute == nullptr || attribute_size != sizeof(float)) return AUDIO3D_ERROR_INVALID_PARAMETER;
     float value = 0.0f;
-    if (!GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value))) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (!std::isfinite(value) || value < minimum || value > maximum) return AUDIO3D_ERROR_INVALID_PARAMETER;
     return 0;
 }
@@ -640,9 +643,12 @@ int APS5_VABI sceAudio3dBedWrite2(uint32_t port_id, uint32_t num_channels, uint3
         const std::uint32_t samples = std::min(num_samples, g_port.granularity);
         const std::size_t bytes = static_cast<std::size_t>(samples) * num_channels * sample_size;
         if (g_port.beds.size() >= g_port.queue_depth) return AUDIO3D_ERROR_NOT_READY;
-        const auto* first = static_cast<const std::uint8_t*>(buffer);
         Audio3dBed bed;
-        bed.pcm.assign(first, first + bytes);
+        bed.pcm.resize(bytes);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(bed.pcm.data(), buffer, bytes);
+        errno = savedErrno;
+        if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         bed.channels = num_channels;
         bed.format = format;
         bed.samples = samples;
@@ -828,8 +834,19 @@ int APS5_VABI sceAudio3dReportRegisterHandler(uint32_t type, Audio3dReportHandle
             registered = reinterpret_cast<std::uintptr_t>(slot);
             result = 0;
         }
+        if (handle != nullptr) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(handle, &registered, sizeof(registered));
+            errno = savedErrno;
+            if (!copied) {
+                if (result == 0) {
+                    *slot = Audio3dReportSlot{};
+                    if (type == AUDIO3D_REPORT_TYPE_CALL) --g_call_report_handlers;
+                }
+                throw std::runtime_error("sceAudio3dReportRegisterHandler: unwritable guest handle");
+            }
+        }
     }
-    if (handle != nullptr) *handle = registered;
     return result;
 }
 
