@@ -4713,6 +4713,71 @@ int main() {
     Require(__isnormalf_nid_postfix(std::numeric_limits<float>::denorm_min()) == 0);
     Require(__isnormal_nid_postfix(1.) == 1 && __isnormal_nid_postfix(0.) == 0);
     Require(__isnormal_nid_postfix(std::numeric_limits<double>::denorm_min()) == 0);
+    struct DoubleClassification { std::uint64_t bits; int finite; int nan; int normal; int inf; };
+    for (const auto& item : {
+             DoubleClassification{0x7ff0000000000001ull, 0, 1, 0, 0},
+             DoubleClassification{0x7ff8000000000001ull, 0, 1, 0, 0},
+             DoubleClassification{0x0ull, 1, 0, 0, 0},
+             DoubleClassification{0x1ull, 1, 0, 0, 0},
+             DoubleClassification{0x000fffffffffffffull, 1, 0, 0, 0},
+             DoubleClassification{0x0010000000000000ull, 1, 0, 1, 0},
+             DoubleClassification{0x7fefffffffffffffull, 1, 0, 1, 0},
+             DoubleClassification{0x7ff0000000000000ull, 0, 0, 0, 1}
+         }) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{0x8000000000000000ull}}) {
+            volatile double input = std::bit_cast<double>(item.bits | sign);
+            Require(std::bit_cast<std::uint64_t>(static_cast<double>(input)) == (item.bits | sign));
+            const decltype(&__isfinite_nid_postfix) classifiers[] = {
+                __isfinite_nid_postfix, __isnan_nid_postfix, __isnormal_nid_postfix, isnan_nid_postfix, __isinf_nid_postfix, isinf_nid_postfix
+            };
+            const int expected[] = {item.finite, item.nan, item.normal, item.nan, item.inf, item.inf};
+            for (std::size_t i = 0; i < std::size(classifiers); ++i) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifiers[i](input);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == expected[i]);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    struct FloatClassification { std::uint32_t bits; int finite; int nan; int normal; int inf; };
+    for (const auto& item : {
+             FloatClassification{0x7f800001u, 0, 1, 0, 0},
+             FloatClassification{0x7fc00001u, 0, 1, 0, 0},
+             FloatClassification{0x0u, 1, 0, 0, 0},
+             FloatClassification{0x1u, 1, 0, 0, 0},
+             FloatClassification{0x007fffffu, 1, 0, 0, 0},
+             FloatClassification{0x00800000u, 1, 0, 1, 0},
+             FloatClassification{0x7f7fffffu, 1, 0, 1, 0},
+             FloatClassification{0x7f800000u, 0, 0, 0, 1}
+         }) {
+        for (const std::uint32_t sign : {std::uint32_t{0}, std::uint32_t{0x80000000u}}) {
+            volatile float input = std::bit_cast<float>(item.bits | sign);
+            Require(std::bit_cast<std::uint32_t>(static_cast<float>(input)) == (item.bits | sign));
+            const decltype(&__isfinitef_nid_postfix) classifiers[] = {
+                __isfinitef_nid_postfix, __isnanf_nid_postfix, __isnormalf_nid_postfix, isnanf_nid_postfix, __isinff_nid_postfix
+            };
+            const int expected[] = {item.finite, item.nan, item.normal, item.nan, item.inf};
+            for (std::size_t i = 0; i < std::size(classifiers); ++i) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifiers[i](input);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == expected[i]);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
     CheckAsin();
     const auto quotient = div_nid_postfix(7, 2);
     CheckAsinfErrno();
