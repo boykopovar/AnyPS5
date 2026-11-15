@@ -65,21 +65,25 @@ static Pthread StartQueued(QueuedWaiter& waiter, int queued) {
     return thread;
 }
 
-static void CheckPassesOverALargerNeed() {
+static void CheckStopsAtALargerNeed(std::uint32_t attr) {
     released = 0;
     KernelSema sem = nullptr;
-    Require(sceKernelCreateSema(&sem, "handoff-skip", SemaFifo, 0, 4, nullptr) == SCE_OK);
+    Require(sceKernelCreateSema(&sem, "handoff-head", attr, 0, 4, nullptr) == SCE_OK);
     QueuedWaiter large{sem, 2};
     QueuedWaiter small{sem, 1};
     const Pthread largeThread = StartQueued(large, 1);
     const Pthread smallThread = StartQueued(small, 2);
     Require(sceKernelSignalSema(sem, 1) == SCE_OK);
-    WaitForReleased(1);
-    Require(small.order == 1 && small.result == SCE_OK);
-    Require(QueuedCount(sem) == 1 && sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(released.load() == 0 && QueuedCount(sem) == 2);
+    Require(sceKernelPollSema(sem, 1) == SCE_OK && sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
     Require(sceKernelSignalSema(sem, 2) == SCE_OK);
+    WaitForReleased(1);
+    Require(large.order == 1 && large.result == SCE_OK && small.order == 0);
+    Require(QueuedCount(sem) == 1);
+    Require(sceKernelSignalSema(sem, 1) == SCE_OK);
     WaitForReleased(2);
-    Require(large.order == 2 && large.result == SCE_OK);
+    Require(small.order == 2 && small.result == SCE_OK);
     Require(scePthreadJoin(largeThread, nullptr) == SCE_OK && scePthreadJoin(smallThread, nullptr) == SCE_OK);
     Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
@@ -135,7 +139,9 @@ int main() {
         Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
         Require(sceKernelDeleteSema(sem) == SCE_OK);
     }
-    CheckPassesOverALargerNeed();
+    CheckStopsAtALargerNeed(SemaFifo);
+    CheckStopsAtALargerNeed(SemaPriority);
+    CheckStopsAtALargerNeed(0);
     CheckDeletedRefusesFreeTokens();
     CheckServesInOrder(SemaFifo, 700, 700, true);
     CheckServesInOrder(SemaFifo, 767, 256, true);
