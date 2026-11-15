@@ -225,6 +225,7 @@ struct Context {
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     bool depthClamp = false;
     VkDeviceSize hostImportAlignment = 0;
+    mutable std::vector<std::pair<std::pair<VkFormat, std::uint32_t>, bool>> stencilShadowCopyProbes;
     bool drawInputsInPlace = true;
     bool discreteGpu = false;
     bool integratedGpu = false;
@@ -293,6 +294,7 @@ struct Context {
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
+    bool hostImportsInHeapUsage = false;
     bool tessellationPipelineCache = true;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
