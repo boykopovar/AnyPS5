@@ -51,6 +51,7 @@ The following nine state helpers in [PendingExportsRound7.cpp](../../../core/lib
 
 ### Functional
 
+- [sceNpUtilGetNthChar guest output](../../../core/libs/prx/libSceNpCommon/Strings.cpp) (libSceNpCommon) - returning NP_UTIL_ERROR_INVALID_ARGUMENT with caller errno preserved for an unwritable character pointer via GuestCopyOut_nid_no_patch is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceNpIntGetPlatformType guest input](../../../core/libs/prx/libSceNpCommon/Export.cpp) (libSceNpCommon) - returning NP_ERROR_INVALID_ARGUMENT for an unreadable NpId pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceNpCmpOnlineId guest input](../../../core/libs/prx/libSceNpCommon/Export.cpp) (libSceNpCommon) - safely copy in NpOnlineId inputs via GuestCopyIn_nid_no_patch preserving host errno, returning NP_ERROR_INVALID_ARGUMENT on unmapped or invalid guest memory as a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
 - [sceNpIntIsValidOnlineId guest input](../../../core/libs/prx/libSceNpCommon/Export.cpp) (libSceNpCommon) - safely copy in NpOnlineId via GuestCopyIn_nid_no_patch preserving host errno, returning 0 on unmapped or invalid guest memory as a host-safety fallback; whether console hardware faults or returns false on unmapped memory is unmeasured.

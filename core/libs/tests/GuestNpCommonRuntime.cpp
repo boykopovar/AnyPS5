@@ -1160,6 +1160,10 @@ void TestJsonText() {
     const char* character = nullptr;
     const char* japanese = "\xE6\x97\xA5" "a";
     Require(sceNpUtilGetNthChar(1, japanese, &character) == 0 && character == japanese + 3, "characters are counted, not bytes");
+    Require(sceNpUtilGetNthChar(1, japanese, nullptr) == NpUtilInvalid, "null character output pointer is refused");
+    errno = 71;
+    Require(sceNpUtilGetNthChar(1, japanese, reinterpret_cast<const char**>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable character pointer is refused and errno is kept");
     Require(sceNpUtilGetNthChar(10, "abc", &character) == 0 && *character == '\0', "counting stops at the end");
     Require(sceNpUtilGetNthChar(2, "a\x01b", &character) == NpUtilInvalidCharacter, "control characters are refused");
 

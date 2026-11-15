@@ -728,7 +728,7 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
 }
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
-    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (text == nullptr || character == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const char* position = text;
     for (std::size_t i = 0; i < index && *position != '\0'; ++i) {
         const auto lead = static_cast<unsigned char>(*position);
@@ -741,7 +741,10 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
         }
         position += length;
     }
-    *character = position;
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(character, &position, sizeof(position));
+    errno = savedErrno;
+    if (!ok) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
