@@ -3,14 +3,6 @@
 
 namespace {
 
-char LowerCharacter(char character) {
-    return static_cast<char>(_Tolower_nid_postfix(static_cast<unsigned char>(character), nullptr));
-}
-
-char UpperCharacter(char character) {
-    return static_cast<char>(_Toupper_nid_postfix(static_cast<unsigned char>(character), nullptr));
-}
-
 std::uint16_t LowerWide(std::uint16_t character) {
     return static_cast<std::uint16_t>(_Towlower_nid_postfix(character, nullptr));
 }
@@ -33,22 +25,6 @@ const TCharacter* ConvertRange(TCharacter* first, const TCharacter* last, TConve
 }
 
 extern "C" {
-
-char APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(const GuestLocale::Facet*, char character) {
-    return LowerCharacter(character);
-}
-
-const char* APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix(const GuestLocale::Facet*, char* first, const char* last) {
-    return ConvertRange(first, last, LowerCharacter);
-}
-
-char APS5_VABI _ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(const GuestLocale::Facet*, char character) {
-    return UpperCharacter(character);
-}
-
-const char* APS5_VABI _ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix(const GuestLocale::Facet*, char* first, const char* last) {
-    return ConvertRange(first, last, UpperCharacter);
-}
 
 std::uint16_t APS5_VABI _ZNKSt5ctypeIwE10do_tolowerEw_nid_postfix(const GuestLocale::Facet*, std::uint16_t character) {
     return LowerWide(character);

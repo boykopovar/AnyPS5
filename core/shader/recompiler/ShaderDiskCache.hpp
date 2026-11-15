@@ -74,6 +74,7 @@ void Store(std::vector<std::byte> key, std::shared_ptr<const CompiledVariant> va
 [[nodiscard]] std::shared_ptr<const IrResourcePlan> LoadSharedPlan(std::span<const std::byte> key, std::uint64_t shaderHash);
 void StorePlan(std::vector<std::byte> key, std::shared_ptr<const IrResourcePlan> plan);
 void Flush();
+void ReleaseMapped(const SharedSpirv& spirv) noexcept;
 void Shutdown();
 [[nodiscard]] unsigned Writers();
 [[nodiscard]] Counters Totals();

@@ -75,6 +75,8 @@ bool storageFits(const DepthTarget& target, const GuestTextureResource& descript
 }
 
 std::atomic<bool> directDepthCopy{std::getenv("APS5_NO_DIRECT_DEPTH_COPY") == nullptr};
+std::atomic<bool> forcedDepthUploadImage{false};
+std::atomic<std::uint64_t> depthUploads{0};
 std::atomic<std::uint64_t> directDepthCopies{0};
 
 std::uint32_t aspectCopyBytes(VkFormat format, VkImageAspectFlagBits aspect) {
@@ -657,6 +659,158 @@ std::optional<DepthPlaneOverwrite> decodeOverwrite(const StorageImageClear& clea
     return overwrite;
 }
 
+bool ProbeStencilShadowCopy(const Context& context, VkFormat format, std::uint32_t samples) {
+    if (context.detiler == nullptr) return false;
+    if (auto* recorder = RecorderFor(context)) recorder->Sync();
+    bool works = true;
+    VkImageView view = VK_NULL_HANDLE;
+    VkImageView sourceView = VK_NULL_HANDLE;
+    VkRenderPass patternPass = VK_NULL_HANDLE;
+    VkFramebuffer patternFb = VK_NULL_HANDLE;
+    std::shared_ptr<OwnedImage> source;
+    std::shared_ptr<OwnedImage> shadow;
+    try {
+        constexpr VkExtent3D extent{129u, 67u, 1u};
+        const auto make = [&](VkImageUsageFlags usage, VkImageCreateFlags flags = 0) {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.flags = flags;
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = format;
+            info.extent = extent;
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = static_cast<VkSampleCountFlagBits>(samples);
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = usage;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VkImage image = VK_NULL_HANDLE;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage stencil shadow probe");
+            auto owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
+            try {
+                owned->Allocate(context, info, "vkAllocateMemory stencil shadow probe");
+            } catch (...) {
+                context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+                throw;
+            }
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory stencil shadow probe");
+            return owned;
+        };
+        source = make(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            SampleLocationsCompatibleDepth(context, format, samples) ? VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT : 0);
+        shadow = make(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (HasStencil(format) ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0u));
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        const VkImageSubresourceRange aspects{VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+        const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
+        std::array<VkImageMemoryBarrier, 2> toGeneral{};
+        for (std::size_t index = 0; index < toGeneral.size(); ++index) {
+            auto& entry = toGeneral[index];
+            entry.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            entry.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            entry.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            entry.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            entry.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            entry.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            entry.image = index == 0 ? source->image : shadow->image;
+            entry.subresourceRange = aspects;
+        }
+        barrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(toGeneral.size()), toGeneral.data());
+        const VkClearDepthStencilValue clear{0.25f, 0xa5u};
+        const VkImageSubresourceRange depthOnly{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &depthOnly);
+        VkImageViewCreateInfo sourceViewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        sourceViewInfo.image = source->image;
+        sourceViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        sourceViewInfo.format = format;
+        sourceViewInfo.subresourceRange = aspects;
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &sourceViewInfo, nullptr, &sourceView), "vkCreateImageView stencil shadow probe attachment");
+        const VkAttachmentDescription attachment{0u, format, static_cast<VkSampleCountFlagBits>(samples), VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL};
+        const VkAttachmentReference reference{0u, VK_IMAGE_LAYOUT_GENERAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.pDepthStencilAttachment = &reference;
+        VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        passInfo.attachmentCount = 1u;
+        passInfo.pAttachments = &attachment;
+        passInfo.subpassCount = 1u;
+        passInfo.pSubpasses = &subpass;
+        Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &passInfo, nullptr, &patternPass), "vkCreateRenderPass stencil shadow probe");
+        VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fbInfo.renderPass = patternPass;
+        fbInfo.attachmentCount = 1u;
+        fbInfo.pAttachments = &sourceView;
+        fbInfo.width = extent.width;
+        fbInfo.height = extent.height;
+        fbInfo.layers = 1u;
+        Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &fbInfo, nullptr, &patternFb), "vkCreateFramebuffer stencil shadow probe");
+        const auto attachmentAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, attachmentAccess);
+        VkClearValue passClear{};
+        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        begin.renderPass = patternPass;
+        begin.framebuffer = patternFb;
+        begin.renderArea = {{0, 0}, {extent.width, extent.height}};
+        begin.clearValueCount = 1u;
+        begin.pClearValues = &passClear;
+        context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        constexpr std::uint32_t tile = 16u;
+        for (std::uint32_t cy = 0; cy * tile < extent.height; ++cy) {
+            for (std::uint32_t cx = 0; cx * tile < extent.width; ++cx) {
+                VkClearAttachment pattern{};
+                pattern.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+                pattern.clearValue.depthStencil.stencil = (cx * 37u + cy * 53u + 0x5au) & 0xffu;
+                const VkClearRect rect{{{static_cast<std::int32_t>(cx * tile), static_cast<std::int32_t>(cy * tile)}, {std::min(tile, extent.width - cx * tile), std::min(tile, extent.height - cy * tile)}}, 0u, 1u};
+                context.Function<PFN_vkCmdClearAttachments>("vkCmdClearAttachments")(commands, 1u, &pattern, 1u, &rect);
+            }
+        }
+        context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkImageCopy region{};
+        region.srcSubresource = {aspects.aspectMask, 0, 0, 1};
+        region.dstSubresource = region.srcSubresource;
+        region.extent = extent;
+        context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, shadow->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image = shadow->image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        viewInfo.format = format;
+        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView stencil shadow probe");
+        const std::uint32_t elements = extent.width * extent.height * samples;
+        const auto bytes = (static_cast<std::size_t>(elements) + 3u) & ~std::size_t{3u};
+        Buffer linear(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        context.detiler->DispatchMultisampleReadback(commands, VK_FORMAT_R8_UINT, linear.Handle(), 0u, bytes, view, extent.width, extent.height, 1u, samples, 0u, elements);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        linear.Invalidate();
+        works = true;
+        for (std::uint32_t element = 0; element < elements && works; ++element) {
+            const auto pixel = element / samples;
+            const auto x = pixel % extent.width;
+            const auto y = (pixel / extent.width) % extent.height;
+            works = linear.Bytes()[element] == static_cast<std::byte>(((x / tile) * 37u + (y / tile) * 53u + 0x5au) & 0xffu);
+        }
+    } catch (...) {
+        works = false;
+    }
+    if (view != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+    if (sourceView != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, sourceView, nullptr);
+    if (patternFb != VK_NULL_HANDLE) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, patternFb, nullptr);
+    if (patternPass != VK_NULL_HANDLE) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, patternPass, nullptr);
+    return works;
+}
+
+bool StencilShadowCopyWorks(const Context& context, VkFormat format, std::uint32_t samples) {
+    const std::pair key{format, samples};
+    const auto cached = std::find_if(context.stencilShadowCopyProbes.begin(), context.stencilShadowCopyProbes.end(), [&](const auto& entry) { return entry.first == key; });
+    if (cached != context.stencilShadowCopyProbes.end()) return cached->second;
+    const bool works = ProbeStencilShadowCopy(context, format, samples);
+    context.stencilShadowCopyProbes.emplace_back(key, works);
+    return works;
+}
+
 class DepthSurface;
 std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& surface);
 void noteStalePlane(std::uint64_t begin, std::uint64_t end);
@@ -698,8 +852,12 @@ public:
                 };
                 useSampleShadow = supports(shadowResult, shadowProperties);
                 const bool directSampleable = supports(directResult, directProperties);
+                if (useSampleShadow && directSampleable && HasStencil(hostFormat)) useSampleShadow = StencilShadowCopyWorks(context, hostFormat, info.samples);
                 sampleable = useSampleShadow || directSampleable;
-                if (!useSampleShadow && directSampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+                if (!useSampleShadow && directSampleable) {
+                    info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+                    directSampled = true;
+                }
             }
             if (target.samples == 1 && sampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -910,17 +1068,57 @@ public:
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
-        const VkImageSubresourceRange range{aspects, 0, 1, 0, 1};
         constexpr VkAccessFlags access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, access, VK_ACCESS_TRANSFER_WRITE_BIT);
-        const VkClearDepthStencilValue clear{depth, stencil};
-        context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, access);
+        if (aspects == VK_IMAGE_ASPECT_STENCIL_BIT && directSampled) RecordStencilClearPass(commands, access, stencil);
+        else {
+            const VkImageSubresourceRange range{aspects, 0, 1, 0, 1};
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, access, VK_ACCESS_TRANSFER_WRITE_BIT);
+            const VkClearDepthStencilValue clear{depth, stencil};
+            context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, access);
+        }
         if (batch) batch->SubmitAndWait();
         else {
             Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
             recorder->Keep(owned);
         }
+    }
+
+    void RecordStencilClearPass(VkCommandBuffer commands, VkAccessFlags access, std::uint8_t stencil) {
+        if (stencilClearPass == VK_NULL_HANDLE) {
+            const VkAttachmentDescription attachment{0u, hostFormat, static_cast<VkSampleCountFlagBits>(target.samples), VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL};
+            const VkAttachmentReference reference{0u, VK_IMAGE_LAYOUT_GENERAL};
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.pDepthStencilAttachment = &reference;
+            VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            info.attachmentCount = 1u;
+            info.pAttachments = &attachment;
+            info.subpassCount = 1u;
+            info.pSubpasses = &subpass;
+            Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &info, nullptr, &stencilClearPass), "vkCreateRenderPass native depth stencil fill");
+            VkFramebufferCreateInfo framebuffer{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            framebuffer.renderPass = stencilClearPass;
+            framebuffer.attachmentCount = 1u;
+            framebuffer.pAttachments = &view;
+            framebuffer.width = target.extent.width;
+            framebuffer.height = target.extent.height;
+            framebuffer.layers = 1u;
+            Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebuffer, nullptr, &stencilClearFb), "vkCreateFramebuffer native depth stencil fill");
+        }
+        const auto attachment = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, access, attachment);
+        VkClearValue value{};
+        value.depthStencil.stencil = stencil;
+        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        begin.renderPass = stencilClearPass;
+        begin.framebuffer = stencilClearFb;
+        begin.renderArea = {{0, 0}, target.extent};
+        begin.clearValueCount = 1u;
+        begin.pClearValues = &value;
+        context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, access);
     }
 
     bool UnormStencilView(const GuestTextureResource& resource) const {
@@ -1007,11 +1205,23 @@ public:
         if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) stencilFill.reset();
     }
 
-    void MarkStencilStale() {
+    void TakeStencilBaseline() {
+        const auto [begin, end] = staleStencilRange(*this);
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (GuestMemory::Watched(begin, bytes) || !GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) {
+            stencilBaseline.clear();
+            return;
+        }
+        stencilBaseline.resize(bytes);
+        GuestMemory::Read(begin, stencilBaseline);
+    }
+
+    void MarkStencilStale(bool written = false) {
         if (!StencilMirrorable()) return;
+        const auto [begin, end] = staleStencilRange(*this);
+        if (stencilBaseline.size() != static_cast<std::size_t>(end - begin) || (written && !GuestMemory::EqualsCommittedUnsynced(begin, stencilBaseline))) TakeStencilBaseline();
         stencilStale = true;
         stencilMark = nextPlaneSerial();
-        const auto [begin, end] = staleStencilRange(*this);
         noteStalePlane(begin, end);
     }
 
@@ -1029,7 +1239,7 @@ public:
             NoteDepthWork();
         } else {
             stencilFill = stencil;
-            MarkStencilStale();
+            MarkStencilStale(true);
         }
     }
 
@@ -1102,6 +1312,13 @@ public:
 
     bool GuestHoldsSamples() const {
         return target.samples != 1u && uniformPlaneTarget(target) && samplingActive && sampling.refusal.empty() && !hostWritten->load(std::memory_order_acquire);
+    }
+
+    bool PublishedUnderStorage() const {
+        return GuestHoldsSamples() && std::ranges::any_of(sampling.initial, [](const auto& range) {
+            const std::pair<std::uint64_t, std::uint64_t> plane{range.address, range.address + range.bytes};
+            return StorageTexture::AnyPendingUnitsOverlap(std::span(&plane, 1u));
+        });
     }
 
     void PublishToGuest();
@@ -1648,10 +1865,12 @@ public:
 
     void NoteStencilStored(std::uint64_t generation) {
         stencilGeneration = generation;
+        if (StencilMirrorable()) TakeStencilBaseline();
     }
 
     bool stencilStale = false;
     std::uint64_t stencilGeneration = 0;
+    std::vector<std::byte> stencilBaseline;
 
     std::vector<bool> staleUnits;
     std::size_t staleCount = 0;
@@ -1698,6 +1917,9 @@ public:
     std::shared_ptr<OwnedImage> owned;
     std::shared_ptr<OwnedImage> sampleShadow;
     bool useSampleShadow = false;
+    bool directSampled = false;
+    VkRenderPass stencilClearPass = VK_NULL_HANDLE;
+    VkFramebuffer stencilClearFb = VK_NULL_HANDLE;
     std::uint64_t sampleShadowWritten = 0u;
     bool sampleShadowStencil = false;
 
@@ -1837,6 +2059,40 @@ private:
     std::uint64_t stencilMemory = 0;
     StencilCopy stencilCopy;
     VkImageView transferView = VK_NULL_HANDLE;
+    std::shared_ptr<OwnedImage> depthUpload;
+
+    const std::shared_ptr<OwnedImage>& depthUploadImage() {
+        if (depthUpload != nullptr) return depthUpload;
+        VkImage uploadImage = VK_NULL_HANDLE;
+        VkDeviceMemory uploadMemory = VK_NULL_HANDLE;
+        try {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = hostFormat;
+            info.extent = {target.extent.width, target.extent.height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &uploadImage), "vkCreateImage depth upload");
+            VkMemoryRequirements requirements{};
+            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, uploadImage, &requirements);
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            Check(MemoryAccounting::Allocate(context, allocation, "depth upload", &uploadMemory), "vkAllocateMemory depth upload");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, uploadImage, uploadMemory, 0), "vkBindImageMemory depth upload");
+            depthUpload = std::make_shared<OwnedImage>(context, uploadImage, uploadMemory);
+        } catch (...) {
+            if (uploadImage != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, uploadImage, nullptr);
+            if (uploadMemory != VK_NULL_HANDLE) MemoryAccounting::Free(context, uploadMemory);
+            throw;
+        }
+        return depthUpload;
+    }
 
     VkImageUsageFlags sampleShadowUsage() const {
         return VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (HasStencil(hostFormat) ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0u);
@@ -2089,13 +2345,41 @@ private:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, sourceImage, VK_IMAGE_LAYOUT_GENERAL, plane.staging->Handle(), count, toStorage ? planeRegions.data() : colorRegions.data());
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, plane.staging->Handle(), destinationImage, VK_IMAGE_LAYOUT_GENERAL, count, toStorage ? colorRegions.data() : planeRegions.data());
+        const bool throughUpload = !toStorage && !stencil && DepthUploadImage(context);
+        if (throughUpload) {
+            const auto& upload = depthUploadImage();
+            if (recorder != nullptr) recorder->Keep(upload);
+            const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
+            VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer.image = upload->image;
+            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(hostFormat) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
+            barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, plane.staging->Handle(), upload->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, count, planeRegions.data());
+            VkImageMemoryBarrier toSource = toTransfer;
+            toSource.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toSource.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            toSource.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toSource.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
+            std::vector<VkImageCopy> copies;
+            copies.reserve(planeRegions.size());
+            for (const auto& region : planeRegions) copies.push_back({region.imageSubresource, region.imageOffset, region.imageSubresource, region.imageOffset, region.imageExtent});
+            context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, upload->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destinationImage, VK_IMAGE_LAYOUT_GENERAL, count, copies.data());
+            depthUploads.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, plane.staging->Handle(), destinationImage, VK_IMAGE_LAYOUT_GENERAL, count, toStorage ? colorRegions.data() : planeRegions.data());
+        }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
         if (batch) {
             batch->SubmitAndWait();
             return;
         }
-        Recorder::CountBarriers(Recorder::CommandClass::Copy, 3);
+        Recorder::CountBarriers(Recorder::CommandClass::Copy, throughUpload ? 5 : 3);
         recorder->EndGpuTiming(timing, moved);
     }
 
@@ -2114,11 +2398,16 @@ private:
         depthPlane = {};
         stencilPlane = {};
         releaseStencilCopy();
+        depthUpload.reset();
         mirrorPlane = {};
         stencilMirror = {};
         textures.clear();
         if (transferView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, transferView, nullptr);
         transferView = VK_NULL_HANDLE;
+        if (stencilClearFb) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, stencilClearFb, nullptr);
+        if (stencilClearPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, stencilClearPass, nullptr);
+        stencilClearFb = VK_NULL_HANDLE;
+        stencilClearPass = VK_NULL_HANDLE;
         if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
         if (owned != nullptr) owned.reset();
         else {
@@ -2381,7 +2670,7 @@ struct LayeredSlice {
 class LayeredDepthStorage {
 public:
     LayeredDepthStorage(const Context& context, const GuestTextureResource& resource, const DepthTarget& base, std::uint32_t bytesPerTexel, std::uint32_t firstLayer, std::uint32_t layers) : context(context), base(base), extent(base.extent), bytesPerTexel(bytesPerTexel), firstLayer(firstLayer), layers(layers) {
-        const auto bytes = DescribeSurface(resource).guestBytes;
+        const auto bytes = SurfaceGuestBytes(resource);
         layerPitchBytes = DescribeSurface(resource).GuestLayerOffset(1);
         StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(bytes), nullptr, "storage image creation", PublishScope::None);
         storage = StorageTexture::Create(context, *context.detiler, resource, 0);
@@ -2538,9 +2827,28 @@ void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address
     entry = {&surface, ++planeBinds};
 }
 
+void retireStoringStale(DepthSurface& surface);
+
+bool ownsPlane(const DepthSurface& surface) {
+    const auto owns = [&](const PlaneOwners& owners) { return std::any_of(owners.begin(), owners.end(), [&](const auto& entry) { return entry.second.surface == &surface; }); };
+    return owns(depthOwners()) || owns(stencilOwners());
+}
+
 void takePlanes(DepthSurface& surface, bool created, VkImageAspectFlags clearAspects) {
+    std::array<DepthSurface*, 2> displaced{};
+    const auto previous = [&](PlaneOwners& owners, std::uint64_t address) {
+        const auto found = owners.find({surface.context.device, address});
+        return found == owners.end() || found->second.surface == &surface ? nullptr : found->second.surface;
+    };
+    displaced[0] = previous(depthOwners(), surface.target.address);
+    if (surface.target.stencilAddress != 0) displaced[1] = previous(stencilOwners(), surface.target.stencilAddress);
     takePlane(surface, depthOwners(), surface.target.address, VK_IMAGE_ASPECT_DEPTH_BIT, created, clearAspects);
     if (surface.target.stencilAddress != 0) takePlane(surface, stencilOwners(), surface.target.stencilAddress, VK_IMAGE_ASPECT_STENCIL_BIT, created, clearAspects);
+    for (std::size_t index = 0; index < displaced.size(); ++index) {
+        auto* owner = displaced[index];
+        if (owner == nullptr || (index == 1 && owner == displaced[0]) || owner->retired || owner->target.samples != 1u || ownsPlane(*owner)) continue;
+        retireStoringStale(*owner);
+    }
 }
 
 DepthSurface* depthSlice(VkDevice device, std::uint64_t address, const DepthTarget& base) {
@@ -3152,12 +3460,12 @@ GuestTextureResource stencilResource(const DepthTarget& target) {
 }
 
 std::uint64_t DepthSurface::MirrorBytes() const {
-    if (mirrorBytes == 0) mirrorBytes = DescribeSurface(mirrorResource(target)).guestBytes;
+    if (mirrorBytes == 0) mirrorBytes = SurfaceGuestBytes(mirrorResource(target));
     return mirrorBytes;
 }
 
 std::uint64_t DepthSurface::StencilMirrorBytes() const {
-    if (stencilMirrorBytes == 0) stencilMirrorBytes = DescribeSurface(stencilResource(target)).guestBytes;
+    if (stencilMirrorBytes == 0) stencilMirrorBytes = SurfaceGuestBytes(stencilResource(target));
     return stencilMirrorBytes;
 }
 
@@ -3180,12 +3488,20 @@ void retireStencil(DepthSurface& surface) {
     forgetStaleStencil(surface);
 }
 
+bool stencilWrittenSinceBaseline(const DepthSurface& surface, std::uint64_t begin, std::size_t bytes) {
+    if (GuestMemory::Watched(begin, bytes)) {
+        GuestMemory::CollectWritesUncached(begin, bytes);
+        return surface.stencilGeneration != 0u && GuestMemory::WrittenSince(begin, bytes, surface.stencilGeneration);
+    }
+    return surface.stencilBaseline.size() == bytes && !GuestMemory::EqualsCommittedUnsynced(begin, surface.stencilBaseline);
+}
+
 void storeStaleStencil(DepthSurface& surface) {
     if (!surface.stencilStale || surface.syncing || !surface.StencilMirrorable()) return;
     const auto [begin, end] = staleStencilRange(surface);
     const auto bytes = static_cast<std::size_t>(end - begin);
     if (GuestMemory::CommittedRanges(begin, bytes).empty()) return;
-    if (unmappedSince(begin, end, surface.stencilMark)) {
+    if (unmappedSince(begin, end, surface.stencilMark) || stencilWrittenSinceBaseline(surface, begin, bytes)) {
         retireStencil(surface);
         return;
     }
@@ -3454,6 +3770,13 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
     for (const auto& candidate : surfaces()) {
         if (surface == nullptr && candidate->active->load(std::memory_order_acquire) && candidate->context.device == context.device && sameLayoutWithin(candidate->target, target)) surface = candidate.get();
     }
+    if (surface != nullptr && overwrittenStencil && surface->PublishedUnderStorage()) {
+        std::unique_lock guardLock(depthGuardMutex());
+        surface->active->store(false, std::memory_order_release);
+        std::erase_if(depthGuards(), [&](const auto& range) { return range.active == surface->active; });
+        anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+        surface = nullptr;
+    }
     const bool created = surface == nullptr;
     if (!created) surface->ProveOverwrite();
     GuestAllocations::Lease creationLease;
@@ -3495,6 +3818,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         }
         surface = surfaces().back().get();
     }
+    if (surface->retired) surfacesSerial.fetch_add(1, std::memory_order_release);
     surface->retired = false;
     const auto owner = depthOwners().find({context.device, target.address});
     const bool inherits = owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && !owner->second.surface->retired;
@@ -3536,7 +3860,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         surface->MarkAllStale(planeBytes);
         noteStalePlane(plane, plane + planeBytes);
     }
-    if (stencilWritten || created || stencilRebound) surface->MarkStencilStale();
+    if (stencilWritten || created || stencilRebound) surface->MarkStencilStale(stencilWritten);
     drawnDepth = surface;
     return surface->view;
 }
@@ -3620,7 +3944,10 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
             if (surface->stencilStale && !surface->syncing) {
                 const auto [stencilBegin, stencilEnd] = staleStencilRange(*surface);
                 if (stencilBegin < end && address < stencilEnd) {
-                    if (GuestMemory::CommittedRanges(stencilBegin, static_cast<std::size_t>(stencilEnd - stencilBegin)).empty() || unmappedSince(stencilBegin, stencilEnd, surface->stencilMark)) {
+                    const auto stencilBytes = static_cast<std::size_t>(stencilEnd - stencilBegin);
+                    if (GuestMemory::CommittedRanges(stencilBegin, stencilBytes).empty() ||
+                        unmappedSince(stencilBegin, stencilEnd, surface->stencilMark) ||
+                        stencilWrittenSinceBaseline(*surface, stencilBegin, stencilBytes)) {
                         surface->stencilStale = false;
                     } else {
                         auto mirror = surface->StoreStencilPlane(stencilResource(surface->target));
@@ -4339,15 +4666,15 @@ DepthCopySourceScope::~DepthCopySourceScope() {
     depthCopySourceActive = previous;
 }
 
-std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target) {
+std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target, bool stencil) {
     const bool multisampled = target.samples != 1u;
-    const auto base = (target.address | target.pipeBankXor) >> 8u;
-    const auto metadata = multisampled ? target.htileAddress >> 8u : 0u;
+    const auto base = ((stencil ? target.stencilAddress : target.address) | target.pipeBankXor) >> 8u;
+    const auto metadata = multisampled && !stencil ? target.htileAddress >> 8u : 0u;
     const auto count = static_cast<std::uint32_t>(std::countr_zero(target.samples));
     const auto width = target.extent.width - 1u, height = target.extent.height - 1u;
     const auto type = multisampled ? 14u : 9u;
-    const auto word6 = (multisampled && target.iterate256 ? 1u << 10u : 0u) | (multisampled && target.htilePipeAligned ? 1u << 19u : 0u) | (metadata != 0 ? 1u << 21u : 0u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u);
-    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (22u << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (type << 28u) | (target.depthSwizzle << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, word6, static_cast<std::uint32_t>(metadata >> 8u)};
+    const auto word6 = (multisampled && !stencil && target.iterate256 ? 1u << 10u : 0u) | (multisampled && !stencil && target.htilePipeAligned ? 1u << 19u : 0u) | (metadata != 0 ? 1u << 21u : 0u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u);
+    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | ((stencil ? 5u : 22u) << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (type << 28u) | (target.depthSwizzle << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, word6, static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage) {
@@ -4587,6 +4914,18 @@ void SetDepthTransferPasses(bool enabled) {
 
 std::uint64_t DepthTransferPassCount() {
     return depthTransferPassCount.load(std::memory_order_relaxed);
+}
+
+bool DepthUploadImage(const Context& context) {
+    return context.depthUploadImage || forcedDepthUploadImage.load(std::memory_order_relaxed);
+}
+
+std::uint64_t DepthUploadCount() {
+    return depthUploads.load(std::memory_order_relaxed);
+}
+
+void SetDepthUploadImage(bool enabled) {
+    forcedDepthUploadImage.store(enabled && std::getenv("APS5_NO_DEPTH_UPLOAD_IMAGE") == nullptr, std::memory_order_relaxed);
 }
 
 }
