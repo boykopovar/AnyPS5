@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
 #include "prx/libSceRtc/libSceRtc.hpp"
 #include "prx/libSceUserService/libSceUserService.hpp"
@@ -40,6 +41,55 @@ constexpr int UserServiceAlreadyInitialized = static_cast<int>(0x80960003);
 constexpr std::int32_t InitialUser = 0x10000000;
 
 void Require(bool value) { if (!value) std::abort(); }
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
+
+struct ArenaHookGuard {
+    ArenaHookGuard() {
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+    }
+    ~ArenaHookGuard() {
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    }
+};
+
+struct GuardedPage {
+    char* memory = nullptr;
+    std::size_t page = 0;
+
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+        std::memset(memory, 'a', page);
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(memory, 2 * page) == 0);
+#endif
+    }
+
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+
+    const char* Tail(std::size_t bytesFromEnd) const { return memory + page - bytesFromEnd; }
+};
 
 void TestWithoutCache() {
     Require(sceHttpCacheTerm(1) == NotFound);
@@ -449,29 +499,10 @@ void TestSystemLifecycle() {
 void TestSystemPathMemory() {
     Require(sceHttpCacheSystemInit(reinterpret_cast<const char*>(0x10)) == InvalidValue);
     Require(sceHttpCacheSystemClearAll(reinterpret_cast<const char*>(0x10)) == InvalidValue);
-#ifdef _WIN32
-    SYSTEM_INFO info{};
-    GetSystemInfo(&info);
-    const std::size_t page = info.dwPageSize;
-    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-    Require(memory != nullptr);
-    DWORD previous = 0;
-    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
-#else
-    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    auto* memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    Require(memory != MAP_FAILED);
-    Require(mprotect(memory + page, page, PROT_NONE) == 0);
-#endif
-    std::memset(memory, 'a', page);
-    const char* unterminated = memory + page - 8;
+    const GuardedPage guarded;
+    const char* unterminated = guarded.Tail(8);
     Require(sceHttpCacheSystemInit(unterminated) == InvalidValue);
     Require(sceHttpCacheSystemClearAll(unterminated) == InvalidValue);
-#ifdef _WIN32
-    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
-#else
-    Require(munmap(memory, 2 * page) == 0);
-#endif
 }
 
 void TestPublicResponses() {
@@ -536,6 +567,135 @@ void TestTags() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestRevalidateExcludesPrefixedHeaders() {
+    Exchange exchange{sceHttpCacheInit(0)};
+    Cached(exchange, "http://prefix/a",
+           {{"Cache-Control", "max-age=60"},
+            {"ETag", "v1"},
+            {"Content-Type", "application/json"},
+            {"Content-Length", "7"},
+            {"X-Content-Type-Options", "nosniff"},
+            {"X-WebKit-Test", "orig"}},
+           "payload");
+    exchange.requestHeaders = {{"Cache-Control", "no-cache"}};
+    Require(exchange.Retrieve("http://prefix/a") == 0 && exchange.result == 2);
+    Require(exchange.Revalidate(304,
+                                {{"Cache-Control", "max-age=600"},
+                                 {"Content-Type", "text/plain"},
+                                 {"Content-Length", "999"},
+                                 {"X-Content-Type-Options", "changed"},
+                                 {"X-WebKit-Test", "changed"}}) == 0 &&
+            exchange.result == 1);
+    Require(Value(exchange.response, "Cache-Control") == "max-age=600");
+    Require(Value(exchange.response, "Content-Type") == "application/json");
+    Require(Value(exchange.response, "Content-Length") == "7");
+    Require(Value(exchange.response, "X-Content-Type-Options") == "nosniff");
+    Require(Value(exchange.response, "X-WebKit-Test") == "orig");
+    Require(ReadAll(exchange.request) == "payload");
+    exchange.Done();
+    Require(sceHttpCacheTerm(exchange.cache) == 0);
+}
+
+void TestHeaderSafetyAndErrno() {
+    const ArenaHookGuard hookGuard;
+    const GuardedPage guarded;
+    const char* badPtr = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+    const char* unterminated = guarded.Tail(8);
+    const std::string overlong(65536, 'x');
+
+    errno = 71;
+    Require(sceHttpCacheSystemInit("/data/cache_errno") == 0 && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheSystemInit(badPtr) == InvalidValue && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheSystemInit(unterminated) == InvalidValue && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheSystemClearAll(badPtr) == InvalidValue && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheSystemClearAll(unterminated) == InvalidValue && errno == 71);
+
+    const int cache = sceHttpCacheInit(0);
+    Require(cache > 0);
+    errno = 71;
+    const int tagged = sceHttpCacheCreateRequestWithTag(cache, InitialUser, "tag1");
+    Require(tagged > 0 && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheCreateRequestWithTag(cache, InitialUser, badPtr) == InvalidValue && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheCreateRequestWithTag(cache, InitialUser, unterminated) == InvalidValue && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheClear(cache, InitialUser, "tag1") == 0 && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheClear(cache, InitialUser, badPtr) == InvalidValue && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheClear(cache, InitialUser, unterminated) == InvalidValue && errno == 71);
+    Require(sceHttpCacheDeleteRequest(tagged) == 0);
+
+    Exchange seed{cache};
+    Cached(seed, "http://header-safety/item", {{"Cache-Control", "max-age=60"}, {"ETag", "e1"}}, "body");
+
+    const int retrieveReq = sceHttpCacheCreateRequest(cache, InitialUser);
+    const int headerReq = sceHttpCacheCreateRequest(cache, InitialUser);
+    const int revalidateReq = sceHttpCacheCreateRequest(cache, InitialUser);
+    Require(retrieveReq > 0 && headerReq > 0 && revalidateReq > 0);
+
+    Header validReqHeader{"X-Test", "ok"};
+    Request validReq{0, 0, "http://header-safety/item", 1, &validReqHeader};
+    Response outResp{};
+    Request outNext{};
+    std::int32_t outResult = -1;
+    errno = 71;
+    Require(sceHttpCacheRetrieve(retrieveReq, &validReq, &outResp, &outNext, &outResult) == 0 && outResult == 1 && errno == 71);
+
+    Header validRespHeader{"Cache-Control", "max-age=60"};
+    ResponseHeader validResp{200, 0, 1, &validRespHeader};
+    errno = 71;
+    Require(sceHttpCacheSetResponseHeader(headerReq, &validResp) == 0 && errno == 71);
+
+    Header noCacheHeader{"Cache-Control", "no-cache"};
+    Request revalQuery{0, 0, "http://header-safety/item", 1, &noCacheHeader};
+    Require(sceHttpCacheRetrieve(revalidateReq, &revalQuery, &outResp, &outNext, &outResult) == 0 && outResult == 2);
+    errno = 71;
+    Require(sceHttpCacheRevalidate(revalidateReq, &validResp, &outResp, &outResult) == 0 && outResult == 1 && errno == 71);
+
+    const Header badName{badPtr, "v"};
+    const Header badValue{"k", badPtr};
+    const Header untermName{unterminated, "v"};
+    const Header untermValue{"k", unterminated};
+    const Header longName{overlong.c_str(), "v"};
+    const Header longValue{"k", overlong.c_str()};
+    struct BadHeaderCase {
+        std::size_t count;
+        const Header* ptr;
+    };
+    const BadHeaderCase badCases[]{
+        {1, reinterpret_cast<const Header*>(static_cast<std::uintptr_t>(0x10))},
+        {4097, &validRespHeader},
+        {std::numeric_limits<std::size_t>::max(), &validRespHeader},
+        {1, &badName},
+        {1, &badValue},
+        {1, &untermName},
+        {1, &untermValue},
+        {1, &longName},
+        {1, &longValue},
+    };
+    for (const auto& testCase : badCases) {
+        Request badReq{0, 0, "http://header-safety/other", testCase.count, testCase.ptr};
+        errno = 71;
+        Require(sceHttpCacheRetrieve(retrieveReq, &badReq, &outResp, &outNext, &outResult) == InvalidValue && errno == 71);
+        ResponseHeader badResp{200, 0, testCase.count, testCase.ptr};
+        errno = 71;
+        Require(sceHttpCacheSetResponseHeader(headerReq, &badResp) == InvalidValue && errno == 71);
+        errno = 71;
+        Require(sceHttpCacheRevalidate(revalidateReq, &badResp, &outResp, &outResult) == InvalidValue && errno == 71);
+    }
+
+    Require(sceHttpCacheDeleteRequest(retrieveReq) == 0);
+    Require(sceHttpCacheDeleteRequest(headerReq) == 0);
+    Require(sceHttpCacheDeleteRequest(revalidateReq) == 0);
+    Require(sceHttpCacheTerm(cache) == 0);
+}
+
 }
 
 int main() {
@@ -546,6 +706,8 @@ int main() {
     TestStoreAndHit();
     TestLifetimeOrder();
     TestRevalidation();
+    TestRevalidateExcludesPrefixedHeaders();
+    TestHeaderSafetyAndErrno();
     TestSystemLifecycle();
     TestSystemPathMemory();
     TestPublicResponses();

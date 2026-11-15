@@ -161,7 +161,13 @@ std::int32_t LastCacheId = 0;
 bool UserServiceStarted = false;
 std::uint8_t CacheSharing = 1;
 
+struct ErrnoGuard {
+    int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
 bool CopySystemPath(const char* path, std::string& destination) {
+    const ErrnoGuard guard;
     return CopyGuestString_nid_no_patch(path, 0x401, destination) == 0 && destination.size() <= 0x400;
 }
 
@@ -200,6 +206,7 @@ constexpr std::size_t TagCapacity = 32;
 
 int CopyTag(const char* tag, std::string& destination) {
     if (tag == nullptr) return ErrorInvalidValue;
+    const ErrnoGuard guard;
     if (CopyGuestString_nid_no_patch(tag, TagCapacity, destination) != 0 || destination.empty()) return ErrorInvalidValue;
     return 0;
 }
@@ -552,12 +559,29 @@ Decision Validate(const Headers& requestHeaders, Entry& entry) {
     return decision;
 }
 
+constexpr std::size_t MaxHeaders = 4096;
+constexpr std::size_t MaxHeaderStringBytes = 65536;
+
 int ConvertHeaders(std::size_t count, const HttpCacheHeader* source, Headers& headers) {
     if (source == nullptr) return count != 0 ? ErrorInvalidValue : 0;
-    for (std::size_t i = 0; i < count; ++i) {
-        if (source[i].name == nullptr || source[i].value == nullptr) return ErrorInvalidValue;
-        Append(headers, source[i].name, source[i].value);
+    if (count == 0) return 0;
+    if (count > MaxHeaders) return ErrorInvalidValue;
+    const ErrnoGuard guard;
+    std::vector<HttpCacheHeader> copied(count);
+    if (!GuestCopyIn_nid_no_patch(copied.data(), source, count * sizeof(HttpCacheHeader))) return ErrorInvalidValue;
+    Headers parsed;
+    parsed.reserve(count);
+    for (const auto& entry : copied) {
+        if (entry.name == nullptr || entry.value == nullptr) return ErrorInvalidValue;
+        std::string name;
+        std::string value;
+        if (CopyGuestString_nid_no_patch(entry.name, MaxHeaderStringBytes, name) != 0 ||
+            CopyGuestString_nid_no_patch(entry.value, MaxHeaderStringBytes, value) != 0) {
+            return ErrorInvalidValue;
+        }
+        parsed.push_back(Header{std::move(name), std::move(value)});
     }
+    headers.insert(headers.end(), std::make_move_iterator(parsed.begin()), std::make_move_iterator(parsed.end()));
     return 0;
 }
 
@@ -614,11 +638,6 @@ const HttpCacheHeader* ExportHeaders(Request& request, const Headers& headers) {
     }
     return array.data();
 }
-
-struct ErrnoGuard {
-    int saved = errno;
-    ~ErrnoGuard() { errno = saved; }
-};
 
 bool CopyIn(void* dst, const void* src, std::size_t size) {
     const ErrnoGuard guard;
@@ -700,7 +719,7 @@ bool MergedHeader(std::string_view name) {
         if (lower == excluded) return false;
     }
     for (const auto excluded : UnmergedHeaderNames) {
-        if (lower == excluded) return false;
+        if (lower.starts_with(excluded)) return false;
     }
     return true;
 }
@@ -920,6 +939,7 @@ int APS5_VABI sceHttpCacheReadData(std::int32_t requestId, std::size_t size, voi
 }
 
 int APS5_VABI sceHttpCacheRetrieve(std::int32_t requestId, const HttpCacheRequest* request, HttpCacheResponse* response, HttpCacheRequest* nextRequest, std::int32_t* result) {
+    const ErrnoGuard guard;
     if (request == nullptr || result == nullptr) return ErrorInvalidValue;
     HttpCacheRequest localRequest{};
     if (!CopyIn(&localRequest, request, sizeof(localRequest))) return ErrorInvalidValue;
@@ -1027,6 +1047,7 @@ int APS5_VABI sceHttpCacheSetQuota(std::int32_t cacheId, const HttpCacheQuota* q
 }
 
 int APS5_VABI sceHttpCacheSetResponseHeader(std::int32_t requestId, const HttpCacheResponseHeader* header) {
+    const ErrnoGuard guard;
     if (header == nullptr) return ErrorInvalidValue;
     std::lock_guard lock(Mutex);
     Request* request = FindRequest(requestId);
