@@ -534,7 +534,7 @@ void Close(SQLiteDatabase& db) {
     SetOpenErrorMessage(db, nullptr);
 }
 
-bool Open(SQLiteDatabase& db, const String& filename, int openMode) {
+bool OpenDatabase(SQLiteDatabase& db, const String& filename, int openMode) {
     static std::once_flag initialized;
     std::call_once(initialized, [] {
         if (sqlite3_initialize_nid_postfix() != SqliteOk) throw std::runtime_error("Failed to initialize SQLite");
@@ -667,7 +667,7 @@ void APS5_VABI _ZN7WebCore14SQLiteDatabaseD2Ev(SQLiteDatabase* self) {
 
 bool APS5_VABI _ZN7WebCore14SQLiteDatabase4openERKN3WTF6StringENS0_8OpenModeE(SQLiteDatabase* self, const String* filename,
     int openMode) {
-    return Open(Checked(self), Checked(filename), openMode);
+    return OpenDatabase(Checked(self), Checked(filename), openMode);
 }
 
 void APS5_VABI _ZN7WebCore14SQLiteDatabase5closeEv(SQLiteDatabase* self) {
