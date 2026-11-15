@@ -2256,6 +2256,65 @@ static void TestImage() {
     Require(threwOutOfRange);
 }
 
+static void TestAuthentication() {
+    Require(WKAuthenticationChallengeGetTypeID() == 2);
+    Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
+
+    auto challenge = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+    challenge->requestURL = "https://auth.example.com/login";
+    challenge->previousFailureCount = 2;
+    challenge->isForMainResource = true;
+    challenge->isInMainFrame = true;
+
+    auto listener = NKWebKit::Make<NKWebKit::AuthenticationDecisionListener>();
+    challenge->decisionListener = NKWebKit::Retained<NKWebKit::AuthenticationDecisionListener>::Share(listener.Get());
+
+    auto cred = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::Credential>>();
+    challenge->proposedCredential = NKWebKit::Retained<NKWebKit::Object>::Share(cred.Get());
+
+    auto space = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::ProtectionSpace>>();
+    challenge->protectionSpace = NKWebKit::Retained<NKWebKit::Object>::Share(space.Get());
+
+    const void* challengeRef = challenge.Get();
+    auto* reqUrl = WKAuthenticationChallengCopyRequestURL(challengeRef);
+    Require(reqUrl != nullptr);
+    WKRelease(reqUrl);
+
+    Require(WKAuthenticationChallengeGetDecisionListener(challengeRef) == listener.Get());
+    Require(WKAuthenticationChallengeGetPreviousFailureCount(challengeRef) == 2);
+    Require(WKAuthenticationChallengeGetProposedCredential(challengeRef) == cred.Get());
+    Require(WKAuthenticationChallengeGetProtectionSpace(challengeRef) == space.Get());
+    Require(WKAuthenticationChallengeIsForMainResource(challengeRef));
+    Require(WKAuthenticationChallengeIsInMainFrame(challengeRef));
+
+    const void* listenerRef = listener.Get();
+    WKAuthenticationDecisionListenerCancel(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::Cancel);
+
+    WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::RejectProtectionSpace);
+
+    WKAuthenticationDecisionListenerUseCredential(listenerRef, cred.Get());
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::UseCredential);
+    Require(listener->credential.Get() == cred.Get());
+
+    bool threw = false;
+    try {
+        WKAuthenticationChallengeGetDecisionListener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationDecisionListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static int s_runLoopCallCount = 0;
 static void* s_runLoopReceivedContext = nullptr;
 
@@ -2624,6 +2683,7 @@ int main() {
     TestOpenPanelParameters();
     TestNotification();
     TestImage();
+    TestAuthentication();
     TestCertificateInfo();
     try {
         TestEmptyFrameLoaderClient();

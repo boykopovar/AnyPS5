@@ -90,6 +90,7 @@ public:
 };
 
 static std::atomic<int> reverseLookupCalls{0};
+static std::atomic<std::size_t> reverseLookupLastCapacity{0};
 
 static int NamedLoopbackReverseLookup(const void* address, std::size_t addressLength, char* name, std::size_t capacity) {
     Require(address != nullptr && name != nullptr);
@@ -107,6 +108,7 @@ static int NamedLoopbackReverseLookup(const void* address, std::size_t addressLe
     constexpr char localhost[] = "localhost";
     Require(capacity >= sizeof(localhost));
     std::memcpy(name, localhost, sizeof(localhost));
+    reverseLookupLastCapacity.store(capacity);
     ++reverseLookupCalls;
     return 0;
 }
@@ -134,6 +136,12 @@ static void APS5_VABI RecordNetCtlEvent(int event, void* arg) {
     ++record->calls;
     record->event = event;
     record->arg = arg;
+}
+
+template<typename TCall>
+static bool Throws(TCall call) {
+    try { call(); } catch (const std::exception&) { return true; }
+    return false;
 }
 
 static bool Failed(std::int64_t result, int error) {
@@ -314,6 +322,17 @@ static void CheckNetstat() {
     CheckDiagnostics();
     Require(sceNetShowPolicy() == 0);
     Require(sceNetShowNetstatEx(0) == 0);
+    for (unsigned bit = 0; bit < 32; ++bit) {
+        const std::uint32_t flags = std::uint32_t{1} << bit;
+        *sceNetErrnoLoc() = 123;
+        if (bit == 16) Require(Failed(sceNetShowNetstatEx(flags), 22));
+        else Require(sceNetShowNetstatEx(flags) == 0 && *sceNetErrnoLoc() == 123);
+    }
+    for (const std::uint32_t flags : {0xfffeffffu, 0xffff0000u, 0x10001u, 0x1ffffu, 0x20001u, 0x7fffffffu, 0x8000ffffu}) {
+        *sceNetErrnoLoc() = 123;
+        if ((flags & 0x10000) != 0) Require(Failed(sceNetShowNetstatEx(flags), 22));
+        else Require(sceNetShowNetstatEx(flags) == 0 && *sceNetErrnoLoc() == 123);
+    }
     Require(sceNetShowRoute() == 0);
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));
@@ -543,6 +562,9 @@ static void CheckDefaultRoute() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    Require(Failed(sceNetConfigGetDefaultRoute(reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    Require(errno == 14);
 }
 
 static void CheckIfNameIndex() {
@@ -1197,6 +1219,10 @@ static void CheckConnectTimeoutExpiry() {
     }
     if (waited < std::chrono::milliseconds(80)) report("the pending connect returned before its timeout");
     Require(waited >= std::chrono::milliseconds(80));
+    if (threw || result != static_cast<int>(0x80410123)) report("the expired connect did not return EAGAIN");
+    Require(!threw && result == static_cast<int>(0x80410123));
+    Require(Failed(sceNetConnect(pending, address.data(), address.size()), 48));
+    Require(Throws([&] { sceNetConnect(pending, address.data(), address.size()); }));
     int value = -1;
     std::uint32_t length = sizeof(value);
     Require(sceNetGetsockopt(pending, 0xffff, 0x1200, &value, &length) == 0 && value == 0);
@@ -1830,6 +1856,9 @@ static void CheckSystemTime() {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     sceNetGetSystemTime(&output[1]);
     Require(output[1] > previous);
+    errno = 71;
+    sceNetGetSystemTime(reinterpret_cast<std::uint64_t*>(0x10));
+    Require(*sceNetErrnoLoc() == 22 && errno == 71);
 }
 
 static void CheckUsleep() {
@@ -3138,6 +3167,15 @@ int main(int argc, char** argv) {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     const int reverse_result = sceNetResolverStartAton(resolver, loopback.data(), reverse, sizeof(reverse), 5000000, 1, 0);
     Require(reverse_result == 0 || reverse_result == static_cast<int>(0x804101E1));
+    {
+        ScopedResolverReverseLookupOverride lookupOverride(NamedLoopbackReverseLookup);
+        std::array<char, NI_MAXHOST> output{};
+        output.fill('Z');
+        Require(sceNetResolverStartAton(resolver, loopback.data(), output.data(), std::numeric_limits<int>::max(), 5000000, 1, 0) == 0);
+        Require(std::strcmp(output.data(), "localhost") == 0 && output[sizeof("localhost")] == 'Z');
+        Require(reverseLookupLastCapacity.load() == NI_MAXHOST);
+        Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    }
     const auto* unreadableAddress = reinterpret_cast<const void*>(std::uintptr_t{0x10});
     auto* unwritableName = reinterpret_cast<char*>(std::uintptr_t{0x10});
     char invalidOutput[256];
@@ -3190,6 +3228,15 @@ int main(int argc, char** argv) {
     std::memset(reverse, 0x5A, sizeof(reverse));
     const int reverse6_result = sceNetResolverStartAton6(resolver, loopback6.data(), reverse, sizeof(reverse), 5000000, 1, 0);
     Require(reverse6_result == 0 || reverse6_result == static_cast<int>(0x804101E1));
+    {
+        ScopedResolverReverseLookupOverride lookupOverride(NamedLoopbackReverseLookup);
+        std::array<char, NI_MAXHOST> output{};
+        output.fill('Z');
+        Require(sceNetResolverStartAton6(resolver, loopback6.data(), output.data(), std::numeric_limits<int>::max(), 5000000, 1, 0) == 0);
+        Require(std::strcmp(output.data(), "localhost") == 0 && output[sizeof("localhost")] == 'Z');
+        Require(reverseLookupLastCapacity.load() == NI_MAXHOST);
+        Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    }
     std::memset(invalidOutput, 0x5A, sizeof(invalidOutput));
     Require(sceNetResolverStartAton6(resolver, unreadableAddress, invalidOutput, sizeof(invalidOutput), 5000000, 1, 0) ==
         static_cast<int>(0x8041010E) && *sceNetErrnoLoc() == 14 && static_cast<unsigned char>(invalidOutput[0]) == 0x5A);

@@ -390,7 +390,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     timing.Mark("device_setup");
     phaseTiming.Phase(DrawRowVectors);
 
-    const bool useDrawEntries = drawEntries() && !ShaderRecompiler::DebugProbeActive() && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0;
+    const bool useDrawEntries = drawEntries() && !ShaderRecompiler::DebugProbeActive() && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0 && drawEntriesThisDraw();
     tail.registerKey = useDrawEntries && registerKeyEnabled();
     const bool registerKey = tail.registerKey;
     auto& drawKey = tail.drawKey;
@@ -469,7 +469,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                     const auto kept = drawCache.find(shape->second);
                     if (kept != drawCache.end() && kept->second->decode != nullptr && kept->second->shape == shapeKey) dataEntry = kept->second;
                 }
-                if (dataEntry != nullptr) ++drawEntryCounters.dataHits;
+                if (dataEntry != nullptr) {
+                    ++drawEntryCounters.dataHits;
+                    drawCacheUseful().fetch_add(1, std::memory_order_relaxed);
+                }
             }
         }
         if (traceDrawCache()) traceDrawKeyLookup(drawKeyComponents, found == drawCache.end());
@@ -753,6 +756,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             PerformanceTimer finishTiming("Driver.DrawFinish");
             try {
                 if (finishDraw(job, finishTiming) == DrawVerdict::Rejected) throw std::runtime_error(job.ownRejected);
+            } catch (const DrawCompilePending&) {
+                CaptureTrace::Log("draw-pending submission=%llu offset=%zu finisher=1", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset);
             } catch (const RefusedDraw& refused) {
                 CaptureTrace::Log("draw-refused submission=%llu offset=%zu finisher=1 reason=%.256s", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset, refused.what());
                 ReportRefusedDraw(refused);
@@ -940,17 +945,21 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
+    const bool fixedSlots = localDevice->GraphicsPipelineLibraries();
+    const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; });
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::GeometryBack) continue;
         const auto& program = programs[i];
-        pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, localDevice->GraphicsPipelineLibraries());
+        pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, fixedSlots);
+        require(pushCursorBytes <= Graphics::PushBlockBytes(fixedSlots), "stage push constant offset exceeds the pipeline push constant block");
+        const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushCursorBytes, graphics.depthRemap.mode != 0u), pushCursorBytes, program.binary.stage, fixedSlots, hasFragment);
         pushOffsets[i] = pushCursorBytes;
         if (drawHit) {
 
             programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
             memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
         } else {
-            const auto candidate = std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes; });
+            const auto candidate = std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes && kept.first->compiled->pushConstants.size() <= pushBudget; });
             if (candidate != dataCandidates[i].end() && !verifyDrawDataHits()) {
                 matched[i] = candidate->first;
                 stageCaptures[i].registeredViews = matched[i]->registeredViews;
@@ -984,8 +993,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             fold(result, drawParameters);
         }
         try {
-            const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
-            require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
+            require(result.pushConstants.size() <= pushBudget, "stage push constants exceed the pipeline push constant block");
             stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes, stageCaptures[i].registeredViews.get()});
             pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
         } catch (...) {

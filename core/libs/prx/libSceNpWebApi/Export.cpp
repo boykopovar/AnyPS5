@@ -161,6 +161,20 @@ RequestLookup findRequest(std::int64_t requestId) {
     return {0, lookup.user, &request->second};
 }
 
+bool copyIn(void* dst, const void* src, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = saved;
+    return ok;
+}
+
+bool copyOut(void* dst, const void* src, std::size_t size) {
+    const int saved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = saved;
+    return ok;
+}
+
 int createRequest(int titleUserCtxId, bool multipart, std::int64_t* requestId) {
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
@@ -169,8 +183,8 @@ int createRequest(int titleUserCtxId, bool multipart, std::int64_t* requestId) {
     std::int64_t id = base | lastRequest;
     while (lookup.user->requests.contains(id)) --id;
     if (id <= base) throw std::runtime_error("sceNpWebApiCreateRequest: every request id of the user context is in use");
+    if (requestId && !copyOut(requestId, &id, sizeof(id))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     lookup.user->requests.emplace(id, Request{false, multipart, false, 0, 0, {}});
-    if (requestId) *requestId = id;
     return 0;
 }
 
@@ -260,7 +274,11 @@ int APS5_VABI sceNpWebApiCreatePushEventFilter(int libCtxId, const void* filterP
 
 int APS5_VABI sceNpWebApiCreateRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, const NpWebApiContentParameter* contentParameter, std::int64_t* requestId) {
     if (!apiGroup || !path) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    if (contentParameter && contentParameter->contentLength != 0 && !contentParameter->contentType) return SCE_NP_WEBAPI_ERROR_INVALID_CONTENT_PARAMETER;
+    if (contentParameter) {
+        NpWebApiContentParameter localContent{};
+        if (!copyIn(&localContent, contentParameter, sizeof(localContent))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+        if (localContent.contentLength != 0 && !localContent.contentType) return SCE_NP_WEBAPI_ERROR_INVALID_CONTENT_PARAMETER;
+    }
     if (method > SCE_NP_WEBAPI_HTTP_METHOD_DELETE && compiledSdkVersion() >= SDK_VERSION_2_50) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     return createRequest(titleUserCtxId, false, requestId);
@@ -448,12 +466,20 @@ int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char
 
 int APS5_VABI sceNpWebApiAddMultipartPart(std::int64_t requestId, const NpWebApiMultipartPartParameter* parameter, int* partIndex) {
     if (!parameter) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    NpWebApiMultipartPartParameter localParameter{};
+    if (!copyIn(&localParameter, parameter, sizeof(localParameter))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     const auto lookup = findRequest(requestId);
     if (lookup.error != 0) return lookup.error;
-    if (parameter->headerNum != 0 && !parameter->headers) NotImplemented_nid_no_patch(__func__);
-    lookup.request->multipartParts.push_back({parameter->contentLength, 0});
-    if (partIndex) *partIndex = static_cast<int>(lookup.request->multipartParts.size());
+    if (localParameter.headerNum != 0 && !localParameter.headers) NotImplemented_nid_no_patch(__func__);
+    lookup.request->multipartParts.push_back({localParameter.contentLength, 0});
+    if (partIndex) {
+        const int index = static_cast<int>(lookup.request->multipartParts.size());
+        if (!copyOut(partIndex, &index, sizeof(index))) {
+            lookup.request->multipartParts.pop_back();
+            return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+        }
+    }
     return 0;
 }
 
@@ -521,9 +547,15 @@ int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter(int libCtxId, int ha
 
 int APS5_VABI sceNpWebApiIntCreateRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, const NpWebApiContentParameter* contentParameter, const NpWebApiIntCreateRequestExtraArgs* internalArgs, std::int64_t* requestId) {
     if (!apiGroup || !path || method > SCE_NP_WEBAPI_HTTP_METHOD_PATCH) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    if (contentParameter && contentParameter->contentLength != 0 && !contentParameter->contentType) return SCE_NP_WEBAPI_ERROR_INVALID_CONTENT_PARAMETER;
+    if (contentParameter) {
+        NpWebApiContentParameter localContent{};
+        if (!copyIn(&localContent, contentParameter, sizeof(localContent))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+        if (localContent.contentLength != 0 && !localContent.contentType) return SCE_NP_WEBAPI_ERROR_INVALID_CONTENT_PARAMETER;
+    }
+    NpWebApiIntCreateRequestExtraArgs localInternal{};
+    if (internalArgs && !copyIn(&localInternal, internalArgs, sizeof(localInternal))) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
-    if (internalArgs && (internalArgs->unknown0 || internalArgs->unknown1 || internalArgs->unknown2)) {
+    if (internalArgs && (localInternal.unknown0 || localInternal.unknown1 || localInternal.unknown2)) {
         const auto lookup = findUserContext(titleUserCtxId);
         if (lookup.error != 0) return lookup.error;
         NotImplemented_nid_no_patch("sceNpWebApiIntCreateRequest with internal arguments set");
@@ -545,8 +577,9 @@ int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter(int libCtxId, int handl
 }
 
 int APS5_VABI sceNpWebApiIntInitialize(const NpWebApiIntInitializeArgs* args) {
-    if (!args || args->structSize != sizeof(NpWebApiIntInitializeArgs)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    return sceNpWebApiInitialize(static_cast<int>(args->libHttpCtxId), args->poolSize);
+    NpWebApiIntInitializeArgs localArgs{};
+    if (!args || !copyIn(&localArgs, args, sizeof(localArgs)) || localArgs.structSize != sizeof(NpWebApiIntInitializeArgs)) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    return sceNpWebApiInitialize(static_cast<int>(localArgs.libHttpCtxId), localArgs.poolSize);
 }
 
 int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
