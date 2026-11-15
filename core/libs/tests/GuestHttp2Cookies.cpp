@@ -1,10 +1,18 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -35,6 +43,77 @@ static bool NoMatch(int box, const char* url) {
     char buffer[16] = {'x'};
     return sceHttp2GetCookie(box, url, nullptr, &required, 0) == NotFound && required == 7 &&
            sceHttp2GetCookie(box, url, buffer, &required, sizeof(buffer)) == NotFound && required == 7 && buffer[0] == 'x';
+}
+
+static void CheckUnmappedOutputs(int box) {
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(clobberErrno);
+    const char* url = "http://example.com/a/b";
+    auto* badSize = reinterpret_cast<std::size_t*>(0x10);
+    auto* badCookie = reinterpret_cast<char*>(0x10);
+    std::size_t required = 0;
+    char header[0x1000];
+    std::memset(header, 'Z', sizeof(header));
+    errno = 71;
+    Require(sceHttp2GetCookie(box, url, nullptr, badSize, 0) == InvalidValue);
+    Require(sceHttp2GetCookie(box, url, badCookie, &required, 1) == InvalidValue);
+    Require(sceHttp2GetCookie(box, url, badCookie, &required, sizeof(header)) == InvalidValue && required == 0);
+    Require(sceHttp2GetCookie(box, url, header, badSize, sizeof(header)) == InvalidValue);
+    for (char ch : header) Require(ch == 'Z');
+
+    std::size_t pageSize = 4096u;
+    void* roSizePage = nullptr;
+    void* roCookiePage = nullptr;
+    const std::size_t roSizeInitial = 0x55u;
+    char roCookieInitial[16];
+    std::memset(roCookieInitial, 'Q', sizeof(roCookieInitial));
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    if (info.dwPageSize != 0) pageSize = info.dwPageSize;
+    roSizePage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    roCookiePage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(roSizePage != nullptr && roCookiePage != nullptr);
+    std::memcpy(roSizePage, &roSizeInitial, sizeof(roSizeInitial));
+    std::memcpy(roCookiePage, roCookieInitial, sizeof(roCookieInitial));
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(roSizePage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    Require(VirtualProtect(roCookiePage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const long sysPage = sysconf(_SC_PAGESIZE);
+    if (sysPage > 0) pageSize = static_cast<std::size_t>(sysPage);
+    roSizePage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    roCookiePage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(roSizePage != MAP_FAILED && roCookiePage != MAP_FAILED);
+    std::memcpy(roSizePage, &roSizeInitial, sizeof(roSizeInitial));
+    std::memcpy(roCookiePage, roCookieInitial, sizeof(roCookieInitial));
+    Require(mprotect(roSizePage, pageSize, PROT_READ) == 0);
+    Require(mprotect(roCookiePage, pageSize, PROT_READ) == 0);
+#endif
+    Require(sceHttp2GetCookie(box, url, header, static_cast<std::size_t*>(roSizePage), sizeof(header)) == InvalidValue);
+    for (char ch : header) Require(ch == 'Z');
+    Require(std::memcmp(roSizePage, &roSizeInitial, sizeof(roSizeInitial)) == 0);
+
+    std::size_t untouchedRequired = 0x77u;
+    Require(sceHttp2GetCookie(box, url, static_cast<char*>(roCookiePage), &untouchedRequired, sizeof(header)) == InvalidValue);
+    Require(untouchedRequired == 0x77u);
+    Require(std::memcmp(roCookiePage, roCookieInitial, sizeof(roCookieInitial)) == 0);
+#ifdef _WIN32
+    VirtualFree(roSizePage, 0, MEM_RELEASE);
+    VirtualFree(roCookiePage, 0, MEM_RELEASE);
+#else
+    munmap(roSizePage, pageSize);
+    munmap(roCookiePage, pageSize);
+#endif
+
+    const char* const badText = reinterpret_cast<const char*>(0x10);
+    Require(sceHttp2GetCookie(box, badText, header, &required, sizeof(header)) == InvalidValue);
+    Require(sceHttp2AddCookie(box, badText, "a=b", 3) == InvalidValue);
+    Require(sceHttp2AddCookie(box, url, badText, 3) == InvalidValue);
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
 
 static Http2CookieStats Stats(int box) {
@@ -114,6 +193,7 @@ int main() {
     Require(Add(box, "http://Example.COM:8080/", "lang=fr; Path=/; Domain=.example.com") == 0);
     Require(Add(box, "https://example.com/", "token=x; Secure; HttpOnly; Path=/") == 0);
     Require(Add(box, "http://example.com/", "wide=1; Path=/a; Max-Age=3600") == 0);
+    CheckUnmappedOutputs(box);
     Require(Get(box, "http://example.com/a/c") == "sid=1; wide=1; lang=fr");
     Require(Get(box, "https://example.com/a/b?q#f") == "sid=1; wide=1; token=x; lang=fr");
     Require(Get(box, "HTTPS://example.com/") == "token=x; lang=fr");
