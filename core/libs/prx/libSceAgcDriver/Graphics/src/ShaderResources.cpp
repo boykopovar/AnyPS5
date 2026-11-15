@@ -3292,7 +3292,7 @@ std::uint64_t ShaderResources::DepthGuardRefusals() {
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     const bool loopGuard = LoopGuardEnabled();
     return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
-        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [&](const ShaderRecompiler::DescriptorBinding& binding) { return (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && (SpaceReuseDisabled() || shader.program->bdaStores)) || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
+        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [&](const ShaderRecompiler::DescriptorBinding& binding) { return (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && (SpaceReuseDisabled() || ProgramStoresThroughAddresses(*shader.program))) || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
     });
 }
 

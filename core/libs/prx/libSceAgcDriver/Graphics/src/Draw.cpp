@@ -2267,7 +2267,7 @@ AddressStages addressStages(std::span<const CompiledShader> shaders) {
     auto stages = AddressStages::None;
     for (const auto& shader : shaders) {
         if (shader.program == nullptr || std::none_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; })) continue;
-        if (shader.program->bdaStores) return AddressStages::Storing;
+        if (ProgramStoresThroughAddresses(*shader.program)) return AddressStages::Storing;
         stages = AddressStages::ReadOnly;
     }
     return stages;

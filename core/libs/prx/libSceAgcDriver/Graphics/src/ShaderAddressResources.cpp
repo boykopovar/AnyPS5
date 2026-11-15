@@ -109,6 +109,21 @@ bool forEachInstruction(std::span<const std::uint32_t> words, const TVisit& visi
     return true;
 }
 
+bool storesThroughAddressesCached(const ShaderRecompiler::SharedSpirv& spirv) {
+    static std::mutex mutex;
+    static std::map<std::pair<std::uint64_t, std::uint64_t>, bool> known;
+    const auto hash = spirv.ContentHash();
+    const std::pair key{hash.low, hash.high};
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = known.find(key); found != known.end()) return found->second;
+    }
+    const bool stores = SpirvStoresThroughAddresses(spirv.Words());
+    std::lock_guard lock(mutex);
+    known.emplace(key, stores);
+    return stores;
+}
+
 bool faultReportOnlyCached(const ShaderRecompiler::SharedSpirv& spirv, std::uint32_t set, std::uint32_t binding) {
     static std::mutex mutex;
     static std::map<std::tuple<std::uint64_t, std::uint64_t, std::uint32_t, std::uint32_t>, bool> known;
@@ -124,6 +139,31 @@ bool faultReportOnlyCached(const ShaderRecompiler::SharedSpirv& spirv, std::uint
     return reportOnly;
 }
 
+}
+
+bool ProgramStoresThroughAddresses(const ShaderRecompiler::RecompileResult& program) {
+    return program.gpuResolvedImages ? program.bdaStores : storesThroughAddressesCached(program.spirv);
+}
+
+bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words) {
+    if (words.size() < 5 || words[0] != spv::MagicNumber) return true;
+    std::unordered_set<std::uint32_t> pointerTypes;
+    const bool readable = forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if ((opcode == spv::OpTypePointer || opcode == spv::OpTypeUntypedPointerKHR) && instruction.size() > 2 && instruction[2] == spv::StorageClassPhysicalStorageBuffer) pointerTypes.insert(instruction[1]);
+    });
+    if (!readable) return true;
+    if (pointerTypes.empty()) return false;
+    std::unordered_set<std::uint32_t> pointers;
+    forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        if (instruction.size() > 2 && !definesNoPointerValue(opcode) && pointerTypes.contains(instruction[1])) pointers.insert(instruction[2]);
+    });
+    bool stores = false;
+    forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
+        const auto pointer = pointerOperandStored(opcode, instruction);
+        const bool extendedWithPointer = opcode == spv::OpExtInst && std::any_of(instruction.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(5u, instruction.size())), instruction.end(), [&](std::uint32_t operand) { return pointers.contains(operand); });
+        stores = stores || extendedWithPointer || (pointer != 0 && pointers.contains(pointer));
+    });
+    return stores;
 }
 
 bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t set, std::uint32_t binding) {
@@ -186,7 +226,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         Require(shader.program->bdaAbiVersion == (faults == 0 ? 0u : ShaderRecompiler::BdaAbi::Version), "incompatible BDA ABI version");
         // Rect-list validation needs a fault buffer, but never accesses guest addresses.
         usesBda = usesBda || tables != 0;
-        if (tables != 0 && shader.program->bdaStores) bdaReadOnly = false;
+        if (tables != 0 && ProgramStoresThroughAddresses(*shader.program)) bdaReadOnly = false;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
         faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || shader.program->descriptorFaults != 0 || loopGuarded));

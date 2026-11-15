@@ -260,7 +260,7 @@ void noteHeld(HeldReason reason) {
 std::optional<HeldReason> writesBeyondTargets(const ShaderRecompiler::RecompileResult& compiled) {
     using Role = ShaderRecompiler::DescriptorRole;
     for (const auto& binding : compiled.bindings) {
-        if (binding.role == Role::BdaPagetable && compiled.bdaStores) return HeldReason::Bda;
+        if (binding.role == Role::BdaPagetable && Graphics::ProgramStoresThroughAddresses(compiled)) return HeldReason::Bda;
         if (binding.role == Role::GuestBuffers) {
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 if (element >= binding.bufferWritten.size() || binding.bufferWritten[element]) return HeldReason::Buffer;
