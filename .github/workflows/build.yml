@@ -828,7 +828,7 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: cmd
         run: python tools/build_mingw_host_only_tests.py build changed.txt
-      - name: Build and run changed guest core/libs tests
+      - name: Build and run changed core/libs tests
         if: github.event_name == 'pull_request'
         shell: cmd
         run: python tools/build_changed_guest_tests.py build changed.txt --output-log ctest.log

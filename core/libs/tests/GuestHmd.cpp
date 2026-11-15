@@ -4,6 +4,7 @@
 #include "prx/libSceHmd/include/InventoryExports.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -131,6 +132,9 @@ void CheckCommandQueries(bool handleZeroMeasured) {
         for (const auto query : {sceHmdGet2dVrCommand, sceHmdDistortionGet2dVrCommand}) {
             Require(query(handle, zeroedVr2d, commandBuffer) == Hmd::ParameterNull, "2D VR command took a parameter with null pointers");
             Require(query(handle, nullptr, commandBuffer) == Hmd::ParameterNull, "2D VR command took a null parameter");
+            errno = 71;
+            Require(query(handle, reinterpret_cast<const Hmd2dVrCommandParameter*>(static_cast<std::uintptr_t>(0x10)), commandBuffer) == Hmd::ParameterNull, "2D VR command took an unreadable parameter");
+            Require(errno == 71, "2D VR command changed errno on unreadable parameter");
             Require(query(handle, vr2d, nullptr) == Hmd::ParameterNull, "2D VR command took a null command buffer");
             for (const std::size_t offset : {0x00u, 0x08u, 0x20u}) {
                 vr2dWith(offset, 0, 8, [&](const Hmd2dVrCommandParameter* changed) {
@@ -204,6 +208,13 @@ int main() {
     CheckAssyError(Hmd::NotInitialized);
     Require(sceHmdInitialize(nullptr) == Hmd::ParameterNull, "null initialize");
     Require(sceHmdInitialize315(nullptr) == Hmd::ParameterNull, "null initialize315");
+    auto* const unreadableParam = reinterpret_cast<Hmd::InitializeParam*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    Require(sceHmdInitialize(unreadableParam) == Hmd::ParameterNull, "unreadable initialize");
+    Require(errno == 71, "unreadable initialize changed errno");
+    errno = 71;
+    Require(sceHmdInitialize315(unreadableParam) == Hmd::ParameterNull, "unreadable initialize315");
+    Require(errno == 71, "unreadable initialize315 changed errno");
     param.reserved0 = &param;
     Require(sceHmdInitialize(&param) == Hmd::UnsupportedFeature, "distortion unsupported");
     Require(sceHmdInitialize315(&param) == Hmd::UnsupportedFeature, "distortion315 unsupported");

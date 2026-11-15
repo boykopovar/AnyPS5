@@ -41,6 +41,11 @@ set(curlBackendOptions
     -DCURL_ZLIB:BOOL=OFF
     -DPICKY_COMPILER:BOOL=OFF
 )
+if(MINGW)
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/BackendResourceRule.cmake CONTENT
+        "set(CMAKE_RC_COMPILE_OBJECT \"<CMAKE_RC_COMPILER> -O coff <DEFINES> <FLAGS> <SOURCE> <OBJECT>\")\n")
+    list(APPEND curlBackendOptions -DCMAKE_PROJECT_INCLUDE:FILEPATH=${CMAKE_CURRENT_BINARY_DIR}/BackendResourceRule.cmake)
+endif()
 foreach(option CURL_USE_OPENSSL CURL_USE_SCHANNEL CURL_USE_SECTRANSP CURL_USE_BEARSSL CURL_USE_NSS CURL_USE_WOLFSSL
         CURL_USE_LIBSSH CURL_USE_LIBSSH2 CURL_USE_GSSAPI CURL_WINDOWS_SSPI USE_LIBIDN2 USE_WIN32_IDN
         CURL_BROTLI CURL_ZSTD ENABLE_ARES USE_NGTCP2 USE_QUICHE)
@@ -113,7 +118,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
     endif()
 
-    foreach(test_topic IN ITEMS Utility Url SlistMime Options Handles Transfers MimeCallback)
+    set(curlTestTopics Utility Url SlistMime Options Handles Transfers MimeCallback Allocators)
+    foreach(test_topic IN LISTS curlTestTopics)
         set(test_name guest_curl_${test_topic}_tests)
         string(TOLOWER "${test_topic}" test_slug)
         add_test_executable(${test_name} tests/Curl${test_topic}.cpp)

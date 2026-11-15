@@ -1,11 +1,24 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceFsInternalForVsh/include/InventoryExports.hpp"
 #include "prx/libSceFsInternalForVsh/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+int InitWorkspaceOpt(void* opt) {
+    const std::uint32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = opt != nullptr && GuestCopyOut_nid_no_patch(opt, &zero, sizeof(zero));
+    errno = savedErrno;
+    return copied ? 0 : static_cast<int>(0x80020016u);
+}
+
+}
 
 extern "C" {
 
@@ -1099,15 +1112,11 @@ int APS5_VABI sceFsInitCreatePprPfsSaveDataOpt() {
 }
 
 int APS5_VABI sceFsInitCreateWorkspaceOpt(void* opt) {
-    const std::uint32_t zero = 0;
-    std::memcpy(opt, &zero, sizeof(zero));
-    return 0;
+    return InitWorkspaceOpt(opt);
 }
 
 int APS5_VABI sceFsInitDeleteWorkspaceOpt(void* opt) {
-    const std::uint32_t zero = 0;
-    std::memcpy(opt, &zero, sizeof(zero));
-    return 0;
+    return InitWorkspaceOpt(opt);
 }
 
 int APS5_VABI sceFsInitMountWorkspaceOpt() {
@@ -1115,9 +1124,7 @@ int APS5_VABI sceFsInitMountWorkspaceOpt() {
 }
 
 int APS5_VABI sceFsInitUmountWorkspaceOpt(void* opt) {
-    const std::uint32_t zero = 0;
-    std::memcpy(opt, &zero, sizeof(zero));
-    return 0;
+    return InitWorkspaceOpt(opt);
 }
 
 int APS5_VABI sceFsIsActiveBankSystemEx() {

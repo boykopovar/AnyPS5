@@ -1163,6 +1163,43 @@ static void TestBundleDOMWindowExtension() {
     Require(threw);
 }
 
+static void TestBundleNodeHandle() {
+    Require(WKBundleNodeHandleGetTypeID() == 122);
+    auto handle = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    const void* ref = handle.Get();
+    Require(WKBundleNodeHandleCopyDocument(ref) == nullptr);
+    Require(WKBundleNodeHandleCopyDocumentFrame(ref) == nullptr);
+    Require(WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(ref) == nullptr);
+
+    auto doc = NKWebKit::Make<NKWebKit::BundleNodeHandle>();
+    auto docFrame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto iframeContent = NKWebKit::Make<NKWebKit::BundleFrame>();
+
+    handle->document = doc;
+    handle->documentFrame = docFrame;
+    handle->htmlIFrameElementContentFrame = iframeContent;
+
+    auto* copiedDoc = WKBundleNodeHandleCopyDocument(ref);
+    Require(copiedDoc == doc.Get());
+    WKRelease(copiedDoc);
+
+    auto* copiedDocFrame = WKBundleNodeHandleCopyDocumentFrame(ref);
+    Require(copiedDocFrame == docFrame.Get());
+    WKRelease(copiedDocFrame);
+
+    auto* copiedIframe = WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(ref);
+    Require(copiedIframe == iframeContent.Get());
+    WKRelease(copiedIframe);
+
+    bool threw = false;
+    try {
+        WKBundleNodeHandleCopyDocument(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -1989,9 +2026,147 @@ static void TestInspector() {
     Require(!WKInspectorIsProfilingPage(ref));
     Require(WKInspectorIsVisible(ref));
 
+    WKInspectorAttach(ref);
+    Require(WKInspectorIsAttached(ref));
+    WKInspectorDetach(ref);
+    Require(!WKInspectorIsAttached(ref));
+
+    WKInspectorConnect(ref);
+    Require(WKInspectorIsConnected(ref));
+
+    WKInspectorShow(ref);
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+    WKInspectorHide(ref);
+    Require(!WKInspectorIsVisible(ref));
+    Require(!WKInspectorIsFront(ref));
+
+    WKInspectorShowConsole(ref);
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+    WKInspectorHide(ref);
+    Require(!WKInspectorIsVisible(ref));
+    Require(!WKInspectorIsFront(ref));
+
+    WKInspectorShowResources(ref);
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    WKInspectorToggleElementSelection(ref);
+    Require(WKInspectorIsElementSelectionActive(ref));
+    WKInspectorToggleElementSelection(ref);
+    Require(!WKInspectorIsElementSelectionActive(ref));
+
+    Require(!WKInspectorIsProfilingPage(ref));
+    WKInspectorTogglePageProfiling(ref);
+    Require(WKInspectorIsProfilingPage(ref));
+    WKInspectorTogglePageProfiling(ref);
+    Require(!WKInspectorIsProfilingPage(ref));
+
+    WKInspectorAttach(ref);
+    WKInspectorConnect(ref);
+    WKInspectorShow(ref);
+    WKInspectorToggleElementSelection(ref);
+    WKInspectorTogglePageProfiling(ref);
+    Require(WKInspectorIsAttached(ref));
+    Require(WKInspectorIsConnected(ref));
+    Require(WKInspectorIsVisible(ref));
+    Require(WKInspectorIsFront(ref));
+    Require(WKInspectorIsElementSelectionActive(ref));
+    Require(WKInspectorIsProfilingPage(ref));
+
+    WKInspectorClose(ref);
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsVisible(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+
     bool threw = false;
     try {
         WKInspectorIsAttached(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorAttach(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorClose(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorConnect(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorDetach(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorHide(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorShow(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorShowConsole(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorShowResources(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorToggleElementSelection(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKInspectorTogglePageProfiling(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2079,6 +2254,65 @@ static void TestImage() {
         threwOutOfRange = true;
     }
     Require(threwOutOfRange);
+}
+
+static void TestAuthentication() {
+    Require(WKAuthenticationChallengeGetTypeID() == 2);
+    Require(WKAuthenticationDecisionListenerGetTypeID() == 3);
+
+    auto challenge = NKWebKit::Make<NKWebKit::AuthenticationChallenge>();
+    challenge->requestURL = "https://auth.example.com/login";
+    challenge->previousFailureCount = 2;
+    challenge->isForMainResource = true;
+    challenge->isInMainFrame = true;
+
+    auto listener = NKWebKit::Make<NKWebKit::AuthenticationDecisionListener>();
+    challenge->decisionListener = NKWebKit::Retained<NKWebKit::AuthenticationDecisionListener>::Share(listener.Get());
+
+    auto cred = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::Credential>>();
+    challenge->proposedCredential = NKWebKit::Retained<NKWebKit::Object>::Share(cred.Get());
+
+    auto space = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::ProtectionSpace>>();
+    challenge->protectionSpace = NKWebKit::Retained<NKWebKit::Object>::Share(space.Get());
+
+    const void* challengeRef = challenge.Get();
+    auto* reqUrl = WKAuthenticationChallengCopyRequestURL(challengeRef);
+    Require(reqUrl != nullptr);
+    WKRelease(reqUrl);
+
+    Require(WKAuthenticationChallengeGetDecisionListener(challengeRef) == listener.Get());
+    Require(WKAuthenticationChallengeGetPreviousFailureCount(challengeRef) == 2);
+    Require(WKAuthenticationChallengeGetProposedCredential(challengeRef) == cred.Get());
+    Require(WKAuthenticationChallengeGetProtectionSpace(challengeRef) == space.Get());
+    Require(WKAuthenticationChallengeIsForMainResource(challengeRef));
+    Require(WKAuthenticationChallengeIsInMainFrame(challengeRef));
+
+    const void* listenerRef = listener.Get();
+    WKAuthenticationDecisionListenerCancel(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::Cancel);
+
+    WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(listenerRef);
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::RejectProtectionSpace);
+
+    WKAuthenticationDecisionListenerUseCredential(listenerRef, cred.Get());
+    Require(listener->decision == NKWebKit::AuthenticationDecisionListener::Decision::UseCredential);
+    Require(listener->credential.Get() == cred.Get());
+
+    bool threw = false;
+    try {
+        WKAuthenticationChallengeGetDecisionListener(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKAuthenticationDecisionListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static int s_runLoopCallCount = 0;
@@ -2438,6 +2672,7 @@ int main() {
     TestBundleScriptWorld();
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
+    TestBundleNodeHandle();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
@@ -2448,6 +2683,7 @@ int main() {
     TestOpenPanelParameters();
     TestNotification();
     TestImage();
+    TestAuthentication();
     TestCertificateInfo();
     try {
         TestEmptyFrameLoaderClient();

@@ -1,6 +1,7 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceRtc/include/Rtc.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +22,12 @@ int main() {
     std::int64_t seconds = -1;
     const RtcTick zero{0};
     CHECK(sceNpRtcConvertToPosixTime(&zero, &seconds) == invalidArgument && seconds == -1);
+    errno = 71;
+    CHECK(sceNpRtcConvertToPosixTime(nullptr, &seconds) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(&zero, nullptr) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(reinterpret_cast<const RtcTick*>(0x10), &seconds) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(reinterpret_cast<const RtcTick*>(0x10), reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
+    CHECK(errno == 71);
     const RtcTick epoch{unixEpochTick};
     CHECK(sceNpRtcConvertToPosixTime(&epoch, &seconds) == 0 && seconds == 0);
     const RtcTick dayLater{unixEpochTick + 86400000000ull + 1500000ull};

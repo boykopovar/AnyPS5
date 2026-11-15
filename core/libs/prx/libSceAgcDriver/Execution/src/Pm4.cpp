@@ -3,7 +3,9 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <thread>
 #include <chrono>
@@ -89,6 +91,17 @@ void require(bool condition, const char* reason) {
 
 std::uint64_t address(std::uint32_t low, std::uint32_t high) {
     return low | (static_cast<std::uint64_t>(high) << 32u);
+}
+
+using GcnSystemCounterTicks = std::chrono::duration<std::uint64_t, std::ratio<1, 800000000>>;
+
+const auto GcnSystemCounterStart = std::chrono::steady_clock::now();
+
+std::uint64_t ReleaseMemValue(std::span<const std::uint32_t> packet) {
+    const auto dataSelect = packet[2] >> 29u;
+    if (dataSelect == 3) return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
+    if (dataSelect == 4) return std::chrono::duration_cast<GcnSystemCounterTicks>(std::chrono::steady_clock::now() - GcnSystemCounterStart).count();
+    return address(packet[5], packet[6]);
 }
 
 std::uint32_t registerOffset(std::uint32_t value) {
@@ -266,7 +279,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x11: case 0x12: case 0x13: case 0x15: case 0x16: case 0x20: case 0x22: case 0x26: case 0x27:
         case 0x2a: case 0x2d: case 0x2f: case 0x35: case 0x37: case 0x40: case 0x42: case 0x45: case 0x46: case 0x50:
         case 0x58: case 0x63: case 0x64: case 0x69: case 0x76: case 0x79: case 0x7a:
-        case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: return {};
+        case 0x51: case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: return {};
         case 0x24: case 0x25: case 0x2c: case 0x38:
             if (IndirectDrawsDisabled()) return "graphics draw, shader stages and guest render-target materialization are not implemented";
             return {};
@@ -394,13 +407,18 @@ void ValidateGeneral(std::span<const std::uint32_t> packet, std::uint32_t queue,
             require(packet[1] == 1 && (packet[2] & 3u) == 0 && packet[3] <= 0xffffu, "unsupported indirect base index, alignment or address bits");
             if ((header & 2u) == 0) graphics();
             break;
+        case 0x51:
+            graphics();
+            size(4);
+            require((packet[1] & 0xffff0000u) == 0, "CONTEXT_REG_RMW reserved offset bits are not implemented");
+            break;
         case 0x12: graphics(); size(2); require((packet[1] & ~0xfu) == 0, "unsupported CLEAR_STATE payload bits"); break;
         case 0x20: {
             graphics();
             size(4);
             const auto operation = (packet[1] >> 16u) & 7u;
-            require(operation != 1 && operation != 2, "GPU query predication is not implemented");
-            require(operation == 0 || operation == 3 || operation == 4, "invalid predication operation");
+            require(operation != 2, "GPU primitive-count predication is not implemented");
+            require(operation == 0 || operation == 1 || operation == 3 || operation == 4, "invalid predication operation");
             require((packet[1] & ~0x71100u) == 0, "unsupported SET_PREDICATION bits");
             if (operation != 0) require(address(packet[2], packet[3]) != 0 && (packet[2] & 0xfu) == 0, "unaligned predication address");
             break;
@@ -569,9 +587,9 @@ void ValidateGeneral(std::span<const std::uint32_t> packet, std::uint32_t queue,
         case 0x49: {
             size(8);
             const auto dataSelect = packet[2] >> 29u;
-            require(dataSelect != 4, "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
+            require(dataSelect != 4 || ShaderRecompiler::GcnGuestShaders(), "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
             require(dataSelect <= 5, "reserved RELEASE_MEM DATA_SEL");
-            require(dataSelect <= 3, "GDS RELEASE_MEM data is not implemented");
+            require(dataSelect != 5, "GDS RELEASE_MEM data is not implemented");
             require(dataSelect == 0 || address(packet[3], packet[4]) == 0 || (packet[3] & (dataSelect == 1 ? 3u : 7u)) == 0, "misaligned RELEASE_MEM destination");
             break;
         }
@@ -695,12 +713,33 @@ std::size_t ConditionalWords(std::span<const std::uint32_t> packet) {
     return packet[4] & ConditionalWordsMask;
 }
 
+std::size_t PredicationBytes(const Predication& predication) {
+    if (predication.operation == 1) return SampleDumpBytes + SampleDumpBlockBytes;
+    return predication.operation == 3 ? 8 : 4;
+}
+
 bool PredicationPasses(const QueueState& queue) {
     const auto& predication = queue.predication;
     if (predication.operation == 0) return true;
-    const std::size_t bytes = predication.operation == 3 ? 8 : 4;
-    std::uint64_t value = 0;
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
+    if (predication.operation == 1) {
+        constexpr std::uint64_t ready = 1ull << 63u;
+        std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
+        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(PredicationBytes(predication)), 8);
+        std::uint64_t samples = 0;
+        for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
+            const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
+            const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
+            if ((begin & ready) == 0 || (end & ready) == 0) {
+                require(predication.runWhenUnwritten, "Z-pass predication waits for a counter pair that was never written");
+                return true;
+            }
+            samples += (end & ~ready) - (begin & ~ready);
+        }
+        return (samples != 0) == predication.executeWhenSet;
+    }
+    const std::size_t bytes = PredicationBytes(predication);
+    std::uint64_t value = 0;
     GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(&value, 1)).first(bytes), bytes);
     return (value != 0) == predication.executeWhenSet;
 }
@@ -718,10 +757,9 @@ std::optional<LabelWrite> DecodeLabelWrite(std::span<const std::uint32_t> packet
     if (opcode == 0x49 && packet.size() >= 7) {
         const auto dataSelect = packet[2] >> 29u;
         const auto destination = address(packet[3], packet[4]);
-        if (dataSelect == 0 || dataSelect > 3) return std::nullopt;
+        if (dataSelect == 0 || dataSelect > 4) return std::nullopt;
         if (destination == 0) return std::nullopt;
-        std::uint64_t value = address(packet[5], packet[6]);
-        if (dataSelect == 3) value = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
+        const auto value = ReleaseMemValue(packet);
         LabelWrite label{destination, {}};
         label.inlineSize = dataSelect == 1 ? 4 : 8;
         std::memcpy(label.inlineBytes.data(), &value, label.inlineSize);
@@ -818,7 +856,7 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
         case 0x49: {
             const auto label = DecodeLabelWrite(packet);
             if (!label.has_value()) return {};
-            if ((packet[2] >> 29u) == 3) return {runTime(label->address, label->Bytes().size())};
+            if ((packet[2] >> 29u) >= 3) return {runTime(label->address, label->Bytes().size())};
             return {known(label->address, label->Bytes())};
         }
         case 0x37: {
@@ -1172,7 +1210,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x13: queue.indexBufferSize = packet[1]; return;
         case 0x20: {
             const auto operation = (packet[1] >> 16u) & 7u;
-            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0};
+            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0, (packet[1] & 0x1000u) != 0};
             return;
         }
         case 0x3f: throw std::runtime_error(std::string(UnsupportedReason(packet[0])));
@@ -1245,11 +1283,15 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             const auto dataSelect = packet[2] >> 29u;
             const auto destination = address(packet[3], packet[4]);
             if (dataSelect == 0 || destination == 0) return;
-            std::uint64_t value = address(packet[5], packet[6]);
-            if (dataSelect == 3) {
-                value = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
-            }
+            const auto value = ReleaseMemValue(packet);
             GuestMemory::Write(destination, std::as_bytes(std::span(&value, 1)).first(dataSelect == 1 ? 4 : 8), dataSelect == 1 ? 4 : 8);
+            return;
+        }
+        case 0x51: {
+            const auto offset = packet[1];
+            require(queue.context.contains(offset), "CONTEXT_REG_RMW register has no known value");
+            const auto value = (queue.context.at(offset) & ~packet[2]) | (packet[3] & packet[2]);
+            writeRegister(queue, 0x69, offset, value);
             return;
         }
         case 0x69: case 0x76: case 0x79: case 0x7a: {

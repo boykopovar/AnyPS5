@@ -39,10 +39,27 @@ public:
         const auto found = std::lower_bound(entries.begin(), entries.end(), cursor, [](const auto& entry, std::size_t key) { return entry.first < key; });
         return found == entries.end() || found->first != cursor ? nullptr : &found->second;
     }
+    void replace(std::size_t start, std::size_t end, std::ptrdiff_t delta, RegisterLists&& inner) {
+        std::vector<std::pair<std::size_t, std::vector<std::uint32_t>>> replaced;
+        replaced.reserve(entries.size() + inner.entries.size());
+        auto entry = entries.begin();
+        for (; entry != entries.end() && entry->first < start; ++entry) replaced.push_back(std::move(*entry));
+        for (auto& listed : inner.entries) replaced.emplace_back(start + listed.first, std::move(listed.second));
+        for (; entry != entries.end(); ++entry) {
+            if (entry->first >= end) replaced.emplace_back(static_cast<std::size_t>(static_cast<std::ptrdiff_t>(entry->first) + delta), std::move(entry->second));
+        }
+        entries = std::move(replaced);
+    }
     std::size_t size() const { return entries.size(); }
 
 private:
     std::vector<std::pair<std::size_t, std::vector<std::uint32_t>>> entries;
+};
+
+struct FlipWork {
+    bool finished = false;
+    std::uint64_t serial = 0;
+    std::shared_ptr<FlipWork> previous;
 };
 
 struct Submission {
@@ -61,6 +78,7 @@ struct Submission {
     bool suspend = false;
     bool waitFree = false;
     bool holdsFlip = false;
+    std::shared_ptr<FlipWork> flipWork;
 
     std::uint64_t received = 0;
     std::vector<std::uint64_t> labelWrites;
@@ -74,6 +92,14 @@ struct Submission {
     std::chrono::steady_clock::time_point orderedAt{};
     const std::uint32_t* rewindTail = nullptr;
     std::size_t rewindWords = 0;
+    using PreparedWaits = std::map<std::pair<std::uint32_t, std::uint32_t>, std::shared_ptr<IRenderingWait>>;
+    struct IndirectSegment {
+        std::size_t start;
+        const std::uint32_t* target;
+        std::size_t words;
+        std::shared_ptr<const PreparedWaits> waits{};
+    };
+    std::vector<IndirectSegment> indirectSegments;
 };
 
 struct QueueWorker {

@@ -92,6 +92,8 @@ struct PthreadSemPrivate {
     std::mutex _mutex;
     TimedWait::Condition _cv;
     int _count = 0;
+    int _waiters = 0;
+    bool _destroyed = false;
 
     explicit PthreadSemPrivate(unsigned int value) : _count(static_cast<int>(value)) {}
 };
@@ -121,7 +123,7 @@ struct PthreadAttrPrivate {
     int _schedpolicy;
     int _inheritsched;
     bool _createSuspended = false;
-    KernelCpumask _affinity = DEFAULT_THREAD_AFFINITY;
+    KernelCpumask _affinity = ~KernelCpumask{0};
     bool _affinityExplicit = false;
     std::size_t _guardsize = 0x1000;
     int _solosched = 0;
@@ -181,6 +183,7 @@ struct PthreadPrivate {
     std::mutex cancelLock;
     TimedWait::Condition* cancelWait = nullptr;
     bool cancelWaitExiting = false;
+    std::uint32_t hostMxcsr = 0x1f80;
 
     explicit PthreadPrivate(const PthreadAttrPrivate* attr = nullptr);
     ~PthreadPrivate();
