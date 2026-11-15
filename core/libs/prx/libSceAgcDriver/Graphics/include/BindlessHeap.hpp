@@ -327,7 +327,7 @@ std::uint64_t DataAddressPushes();
 std::uint64_t EmbeddedSamplerMappings();
 std::uint64_t SlotPressureSubmits();
 std::uint64_t HeapSlotEvictions();
-enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, DepthTransfer, StagedMerge, FirstSampleCopy, Count };
+enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, DepthTransfer, StagedMerge, FirstSampleCopy, ChangedCopy, Count };
 enum class HeapExcluded : std::uint8_t { Draw, Dispatch, Count };
 enum class HeapStageReason : std::uint8_t {
     Heap,
