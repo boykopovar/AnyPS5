@@ -3386,7 +3386,7 @@ std::vector<std::byte> boundedModuleKey(std::size_t index) {
 
 int runSpecializedBoundsProcess(std::string_view mode) {
     if (mode == "--specialized-cap-entries") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_ENTRIES", "3");
-    if (mode == "--specialized-cap-bytes") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_MAX_MIB", "1");
+    if (mode == "--specialized-cap-bytes" || mode == "--specialized-cap-rewrite-grow" || mode == "--specialized-cap-rewrite-shrink") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_MAX_MIB", "1");
     if (mode == "--specialized-cap-invalid") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_ENTRIES", "three");
     if (mode == "--specialized-cap-off") setEnvironment("APS5_SPECIALIZED_DISK_CACHE_ENTRIES", "0");
     const auto stored = [&](std::size_t index) { return ShaderDiskCache::EntryDirectory() / ShaderDiskCache::SpecializedEntryName(boundedModuleKey(index)); };
@@ -3437,6 +3437,45 @@ int runSpecializedBoundsProcess(std::string_view mode) {
         std::cout << "APS5_SPECIALIZED_DISK_CACHE_MAX_MIB=1 kept one 640 KiB module and evicted the other\n";
         return 0;
     }
+    const auto sized = [](std::size_t kibibytes) {
+        auto sizedModule = sampleSpecializedModule();
+        std::vector<std::uint32_t> words(kibibytes * 1024u / sizeof(std::uint32_t), 0u);
+        words[0] = 0x07230203u;
+        sizedModule.spirv = SharedSpirv(words);
+        return std::make_shared<const ShaderDiskCache::SpecializedModule>(sizedModule);
+    };
+    const auto storedBytes = [&](std::size_t count) {
+        std::uintmax_t bytes = 0;
+        for (std::size_t index = 0; index < count; ++index) {
+            if (onDisk(index)) bytes += std::filesystem::file_size(stored(index));
+        }
+        return bytes;
+    };
+    if (mode == "--specialized-cap-rewrite-grow") {
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(0), sized(256));
+        ShaderDiskCache::Flush();
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(0), sized(640));
+        ShaderDiskCache::Flush();
+        require(onDisk(0) && ShaderDiskCache::Totals().specializedEvictions == 0u, "rewriting a module larger evicted it alone under the byte bound" + counters("after rewriting module 0 from 256 KiB to 640 KiB"));
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(1), sized(640));
+        ShaderDiskCache::Flush();
+        require(storedBytes(2) <= (1u << 20u), "a module rewritten larger was counted at its old size, so the entries on disk exceed APS5_SPECIALIZED_DISK_CACHE_MAX_MIB=1 (" + std::to_string(storedBytes(2)) + " bytes)" + counters("after storing module 1"));
+        require(onDisk(1) && !onDisk(0) && ShaderDiskCache::Totals().specializedEvictions == 1u, "storing a second 640 KiB module beside a module rewritten to 640 KiB did not evict the rewritten one" + counters("after storing module 1"));
+        std::cout << "a module rewritten from 256 KiB to 640 KiB was counted at its new size and evicted for the next 640 KiB module\n";
+        return 0;
+    }
+    if (mode == "--specialized-cap-rewrite-shrink") {
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(0), sized(640));
+        ShaderDiskCache::Flush();
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(0), sized(256));
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(1), sized(256));
+        ShaderDiskCache::StoreSpecialized(boundedModuleKey(2), sized(256));
+        ShaderDiskCache::Flush();
+        require(onDisk(0) && onDisk(1) && onDisk(2) && ShaderDiskCache::Totals().specializedEvictions == 0u, "a module rewritten from 640 KiB to 256 KiB was still counted at 640 KiB, so three 256 KiB modules evicted one under APS5_SPECIALIZED_DISK_CACHE_MAX_MIB=1" + counters("after storing modules 1 and 2"));
+        require(storedBytes(3) <= (1u << 20u), "three 256 KiB modules exceed APS5_SPECIALIZED_DISK_CACHE_MAX_MIB=1 on disk" + counters("after storing modules 1 and 2"));
+        std::cout << "a module rewritten from 640 KiB to 256 KiB was counted at its new size and three 256 KiB modules stayed\n";
+        return 0;
+    }
     require(mode == "--specialized-cap-entries", "unknown specialized bounds mode");
     for (std::size_t index = 0; index < 5u; ++index) ShaderDiskCache::StoreSpecialized(boundedModuleKey(index), module);
     ShaderDiskCache::Flush();
@@ -3465,7 +3504,7 @@ void verifySpecializedBoundsAcrossProcesses(const char* self) {
         const std::string command = "\"" + std::string(self) + "\" " + mode;
         require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
     };
-    for (const auto* mode : {"--specialized-cap-entries", "--specialized-cap-bytes", "--specialized-cap-invalid", "--specialized-cap-off"}) run(mode);
+    for (const auto* mode : {"--specialized-cap-entries", "--specialized-cap-bytes", "--specialized-cap-rewrite-grow", "--specialized-cap-rewrite-shrink", "--specialized-cap-invalid", "--specialized-cap-off"}) run(mode);
     setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
 }
 

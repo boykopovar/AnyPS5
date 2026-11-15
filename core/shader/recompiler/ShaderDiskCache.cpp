@@ -1837,18 +1837,22 @@ private:
         std::shared_ptr<const DescriptorBindingPlan> bindingPlan;
     };
 
-    void trackSpecialized(std::string name, std::uintmax_t bytes) {
+    bool trackSpecialized(std::string name, std::uintmax_t bytes) {
         std::lock_guard lock(specializedMutex);
         const auto found = specializedIndex.find(name);
         if (found != specializedIndex.end()) {
+            const auto previous = found->second->bytes;
             found->second->bytes = bytes;
+            if (bytes > previous) specializedBytes.fetch_add(bytes - previous, std::memory_order_relaxed);
+            else specializedBytes.fetch_sub(previous - bytes, std::memory_order_relaxed);
             specializedRecords.splice(specializedRecords.end(), specializedRecords, found->second);
-            return;
+            return bytes > previous;
         }
         const auto record = specializedRecords.insert(specializedRecords.end(), {std::move(name), bytes});
         specializedIndex.emplace(record->name, record);
         specializedEntryCount.fetch_add(1, std::memory_order_relaxed);
         specializedBytes.fetch_add(bytes, std::memory_order_relaxed);
+        return true;
     }
 
     void evictSpecialized() {
@@ -1972,7 +1976,7 @@ private:
                     hitCount.fetch_add(1, std::memory_order_relaxed);
                     bytesRead.fetch_add(bytes.size(), std::memory_order_relaxed);
                     loaded = true;
-                    if (specialized) trackSpecialized(name, bytes.size());
+                    if (specialized && trackSpecialized(name, bytes.size())) evictSpecialized();
                     break;
                 case LoadStatus::Absent:
                 case LoadStatus::KeyMismatch:
