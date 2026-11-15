@@ -4,9 +4,9 @@
 
 The PS5 3.20 export inventory and verified NID-name database identify 92 exports in this library. The decrypted local PS5 13.60 `libSceFreeTypeOl.sprx` (SHA-256 `61E0CDB1628968A9D26790D8F6C2874C0CBF86193DC1762BA83E434CF229BADA`) was analyzed locally with Ghidra; no binary or decompilation is included in this repository. The analysis informed the FreeType wrapper signatures and shared-library module lifecycle; no byte-for-byte console call trace is included.
 
-Implemented wrappers are in [ModuleWrappers.cpp](../../../core/libs/prx/libSceFreeTypeOl/ModuleWrappers.cpp); the remaining NID aliases are in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
+Implemented wrappers are in [ModuleWrappers.cpp](../../../core/libs/prx/libSceFreeTypeOl/ModuleWrappers.cpp) and [AttachStream.cpp](../../../core/libs/prx/libSceFreeTypeOl/AttachStream.cpp); the remaining NID aliases are in [Export.cpp](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).
 
-Forty-seven exports now forward to the bundled FreeType implementation: built-in add/remove helpers for the 18 available module classes, eight module support helpers (including bulk registration via `FT_Add_Default_Modules`), allocator/free, and glyph-slot destruction. Library handles are translated through `GuestLibrary::host`, and glyph-slot destruction operates on the native slot owned by the corresponding `GuestFace`. Focused guest-bridge coverage is in `GuestFreeTypeOlModules.cpp`.
+Forty-eight exports now forward to the bundled FreeType implementation: `FT_Attach_Stream`, built-in add/remove helpers for the 18 available module classes, eight module support helpers (including bulk registration via `FT_Add_Default_Modules`), allocator/free, and glyph-slot destruction. Library handles are translated through `GuestLibrary::host`, and glyph-slot destruction operates on the native slot owned by the corresponding `GuestFace`. Focused guest-bridge coverage is in `GuestFreeTypeOlModules.cpp`.
 
 ### Signature and layout provenance
 
@@ -24,7 +24,7 @@ The FreeType guest bridge owns its guest faces in `GuestLibrary::faces`. Native 
 
 With `ANYPS5_USE_SYSTEM_DEPS=ON`, the `freetype` CMake target is an `INTERFACE` wrapper around the installed library. Bundled GX/OpenType validation C sources, private FreeType headers and module-class objects are not present. In this mode the 47 module-wrapper NIDs compile as explicit throwing stubs and the other 45 remain unchanged, preserving all 92 export aliases without calling unavailable internals. The bundled-only module regression test is omitted; the existing outline-border tests remain registered. The 47-export implementation is built only with bundled FreeType.
 
-The remaining 45 exports deliberately retain `NotImplemented_nid_no_patch` because they require unavailable Sony-specific modules/state or a guest/native bridge that is not yet implemented:
+The remaining 44 exports deliberately retain `NotImplemented_nid_no_patch` because they require unavailable Sony-specific modules/state or a guest/native bridge that is not yet implemented:
 
 - [Module class exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp) (18), the generic `FT_Add_Module` / `FtaAddModule` wrappers (2), and `FT_Get_Module_Interface` (1): host `FT_Module_Class` fields differ from the 64-bit guest ABI on some platforms; native FreeType callback and interface pointers are not guest-callable trampolines. A guest module-class layout and callback bridge are required before safe implementation. Their NIDs retain their original labels in `Export.cpp`.
 - Raster5 add/export/remove/support (`wbyY8kfNfaI`, `6zDeyzjWz-8`, `SKUldaN3e2A`, `Tzm-z36UYKg`): the Sony Raster5 module is absent from the bundled FreeType sources. See its [unimplemented exports](../../../core/libs/prx/libSceFreeTypeOl/Export.cpp).

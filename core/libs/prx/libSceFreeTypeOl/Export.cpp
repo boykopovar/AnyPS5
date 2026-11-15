@@ -105,11 +105,6 @@ int APS5_VABI sceFreeTypeOlFtaSupportRendererSmoothLcdv_nid_no_patch() {
 }
 APS5_EXPORT("Ns9a-LjOcDw", sceFreeTypeOlFtaSupportRendererSmoothLcdv_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOlAttachStream_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("ZqvTX8u1bEc", sceFreeTypeOlAttachStream_nid_no_patch);
-
 int APS5_VABI sceFreeTypeOlCMapDone_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
