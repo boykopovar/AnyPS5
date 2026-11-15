@@ -1099,6 +1099,9 @@ static void CheckKqueueFromEqueue() {
     const KernelEvent change{9, -11, 0x0001, 0, 0, nullptr};
     Require(kevent_nid_postfix(kq, &change, 1, nullptr, 0, nullptr) == 0);
     Require(sceKernelGetKqueueFromEqueue(eq, nullptr) == static_cast<int>(0x80020016));
+    errno = 71;
+    Require(sceKernelGetKqueueFromEqueue(eq, reinterpret_cast<int*>(0x10)) == static_cast<int>(0x80020016));
+    Require(errno == 71);
     Require(sceKernelDeleteEqueue(eq) == 0);
 }
 

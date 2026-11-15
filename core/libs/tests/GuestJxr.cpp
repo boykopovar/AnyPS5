@@ -13,11 +13,41 @@
 #include <limits>
 #include <stdexcept>
 
+extern "C" {
+void* JxrTileFixtureReset(std::uint32_t sliceCount);
+void* JxrTileFixtureTilePointer(void* codec);
+void* JxrTileFixtureSentinel();
+std::size_t JxrTileFixtureTileSize();
+std::size_t JxrTileFixtureMaxTiles();
+int JxrTileFixtureCodecIntact(void* codec);
+int JxrTileFixtureTilesInitialized(void* codec);
+}
+
+extern "C" {
+void* JxrBitIoFixtureReset(std::int32_t format, std::size_t bitIOCount, std::uint8_t subbands, std::uint32_t sliceCount);
+void* JxrBitIoFixtureField(std::size_t context, std::size_t field);
+void* JxrBitIoFixtureInput(std::size_t index);
+void* JxrBitIoFixtureSentinel(std::size_t context, std::size_t field);
+void* JxrBitIoFixtureHeader();
+int JxrBitIoFixtureGuardsAndCodecIntact(void* codec);
+}
+
+extern "C" {
+void* JxrFreeTileFixtureReset(std::uint32_t mode, std::int32_t subband, std::uint32_t lastTile, int empty);
+void* JxrFreeTileFixtureSlot(std::size_t tile, std::size_t band);
+void* JxrFreeTileFixtureTiles();
+int JxrFreeTileFixtureIntact();
+void JxrFreeTileFixtureClearTiles();
+}
+
 namespace {
 
 void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.cpp:%d: requirement failed\n", line); std::abort(); } }
 #define Require(value) Check((value), __LINE__)
 
+bool recordTileFrees = false;
+std::array<void*, 16> tileFrees{};
+std::size_t tileFreeCount = 0;
 template <typename F>
 void RequireThrows(F&& function) {
     try {
@@ -34,8 +64,8 @@ bool failAllocation = false;
 bool fillMalloc = false;
 int mallocCalls = 0;
 int failMallocAt = -1;
-std::array<void*, 32> mallocLog{};
-std::array<std::size_t, 32> mallocSizeLog{};
+std::array<void*, 512> mallocLog{};
+std::array<std::size_t, 512> mallocSizeLog{};
 std::size_t lastCount = 0;
 std::size_t lastSize = 0;
 void* lastAllocated = nullptr;
@@ -52,6 +82,11 @@ void* APS5_VABI Allocate(std::size_t size) {
     return pointer;
 }
 void APS5_VABI Free(void* pointer) {
+    if (recordTileFrees) {
+        Require(tileFreeCount < tileFrees.size());
+        tileFrees[tileFreeCount++] = pointer;
+        return;
+    }
     if (pointer != nullptr) {
         lastFreed = pointer;
         if (frees < static_cast<int>(freeLog.size())) freeLog[static_cast<std::size_t>(frees)] = pointer;
@@ -573,6 +608,177 @@ void TestInitPostProc() {
     fillMalloc = false;
 }
 
+void TestAllocateQuantizer() {
+    fillMalloc = true;
+    constexpr std::size_t quantizerSize = 20;
+    int sentinelObject = 0;
+    void* const sentinel = &sentinelObject;
+    std::array<void*, 16> quantizers{};
+    for (std::size_t channels = 0; channels <= 16; ++channels) {
+        for (std::size_t count = 0; count <= 16; ++count) {
+            quantizers.fill(sentinel);
+            const auto allocationIndex = static_cast<std::size_t>(mallocCalls);
+            const int result = allocateQuantizer_nid_postfix(quantizers.data(), channels, count);
+            void* const allocation = mallocLog[allocationIndex];
+            const std::size_t bytes = channels * count * quantizerSize;
+            Require(mallocSizeLog[allocationIndex] == bytes);
+            Require(quantizers[0] == allocation);
+            Require(result == (allocation ? 0 : -1));
+            if (allocation) {
+                auto* const base = static_cast<unsigned char*>(allocation);
+                for (std::size_t i = 0; i < bytes; ++i) Require(base[i] == 0xa5);
+                for (std::size_t channel = 1; channel < channels; ++channel)
+                    Require(quantizers[channel] == base + channel * count * quantizerSize);
+                free_nid_postfix(allocation);
+            }
+            for (std::size_t channel = channels == 0 ? 1 : channels; channel < quantizers.size(); ++channel)
+                Require(quantizers[channel] == sentinel);
+        }
+    }
+
+    const auto callsBeforeBounds = mallocCalls;
+    Require(allocateQuantizer_nid_postfix(nullptr, 17, 0) == -1);
+    Require(allocateQuantizer_nid_postfix(nullptr, 0, 17) == -1);
+    Require(mallocCalls == callsBeforeBounds);
+
+    int failureSentinelObject = 0;
+    void* const failureSentinel = &failureSentinelObject;
+    quantizers.fill(failureSentinel);
+    failMallocAt = mallocCalls + 1;
+    const auto failedAllocationIndex = static_cast<std::size_t>(mallocCalls);
+    Require(allocateQuantizer_nid_postfix(quantizers.data(), 3, 7) == -1);
+    failMallocAt = -1;
+    Require(mallocSizeLog[failedAllocationIndex] == 3 * 7 * quantizerSize);
+    Require(quantizers[0] == nullptr);
+    for (std::size_t channel = 1; channel < quantizers.size(); ++channel)
+        Require(quantizers[channel] == failureSentinel);
+
+    const auto callsBeforeNull = mallocCalls;
+    bool threw = false;
+    try { allocateQuantizer_nid_postfix(nullptr, 1, 1); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && mallocCalls == callsBeforeNull);
+    fillMalloc = false;
+}
+
+}
+
+void TestAllocateTileInfo() {
+    void* codec = nullptr;
+    const auto tileSize = JxrTileFixtureTileSize();
+    for (const auto count : {std::size_t{0}, std::size_t{2}, JxrTileFixtureMaxTiles() - 1}) {
+        codec = JxrTileFixtureReset(static_cast<std::uint32_t>(count));
+        const auto firstAllocation = mallocCalls;
+        Require(allocateTileInfo_nid_postfix(codec) == 0);
+        Require(mallocCalls == firstAllocation + 1);
+        auto* const tiles = JxrTileFixtureTilePointer(codec);
+        Require(tiles != nullptr && tiles != JxrTileFixtureSentinel());
+        Require(mallocLog[static_cast<std::size_t>(firstAllocation)] == tiles);
+        Require(mallocSizeLog[static_cast<std::size_t>(firstAllocation)] == (count + 1) * tileSize);
+        Require(JxrTileFixtureCodecIntact(codec));
+        Require(JxrTileFixtureTilesInitialized(codec));
+        free_nid_postfix(tiles);
+    }
+
+    codec = JxrTileFixtureReset(static_cast<std::uint32_t>(JxrTileFixtureMaxTiles()));
+    const auto allocationsBeforeLimit = mallocCalls;
+    auto* const priorTiles = JxrTileFixtureSentinel();
+    Require(JxrTileFixtureTilePointer(codec) == priorTiles);
+    Require(allocateTileInfo_nid_postfix(codec) == -1);
+    Require(mallocCalls == allocationsBeforeLimit);
+    Require(JxrTileFixtureTilePointer(codec) == priorTiles);
+    Require(JxrTileFixtureCodecIntact(codec));
+
+    codec = JxrTileFixtureReset(0);
+    const auto failedAllocation = mallocCalls + 1;
+    failMallocAt = failedAllocation;
+    Require(allocateTileInfo_nid_postfix(codec) == -1);
+    failMallocAt = -1;
+    Require(mallocCalls == failedAllocation);
+    Require(mallocSizeLog[static_cast<std::size_t>(failedAllocation - 1)] == tileSize);
+    Require(JxrTileFixtureTilePointer(codec) == nullptr);
+    Require(JxrTileFixtureCodecIntact(codec));
+}
+
+void TestFreeTileInfo() {
+    bool threw = false;
+    try { freeTileInfo_nid_postfix(nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    recordTileFrees = true;
+    for (std::uint32_t mode = 0; mode < 16; ++mode) {
+        for (std::int32_t band = 0; band <= 4; ++band) {
+            for (std::uint32_t lastTile = 0; lastTile < 3; ++lastTile) {
+                for (int empty : {0, 1}) {
+                    auto* codec = JxrFreeTileFixtureReset(mode, band, lastTile, empty);
+                    std::array<void*, 16> expected{};
+                    std::size_t count = 0;
+                    const std::size_t bands = band == 3 ? 1 : band == 2 ? 2 : 3;
+                    for (std::size_t current = 0; current < bands; ++current) {
+                        const auto end = mode & (1U << current) ? lastTile : 0;
+                        for (std::size_t tile = 0; tile <= end; ++tile) {
+                            if (auto* pointer = JxrFreeTileFixtureSlot(tile, current)) expected[count++] = pointer;
+                        }
+                    }
+                    expected[count++] = JxrFreeTileFixtureTiles();
+                    tileFreeCount = 0;
+                    freeTileInfo_nid_postfix(codec);
+                    Require(tileFreeCount == count);
+                    for (std::size_t i = 0; i < count; ++i) Require(tileFrees[i] == expected[i]);
+                    Require(JxrFreeTileFixtureIntact());
+                }
+            }
+        }
+    }
+    auto* codec = JxrFreeTileFixtureReset(0, 3, 0, 0);
+    JxrFreeTileFixtureClearTiles();
+    tileFreeCount = 0;
+    threw = false;
+    try { freeTileInfo_nid_postfix(codec); }
+    catch (const std::exception&) { threw = true; }
+    Require(threw && tileFreeCount == 0);
+    recordTileFrees = false;
+}
+
+void TestSetBitIOPointers() {
+    bool threw = false;
+    try { setBitIOPointers_nid_postfix(nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+
+    auto* codec = JxrBitIoFixtureReset(0, 1, 4, 1);
+    Require(setBitIOPointers_nid_postfix(codec) == 0);
+    for (std::size_t context = 0; context < 4; ++context) {
+        for (std::size_t field = 0; field < 4; ++field) {
+            auto* expected = context < 2 ? JxrBitIoFixtureInput(context) : JxrBitIoFixtureSentinel(context, field);
+            Require(JxrBitIoFixtureField(context, field) == expected);
+        }
+    }
+    Require(JxrBitIoFixtureGuardsAndCodecIntact(codec));
+
+    for (std::uint8_t subbands = 0; subbands <= 5; ++subbands) {
+        codec = JxrBitIoFixtureReset(1, 1, subbands, 1);
+        Require(setBitIOPointers_nid_postfix(codec) == 0);
+        for (std::size_t context = 0; context < 4; ++context) {
+            for (std::size_t field = 0; field < 4; ++field) {
+                void* expected = JxrBitIoFixtureSentinel(context, field);
+                if (context < 2 && (field == 0 || field < subbands))
+                    expected = JxrBitIoFixtureInput(context * subbands + field);
+                Require(JxrBitIoFixtureField(context, field) == expected);
+            }
+        }
+        Require(JxrBitIoFixtureGuardsAndCodecIntact(codec));
+    }
+
+    codec = JxrBitIoFixtureReset(1, 0, 3, 1);
+    Require(setBitIOPointers_nid_postfix(codec) == 0);
+    for (std::size_t context = 0; context < 4; ++context) {
+        for (std::size_t field = 0; field < 4; ++field) {
+            auto* expected = context == 0 ? JxrBitIoFixtureHeader() : JxrBitIoFixtureSentinel(context, field);
+            Require(JxrBitIoFixtureField(context, field) == expected);
+        }
+    }
+    Require(JxrBitIoFixtureGuardsAndCodecIntact(codec));
 }
 
 void TestTermPostProc() {
@@ -903,6 +1109,10 @@ int main() {
     TestTermPostProc();
     TestInitPostProc();
     TestExifMetadata();
+    TestAllocateTileInfo();
+    TestFreeTileInfo();
+    TestAllocateQuantizer();
+    TestSetBitIOPointers();
     TestGpsMetadata();
     TestIptcMetadata();
     TestPhotoshopMetadata();
