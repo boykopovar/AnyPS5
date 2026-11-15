@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <source_location>
 #include <stdexcept>
 #include <vector>
@@ -100,8 +101,20 @@ static void SetFlags(unsigned char* context, std::uint64_t flags) {
     std::memcpy(context + FlagsOffset, &flags, sizeof(flags));
 }
 
+static bool failCalloc = false;
+
+static void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size); }
+static void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
+static void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return failCalloc ? nullptr : std::calloc(count, size); }
+static void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+static void* APS5_VABI HeapAlign(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+static void* APS5_VABI HeapRealign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
+static int APS5_VABI HeapPosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+
 static void InitializeHeap() {
-    void* const api[10] {};
+    void* const api[10] {reinterpret_cast<void*>(HeapAllocate), reinterpret_cast<void*>(HeapFree), reinterpret_cast<void*>(HeapCalloc),
+        reinterpret_cast<void*>(HeapReallocate), reinterpret_cast<void*>(HeapAlign), reinterpret_cast<void*>(HeapRealign),
+        reinterpret_cast<void*>(HeapPosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api);
 }
 
@@ -415,6 +428,155 @@ static void TestHeldBlock() {
     Require(EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written) == 1);
     Require(written == 4 && std::memcmp(out, plain.data() + 16, 4) == 0);
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
+static void TestDecryptFinalErrors() {
+    auto cipher = XorBlockCipher();
+    for (const auto final : {EVP_DecryptFinal_ex_nid_postfix, EVP_CipherFinal_ex_nid_postfix}) {
+        for (int scenario = 0; scenario < 9; ++scenario) {
+            cipher.blockSize = 16;
+            ResetCalls();
+            ERR_clear_error_nid_postfix();
+            unsigned char context[ContextBytes] {};
+            unsigned char out[32];
+            std::memset(out, 0xEE, sizeof(out));
+            Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+            Bytes block(16, 16);
+            if (scenario == 0) block[15] = 0;
+            if (scenario == 1) block[15] = 17;
+            if (scenario == 2) { block[14] = 3; block[15] = 2; }
+            if (scenario == 3 || scenario == 7) Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+            int written = -1;
+            const int length = scenario == 3 || scenario == 5 ? 15 : scenario == 4 ? 0 : 16;
+            const auto encrypted = Xor(block);
+            Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, encrypted.data(), length) == 1);
+            std::memset(out, 0xEE, sizeof(out));
+            if (scenario == 8) cipher.blockSize = 64;
+            written = 123;
+            const int result = final(Context(context), out, &written);
+            const auto error = ERR_get_error_nid_postfix();
+            const int reason = scenario < 3 ? 100 : scenario == 3 ? 138 : scenario < 6 ? 109 : scenario == 8 ? 136 : 0;
+            Require(result == (reason == 0 ? 1 : 0));
+            Require(written == 0);
+            for (const auto byte : out) Require(byte == 0xEE);
+            if (error != (reason ? (UINT64_C(6) << 24 | UINT64_C(0xfff) << 12 | reason) : 0))
+                std::fprintf(stderr, "decrypt final scenario %d: ret=%d length=%d error=0x%llx expected EVP/fff/%d\n", scenario, result, written, static_cast<unsigned long long>(error), reason);
+            Require((error >> 24 & 0xff) == (reason ? 6 : 0));
+            Require((error >> 12 & 0xfff) == (reason ? 0xfff : 0));
+            Require((error & 0xfff) == static_cast<unsigned>(reason));
+            Require(ERR_get_error_nid_postfix() == 0);
+            Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        }
+    }
+}
+
+static void RequireErrors(std::initializer_list<int> reasons, std::source_location location = std::source_location::current()) {
+    for (const int reason : reasons) Require(ERR_get_error_nid_postfix() == (UINT64_C(0x06fff000) | static_cast<unsigned>(reason)), location);
+    Require(ERR_get_error_nid_postfix() == 0, location);
+}
+
+static void TestCipherErrors() {
+    int value = 0;
+    {
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == 0);
+        RequireErrors({131});
+        Cipher cipher {};
+        Store(context, CipherOffset, &cipher);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == 0);
+        RequireErrors({132});
+        cipher.control = RecordControl;
+        for (int result : {-1, 0, -2, 1}) {
+            ResetCalls();
+            calls.controlResult = result;
+            Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 9, 12, &value) == (result == -1 ? 0 : result));
+            if (result == -1) RequireErrors({133});
+            else RequireErrors({});
+        }
+    }
+    for (int result : {2, -1, 0}) {
+        auto cipher = XorBlockCipher();
+        cipher.flags = FlagCtrlInit;
+        cipher.control = result == 2 ? nullptr : RecordControl;
+        ResetCalls();
+        calls.controlResult = result;
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+        if (result == 2) RequireErrors({132, 134});
+        else if (result == -1) RequireErrors({133, 134});
+        else RequireErrors({134});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    for (int encrypt : {1, 0}) {
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        Require(EVP_CipherInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr, encrypt) == 0);
+        RequireErrors({131});
+        Require((encrypt ? EVP_EncryptInit_ex_nid_postfix : EVP_DecryptInit_ex_nid_postfix)(Context(context), nullptr, nullptr, XorKey, nullptr) == 0);
+        RequireErrors({131});
+    }
+    {
+        auto cipher = XorBlockCipher();
+        ResetCalls();
+        unsigned char context[ContextBytes] {};
+        ERR_clear_error_nid_postfix();
+        failCalloc = true;
+        const int result = EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr);
+        failCalloc = false;
+        Require(result == 0 && calls.inits == 0);
+        RequireErrors({65});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        cipher.blockSize = 4;
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+        RequireErrors({136});
+        cipher.blockSize = 16;
+        cipher.ivLength = 17;
+        for (std::uint64_t mode : {ModeCbc, ModeCfb, ModeOfb}) {
+            cipher.flags = mode;
+            Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 0);
+            RequireErrors({102});
+        }
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    const auto input = Pattern(32, 7);
+    for (const auto final : {EVP_EncryptFinal_ex_nid_postfix, EVP_CipherFinal_ex_nid_postfix}) {
+        auto cipher = XorBlockCipher();
+        ResetCalls();
+        unsigned char context[ContextBytes] {};
+        unsigned char out[64] {};
+        int written = 123;
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+        ERR_clear_error_nid_postfix();
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, input.data(), 5) == 1 && written == 0);
+        written = 123;
+        Require(final(Context(context), out, &written) == 0 && written == 123);
+        RequireErrors({138});
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr) == 1);
+        cipher.blockSize = 64;
+        Require(final(Context(context), out, &written) == 0 && written == 123);
+        RequireErrors({136});
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+    for (const auto update : {EVP_EncryptUpdate_nid_postfix, EVP_DecryptUpdate_nid_postfix, EVP_CipherUpdate_nid_postfix}) {
+        for (int encrypt : {1, 0}) {
+            if (update != EVP_CipherUpdate_nid_postfix && encrypt != (update == EVP_EncryptUpdate_nid_postfix)) continue;
+            auto cipher = XorBlockCipher();
+            ResetCalls();
+            unsigned char context[ContextBytes] {};
+            unsigned char out[64] {};
+            Require(EVP_CipherInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr, encrypt) == 1);
+            cipher.blockSize = 64;
+            ERR_clear_error_nid_postfix();
+            int written = 123;
+            Require(update(Context(context), out, &written, input.data(), 5) == 0);
+            Require(written == (encrypt ? 0 : 123) && calls.ciphers == 0);
+            RequireErrors({136});
+            Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+        }
+    }
 }
 
 static void TestBadPadding() {
@@ -1126,6 +1288,68 @@ static void TestEvpCleanup() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
+constexpr std::uint64_t WrapFlagsValue = 0x111037;
+
+static void RequireWrapDescriptor(const Cipher* cipher, int nid, int keyLength) {
+    Require(cipher != nullptr && cipher->nid == nid && cipher->blockSize == 8 && cipher->keyLength == keyLength);
+    Require(cipher->ivLength == 8 && cipher->flags == WrapFlagsValue && cipher->contextSize == 264);
+    Require(cipher->init != nullptr && cipher->doCipher != nullptr && cipher->applicationData == nullptr);
+    Require(cipher->setAsn1Parameters == nullptr && cipher->getAsn1Parameters == nullptr);
+}
+
+static void RequireWrapVector(const Cipher* cipher, const Bytes& kek, const Bytes& key, const Bytes& wrapped) {
+    unsigned char context[ContextBytes] {};
+    unsigned char out[64] {};
+    int written = -1;
+    const int keySize = static_cast<int>(key.size());
+    const int wrappedSize = static_cast<int>(wrapped.size());
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 0);
+    SetFlags(context, 1);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, kek.data(), nullptr) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, key.data(), keySize) == 1 && written == wrappedSize);
+    Require(Bytes(out, out + wrappedSize) == wrapped);
+    Require(EVP_EncryptFinal_ex_nid_postfix(Context(context), out, &written) == 1 && written == 0);
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, kek.data(), nullptr) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, wrapped.data(), wrappedSize) == 1 && written == keySize);
+    Require(Bytes(out, out + keySize) == key);
+    Require(EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written) == 1 && written == 0);
+    auto tampered = wrapped;
+    tampered[wrapped.size() - 1] ^= 0x01;
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, tampered.data(), wrappedSize) == 0 && written == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, kek.data(), nullptr) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, key.data(), keySize) == 1 && written == wrappedSize);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, key.data(), 7) == 0);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, nullptr, Hex("a6a6a6a6a6a6a6a6").data()) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, key.data(), keySize) == 1 && written == wrappedSize);
+    Require(Bytes(out, out + wrappedSize) == wrapped);
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, kek.data(), Hex("0001020304050607").data()) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, wrapped.data(), wrappedSize) == 0 && written == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
+static void TestAesWrap128() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_128_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 788, 16);
+    RequireWrapVector(cipher, Hex("000102030405060708090a0b0c0d0e0f"), Hex("00112233445566778899aabbccddeeff"),
+        Hex("1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5"));
+}
+
+static void TestAesWrap192() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_192_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 789, 24);
+    RequireWrapVector(cipher, Hex("000102030405060708090a0b0c0d0e0f1011121314151617"), Hex("00112233445566778899aabbccddeeff"),
+        Hex("96778b25ae6ca435f92b5b97c050aed2468ab8a17ad84e5d"));
+}
+
+static void TestAesWrap256() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_256_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 790, 32);
+    const auto kek = Hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    RequireWrapVector(cipher, kek, Hex("00112233445566778899aabbccddeeff"), Hex("64e8c3f9ce0f5ba263e9777905818a2a93c8191e7d6e8ae7"));
+    RequireWrapVector(cipher, kek, Hex("00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f"),
+        Hex("28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21"));
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1136,6 +1360,8 @@ int main() {
     TestCtrl();
     TestPadding();
     TestHeldBlock();
+    TestDecryptFinalErrors();
+    TestCipherErrors();
     TestBadPadding();
     TestNoPadding();
     TestInitFields();
@@ -1148,6 +1374,9 @@ int main() {
     TestAesGcmVectors();
     TestAesGcmControl();
     TestAesGcmTls();
+    TestAesWrap128();
+    TestAesWrap192();
+    TestAesWrap256();
     TestEvpCleanup();
     return 0;
 }

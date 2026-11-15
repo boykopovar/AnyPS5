@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +28,11 @@ static void CheckNullPointers() {
     Check(l64a_r_nid_postfix(1, nullptr, 10) == -1);
     Check(l64a_r_nid_postfix(3695, nullptr, 10) == -1);
     Check(l64a_r_nid_postfix(-1L, nullptr, 10) == -1);
+
+    errno = 71;
+    Check(a64l_nid_postfix(reinterpret_cast<const char*>(0x10)) == 0 && errno == 71);
+    Check(l64a_r_nid_postfix(3695, reinterpret_cast<char*>(0x10), 10) == -1 && errno == 71);
+    Check(l64a_r_nid_postfix(0, reinterpret_cast<char*>(0x10), 10) == -1 && errno == 71);
 }
 
 static void CheckEmptyStrings() {
@@ -98,6 +104,14 @@ static void CheckBoundaries() {
     Check(a64l_nid_postfix("zzzzz1") == INT64_C(-1));
     Check(a64l_nid_postfix(".....0") == INT64_C(-2147483648));
     Check(std::strcmp(l64a_nid_postfix(INT64_C(0x100000001)), "/") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(0x100000000)), "") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(0x7fffffff00000000)), "") == 0);
+    Check(std::strcmp(l64a_nid_postfix(INT64_C(-0x100000000)), "") == 0);
+    char highBuf[16]{};
+    Check(l64a_r_nid_postfix(INT64_C(0x100000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(0x100000001), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "/") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(0x7fffffff00000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
+    Check(l64a_r_nid_postfix(INT64_C(-0x100000000), highBuf, sizeof(highBuf)) == 0 && std::strcmp(highBuf, "") == 0);
     Check(a64l_nid_postfix("zz") == 4095);
     Check(std::strcmp(l64a_nid_postfix(4095), "zz") == 0);
 

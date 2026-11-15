@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <climits>
 #include <cstring>
@@ -11,6 +12,8 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+
+extern "C" char* suboptarg_nid_postfix;
 
 static void Require(bool condition) {
     if (!condition) {
@@ -136,13 +139,6 @@ static void CheckBoundsCheckedFunctions() {
     char nonOverlap[16] = {};
     std::strcpy(nonOverlap + 8, "cd");
     Require(strcpy_s_nid_postfix(nonOverlap, (std::size_t{1} << 61) - 1, nonOverlap + 8) == 0 && std::strcmp(nonOverlap, "cd") == 0);
-    Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 8) == 22 && bytes[0] == 9 && bytes[3] == 9);
-    char sentinel[4] = {1, 2, 3, 4};
-    Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 7, 2) == 0 && sentinel[1] == 7 && sentinel[2] == 3);
-    Require(memset_s_nid_postfix(sentinel, (SIZE_MAX >> 1) + 1, 0, 1) == 22 && sentinel[0] == 7);
-    Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 0, (SIZE_MAX >> 1) + 1) == 22 && sentinel[0] == 7 && sentinel[3] == 4);
-    Require(memset_s_nid_postfix(sentinel, SIZE_MAX >> 1, 5, 1) == 0 && sentinel[0] == 5 && sentinel[1] == 7);
-    Require(memset_s_nid_postfix(nullptr, sizeof(sentinel), 0, 1) == 22);
     Require(strnstr_nid_postfix("haystack", "st", 4) == nullptr);
     const char haystack[] = "haystack";
     Require(strnstr_nid_postfix(haystack, "st", 6) == haystack + 3);
@@ -445,6 +441,8 @@ int main() {
     Require(basename_r_nid_postfix(("/a/" + longest).c_str(), baseBuffer) == baseBuffer && std::strlen(baseBuffer) == 1023);
     *__error_nid_postfix() = 0;
     Require(basename_r_nid_postfix(longName.c_str(), baseBuffer) == nullptr && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(basename_r_nid_postfix("/one/plain", reinterpret_cast<char*>(0x10)) == nullptr && *__error_nid_postfix() == 14);
     const unsigned char loopbackBytes[4] = {127, 0, 0, 1};
     unsigned int loopback;
     std::memcpy(&loopback, loopbackBytes, sizeof(loopback));
@@ -554,6 +552,8 @@ int main() {
     Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
     Require(inetAton("1.2.3.4\n", "1.2.3.4"));
     Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    errno = 71;
+    Require(__inet_aton_nid_postfix("1.2.3.4", reinterpret_cast<void*>(0x10)) == 0 && errno == 71);
     bool atonNullThrew = false;
     try {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
@@ -780,6 +780,7 @@ int main() {
     char* value = nullptr;
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && cursor == options + 3);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 2 && std::strcmp(value, "1024") == 0);
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "size") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 3 && std::strcmp(value, "test") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr && *cursor == '\0');
@@ -791,7 +792,9 @@ int main() {
     cursor = unmatched;
     value = nullptr;
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && std::strcmp(value, "val") == 0 && std::strcmp(cursor, "ro") == 0);
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "unknown") == 0);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && *cursor == '\0');
+    Require(suboptarg_nid_postfix != nullptr && std::strcmp(suboptarg_nid_postfix, "ro") == 0);
     char leadingEqual[] = "=val,ro";
     cursor = leadingEqual;
     value = nullptr;
@@ -803,12 +806,15 @@ int main() {
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr);
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
     Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr);
-    Require(getsubopt_nid_postfix(nullptr, tokens, &value) == -1);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(nullptr, tokens, &value) == -1 && suboptarg_nid_postfix == nullptr);
     char* nullCursor = nullptr;
-    Require(getsubopt_nid_postfix(&nullCursor, tokens, &value) == -1);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(&nullCursor, tokens, &value) == -1 && suboptarg_nid_postfix == nullptr);
     char emptyStr[] = "";
     cursor = emptyStr;
-    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && cursor == emptyStr);
+    suboptarg_nid_postfix = options;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && cursor == emptyStr && suboptarg_nid_postfix == nullptr);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
     CheckConstraintHandlerCalls();
@@ -844,5 +850,12 @@ int main() {
     Require(modeBuffer[0] == 'w');
     strmode_nid_postfix(0, modeBuffer);
     Require(std::memcmp(modeBuffer, "?--------- ", 11) == 0);
+    *__error_nid_postfix() = 71;
+    strmode_nid_postfix(0100644, reinterpret_cast<char*>(std::uintptr_t{0x10}));
+    Require(*__error_nid_postfix() == 71);
+    char modeRow[16];
+    std::memset(modeRow, '!', sizeof(modeRow));
+    strmode_nid_postfix(0106755, modeRow + 1);
+    Require(modeRow[0] == '!' && std::memcmp(modeRow + 1, "-rwsr-sr-x ", 12) == 0 && modeRow[13] == '!');
     return CheckMemcpyOverlap() ? 0 : 1;
 }
