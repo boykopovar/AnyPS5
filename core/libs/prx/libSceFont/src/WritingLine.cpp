@@ -294,6 +294,13 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
         if (!lines.contains(line)) return SCE_FONT_ERROR_INVALID_WRITING;
     }
     if (!IsMemoryValid(line->memory)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    FontWritingMetrics localMetrics{};
+    if (writingMetrics) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localMetrics, writingMetrics, sizeof(localMetrics));
+        errno = savedErrno;
+        if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     if (line->cursor) ResetOrders(*line);
     void* allocation = line->memory->iface->alloc(line->memory->mspace_handle, sizeof(WritingOrder));
     if (!allocation) return SCE_FONT_ERROR_ALLOCATION_FAILED;
@@ -301,7 +308,7 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
     if (!line->last) line->first = order;
     order->orderer = writingOrderer;
     order->attribute = writingAttribute;
-    if (writingMetrics) order->metrics = *writingMetrics;
+    if (writingMetrics) order->metrics = localMetrics;
     Link(*line, order, level);
     if (!order->prev) line->head = order;
     if (!order->next) line->tail = order;
