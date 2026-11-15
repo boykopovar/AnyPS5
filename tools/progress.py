@@ -98,6 +98,15 @@ GRID_COLUMNS, GRID_ROW = 12, 28
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
 
 
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def blank(match):
     if match.group("code") is not None:
         return match.group()
@@ -1061,7 +1070,7 @@ def main(argv=None):
             snapshots = []
             for path in args.compare:
                 try:
-                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig")))
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys))
                 except (OSError, ValueError, RecursionError) as error:
                     parser.error(f"{path}: {error}")
             for path, snapshot in zip(args.compare, snapshots):
@@ -1088,7 +1097,7 @@ def main(argv=None):
         open_pr_progress = None
         if args.open_pr_estimate:
             try:
-                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"))
+                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
                 validate_open_pr_progress(open_pr_progress)
             except (OSError, ValueError, RecursionError) as error:
                 parser.error(f"{args.open_pr_estimate}: {error}")

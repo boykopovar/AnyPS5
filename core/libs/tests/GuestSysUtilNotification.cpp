@@ -1,8 +1,10 @@
 #include "prx/libSceSysUtil/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -15,6 +17,10 @@
 #endif
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -71,6 +77,8 @@ private:
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::string longText;
     for (int index = 0; index < 300; ++index) longText.push_back(static_cast<char>('a' + index % 26));
 
@@ -101,8 +109,12 @@ int main() {
     Require(type1 == 0, "a type 1 notification was not sent");
     Require(type2 == 0, "a type 2 notification was not sent");
     Require(truncated == 0, "a long message was not sent");
+    errno = 71;
     Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
+    Require(errno == 71, "unreadable message pointer clobbered errno");
+    errno = 71;
     Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(~std::uintptr_t{0xfff})) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
+    Require(errno == 71, "high unreadable message pointer clobbered errno");
     const std::string expected =
         "[notification] hello\n"
         "[notification] \n"
@@ -129,5 +141,7 @@ int main() {
     Require(sceKernelSendNotificationRequest(1, validReq.data(), 3120, 0) == notSupported, "nonzero device must return notSupported");
     Require(sceKernelSendNotificationRequest(0, validReq.data(), 3120, 1) == notSupported, "nonzero flags must return notSupported");
     std::puts("SysUtil notification tests passed");
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }
