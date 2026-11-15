@@ -256,9 +256,12 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     LibcAwaitExit_nid_postfix();
 }
 
+static bool isFreshHandle(int handle);
+
 int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) try {
     if (status == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (isFreshHandle(handle)) return VIDEO_OUT_ERROR_0x8029001C;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
@@ -458,7 +461,12 @@ int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, 
     if (!std::isfinite(gamma) || gamma < 0.1f || gamma > 2.0f) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
     }
-    settings->gamma = gamma;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(&settings->gamma, &gamma, sizeof(gamma));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     return 0;
 }
 
@@ -480,7 +488,13 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversio
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
-    std::memset(settings, 0, sizeof(VideoOutColorSpaceConversionSettings));
+    const VideoOutColorSpaceConversionSettings zeroSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(settings, &zeroSettings, sizeof(zeroSettings));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     return 0;
 }
 

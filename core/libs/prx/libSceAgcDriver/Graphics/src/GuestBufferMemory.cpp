@@ -179,6 +179,7 @@ void SetHeapMirrorBudget(std::uint64_t bytes) {
 }
 
 namespace {
+void clearCarriedShadows(VkDevice device);
 struct RefreshBlock;
 static thread_local GuestBufferMemory* buildingBufferMemory = nullptr;
 static thread_local std::vector<RefreshBlock>* buildingBlocks = nullptr;
@@ -585,6 +586,8 @@ bool retireFreesAtOnce(bool hold) {
     return recorder == nullptr || (!hold && recorder->Idle());
 }
 
+std::atomic<std::uint64_t> retiredImports{0};
+
 void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, HostImport>::iterator it, const GuestAllocations::Lease& lease, bool hold = true) {
 #ifdef _WIN32
     auto* reading = forgetSettle(state, it->first);
@@ -595,6 +598,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     // size); the holder below outlives the batch that copies them.
     RetireShadow(device, it->second, [&lease, joined = it->second.joined](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end) || (joined && joinedCovers(lease, begin, end)); });
     bumpEpoch(state);
+    retiredImports.fetch_add(1, std::memory_order_release);
     state.liveBytes -= it->second.pinnedBytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
 #ifdef _WIN32
@@ -751,6 +755,10 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
 }
 
 const char* createHostPointerImport(const Context& context, HostImport& entry, VkResult& failure) {
+    if (!context.hostPointerImport) {
+        failure = VK_ERROR_EXTENSION_NOT_PRESENT;
+        return "VK_EXT_external_memory_host";
+    }
     void* const host = entry.alias != nullptr ? entry.alias : reinterpret_cast<void*>(entry.base);
     VkMemoryHostPointerPropertiesEXT pointer{VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
     if (const auto result = context.Function<PFN_vkGetMemoryHostPointerPropertiesEXT>("vkGetMemoryHostPointerPropertiesEXT")(context.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host, &pointer); result != VK_SUCCESS) {
@@ -1548,8 +1556,11 @@ void decideImportWatch(const Context& context, HostImports& state) {
         std::fprintf(stderr, "[write-watch] host imports are compared, not watched (APS5_WRITE_WATCH_IMPORTS=unwatch)\n");
         return;
     }
-    const auto probe = ProbeImportWriteProtection(context);
-    if (probe.failure != nullptr) {
+    const auto probe = context.hostPointerImport ? ProbeImportWriteProtection(context) : ImportProbe{};
+    if (!context.hostPointerImport) {
+        state.unwatchImports = true;
+        std::fprintf(stderr, "[write-watch] no host pointer imports (the device has no VK_EXT_external_memory_host); only dma-buf imports are probed\n");
+    } else if (probe.failure != nullptr) {
         state.unwatchImports = true;
         std::fprintf(stderr, "[write-watch] host imports resolve write protection: unknown (probe failed at %s, %d); imported ranges are compared\n", probe.failure, static_cast<int>(probe.result));
     } else {
@@ -1829,6 +1840,7 @@ ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, s
     if (run.ranges.empty()) return run;
     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
     if (begin == run.base) return run;
+    if (run.ranges.front()->bytes > window && run.bytes - run.ranges.front()->bytes <= window) return run;
     return {};
 }
 
@@ -4381,6 +4393,7 @@ void ClearImageMirrors(VkDevice device) {
 }
 
 void ClearHostImports(VkDevice device) {
+    clearCarriedShadows(device);
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     state.parked.erase(device);
@@ -4718,6 +4731,16 @@ std::uint64_t HostImportBudgetFor(const VkPhysicalDeviceMemoryProperties& memory
     const auto held = others + granted / 8u;
     constexpr std::uint64_t step = 64ull << 20u;
     return std::min(configured, granted > held ? (granted - held) / step * step : 0u);
+}
+
+bool HostImportsInHeapUsage(VkDriverId driver) {
+    return driver == VK_DRIVER_ID_MOLTENVK;
+}
+
+VkPhysicalDeviceMemoryBudgetPropertiesEXT UsageWithoutHostImports(const VkPhysicalDeviceMemoryProperties& memory, VkPhysicalDeviceMemoryBudgetPropertiesEXT reported, std::uint64_t liveBytes, bool importsInUsage) {
+    if (!importsInUsage) return reported;
+    if (const auto heap = hostHeapIndex(memory)) reported.heapUsage[*heap] -= std::min<VkDeviceSize>(reported.heapUsage[*heap], liveBytes);
+    return reported;
 }
 
 std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling) {
@@ -5191,6 +5214,33 @@ void GuestBufferMemory::RecordEvicted(std::uint64_t address) {
     if (!WasEvicted(address)) evictedRanges.push_back(address);
 }
 
+namespace {
+
+void stampSpaceUse(HostImports& state, const GuestBufferMemory::AddressSpace& space) {
+    const auto stamp = ++state.useCounter;
+    static const bool stampOnce = std::getenv("APS5_NO_SPACE_STAMP_ONCE") == nullptr;
+    auto& spaceUse = state.spaceUses[space.serial];
+    if (!stampOnce || spaceUse == 0) {
+        for (const auto& region : space.base) {
+            if (region.direct == nullptr) continue;
+            region.direct->lastUse = stamp;
+            if (stampOnce) region.direct->spaceSerial = space.serial;
+        }
+    }
+    spaceUse = stamp;
+    if (state.spaceUses.size() > 64) {
+        const auto oldest = std::min_element(state.spaceUses.begin(), state.spaceUses.end(), [](const auto& left, const auto& right) { return left.second < right.second; });
+        for (auto& [base, entry] : state.imports) {
+            if (entry.spaceSerial != oldest->first) continue;
+            entry.lastUse = std::max(entry.lastUse, oldest->second);
+            entry.spaceSerial = 0;
+        }
+        state.spaceUses.erase(oldest);
+    }
+}
+
+}
+
 void GuestBufferMemory::AcquireRegistered() {
     struct BuildingScope {
         explicit BuildingScope(GuestBufferMemory* self) { buildingBufferMemory = self; }
@@ -5272,26 +5322,7 @@ void GuestBufferMemory::AcquireRegistered() {
             }
             importFloor = state.useCounter + 1;
             if (hit) {
-                const auto stamp = ++state.useCounter;
-                static const bool stampOnce = std::getenv("APS5_NO_SPACE_STAMP_ONCE") == nullptr;
-                auto& spaceUse = state.spaceUses[current->serial];
-                if (!stampOnce || spaceUse == 0) {
-                    for (const auto& region : current->base) {
-                        if (region.direct == nullptr) continue;
-                        region.direct->lastUse = stamp;
-                        if (stampOnce) region.direct->spaceSerial = current->serial;
-                    }
-                }
-                spaceUse = stamp;
-                if (state.spaceUses.size() > 64) {
-                    const auto oldest = std::min_element(state.spaceUses.begin(), state.spaceUses.end(), [](const auto& left, const auto& right) { return left.second < right.second; });
-                    for (auto& [base, entry] : state.imports) {
-                        if (entry.spaceSerial != oldest->first) continue;
-                        entry.lastUse = std::max(entry.lastUse, oldest->second);
-                        entry.spaceSerial = 0;
-                    }
-                    state.spaceUses.erase(oldest);
-                }
+                stampSpaceUse(state, *current);
             }
         }
         if (hit) {
@@ -5920,10 +5951,7 @@ bool GuestBufferMemory::RetakeSpace() {
         std::lock_guard lock(state.mutex);
         if (current->device != context.device || current->generation != generation || current->importsEpoch != state.epoch) return false;
         importFloor = state.useCounter + 1;
-        const auto stamp = ++state.useCounter;
-        for (const auto& region : current->base) {
-            if (region.direct != nullptr) region.direct->lastUse = stamp;
-        }
+        stampSpaceUse(state, *current);
     }
     spaces.hits.fetch_add(1, std::memory_order_relaxed);
     space = std::move(current);
@@ -6086,11 +6114,15 @@ std::uint64_t gpuCopyLimit() {
 
 bool changedCopyBacks(const Context& context) {
     static const bool disabled = std::getenv("APS5_NO_CHANGED_COPY_BACK") != nullptr;
-    return !disabled && context.bufferDeviceAddress;
+    return !disabled && (context.pushDescriptors || context.bufferDeviceAddress);
+}
+
+bool addressedChangedCopyBacks(const Context& context) {
+    return changedCopyBacks(context) && !context.pushDescriptors;
 }
 
 VkBufferUsageFlags gpuCopyUsage(const Context& context, bool addressable) {
-    return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (addressable || changedCopyBacks(context) ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
+    return VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (addressable || addressedChangedCopyBacks(context) ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
 }
 
 // Device-local staging. A written V# element bound in place makes the shader store into host
@@ -6991,6 +7023,98 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     }
 }
 
+namespace {
+
+bool carriedShadowsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_CARRIED_SHADOWS") == nullptr;
+    return enabled;
+}
+
+std::atomic<std::uint64_t> carriedShadowCopies{0};
+
+struct CarriedShadow {
+    std::shared_ptr<Buffer> buffer;
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t recorderId = 0;
+    std::uint64_t importSerial = 0;
+    std::uint64_t note = 0;
+    std::uint64_t generation = 0;
+};
+
+struct CarriedShadows {
+    static constexpr std::size_t MaxEntries = 256;
+    static constexpr std::uint64_t MaxBytes = std::uint64_t{512} << 20u;
+    AgcDriver::Mutex mutex;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, CarriedShadow> entries;
+    std::uint64_t bytes = 0;
+};
+
+CarriedShadows& Carried() {
+    static CarriedShadows shadows;
+    return shadows;
+}
+
+void clearCarriedShadows(VkDevice device) {
+    auto& shadows = Carried();
+    std::lock_guard lock(shadows.mutex);
+    for (auto entry = shadows.entries.begin(); entry != shadows.entries.end();) {
+        if (entry->second.device != device) {
+            ++entry;
+            continue;
+        }
+        shadows.bytes -= entry->first.second - entry->first.first;
+        entry = shadows.entries.erase(entry);
+    }
+}
+
+std::shared_ptr<Buffer> takeCarriedShadow(const Context& context, const Recorder& recorder, std::uint64_t begin, std::uint64_t end) {
+    if (!carriedShadowsEnabled()) return nullptr;
+    auto& shadows = Carried();
+    CarriedShadow shadow;
+    {
+        std::lock_guard lock(shadows.mutex);
+        const auto found = shadows.entries.find({begin, end});
+        if (found == shadows.entries.end()) return nullptr;
+        shadow = std::move(found->second);
+        shadows.bytes -= end - begin;
+        shadows.entries.erase(found);
+    }
+    const auto bytes = static_cast<std::size_t>(end - begin);
+    if (shadow.device != context.device || shadow.recorderId != recorder.Id() || shadow.note == 0 || recorder.NewestWriteNote(begin, bytes) != shadow.note) return nullptr;
+    if (shadow.importSerial == 0 || HostImportSerial(context, begin, bytes, false) != shadow.importSerial) return nullptr;
+    static_cast<void>(GuestMemory::CollectWrites(begin, bytes));
+    if (!GuestMemory::UnchangedSince(begin, bytes, shadow.generation)) return nullptr;
+    return shadow.buffer;
+}
+
+}
+
+std::uint64_t GuestBufferMemory::CarriedShadowCopies() {
+    return carriedShadowCopies.load(std::memory_order_relaxed);
+}
+
+void GuestBufferMemory::NoteCarriedShadows(const Recorder& recorder) const {
+    if (!carriedShadowsEnabled()) return;
+    auto& shadows = Carried();
+    std::uint64_t generation = 0;
+    for (const auto& region : regions) {
+        if (!region.gpuCopy || !region.deviceLocal || !region.copiedBack || region.buffer == nullptr || region.sparse || region.mirror != nullptr || region.bufferEnd != 0) continue;
+        const auto bytes = region.end - region.begin;
+        const auto serial = HostImportSerial(context, region.begin, static_cast<std::size_t>(bytes), false);
+        if (serial == 0) continue;
+        if (generation == 0) generation = GuestMemory::TrackerGeneration();
+        const auto note = recorder.NewestWriteNote(region.begin, static_cast<std::size_t>(bytes));
+        std::lock_guard lock(shadows.mutex);
+        auto [entry, inserted] = shadows.entries.try_emplace({region.begin, region.end});
+        if (inserted) shadows.bytes += bytes;
+        entry->second = {region.buffer, context.device, recorder.Id(), serial, note, generation};
+        if (shadows.entries.size() > CarriedShadows::MaxEntries || shadows.bytes > CarriedShadows::MaxBytes) {
+            shadows.entries.clear();
+            shadows.bytes = 0;
+        }
+    }
+}
+
 void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool addressable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static const bool capture = std::getenv("APS5_CAPTURE_GPU_COPIES") != nullptr;
@@ -7060,7 +7184,17 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
             }
         }
         recorder->Keep(region->buffer);
-        CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        std::shared_ptr<Buffer> carried;
+        if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(context, *recorder, region->begin, region->end);
+        if (carried != nullptr) {
+            carriedShadowCopies.fetch_add(1, std::memory_order_relaxed);
+            if (carried->Handle() != region->buffer->Handle()) {
+                CopyBuffer(context, commands, carried->Handle(), 0, region->buffer->Handle(), 0, bytes);
+                recorder->Keep(carried);
+            }
+        } else {
+            CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        }
         if (!expected.empty()) {
             auto readback = std::make_shared<Buffer>(context, expected.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             recorder->Keep(readback, readback->Bytes().size());
@@ -7095,12 +7229,13 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     std::vector<Region*> shadowed;
     for (auto* region : copies) {
         const auto bytes = static_cast<std::size_t>(region->end - region->begin);
-        if (!changedCopyBacks(context) || region->buffer->DeviceAddress() == 0 || !WritesOverlap(region->begin, bytes)) {
+        const bool addressed = addressedChangedCopyBacks(context);
+        if (!changedCopyBacks(context) || (addressed && region->buffer->DeviceAddress() == 0) || !WritesOverlap(region->begin, bytes)) {
             region->shadowCopy = nullptr;
             continue;
         }
-        if (region->shadowCopy == nullptr) region->shadowCopy = stagingBuffer(context, bytes, gpuCopyUsage(context, true));
-        if (region->shadowCopy == nullptr || region->shadowCopy->DeviceAddress() == 0) {
+        if (region->shadowCopy == nullptr) region->shadowCopy = stagingBuffer(context, bytes, gpuCopyUsage(context, addressed));
+        if (region->shadowCopy == nullptr || (addressed && region->shadowCopy->DeviceAddress() == 0)) {
             region->shadowCopy = nullptr;
             continue;
         }
@@ -7183,16 +7318,22 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             // would have stored there itself had the range been bindable.
             auto whole = from;
             auto wholeEnd = to;
-            if (region.shadowCopy != nullptr && region.copySourceAddress != 0 && region.begin % 4u == 0 && region.copySourceBase % 4u == 0) {
+            const bool addressed = addressedChangedCopyBacks(context);
+            if (region.shadowCopy != nullptr && (addressed ? region.copySourceAddress != 0 : region.copySource != VK_NULL_HANDLE) && region.begin % 4u == 0 && region.copySourceBase % 4u == 0) {
                 const auto alignedFrom = (from + 3u) & ~std::uint64_t{3};
                 const auto alignedTo = to & ~std::uint64_t{3};
                 static const bool traceDivergence = std::getenv("APS5_TRACE_COPY_BACK") != nullptr;
                 std::shared_ptr<Buffer> counter;
                 if (traceDivergence && alignedFrom < alignedTo) {
-                    counter = std::make_shared<Buffer>(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                    counter = std::make_shared<Buffer>(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (addressed ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
                     std::memset(counter->Bytes().data(), 0, 16);
                 }
-                if (alignedFrom < alignedTo && recorder.RecordChangedCopy(commands, region.buffer->DeviceAddress() + (alignedFrom - region.begin), region.shadowCopy->DeviceAddress() + (alignedFrom - region.begin), region.copySourceAddress + (alignedFrom - region.copySourceBase), static_cast<std::uint32_t>((alignedTo - alignedFrom) / 4u), counter != nullptr ? counter->DeviceAddress() : 0)) {
+                const auto dwords = static_cast<std::uint32_t>((alignedTo - alignedFrom) / 4u);
+                const auto recordChanged = [&] {
+                    if (addressed) return recorder.RecordChangedCopy(commands, region.buffer->DeviceAddress() + (alignedFrom - region.begin), region.shadowCopy->DeviceAddress() + (alignedFrom - region.begin), region.copySourceAddress + (alignedFrom - region.copySourceBase), dwords, counter != nullptr ? counter->DeviceAddress() : 0);
+                    return recorder.RecordBoundChangedCopy(commands, {region.buffer->Handle(), alignedFrom - region.begin}, {region.shadowCopy->Handle(), alignedFrom - region.begin}, {region.copySource, alignedFrom - region.copySourceBase}, dwords, counter != nullptr ? counter->Handle() : VK_NULL_HANDLE);
+                };
+                if (alignedFrom < alignedTo && recordChanged()) {
                     if (counter != nullptr) {
                         recorder.Keep(counter);
                         recorder.OnComplete([counter, alignedFrom, alignedTo, regionBegin = region.begin, regionEnd = region.end] {
@@ -7882,6 +8023,10 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
     if (state.device != proof.device) return false;
     if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
     return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
+}
+
+std::uint64_t RetiredImportSerial() {
+    return retiredImports.load(std::memory_order_acquire);
 }
 
 void SetDeviceLocalFullForTests(bool full) {

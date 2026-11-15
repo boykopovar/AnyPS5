@@ -8,6 +8,8 @@
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "Optimization/SrtWalker.hpp"
@@ -1716,6 +1718,7 @@ void verifyTypeZeroImageMaterialization() {
     static bool knownRecord0 = false;
     static std::array<std::uint32_t, 4> pendingV0{};
 
+    static std::uint64_t phase3WaitLimit = ~std::uint64_t{0};
     AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
         if (phase == 1u && !flushed && address < syncEnd && syncBegin < address + bytes) {
             flushed = true;
@@ -1726,7 +1729,7 @@ void verifyTypeZeroImageMaterialization() {
             if (waits == 0u && address < record1Addr + 32u && record1Addr + 12u < address + bytes) {
                 ++waits;
                 std::memcpy(reinterpret_cast<void*>(record1Addr), pendingT1.data(), sizeof(pendingT1));
-            } else if ((waits == 1u || (phase == 3u && waits >= 1u)) && address < record2Addr + 32u && record2Addr + 12u < address + bytes) {
+            } else if ((waits == 1u || (phase == 3u && waits >= 1u && waits < phase3WaitLimit)) && address < record2Addr + 32u && record2Addr + 12u < address + bytes) {
                 ++waits;
                 if (phase != 6u) std::memcpy(reinterpret_cast<void*>(record0Addr), pendingT0.data(), sizeof(pendingT0));
                 std::memcpy(reinterpret_cast<void*>(record2Addr), pendingT2.data(), sizeof(pendingT2));
@@ -1984,7 +1987,7 @@ void verifyTypeZeroImageMaterialization() {
         AgcDriver::ShaderMemory twoWaitMemory({}, multiPending, nullptr, hookWaits);
         const auto twoWaitCapture = twoWaitMemory.Capture(twoWaitReq);
         const auto& col = twoWaitCapture->snapshot.tables.tables.at(0);
-        require(waits == 2u && forcedHookCalls == 15u && (!gateSecondWaitOnSrtRoot || srtRootReads == 5u) && col.keys == 3u,
+        require(waits == 2u && forcedHookCalls == 15u && (!gateSecondWaitOnSrtRoot || srtRootReads == 3u) && col.keys == 3u,
                 "multi-wait readWords: forced third attempt did not execute or nested forceSync scope was not preserved");
         require(col.words.at(col.codes.at(0)).dwords == newT && col.words.at(col.codes.at(1)).dwords == thirdT && col.words.at(col.codes.at(2)).dwords == newT,
                 "multi-wait readWords: retry pass accepted an unstable epoch after a second invalidation");
@@ -2021,6 +2024,28 @@ void verifyTypeZeroImageMaterialization() {
             refused = true;
         }
         require(refused && waits >= 3u, "unstable epoch refusal: capture succeeded despite invalidation on every retry attempt");
+        for (const std::uint64_t limit : {1u, 2u, 4u, 8u}) {
+            std::fill(srt.begin(), srt.end(), 0u);
+            std::copy(oldT.begin(), oldT.end(), srt.begin());
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + stepWords);
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + 2u * stepWords);
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + 256u);
+            std::copy(outputV.begin(), outputV.end(), srt.begin() + 256u + 16u);
+            srt[256u + 20u] = 1u;
+            fillWholeSrt(srt.data() + 512u, srt.data(), stride, 3u);
+            phase = 3u;
+            phase3WaitLimit = limit;
+            waits = 0u;
+            forcedHookCalls = 0u;
+            srtRootReads = 0u;
+            lastPendingAddr = 0u;
+            flushed = false;
+            AgcDriver::ShaderMemory settlingMemory({}, multiPending, nullptr, hookWaits);
+            const auto settled = settlingMemory.Capture(twoWaitReq);
+            require(settled->snapshot.tables.tables.at(0).keys == 3u,
+                    "settling epoch: a forced pass whose waits ended was disturbed by a Sync read that did not wait and left its raw words unchanged");
+        }
+        phase3WaitLimit = ~std::uint64_t{0};
         phase = 5u;
         waits = 0u;
         forcedHookCalls = 0u;
@@ -2336,34 +2361,56 @@ void verifyTypeZeroImageMaterialization() {
             std::uint32_t settledFill = 0u;
             std::uint64_t epoch = 0u;
             std::uint32_t fillReads = 0u;
+            std::uint64_t generation = 0u;
+            std::uint32_t snapshotChecks = 0u;
+            bool backingMoved = false;
+            bool cached = false;
+            bool throwOnMove = false;
         };
-        FillMemory fillState;
-        fillState.words = outputV;
-        fillState.fill = 0x11111111u;
-        fillState.settledFill = 0x3f800000u;
-        SrtRuntime fillRuntime{retryUserData};
-        fillRuntime.userContext = &fillState;
-        fillRuntime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
-            auto& self = *static_cast<FillMemory*>(ctx);
-            if (address == RetryBase + sizeof(self.words)) {
-                ++self.fillReads;
-                *value = self.fill;
-                if (self.fill != self.settledFill) {
-                    self.fill = self.settledFill;
-                    ++self.epoch;
+        for (const std::uint32_t mode : {0u, 2u, 1u}) {
+            FillMemory fillState;
+            fillState.backingMoved = mode != 0u;
+            fillState.throwOnMove = mode == 2u;
+            fillState.words = outputV;
+            fillState.fill = 0x11111111u;
+            fillState.settledFill = 0x3f800000u;
+            SrtRuntime fillRuntime{retryUserData};
+            fillRuntime.userContext = &fillState;
+            fillRuntime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
+                auto& self = *static_cast<FillMemory*>(ctx);
+                if (address == RetryBase + sizeof(self.words)) {
+                    ++self.fillReads;
+                    *value = self.fill;
+                    if (self.fill != self.settledFill && !self.cached) {
+                        if (!self.backingMoved) self.fill = self.settledFill;
+                        ++self.epoch;
+                        if (self.backingMoved) ++self.generation;
+                        self.cached = true;
+                        if (self.throwOnMove) throw std::runtime_error("uniform fill page remapped during a read");
+                    }
+                    return true;
                 }
+                if (address < RetryBase || address >= RetryBase + sizeof(self.words)) return false;
+                *value = self.words[(address - RetryBase) / sizeof(std::uint32_t)];
                 return true;
-            }
-            if (address < RetryBase || address >= RetryBase + sizeof(self.words)) return false;
-            *value = self.words[(address - RetryBase) / sizeof(std::uint32_t)];
-            return true;
-        };
-        fillRuntime.readSpecializationMemory = fillRuntime.readMemory;
-        fillRuntime.descriptorScope = +[](void* ctx, std::size_t) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->epoch; };
-        ResourceSnapshot fillSnapshot;
-        ResourceMaterializer{}.Materialize(fillPlan, fillRuntime, fillSnapshot);
-        require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
-                "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
+            };
+            fillRuntime.readSpecializationMemory = fillRuntime.readMemory;
+            fillRuntime.descriptorScope = +[](void* ctx, std::size_t) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->epoch; };
+            fillRuntime.imageViewGeneration = +[](void* ctx) -> std::uint64_t { return static_cast<FillMemory*>(ctx)->generation; };
+            fillRuntime.snapshotCurrent = +[](void* ctx, std::span<const RegisteredImageView>) {
+                auto& self = *static_cast<FillMemory*>(ctx);
+                ++self.snapshotChecks;
+                self.fill = self.settledFill;
+                return false;
+            };
+            ResourceSnapshot fillSnapshot;
+            ResourceMaterializer{}.Materialize(fillPlan, fillRuntime, fillSnapshot);
+            require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
+                    fillState.throwOnMove ? "uniform fill remap after read failure: a retry kept the cached value from before the remap"
+                                               : "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
+            require(!fillState.backingMoved || fillState.snapshotChecks == 1u,
+                    "uniform fill remap: descriptor scope retry skipped the snapshot backing check and retained cached words");
+        }
     }
 }
 
@@ -5163,6 +5210,10 @@ void verifyImageTables() {
     materials[2][1] = 2u;
     const auto nulled = CompileTable(request);
     require(TableCodes(TableMap(*nulled.result), 0).at(2) == Abi::NullCode, "image tables: a null entry's key was mapped to a record");
+    heap[2].fill(0xffffffffu);
+    const auto unbound = CompileTable(request);
+    require(TableCodes(TableMap(*unbound.result), 0).at(2) == Abi::NullCode && unbound.result->imageTableFaults == 0u, "image tables: an entry filled with ones was mapped to a record or expects a fault");
+    heap[2] = {};
     materials[2][1] = 3u;
 
     std::vector<std::uint32_t> latchCode(TableWholeCode.begin(), TableWholeCode.begin() + 12);
@@ -6966,7 +7017,16 @@ void verifyDescriptorPhis() {
     require(countOps(Recompile(twoLane, *twoLaneCapture)->spirv, OpImageSampleExplicitLod) == 4u, "descriptor Phi: the specialized two-lane SPIR-V does not sample once per edge and half");
 
     auto dynamic = makeRequest(dynamicCode);
-    expectFailure([&] { static_cast<void>(GetResourcePlan(dynamic)); }, "GetSamplerResource dword 0 is not a valid runtime value", "descriptor Phi: an edge without an SRT slot was accepted");
+    const auto dynamicPlan = GetResourcePlan(dynamic);
+    require(dynamicPlan->info.usesFaultBuffer, "descriptor Phi: an unsupported sampler arm was accepted without a runtime fault buffer");
+    AgcDriver::ShaderMemory dynamicMemory({});
+    const auto dynamicCapture = dynamicMemory.Capture(dynamic);
+    const auto dynamicRegions = dynamicMemory.Regions();
+    dynamic.context.memory = dynamicRegions;
+    const auto dynamicCompiled = Recompile(dynamic, *dynamicCapture);
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(dynamicCompiled->spirv, dynamic.target.vulkanVersion, dynamic.target.spirvVersion));
+#endif
 
     const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
     const auto loopCapture = compile(loopCode, 2u, 1u);
@@ -7505,6 +7565,7 @@ void verifyFusedExactArithmetic() {
     struct Counts {
         std::uint32_t exactArithmetic = 0;
         std::uint32_t fmas = 0;
+        std::uint32_t looseFmas = 0;
     };
     const auto count = [](std::span<const std::uint32_t> spirv) {
         std::set<std::uint32_t> exact;
@@ -7515,7 +7576,10 @@ void verifyFusedExactArithmetic() {
             const auto words = spirv[cursor] >> 16u;
             if (op == spv::OpDecorate && words == 3u && spirv[cursor + 2] == spv::DecorationNoContraction) exact.insert(spirv[cursor + 1]);
             if (op == spv::OpFAdd || op == spv::OpFSub || op == spv::OpFMul) arithmetic.push_back(spirv[cursor + 2]);
-            if (op == spv::OpExtInst && words >= 5u && spirv[cursor + 4] == 50u) ++result.fmas;
+            if (op == spv::OpExtInst && words >= 5u && spirv[cursor + 4] == 50u) {
+                ++result.fmas;
+                if (!exact.contains(spirv[cursor + 2])) ++result.looseFmas;
+            }
         }
         result.exactArithmetic = static_cast<std::uint32_t>(std::count_if(arithmetic.begin(), arithmetic.end(), [&](std::uint32_t id) { return exact.contains(id); }));
         return result;
@@ -7524,6 +7588,7 @@ void verifyFusedExactArithmetic() {
     const auto fused = count(pixel(true));
     require(plain.exactArithmetic >= 3u, "fused exact arithmetic: the f32 multiply, add and subtract were not exact operations without the flag");
     require(fused.exactArithmetic == 0u && fused.fmas >= plain.fmas + 3u, "fused exact arithmetic: the f32 multiply, add and subtract did not become fused multiply-adds with the flag");
+    require(plain.looseFmas == 0u && fused.looseFmas == 0u, "fused exact arithmetic: a fused multiply-add is not marked NoContraction, so a driver may rewrite it as an inexact multiply or add and reassociate it");
 }
 
 void verifyHalfWaveReduction() {
@@ -11954,6 +12019,362 @@ void verifyFmaskImageMode() {
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK requires a direct 32-bit image load", "an incompatible FMASK operation was accepted");
 }
 
+class GcnGuestShaderScope {
+public:
+    GcnGuestShaderScope() { ShaderRecompiler::SetGcnGuestShaders(true); }
+    ~GcnGuestShaderScope() { ShaderRecompiler::SetGcnGuestShaders(false); }
+};
+
+constexpr std::array<std::uint32_t, 8> GcnVolumeDescriptor{0x00001000u, 0x00a00000u, 0x0003c00fu, 0xa0800facu, 0x0001e00fu, 0u, 0u, 0u};
+constexpr std::uint32_t GcnType1D = 8u;
+constexpr std::uint32_t GcnType2D = 9u;
+constexpr std::uint32_t GcnType3D = 10u;
+constexpr std::uint32_t GcnTypeCube = 11u;
+constexpr std::uint32_t GcnType1DArray = 12u;
+constexpr std::uint32_t GcnType2DArray = 13u;
+
+std::array<std::uint32_t, 8> gcnDescriptor(std::uint32_t type, std::uint32_t slices = 6u) {
+    auto words = GcnVolumeDescriptor;
+    words[3] = (words[3] & 0x0fffffffu) | (type << 28u);
+    if (type == GcnTypeCube || type == GcnType1DArray || type == GcnType2DArray) words[5] = (slices - 1u) << 13u;
+    return words;
+}
+
+ShaderRecompiler::DescriptorValue gcnDescriptorValue(const std::array<std::uint32_t, 8>& words) {
+    ShaderRecompiler::DescriptorValue value{};
+    const auto converted = ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(words));
+    std::copy(converted.begin(), converted.end(), value.dwords.begin());
+    value.dwordCount = 8u;
+    return value;
+}
+
+void verifyGcnRuntimeImageDimensions() {
+    using namespace ShaderRecompiler;
+    const auto offers = [](const std::vector<ImageResource>& modes, RdnaImageDimension dimension, bool cube) {
+        return std::ranges::any_of(modes, [&](const ImageResource& mode) {
+            return mode.numericClass == IrTextureNumericClass::Float && mode.dimension == dimension && mode.cube == cube && !mode.depthBits && mode.conversionFormat == IrBufferFormat::Invalid && (mode.emulatedCompare & EmulatedCompare::Enabled) == 0u;
+        });
+    };
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(image), RdnaImageDimension::Dim1DArray, false), "GCN dimensions: a PS5 2D image offered a 1D-array mode");
+    GcnGuestShaderScope gcn;
+    auto declaredArray = image;
+    declaredArray.dimension = RdnaImageDimension::Dim2DArray;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    for (const auto dimension : {RdnaImageDimension::Dim1D, RdnaImageDimension::Dim2D, RdnaImageDimension::Dim3D}) {
+        require(offers(modes, dimension, false), "GCN dimensions: an image without DA does not offer every T# dimension at run time");
+    }
+    require(offers(modes, RdnaImageDimension::Dim2DArray, true), "GCN dimensions: an image without DA does not offer a cube at run time");
+    require(!offers(modes, RdnaImageDimension::Dim1DArray, false) && !offers(modes, RdnaImageDimension::Dim2DArray, false), "GCN dimensions: an image without DA offered an array mode, though no array index is sent");
+    const auto arrayModes = ResourceMaterializer::RuntimeImageModes(declaredArray);
+    for (const auto dimension : {RdnaImageDimension::Dim1D, RdnaImageDimension::Dim1DArray, RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray}) {
+        require(offers(arrayModes, dimension, false), "GCN dimensions: an image with DA does not offer every T# dimension at run time");
+    }
+    require(offers(arrayModes, RdnaImageDimension::Dim2DArray, true), "GCN dimensions: an image with DA does not offer a cube at run time");
+    require(!offers(arrayModes, RdnaImageDimension::Dim3D, false), "GCN dimensions: an image with DA offered a volume mode");
+    const auto selected = [](const ImageResource& resource, const std::array<std::uint32_t, 8>& words) {
+        const auto resourceModes = ResourceMaterializer::RuntimeImageModes(resource);
+        return resourceModes[ResourceMaterializer::RuntimeImageMode(resource, gcnDescriptorValue(words), resourceModes)];
+    };
+    struct Selection {
+        const ImageResource* resource;
+        std::uint32_t type;
+        RdnaImageDimension dimension;
+        bool cube;
+        const char* what;
+    };
+    const std::array selections{
+        Selection{&image, GcnType1D, RdnaImageDimension::Dim1D, false, "GCN dimensions: a 1D T# without DA did not select a line mode"},
+        Selection{&image, GcnType2D, RdnaImageDimension::Dim2D, false, "GCN dimensions: a 2D T# without DA did not select a plane mode"},
+        Selection{&image, GcnType3D, RdnaImageDimension::Dim3D, false, "GCN dimensions: a 3D T# without DA did not select a volume mode"},
+        Selection{&image, GcnType1DArray, RdnaImageDimension::Dim1D, false, "GCN dimensions: a 1D-array T# without DA did not select a line mode at slice 0"},
+        Selection{&image, GcnType2DArray, RdnaImageDimension::Dim2D, false, "GCN dimensions: a 2D-array T# without DA did not select a plane mode at slice 0"},
+        Selection{&image, GcnTypeCube, RdnaImageDimension::Dim2DArray, true, "GCN dimensions: a cube T# without DA did not select a cube mode"},
+        Selection{&declaredArray, GcnType1D, RdnaImageDimension::Dim1D, false, "GCN dimensions: a 1D T# with DA did not select a line mode"},
+        Selection{&declaredArray, GcnType2D, RdnaImageDimension::Dim2D, false, "GCN dimensions: a 2D T# with DA did not select a plane mode"},
+        Selection{&declaredArray, GcnType1DArray, RdnaImageDimension::Dim1DArray, false, "GCN dimensions: a 1D-array T# with DA did not select a line-array mode"},
+        Selection{&declaredArray, GcnType2DArray, RdnaImageDimension::Dim2DArray, false, "GCN dimensions: a 2D-array T# with DA did not select an array mode"},
+        Selection{&declaredArray, GcnTypeCube, RdnaImageDimension::Dim2DArray, true, "GCN dimensions: a cube T# with DA did not select a cube mode"},
+    };
+    for (const auto& selection : selections) {
+        const auto mode = selected(*selection.resource, gcnDescriptor(selection.type));
+        require(mode.dimension == selection.dimension && mode.cube == selection.cube, selection.what);
+    }
+    auto gathered = image;
+    gathered.gathered = true;
+    const auto gatherModes = ResourceMaterializer::RuntimeImageModes(gathered);
+    require(!offers(gatherModes, RdnaImageDimension::Dim1D, false) && !offers(gatherModes, RdnaImageDimension::Dim1DArray, false) && !offers(gatherModes, RdnaImageDimension::Dim3D, false), "GCN dimensions: a gathered image offered a dimension SPIR-V cannot gather");
+    require(offers(gatherModes, RdnaImageDimension::Dim2DArray, true), "GCN dimensions: a gathered image does not offer a cube");
+    expectFailure([&] { static_cast<void>(selected(gathered, gcnDescriptor(GcnType3D))); }, "incompatible with the static runtime image interface", "GCN dimensions: a gather through a 3D T# was accepted");
+    auto compared = image;
+    compared.depthCompare = true;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(compared), RdnaImageDimension::Dim3D, false), "GCN dimensions: a depth comparison offered a volume mode");
+    auto stored = image;
+    stored.resourceClass = ImageResourceClass::Storage;
+    stored.written = true;
+    const auto cubeStore = selected(stored, gcnDescriptor(GcnTypeCube));
+    require(cubeStore.dimension == RdnaImageDimension::Dim2DArray && cubeStore.cube, "GCN dimensions: a store through a cube T# did not select a cube mode");
+    expectFailure([&] { static_cast<void>(selected(stored, gcnDescriptor(GcnTypeCube, 4u))); }, "a cube descriptor with fewer than six slices", "GCN dimensions: a store through a short cube T# was accepted");
+    const auto shortCube = selected(image, gcnDescriptor(GcnTypeCube, 4u));
+    require(shortCube.dimension == RdnaImageDimension::Dim2DArray && shortCube.cube, "GCN dimensions: a sample through a short cube T# did not select a cube mode");
+    auto packedFloat = gcnDescriptor(GcnType2D);
+    packedFloat[1] = (7u << 20u) | (7u << 26u);
+    packedFloat[3] = (packedFloat[3] & 0xfffff000u) | 0x3acu;
+    require(selected(stored, packedFloat).dimension == RdnaImageDimension::Dim2D, "GCN dimensions: a store through an 11_11_10 float 2D T# did not select a plane mode");
+    packedFloat[3] = (packedFloat[3] & 0x0fffffffu) | (GcnType3D << 28u);
+    expectFailure([&] { static_cast<void>(selected(stored, packedFloat)); }, "incompatible with the static runtime image interface", "GCN dimensions: a store through an 11_11_10 float 3D T# was accepted, though converted formats keep the inferred dimension");
+}
+
+std::vector<std::uint32_t> gcnImageProgram(std::span<const std::uint32_t, 4> addressSources, std::uint32_t word0, std::uint32_t word1) {
+    return {
+        0xc0c40100u,
+        0xc0880108u,
+        0xc08a0110u,
+        0xbf8c007fu,
+        0x7e000200u | addressSources[0],
+        0x7e020200u | addressSources[1],
+        0x7e040200u | addressSources[2],
+        0x7e060200u | addressSources[3],
+        0x7e080280u,
+        0x7e0a0280u,
+        0x7e0c0280u,
+        0x7e0e0280u,
+        word0, word1,
+        0xbf8c0f70u,
+        0xe0780000u, 0x80050400u,
+        0xbf810000u,
+    };
+}
+
+ShaderRecompiler::RecompileRequest gcnImageRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, std::uint64_t address) {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 7> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilitySampled1D, spv::CapabilityImage1D, spv::CapabilityImageQuery};
+    static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, address, code, 0, {}};
+    request.context.waveSize = 64u;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 64;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    return request;
+}
+
+class GcnImageModule {
+public:
+    GcnImageModule(const std::vector<std::uint32_t>& code, const std::array<std::uint32_t, 8>& descriptor) {
+        using namespace ShaderRecompiler;
+        static std::uint64_t nextAddress = 0x24000u;
+        std::array<std::uint32_t, 4> output{};
+        const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+        std::array<std::uint32_t, 20> srt{};
+        std::copy(descriptor.begin(), descriptor.end(), srt.begin());
+        const std::array<std::uint32_t, 4> sampler{0u, 0x00fff000u, 0x05500000u, 0u};
+        std::copy(sampler.begin(), sampler.end(), srt.begin() + 8);
+        const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0x77facu};
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+        const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+        auto request = gcnImageRequest(code, userData, nextAddress += 0x1000u);
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        const auto memoryRegions = memory.Regions();
+        request.context.memory = memoryRegions;
+        const auto compiled = Recompile(request, *capture);
+        const auto words = compiled->spirv.Words();
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto length = words[cursor] >> 16u;
+            const auto op = words[cursor] & 0xffffu;
+            require(length != 0 && length <= words.size() - cursor, "GCN image module: truncated SPIR-V instruction");
+            if (op == spv::OpTypeImage) images[words[cursor + 1]] = {words[cursor + 3], words[cursor + 5]};
+            if (op == spv::OpTypeSampledImage) sampledImages[words[cursor + 1]] = words[cursor + 2];
+            if (op == spv::OpImageSampleExplicitLod) samples.push_back({words[cursor + 3], words[cursor + 4], words[cursor + 6]});
+            if (op == spv::OpImageWrite) writes.push_back({words[cursor + 1], words[cursor + 2]});
+            if (op == spv::OpImageQuerySizeLod) querySize = words[cursor + 2];
+            if (op == spv::OpIEqual) comparisons.push_back({words[cursor + 3], words[cursor + 4]});
+            if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
+            if (op == spv::OpConstant && length == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (op == spv::OpBitcast || op == spv::OpFSub || op == spv::OpISub || op == spv::OpConvertUToF || op == spv::OpConvertFToU) sources[words[cursor + 2]] = words[cursor + 3];
+            for (std::size_t operand = 3; (op == spv::OpCompositeConstruct || op == spv::OpConstantComposite) && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
+            if (length > 2u && op != spv::OpTypeVector && op != spv::OpTypeImage && op != spv::OpTypeSampledImage && op != spv::OpStore && op != spv::OpDecorate && op != spv::OpMemberDecorate && op != spv::OpName && op != spv::OpImageWrite) resultTypes[words[cursor + 2]] = words[cursor + 1];
+            cursor += length;
+        }
+    }
+
+    struct Sample {
+        std::uint32_t sampledImage;
+        std::uint32_t coordinate;
+        std::uint32_t lod;
+    };
+    struct Write {
+        std::uint32_t image;
+        std::uint32_t coordinate;
+    };
+
+    std::uint32_t Root(std::uint32_t id) const {
+        while (true) {
+            if (const auto constant = constants.find(id); constant != constants.end()) return constant->second;
+            const auto source = sources.find(id);
+            if (source == sources.end()) return 0xffffffffu;
+            id = source->second;
+        }
+    }
+
+    std::vector<std::uint32_t> Components(std::uint32_t id) const {
+        const auto composite = composites.find(id);
+        if (composite == composites.end()) return {Root(id)};
+        std::vector<std::uint32_t> roots;
+        for (const auto part : composite->second) roots.push_back(Root(part));
+        return roots;
+    }
+
+    std::pair<std::uint32_t, std::uint32_t> SampledImageKind(const Sample& sample) const { return images.at(sampledImages.at(resultTypes.at(sample.sampledImage))); }
+    std::pair<std::uint32_t, std::uint32_t> WrittenImageKind(const Write& write) const { return images.at(resultTypes.at(write.image)); }
+
+    bool ComparesConstants(std::uint32_t left, std::uint32_t right) const {
+        return std::ranges::any_of(comparisons, [&](const std::pair<std::uint32_t, std::uint32_t>& pair) { return Root(pair.first) == left && Root(pair.second) == right; });
+    }
+
+    bool QueryReportsDepth() const {
+        return std::ranges::any_of(composites, [&](const auto& composite) {
+            if (composite.second.size() != 4u) return false;
+            const auto extract = extracted.find(composite.second[2]);
+            return extract != extracted.end() && extract->second == querySize;
+        });
+    }
+
+    std::vector<Sample> samples;
+    std::vector<Write> writes;
+
+private:
+    std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> images;
+    std::map<std::uint32_t, std::uint32_t> sampledImages;
+    std::map<std::uint32_t, std::uint32_t> resultTypes;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::map<std::uint32_t, std::uint32_t> sources;
+    std::map<std::uint32_t, std::uint32_t> extracted;
+    std::map<std::uint32_t, std::vector<std::uint32_t>> composites;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> comparisons;
+    std::uint32_t querySize = 0u;
+};
+
+struct GcnAddressCase {
+    std::uint32_t type;
+    bool declaredArray;
+    std::uint32_t dim;
+    bool arrayed;
+    std::vector<std::uint32_t> coordinates;
+    std::uint32_t lod;
+    const char* what;
+};
+
+void verifyGcnSampleAddresses() {
+    using namespace ShaderRecompiler;
+    GcnGuestShaderScope gcn;
+    constexpr std::array<std::uint32_t, 4> sources{0xf0u, 0xf2u, 0xf4u, 0xf6u};
+    constexpr std::uint32_t v0 = 0x3f000000u;
+    constexpr std::uint32_t v1 = 0x3f800000u;
+    constexpr std::uint32_t v2 = 0x40000000u;
+    constexpr std::uint32_t v3 = 0x40800000u;
+    const std::vector<GcnAddressCase> cases{
+        {GcnType1D, false, spv::Dim1D, false, {v0}, v1, "GCN sample address: a 1D T# without DA"},
+        {GcnType2D, false, spv::Dim2D, false, {v0, v1}, v2, "GCN sample address: a 2D T# without DA"},
+        {GcnType3D, false, spv::Dim3D, false, {v0, v1, v2}, v3, "GCN sample address: a 3D T# without DA"},
+        {GcnType1DArray, false, spv::Dim1D, false, {v0}, v1, "GCN sample address: a 1D-array T# without DA"},
+        {GcnType2DArray, false, spv::Dim2D, false, {v0, v1}, v2, "GCN sample address: a 2D-array T# without DA"},
+        {GcnTypeCube, false, spv::Dim2D, true, {v0, v1, v2}, v3, "GCN sample address: a cube T# without DA"},
+        {GcnType1D, true, spv::Dim1D, false, {v0}, v2, "GCN sample address: a 1D T# with DA"},
+        {GcnType2D, true, spv::Dim2D, false, {v0, v1}, v3, "GCN sample address: a 2D T# with DA"},
+        {GcnType1DArray, true, spv::Dim1D, true, {v0, v1}, v2, "GCN sample address: a 1D-array T# with DA"},
+        {GcnType2DArray, true, spv::Dim2D, true, {v0, v1, v2}, v3, "GCN sample address: a 2D-array T# with DA"},
+        {GcnTypeCube, true, spv::Dim2D, true, {v0, v1, v2}, v3, "GCN sample address: a cube T# with DA"},
+    };
+    for (const auto& addressCase : cases) {
+        const auto code = gcnImageProgram(sources, 0xf0900f00u | (addressCase.declaredArray ? 0x4000u : 0u), 0x00820400u);
+        const GcnImageModule module(code, gcnDescriptor(addressCase.type));
+        require(!module.samples.empty(), addressCase.what);
+        for (const auto& sample : module.samples) {
+            const auto [dim, arrayed] = module.SampledImageKind(sample);
+            require(dim == addressCase.dim && (arrayed != 0u) == addressCase.arrayed, addressCase.what);
+            require(module.Components(sample.coordinate) == addressCase.coordinates, addressCase.what);
+            require(module.Root(sample.lod) == addressCase.lod, addressCase.what);
+        }
+    }
+}
+
+void verifyGcnStoreAddresses() {
+    using namespace ShaderRecompiler;
+    GcnGuestShaderScope gcn;
+    constexpr std::array<std::uint32_t, 4> sources{0x81u, 0x82u, 0x83u, 0x84u};
+    const std::vector<GcnAddressCase> cases{
+        {GcnType1D, false, spv::Dim1D, false, {1u}, 0u, "GCN store address: a 1D T# without DA"},
+        {GcnType2D, false, spv::Dim2D, false, {1u, 2u}, 0u, "GCN store address: a 2D T# without DA"},
+        {GcnType3D, false, spv::Dim3D, false, {1u, 2u, 3u}, 0u, "GCN store address: a 3D T# without DA"},
+        {GcnType1DArray, false, spv::Dim1D, false, {1u}, 0u, "GCN store address: a 1D-array T# without DA"},
+        {GcnType2DArray, false, spv::Dim2D, false, {1u, 2u}, 0u, "GCN store address: a 2D-array T# without DA"},
+        {GcnTypeCube, false, spv::Dim2D, true, {1u, 2u, 3u}, 0u, "GCN store address: a cube T# without DA"},
+        {GcnType1D, true, spv::Dim1D, false, {1u}, 0u, "GCN store address: a 1D T# with DA"},
+        {GcnType2D, true, spv::Dim2D, false, {1u, 2u}, 0u, "GCN store address: a 2D T# with DA"},
+        {GcnType1DArray, true, spv::Dim1D, true, {1u, 2u}, 0u, "GCN store address: a 1D-array T# with DA"},
+        {GcnType2DArray, true, spv::Dim2D, true, {1u, 2u, 3u}, 0u, "GCN store address: a 2D-array T# with DA"},
+        {GcnTypeCube, true, spv::Dim2D, true, {1u, 2u, 3u}, 0u, "GCN store address: a cube T# with DA"},
+    };
+    for (const auto& addressCase : cases) {
+        const auto code = gcnImageProgram(sources, 0xf0201f00u | (addressCase.declaredArray ? 0x4000u : 0u), 0x00020400u);
+        const GcnImageModule module(code, gcnDescriptor(addressCase.type));
+        require(!module.writes.empty(), addressCase.what);
+        for (const auto& write : module.writes) {
+            const auto [dim, arrayed] = module.WrittenImageKind(write);
+            require(dim == addressCase.dim && (arrayed != 0u) == addressCase.arrayed, addressCase.what);
+            require(module.Components(write.coordinate) == addressCase.coordinates, addressCase.what);
+        }
+        require(!module.ComparesConstants(3u, 0u), "GCN store address: a store is skipped by a nonzero array index, which a non-indexed T# ignores");
+    }
+}
+
+void verifyGcnDimensionQueries() {
+    using namespace ShaderRecompiler;
+    GcnGuestShaderScope gcn;
+    constexpr std::array<std::uint32_t, 4> sources{0x80u, 0x80u, 0x80u, 0x80u};
+    const auto query = [&](std::uint32_t type, bool declaredArray) {
+        const auto code = gcnImageProgram(sources, 0xf0380f00u | (declaredArray ? 0x4000u : 0u), 0x00020400u);
+        return GcnImageModule(code, gcnDescriptor(type));
+    };
+    require(query(GcnTypeCube, false).QueryReportsDepth(), "GCN resinfo: a cube T# without DA does not report six faces per slice as depth");
+    require(query(GcnTypeCube, true).QueryReportsDepth(), "GCN resinfo: a cube T# with DA does not report six faces per slice as depth");
+    require(query(GcnType3D, false).QueryReportsDepth(), "GCN resinfo: a 3D T# does not report its depth");
+    require(!query(GcnType2D, false).QueryReportsDepth(), "GCN resinfo: a 2D T# reported a depth");
+}
+
+void verifyGcnSampleThroughVolume() {
+    using namespace ShaderRecompiler;
+    GcnGuestShaderScope gcn;
+    constexpr std::array<std::uint32_t, 4> sources{0xf0u, 0xf0u, 0xf2u, 0xf0u};
+    const auto code = gcnImageProgram(sources, 0xf09c0f00u, 0x00820400u);
+    const std::array<std::uint32_t, 2> userData{};
+    const auto plan = GetResourcePlan(gcnImageRequest(code, userData, 0x24000u));
+    require(plan->info.images.size() == 1u && plan->info.images[0].dimension == RdnaImageDimension::Dim2D, "GCN volume sample: the GCN sample was not inferred as one 2D image");
+    const auto gatherCode = gcnImageProgram(sources, 0xf11c0100u, 0x00820400u);
+    const auto gatherPlan = GetResourcePlan(gcnImageRequest(gatherCode, userData, 0x25000u));
+    require(!plan->info.images[0].gathered && gatherPlan->info.images.size() == 1u && gatherPlan->info.images[0].gathered, "GCN volume sample: only the image of the GCN gather is marked as gathered");
+    const GcnImageModule module(code, gcnDescriptor(GcnType3D));
+    require(!module.samples.empty(), "GCN volume sample: the sample was not emitted");
+    for (const auto& sample : module.samples) {
+        require(module.SampledImageKind(sample).first == spv::Dim3D, "GCN volume sample: a sample through a 3D T# does not read a 3D image");
+        const std::vector<std::uint32_t> expected{0x3f000000u, 0x3f000000u, 0x3f800000u};
+        require(module.Components(sample.coordinate) == expected, "GCN volume sample: a sample through a 3D T# does not take its z from the third address VGPR");
+    }
+}
+
 void verifyPixelQuadPermReads() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
@@ -12689,6 +13110,11 @@ int main(int argc, char** argv) {
         verifyVolumeBiasTableRejection();
         verifySamplerTableDeduplication();
         verifyDynamicStorageMipChain();
+        verifyGcnRuntimeImageDimensions();
+        verifyGcnSampleThroughVolume();
+        verifyGcnSampleAddresses();
+        verifyGcnStoreAddresses();
+        verifyGcnDimensionQueries();
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();

@@ -21,6 +21,7 @@ DISAMBIG = "_nid_disambig"
 NID_PATTERN = "[A-Za-z0-9+\\-]{11}"
 VABI = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
 DEFINE = re.compile(r"#define\s+(\w+)\s*\(\s*(\w+)\s*\)([^\n]*)")
+DIRECTIVE_TOKEN = re.compile(r'(?P<directive>^[ \t]*#(?://[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"|[^\n])*)|' + nid_names.CPP_TOKEN.pattern, re.M)
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
@@ -119,13 +120,13 @@ def parse_export_table(path):
     return nids
 
 
-def mask_code(text):
+def mask_code(text, token=nid_names.CPP_TOKEN):
     def blank(match):
         if match.group("code") is not None:
             return match.group()
         return re.sub(r"[^\n]", " ", match.group())
 
-    return nid_names.CPP_TOKEN.sub(blank, text)
+    return token.sub(blank, text)
 
 
 def mask_directives(text):
@@ -211,8 +212,7 @@ def collect_source_exports(texts):
     macros = macro_definitions(texts)
     provided = {}
     for _, text in texts:
-        code = "\n".join(line for line in mask_code(joined_lines(text)).split("\n") if not line.lstrip().startswith("#"))
-        for match in nid_names.DEFINITION.finditer(code):
+        for match in nid_names.DEFINITION.finditer(mask_code(joined_lines(text), DIRECTIVE_TOKEN)):
             record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")

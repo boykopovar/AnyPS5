@@ -501,6 +501,23 @@ void TestRetiredSurfaceRelease(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void TestDisplacedSurfaceRelease(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    const auto destroyed = [](VkImage image) { return std::find(destroyedImages.begin(), destroyedImages.end(), image) != destroyedImages.end(); };
+    constexpr std::uint64_t address = 0xa0000000;
+    std::vector<VkImage> displaced;
+    for (const auto width : {256u, 224u, 192u}) {
+        DepthSurfaceView(context, {address, 0, {width, width}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+        displaced.push_back(lastImage);
+    }
+    const auto current = displaced.back();
+    displaced.pop_back();
+    DepthSurfaceView(context, {address + 0x1000000u, 0, {256, 256}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(std::all_of(displaced.begin(), displaced.end(), destroyed), "a depth surface whose address a surface of another extent took over must free its image");
+    Require(!destroyed(current), "the depth surface that owns the address must keep its image");
+    ClearDepthSurfaces(context.device);
+}
+
 std::atomic<std::uint64_t> untrackedHtileBegin{0};
 std::atomic<std::uint64_t> untrackedHtileEnd{0};
 std::atomic<int> untrackedHtileReads{0};
@@ -658,6 +675,10 @@ void TestUnmappedStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void ForgetFixturePages(std::uintptr_t address, std::size_t bytes) {
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, bytes);
+}
+
 void TestReadOnlyStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
     constexpr std::size_t bytes = 1024 * 1024;
@@ -671,6 +692,7 @@ void TestReadOnlyStalePlaneFlush(const Context& context) {
     Require(mapping.get() != MAP_FAILED, "cannot map a read-only depth plane");
 #endif
     const auto address = (reinterpret_cast<std::uintptr_t>(mapping.get()) + 65535u) & ~std::uintptr_t{65535u};
+    ForgetFixturePages(reinterpret_cast<std::uintptr_t>(mapping.get()), bytes);
     constexpr VkExtent2D extent{256, 256};
     const auto planeBytes = DepthSliceBytes(extent, 4u);
     Require(!AgcDriver::GuestMemory::CommittedRanges(address, planeBytes).empty(), "a read-only depth plane must remain readable");
@@ -711,12 +733,14 @@ void TestPartiallyResidentPlanes(const Context& context) {
     Require(mapping.get() != MAP_FAILED, "cannot reserve partially resident depth planes");
 #endif
     const auto base = (reinterpret_cast<std::uintptr_t>(mapping.get()) + hole - 1u) & ~std::uintptr_t{hole - 1u};
+    ForgetFixturePages(reinterpret_cast<std::uintptr_t>(mapping.get()), bytes);
     const auto commit = [&](std::uintptr_t address, std::size_t length) {
 #ifdef _WIN32
         Require(VirtualAlloc(reinterpret_cast<void*>(address), length, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot map a partially resident depth page");
 #else
         Require(mprotect(reinterpret_cast<void*>(address), length, PROT_READ | PROT_WRITE) == 0, "cannot map a partially resident depth page");
 #endif
+        ForgetFixturePages(address, length);
     };
     constexpr VkExtent2D extent{256, 256};
     const auto depthBytes = DepthSliceBytes(extent, 4u);
@@ -729,6 +753,7 @@ void TestPartiallyResidentPlanes(const Context& context) {
     Require(end <= reinterpret_cast<std::uintptr_t>(mapping.get()) + bytes, "the partially resident fixture does not fit its reservation");
     commit(depth, depthBytes - hole);
     commit(stencil, stencilBytes);
+    Require(AgcDriver::GuestMemory::CommittedRanges(depth + depthBytes - hole, hole).empty(), "the unmapped page of the partially resident fixture must read as unmapped");
     const auto refused = [&](const DepthTarget& target, std::string_view expected) {
         try {
             static_cast<void>(DepthSurfaceView(context, target));
@@ -976,6 +1001,7 @@ void RunDepthSurfaceReuseTests() {
         Require(clearsAfter(2u * sliceHtile) == std::vector<VkImage>{firstImage, secondImage}, "an HTILE clear over both slices must clear both");
     }
     TestRetiredSurfaceRelease(context);
+    TestDisplacedSurfaceRelease(context);
 
     ClearDepthSurfaces(context.device);
 }
