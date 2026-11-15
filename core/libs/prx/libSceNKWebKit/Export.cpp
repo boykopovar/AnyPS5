@@ -11518,9 +11518,7 @@ int APS5_VABI WKPageSetTextZoomFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetUseFixedLayout() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageStopLoading() {
     NotImplemented_nid_no_patch(__func__);
@@ -11554,9 +11552,7 @@ int APS5_VABI WKPageUpdateWebsitePolicies() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageUseFixedLayout() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageValidateCommand() {
     NotImplemented_nid_no_patch(__func__);
