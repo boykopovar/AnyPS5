@@ -318,11 +318,8 @@ int APS5_VABI sceAudioInSetUsbGain(void) {
 int APS5_VABI sceAudioInIsSharedDevice(int handle) {
     const std::uint32_t index = static_cast<std::uint32_t>(handle) & 0xffu;
     if (index >= g_ports.size()) return AUDIO_IN_ERROR_INVALID_HANDLE;
-    {
-        std::lock_guard lock(g_mutex);
-        if (!g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
-    }
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_ports[index].used) return AUDIO_IN_ERROR_INVALID_STATE;
     return 0;
 }
 
