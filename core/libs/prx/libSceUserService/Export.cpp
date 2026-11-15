@@ -3008,14 +3008,24 @@ int APS5_VABI sceUserServiceSetGlsMessageFilterLevel(void) {
 
 int APS5_VABI sceUserServiceGetUserGroupNameList(int groupIndex, char* nameList, std::size_t size,
                                                 std::int32_t* count) {
+    const int savedErrno = errno;
     if (nameList == nullptr || count == nullptr) {
+        errno = savedErrno;
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     if (size < 0x110) {
+        errno = savedErrno;
         return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
     }
-    if (size != 0x110 || groupIndex < -1 || groupIndex > 128 ||
-        (groupIndex >= 0 && !UserGroupSlotExists(groupIndex))) {
+    const bool groupValid = groupIndex >= -1 && groupIndex <= 128 && (groupIndex < 0 || UserGroupSlotExists(groupIndex));
+    errno = savedErrno;
+    if (size != 0x110 || !groupValid) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const bool countWritable = GuestWritable_nid_no_patch(count, sizeof(*count));
+    const bool namesWritable = GuestWritable_nid_no_patch(nameList, size);
+    errno = savedErrno;
+    if (!countWritable || !namesWritable) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     char path[64];
@@ -3028,22 +3038,32 @@ int APS5_VABI sceUserServiceGetUserGroupNameList(int groupIndex, char* nameList,
     userIds.fill(USER_SERVICE_USER_ID_INVALID);
     const int descriptor = sceKernelOpen(path, 0, 0);
     if (descriptor < 0) {
+        errno = savedErrno;
         return descriptor;
     }
     const std::int64_t bytesRead = sceKernelRead(descriptor, userIds.data(), 0x40);
     sceKernelClose(descriptor);
     if (bytesRead < 0) {
+        errno = savedErrno;
         return static_cast<int>(bytesRead);
     }
-    *count = 0;
+    std::array<char, 0x110> localNames{};
+    std::int32_t localCount = 0;
     for (std::size_t index = 0; index < userIds.size() && userIds[index] != USER_SERVICE_USER_ID_INVALID; ++index) {
         char userName[USER_SERVICE_MAX_USER_NAME_LENGTH + 1]{};
         const int result = sceUserServiceGetUserName(userIds[index], userName, sizeof(userName));
         if (result != USER_SERVICE_OK) {
+            errno = savedErrno;
             return result;
         }
-        std::memcpy(nameList + index * sizeof(userName), userName, sizeof(userName));
-        ++*count;
+        std::memcpy(localNames.data() + index * sizeof(userName), userName, sizeof(userName));
+        ++localCount;
+    }
+    const bool countCopied = GuestCopyOut_nid_no_patch(count, &localCount, sizeof(localCount));
+    const bool namesCopied = GuestCopyOut_nid_no_patch(nameList, localNames.data(), localNames.size());
+    errno = savedErrno;
+    if (!countCopied || !namesCopied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     return USER_SERVICE_OK;
 }
