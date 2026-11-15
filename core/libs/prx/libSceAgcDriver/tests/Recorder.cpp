@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -4446,6 +4447,106 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         mutation.Remove(block);
     }
     HostImportFor(context, address, bytes);
+    return true;
+}
+
+bool stagedEpochReuseTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (context.hostImportAlignment == 0 || !context.nullDescriptors) {
+        std::cout << "host imports or null descriptors unavailable: staged reuse in one collect epoch not tested\n";
+        return false;
+    }
+    Require(ShaderResources::EpochProofs(), "the staged epoch reuse test needs epoch proofs on");
+    AgcDriver::GuestMemory::MarkProofThread();
+    recorder.Sync();
+    constexpr std::size_t bytes = 4u << 20u;
+    constexpr std::size_t elementBytes = 1u << 20u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the staged epoch reuse block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import of the staged epoch reuse block refused: not tested\n";
+        return false;
+    }
+    const auto element = address + 65536u;
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, static_cast<std::uint32_t>(elementBytes), 0x31000000u};
+    binding.bufferWritten = {true};
+    binding.bufferRead = {true};
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, compute);
+    const auto reads = resources->InPlaceReads();
+    const bool inPlace = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return range.first <= element && range.second >= element + elementBytes; });
+    Require(resources->Reusable() && !resources->HasCopiedWrites() && !inPlace, "the read and written 1 MiB element was not staged in a reusable build");
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    const auto setLayout = resources->Layout();
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(std::uint32_t)};
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &setLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &push;
+    Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "staged epoch reuse pipeline layout");
+    const auto module = CreateShaderModule(context, BUFFER_UPDATE_SPV, sizeof(BUFFER_UPDATE_SPV), "staged epoch reuse shader module");
+    VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
+    pipelineInfo.layout = layout;
+    Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline), "staged epoch reuse pipeline");
+    const auto update = [&](std::uint32_t delta) {
+        const auto commands = recorder.Commands();
+        recorder.Keep(resources);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        context.BindComputePipeline(commands, pipeline);
+        resources->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout);
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(delta), &delta);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        resources->MarkGpuWrites(recorder);
+    };
+    auto* word = reinterpret_cast<volatile std::uint32_t*>(element);
+    update(1);
+    Require(resources->Revalidate(compute), "the staged build did not prove current after its first use");
+    update(2);
+    const auto reusesBefore = EpochProofCounts().resourceReuses.Sum();
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    Require(resources->Revalidate(compute), "the staged build did not prove current after its second use");
+    const bool exited = EpochProofCounts().resourceReuses.Sum() != reusesBefore;
+    update(4);
+    const bool broke = AgcDriver::GuestMemory::ProofSerial() != proofBefore;
+    recorder.Sync();
+    const auto value = *word;
+    std::cout << "staged epoch reuse: the third use " << (exited ? "took" : "did not take") << " the epoch exit, its writes " << (broke ? "broke" : "kept") << " the proof; the element holds " << value << "\n";
+    Require(!exited && broke, "a staged build's use did not break the proof, so its next use could skip its staging copy-in and copy-back through the epoch exit");
+    Require(value == 7u, "a reused staged build lost a use's writes");
+    resources.reset();
+    context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+    context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+    context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    static_cast<void>(HostImportFor(context, address, bytes));
+    recorder.Sync();
     return true;
 }
 
@@ -16531,6 +16632,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--bda-staging-only") {
             if (!bdaStagingTests(device, recorder)) return 77;
             std::cout << "address-based staging tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--staged-epoch-reuse-only") {
+            if (!stagedEpochReuseTests(device, recorder)) return 77;
+            std::cout << "staged epoch reuse tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--read-written-staging-only") {

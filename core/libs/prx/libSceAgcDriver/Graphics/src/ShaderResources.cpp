@@ -4122,13 +4122,14 @@ void ReportEpochProofCounts() {
 }
 
 namespace {
-void noteEpochProof(bool reused, bool verified, bool failed) {
+void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false) {
     (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
     if (!verified) return;
-    static std::atomic<std::uint64_t> checks{0}, failures{0};
+    static std::atomic<std::uint64_t> checks{0}, failures{0}, stores{0};
     if (failed) failures.fetch_add(1, std::memory_order_relaxed);
+    if (stored) stores.fetch_add(1, std::memory_order_relaxed);
     const auto count = checks.fetch_add(1, std::memory_order_relaxed) + 1u;
-    if (count % 4096u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed\n", static_cast<unsigned long long>(count), static_cast<unsigned long long>(failures.load(std::memory_order_relaxed)));
+    if (count % 4096u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory\n", static_cast<unsigned long long>(count), static_cast<unsigned long long>(failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(stores.load(std::memory_order_relaxed)));
 }
 }
 
@@ -4461,12 +4462,12 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const auto proof = GuestMemory::ProofSerial();
         const auto pending = StorageTexture::PendingSerial();
         const auto releases = textureReleases.load(std::memory_order_acquire);
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases) {
+        const auto unwatch = GuestMemory::UnwatchSerial();
+        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedReleases == releases && provedUnwatch == unwatch && refreshPerUseCopies()) {
             static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-            thread_local std::uint64_t reuses = 0;
-            if (verify && ++reuses % 64u == 0u) {
+            if (verify) {
                 const bool ok = revalidateFull(shaders, report);
-                noteEpochProof(true, true, !ok);
+                noteEpochProof(true, true, !ok, GuestMemory::ProofSerial() != proof);
                 return ok;
             }
             if (report != nullptr) *report = {ProofPath::Full, ProofFailure::None};
@@ -4480,6 +4481,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             provedProof = proof;
             provedPending = pending;
             provedReleases = releases;
+            provedUnwatch = unwatch;
         } else {
             provedEpoch = 0;
         }
@@ -4771,25 +4773,30 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
         comparedTableSpans.erase(std::remove_if(comparedTableSpans.begin(), comparedTableSpans.end(), [](const auto& span) { return span.second.empty(); }), comparedTableSpans.end());
     }
+    if (!refreshPerUseCopies()) return finish(fast, false, ProofFailure::Changed);
+    return finish(fast, true);
+}
+
+bool ShaderResources::refreshPerUseCopies() {
     if (writeSubscription != nullptr) {
         for (const auto index : depthCopyTextures) {
             if (textures[index]->HasReuseLookup()) {
-                if (!textures[index]->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
+                if (!textures[index]->ReuseLookupHolds()) return false;
             } else {
                 textures[index]->RefreshDepthCopy();
             }
         }
-    } else {
-        for (const auto& texture : textures) {
-            if (texture == nullptr) continue;
-            if (texture->HasReuseLookup()) {
-                if (!texture->ReuseLookupHolds()) return finish(fast, false, ProofFailure::Changed);
-            } else if (texture->IsDepthCopy()) {
-                texture->RefreshDepthCopy();
-            }
+        return true;
+    }
+    for (const auto& texture : textures) {
+        if (texture == nullptr) continue;
+        if (texture->HasReuseLookup()) {
+            if (!texture->ReuseLookupHolds()) return false;
+        } else if (texture->IsDepthCopy()) {
+            texture->RefreshDepthCopy();
         }
     }
-    return finish(fast, true);
+    return true;
 }
 
 namespace {

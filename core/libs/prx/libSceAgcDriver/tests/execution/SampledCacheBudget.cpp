@@ -654,6 +654,40 @@ void replacedEntryTests(Context context) {
     std::puts("template over a replaced sampled cache entry passed");
 }
 
+void unwatchedEpochTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    WatchedSurface surface(context);
+    ClearCachedTextures(context.device);
+    Require(ShaderResources::EpochProofs(), "the unwatch fixture needs epoch proofs on");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->Reusable() && resources->SampledTextures().size() == 1, "the unwatch template is not reusable");
+    ShaderResources::ProofReport report{};
+    Require(resources->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the unwatch template did not prove current through the full proof");
+    Require(resources->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full && report.failure == ShaderResources::ProofFailure::None, "an unchanged template in the same collect epoch did not take the epoch exit");
+    const auto unwatchBefore = AgcDriver::GuestMemory::UnwatchSerial();
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    AgcDriver::GuestMemory::Unwatch(surface.Address(), SurfaceBytes);
+    const bool unwatched = AgcDriver::GuestMemory::UnwatchSerial() != unwatchBefore;
+    auto* bytes = reinterpret_cast<std::uint8_t*>(surface.Address());
+    bytes[0] = static_cast<std::uint8_t>(bytes[0] ^ 0xffu);
+    const bool exitProved = resources->Revalidate(shader, &report);
+    const bool proofMoved = AgcDriver::GuestMemory::ProofSerial() != proofBefore;
+    AgcDriver::GuestMemory::BreakProofs();
+    const bool fullProved = resources->Revalidate(shader, &report);
+    std::printf("unwatch in one collect epoch: unwatched %s, proof serial %s; after a CPU write the epoch exit %s and the full proof %s\n", unwatched ? "yes" : "no", proofMoved ? "moved" : "unchanged", exitProved ? "proved current" : "refused", fullProved ? "proved current" : "refused");
+    Require(unwatched, "unwatching the surface did not bump the unwatch serial");
+    Require(!exitProved || fullProved, "an unwatch let the epoch exit prove current a template the full proof refuses");
+    resources.reset();
+    ClearCachedTextures(context.device);
+    std::puts("template over an unwatched surface in the same collect epoch passed");
+}
+
 void releasedEpochTests(Context context) {
     PlaceholderImages placeholders(context);
     context.placeholderImages = &placeholders;
@@ -1621,6 +1655,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             replacedEntryTests(context);
             std::puts("resource cache replaced entry tests passed");
+            return 0;
+        }
+        if (mode == "resource-unwatched-epoch") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            unwatchedEpochTests(context);
+            std::puts("resource cache unwatched epoch tests passed");
             return 0;
         }
         if (mode == "resource-released-epoch") {
