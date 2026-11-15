@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <string>
 #include <stdexcept>
 #include <cstdint>
@@ -103,6 +104,22 @@ static void CheckCharacterScanLengths() {
             check(std::strcmp(output.data(), example.first[1] == ' ' ? "ab" : "%lls") == 0, "Character scan normalization changed a literal or scanset");
         }
     }
+}
+
+static void CheckFloatingScanRange() {
+    const auto scan = [](const std::string& input) {
+        double value = 0.0;
+        errno = 0;
+        const int result = sscanf_s_nid_postfix(input.c_str(), "%lf", &value);
+        return std::pair{result, errno};
+    };
+    Require(scan("1.5") == std::pair{1, 0});
+    Require(scan(std::string(4000, '9')) == std::pair{1, 0});
+    Require(scan(std::string(5000, '9')) == std::pair{1, ERANGE});
+    Require(scan("0." + std::string(5000, '0') + "1") == std::pair{1, ERANGE});
+    Require(scan("1e5000") == std::pair{1, ERANGE});
+    Require(scan("1e-5000") == std::pair{1, ERANGE});
+    Require(scan("1e300") == std::pair{1, 0});
 }
 
 static int APS5_VABI PrintList(const char* format, ...) {
@@ -352,6 +369,11 @@ static void CheckSecureFormat() {
     Require(snprintf_s_nid_postfix(buffer, 5, "%d-%ls", 42, u"abcd") == 7 && std::strcmp(buffer, "42-a") == 0);
     Require(FormatListS(buffer, 1, "%x", 0xabcu) == 3 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "") == 0 && buffer[0] == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%zf|%Ld", 1.5, 12) == 11 && std::strcmp(buffer, "1.500000|12") == 0);
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%hhf", 0.5) == 8 && std::strcmp(buffer, "0.500000") == 0);
+    char pointerText[32];
+    snprintf_s_nid_postfix(pointerText, sizeof(pointerText), "%p", reinterpret_cast<void*>(0x1234));
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%hp", reinterpret_cast<void*>(0x1234)) == static_cast<int>(std::strlen(pointerText)) && std::strcmp(buffer, pointerText) == 0);
     buffer[0] = 'x';
     Require(FormatListS(buffer, sizeof(buffer), nullptr) < 0 && buffer[0] == 0);
     Require(FormatListS(nullptr, sizeof(buffer), "a") < 0 && snprintf_s_nid_postfix(nullptr, sizeof(buffer), "a") < 0);
@@ -505,6 +527,16 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(binary == 0 && binaryEnd == 1 && std::strcmp(binaryRest, "b101") == 0);
     Require(ScanList(" -0B11", "%i", &binary) == 1 && binary == 0);
     Require(ScanListS("0b1", "%i", &binary) == 1 && binary == 0);
+    {
+        int count = -7;
+        int value = -9;
+        Require(ScanListS("\x80", "\x80%n", &count) == 0 && count == -7);
+        Require(ScanListS("\xc3\xa9", "\xc3\xa9%n", &count) == 0 && count == -7);
+        Require(ScanListS("", "\x80%n", &count) == 0 && count == -7);
+        Require(ScanListS(" \x80", " \x80%n", &count) == 0 && count == -7);
+        Require(ScanListS("5\x80", "%d\x80%n", &value, &count) == 1 && value == 5 && count == -7);
+        Require(ScanListS("\x7f", "\x7f%n", &count) == 0 && count == 1);
+    }
     unsigned int hexWrap = 0;
     unsigned short shortWrap = 0;
     unsigned char byteWrap = 0;
@@ -811,9 +843,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         Require(sscanf_nid_postfix("\xc3\xa9", "%*ls") == 0 && sscanf_nid_postfix("\x80", "%*ls") == EOF);
         Require(sscanf_nid_postfix("\xc3\xa9", "%*lc") == EOF && sscanf_nid_postfix("a\xc3", "%*ls") == EOF);
         char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
-        bool positional = false;
-        try { sscanf_nid_postfix("a b", "%2$ls", untouched); } catch (const std::runtime_error&) { positional = untouched[0] == u'!'; }
-        Require(positional);
+        Require(sscanf_nid_postfix("a b", "%2$ls", untouched) == 0 && untouched[0] == u'!');
+        Require(sscanf_nid_postfix("5 ab", "%d %1$ls", &number, untouched) == 1 && number == 5 && untouched[0] == u'!');
     }
 #ifndef _WIN32
     char narrow[8] = {};
@@ -986,4 +1017,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSecureCountBeforeInputFailure(); CheckFloatingScanRange(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

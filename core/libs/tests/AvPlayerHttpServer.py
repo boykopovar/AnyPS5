@@ -9,7 +9,20 @@ import urllib.parse
 
 
 identity_requests = {}
+unknown_range_requests = {}
 identity_targets = []
+legacy_dates = {
+    "date-rfc850": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-asctime": ("Wed Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-rfc850-date": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wednesday, 01-Jan-20 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-asctime-date": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed Jan  1 00:02:00 2020", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-rfc850-both": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wednesday, 01-Jan-20 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-asctime-both": ("Wed Jan  1 00:00:00 2020", "Wed Jan  1 00:02:00 2020", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-asctime-two-digit": ("Wed Jan 01 00:00:00 2020", "Wed Jan 01 00:02:00 2020", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-century": ("Friday, 31-Dec-99 00:00:00 GMT", "Fri, 31 Dec 1999 00:02:00 GMT", "Fri, 31 Dec 1999 00:00:00 GMT"),
+    "date-legacy-200-match": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+    "date-legacy-206-omit": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT", "Wed, 01 Jan 2020 00:00:00 GMT"),
+}
 date_snapshots = {
     "date-short-year": ("Wed, 01 Jan 20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
     "date-short-day": ("Wed, 1 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
@@ -22,14 +35,23 @@ date_snapshots = {
     "date-short-response-time": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 0:02:00 GMT"),
     "date-wrong-response-weekday": ("Wed, 01 Jan 2020 00:00:00 GMT", "Thu, 01 Jan 2020 00:02:00 GMT"),
     "date-extra-response-space": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed,  01 Jan 2020 00:02:00 GMT"),
-    "date-rfc850": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
-    "date-asctime": ("Wed Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-weekday": ("Thursday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-weekday": ("Thu Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-month": ("Wednesday, 01-Jax-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-month": ("Wed Jax  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-recent": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:00:59 GMT"),
+    "date-legacy-asctime-recent": ("Wed Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:00:59 GMT"),
+    "date-legacy-rfc850-short-year": ("Wednesday, 01-Jan-2 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-short-year": ("Wed Jan  1 00:00:00 20", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-rfc850-time": ("Wednesday, 01-Jan-20 24:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-legacy-asctime-day": ("Mon Feb 31 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
     "date-trailer-only": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:00:59 GMT"),
     "weak-trailer-date": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
 }
 date_validators = {
     "date-leap-second": "Sat, 31 Dec 2016 23:59:60 GMT",
     "date-minimum-year": "Mon, 01 Jan 1900 00:00:00 GMT",
+    **{name: fields[2] for name, fields in legacy_dates.items()},
 }
 trailer_full_responses = {"etag-200-trailer", "etag-200-mixed-trailer"}
 trailer_responses = {
@@ -55,6 +77,7 @@ invalid_responses = {
     "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-200-trailer-conflict",
     "etag-206-trailer-conflict", "etag-206-trailer-changed", "etag-200-trailer-duplicate", "etag-200-trailer-malformed",
     "etag-200-trailer-name", "date-200-trailer-only",
+    "date-legacy-206-changed",
 }
 requests = []
 targets = []
@@ -108,6 +131,71 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def unknown_range(self, path):
+        name = path.split("/")[2]
+        history = unknown_range_requests.setdefault(name, [])
+        ranged = self.headers.get("Range")
+        history.append((ranged, self.headers.get("If-Range")))
+        content = pathlib.Path("app0", "payload.bin").read_bytes()
+        status = 200
+        first, last = 0, len(content) - 1
+        total = "*"
+        if ranged is not None:
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", ranged)
+            assert match is not None
+            first, end = map(int, match.groups())
+            last = min(first + 511, end, len(content) - 1)
+            if first:
+                expected = "Wed, 01 Jan 2020 00:00:00 GMT" if name.endswith("date") else '"unknown-v1"'
+                assert self.headers.get("If-Range") == expected
+            status = 206
+            if name == "known" or (name.startswith("late") and first == 0):
+                total = str(len(content))
+        else:
+            assert self.headers.get("If-Range") is None
+            if name == "full-partial":
+                status, last, total = 206, 511, str(len(content))
+            elif name == "full-refused":
+                status = 404
+            elif name == "late-redirect":
+                status = 302
+        body = content[first:last + 1]
+        if name == "late-size" and ranged is None:
+            body = body[:-1]
+        if name == "empty-body":
+            body = b""
+        header_first = first + int(name == "wrong-start")
+        header_last = last
+        if name in {"wrong-span", "empty-body"}:
+            header_last = first
+        elif name == "overflow-span":
+            header_last = 18446744073709551615
+        total = "*invalid" if name == "bad-total" else "" if name == "missing-total" else total
+        self.send_response_only(status)
+        if status == 206:
+            unit = "items" if name == "unknown-unit" else "ByTeS"
+            self.send_header("Content-Range", f"{unit} {header_first}-{header_last}/{total}")
+        if name.endswith("date"):
+            self.send_header("Last-Modified", "Wed, 01 Jan 2020 00:00:00 GMT")
+            self.send_header("Date", "Wed, 01 Jan 2020 00:02:00 GMT")
+        elif name != "unvalidated" and not (name == "late-absent" and ranged is None):
+            self.send_header("ETag", '"unknown-v2"' if name == "late-changed" and ranged is None else '"unknown-v1"')
+        if status == 302:
+            self.send_header("Location", "/range/payload.bin")
+        if name == "chunked":
+            self.send_header("Transfer-Encoding", "chunked")
+        elif name != "closed":
+            self.send_header("Content-Length", str(len(body) + int(name == "full-short" and ranged is None)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if name == "chunked":
+            for at in range(0, len(body), 4096):
+                chunk = body[at:at + 4096]
+                self.wfile.write(f"{len(chunk):X}\r\n".encode() + chunk + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+        else:
+            self.wfile.write(body)
+
     def do_GET(self):
         try:
             self.respond()
@@ -124,6 +212,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         requests.append((path, self.headers.get("Range")))
         targets.append(self.path)
+        if path.startswith("/length-list/"):
+            self.length_list(path)
+            return
         if path.startswith("/client-unsupported/"):
             location = {"https": "https://{authority}/payload.bin", "scheme": "ftp://{authority}/payload.bin", "userinfo": "http://user@{authority}/payload.bin"}[path.removeprefix("/client-unsupported/")]
             self.send_response(307)
@@ -148,6 +239,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if path.startswith("/transfer-fields/"):
+            self.transfer_fields(path)
+            return
         if path.startswith("/sync/"):
             ready = stalled[path.removeprefix("/sync/")].wait(2)
             self.send_response(200 if ready else 500)
@@ -155,6 +249,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(b"ready" if ready else b"error")
+            return
+        if path.startswith("/unknown-range/"):
+            self.unknown_range(path)
             return
         if path.startswith("/redirect/") or path.startswith("/client-redirect/"):
             self.send_response(307)
@@ -295,6 +392,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             date = "Sun, 01 Jan 2017 00:02:00 GMT"
         if name in date_snapshots:
             modified, date = date_snapshots[name]
+        elif name in legacy_dates:
+            modified, date = legacy_dates[name][:2]
         if name in fallbacks:
             etag = {
                 "weak": 'W/"identity-v1"', "weak-date": 'W/"identity-v1"', "invalid-tag": "identity-v1",
@@ -318,6 +417,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 etag = 'W/"identity-v1"'
             elif name.endswith("invalid"):
                 etag = '"identity v1"'
+        if name == "date-legacy-200-match" and not initial:
+            modified = "Wed Jan  1 00:00:00 2020"
+        elif name == "date-legacy-206-changed":
+            modified = "Wed Jan  1 00:00:01 2020" if failed else "Wednesday, 01-Jan-20 00:00:00 GMT"
         trailers = []
         trailer_response = name == "etag-initial-trailer" or not initial and name in trailer_responses and (name in validated_responses or failed)
         if name == "etag-initial-trailer" or not initial and name in {"etag-206-trailer", "etag-200-trailer"}:
@@ -372,6 +475,117 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
 
 
+    def length_list(self, path):
+        _, _, mode, name, _ = path.split("/")
+        content = pathlib.Path("app0", "payload.bin").read_bytes() if mode != "empty" else b""
+        start = 0
+        end = len(content)
+        if mode == "range":
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+            assert match is not None
+            start, last = map(int, match.groups())
+            end = min(start + 512, last + 1, len(content))
+            if start:
+                assert self.headers.get("If-Range") == '"length-v1"'
+        body = content[start:end]
+        fields = {
+            "single": "{n}",
+            "pair": "{n}, {n}",
+            "compact": "{n},{n}",
+            "whitespace": " \t{n}\t, \t{n} ",
+            "many": "{n}, {n}, {n}",
+            "zeros": "000{n}, {n}",
+            "different": "{n}, {other}",
+            "suffix": "{n}, {n}x",
+            "empty": "",
+            "leading-empty": ", {n}",
+            "trailing-empty": "{n},",
+            "middle-empty": "{n}, , {n}",
+            "plus": "+{n}, {n}",
+            "negative": "-{n}, {n}",
+            "overflow": "18446744073709551616, {n}",
+            "hex": "0x{n}, {n}",
+            "fraction": "{n}.0, {n}",
+            "embedded-space": "{n} 0, {n}",
+            "embedded-tab": "{n}\t0, {n}",
+        }
+        repeated = {
+            "repeat-exact": ["{n}", "{n}"],
+            "repeat-ows": ["{n}", " \t{n}\t "],
+            "repeat-zeros": ["{n}", "000{n}"],
+            "repeat-zeros-first": ["000{n}", "{n}"],
+            "repeat-list-second": ["{n}", "{n}, {n}"],
+            "repeat-list-first": ["{n}, {n}", "{n}"],
+            "repeat-two-lists": ["{n},{n}", "000{n}, {n}"],
+            "repeat-many": ["{n}", "000{n}", "{n}, {n}"],
+            "repeat-whitespace-lists": [" \t{n}\t,\t{n} ", "{n}"],
+            "repeat-different": ["{n}", "{other}"],
+            "repeat-mismatch-list": ["{n}", "{n}, {other}"],
+            "repeat-mismatch-first": ["{n}, {other}", "{n}"],
+            "repeat-mismatch-identical": ["{n}, {other}", "{n}, {other}"],
+            "repeat-empty-first": ["", "{n}"],
+            "repeat-empty-second": ["{n}", ""],
+            "repeat-signed": ["{n}", "+{n}"],
+            "repeat-overflow": ["{n}", "18446744073709551616"],
+            "repeat-suffix": ["{n}", "{n}x"],
+            "repeat-last": ["{n}", "000{n}", "{other}"],
+            "etag-duplicate": ["{n}", "{n}"],
+            "repeat-late-mismatch": ["{n}", "000{n}", "{other}" if start else "{n}"],
+        }
+        self.send_response(206 if mode == "range" else 200)
+        if mode == "range":
+            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
+        self.send_header("ETag", '"length-v1"')
+        if name == "etag-duplicate":
+            self.send_header("ETag", '"length-v2"')
+        for value in repeated[name] if name in repeated else [fields[name]]:
+            self.send_header("Content-Length", value.format(n=len(body), other=len(body) + 1))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+    def transfer_fields(self, path):
+        _, _, mode, name, _ = path.split("/")
+        content = pathlib.Path("app0", "payload.bin").read_bytes() if mode != "empty" else b""
+        start = 0
+        end = len(content)
+        if mode == "range":
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
+            assert match is not None
+            start, last = map(int, match.groups())
+            end = min(start + 512, last + 1, len(content))
+            if start:
+                assert self.headers.get("If-Range") == '"transfer-v1"'
+        body = content[start:end]
+        fields = {
+            "single": ["chunked"],
+            "case": ["ChUnKeD"],
+            "ows": [" \tchunked\t "],
+            "repeat": ["chunked", "chunked"],
+            "repeat-ows": ["chunked", " \tchunked\t "],
+            "repeat-field-case": ["chunked", "chunked"],
+            "triple": ["chunked", "chunked", "chunked"],
+            "joined": ["chunked, chunked"],
+            "mixed-case": ["chunked", "Chunked"],
+            "before": ["gzip", "chunked"],
+            "after": ["chunked", "gzip"],
+            "empty": ["chunked", ""],
+            "late-repeat": ["chunked", "chunked"] if start else ["chunked"],
+        }
+        self.send_response(206 if mode == "range" else 200)
+        if mode == "range":
+            self.send_header("Content-Range", f"bytes {start}-{end - 1}/{len(content)}")
+        self.send_header("ETag", '"transfer-v1"')
+        for index, value in enumerate(fields[name]):
+            field = "tRaNsFeR-EnCoDiNg" if name == "repeat-field-case" and index else "Transfer-Encoding"
+            self.send_header(field, value)
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if body:
+            self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
+
 with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handler) as destination:
     server.redirect_authority = destination.redirect_authority = f"127.0.0.1:{destination.server_port}"
     server.redirect_destination = False
@@ -391,6 +605,24 @@ with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handl
         sys.exit(result.returncode)
     assert not failures, failures
     assert any(header is not None and not header.startswith("bytes=0-") for _, header in requests)
+    if unknown_range_requests:
+        valid = {"known", "initial", "late", "chunked", "closed", "initial-date", "late-date", "unvalidated"}
+        invalid = {"wrong-start", "wrong-span", "empty-body", "bad-total", "missing-total", "overflow-span", "unknown-unit"}
+        bad_full = {"full-partial", "full-refused", "full-short"}
+        bad_late = {"late-changed", "late-size", "late-absent", "late-redirect"}
+        assert set(unknown_range_requests) == valid | invalid | bad_full | bad_late
+        for name, history in unknown_range_requests.items():
+            initial = [("bytes=0-65535", None)]
+            validator = "Wed, 01 Jan 2020 00:00:00 GMT" if name.endswith("date") else '"unknown-v1"'
+            if name == "known":
+                expected = initial + [("bytes=90000-99999", validator), ("bytes=0-65535", validator)]
+            elif name.startswith("late"):
+                expected = initial + [("bytes=90000-99999", validator), (None, None)]
+            elif name in invalid:
+                expected = initial
+            else:
+                expected = initial + [(None, None)]
+            assert history == expected, (name, history, expected)
     if mode == "avplayer":
         assert {"/range/avplayer.mp4", "/chunk/avplayer.webm", "/ignore/avplayer.mp4", "/redirect/avplayer.mp4"}.issubset({path for path, _ in requests})
     if mode == "client":

@@ -245,14 +245,22 @@ void APS5_VABI pthread_exit_nid_postfix(void* value) {
 
 int APS5_VABI scePthreadGetschedparam(Pthread thread, int* policy, KernelSchedParam* param) {
     if (!policy || !param) return SCE_KERNEL_ERROR_EINVAL;
-    const int result = scePthreadGetprio(thread, &param->sched_priority);
-    if (result == 0) *policy = thread->schedPolicy.load(std::memory_order_relaxed);
-    return result;
+    KernelSchedParam current{};
+    const int result = scePthreadGetprio(thread, &current.sched_priority);
+    if (result != 0) return result;
+    const int currentPolicy = thread->schedPolicy.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(param, &current, sizeof(current)) ||
+        !GuestCopyOut_nid_no_patch(policy, &currentPolicy, sizeof(currentPolicy)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
 }
 
 int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSchedParam* param) {
-    if (!param || !AcceptsSchedParam(policy, param->sched_priority)) return SCE_KERNEL_ERROR_EINVAL;
-    const int result = scePthreadSetprio(thread, param->sched_priority);
+    if (!param) return SCE_KERNEL_ERROR_EINVAL;
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SCE_KERNEL_ERROR_EFAULT;
+    if (!AcceptsSchedParam(policy, requested.sched_priority)) return SCE_KERNEL_ERROR_EINVAL;
+    const int result = scePthreadSetprio(thread, requested.sched_priority);
     if (result == 0) thread->schedPolicy.store(policy, std::memory_order_relaxed);
     return result;
 }
@@ -439,8 +447,10 @@ const RegisterPthreadOnLoad gRegisterPthread;
 }
 
 int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
-    if (thread && name && std::strlen(name) >= 32) return PosixThread::ToErrno(SCE_KERNEL_ERROR_ENAMETOOLONG);
-    return PosixThread::ToErrno(scePthreadRename(thread, name));
+    if (!thread || !name) return PosixThread::ToErrno(scePthreadRename(thread, name));
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, 32, copy)) return error;
+    return PosixThread::ToErrno(scePthreadRename(thread, copy.c_str()));
 }
 
 int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name) {

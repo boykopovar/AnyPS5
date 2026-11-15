@@ -233,13 +233,20 @@ void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, i
 
 
 
-int APS5_VABI clock_gettime_np() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI clock_gettime_np(int clockId, KernelTimespec* tp) {
+    return clock_gettime_nid_postfix(clockId, tp);
 }
 
-int APS5_VABI getenv_np() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
+    if (!name || !buffer)
+        throw std::invalid_argument("getenv_np requires a name and a buffer");
+    const char* value = getenv_nid_postfix(name);
+    if (!value)
+        return -1;
+    const std::size_t length = std::strlen(value);
+    if (length >= size)
+        throw std::runtime_error("getenv_np: the console's handling of a value longer than the buffer is unknown");
+    std::memcpy(buffer, value, length + 1);
     return 0;
 }
 
