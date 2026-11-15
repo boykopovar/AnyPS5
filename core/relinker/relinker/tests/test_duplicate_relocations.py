@@ -22,6 +22,8 @@ def with_second_entry(entry):
 
 def strict_fixture(second_addend=None):
     image = importing_executable(["live"])
+    struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x4000, 0x4000, 0x4000, 0x800, 0x800, 0x4000)
+    struct.pack_into("<IIQQQQQQ", image, 64 + 2 * 56, 1, 6, 0x4800, 0x4800, 0x4800, 0x800, 0x800, 0x4000)
     dynamic_size, = struct.unpack_from("<Q", image, 152)
     struct.pack_into("<qQ", image, DYNAMIC + dynamic_size - 16, 0x6100003F, 48)
     struct.pack_into("<qQ", image, DYNAMIC + dynamic_size, 0, 0)
