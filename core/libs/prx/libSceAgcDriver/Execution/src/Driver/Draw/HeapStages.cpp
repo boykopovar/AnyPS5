@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <limits>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -362,6 +363,36 @@ bool readWalkWord(void* context, std::uint64_t address, std::uint32_t* value) {
     return true;
 }
 
+bool readWalkWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count) {
+    auto& reads = *static_cast<WalkReads*>(context);
+    if (address % WordBytes != 0u || count > (std::numeric_limits<std::uint64_t>::max() - address) / WordBytes) {
+        reads.failed = true;
+        return false;
+    }
+    const auto first = address & ~(WalkPageBytes - 1u);
+    const auto past = (address + count * WordBytes + WalkPageBytes - 1u) & ~(WalkPageBytes - 1u);
+    if (count != 0u && past > first && !reads.Verified(address, count * WordBytes) && GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) reads.Verify(first, past - first);
+    while (count != 0u) {
+        const auto page = address & ~(WalkPageBytes - 1u);
+        const auto words = std::min<std::uint64_t>(count, (page + WalkPageBytes - address) / WordBytes);
+        const auto bytes = words * WordBytes;
+        if (!reads.Verified(address, bytes)) {
+            if (GuestMemory::Accessible(reinterpret_cast<const void*>(page), WalkPageBytes)) reads.Verify(page, WalkPageBytes);
+            else if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes))) {
+                reads.failed = true;
+                return false;
+            }
+        }
+        std::memcpy(values, reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes));
+        if (!reads.runs.empty() && address >= reads.runs.back().first && address <= reads.runs.back().second) reads.runs.back().second = std::max(reads.runs.back().second, address + bytes);
+        else reads.runs.emplace_back(address, address + bytes);
+        address += bytes;
+        values += words;
+        count -= words;
+    }
+    return true;
+}
+
 bool walkAccessible(void* context, std::uint64_t address, std::uint64_t bytes) {
     auto& reads = *static_cast<WalkReads*>(context);
     if (bytes != 0 && reads.Verified(address, bytes)) return true;
@@ -400,6 +431,7 @@ captureWalk(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::s
     runtime.shaderBase = shaderBase;
     runtime.userContext = &reads;
     runtime.readMemory = readWalkWord;
+    runtime.readWords = readWalkWords;
     runtime.accessible = walkAccessible;
     return invocation.Capture(runtime);
 }
