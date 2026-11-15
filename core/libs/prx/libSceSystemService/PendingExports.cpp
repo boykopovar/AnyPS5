@@ -240,11 +240,6 @@ int APS5_VABI sceLncUtilGetAppCategory(std::int32_t appId, char* category) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilGetAppFocusedAppStatus(LncAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -508,16 +503,6 @@ int APS5_VABI sceLncUtilUnregisterDaemon() {
 }
 
 int APS5_VABI sceLncUtilUnregisterShellUI() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilAccessibilityZoomLock() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilAccessibilityZoomUnlock() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1049,11 +1034,6 @@ int APS5_VABI sceShellCoreUtilHideBlocksFromUser(std::int64_t bytes, std::int32_
 }
 
 int APS5_VABI sceShellCoreUtilIncrementVersionNumberOfCameraCalibrationData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsAccessibilityZoomLocked(std::int32_t appId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1707,11 +1687,6 @@ int APS5_VABI sceSystemServiceDisableVoiceRecognition() {
 }
 
 int APS5_VABI sceSystemServiceEnablePersonalEyeToEyeDistanceSetting() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
@@ -126,45 +127,38 @@ std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* r
 int APS5_VABI wctomb_s_nid_postfix(int* status, char* destination, std::size_t capacity, std::uint16_t wide) {
     if (!status || (!destination && capacity) || (destination && capacity > rsizeMax))
         return violation("wctomb_s: bad argument", guestEinval);
-    if (destination && static_cast<std::size_t>(_Getmbcurmax_nid_postfix()) > capacity) {
-        char bytes[MB_LEN_MAX];
-        const int length = wctomb_nid_postfix(bytes, wide);
-        if (length > 0 && static_cast<std::size_t>(length) > capacity) return violation("wctomb_s: buffer too small", guestErange);
-        if (length > 0) std::memcpy(destination, bytes, static_cast<std::size_t>(length));
-        *status = length;
-        return length < 0 ? guestEilseq : 0;
-    }
-    const int length = wctomb_nid_postfix(destination, wide);
-    *status = length;
+    char bytes[MB_LEN_MAX];
+    const int length = wctomb_nid_postfix(destination ? bytes : nullptr, wide);
+    if (destination && length > 0 && static_cast<std::size_t>(length) > capacity) return violation("wctomb_s: buffer too small", guestErange);
+    if (destination && length > 0 && !GuestCopyOut_nid_no_patch(destination, bytes, static_cast<std::size_t>(length)))
+        return violation("wctomb_s: bad argument", guestEinval);
+    if (!GuestCopyOut_nid_no_patch(status, &length, sizeof(length))) return violation("wctomb_s: bad argument", guestEinval);
     return destination && length < 0 ? guestEilseq : 0;
 }
 
 int APS5_VABI wcrtomb_s_nid_postfix(std::size_t* result, char* destination, std::size_t capacity, std::uint16_t wide, void* state) {
+    const char terminator = '\0';
     if (!result || !state) {
-        if (destination && usableSize(capacity)) destination[0] = '\0';
-        if (result) *result = failed;
+        if (destination && usableSize(capacity)) GuestCopyOut_nid_no_patch(destination, &terminator, sizeof(terminator));
+        if (result) GuestCopyOut_nid_no_patch(result, &failed, sizeof(failed));
         return violation("wcrtomb_s: bad argument", guestEinval);
     }
     if ((!destination && capacity) || (destination && !usableSize(capacity))) {
-        *result = failed;
+        GuestCopyOut_nid_no_patch(result, &failed, sizeof(failed));
         return violation("wcrtomb_s: bad argument", guestEinval);
     }
     char bytes[MB_LEN_MAX];
-    std::size_t length = 0;
-    if (!destination) {
-        length = wcrtomb_nid_postfix(bytes, 0, state);
-    } else if (static_cast<std::size_t>(_Getmbcurmax_nid_postfix()) > capacity) {
-        length = wcrtomb_nid_postfix(bytes, wide, state);
-        if (length != failed && length > capacity) {
-            *result = failed;
-            destination[0] = '\0';
-            return violation("wcrtomb_s: buffer too small", guestErange);
-        }
-        if (length != failed) std::memcpy(destination, bytes, length);
-    } else {
-        length = wcrtomb_nid_postfix(destination, wide, state);
+    const std::size_t length = wcrtomb_nid_postfix(bytes, destination ? wide : 0, state);
+    if (destination && length != failed && length > capacity) {
+        GuestCopyOut_nid_no_patch(result, &failed, sizeof(failed));
+        GuestCopyOut_nid_no_patch(destination, &terminator, sizeof(terminator));
+        return violation("wcrtomb_s: buffer too small", guestErange);
     }
-    *result = length;
+    if (destination && length != failed && !GuestCopyOut_nid_no_patch(destination, bytes, length)) {
+        GuestCopyOut_nid_no_patch(result, &failed, sizeof(failed));
+        return violation("wcrtomb_s: bad argument", guestEinval);
+    }
+    if (!GuestCopyOut_nid_no_patch(result, &length, sizeof(length))) return violation("wcrtomb_s: bad argument", guestEinval);
     return length == failed ? guestEilseq : 0;
 }
 
