@@ -984,6 +984,7 @@ struct HeapBindingUse {
     std::vector<std::uint32_t> dataUniforms;
     std::vector<std::uint32_t> embeddedSamplers;
     std::vector<std::uint32_t> pushedBuffers;
+    bool overflowRecords = false;
     std::pair<std::uint32_t, std::uint32_t> refused{~0u, ~0u};
 };
 
@@ -1040,13 +1041,18 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             continue;
         }
         const auto dataKind = binding % bindingCount;
-        const bool dataBlock = dataKind == static_cast<std::uint32_t>(Abi::Binding::ShaderData) || dataKind == static_cast<std::uint32_t>(Abi::Binding::UserData);
+        const bool dataBlock = dataKind == static_cast<std::uint32_t>(Abi::Binding::ShaderData) || dataKind == static_cast<std::uint32_t>(Abi::Binding::UserData) ||
+                               dataKind == static_cast<std::uint32_t>(Abi::Binding::FlattenedSrt);
         if (set == Abi::GpuDataSet && dataBlock && binding / bindingCount < Abi::StageCount) {
             use.dataUniforms.push_back(binding);
             continue;
         }
         if (set == Abi::EmbeddedSamplerSet) {
             use.embeddedSamplers.push_back(binding);
+            continue;
+        }
+        if (set == Abi::PushedBufferSet && binding == Abi::PushedBufferOverflowBinding) {
+            use.overflowRecords = true;
             continue;
         }
         if (set == Abi::PushedBufferSet) {
@@ -1105,9 +1111,18 @@ VkDescriptorSetAndBindingMappingEXT pushedBufferMapping(std::uint32_t binding, c
 }
 
 VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, const ShaderRecompiler::StagePushPlacement* placement) {
-    const bool user = binding % static_cast<std::uint32_t>(Abi::Binding::Count) == static_cast<std::uint32_t>(Abi::Binding::UserData);
+    const auto kind = binding % static_cast<std::uint32_t>(Abi::Binding::Count);
+    if (kind == static_cast<std::uint32_t>(Abi::Binding::FlattenedSrt))
+        return HeapPushAddressMapping(Abi::GpuDataSet, binding, rootItemOffset(placement, Abi::RootItem::SrtAddress), VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT);
+    const bool user = kind == static_cast<std::uint32_t>(Abi::Binding::UserData);
     const bool userPlaced = user && placement != nullptr && placement->Item(Abi::RootItem::UserData) != Abi::NoPushPosition;
     return HeapPushAddressMapping(Abi::GpuDataSet, binding, rootItemOffset(placement, userPlaced ? Abi::RootItem::UserData : Abi::RootItem::ShaderData), VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT);
+}
+
+VkDescriptorSetAndBindingMappingEXT overflowRecordsMapping(const ShaderRecompiler::StagePushPlacement* placement) {
+    Require(placement != nullptr, "a heap mapping reads buffer overflow records without a push layout");
+    const auto offset = placement->bufferOverflow != Abi::NoPushPosition ? placement->bufferOverflow * static_cast<std::uint32_t>(sizeof(std::uint32_t)) : rootItemOffset(placement, Abi::RootItem::ShaderData);
+    return HeapPushAddressMapping(Abi::PushedBufferSet, Abi::PushedBufferOverflowBinding, offset, VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT);
 }
 
 }
@@ -1225,6 +1240,7 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
     for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, placement));
     std::ranges::sort(use.pushedBuffers);
     for (const auto binding : use.pushedBuffers) mappings.push_back(pushedBufferMapping(binding, placement));
+    if (use.overflowRecords) mappings.push_back(overflowRecordsMapping(placement));
     if (use.workgroupMemory)
         mappings.push_back(HeapPushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset, VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT));
     if (use.scratchPoolMemory)

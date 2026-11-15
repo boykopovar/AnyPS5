@@ -91,6 +91,8 @@ private:
     static constexpr std::uint32_t optionalItems = RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::UserData);
     static constexpr std::array parts{PushPart::Fragment, PushPart::Compute, PushPart::PreRasterization};
 
+    static constexpr std::uint32_t fragmentRecordFloor = 2u * RuntimeAbi::RootItemCount;
+
     static bool Top(PushPart part) { return part != PushPart::PreRasterization; }
 
     bool IsFree(std::uint32_t first, std::uint32_t width) const {
@@ -100,9 +102,10 @@ private:
         return true;
     }
 
-    std::uint32_t TryTake(std::uint32_t width, bool aligned, bool top) {
+    std::uint32_t TryTake(std::uint32_t width, bool aligned, bool top, std::uint32_t floor = 0u) {
         for (std::uint32_t step = 0; step + width <= total; ++step) {
             const auto first = top ? total - width - step : step;
+            if (first < floor) break;
             if ((aligned && first % 2u != 0u) || !IsFree(first, width)) continue;
             for (auto dword = first; dword < first + width; ++dword) used |= 1ull << dword;
             return first;
@@ -179,9 +182,10 @@ private:
         const auto buffers = stages[index].pushedBuffers;
         if (buffers == 0u) return;
         const auto records = RecordsOf(index);
+        const auto floor = stages[index].part == PushPart::Fragment ? fragmentRecordFloor : 0u;
         bool overflowed = buffers > records;
         for (std::uint32_t buffer = 0; buffer < records; ++buffer) {
-            placements[index].bufferRoots[buffer] = TryTake(RuntimeAbi::PushedBufferWords, true, top);
+            placements[index].bufferRoots[buffer] = TryTake(RuntimeAbi::PushedBufferWords, true, top, floor);
             overflowed = overflowed || placements[index].bufferRoots[buffer] == RuntimeAbi::NoPushPosition;
         }
         if (overflowed && overflows[index] == RuntimeAbi::NoPushPosition) throw std::runtime_error("the push data has no room for a stage's buffer addresses");

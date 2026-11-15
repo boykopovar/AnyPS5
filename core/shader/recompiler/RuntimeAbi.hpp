@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 17u;
+inline constexpr std::uint32_t Version = 18u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t FragmentDescriptorSet = 1u;
 inline constexpr std::uint32_t StageCount = 4u;
@@ -26,8 +26,9 @@ inline constexpr std::uint32_t FirstAtomic64ImageBinding = FirstStorageImageBind
 inline constexpr std::uint32_t SamplerSlotWords = 2u;
 inline constexpr std::uint32_t BufferAddressWords = 4u;
 inline constexpr std::uint32_t PushedBufferWords = 3u;
-inline constexpr std::uint32_t PushedBufferLimit = 4u;
+inline constexpr std::uint32_t PushedBufferLimit = 16u;
 inline constexpr std::uint32_t OverflowRecordWords = 4u;
+inline constexpr std::uint32_t PushedBufferOverflowBinding = 1023u;
 inline constexpr bool AtomicImageKind(std::uint32_t kind) { return kind >= FirstAtomicImageBinding && kind < FirstAtomic64ImageBinding; }
 inline constexpr bool Atomic64ImageKind(std::uint32_t kind) { return kind >= FirstAtomic64ImageBinding && kind < FirstImageBinding + ImageBindingCount; }
 inline constexpr bool UintStorageImageKind(std::uint32_t kind) { return kind >= FirstUintStorageImageBinding && kind < FirstAtomicImageBinding; }

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "PushDataLayout.hpp"
 #include "RuntimeAbi.hpp"
@@ -236,7 +237,9 @@ int main() {
                 const std::vector<Stage> typical{{ShaderStage::Vertex, vertexItems, 6, buffers}, {ShaderStage::Fragment, pixelItems, 20, buffers}};
                 const auto roomy = place(typical);
                 disjoint(typical, roomy, 0, ("typical stages with " + std::to_string(buffers) + " buffers each").c_str());
-                require(!defaultCap || (buffers > Abi::PushedBufferLimit) == (roomy[1].bufferOverflow != Abi::NoPushPosition), "a typical pixel stage overflows only buffers past the push limit");
+                const auto kept = static_cast<std::uint32_t>(std::count_if(roomy[1].bufferRoots.begin(), roomy[1].bufferRoots.end(), [](std::uint32_t root) { return root != Abi::NoPushPosition; }));
+                require(!defaultCap || (buffers > kept) == (roomy[1].bufferOverflow != Abi::NoPushPosition), "a typical pixel stage overflows only the buffers it cannot keep in push data");
+                require(!defaultCap || kept >= std::min(buffers, 8u), "a typical pixel stage keeps at least eight buffer records in push data");
                 const auto alone = place({typical[1]})[0];
                 require(alone.items == roomy[1].items && alone.bufferRoots == roomy[1].bufferRoots && alone.bufferOverflow == roomy[1].bufferOverflow, "a typical pixel stage with buffers is placed as it is alone, so its fragment library is shared");
                 const std::vector<Stage> tessellation{{ShaderStage::Local, all & ~stencil, 4, buffers}, {ShaderStage::TessellationControl, all & ~stencil, 3, buffers}, {ShaderStage::TessellationEvaluation, (all & ~stencil) | Abi::DepthRemapPushBit, 10, buffers}, {ShaderStage::Fragment, all, 48, buffers}};

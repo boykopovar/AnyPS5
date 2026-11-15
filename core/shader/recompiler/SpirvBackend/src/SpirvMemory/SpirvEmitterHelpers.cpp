@@ -574,6 +574,11 @@ void DefinePushedBuffers(SpirvEmitterState& state, const IrBindingLayout& layout
         }
         state.pushedBuffers.push_back(variables);
     }
+    if (count != 0u) {
+        const auto block = UniformWordsBlockType(state, TypeU32Vector(state, 4), RuntimeAbi::OverflowRecordWords * 4u, count);
+        state.bufferOverflowUniformVariable = DefinePushedBufferVariable(state, block, spv::StorageClassUniform, RuntimeAbi::PushedBufferOverflowBinding, "buffer_overflow");
+        state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::ShaderData);
+    }
 }
 
 std::uint32_t defineHeapArray(SpirvEmitterState& state, std::uint32_t slotCount, std::uint32_t elementType, const char* name, std::uint32_t heapKind) {
@@ -666,8 +671,16 @@ void DefineDescriptors(SpirvEmitterState& state) {
             }
             break;
         case DescriptorBindingKind::FlattenedSrt:
-            if (layout.UsesDataAddress()) state.flattenedSrtAddressed = true;
-            else {
+            if (layout.UsesDataAddress()) {
+                state.flattenedSrtAddressed = true;
+                const auto& resources = state.program.Resources();
+                const auto dwords = resources.srtGuardOffset + static_cast<std::uint32_t>(resources.guardedSrtSlots.size());
+                if (dwords != 0u && dwords <= state.heapDataUniformDwords) {
+                    const auto block = UniformWordsBlockType(state, TypeU32Vector(state, 4), 16u, (dwords + 3u) / 4u);
+                    state.flattenedSrtUniformVariable = Define(block, "flattened_srt", spv::StorageClassUniform);
+                    state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::SrtAddress);
+                }
+            } else {
                 state.flattenedSrtVariable = Define(StorageBufferBlockType(state), "flattened_srt");
                 state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
             }

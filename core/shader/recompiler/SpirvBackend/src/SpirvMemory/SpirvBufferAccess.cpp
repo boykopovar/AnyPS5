@@ -67,13 +67,15 @@ std::uint32_t placedPushDword(SpirvEmitterState& state, std::uint32_t specializa
 }
 
 std::uint32_t overflowDword(SpirvEmitterState& state, std::uint32_t buffer, std::uint32_t word) {
-    const auto address = ComposeAddress64(state, [&] { return placedPushDword(state, PipelineSpecialization::BufferOverflowPosition, 0u); }, [&] { return placedPushDword(state, PipelineSpecialization::BufferOverflowPosition, 1u); });
-    const auto words = ReadOnlyStorageBufferType(state, TypeU32(state), 4u);
-    const auto block = state.module.AllocateId();
-    state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, words), block, address);
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypePhysicalU32Pointer(state), pointer, block, ConstantU32(state, 0u), ConstantU32(state, buffer * RuntimeAbi::OverflowRecordWords + word));
-    return EmitAlignedLoadU32(state, pointer);
+    if (state.bufferOverflowUniformVariable == 0u) FailEmit("a stage reads buffer overflow records without the records block");
+    const auto u32x4 = TypeU32Vector(state, 4);
+    const auto element = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassUniform, u32x4), element, state.bufferOverflowUniformVariable, ConstantU32(state, 0u), ConstantU32(state, buffer));
+    const auto record = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, u32x4, record, element);
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, record, word);
+    return value;
 }
 
 }
@@ -166,7 +168,10 @@ std::uint32_t EmitRootAddressReadOnlyWordPointer(SpirvEmitterState& state, Runti
 namespace {
 
 std::uint32_t dataAddressLoad(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index) {
-    const auto uniform = item == RuntimeAbi::RootItem::ShaderData ? state.shaderDataUniformVariable : item == RuntimeAbi::RootItem::UserData ? state.userDataUniformVariable : 0u;
+    const auto uniform = item == RuntimeAbi::RootItem::ShaderData ? state.shaderDataUniformVariable
+                         : item == RuntimeAbi::RootItem::UserData ? state.userDataUniformVariable
+                         : item == RuntimeAbi::RootItem::SrtAddress ? state.flattenedSrtUniformVariable
+                                                                     : 0u;
     if (uniform != 0u) {
         const auto u32 = TypeU32(state);
         const auto vector = Binary(state, spv::OpShiftRightLogical, u32, index, ConstantU32(state, 2u));

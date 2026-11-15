@@ -7971,7 +7971,7 @@ void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConsta
         return static_cast<std::uint32_t>(std::min<VkDeviceSize>(range.size, 0xffffffffu));
     };
     const auto record = [&](VkDeviceAddress address, std::uint32_t size) {
-        Require(address % uniformAlignment == 0, "a pushed buffer address is off the uniform buffer offset alignment");
+        Require((address & (uniformAlignment - 1u)) == 0u, "a pushed buffer address is off the uniform buffer offset alignment");
         return std::array<std::uint32_t, Abi::OverflowRecordWords>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), size, 0u};
     };
     const auto encode = [&](const VkDeviceAddressRangeEXT& range) {
