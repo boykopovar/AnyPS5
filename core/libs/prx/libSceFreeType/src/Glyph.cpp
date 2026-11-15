@@ -85,6 +85,10 @@ struct Glyph {
                                reinterpret_cast<std::uint16_t*>(native.contours), native.flags};
         }
     }
+
+    void Publish(const GuestOutline& source, const char* function) {
+        Publish(function, &source);
+    }
 };
 
 std::mutex glyphMutex;
