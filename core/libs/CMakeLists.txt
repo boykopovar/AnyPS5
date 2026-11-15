@@ -443,6 +443,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sys_constant_unknowns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
+    add_test_executable(guest_kernel_sys_named_object_tests tests/GuestKernelSysNamedObject.cpp)
+    target_include_directories(guest_kernel_sys_named_object_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_named_object_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_named_object_tests)
+    add_test(NAME guest_kernel_sys_named_object COMMAND guest_kernel_sys_named_object_tests)
+    set_tests_properties(guest_kernel_sys_named_object PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_named_object PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
     add_test_executable(nid_buffer_validation_tests nid/tests/BufferValidation.cpp)
     target_include_directories(nid_buffer_validation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
     target_compile_features(nid_buffer_validation_tests PRIVATE cxx_std_20)
@@ -1715,6 +1725,7 @@ if(BUILD_TESTING)
 
 endif()
 
+include(prx/libfreetype/NewGlyph.cmake)
 include(prx/libSceFreeType/CurveBounds.cmake)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/src/FileWrapper.cpp)
 

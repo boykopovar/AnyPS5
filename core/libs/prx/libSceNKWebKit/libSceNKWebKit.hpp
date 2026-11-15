@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyProtectionSpaceBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
+#include "prx/libSceNKWebKit/include/CustomHeaderFieldsExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 
@@ -34,6 +35,7 @@
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
 #include "prx/libSceNKWebKit/include/SettingsBaseDefaultsExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreProcessSwitchesExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfConcurrentPtrHashSet.hpp"
 #include "prx/libSceNKWebKit/include/ArgumentReturnExports.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
@@ -44,6 +46,7 @@
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
+#include "prx/libSceNKWebKit/include/URLDecompositionExports.hpp"
 
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 

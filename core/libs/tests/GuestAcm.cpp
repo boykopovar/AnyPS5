@@ -31,6 +31,10 @@ static std::uintptr_t AdvanceRing(std::byte* ring, std::uint32_t capacity, std::
 
 static void TestRingAdvance() {
     Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(nullptr) == nullptr);
+    errno = 71;
+    Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(reinterpret_cast<void*>(0x10)) == nullptr);
+    Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(reinterpret_cast<void*>(~std::uintptr_t{0})) == nullptr);
+    Require(errno == 71);
     alignas(8) std::byte ring[0x18];
     std::memset(ring, 0xEE, sizeof(ring));
     const std::uint64_t base = 0x123400000ull;
