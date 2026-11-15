@@ -1,6 +1,7 @@
 #include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -1171,6 +1172,8 @@ static void TestCustomModuleInfo() {
     Require(info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_FILTER && info.state_offset == 0 && info.state_size == 0 && info.reserved == 0 && info.reserved2 == 0);
 
     Require(sceNgs2CustomRackGetModuleInfo(rack, 0, nullptr, sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    errno = 71;
+    Require(sceNgs2CustomRackGetModuleInfo(rack, 0, reinterpret_cast<Ngs2CustomModuleInfo*>(0x10), sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS && errno == 71);
     Require(sceNgs2CustomRackGetModuleInfo(0x1234, 0, nullptr, sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
     std::memset(&info, 0xa5, sizeof(info));
     Require(sceNgs2CustomRackGetModuleInfo(0x1234, 0, &info, sizeof(info)) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);

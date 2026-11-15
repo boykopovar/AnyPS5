@@ -609,18 +609,31 @@ int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagat
 int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uint32_t count) {
     if (!attributes) return ErrorNullPointer;
     if (!count) return ErrorInvalidArgument;
+    const auto address = reinterpret_cast<std::uintptr_t>(attributes);
+    const auto readAttribute = [&](std::uint32_t index, Attribute& attribute) {
+        if (index > (UINTPTR_MAX - address) / sizeof(Attribute)) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&attribute, reinterpret_cast<const void*>(address + static_cast<std::size_t>(index) * sizeof(Attribute)), sizeof(attribute));
+        errno = savedErrno;
+        return copied;
+    };
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     for (std::uint32_t index = 0; index < count; ++index) {
-        const Attribute& attribute = attributes[index];
+        Attribute attribute{};
+        if (!readAttribute(index, attribute)) return ErrorInvalidArgument;
         if (!attribute.value) return ErrorNullPointer;
         if (attribute.id > 0x10000) {
             const bool handle = attribute.id == 0x10001 || attribute.id == 0x20000;
             if (!handle && attribute.id - 0x10002 >= 4) return ErrorInvalidArgument;
             if (attribute.valueSize != (attribute.id == 0x20000 ? 8 : 16)) return ErrorInvalidArgument;
             if (handle) {
-                const auto* rooms = reinterpret_cast<const AudioPropagationHandle*>(attribute.value);
                 const std::size_t roomCount = attribute.id == 0x10001 ? 2 : 1;
+                std::array<AudioPropagationHandle, 2> rooms{};
+                const int savedErrno = errno;
+                const bool copied = GuestCopyIn_nid_no_patch(rooms.data(), attribute.value, roomCount * sizeof(AudioPropagationHandle));
+                errno = savedErrno;
+                if (!copied) return ErrorInvalidArgument;
                 for (std::size_t slot = 0; slot < roomCount; ++slot) {
                     const auto room = rooms[slot];
                     if (attribute.id == 0x20000 && room == 0) continue;
@@ -638,23 +651,29 @@ int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uin
         }
     }
     for (std::uint32_t index = 0; index < count; ++index) {
-        const Attribute& attribute = attributes[index];
-        auto* value = reinterpret_cast<std::uint32_t*>(const_cast<void*>(attribute.value));
+        Attribute attribute{};
+        if (!readAttribute(index, attribute)) return ErrorInvalidArgument;
+        std::array<std::uint32_t, 4> value{};
+        std::size_t bytes = 0;
         switch (attribute.id) {
-            case 0: value[0] = 0; value[1] = 0; value[2] = 0; break;
-            case 1: value[0] = 0; value[1] = 0; value[2] = 0x3f800000; break;
-            case 2: value[0] = 3; value[1] = 0x42c80000; value[2] = 0x3f800000; value[3] = 0x3f800000; break;
-            case 3: value[0] = 0x3f800000; value[1] = 0x41f00000; value[2] = 0x3f333333; value[3] = 0x43870000; break;
-            case 4: std::memset(value, 0, 16); break;
-            case 5: value[0] = 0; break;
+            case 0: bytes = 12; break;
+            case 1: value[2] = 0x3f800000; bytes = 12; break;
+            case 2: value = {3, 0x42c80000, 0x3f800000, 0x3f800000}; bytes = 16; break;
+            case 3: value = {0x3f800000, 0x41f00000, 0x3f333333, 0x43870000}; bytes = 16; break;
+            case 4: bytes = 16; break;
+            case 5: bytes = 4; break;
             case 6:
-            case 7: value[0] = 0; value[1] = 0; break;
-            case 0x10001: std::memset(value, 0, 16); break;
-            case 0x10002: value[0] = 0x3f000000; value[1] = 0x3f000000; value[2] = 0x3f000000; break;
-            case 0x10003: value[0] = 0; value[1] = 0; value[2] = 0x3f800000; break;
-            case 0x10004: value[0] = 0; value[1] = 0x3f800000; value[2] = 0; break;
+            case 7: bytes = 8; break;
+            case 0x10001: bytes = 16; break;
+            case 0x10002: value = {0x3f000000, 0x3f000000, 0x3f000000, 0}; bytes = 12; break;
+            case 0x10003: value[2] = 0x3f800000; bytes = 12; break;
+            case 0x10004: value[1] = 0x3f800000; bytes = 12; break;
             default: return ErrorInvalidArgument;
         }
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(const_cast<void*>(attribute.value), value.data(), bytes);
+        errno = savedErrno;
+        if (!copied) return ErrorNullPointer;
     }
     return 0;
 }

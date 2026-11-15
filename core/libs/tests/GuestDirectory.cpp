@@ -164,6 +164,17 @@ int main() {
         nullResultThrows = true;
     }
     Require(nullResultThrows);
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        rewinddir_nid_postfix(directory);
+        GuestDirectoryEntry entry{};
+        *__error_nid_postfix() = 13;
+        Require(readdir_r_nid_postfix(directory, reinterpret_cast<GuestDirectoryEntry*>(const_cast<char*>(unusable)), &result) == 14);
+        Require(*__error_nid_postfix() == 13);
+        rewinddir_nid_postfix(directory);
+        *__error_nid_postfix() = 13;
+        Require(readdir_r_nid_postfix(directory, &entry, reinterpret_cast<GuestDirectoryEntry**>(const_cast<char*>(unusable))) == 14);
+        Require(*__error_nid_postfix() == 13);
+    }
     rewinddir_nid_postfix(directory);
 
     Require(readdir_nid_postfix(directory) != nullptr);
