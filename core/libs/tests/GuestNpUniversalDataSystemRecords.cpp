@@ -96,6 +96,7 @@ int main() {
     void* child = nullptr;
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, nullptr, &child) == kNullValue, "null array object");
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, reinterpret_cast<void*>(1), &child) == kNullObject, "unknown array object");
+    Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, object, reinterpret_cast<void**>(0x10)) == kInvalidArgument, "unwritable array object child ptr");
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, object, &child) == 0 && child != nullptr, "array object");
     const auto* storedArrayObject = static_cast<NpUniversalDataSystemEventPropertyArray*>(array);
     Require(storedArrayObject->values.size() >= 1, "array object stored");
@@ -107,6 +108,7 @@ int main() {
 
     void* arrayChild = nullptr;
     Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, nullptr, &arrayChild) == kNullValue, "null array array");
+    Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, array, reinterpret_cast<void**>(0x10)) == kInvalidArgument, "unwritable array child array ptr");
     Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, array, &arrayChild) == 0 && arrayChild != nullptr, "array array");
     const auto* storedNestedArray = std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyArray>>(&storedArrayObject->values.back());
     Require(storedNestedArray != nullptr && storedNestedArray->get() == arrayChild, "array array child pointer");
