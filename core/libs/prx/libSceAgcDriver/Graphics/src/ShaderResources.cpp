@@ -4141,14 +4141,48 @@ bool EpochProofCountsProfiled() {
     return profiled;
 }
 
+namespace {
+
+constexpr std::array<const char*, 10> ExitInputs{"epoch", "proof", "pending", "releases", "unwatch", "imports", "allocations", "surfaces", "stale planes", "per-use copies"};
+
+struct ExitMisses {
+    ProfileCounter misses;
+    std::array<ProfileCounter, ExitInputs.size()> moved;
+    std::array<ProfileCounter, ExitInputs.size()> alone;
+};
+
+bool exitMissesCounted() {
+    static const bool counted = EpochProofCountsProfiled() || std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PIPELINE_STATS") != nullptr;
+    return counted;
+}
+
+ExitMisses& exitMisses() {
+    static ExitMisses misses;
+    return misses;
+}
+
+void reportExitMisses() {
+    auto& misses = exitMisses();
+    std::string inputs;
+    for (std::size_t input = 0; input < ExitInputs.size(); ++input) {
+        const auto alone = misses.alone[input].Take();
+        const auto moved = misses.moved[input].Take();
+        if (moved == 0) continue;
+        inputs += inputs.empty() ? "" : ", ";
+        inputs += std::string(ExitInputs[input]) + " " + std::to_string(alone) + "/" + std::to_string(moved);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s) proved resource sets that missed the exit %llu; by input, moved alone/moved: %s\n", static_cast<unsigned long long>(misses.misses.Take()), inputs.empty() ? "none" : inputs.c_str());
+}
+
+}
+
 void ReportEpochProofCounts() {
     auto& counts = EpochProofCounts();
+    reportExitMisses();
     AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s, proofs %s): resource proofs reused %llu, proved %llu; storage refreshes reused %llu; address spaces reused %llu, refreshed %llu\n", ShaderResources::EpochProofs() ? "on" : "off", static_cast<unsigned long long>(counts.resourceReuses.Take()), static_cast<unsigned long long>(counts.resourceProofs.Take()), static_cast<unsigned long long>(counts.storageReuses.Take()), static_cast<unsigned long long>(counts.mirrorReuses.Take()), static_cast<unsigned long long>(counts.mirrorRefreshes.Take()));
 }
 
 namespace {
-
-constexpr std::array<const char*, 9> ExitInputs{"epoch", "proof", "pending", "releases", "unwatch", "imports", "allocations", "surfaces", "stale planes"};
 
 struct ExitVerification {
     std::atomic<std::uint64_t> checks{0};
@@ -4156,6 +4190,7 @@ struct ExitVerification {
     std::atomic<std::uint64_t> stores{0};
     std::atomic<std::uint64_t> misses{0};
     std::array<std::atomic<std::uint64_t>, ExitInputs.size()> moved{};
+    std::array<std::atomic<std::uint64_t>, ExitInputs.size()> alone{};
 };
 
 ExitVerification& exitVerification() {
@@ -4179,7 +4214,12 @@ void printExitVerification() {
         moved += moved.empty() ? "" : ", ";
         moved += std::string(ExitInputs[input]) + " " + std::to_string(verification.moved[input].load(std::memory_order_relaxed));
     }
-    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory; %llu proved builds missed the exit, by input moved: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str());
+    std::string alone;
+    for (std::size_t input = 0; input < ExitInputs.size(); ++input) {
+        alone += alone.empty() ? "" : ", ";
+        alone += std::string(ExitInputs[input]) + " " + std::to_string(verification.alone[input].load(std::memory_order_relaxed));
+    }
+    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory; %llu proved builds missed the exit, by input moved: %s; moved alone: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str(), alone.c_str());
 }
 
 void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false) {
@@ -4191,11 +4231,24 @@ void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false
     if (reportDue(verification.checks.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
 }
 
-void noteExitMiss(const ShaderResources::ExitStamp& proved, const ShaderResources::ExitStamp& current, bool stalePlanes) {
+void noteExitMiss(const ShaderResources::ExitStamp& proved, const ShaderResources::ExitStamp& current, bool stalePlanes, bool copies) {
+    const std::array<bool, ExitInputs.size()> moved{proved.epoch != current.epoch, proved.proof != current.proof, proved.pending != current.pending, proved.releases != current.releases, proved.unwatch != current.unwatch, proved.importSet != current.importSet, proved.allocations != current.allocations, proved.surfaces != current.surfaces, stalePlanes, copies};
+    const bool alone = std::ranges::count(moved, true) == 1;
+    if (exitMissesCounted()) {
+        auto& misses = exitMisses();
+        misses.misses.Add();
+        for (std::size_t input = 0; input < moved.size(); ++input) {
+            if (!moved[input]) continue;
+            misses.moved[input].Add();
+            if (alone) misses.alone[input].Add();
+        }
+    }
+    if (!verifyingExits()) return;
     auto& verification = exitVerification();
-    const std::array<bool, ExitInputs.size()> moved{proved.epoch != current.epoch, proved.proof != current.proof, proved.pending != current.pending, proved.releases != current.releases, proved.unwatch != current.unwatch, proved.importSet != current.importSet, proved.allocations != current.allocations, proved.surfaces != current.surfaces, stalePlanes};
     for (std::size_t input = 0; input < moved.size(); ++input) {
-        if (moved[input]) verification.moved[input].fetch_add(1, std::memory_order_relaxed);
+        if (!moved[input]) continue;
+        verification.moved[input].fetch_add(1, std::memory_order_relaxed);
+        if (alone) verification.alone[input].fetch_add(1, std::memory_order_relaxed);
     }
     if (reportDue(verification.misses.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
 }
@@ -4534,7 +4587,9 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     if (EpochProofs()) {
         const auto stamp = currentExitStamp();
         const bool stalePlanes = DepthPlanesStale();
-        if (stamp.epoch != 0 && proved == stamp && !stalePlanes && refreshPerUseCopies()) {
+        const bool matched = stamp.epoch != 0 && proved == stamp && !stalePlanes;
+        const bool copies = matched && !refreshPerUseCopies();
+        if (matched && !copies) {
             if (verifyingExits()) {
                 const bool ok = revalidateFull(shaders, report);
                 noteEpochProof(true, true, !ok, GuestMemory::ProofSerial() != stamp.proof);
@@ -4544,7 +4599,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             noteEpochProof(true, false, false);
             return true;
         }
-        if (verifyingExits() && proved.epoch != 0) noteExitMiss(proved, stamp, stalePlanes);
+        if (proved.epoch != 0 && (verifyingExits() || exitMissesCounted())) noteExitMiss(proved, stamp, stalePlanes, copies);
         const bool ok = revalidateFull(shaders, report);
         noteEpochProof(false, false, false);
         proved = stamp;
