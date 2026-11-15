@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -979,7 +980,14 @@ void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void) {
     sharedPtrSpinLock.clear(std::memory_order_release);
 }
 
-int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char*) {
+int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
+    constexpr std::size_t objectNameLimit = 32;
+    constexpr int guestNameTooLong = 63;
+    constexpr int threadError = 4;
+    if (name != nullptr && std::strlen(name) >= objectNameLimit) {
+        errno = guestNameTooLong;
+        return threadError;
+    }
     return _Cnd_init_nid_postfix(handle);
 }
 
