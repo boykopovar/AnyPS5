@@ -1,3 +1,5 @@
+/* Derived from Source/WebCore/platform/graphics/FourCC.cpp@c55364d53f971f63a709976f168d932d558b8909 */
+/* Derived from Source/WTF/wtf/text/WTFString.cpp@c55364d53f971f63a709976f168d932d558b8909 */
 /*
  * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
