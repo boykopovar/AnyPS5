@@ -1,0 +1,7 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_mesh_reuse_groups_tests tests/MeshReuseGroups.cpp)
+    target_include_directories(agc_mesh_reuse_groups_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    set_target_properties(agc_mesh_reuse_groups_tests PROPERTIES CXX_EXTENSIONS OFF)
+    add_test(NAME agc_mesh_reuse_groups COMMAND agc_mesh_reuse_groups_tests)
+    set_tests_properties(agc_mesh_reuse_groups PROPERTIES TIMEOUT 30 FAIL_REGULAR_EXPRESSION "FAIL:")
+endif()
