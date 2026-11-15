@@ -484,7 +484,7 @@ std::int32_t APS5_VABI sceUsbdInterruptTransfer(void* deviceHandle, std::uint8_t
 }
 
 std::int32_t APS5_VABI sceUsbdCancelTransfer(UsbdTransfer* transfer) {
-    if (transfer == nullptr) throw std::runtime_error(std::string(__func__) + ": null transfer");
+    if (transfer == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     const auto found = state.inFlight.find(transfer);

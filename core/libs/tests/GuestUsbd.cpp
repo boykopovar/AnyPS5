@@ -570,6 +570,7 @@ int main(int argc, char** argv) {
     Require(*reinterpret_cast<void**>(transfer + 40) == &user && *reinterpret_cast<std::uint8_t**>(transfer + 48) == buffer, "user data or buffer not filled");
     Require(sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == static_cast<std::int32_t>(0x80240005), "cancelling an unsubmitted transfer did not report not found");
     Require(sceUsbdSubmitTransfer(nullptr) == invalidArgument, "null transfer submitted");
+    Require(sceUsbdCancelTransfer(nullptr) == invalidArgument, "null transfer cancelled");
     Require(sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == invalidArgument, "transfer without a handle submitted");
     sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), &foreign, 0x81, buffer, 8, reinterpret_cast<UsbdTransferCallback>(&Require), &user, 250);
 
