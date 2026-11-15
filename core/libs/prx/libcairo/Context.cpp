@@ -7,7 +7,6 @@
 #include <bit>
 #include <cerrno>
 #include <cstddef>
-#include <limits>
 #include <vector>
 
 static_assert(sizeof(CairoPathData) == sizeof(cairo_path_data_t));
@@ -205,12 +204,14 @@ double APS5_VABI cairo_get_miter_limit(CairoContext* context) {
     return aps5_cairo_get_miter_limit(Backend(context));
 }
 
+constexpr int MaxDashCount = 4096;
+
 void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes, int numDashes, double offset) {
     if (numDashes <= 0) {
         aps5_cairo_set_dash(Backend(context), dashes, numDashes, offset);
         return;
     }
-    if (!dashes || static_cast<std::size_t>(numDashes) > std::numeric_limits<std::size_t>::max() / sizeof(double))
+    if (!dashes || numDashes > MaxDashCount)
         NotImplemented_nid_no_patch(__func__);
     std::vector<double> hostDashes(static_cast<std::size_t>(numDashes));
     const int savedErrno = errno;
@@ -223,6 +224,8 @@ void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes, int n
 
 void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* offset) {
     const int count = aps5_cairo_get_dash_count(Backend(context));
+    if (dashes && count > MaxDashCount)
+        NotImplemented_nid_no_patch(__func__);
     std::vector<double> hostDashes(dashes && count > 0 ? static_cast<std::size_t>(count) : 0);
     if (!hostDashes.empty())
         RequireWritable(dashes, hostDashes.size() * sizeof(double), __func__);

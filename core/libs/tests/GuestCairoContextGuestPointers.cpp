@@ -147,7 +147,12 @@ int main() {
     EXPECT_REJECTED(cairo_set_dash(context, nullptr, 2, 0.5));
     EXPECT_REJECTED(cairo_set_dash(context, badDouble, 2, 0.5));
     const std::array<double, 2> dashPattern{4.0, 2.0};
+    EXPECT_REJECTED(cairo_set_dash(context, dashPattern.data(), 4097, 0.5));
+    EXPECT_REJECTED(cairo_set_dash(context, dashPattern.data(), 0x7fffffff, 0.5));
+    EXPECT_REJECTED(cairo_set_dash(context, badDouble, 0x7fffffff, 0.5));
     cairo_set_dash(context, dashPattern.data(), 2, 1.5);
+    CHECK(cairo_get_dash_count(context) == 2);
+    EXPECT_REJECTED(cairo_set_dash(context, dashPattern.data(), 0x7fffffff, 0.5));
     CHECK(cairo_get_dash_count(context) == 2);
 
     std::array<double, 2> outDashes{99.0, 99.0};
