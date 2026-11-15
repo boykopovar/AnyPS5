@@ -381,6 +381,8 @@ struct SpirvTarget {
     bool shaderImageMinLod = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool float16HostNans = false;
+    bool meshInlineFunctions = false;
 };
 
 struct BindingLayout {
@@ -808,6 +810,7 @@ public:
     }
 
     [[nodiscard]] std::span<const std::uint32_t> Words() const { return holder ? holder->Words() : std::span<const std::uint32_t>{}; }
+    [[nodiscard]] bool Mapped() const { return holder != nullptr && holder->owner != nullptr; }
     [[nodiscard]] SpirvContentHash ContentHash() const {
         if (holder == nullptr) return {};
         if (holder->hashed.load(std::memory_order_acquire)) return {holder->hashLow.load(std::memory_order_relaxed), holder->hashHigh.load(std::memory_order_relaxed)};
@@ -1026,6 +1029,20 @@ struct ResourceCapture;
 void SetResultMemoBudget(std::uint64_t bytes);
 [[nodiscard]] std::uint64_t ResultMemoBytes();
 void SetResultMemoTrimHook(std::function<void()> hook);
+struct ResourcePlanCounters {
+    std::uint64_t heldBytes = 0;
+    std::uint64_t heldPlans = 0;
+    std::uint64_t evictions = 0;
+    std::uint64_t reloads = 0;
+};
+void SetResourcePlanBudget(std::uint64_t bytes);
+[[nodiscard]] ResourcePlanCounters ResourcePlanTotals();
+struct ResourcePlanInterval {
+    std::uint64_t reloads = 0;
+    std::uint64_t evictions = 0;
+};
+[[nodiscard]] ResourcePlanInterval TakeResourcePlanInterval();
+void SetResourcePlanReportHook(std::function<void()> hook);
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile

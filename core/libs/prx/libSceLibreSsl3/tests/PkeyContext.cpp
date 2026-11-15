@@ -14,6 +14,7 @@
 #include <cstring>
 #include <exception>
 #include <initializer_list>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <unordered_map>
@@ -897,6 +898,160 @@ void PssPaddingBlock() {
     ReleaseKey(key);
 }
 
+LibreSsl3EvpPkey* NewModulusOnlyKey(std::size_t modulusSize, unsigned char firstByte) {
+    std::vector<unsigned char> modulusBytes(modulusSize, 0);
+    modulusBytes[0] = firstByte;
+    modulusBytes[modulusSize - 1] = 0x01;
+    auto* key = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    Require(key != nullptr);
+    key->type = LibreSsl3PkeyRsa;
+    key->method = FindNativePkeyAsn1Method_nid_no_patch(LibreSsl3PkeyRsa);
+    Require(key->method != nullptr);
+    auto* rsa = RSA_new_nid_disambig1_nid_postfix();
+    Require(rsa != nullptr);
+    key->key = rsa;
+    auto* modulus = LibreSsl3::NewRsaBignum_nid_no_patch(modulusBytes.data(), modulusBytes.size());
+    auto* exponent = LibreSsl3::NewRsaBignum_nid_no_patch(PublicExponent, sizeof(PublicExponent));
+    Require(modulus != nullptr && exponent != nullptr);
+    Require(RSA_set0_key_nid_postfix(rsa, modulus, exponent, nullptr) == 1);
+    return key;
+}
+
+void PssRejectedMaximumSaltControl() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* rsa = static_cast<LibreSsl3Rsa*>(key->key);
+    auto* context = SignatureContext(key, true, EVP_sha256_nid_postfix());
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPadding,
+        LibreSsl3RsaPaddingPss, nullptr) == 1);
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength,
+        LibreSsl3RsaPssSaltLengthMaximum, nullptr) == 1);
+    int configuredSaltLength = 0;
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlGetRsaPssSaltLength, 0,
+        &configuredSaltLength) == 1);
+    Require(configuredSaltLength == LibreSsl3RsaPssSaltLengthMaximum);
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength, -4,
+        nullptr) == -2);
+    ExpectErrors({EvpCode(147)});
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlGetRsaPssSaltLength, 0,
+        &configuredSaltLength) == 1);
+    Require(configuredSaltLength == LibreSsl3RsaPssSaltLengthMaximum);
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = signature.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, signature.data(), &length, DigestSha256, sizeof(DigestSha256)) == -1);
+    ExpectErrors({RsaCode(136)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+
+    auto* autoSignContext = SignatureContext(key, true, EVP_sha256_nid_postfix());
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(autoSignContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPadding,
+        LibreSsl3RsaPaddingPss, nullptr) == 1);
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(autoSignContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength,
+        LibreSsl3RsaPssSaltLengthAuto, nullptr) == 1);
+    length = signature.size();
+    Require(EVP_PKEY_sign_nid_postfix(autoSignContext, signature.data(), &length, DigestSha256,
+        sizeof(DigestSha256)) == 1);
+    Require(length == 256);
+    EVP_PKEY_CTX_free_nid_postfix(autoSignContext);
+
+    auto* verifyContext = SignatureContext(key, false, EVP_sha256_nid_postfix());
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPadding,
+        LibreSsl3RsaPaddingPss, nullptr) == 1);
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength,
+        LibreSsl3RsaPssSaltLengthMaximum, nullptr) == 1);
+    int verifySaltLength = 0;
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlGetRsaPssSaltLength, 0,
+        &verifySaltLength) == 1);
+    Require(verifySaltLength == LibreSsl3RsaPssSaltLengthMaximum);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, signature.data(), 256, DigestSha256, sizeof(DigestSha256)) == 0);
+    ExpectErrors({RsaCode(136)});
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength,
+        LibreSsl3RsaPssSaltLengthAuto, nullptr) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, signature.data(), 256, DigestSha256, sizeof(DigestSha256)) == 1);
+    const int expectedMaxSalt = 256 - static_cast<int>(sizeof(DigestSha256)) - 2;
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength,
+        expectedMaxSalt, nullptr) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, signature.data(), 256, DigestSha256, sizeof(DigestSha256)) == 1);
+    EVP_PKEY_CTX_free_nid_postfix(verifyContext);
+
+    std::array<unsigned char, 256> block {};
+    const auto* sha256 = reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix());
+    Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, block.data(), DigestSha256, sha256, sha256,
+        LibreSsl3RsaPssSaltLengthMaximum) == 0);
+    ExpectErrors({RsaCode(136)});
+    Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, block.data(), DigestSha256, sha256, sha256,
+        LibreSsl3RsaPssSaltLengthAuto) == 1);
+    Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256, block.data(),
+        LibreSsl3RsaPssSaltLengthMaximum) == 0);
+    ExpectErrors({RsaCode(136)});
+    Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256, block.data(),
+        LibreSsl3RsaPssSaltLengthAuto) == 1);
+    ReleaseKey(key);
+}
+
+void PssSmallModulusBounds() {
+    const auto* sha256 = reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix());
+    struct SmallKeyCase {
+        std::size_t modulusBytes;
+        unsigned char firstByte;
+    };
+    constexpr SmallKeyCase tooSmallCases[] {
+        {sizeof(DigestSha256), 0x80},
+        {sizeof(DigestSha256) + 1, 0x01},
+        {sizeof(DigestSha256) + 1, 0x80},
+        {sizeof(DigestSha256) + 2, 0x01},
+    };
+    for (const auto& entry : tooSmallCases) {
+        auto* key = NewModulusOnlyKey(entry.modulusBytes, entry.firstByte);
+        auto* rsa = static_cast<LibreSsl3Rsa*>(key->key);
+        for (const int mode : {LibreSsl3RsaPssSaltLengthAuto, 0}) {
+            std::vector<unsigned char> block(entry.modulusBytes, 0);
+            Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, block.data(), DigestSha256, sha256, sha256,
+                mode) == 0);
+            ExpectErrors({RsaCode(110)});
+            block.back() = 0xbc;
+            Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256, block.data(),
+                mode) == 0);
+            ExpectErrors({RsaCode(109)});
+        }
+        std::vector<unsigned char> rejectedBlock(entry.modulusBytes, 0);
+        rejectedBlock.back() = 0xbc;
+        for (const int rejectedMode : {LibreSsl3RsaPssSaltLengthMaximum, -4}) {
+            Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, rejectedBlock.data(), DigestSha256, sha256, sha256,
+                rejectedMode) == 0);
+            ExpectErrors({RsaCode(136)});
+            Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256,
+                rejectedBlock.data(), rejectedMode) == 0);
+            ExpectErrors({RsaCode(136)});
+        }
+        ReleaseKey(key);
+    }
+
+    constexpr SmallKeyCase zeroSaltBoundaryCases[] {
+        {sizeof(DigestSha256) + 2, 0x80},
+        {sizeof(DigestSha256) + 3, 0x01},
+    };
+    for (const auto& entry : zeroSaltBoundaryCases) {
+        auto* key = NewModulusOnlyKey(entry.modulusBytes, entry.firstByte);
+        auto* rsa = static_cast<LibreSsl3Rsa*>(key->key);
+        std::vector<unsigned char> block(entry.modulusBytes, 0);
+        Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, block.data(), DigestSha256, sha256, sha256,
+            LibreSsl3RsaPssSaltLengthAuto) == 1);
+        Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256, block.data(),
+            LibreSsl3RsaPssSaltLengthAuto) == 1);
+        Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256, block.data(),
+            0) == 1);
+        Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256, block.data(),
+            LibreSsl3RsaPssSaltLengthDigest) == 0);
+        ExpectErrors({RsaCode(109)});
+        Require(LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, DigestSha256, sha256, sha256, block.data(),
+            std::numeric_limits<int>::max()) == 0);
+        ExpectErrors({RsaCode(109)});
+        Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, block.data(), DigestSha256, sha256, sha256,
+            std::numeric_limits<int>::max()) == 0);
+        ExpectErrors({RsaCode(110)});
+        ReleaseKey(key);
+    }
+}
+
 void RawPkcs1Signature() {
     auto* key = NewNativeKey(LibreSsl3PkeyRsa);
     auto* context = SignatureContext(key, true, nullptr);
@@ -1278,6 +1433,8 @@ int main() {
     Pkcs1VerificationFailures();
     PssSignatures();
     PssPaddingBlock();
+    PssRejectedMaximumSaltControl();
+    PssSmallModulusBounds();
     RawPkcs1Signature();
     SignatureControls();
     SignatureOperationGuards();
