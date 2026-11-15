@@ -6780,7 +6780,17 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied
     if (copied) {
         Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "an imported draw input was bound in place where draw inputs are copied");
         Require(!recorder.PendingReadOverlaps(vertices, 256), "a copied draw input's read was noted as an in-place read");
+        context.drawInputsInPlaceBelow = 64;
+        Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "a draw input fetching its whole range above the in-place size was bound in place");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 128) == nullptr, "a draw input fetching more than the in-place size was bound in place");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 64) == nullptr, "a small draw input whose draw reads it an unknown number of times was bound in place");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 64, InPlaceDrawInputMaxReads + 1) == nullptr, "a small draw input read more often than the in-place read limit was bound in place");
+        Require(!recorder.PendingReadOverlaps(vertices, 256), "a copied small draw input's read was noted as an in-place read");
+        Require(InPlaceDrawInput(context, vertices, 256, 4, nullptr, 64, InPlaceDrawInputMaxReads) != nullptr, "a small draw input read no more often than the in-place read limit was copied");
+        Require(recorder.PendingReadOverlaps(vertices, 256), "a small draw input bound in place did not note its read");
         bool behind = false;
+        Require(InPlaceDrawInput(context, vertices, 256, 4, &behind, 64, InPlaceDrawInputMaxReads) != nullptr && !behind, "a small vertex input free of pending GPU writes was copied where draw inputs are copied");
+        recorder.Sync();
         Require(InPlaceDrawInput(context, vertices, 256, 4, &behind) == nullptr && !behind, "a vertex input free of pending GPU writes was bound in place where draw inputs are copied");
         recorder.NotePendingWrite(vertices, 16);
         Require(InPlaceDrawInput(context, vertices, 256, 4) == nullptr, "an index input under a pending GPU write was bound in place where draw inputs are copied");
