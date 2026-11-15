@@ -28,8 +28,8 @@ std::uint32_t* WriteDma(CommandBuffer* buffer, bool compute, std::uint8_t engine
 }
 
 std::uint32_t* WriteCopyData(CommandBuffer* buffer, bool compute, std::uint8_t dst, std::uint8_t dstCachePolicy, std::uint64_t dstAddress, std::uint8_t src, std::uint8_t srcCachePolicy, std::uint64_t srcAddressOrImmediate, std::uint8_t itemSize, std::uint8_t writeConfirm, const char* function) {
-    CheckBits(dstCachePolicy, 3, function);
-    CheckBits(srcCachePolicy, 3, function);
+    dstCachePolicy &= 3u;
+    srcCachePolicy &= 3u;
     CheckBits(itemSize, 1, function);
     CheckBits(writeConfirm, 1, function);
     const auto srcSelect = compute ? static_cast<std::uint32_t>(src) & 0xfu : (static_cast<std::uint32_t>(src) >> 1u) & 0xfu;

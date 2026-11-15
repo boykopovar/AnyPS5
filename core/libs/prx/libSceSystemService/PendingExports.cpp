@@ -240,11 +240,6 @@ int APS5_VABI sceLncUtilGetAppCategory(std::int32_t appId, char* category) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilGetAppFocusedAppStatus(LncAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -508,16 +503,6 @@ int APS5_VABI sceLncUtilUnregisterDaemon() {
 }
 
 int APS5_VABI sceLncUtilUnregisterShellUI() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilAccessibilityZoomLock() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilAccessibilityZoomUnlock() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -853,8 +838,22 @@ std::uint64_t APS5_VABI sceShellCoreUtilGetFreeSizeOfAvContentsTmp() {
 
 int APS5_VABI sceShellCoreUtilGetFreeSizeOfUserPartition(std::uint64_t* freeSize, std::uint64_t* totalSize) {
     const std::filesystem::space_info space = HostSpace();
-    if (freeSize != nullptr) *freeSize = space.available;
-    if (totalSize != nullptr) *totalSize = space.capacity;
+    const int savedErrno = errno;
+    if (freeSize != nullptr) {
+        const std::uint64_t localFree = space.available;
+        if (!GuestCopyOut_nid_no_patch(freeSize, &localFree, sizeof(localFree))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    if (totalSize != nullptr) {
+        const std::uint64_t localTotal = space.capacity;
+        if (!GuestCopyOut_nid_no_patch(totalSize, &localTotal, sizeof(localTotal))) {
+            errno = savedErrno;
+            return static_cast<int>(0x80e30005);
+        }
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -1049,11 +1048,6 @@ int APS5_VABI sceShellCoreUtilHideBlocksFromUser(std::int64_t bytes, std::int32_
 }
 
 int APS5_VABI sceShellCoreUtilIncrementVersionNumberOfCameraCalibrationData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsAccessibilityZoomLocked(std::int32_t appId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1707,11 +1701,6 @@ int APS5_VABI sceSystemServiceDisableVoiceRecognition() {
 }
 
 int APS5_VABI sceSystemServiceEnablePersonalEyeToEyeDistanceSetting() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

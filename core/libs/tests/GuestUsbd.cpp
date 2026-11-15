@@ -443,6 +443,10 @@ void CheckTransferFillers() {
     Require(transfer->length == 0 && sceUsbdControlTransferGetData(transfer) == nullptr, "a control transfer without a buffer has data");
     Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
+    Require(Throws([] { sceUsbdFillControlSetup(reinterpret_cast<std::uint8_t*>(0x10), 0x80, 6, 0x0100, 0, 18); }), "filling an unwritable control setup did not throw");
+    transfer->length = 77;
+    Require(Throws([&] { sceUsbdFillControlTransfer(transfer, &device, reinterpret_cast<std::uint8_t*>(0x10), &MarkDone, &user, 100); }) && transfer->length == 77,
+        "filling a control transfer from an unreadable setup did not throw before touching the transfer");
     Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
     auto* bulk = sceUsbdAllocTransfer(0);
     Require(bulk != nullptr, "transfer allocation failed");
