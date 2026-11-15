@@ -1542,6 +1542,10 @@ void TestLanguagesAndDebugIds() {
         "language strings are returned directly");
     Require(sceNpUtilGetNpLanguageCode(31, code) == NpUtilInvalid && sceNpUtilGetNpLanguageCodeStr(31) == nullptr,
         "unknown languages are refused");
+    Require(sceNpUtilGetNpLanguageCode(0, nullptr) == NpUtilInvalid, "a language code needs a buffer");
+    errno = 71;
+    Require(sceNpUtilGetNpLanguageCode(1, reinterpret_cast<char*>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable code buffer is refused and errno is kept");
     Require(sceNpUtilGetNpLanguageCode2(0, nullptr) == NpUtilInvalid, "a language code needs a buffer");
     const std::uint32_t first = sceNpDbgAssignDebugId();
     Require(first != 0 && sceNpDbgAssignDebugId() == first + 1, "debug ids count up");
@@ -1618,6 +1622,11 @@ void TestNumbers() {
     std::uint64_t unsigned64 = 0;
     Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == 0 && unsigned64 == UINT64_MAX, "the 64-bit maximum parses");
     Require(sceNpStrToUInt64("18446744073709551616", &unsigned64, 10, nullptr) == NpOutOfRange, "64-bit unsigned overflow is an error");
+    Require(sceNpStrToInt32("12", reinterpret_cast<std::int32_t*>(0x10), 10, &parsed) == NpInvalidArgument, "an unwritable 32-bit value is refused");
+    Require(sceNpStrToInt32("12", &value32, 10, reinterpret_cast<std::size_t*>(0x10)) == NpInvalidArgument, "an unwritable parsed length is refused");
+    Require(sceNpStrToInt64("12", reinterpret_cast<std::int64_t*>(0x10), 10, nullptr) == NpInvalidArgument, "an unwritable 64-bit value is refused");
+    Require(sceNpStrToUInt32("12", reinterpret_cast<std::uint32_t*>(0x10), 10, nullptr) == NpInvalidArgument, "an unwritable unsigned 32-bit value is refused");
+    Require(sceNpStrToUInt64("12", reinterpret_cast<std::uint64_t*>(0x10), 10, nullptr) == NpInvalidArgument, "an unwritable unsigned 64-bit value is refused");
 }
 
 void TestHexAndCopies() {
