@@ -279,7 +279,7 @@ void Run() {
 
 } // namespace UcolSetAttribute
 
-namespace GuestPointers {
+namespace CollatorGuestPointers {
 
 void Run() {
     auto rejectsRuntime = [](auto&& call) {
@@ -310,5 +310,5 @@ void CheckIcuCollator() {
     UcolGetTailoredSet::Run();
     UcolOpen::Run();
     UcolSetAttribute::Run();
-    GuestPointers::Run();
+    CollatorGuestPointers::Run();
 }
