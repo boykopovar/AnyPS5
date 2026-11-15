@@ -63,6 +63,7 @@ FREETYPEOL_STUB("oJm1lThZ3iQ", sceFreeTypeOlDoneGlyphSlot)
 #include <freetype/internal/ftdrv.h>
 #include <freetype/internal/ftobjs.h>
 
+#include <cerrno>
 #include <cstdint>
 
 using namespace FreeType;
@@ -119,6 +120,20 @@ int RemoveModule(void* library, const char* name) {
             return FT_Err_Invalid_Argument;
     }
     return FT_Remove_Module(host, module);
+}
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
 }
 }
 
@@ -302,18 +317,28 @@ APS5_EXPORT("OmxJF0FvwWc", sceFreeTypeOlFtaRemoveModuleWinfonts_nid_postfix);
 
 
 int APS5_VABI sceFreeTypeOlAlloc_nid_postfix(GuestMemoryRec* memory, std::int64_t size, void** output) {
-    if (output) *output = nullptr;
-    if (!memory || !memory->alloc || !output || size < 0) return 6;
+    void* zero = nullptr;
+    if (output && !CopyOutPreservingErrno(output, &zero, sizeof(zero))) return 6;
+    if (!memory || !output || size < 0) return 6;
+    GuestMemoryRec localMemory{};
+    if (!CopyInPreservingErrno(&localMemory, memory, sizeof(localMemory)) || !localMemory.alloc) return 6;
     if (size == 0) return 0;
-    *output = memory->alloc(memory, size);
-    return *output ? 0 : 64;
+    void* allocated = localMemory.alloc(memory, size);
+    if (!allocated) return 64;
+    if (!CopyOutPreservingErrno(output, &allocated, sizeof(allocated))) return 6;
+    return 0;
 }
 APS5_EXPORT("Uw+BZJpflxk", sceFreeTypeOlAlloc_nid_postfix);
 
 void APS5_VABI sceFreeTypeOlFree_nid_postfix(GuestMemoryRec* memory, void** block) {
-    if (!memory || !memory->free || !block || !*block) return;
-    memory->free(memory, *block);
-    *block = nullptr;
+    if (!memory || !block) return;
+    GuestMemoryRec localMemory{};
+    if (!CopyInPreservingErrno(&localMemory, memory, sizeof(localMemory)) || !localMemory.free) return;
+    void* target = nullptr;
+    if (!CopyInPreservingErrno(&target, block, sizeof(target)) || !target) return;
+    localMemory.free(memory, target);
+    void* zero = nullptr;
+    (void)CopyOutPreservingErrno(block, &zero, sizeof(zero));
 }
 APS5_EXPORT("fHMsRluEMfI", sceFreeTypeOlFree_nid_postfix);
 
@@ -388,7 +413,9 @@ APS5_EXPORT("oM0zMNCfXKM", sceFreeTypeOlFtaSupportModules_nid_postfix);
 
 void APS5_VABI sceFreeTypeOlDoneGlyphSlot_nid_postfix(GuestGlyphSlotRec* slot) {
     if (!slot) return;
-    auto* owner = static_cast<GuestFace*>(slot->internal);
+    GuestGlyphSlotRec localSlot{};
+    if (!CopyInPreservingErrno(&localSlot, slot, sizeof(localSlot))) return;
+    auto* owner = static_cast<GuestFace*>(localSlot.internal);
     if (!owner || slot != &owner->slot || !owner->host) return;
     if (owner->host->glyph) FT_Done_GlyphSlot(owner->host->glyph);
 }

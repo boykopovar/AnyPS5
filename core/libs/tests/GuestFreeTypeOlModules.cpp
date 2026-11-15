@@ -6,6 +6,7 @@
 #include FT_FREETYPE_H
 #include FT_MODULE_H
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -106,6 +107,19 @@ int main() {
     REQUIRE(block == nullptr);
     REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, -1, &block) == 6);
     REQUIRE(block == nullptr);
+    auto* badMemory = reinterpret_cast<GuestMemoryRec*>(std::uintptr_t{0x1000});
+    auto** badBlock = reinterpret_cast<void**>(std::uintptr_t{0x1000});
+    errno = 71;
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(badMemory, 24, &block) == 6);
+    REQUIRE(errno == 71);
+    REQUIRE(sceFreeTypeOlAlloc_nid_postfix(&memory, 24, badBlock) == 6);
+    REQUIRE(errno == 71);
+    sceFreeTypeOlFree_nid_postfix(badMemory, &block);
+    REQUIRE(errno == 71);
+    sceFreeTypeOlFree_nid_postfix(&memory, badBlock);
+    REQUIRE(errno == 71);
+    sceFreeTypeOlDoneGlyphSlot_nid_postfix(reinterpret_cast<FreeType::GuestGlyphSlotRec*>(std::uintptr_t{0x1000}));
+    REQUIRE(errno == 71);
 
     const auto font = SquareGlyphFont('A', 700, true);
     GuestFaceRec* activeFace = nullptr;
