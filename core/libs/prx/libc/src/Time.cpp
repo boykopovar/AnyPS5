@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <array>
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <type_traits>
 #include <stdexcept>
@@ -516,11 +518,15 @@ void formatTime(FormatBuffer<TChar>& buffer, const TFormatChar* format, const Gu
 }
 
 std::size_t formatGuestTime(char* destination, std::size_t size, const char* format, const GuestTm& time) {
-    FormatBuffer<char> buffer{destination, size};
+    const std::size_t capacity = std::min<std::size_t>(size, std::size_t{1} << 20);
+    const auto local = std::make_unique_for_overwrite<char[]>(capacity + 1);
+    FormatBuffer<char> buffer{local.get(), capacity};
     formatTime(buffer, format == nullptr ? "%c" : format, time);
-    if (buffer.full || buffer.remaining == 0) return 0;
-    *buffer.cursor = '\0';
-    return static_cast<std::size_t>(buffer.cursor - destination);
+    const bool fits = !buffer.full && buffer.remaining != 0;
+    if (fits) *buffer.cursor = '\0';
+    const auto length = static_cast<std::size_t>(buffer.cursor - local.get());
+    if (!GuestCopyOut_nid_no_patch(destination, local.get(), length + (fits ? 1 : 0))) return 0;
+    return fits ? length : 0;
 }
 
 char** HostZoneNames() {
@@ -806,10 +812,13 @@ int64_t APS5_VABI timelocal_nid_postfix(GuestTm* timeptr) {
 }
 
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
+    if (timeptr == nullptr) throw std::invalid_argument("strftime: null time");
+    GuestTm time{};
+    if (!GuestCopyIn_nid_no_patch(&time, timeptr, sizeof(time))) throw std::invalid_argument("strftime: unreadable time");
     const ZoneScope zone;
     tzset_nid_postfix();
 
-    return formatGuestTime(str, count, format, *timeptr);
+    return formatGuestTime(str, count, format, time);
 }
 
 char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer) {

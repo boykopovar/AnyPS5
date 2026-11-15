@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -136,8 +137,10 @@ std::uint64_t APS5_VABI wctype_nid_postfix(const char* property) {
         {"ideogram", 0x80000}, {"special", 0x100000}, {"phonogram", 0x200000},
         {"number", GuestRune::Number}, {"rune", 0xffffff00},
     };
+    std::string name;
+    if (CopyGuestString_nid_no_patch(property, 10, name) != 0) return 0;
     for (const auto& entry : properties) {
-        if (std::strcmp(property, entry.name) == 0) return entry.mask;
+        if (name == entry.name) return entry.mask;
     }
     return 0;
 }
@@ -172,8 +175,10 @@ int APS5_VABI _Wctob_nid_postfix(std::uint32_t c) {
 }
 
 std::uint64_t APS5_VABI wctrans_nid_postfix(const char* property) {
-    if (std::strcmp(property, "tolower") == 0) return 1;
-    if (std::strcmp(property, "toupper") == 0) return 2;
+    std::string name;
+    if (CopyGuestString_nid_no_patch(property, 8, name) != 0) return 0;
+    if (name == "tolower") return 1;
+    if (name == "toupper") return 2;
     return 0;
 }
 

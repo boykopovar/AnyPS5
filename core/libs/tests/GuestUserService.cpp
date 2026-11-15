@@ -264,6 +264,14 @@ int main() {
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 37) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 38) == USER_SERVICE_OK);
     Require(std::strlen(homePath) == 36);
+    errno = 71;
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), 38) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    char groupName[160];
+    std::memset(groupName, 0x5a, sizeof(groupName));
+    Require(sceUserServiceGetDefaultNewUserGroupName(groupName, sizeof(groupName)) == USER_SERVICE_OK);
+    Require(std::strncmp(groupName, "User Group ", 11) == 0 && groupName[std::strlen(groupName) + 1] == 0x5a);
+    Require(sceUserServiceGetDefaultNewUserGroupName(reinterpret_cast<char*>(0x10), sizeof(groupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetCurrentUserGroupIndex(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     errno = 71;
     Require(sceUserServiceGetCurrentUserGroupIndex(reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);

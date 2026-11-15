@@ -1,6 +1,8 @@
 #include "prx/libSceAudiodecCpu/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -34,6 +37,10 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "AudiodecCpu query guest: %s\n", message);
     std::abort();
+}
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
 }
 
 template <typename Operation>
@@ -91,6 +98,8 @@ struct ProtectedRegion {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::uint32_t param = 0;
     AudiodecCtrl ctrl{&param, nullptr, nullptr, nullptr};
     AudiodecCpuMemory memory{0x18u, nullptr, 0xA5A5A5A5u};
@@ -137,5 +146,79 @@ int main() {
     Require(readOnly->ui_memory_size == 0xA5A5A5A5u, "read-only output modified");
     Require(errno == 71, "protected guest copies changed errno");
 
+    std::vector<std::uint8_t> lpcmMem(0x200, 0);
+    std::array<std::uint32_t, 10> lpcmParam{};
+    std::array<std::uint32_t, 8> lpcmBsi{};
+    std::array<std::uint8_t, 960> auBuf{};
+    std::array<float, 480> pcmBuf{};
+    auto initValid = [&] {
+        lpcmParam.fill(0);
+        lpcmParam[0] = 0x28u;
+        lpcmParam[7] = 0xffffffffu;
+        lpcmParam[8] = 0x01010102u;
+        lpcmParam[9] = 0xffffffffu;
+        const std::uint64_t header = (std::uint64_t{2} << 32) | (std::uint64_t{1} << 40) | (std::uint64_t{1} << 48) | (std::uint64_t{1} << 56);
+        std::memcpy(&lpcmParam[6], &header, sizeof(header));
+        lpcmParam[8] = 100u;
+        lpcmParam[9] = 200u;
+        lpcmBsi.fill(0);
+        auBuf.fill(0x11);
+        pcmBuf.fill(0.0f);
+    };
+    initValid();
+    AudiodecAuInfo auInfo{0x18u, auBuf.data(), static_cast<std::uint32_t>(auBuf.size())};
+    AudiodecPcmItem pcmItem{0x18u, pcmBuf.data(), static_cast<std::uint32_t>(pcmBuf.size() * sizeof(float))};
+    AudiodecCtrl validCtrl{lpcmParam.data(), lpcmBsi.data(), &auInfo, &pcmItem};
+    AudiodecCpuMemory validMem{0x18u, lpcmMem.data(), RequiredBytes};
+
+    errno = 71;
+    Require(sceAudiodecCpuInitDecoder(&validCtrl, &validMem, LpcmBd) == 0 && errno == 71, "valid InitDecoder failed");
+    errno = 71;
+    Require(sceAudiodecCpuDecode(&validCtrl, &validMem, LpcmBd) == 0 && errno == 71, "valid Decode failed");
+    Require(auInfo.ui_au_size == 960 && pcmItem.ui_pcm_size == 1920, "valid Decode sizes changed");
+    errno = 71;
+    Require(sceAudiodecCpuInternalClearContext(&validMem, LpcmDvd) == 0 && errno == 71, "valid ClearContext failed");
+
+    auto* badPtr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    errno = 71;
+    RequireThrows([&] { sceAudiodecCpuInitDecoder(reinterpret_cast<const AudiodecCtrl*>(badPtr), &validMem, LpcmBd); }, "bad InitDecoder ctrl");
+    Require(errno == 71, "bad InitDecoder ctrl changed errno");
+    errno = 71;
+    RequireThrows([&] { sceAudiodecCpuInternalInitDecoder(&validCtrl, reinterpret_cast<const AudiodecCpuMemory*>(badPtr), LpcmBd); }, "bad InitDecoder mem");
+    Require(errno == 71, "bad InitDecoder mem changed errno");
+    AudiodecCpuMemory badMemPtr{0x18u, badPtr, RequiredBytes};
+    errno = 71;
+    RequireThrows([&] { sceAudiodecCpuInitDecoder(&validCtrl, &badMemPtr, LpcmBd); }, "bad InitDecoder p_memory");
+    Require(errno == 71, "bad InitDecoder p_memory changed errno");
+    errno = 71;
+    RequireThrows([&] { sceAudiodecCpuClearContext(reinterpret_cast<const AudiodecCpuMemory*>(badPtr), LpcmBd); }, "bad ClearContext mem");
+    Require(errno == 71, "bad ClearContext mem changed errno");
+    errno = 71;
+    RequireThrows([&] { sceAudiodecCpuClearContext(&badMemPtr, LpcmBd); }, "bad ClearContext p_memory");
+    Require(errno == 71, "bad ClearContext p_memory changed errno");
+
+    initValid();
+    auInfo = {0x18u, auBuf.data(), static_cast<std::uint32_t>(auBuf.size())};
+    pcmItem = {0x18u, pcmBuf.data(), static_cast<std::uint32_t>(pcmBuf.size() * sizeof(float))};
+    auto checkBadDecode = [&](const AudiodecCtrl& c, const AudiodecCpuMemory& m, const char* msg) {
+        errno = 71;
+        RequireThrows([&] { sceAudiodecCpuInternalDecode(&c, &m, LpcmBd); }, msg);
+        Require(errno == 71, msg);
+    };
+    checkBadDecode({badPtr, lpcmBsi.data(), &auInfo, &pcmItem}, validMem, "bad pParam");
+    checkBadDecode({lpcmParam.data(), badPtr, &auInfo, &pcmItem}, validMem, "bad pBsiInfo");
+    checkBadDecode({lpcmParam.data(), lpcmBsi.data(), reinterpret_cast<AudiodecAuInfo*>(badPtr), &pcmItem}, validMem, "bad pAuInfo");
+    checkBadDecode({lpcmParam.data(), lpcmBsi.data(), &auInfo, reinterpret_cast<AudiodecPcmItem*>(badPtr)}, validMem, "bad pPcmItem");
+    AudiodecAuInfo badAuAddr{0x18u, badPtr, 960u};
+    checkBadDecode({lpcmParam.data(), lpcmBsi.data(), &badAuAddr, &pcmItem}, validMem, "bad p_au_addr");
+    AudiodecPcmItem badPcmAddr{0x18u, badPtr, 1920u};
+    checkBadDecode({lpcmParam.data(), lpcmBsi.data(), &auInfo, &badPcmAddr}, validMem, "bad p_pcm_addr");
+    checkBadDecode(validCtrl, badMemPtr, "bad Decode p_memory");
+    auto* readOnlyBsi = guarded.address;
+    checkBadDecode({lpcmParam.data(), readOnlyBsi, &auInfo, &pcmItem}, validMem, "read-only decode pBsiInfo");
+    Require(lpcmParam[1] == 0 && errno == 71, "failed Decode mutated pParam");
+
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     std::puts("AudiodecCpu guest memory-size queries passed");
 }
