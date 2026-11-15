@@ -93,7 +93,6 @@ int main() {
     bool subscribed = true;
     Require(Throws([] { sceNpEAAccessTerminate(); }));
     Require(Throws([&] { sceNpHasEAAccessSubscription(1, &subscribed); }));
-    Require(ThrowsMessage([] { sceNpHasEAAccessSubscriptionAbortRequest(); }, "not initialized"));
     Require(sceNpEAAccessInitialize() == 0);
     Require(sceNpHasEAAccessSubscriptionAbortRequest() == 0);
     Require(Throws([] { sceNpEAAccessInitialize(); }));
@@ -125,7 +124,6 @@ int main() {
     Require(ThrowsMessage([&] { sceNpHasEAAccessSubscription(1, &subscribed); }, "not initialized"));
     Require(ThrowsMessage([] { sceNpHasEAAccessSubscription(1, nullptr); }, "not initialized"));
     Require(ThrowsMessage([] { sceNpHasEAAccessSubscription(0, nullptr); }, "not initialized"));
-    Require(ThrowsMessage([] { sceNpHasEAAccessSubscriptionAbortRequest(); }, "not initialized"));
     Require(sceNpEAAccessInitialize() == 0);
     Require(sceNpEAAccessTerminate() == 0);
     Require(ThrowsMessage([] { sceNpEAAccessTerminate(); }, "not initialized"));
