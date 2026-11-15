@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cerrno>
 #include <stdexcept>
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -146,6 +148,15 @@ int main(int argc, char** argv) {
     Require(setInfoGetTrophyFlagArray(setInfo, flags) == 0 && flags[0] == 0, "an empty set did not return 0");
     setInfo[0] = 0x01;
     Require(setInfoGetTrophyFlagArray(setInfo, flags) == 1, "a single trophy did not return 1");
+    errno = 71;
+    bool threw = false;
+    try { setInfoGetTrophyFlagArray(reinterpret_cast<const std::uint8_t*>(0x10), flags); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw && errno == 71, "unreadable trophy flag input was accepted");
+    threw = false;
+    try { setInfoGetTrophyFlagArray(setInfo, reinterpret_cast<std::uint8_t*>(0x10)); }
+    catch (const std::runtime_error&) { threw = true; }
+    Require(threw && errno == 71, "unwritable trophy flag output was accepted");
 
     std::uint8_t config[0x100] = {};
     Require(configHasGroupFeature(nullptr) == 0, "a null config did not answer 0");

@@ -1581,6 +1581,13 @@ static void TestUserData() {
         threw = true;
     }
     Require(threw);
+    threw = false;
+    try {
+        sceNgs2SystemGetUserData(system, reinterpret_cast<uintptr_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 
     Require(sceNgs2RackSetUserData(0x1234, 5) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
     Require(sceNgs2RackSetUserData(system, 5) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
@@ -1601,6 +1608,13 @@ static void TestUserData() {
     try {
         sceNgs2RackGetUserData(rack, nullptr);
 
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    threw = false;
+    try {
+        sceNgs2RackGetUserData(rack, reinterpret_cast<uintptr_t*>(0x10));
     } catch (const std::invalid_argument&) {
         threw = true;
     }
