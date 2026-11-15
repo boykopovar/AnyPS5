@@ -128,8 +128,9 @@ std::int32_t APS5_VABI sceHmdGetDeviceInformation(Hmd::DeviceInformation* info) 
     result.status = Hmd::DeviceStatus::NotDetected;
     result.userId = -1;
     const int savedErrno = errno;
-    if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) {
-        errno = savedErrno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &result, sizeof(result));
+    errno = savedErrno;
+    if (!copied) {
         return Hmd::ParameterNull;
     }
     return 0;
@@ -146,8 +147,9 @@ std::int32_t APS5_VABI sceHmdInternalGetDeviceStatus(Hmd::DeviceStatus* status) 
     if (!status) return Hmd::ParameterNull;
     constexpr Hmd::DeviceStatus deviceStatus = Hmd::DeviceStatus::NotDetected;
     const int savedErrno = errno;
-    if (!GuestCopyOut_nid_no_patch(status, &deviceStatus, sizeof(deviceStatus))) {
-        errno = savedErrno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &deviceStatus, sizeof(deviceStatus));
+    errno = savedErrno;
+    if (!copied) {
         return Hmd::ParameterNull;
     }
     return 0;

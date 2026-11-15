@@ -2,6 +2,7 @@
 #include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd/include/Api.hpp"
 #include "prx/libSceHmd/include/InventoryExports.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
 #include <cerrno>
@@ -27,6 +28,10 @@ void Require(bool condition, const char* message) {
     }
 }
 
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
 void InstallProcessParameters() {
     const std::uint64_t size = process.size();
     const std::uint32_t magic = 0x4942524f;
@@ -41,10 +46,12 @@ void SetCompiledSdkVersion(std::uint32_t version) {
 
 void CheckDisconnected() {
     Hmd::DeviceStatus status = Hmd::DeviceStatus::Ready;
-    Require(sceHmdInternalGetDeviceStatus(&status) == 0, "status query failed");
+    errno = 71;
+    Require(sceHmdInternalGetDeviceStatus(&status) == 0 && errno == 71, "status query failed");
     Require(status == Hmd::DeviceStatus::NotDetected, "headset reported connected");
     Require(sceHmdInternalGetDeviceStatus(nullptr) == Hmd::ParameterNull, "null status");
-    Require(sceHmdInternalGetDeviceStatus(reinterpret_cast<Hmd::DeviceStatus*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull, "unwritable status");
+    errno = 71;
+    Require(sceHmdInternalGetDeviceStatus(reinterpret_cast<Hmd::DeviceStatus*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull && errno == 71, "unwritable status");
     Require(sceHmdInternalMmapIsConnect() == 0, "connection reported present");
     Require(!sceHmdInternalIsGameVr2d(), "game reported in VR2D without a headset");
     Require(!sceHmdInternalIsMiniAppVr2d(), "mini app reported in VR2D without a headset");
@@ -183,6 +190,8 @@ int main() {
     std::memset(&info, 0xa5, sizeof(info));
     const auto untouched = info;
 
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     InstallProcessParameters();
     CheckDisconnected();
     CheckBufferQueries();
@@ -226,13 +235,15 @@ int main() {
         Require(sceHmdInitialize315(&param) == Hmd::AlreadyInitialized, "shared initialization");
         Require(sceHmdInitialize(nullptr) == Hmd::AlreadyInitialized, "duplicate precedence");
         CheckDisconnected();
-        Require(sceHmdGetDeviceInformation(&info) == 0, "device query failed");
+        errno = 71;
+        Require(sceHmdGetDeviceInformation(&info) == 0 && errno == 71, "device query failed");
         Hmd::DeviceInformation expected{};
         expected.status = Hmd::DeviceStatus::NotDetected;
         expected.userId = -1;
         Require(std::memcmp(&info, &expected, sizeof(info)) == 0, "incorrect absent-device output");
         Require(sceHmdGetDeviceInformation(nullptr) == Hmd::ParameterNull, "null device query");
-        Require(sceHmdGetDeviceInformation(reinterpret_cast<Hmd::DeviceInformation*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull, "unwritable device query");
+        errno = 71;
+        Require(sceHmdGetDeviceInformation(reinterpret_cast<Hmd::DeviceInformation*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull && errno == 71, "unwritable device query");
 
         Require(sceHmdOpen(-1, 0, 0, nullptr) == Hmd::ParameterInvalid, "invalid user");
         Require(sceHmdOpen(0xff, 0, 0, nullptr) == Hmd::ParameterInvalid, "system user");
@@ -258,4 +269,6 @@ int main() {
         Require(sceHmdGetDeviceInformation(&info) == Hmd::NotInitialized, "query after terminate");
         CheckDisconnected();
     }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
