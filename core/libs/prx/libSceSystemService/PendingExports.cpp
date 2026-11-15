@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -30,6 +31,9 @@ constexpr std::int32_t ActivationStatus = 2;
 constexpr std::intptr_t ActivationHandleStep = 4;
 constexpr std::int32_t FirstPSButtonEventType = 0x20000001;
 constexpr std::int32_t LastPSButtonEventType = 0x20000002;
+constexpr char PlatformPrivacyEventFlagName[] = "SceUserServiceCommonEventFlag";
+constexpr std::uint64_t PlatformPrivacyEventFlagBit = 1;
+constexpr std::uint32_t EventFlagWaitAny = 2;
 
 std::atomic<std::intptr_t> nextActivationHandle{0x1000};
 
@@ -1793,7 +1797,14 @@ int APS5_VABI sceSystemServiceGetPlatformPrivacyDefinitionVersion(const char* ke
 }
 
 int APS5_VABI sceSystemServiceGetPlatformPrivacySetting(std::uint32_t* setting) {
-    NotImplemented_nid_no_patch(__func__);
+    if (sceKernelIsPs4Process() != 1) return 0;
+    std::uint32_t value = 0;
+    KernelEventFlag flag = nullptr;
+    if (sceKernelOpenEventFlag(&flag, PlatformPrivacyEventFlagName) == 0) {
+        if (sceKernelPollEventFlag(flag, PlatformPrivacyEventFlagBit, EventFlagWaitAny, nullptr) == 0) value = 1;
+        sceKernelCloseEventFlag(flag);
+    }
+    *setting = value;
     return 0;
 }
 
