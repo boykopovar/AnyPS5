@@ -34,6 +34,13 @@ void Write(const Environment& state) {
     asm volatile("fldenv %0" : : "m"(state.x87));
     _mm_setcsr(state.sse);
 }
+bool HostKeepsSseTraps() {
+    const unsigned saved=_mm_getcsr();
+    _mm_setcsr(saved&~(0x01u<<7));
+    const bool kept=(_mm_getcsr()&(0x01u<<7))==0;
+    _mm_setcsr(saved);
+    return kept;
+}
 
 void Flags() {
     const auto original=Read();
@@ -70,6 +77,7 @@ void Flags() {
 
 void DifferentMasks() {
     const auto original=Read();
+    const bool sseKept=HostKeepsSseTraps();
     for (unsigned bit=0;bit<6;++bit) {
         auto seed=original;
         seed.x87[0]|=0x3f;
@@ -82,7 +90,8 @@ void DifferentMasks() {
         Write(original);
         Require(result==0,"SSE-only unmask does not deliver an x87 trap");
         Require((after.x87[1]&0x3f)==(1u<<bit) && (after.sse&0x3f)==(1u<<bit),"flags with differing exception masks");
-        Require(after.x87[0]==seed.x87[0] && (after.sse&~0x3fu)==(seed.sse&~0x3fu),"differing masks preserved");
+        const unsigned expectedSse=sseKept ? seed.sse : (seed.sse|(0x3fu<<7));
+        Require(after.x87[0]==seed.x87[0] && (after.sse&~0x3fu)==(expectedSse&~0x3fu),"differing masks preserved");
         seed.x87[0]&=~(1u<<bit);
         seed.sse|=0x3f<<7;
         Write(seed);
@@ -133,6 +142,7 @@ void Trap(int) { std::_Exit(0); }
 
 void CheckTrap(unsigned bit) {
     Require(bit<6,"trap bit");
+    if (!HostKeepsSseTraps()) { std::fprintf(stderr,"feraiseexcept: the host keeps no unmasked floating-point exception\n"); std::exit(77); }
 #ifdef _WIN32
     constexpr DWORD codes[]{EXCEPTION_FLT_INVALID_OPERATION,EXCEPTION_FLT_DENORMAL_OPERAND,EXCEPTION_FLT_DIVIDE_BY_ZERO,EXCEPTION_FLT_OVERFLOW,EXCEPTION_FLT_UNDERFLOW,EXCEPTION_FLT_INEXACT_RESULT};
     expectedException=codes[bit];

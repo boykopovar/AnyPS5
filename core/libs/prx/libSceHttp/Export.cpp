@@ -321,9 +321,7 @@ int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, 
 }
 
 int APS5_VABI sceHttpSetCookieEnabled(int id, int enable) {
-    if (static_cast<uint32_t>(enable) > 1) return ERROR_INVALID_VALUE;
-    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
-    return SetHttpOption(id, &HttpOptions::cookieEnabled, enable != 0) ? 0 : ERROR_INVALID_ID;
+    return SetHttpCookieEnabled(id, enable) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetAutoRedirect(int id, int enable) {
@@ -744,11 +742,10 @@ int APS5_VABI sceHttpGetEpollId(std::int32_t id, std::int32_t* epollId, void** u
 }
 
 int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable) {
-    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
-    if (!enable) return ERROR_INVALID_VALUE;
+    if (!enable) return HttpInitialised() ? ERROR_INVALID_VALUE : ERROR_BEFORE_INIT;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->cookieEnabled ? 1 : 0;
+    *enable = options->cookieEnabled;
     return 0;
 }
 
