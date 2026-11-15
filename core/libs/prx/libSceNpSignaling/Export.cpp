@@ -59,8 +59,10 @@ bool ValidNpId(const SignalingNpId& id) {
 }
 
 bool ReadNpId(const void* npId, SignalingNpId& copy) {
-    std::memcpy(&copy, npId, sizeof(copy));
-    return ValidNpId(copy);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&copy, npId, sizeof(copy));
+    errno = savedErrno;
+    return copied && ValidNpId(copy);
 }
 
 int AllocateContextId() {
