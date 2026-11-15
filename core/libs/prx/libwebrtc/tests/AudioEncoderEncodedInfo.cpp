@@ -51,12 +51,23 @@ WebRtcAudioEncodedInfoLeaf Leaf(std::size_t bytes, int payloadType) {
     leaf.sendEvenIfEmpty = true;
     leaf.speech = false;
     leaf.encoderType = 1;
+    for (std::size_t index = 0; index < sizeof(leaf.unknownAt18); ++index) leaf.unknownAt18[index] = static_cast<std::uint8_t>(bytes + index);
+    leaf.unknownAt64 = true;
     return leaf;
 }
 
 bool SameLeaf(const WebRtcAudioEncodedInfoLeaf& left, const WebRtcAudioEncodedInfoLeaf& right) {
     return left.encodedBytes == right.encodedBytes && left.encodedTimestamp == right.encodedTimestamp && left.payloadType == right.payloadType &&
-           left.sendEvenIfEmpty == right.sendEvenIfEmpty && left.speech == right.speech && left.encoderType == right.encoderType;
+           left.sendEvenIfEmpty == right.sendEvenIfEmpty && left.speech == right.speech && left.encoderType == right.encoderType &&
+           std::memcmp(left.unknownAt18, right.unknownAt18, sizeof(left.unknownAt18)) == 0 && left.unknownAt64 == right.unknownAt64;
+}
+
+void* ConsoleAllocate(std::size_t bytes) {
+    if (bytes < 0x1000) return malloc_nid_postfix(bytes);
+    auto* raw = static_cast<std::uint8_t*>(malloc_nid_postfix(bytes + 0x27));
+    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + 0x27) & ~std::uintptr_t {0x1f};
+    reinterpret_cast<void**>(aligned)[-1] = raw;
+    return reinterpret_cast<void*>(aligned);
 }
 
 std::size_t Count(const WebRtcAudioEncodedInfo& info) {
@@ -78,7 +89,7 @@ WebRtcAudioEncodedInfo WithRedundant(std::size_t count) {
     WebRtcAudioEncodedInfo info = Constructed();
     info.leaf = Leaf(100 + count, 96);
     if (count == 0) return info;
-    auto* leaves = static_cast<WebRtcAudioEncodedInfoLeaf*>(_Znwm_nid_postfix(count * sizeof(WebRtcAudioEncodedInfoLeaf)));
+    auto* leaves = static_cast<WebRtcAudioEncodedInfoLeaf*>(ConsoleAllocate(count * sizeof(WebRtcAudioEncodedInfoLeaf)));
     for (std::size_t index = 0; index < count; ++index) leaves[index] = Leaf(index + 1, static_cast<int>(index + 10));
     info.redundantBegin = leaves;
     info.redundantEnd = leaves + count;
@@ -97,6 +108,8 @@ void TestConstructor() {
     WebRtcAudioEncodedInfo info = Constructed();
     Require(info.leaf.encodedBytes == 0 && info.leaf.encodedTimestamp == 0 && info.leaf.payloadType == 0);
     Require(!info.leaf.sendEvenIfEmpty && info.leaf.speech && info.leaf.encoderType == 0);
+    Require(!info.leaf.unknownAt64);
+    for (const std::uint8_t byte : info.leaf.unknownAt18) Require(byte == 0xA5);
     Require(info.redundantBegin == nullptr && info.redundantEnd == nullptr && info.redundantCapacity == nullptr);
     const int before = frees;
     _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&info);
@@ -110,9 +123,33 @@ void TestCopyConstructor() {
     _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&copy, &source);
     Require(SameLeaf(copy.leaf, source.leaf) && HoldsRedundant(copy, 3) && Capacity(copy) == 3);
     Require(copy.redundantBegin != source.redundantBegin);
+    WebRtcAudioEncodedInfoLeaf* storage = copy.redundantBegin;
     _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&copy);
-    Require(lastFreed == copy.redundantBegin);
+    Require(lastFreed == storage && copy.redundantBegin == nullptr && copy.redundantEnd == nullptr && copy.redundantCapacity == nullptr);
     _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&source);
+}
+
+void TestStorageOf4096BytesKeepsTheRawPointer() {
+    WebRtcAudioEncodedInfo small = WithRedundant(39);
+    WebRtcAudioEncodedInfo smallCopy;
+    _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&smallCopy, &small);
+    WebRtcAudioEncodedInfoLeaf* smallStorage = smallCopy.redundantBegin;
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&smallCopy);
+    Require(lastFreed == smallStorage);
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&small);
+
+    WebRtcAudioEncodedInfo big = WithRedundant(40);
+    WebRtcAudioEncodedInfo bigCopy;
+    _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&bigCopy, &big);
+    Require(HoldsRedundant(bigCopy, 40) && Capacity(bigCopy) == 40);
+    const auto address = reinterpret_cast<std::uintptr_t>(bigCopy.redundantBegin);
+    void* raw = reinterpret_cast<void**>(bigCopy.redundantBegin)[-1];
+    Require(address % 32 == 0 && ((reinterpret_cast<std::uintptr_t>(raw) + 0x27) & ~std::uintptr_t {0x1f}) == address);
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&bigCopy);
+    Require(lastFreed == raw);
+    void* bigRaw = reinterpret_cast<void**>(big.redundantBegin)[-1];
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&big);
+    Require(lastFreed == bigRaw);
 }
 
 void TestCopyOfAnEmptyListAllocatesNothing() {
@@ -181,6 +218,7 @@ int main() {
     TestConstructor();
     TestCopyConstructor();
     TestCopyOfAnEmptyListAllocatesNothing();
+    TestStorageOf4096BytesKeepsTheRawPointer();
     TestAssignmentReusesCapacity();
     TestAssignmentGrowsToTheSourceSize();
     TestSelfAssignment();
