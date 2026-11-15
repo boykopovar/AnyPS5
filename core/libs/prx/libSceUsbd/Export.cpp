@@ -600,14 +600,19 @@ std::int32_t APS5_VABI sceUsbdKernelDriverActive(void* deviceHandle, std::int32_
 std::int32_t APS5_VABI sceUsbdOpen(void* device, void** deviceHandle) {
     if (device == nullptr) throw std::runtime_error(std::string(__func__) + ": null device");
     if (deviceHandle == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
-    *deviceHandle = nullptr;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(deviceHandle, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_device_handle* host = nullptr;
     const int result = libusb_open(KnownDevice(device, __func__), &host);
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(deviceHandle, &stored, sizeof(stored))) {
+        libusb_close(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.handles.insert(host);
-    *deviceHandle = host;
     return 0;
 }
 
