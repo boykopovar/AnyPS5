@@ -297,6 +297,14 @@ if(BUILD_TESTING)
         set_tests_properties(agc_imported_epoch_reuse PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_imported_epoch_reuse_verify COMMAND agc_driver_recorder_tests --imported-epoch-reuse-only)
+    set_tests_properties(agc_imported_epoch_reuse_verify PROPERTIES ENVIRONMENT "APS5_VERIFY_DRAW_PIPELINE=1" SKIP_RETURN_CODE 77 TIMEOUT 30
+        PASS_REGULAR_EXPRESSION "missed the exit, by input moved: [^\n]*imports 1, allocations 1.*imported epoch reuse tests passed"
+        FAIL_REGULAR_EXPRESSION "AGC graphics:")
+    if(WIN32)
+        set_tests_properties(agc_imported_epoch_reuse_verify PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_read_written_staging COMMAND agc_driver_recorder_tests --read-written-staging-only)
     set_tests_properties(agc_read_written_staging PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)

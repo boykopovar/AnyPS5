@@ -4122,15 +4122,59 @@ void ReportEpochProofCounts() {
 }
 
 namespace {
+
+constexpr std::array<const char*, 9> ExitInputs{"epoch", "proof", "pending", "releases", "unwatch", "imports", "allocations", "surfaces", "stale planes"};
+
+struct ExitVerification {
+    std::atomic<std::uint64_t> checks{0};
+    std::atomic<std::uint64_t> failures{0};
+    std::atomic<std::uint64_t> stores{0};
+    std::atomic<std::uint64_t> misses{0};
+    std::array<std::atomic<std::uint64_t>, ExitInputs.size()> moved{};
+};
+
+ExitVerification& exitVerification() {
+    static ExitVerification verification;
+    return verification;
+}
+
+bool verifyingExits() {
+    static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    return verify;
+}
+
+bool reportDue(std::uint64_t count) {
+    return count % 4096u == 0u || (count & (count - 1u)) == 0u;
+}
+
+void printExitVerification() {
+    auto& verification = exitVerification();
+    std::string moved;
+    for (std::size_t input = 0; input < ExitInputs.size(); ++input) {
+        moved += moved.empty() ? "" : ", ";
+        moved += std::string(ExitInputs[input]) + " " + std::to_string(verification.moved[input].load(std::memory_order_relaxed));
+    }
+    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory; %llu proved builds missed the exit, by input moved: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str());
+}
+
 void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false) {
     (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
     if (!verified) return;
-    static std::atomic<std::uint64_t> checks{0}, failures{0}, stores{0};
-    if (failed) failures.fetch_add(1, std::memory_order_relaxed);
-    if (stored) stores.fetch_add(1, std::memory_order_relaxed);
-    const auto count = checks.fetch_add(1, std::memory_order_relaxed) + 1u;
-    if (count % 4096u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory\n", static_cast<unsigned long long>(count), static_cast<unsigned long long>(failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(stores.load(std::memory_order_relaxed)));
+    auto& verification = exitVerification();
+    if (failed) verification.failures.fetch_add(1, std::memory_order_relaxed);
+    if (stored) verification.stores.fetch_add(1, std::memory_order_relaxed);
+    if (reportDue(verification.checks.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
 }
+
+void noteExitMiss(const ShaderResources::ExitStamp& proved, const ShaderResources::ExitStamp& current, bool stalePlanes) {
+    auto& verification = exitVerification();
+    const std::array<bool, ExitInputs.size()> moved{proved.epoch != current.epoch, proved.proof != current.proof, proved.pending != current.pending, proved.releases != current.releases, proved.unwatch != current.unwatch, proved.importSet != current.importSet, proved.allocations != current.allocations, proved.surfaces != current.surfaces, stalePlanes};
+    for (std::size_t input = 0; input < moved.size(); ++input) {
+        if (moved[input]) verification.moved[input].fetch_add(1, std::memory_order_relaxed);
+    }
+    if (reportDue(verification.misses.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
+}
+
 }
 
 namespace {
@@ -4464,9 +4508,9 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     }
     if (EpochProofs()) {
         const auto stamp = currentExitStamp();
-        if (stamp.epoch != 0 && proved == stamp && !DepthPlanesStale() && refreshPerUseCopies()) {
-            static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
-            if (verify) {
+        const bool stalePlanes = DepthPlanesStale();
+        if (stamp.epoch != 0 && proved == stamp && !stalePlanes && refreshPerUseCopies()) {
+            if (verifyingExits()) {
                 const bool ok = revalidateFull(shaders, report);
                 noteEpochProof(true, true, !ok, GuestMemory::ProofSerial() != stamp.proof);
                 return ok;
@@ -4475,6 +4519,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             noteEpochProof(true, false, false);
             return true;
         }
+        if (verifyingExits() && proved.epoch != 0) noteExitMiss(proved, stamp, stalePlanes);
         const bool ok = revalidateFull(shaders, report);
         noteEpochProof(false, false, false);
         proved = stamp;

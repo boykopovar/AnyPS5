@@ -197,6 +197,17 @@ struct PresyncSurface {
 
 class ShaderResources {
 public:
+    struct ExitStamp {
+        std::uint64_t epoch = 0;
+        std::uint64_t proof = 0;
+        std::uint64_t pending = 0;
+        std::uint64_t releases = 0;
+        std::uint64_t unwatch = 0;
+        std::uint64_t importSet = 0;
+        std::uint64_t allocations = 0;
+        std::uint64_t surfaces = 0;
+        bool operator==(const ExitStamp&) const = default;
+    };
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
     ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, bool deviceStaging = false);
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
@@ -776,17 +787,6 @@ private:
     // no image other than the object's own sources has results pending over its surfaces and
     // regions, so those checks are skipped (see fastRevalidate).
     std::uint64_t pendingSerialSeen = 0;
-    struct ExitStamp {
-        std::uint64_t epoch = 0;
-        std::uint64_t proof = 0;
-        std::uint64_t pending = 0;
-        std::uint64_t releases = 0;
-        std::uint64_t unwatch = 0;
-        std::uint64_t importSet = 0;
-        std::uint64_t allocations = 0;
-        std::uint64_t surfaces = 0;
-        bool operator==(const ExitStamp&) const = default;
-    };
     ExitStamp currentExitStamp() const;
     ExitStamp proved;
     bool refreshPerUseCopies();
