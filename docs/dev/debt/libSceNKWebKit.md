@@ -195,6 +195,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
 - [Process pool URL scheme registration](../../../core/libs/prx/libSceNKWebKit/src/ContextURLSchemes.cpp) (libSceNKWebKit) - `WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy`, `WKContextRegisterURLSchemeAsCachePartitioned`, `WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest`, `WKContextRegisterURLSchemeAsEmptyDocument` and `WKContextRegisterURLSchemeAsSecure` record registered scheme names on the host `ProcessPool` without network-process or policy enforcement.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5932 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [WebCore::FileHandle](../../../core/libs/prx/libSceNKWebKit/src/FileHandle.cpp) (libSceNKWebKit) - not compared with a console module. The 24-byte layout and the members' defaults follow the pinned [FileHandle.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/FileHandle.h), measured on a Linux build of it; `read` and `write` retry on guest `EINTR` as the pinned POSIX `readFromFile` and `writeToFile` do. As in the [source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/FileHandle.cpp), the move constructor does not carry the lock settings, and a locking `close` keeps the descriptor, so a later `close` or the destructor unlocks and closes it again. `printf` formats through the guest `vsnprintf`. A null object or path throws.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5916 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - the inventory declarations listed below throw through NotImplemented_nid_no_patch, and a pull request that implements one removes its row; signatures and behavior are unverified. The [generated progress report](https://boykopovar.github.io/AnyPS5/progress.html) counts the throwing exports. The later 13.60-labelled image contains all 8703 inventory declarations; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
@@ -1612,23 +1614,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7Nicosia6BufferD2Ev` | `8mn-7ut9drU` |
 | `_ZN7Nicosia9AnimationC1ERKS0_` | `Jhj07sXaEnU` |
 | `_ZN7Nicosia9AnimationC2ERKS0_` | `z755FgX+8GE` |
-| `_ZN7WebCore10FileHandle4openERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeE` | `hFk9FKLENG8` |
-| `_ZN7WebCore10FileHandle4openEv` | `FUbGs1rzI6g` |
-| `_ZN7WebCore10FileHandle4readEPvi` | `tmUOdbwJw1E` |
-| `_ZN7WebCore10FileHandle5closeEv` | `MbuvuN84TNc` |
-| `_ZN7WebCore10FileHandle5writeEPKvi` | `UpER4IpzKH0` |
-| `_ZN7WebCore10FileHandle6printfEPKcz` | `WEVIlPFp9Rk` |
-| `_ZN7WebCore10FileHandleC1EOS0_` | `KPJLpACpg6k` |
-| `_ZN7WebCore10FileHandleC1ERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeENS1_9OptionSetINS5_12FileLockModeEEE` | `e-mG5kgUUIM` |
-| `_ZN7WebCore10FileHandleC1ERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeE` | `oT0mxPLVvvQ` |
-| `_ZN7WebCore10FileHandleC1Ev` | `l9nuY5Wn5+c` |
-| `_ZN7WebCore10FileHandleC2EOS0_` | `c2EZZ1IdQAE` |
-| `_ZN7WebCore10FileHandleC2ERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeENS1_9OptionSetINS5_12FileLockModeEEE` | `sfw1zSO4sd8` |
-| `_ZN7WebCore10FileHandleC2ERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeE` | `c9v8NHVu0NU` |
-| `_ZN7WebCore10FileHandleC2Ev` | `ctto9lYZYhA` |
-| `_ZN7WebCore10FileHandleD1Ev` | `dcRpnwhqCwc` |
-| `_ZN7WebCore10FileHandleD2Ev` | `0tjbqZDVPp8` |
-| `_ZN7WebCore10FileHandleaSEOS0_` | `Em5voBytaq0` |
 | `_ZN7WebCore10ISOFullBoxC1ERKS0_` | `zCgYva0hGps` |
 | `_ZN7WebCore10ISOFullBoxC1Ev` | `m3TcEKpIGo4` |
 | `_ZN7WebCore10ISOFullBoxC2ERKS0_` | `GMDlBS2FjfA` |
@@ -4853,7 +4838,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK3WTF9MediaTime12toJSONStringEv` | `D-8cZ6N7n4g` |
 | `_ZNK3WTF9MediaTime4dumpERNS_11PrintStreamE` | `tbWxzNR07RQ` |
 | `_ZNK3WTF9MediaTime8toStringEv` | `GraLckR1SPU` |
-| `_ZNK7WebCore10FileHandlecvbEv` | `1WM6fw+AXm0` |
 | `_ZNK7WebCore10FontRanges16fontForCharacterEi` | `a9NTPM3fgrs` |
 | `_ZNK7WebCore10FontRanges17fontForFirstRangeEv` | `J4q5kQaotFE` |
 | `_ZNK7WebCore10FontRanges21glyphDataForCharacterEiNS_30ExternalResourceDownloadPolicyE` | `wFLNa9nYSIU` |
