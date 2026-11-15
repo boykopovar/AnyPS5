@@ -1,6 +1,8 @@
 #include "prx/libSceCesCs/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <algorithm>
 #include <bit>
 #include <charconv>
@@ -16,6 +18,7 @@
 #include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "GuestAccess.hpp"
 #include "JisX0208.hpp"
 #include "JisX0212.hpp"
 #include "JisX0213.hpp"
@@ -484,6 +487,7 @@ int encodeGb(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length
 
 constexpr uint8_t GB18030_2000_TAG[8] = {'G', 'B', '1', '8', '-', '0', '0', 0};
 constexpr uint8_t GB18030_2005_TAG[8] = {'G', 'B', '1', '8', '-', '0', '5', 0};
+constexpr uint8_t GB18030_2022_TAG[8] = {'G', 'B', '1', '8', '-', '2', '2', 0};
 constexpr uint32_t GB_CELLS = 126 * 190;
 
 struct Gb18030Tables {
@@ -502,6 +506,7 @@ struct Gb18030Range {
 
 constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, false, 1};
 constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true, 3};
+constexpr Gb18030Tables GB18030_2022{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true, 3};
 constexpr Gb18030Range GB18030_RANGES[6] = {
     {0, false, false, false}, {1, true, false, false}, {2, false, false, false}, {3, true, false, false}, {5, true, true, false}, {7, true, true, true},
 };
@@ -518,6 +523,7 @@ const Gb18030Tables* gb18030Tables(const void* profile) {
     if (profile == nullptr) return nullptr;
     if (hasSheetTag(profile, GB18030_2000_TAG)) return &GB18030_2000;
     if (hasSheetTag(profile, GB18030_2005_TAG)) return &GB18030_2005;
+    if (hasSheetTag(profile, GB18030_2022_TAG)) return &GB18030_2022;
     return nullptr;
 }
 
@@ -617,7 +623,7 @@ const std::vector<std::pair<uint32_t, uint16_t>>& gb18030Reverse(const Gb18030Ta
     };
     static const auto reverse2000 = build(GB18030_2000);
     static const auto reverse2005 = build(GB18030_2005);
-    return &tables == &GB18030_2005 ? reverse2005 : reverse2000;
+    return tables.edition2005 ? reverse2005 : reverse2000;
 }
 
 int encodeGb18030(const void* profile, const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uint32_t& length) {
@@ -1007,34 +1013,35 @@ int decodeJis2004(bool sjis, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& le
             code = 0xFF61 + (lead - 0xA1);
             return 0;
         }
-        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return rejectLead(length);
+        if (mbcsMax < 2) return needBytes(2, length);
         int row = 0;
         int cell = 0;
-        if (!sjisToJis(lead, mbcs[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+        if (!sjisToJis(lead, mbcs[1], row, cell)) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         if (row <= 94) code = JisX0213::PLANE1[(row - 1) * 94 + (cell - 1)];
         else code = JisX0213::PLANE2[(JIS_X0213_PLANE2_ROWS[row - 95] - 1) * 94 + (cell - 1)];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
     if (lead == 0x8E) {
-        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return needBytes(2, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return rejectTrail(mbcs[1], 2, length);
         length = 2;
         code = 0xFF61 + (mbcs[1] - 0xA1);
         return 0;
     }
     if (lead == 0x8F) {
-        if (mbcsMax < 3) return CES_ERROR_SRC_BUFFER_END;
-        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        if (stopsAtNul(mbcs, mbcsMax, 1, 3, length)) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 3) return needBytes(3, length);
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return rejectTrail(mbcs[1], 3, length);
         length = 3;
         const uint32_t cell = (mbcs[1] - 0xA1) * 94 + (mbcs[2] - 0xA1);
         code = isJisX0213Plane2Row(mbcs[1] - 0xA0) ? JisX0213::PLANE2[cell] : JisX0212::TO_UCS2[cell];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
-    if (lead < 0xA1 || lead > 0xFE) return CES_ERROR_INVALID_ENCODE;
-    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
-    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    if (lead < 0xA1 || lead > 0xFE) return rejectLead(length);
+    if (mbcsMax < 2) return needBytes(2, length);
+    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return rejectTrail(mbcs[1], 2, length);
     length = 2;
     code = JisX0213::PLANE1[(lead - 0xA1) * 94 + (mbcs[1] - 0xA1)];
     return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
@@ -1857,12 +1864,41 @@ bool isJisGraphic(uint32_t byte) {
     return byte >= 0x21 && byte <= 0x7E;
 }
 
+bool isNativeJiscs(uint32_t jiscs) {
+    if (jiscs < 0x100 || jiscs > 0xFFFFFF) return false;
+    return ((jiscs > 0xFFFF ? jiscs >> 16 : jiscs >> 8) & 0xFF) >= 0x80;
+}
+
 bool isMeasuredJiscs(uint32_t jiscs) {
-    return jiscs <= 0xFF || (jiscs >> 16 <= 2 && isJisGraphic(jiscs >> 8 & 0xFF) && isJisGraphic(jiscs & 0xFF));
+    return jiscs <= 0xFF || isNativeJiscs(jiscs) || (jiscs >> 16 <= 2 && isJisGraphic(jiscs >> 8 & 0xFF) && isJisGraphic(jiscs & 0xFF));
 }
 
 JisStrict jisX0208Strictness(const void* profile) {
     return isSjisX0208(profile) ? JisStrict::Sjis : isEucJpX0208(profile) ? JisStrict::Euc : JisStrict::None;
+}
+
+bool isNativeJiscsLead(const void* profile, uint8_t lead) {
+    if (isSjis(profile) || isSjis2004(profile)) {
+        return (lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC) || (lead >= 0xA1 && lead <= 0xDF);
+    }
+    return lead == 0x8E || lead == 0x8F || (lead >= 0xA1 && lead <= 0xFE);
+}
+
+int nativeJiscsToUnicode(const void* profile, uint32_t jiscs, uint32_t& code) {
+    uint8_t mbcs[3];
+    const bool three = jiscs > 0xFFFF;
+    mbcs[0] = static_cast<uint8_t>(jiscs >> (three ? 16 : 8));
+    if (three) {
+        mbcs[1] = static_cast<uint8_t>(jiscs >> 8);
+        mbcs[2] = static_cast<uint8_t>(jiscs);
+    } else {
+        mbcs[1] = static_cast<uint8_t>(jiscs);
+    }
+    if (!isNativeJiscsLead(profile, mbcs[0])) return CES_ERROR_ILLEGAL_CODE;
+    uint32_t length = 0;
+    const int result = decodeMbcs(profile, mbcs, three ? 3 : 2, length, code);
+    if (result == CES_ERROR_SRC_BUFFER_END) throw std::runtime_error("sceCesJiscsToUcs: native code " + hexCode(jiscs) + " ends before its encoding's sequence; its form is not implemented");
+    return result;
 }
 
 uint32_t jiscsCell(uint32_t base, uint32_t cell) {
@@ -1877,6 +1913,7 @@ int jiscsToUnicode(const void* profile, uint32_t jiscs, uint32_t& code) {
         else return CES_ERROR_UNASSIGNED_CODE;
         return 0;
     }
+    if (isNativeJiscs(jiscs)) return nativeJiscsToUnicode(profile, jiscs, code);
     if (jiscs >> 16 != 0) return CES_ERROR_ILLEGAL_CODE;
     const uint32_t index = jisIndex(static_cast<uint16_t>(jiscs));
     code = isJis2004(profile) ? JisX0213::PLANE1[index] : jisX0208ToUnicode(jisX0208Strictness(profile), index);
@@ -2140,19 +2177,19 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003Tilde0x7e(void) {
 
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, SJIS_TAG, sizeof(SJIS_TAG));
+    if (!CesGuest::CopyOut(sheet, SJIS_TAG, sizeof(SJIS_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitSJis1997X0208(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, SJIS_X0208_TAG, sizeof(SJIS_X0208_TAG));
+    if (!CesGuest::CopyOut(sheet, SJIS_X0208_TAG, sizeof(SJIS_X0208_TAG))) return nullptr;
     return sheet;
 }
 
 int APS5_VABI sceCesMbcsUcsContextInit(void* context, const void* profile) {
     if (!context || !profile) return CES_ERROR_INVALID_PARAMETER;
-    std::memcpy(context, &profile, sizeof(profile));
+    if (!CesGuest::CopyOut(context, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
     setContextReplacementEntry(context, Replacement{});
     return 0;
 }
@@ -2160,7 +2197,7 @@ int APS5_VABI sceCesMbcsUcsContextInit(void* context, const void* profile) {
 int APS5_VABI sceCesMbcsUcsContextInitCopy(void* context, const void* source) {
     if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
     const void* profile = contextProfile(source);
-    std::memcpy(context, &profile, sizeof(profile));
+    if (!CesGuest::CopyOut(context, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
     setContextReplacementEntry(context, contextReplacement(source));
     return 0;
 }
@@ -2197,45 +2234,70 @@ int APS5_VABI sceCesGbUcsProfileSetSbcs(void* p, const void* sbcs) {
     return setSheetSbcs(p, sbcs, isGb(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::GbT1988)});
 }
 
+int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void* p, const void* sbcs) {
+    const int savedErrno = errno;
+    if (!p || !sbcs || !isIso2022(p)) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    const std::initializer_list<const uint8_t*> accepted = {
+        singleByteProfile(SingleByte::Ascii),
+        singleByteProfile(SingleByte::JisX0201Roman),
+        singleByteProfile(SingleByte::JisX0201)
+    };
+    if (std::find(accepted.begin(), accepted.end(), static_cast<const uint8_t*>(sbcs)) == accepted.end()) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    const uint8_t index = sbcProfileIndex(sbcs);
+    if (index == 0) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_PROFILE;
+    }
+    static_cast<uint8_t*>(p)[8] = index;
+    errno = savedErrno;
+    return 0;
+}
+
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_TAG, sizeof(EUC_JP_TAG));
+    if (!CesGuest::CopyOut(sheet, EUC_JP_TAG, sizeof(EUC_JP_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpX0208(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_X0208_TAG, sizeof(EUC_JP_X0208_TAG));
+    if (!CesGuest::CopyOut(sheet, EUC_JP_X0208_TAG, sizeof(EUC_JP_X0208_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_X0208_SS2_TAG, sizeof(EUC_JP_X0208_SS2_TAG));
+    if (!CesGuest::CopyOut(sheet, EUC_JP_X0208_SS2_TAG, sizeof(EUC_JP_X0208_SS2_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpX0208Ss2Ss3(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JP_X0208_SS3_TAG, sizeof(EUC_JP_X0208_SS3_TAG));
+    if (!CesGuest::CopyOut(sheet, EUC_JP_X0208_SS3_TAG, sizeof(EUC_JP_X0208_SS3_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucKr(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_KR_TAG, sizeof(EUC_KR_TAG));
+    if (!CesGuest::CopyOut(sheet, EUC_KR_TAG, sizeof(EUC_KR_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitUhc(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, UHC_TAG, sizeof(UHC_TAG));
+    if (!CesGuest::CopyOut(sheet, UHC_TAG, sizeof(UHC_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitBig5Cp950(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, BIG5_TAG, sizeof(BIG5_TAG));
+    if (!CesGuest::CopyOut(sheet, BIG5_TAG, sizeof(BIG5_TAG))) return nullptr;
     return sheet;
 }
 
@@ -2272,71 +2334,71 @@ int APS5_VABI sceCesMbcsStrGetUcs2Len(void* context, const uint8_t* mbcs, uint32
 }
 
 int APS5_VABI sceCesEucJpToUcs2(const void* profile, const uint8_t* euc, uint32_t eucMax, uint32_t* eucSize, uint16_t* ucs2) {
-    if (eucSize) *eucSize = 0;
-    if (ucs2) *ucs2 = 0;
+    if (eucSize && !CesGuest::Store(eucSize, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+    if (ucs2 && !CesGuest::Store(ucs2, uint16_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isEucJp(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!euc || eucMax == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
     const int decoded = decodeEucJp(profile, euc, eucMax, length, code);
-    if (eucSize) *eucSize = length;
+    if (eucSize && !CesGuest::Store(eucSize, length)) return CES_ERROR_INVALID_DST_BUFFER;
     if (decoded != 0) return decoded;
     if (!ucs2) return CES_ERROR_INVALID_DST_BUFFER;
-    *ucs2 = static_cast<uint16_t>(code);
+    if (!CesGuest::Store(ucs2, static_cast<uint16_t>(code))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
 int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len) {
-    if (utf8_len) *utf8_len = 0;
+    if (utf8_len && !CesGuest::Store(utf8_len, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     uint32_t code = 0;
     if (const int result = sbcError(profile, sbc, code); result != 0) return result;
     uint8_t encoded[4];
     const uint32_t length = encodeUtf8(code, encoded);
-    if (utf8_len) *utf8_len = length;
+    if (utf8_len && !CesGuest::Store(utf8_len, length)) return CES_ERROR_INVALID_DST_BUFFER;
     if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
     if (utf8max < length) return CES_ERROR_DST_BUFFER_END;
-    for (uint32_t i = 0; i < length; ++i) utf8[i] = encoded[i];
+    if (!CesGuest::CopyOut(utf8, encoded, length)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
 int APS5_VABI sceCesUtf8ToSbc(const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len, const uint8_t* profile, uint8_t* sbc) {
-    if (utf8_len) *utf8_len = 0;
-    if (sbc) *sbc = 0;
+    if (utf8_len && !CesGuest::Store(utf8_len, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+    if (sbc && !CesGuest::Store(sbc, uint8_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
     if (!utf8 || utf8max == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t length = 0;
     uint32_t code = 0;
     const int decoded = decodeScalarUtf8(utf8, utf8max, length, code);
-    if (utf8_len) *utf8_len = length;
+    if (utf8_len && !CesGuest::Store(utf8_len, length)) return CES_ERROR_INVALID_DST_BUFFER;
     if (decoded != 0) return decoded;
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     uint8_t value = 0;
     if (!unicodeToSbc(profile, code, value)) return CES_ERROR_UNASSIGNED_CODE;
     if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
-    *sbc = value;
+    if (!CesGuest::Store(sbc, value)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
 int APS5_VABI sceCesEucJpToUtf8(const void* profile, const uint8_t* eucBuffer, uint32_t eucMax, uint32_t* eucLength, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Length) {
-    if (eucLength) *eucLength = 0;
-    if (utf8Length) *utf8Length = 0;
+    if (eucLength && !CesGuest::Store(eucLength, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
+    if (utf8Length && !CesGuest::Store(utf8Length, uint32_t{0})) return CES_ERROR_INVALID_DST_BUFFER;
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isEucJp(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!eucBuffer || eucMax == 0) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t consumed = 0;
     uint32_t code = 0;
     const int decoded = decodeEucJp(profile, eucBuffer, eucMax, consumed, code);
-    if (eucLength) *eucLength = consumed;
+    if (eucLength && !CesGuest::Store(eucLength, consumed)) return CES_ERROR_INVALID_DST_BUFFER;
     if (decoded != 0) return decoded;
     uint8_t encoded[4];
     const uint32_t produced = encodeUtf8(code, encoded);
-    if (utf8Length) *utf8Length = produced;
+    if (utf8Length && !CesGuest::Store(utf8Length, produced)) return CES_ERROR_INVALID_DST_BUFFER;
     if (!utf8Buffer) return CES_ERROR_INVALID_DST_BUFFER;
     if (utf8Max < produced) return CES_ERROR_DST_BUFFER_END;
-    std::memcpy(utf8Buffer, encoded, produced);
+    if (!CesGuest::CopyOut(utf8Buffer, encoded, produced)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -2477,8 +2539,8 @@ int APS5_VABI sceCesSJisCodeToJisX0208(uint16_t sjisCode, uint8_t* ku, uint8_t* 
     int row = 0;
     int cell = 0;
     if (!sjisToJis(static_cast<uint8_t>(sjisCode >> 8), static_cast<uint8_t>(sjisCode), row, cell) || row > 94) return CES_ERROR_INVALID_ENCODE;
-    *ku = static_cast<uint8_t>(row);
-    *ten = static_cast<uint8_t>(cell);
+    if (!CesGuest::Store(ku, static_cast<uint8_t>(row))) return CES_ERROR_INVALID_DST_BUFFER;
+    if (!CesGuest::Store(ten, static_cast<uint8_t>(cell))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -2488,7 +2550,7 @@ int APS5_VABI sceCesJisX0208ToSJisCode(uint8_t ku, uint8_t ten, uint16_t* sjisCo
     uint8_t lead = 0;
     uint8_t trail = 0;
     jisToSjis(ku, ten, lead, trail);
-    *sjisCode = static_cast<uint16_t>(lead << 8 | trail);
+    if (!CesGuest::Store(sjisCode, static_cast<uint16_t>(lead << 8 | trail))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -2497,19 +2559,19 @@ int APS5_VABI sceCesSJisCodeToJisX0213(uint16_t sjisCode, uint8_t* men, uint8_t*
     int row = 0;
     int cell = 0;
     if (!sjisToJis(static_cast<uint8_t>(sjisCode >> 8), static_cast<uint8_t>(sjisCode), row, cell)) return CES_ERROR_INVALID_ENCODE;
-    *men = row <= 94 ? 1 : 2;
-    *ku = row <= 94 ? static_cast<uint8_t>(row) : JIS_X0213_PLANE2_ROWS[row - 95];
-    *ten = static_cast<uint8_t>(cell);
+    if (!CesGuest::Store(men, static_cast<uint8_t>(row <= 94 ? 1 : 2))) return CES_ERROR_INVALID_DST_BUFFER;
+    if (!CesGuest::Store(ku, static_cast<uint8_t>(row <= 94 ? static_cast<uint8_t>(row) : JIS_X0213_PLANE2_ROWS[row - 95]))) return CES_ERROR_INVALID_DST_BUFFER;
+    if (!CesGuest::Store(ten, static_cast<uint8_t>(cell))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
 int APS5_VABI sceCesJisGetLevel(uint8_t plane, uint8_t row, uint8_t cell, uint32_t* level) {
     if (plane < 1 || plane > 2 || row < 1 || row > 94 || cell < 1 || cell > 94) {
-        if (level) *level = 0;
+        if (level && !CesGuest::Store(level, uint32_t{0})) return CES_ERROR_INVALID_PARAMETER;
         return CES_ERROR_ILLEGAL_CODE;
     }
     if (!level) return CES_ERROR_INVALID_PARAMETER;
-    *level = jisLevel(plane, row, cell);
+    if (!CesGuest::Store(level, static_cast<uint32_t>(jisLevel(plane, row, cell)))) return CES_ERROR_INVALID_PARAMETER;
     return isJisX0213Assigned(plane, row, cell) ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
@@ -2525,7 +2587,7 @@ int APS5_VABI sceCesJisX0213ToSJisCode(uint8_t men, uint8_t ku, uint8_t ten, uin
     uint8_t lead = 0;
     uint8_t trail = 0;
     jisToSjis(row, ten, lead, trail);
-    *sjisCode = static_cast<uint16_t>(lead << 8 | trail);
+    if (!CesGuest::Store(sjisCode, static_cast<uint16_t>(lead << 8 | trail))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -2533,19 +2595,21 @@ int APS5_VABI sceCesSJisGetCode(const uint8_t* sjisBuffer, uint32_t sjisMax, uin
     if (!sjisBuffer) return CES_ERROR_INVALID_SRC_BUFFER;
     if (sjisMax == 0) return CES_ERROR_SRC_BUFFER_END;
     if (!sjisCode) return CES_ERROR_INVALID_DST_BUFFER;
-    const uint8_t lead = sjisBuffer[0];
+    uint8_t bytes[2] = {};
+    if (!CesGuest::CopyIn(bytes, sjisBuffer, std::min<uint32_t>(sjisMax, 2))) return CES_ERROR_INVALID_SRC_BUFFER;
+    const uint8_t lead = bytes[0];
     if (isSjisSingle(lead)) {
-        *sjisCode = lead;
-        if (sjisSize) *sjisSize = 1;
+        if (!CesGuest::Store(sjisCode, static_cast<uint16_t>(lead))) return CES_ERROR_INVALID_DST_BUFFER;
+        if (sjisSize && !CesGuest::Store(sjisSize, uint32_t{1})) return CES_ERROR_INVALID_DST_BUFFER;
         return 0;
     }
     if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
     if (sjisMax < 2) return CES_ERROR_SRC_BUFFER_END;
     int row = 0;
     int cell = 0;
-    if (!sjisToJis(lead, sjisBuffer[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
-    *sjisCode = static_cast<uint16_t>(lead << 8 | sjisBuffer[1]);
-    if (sjisSize) *sjisSize = 2;
+    if (!sjisToJis(lead, bytes[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+    if (!CesGuest::Store(sjisCode, static_cast<uint16_t>(lead << 8 | bytes[1]))) return CES_ERROR_INVALID_DST_BUFFER;
+    if (sjisSize && !CesGuest::Store(sjisSize, uint32_t{2})) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -2558,9 +2622,11 @@ int APS5_VABI sceCesSJisPutCode(uint16_t sjisCode, uint8_t* sjisBuffer, uint32_t
     const uint32_t size = lead == 0 ? 1 : 2;
     if (size == 1 ? !isSjisSingle(trail) : !sjisToJis(lead, trail, row, cell)) return CES_ERROR_INVALID_ENCODE;
     if (sjisMax < size) return CES_ERROR_DST_BUFFER_END;
-    if (size == 2) sjisBuffer[0] = lead;
-    sjisBuffer[size - 1] = trail;
-    if (sjisSize) *sjisSize = size;
+    uint8_t bytes[2] = {};
+    if (size == 2) bytes[0] = lead;
+    bytes[size - 1] = trail;
+    if (!CesGuest::CopyOut(sjisBuffer, bytes, size)) return CES_ERROR_INVALID_DST_BUFFER;
+    if (sjisSize && !CesGuest::Store(sjisSize, size)) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -2631,7 +2697,7 @@ int APS5_VABI sceCesUtf32leToMbc(const uint32_t* utf32, const void* profile, uin
 int APS5_VABI sceCesSbcToUcs2(const uint8_t* profile, uint8_t sbc, uint16_t* ucs2) {
     uint32_t code = 0;
     if (const int result = sbcToUnit(profile, sbc, ucs2, code); result != 0) return result;
-    *ucs2 = static_cast<uint16_t>(code);
+    if (!CesGuest::Store(ucs2, static_cast<uint16_t>(code))) return CES_ERROR_INVALID_DST_BUFFER;
     return 0;
 }
 
@@ -2722,7 +2788,7 @@ int APS5_VABI sceCesMbcsStrGetUtf32Len(void* context, const uint8_t* mbcs, uint3
 
 void* APS5_VABI sceCesUcsProfileInitEucCnGb2312(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_CN_TAG, sizeof(EUC_CN_TAG));
+    if (!CesGuest::CopyOut(sheet, EUC_CN_TAG, sizeof(EUC_CN_TAG))) return nullptr;
     return sheet;
 }
 
@@ -2741,6 +2807,17 @@ void* APS5_VABI sceCesUcsProfileInitGb18030_2000(void* sheet) {
 void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void* sheet) {
     if (!sheet) return nullptr;
     initGbSheet(sheet, GB18030_2005_TAG, GB18030_2005.defaultRange, 1);
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitGb18030_2022(void* sheet) {
+    const int savedErrno = errno;
+    if (!sheet) {
+        errno = savedErrno;
+        return nullptr;
+    }
+    initGbSheet(sheet, GB18030_2022_TAG, GB18030_2022.defaultRange, 1);
+    errno = savedErrno;
     return sheet;
 }
 
@@ -3071,76 +3148,99 @@ int APS5_VABI sceCesUtf32leToBig5(const uint32_t* utf32, const void* profile, ui
 
 void* APS5_VABI sceCesUcsProfileInitEucJis2004(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, EUC_JIS2004_TAG, sizeof(EUC_JIS2004_TAG));
+    if (!CesGuest::CopyOut(sheet, EUC_JIS2004_TAG, sizeof(EUC_JIS2004_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, SJIS2004_TAG, sizeof(SJIS2004_TAG));
+    if (!CesGuest::CopyOut(sheet, SJIS2004_TAG, sizeof(SJIS2004_TAG))) return nullptr;
     return sheet;
 }
 
 int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs) {
-    if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
-    if (ucs) *ucs = 0;
+    if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte, a native JIS sequence, nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
+    if (ucs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(ucs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesJiscsToUcs: a profile other than the eight JIS profiles is not implemented");
     uint32_t code = 0;
     const int result = jiscsToUnicode(profile, jiscs, code);
     if (result != 0) return result;
     if (!ucs) return CES_ERROR_INVALID_DST_BUFFER;
-    *ucs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(ucs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 
 int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs) {
-    if (jiscs) *jiscs = 0;
+    if (jiscs) {
+        const uint32_t zero = 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(jiscs, &zero, sizeof(zero))) {
+            errno = savedErrno;
+            return CES_ERROR_INVALID_DST_BUFFER;
+        }
+    }
     if (!isScalar(ucs)) return CES_ERROR_ILLEGAL_CODE;
     if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesUcsToJiscs: a profile other than the eight JIS profiles is not implemented");
-    if (ucs > 0xFFFF && !isJis2004(profile)) throw std::runtime_error("sceCesUcsToJiscs: plane 2 with a JIS X 0208 profile is not implemented");
+    if (ucs > 0xFFFF && !isJis2004(profile)) return CES_ERROR_UNASSIGNED_CODE;
     uint32_t code = 0;
     const int result = unicodeToJiscs(profile, ucs, code);
     if (result != 0) return result;
     if (!jiscs) return CES_ERROR_INVALID_DST_BUFFER;
-    *jiscs = code;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(jiscs, &code, sizeof(code))) {
+        errno = savedErrno;
+        return CES_ERROR_INVALID_DST_BUFFER;
+    }
     return 0;
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, ISO2022_RFC1468_TAG, sizeof(ISO2022_RFC1468_TAG));
+    if (!CesGuest::CopyOut(sheet, ISO2022_RFC1468_TAG, sizeof(ISO2022_RFC1468_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, ISO2022_CP50221_TAG, sizeof(ISO2022_CP50221_TAG));
+    if (!CesGuest::CopyOut(sheet, ISO2022_CP50221_TAG, sizeof(ISO2022_CP50221_TAG))) return nullptr;
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, ISO2022_CP50222_TAG, sizeof(ISO2022_CP50222_TAG));
+    if (!CesGuest::CopyOut(sheet, ISO2022_CP50222_TAG, sizeof(ISO2022_CP50222_TAG))) return nullptr;
     return sheet;
 }
 
 int APS5_VABI sceCesIso2022UcsContextInit(void* context, const void* profile) {
     if (!context) return CES_ERROR_INVALID_PARAMETER;
     if (!profile) {
-        std::memset(context, 0, 0x100);
+        uint8_t zeros[0x100] = {};
+        (void)CesGuest::CopyOut(context, zeros, sizeof(zeros));
         return CES_ERROR_INVALID_PARAMETER;
     }
-    std::memcpy(context, &profile, sizeof(profile));
+    if (!CesGuest::CopyOut(context, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
 int APS5_VABI sceCesIso2022UcsContextInitCopy(void* context, const void* source) {
     if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
     const void* profile = contextProfile(source);
-    std::memcpy(context, &profile, sizeof(profile));
+    if (!CesGuest::CopyOut(context, &profile, sizeof(profile))) return CES_ERROR_INVALID_PARAMETER;
     return 0;
 }
 

@@ -1,5 +1,6 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
+#include "Optimization/DeadCodeEliminator.hpp"
 #include "Optimization/MaskedSelectEliminator.hpp"
 #include "StencilReplay.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
@@ -9,6 +10,7 @@
 #include <exception>
 #include <functional>
 #include <initializer_list>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -108,7 +110,17 @@ struct Builder {
     }
 
     std::uint32_t eliminate() {
-        return MaskedSelectEliminator{}.Eliminate(program).removedSelects;
+        const auto removedSelects = MaskedSelectEliminator{}.Eliminate(program).removedSelects;
+        if (removedSelects == 0u) return 0u;
+        const auto instructions = [&] {
+            std::size_t count = 0;
+            for (const IrBlock* each : program.BlockOrder()) count += each->Instructions().size();
+            return count;
+        };
+        const auto before = instructions();
+        DeadCodeEliminator{}.Eliminate(program);
+        if (instructions() != before) throw std::runtime_error("dead code is left after the selects were removed");
+        return removedSelects;
     }
 };
 

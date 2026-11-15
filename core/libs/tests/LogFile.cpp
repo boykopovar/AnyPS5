@@ -1,20 +1,27 @@
 #include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <csignal>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <poll.h>
 #include <spawn.h>
@@ -23,6 +30,7 @@
 #include <unistd.h>
 
 extern char** environ;
+#endif
 
 namespace {
 
@@ -227,10 +235,18 @@ void UnopenablePath() {
     Require(StartFromValue(path.c_str(), SystemFactory(), error) == nullptr, "an unopenable path started a session");
     Require(error.find("ANYPS5_LOG_FILE") != std::string::npos, "the error does not name ANYPS5_LOG_FILE");
     Require(error.find(path) != std::string::npos, "the error does not name the path");
+#ifdef _WIN32
+    Require(error.find("(Windows error 3)") != std::string::npos, "the error does not carry the operating system error");
+#else
     Require(error.find("No such file or directory") != std::string::npos && error.find("errno 2") != std::string::npos, "the error does not carry the operating system error");
+#endif
     const std::string directory = g_directory.string();
     error.clear();
+#ifdef _WIN32
+    Require(StartFromValue(directory.c_str(), SystemFactory(), error) == nullptr && error.find("(Windows error 5)") != std::string::npos, "a directory was accepted as the log file");
+#else
     Require(StartFromValue(directory.c_str(), SystemFactory(), error) == nullptr && error.find("Is a directory") != std::string::npos, "a directory was accepted as the log file");
+#endif
 }
 
 class CountingFactory final : public Factory {
@@ -244,9 +260,15 @@ public:
 };
 
 int OpenDescriptors() {
+#ifdef _WIN32
+    DWORD count = 0;
+    Require(GetProcessHandleCount(GetCurrentProcess(), &count) != 0, "count the process handles");
+    return static_cast<int>(count);
+#else
     int count = 0;
     for (int descriptor = 0; descriptor < 1024; ++descriptor) count += ::fcntl(descriptor, F_GETFD) != -1;
     return count;
+#endif
 }
 
 void UnsetCreatesNothing() {
@@ -261,7 +283,9 @@ void UnsetCreatesNothing() {
 }
 
 void BrokenTerminalKeepsFile() {
+#ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
+#endif
     Rig rig("terminal-closed.log");
     Close(rig.terminalOutput.read);
     rig.terminalOutput.read = NoHandle;
@@ -286,8 +310,17 @@ void FullDiskKeepsTerminal() {
     Pipe terminalError;
     std::string error;
     Require(MakePipe(output, error) && MakePipe(errors, error) && MakePipe(terminalOutput, error) && MakePipe(terminalError, error), "pipes");
-    const int full = ::open("/dev/full", O_WRONLY);
-    if (full < 0) return;
+#ifdef _WIN32
+    const auto readOnly = g_directory / "read-only.log";
+    std::ofstream(readOnly).close();
+    const HANDLE opened = CreateFileW(readOnly.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (opened == INVALID_HANDLE_VALUE) return;
+    const Handle full = reinterpret_cast<Handle>(opened);
+#else
+    const int opened = ::open("/dev/full", O_WRONLY);
+    if (opened < 0) return;
+    const Handle full = opened;
+#endif
     {
         Tee tee(full, terminalOutput.write, terminalError.write, output.read, errors.read);
         tee.Start();
@@ -299,8 +332,19 @@ void FullDiskKeepsTerminal() {
     Require(Drain(terminalOutput.read) == "after the disk is full\n", "the terminal lost output after the file failed");
     const std::string notice = Drain(terminalError.read);
     Require(notice.find("ANYPS5_LOG_FILE") != std::string::npos && notice.find("can no longer be written") != std::string::npos, "the failure was not reported once on the terminal");
-    for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write}) Close(handle);
-    ::close(full);
+    for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write, full}) Close(handle);
+}
+
+#ifdef _WIN32
+constexpr const char TextNewline[] = "\r\n";
+constexpr const char MissingPathError[] = "(Windows error 3)";
+#else
+constexpr const char TextNewline[] = "\n";
+constexpr const char MissingPathError[] = "No such file or directory";
+#endif
+
+std::string Line(const char* text) {
+    return std::string(text) + TextNewline;
 }
 
 struct Result {
@@ -309,6 +353,120 @@ struct Result {
     int status = -1;
 };
 
+bool StandardErrorIs(const std::string& text, const std::string& expected) {
+    constexpr std::string_view WriteWatchUnavailable = "[memory] write watch unavailable: ";
+    std::size_t begin = 0;
+    if (text.compare(0, WriteWatchUnavailable.size(), WriteWatchUnavailable) == 0) {
+        const std::size_t end = text.find('\n');
+        if (end == std::string::npos) return false;
+        begin = end + 1;
+    }
+    return text.compare(begin, std::string::npos, expected) == 0;
+}
+
+int ExitCode(int status) {
+#ifdef _WIN32
+    return status;
+#else
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
+}
+
+#ifdef _WIN32
+std::wstring OwnExecutable() {
+    std::wstring path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    Require(length > 0 && length < path.size(), "the path of the test executable");
+    path.resize(length);
+    return path;
+}
+
+std::vector<wchar_t> ChildEnvironment(const std::string& variable, bool set) {
+    std::vector<std::wstring> entries;
+    wchar_t* const block = GetEnvironmentStringsW();
+    Require(block != nullptr, "read the environment");
+    for (const wchar_t* entry = block; *entry != L'\0'; entry += std::wcslen(entry) + 1) {
+        if (_wcsnicmp(entry, L"ANYPS5_LOG_FILE=", 16) != 0) entries.emplace_back(entry);
+    }
+    FreeEnvironmentStringsW(block);
+    if (set) entries.push_back(L"ANYPS5_LOG_FILE=" + std::filesystem::path(variable).wstring());
+    std::sort(entries.begin(), entries.end(), [](const std::wstring& left, const std::wstring& right) { return _wcsicmp(left.c_str(), right.c_str()) < 0; });
+    std::vector<wchar_t> environment;
+    for (const auto& entry : entries) {
+        environment.insert(environment.end(), entry.begin(), entry.end());
+        environment.push_back(L'\0');
+    }
+    environment.push_back(L'\0');
+    return environment;
+}
+
+HANDLE Spawn(const std::wstring& application, std::wstring command, wchar_t* environment, HANDLE output, HANDLE error) {
+    HANDLE inherited[2] = {nullptr, nullptr};
+    const HANDLE sources[2] = {output, error};
+    for (int index = 0; index < 2; ++index) {
+        Require(DuplicateHandle(GetCurrentProcess(), sources[index], GetCurrentProcess(), &inherited[index], 0, TRUE, DUPLICATE_SAME_ACCESS) != 0, "duplicate a standard handle for the child");
+    }
+    SIZE_T bytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    std::vector<std::max_align_t> storage((bytes + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
+    auto* const attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+    Require(InitializeProcThreadAttributeList(attributes, 1, 0, &bytes) != 0, "create the process attributes");
+    Require(UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), nullptr, nullptr) != 0, "list the inherited handles");
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdOutput = inherited[0];
+    startup.StartupInfo.hStdError = inherited[1];
+    startup.lpAttributeList = attributes;
+    PROCESS_INFORMATION process{};
+    const BOOL created = CreateProcessW(application.c_str(), command.data(), nullptr, nullptr, TRUE, CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, environment, nullptr, &startup.StartupInfo, &process);
+    DeleteProcThreadAttributeList(attributes);
+    for (const HANDLE handle : inherited) CloseHandle(handle);
+    Require(created != 0, "spawn the child");
+    CloseHandle(process.hThread);
+    return process.hProcess;
+}
+
+Result Run(const std::string& role, const std::string& variable, bool set = true) {
+    Pipe out;
+    Pipe err;
+    std::string error;
+    Require(MakePipe(out, error) && MakePipe(err, error), "child pipes");
+    std::vector<wchar_t> environment = ChildEnvironment(variable, set);
+    const std::wstring self = OwnExecutable();
+    const HANDLE child = Spawn(self, L"\"" + self + L"\" --child " + std::wstring(role.begin(), role.end()), environment.data(), reinterpret_cast<HANDLE>(out.write), reinterpret_cast<HANDLE>(err.write));
+    Close(out.write);
+    Close(err.write);
+    Result result;
+    bool open[2] = {true, true};
+    const Handle reads[2] = {out.read, err.read};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while ((open[0] || open[1]) && std::chrono::steady_clock::now() < deadline) {
+        bool idle = true;
+        for (int index = 0; index < 2; ++index) {
+            if (!open[index]) continue;
+            char buffer[4096];
+            const long count = ReadAvailable(reads[index], buffer, sizeof(buffer));
+            if (count > 0) {
+                (index == 0 ? result.out : result.err).append(buffer, static_cast<std::size_t>(count));
+                idle = false;
+            } else if (count < 0) {
+                open[index] = false;
+            }
+        }
+        if (idle) Sleep(2);
+    }
+    if (open[0] || open[1]) std::fprintf(stderr, "role %s open %d %d\n", role.c_str(), open[0], open[1]);
+    Require(!open[0] && !open[1], "the child kept its streams open");
+    DWORD code = 0;
+    Require(WaitForSingleObject(child, 20000) == WAIT_OBJECT_0 && GetExitCodeProcess(child, &code) != 0, "wait for the child");
+    CloseHandle(child);
+    result.status = static_cast<int>(code);
+    Close(out.read);
+    Close(err.read);
+    return result;
+}
+#else
 Result Run(const std::string& role, const std::string& variable, bool set = true) {
     Pipe out;
     Pipe err;
@@ -357,6 +515,7 @@ Result Run(const std::string& role, const std::string& variable, bool set = true
     Close(err.read);
     return result;
 }
+#endif
 
 int ThreadCount() {
     int count = 0;
@@ -397,8 +556,16 @@ int ChildMain(const std::string& role) {
     if (role == "exec") {
         std::fprintf(stderr, "line before the exec\n");
         LogFileRelease_nid_no_patch();
+#ifdef _WIN32
+        wchar_t shell[MAX_PATH];
+        const DWORD length = GetEnvironmentVariableW(L"ComSpec", shell, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) return 9;
+        CloseHandle(Spawn(shell, L"cmd /d /c \"echo from the replacement& (echo from the replacement on stderr)1>&2\"", nullptr, GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE)));
+        return 0;
+#else
         execl("/bin/sh", "sh", "-c", "echo from the replacement; echo from the replacement on stderr >&2", static_cast<char*>(nullptr));
         return 9;
+#endif
     }
     return 2;
 }
@@ -410,9 +577,9 @@ void ChildProcesses() {
     clear();
     Result plain = Run("plain", path.string());
     Require(plain.status == 0, "the child failed");
-    Require(plain.out == "stdout line\n" && plain.err == "stderr line\n", "the terminal output of a child changed");
+    Require(plain.out == Line("stdout line") && StandardErrorIs(plain.err, Line("stderr line")), "the terminal output of a child changed");
     const std::string logged = Slurp(path);
-    Require(logged.find("stdout line\n") != std::string::npos && logged.find("stderr line\n") != std::string::npos, "the child's lines are not in the file");
+    Require(logged.find(Line("stdout line")) != std::string::npos && logged.find(Line("stderr line")) != std::string::npos, "the child's lines are not in the file");
 
     clear();
     Result partial = Run("partial", path.string());
@@ -421,32 +588,32 @@ void ChildProcesses() {
 
     clear();
     Result hard = Run("hard", path.string());
-    Require(WIFEXITED(hard.status) && WEXITSTATUS(hard.status) == 3 && hard.err == "written just before the end\n", "the abrupt child differs");
-    Require(Slurp(path).find("written just before the end\n") != std::string::npos, "a line written before _exit is not in the file");
+    Require(ExitCode(hard.status) == 3 && StandardErrorIs(hard.err, Line("written just before the end")), "the abrupt child differs");
+    Require(Slurp(path).find(Line("written just before the end")) != std::string::npos, "a line written before _exit is not in the file");
 
     clear();
     Result crash = Run("crash", path.string());
-    Require(WIFEXITED(crash.status) && WEXITSTATUS(crash.status) == 4, "the crashing child differs");
-    Require(crash.err == "line before the crash\nFATAL: simulated crash report\n", "the crash text did not reach the terminal in order");
-    Require(Slurp(path).find("line before the crash\nFATAL: simulated crash report\n") != std::string::npos, "the crash text did not reach the file in order");
+    Require(ExitCode(crash.status) == 4, "the crashing child differs");
+    Require(StandardErrorIs(crash.err, Line("line before the crash") + "FATAL: simulated crash report\n"), "the crash text did not reach the terminal in order");
+    Require(Slurp(path).find(Line("line before the crash") + "FATAL: simulated crash report\n") != std::string::npos, "the crash text did not reach the file in order");
 
     clear();
     Result replaced = Run("exec", path.string());
     Require(replaced.status == 0, "the replacement failed or was killed by a broken pipe");
-    Require(replaced.out == "from the replacement\n" && replaced.err == "line before the exec\nfrom the replacement on stderr\n", "the output around the replacement did not reach the terminal");
+    Require(replaced.out == Line("from the replacement") && StandardErrorIs(replaced.err, Line("line before the exec") + Line("from the replacement on stderr")), "the output around the replacement did not reach the terminal");
     const std::string execLog = Slurp(path);
-    Require(execLog.find("line before the exec\n") != std::string::npos && execLog.find("from the replacement") == std::string::npos, "the file holds the replacement's output or lacks the earlier line");
+    Require(execLog.find(Line("line before the exec")) != std::string::npos && execLog.find("from the replacement") == std::string::npos, "the file holds the replacement's output or lacks the earlier line");
 
     clear();
     Result bad = Run("plain", (g_directory / "no-such-directory" / "x.log").string());
-    Require(WIFEXITED(bad.status) && WEXITSTATUS(bad.status) == 1, "an unopenable path did not stop the process");
-    Require(bad.err.find("ANYPS5_LOG_FILE") != std::string::npos && bad.err.find("No such file or directory") != std::string::npos && bad.out.empty(), "the startup error differs");
+    Require(ExitCode(bad.status) == 1, "an unopenable path did not stop the process");
+    Require(bad.err.find("ANYPS5_LOG_FILE") != std::string::npos && bad.err.find(MissingPathError) != std::string::npos && bad.out.empty(), "the startup error differs");
 
     clear();
     Result unset = Run("plain", "", false);
-    Require(unset.out == "stdout line\n" && unset.err == "stderr line\n" && !std::filesystem::exists(path), "an unset variable changed the output or created a file");
+    Require(unset.out == Line("stdout line") && StandardErrorIs(unset.err, Line("stderr line")) && !std::filesystem::exists(path), "an unset variable changed the output or created a file");
     Result emptied = Run("plain", "", true);
-    Require(emptied.out == "stdout line\n" && emptied.err == "stderr line\n", "an empty variable changed the output");
+    Require(emptied.out == Line("stdout line") && StandardErrorIs(emptied.err, Line("stderr line")), "an empty variable changed the output");
 
     if (std::filesystem::exists("/proc/self/task")) {
         const auto count = [&](bool set) {
@@ -468,9 +635,16 @@ int main(int argc, char** argv) {
     g_self = argv[0];
     if (argc == 3 && std::string(argv[1]) == "--child") return ChildMain(argv[2]);
     Require(argc == 1, "unexpected argument");
+#ifdef _WIN32
+    g_directory = std::filesystem::temp_directory_path() / ("anyps5-log-file-" + std::to_string(GetCurrentProcessId()));
+    std::error_code stale;
+    std::filesystem::remove_all(g_directory, stale);
+    Require(std::filesystem::create_directory(g_directory), "temporary directory");
+#else
     char pattern[] = "/tmp/anyps5-log-file-XXXXXX";
     Require(::mkdtemp(pattern) != nullptr, "temporary directory");
     g_directory = pattern;
+#endif
     OrderAndTerminal();
     BothStreams();
     LinesStayWholeAcrossStreams();

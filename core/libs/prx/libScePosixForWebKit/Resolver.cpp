@@ -13,6 +13,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/HostErrno.hpp"
+#include "prx/libkernel/Socket/include/SocketError.hpp"
 #include <cstdint>
 #include <algorithm>
 #include <array>
@@ -146,6 +148,13 @@ bool Ready() {
     return true;
 #endif
 }
+#ifndef _WIN32
+void SetGuestSystemError(int hostError) {
+    const int guestError = GuestErrnoFromHost_nid_no_patch(hostError);
+    errno = guestError == GuestSockets::GuestErrorIo ? GuestSockets::GuestErrorFromHost(hostError) : guestError;
+}
+#endif
+
 int GuestError(int error) {
     if (error == 0) return 0;
     if (error == EAI_AGAIN) return 2;
@@ -158,6 +167,10 @@ int GuestError(int error) {
 #ifdef _WIN32
     if (error == WSAEFAULT) return 14;
 #else
+    if (error == EAI_SYSTEM) {
+        SetGuestSystemError(errno);
+        return 11;
+    }
     if (error == EAI_OVERFLOW) return 14;
 #endif
     return 4;
@@ -199,7 +212,7 @@ GuestResolver::HostEntry* ResolveHost(const char* name) {
         }
         if (error != 0 || !native) {
             *sceNetErrnoLoc() = hostError != 0 ? hostError : 3;
-            if (hostError == -1) errno = error == EAGAIN ? 35 : error;
+            if (hostError == -1) SetGuestSystemError(error ? error : errno);
             return nullptr;
         }
 #endif
@@ -287,6 +300,7 @@ int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver:
 }
 
 GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
+    if (!name) return nullptr;
     for (const auto& service : Services) {
         bool named = std::strcmp(name, service.name) == 0;
         for (const char* alias : service.aliases)
@@ -318,10 +332,14 @@ void APS5_VABI freeaddrinfo_nid_postfix(GuestResolver::AddressInfo* first) {
 }
 
 int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
-    const GuestResolver::AddressInfo* hints, GuestResolver::AddressInfo** output) {
+    const GuestResolver::AddressInfo* guestHints, GuestResolver::AddressInfo** output) {
     if (!output) return 4;
-    *output = nullptr;
+    GuestResolver::AddressInfo* const none = nullptr;
+    if (!GuestCopyOut_nid_no_patch(output, &none, sizeof(none))) return 4;
     if (!node && !service) return 8;
+    GuestResolver::AddressInfo hintsCopy{};
+    if (guestHints && !GuestCopyIn_nid_no_patch(&hintsCopy, guestHints, sizeof(hintsCopy))) return 4;
+    const GuestResolver::AddressInfo* const hints = guestHints ? &hintsCopy : nullptr;
     addrinfo nativeHints{};
     const bool rawQuery = hints && hints->socketType == 3;
     if (hints) {
@@ -427,7 +445,10 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     }
     if (failure) { freeaddrinfo_nid_postfix(first); return failure; }
     if (!first) return lookupFailure ? lookupFailure : 4;
-    *output = first;
+    if (!GuestCopyOut_nid_no_patch(output, &first, sizeof(first))) {
+        freeaddrinfo_nid_postfix(first);
+        return 4;
+    }
     return 0;
 }
 

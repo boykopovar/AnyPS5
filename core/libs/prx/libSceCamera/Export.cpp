@@ -1,10 +1,24 @@
 #include "prx/libSceCamera/include/Api.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include "prx/libSceCamera/include/Camera.hpp"
+
+namespace {
+
+int CheckAudioDataBuffer(const void* data) {
+    if (!data) return SCE_CAMERA_ERROR_PARAM;
+    std::uint8_t probe = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&probe, data, sizeof(probe));
+    errno = savedErrno;
+    return readable ? 0 : SCE_CAMERA_ERROR_PARAM;
+}
+
+}
 
 extern "C" {
 
@@ -107,7 +121,7 @@ int APS5_VABI sceCamera2GetCalibrationData(void) {
 }
 
 int APS5_VABI sceCameraAudioGetData(void* data) {
-    return data ? 0 : SCE_CAMERA_ERROR_PARAM;
+    return CheckAudioDataBuffer(data);
 }
 
 int APS5_VABI sceCameraGetCalibData(void) {
@@ -121,7 +135,7 @@ int APS5_VABI sceCameraWaitForEveReady(void) {
 }
 
 int APS5_VABI sceCameraAudioGetData2(void* data) {
-    return data ? 0 : SCE_CAMERA_ERROR_PARAM;
+    return CheckAudioDataBuffer(data);
 }
 
 int APS5_VABI sceCameraSetAppModuleFocus(void) {

@@ -1,10 +1,24 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceFsInternalForVsh/include/InventoryExports.hpp"
 #include "prx/libSceFsInternalForVsh/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+int InitWorkspaceOpt(void* opt) {
+    const std::uint32_t zero = 0;
+    const int savedErrno = errno;
+    const bool copied = opt != nullptr && GuestCopyOut_nid_no_patch(opt, &zero, sizeof(zero));
+    errno = savedErrno;
+    return copied ? 0 : static_cast<int>(0x80020016u);
+}
+
+}
 
 extern "C" {
 
@@ -626,9 +640,16 @@ int APS5_VABI sceFsTransactionStart() {
     return 0;
 }
 
-int APS5_VABI sceFsTrophyImageError() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsTrophyImageError(int error) {
+    switch (static_cast<std::uint32_t>(error)) {
+    case 0x80020005u:
+    case 0x80020016u:
+    case 0x8002002du:
+    case 0x80020060u:
+        return 0;
+    default:
+        return static_cast<int>(0x80020016u);
+    }
 }
 
 int APS5_VABI sceFsUfsAllocateAdditionalContents() {
@@ -1090,20 +1111,20 @@ int APS5_VABI sceFsInitCreatePprPfsSaveDataOpt() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsInitCreateWorkspaceOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitCreateWorkspaceOpt(void* opt) {
+    return InitWorkspaceOpt(opt);
 }
 
-int APS5_VABI sceFsInitDeleteWorkspaceOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitDeleteWorkspaceOpt(void* opt) {
+    return InitWorkspaceOpt(opt);
 }
 
 int APS5_VABI sceFsInitMountWorkspaceOpt() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsInitUmountWorkspaceOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitUmountWorkspaceOpt(void* opt) {
+    return InitWorkspaceOpt(opt);
 }
 
 int APS5_VABI sceFsIsActiveBankSystemEx() {
