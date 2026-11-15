@@ -160,6 +160,12 @@ static void CheckFileActions() {
     Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addopen_nid_postfix(&actions, 1, nullptr, 0, 0); }));
     Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_destroy_nid_postfix(&uninitialized); }));
     Check(ThrowsInvalidArgument([] { posix_spawn_file_actions_init_nid_postfix(nullptr); }));
+    auto* const unmapped = reinterpret_cast<PosixSpawnFileActions**>(0x10);
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_init_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_destroy_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addclose_nid_postfix(unmapped, 1); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_adddup2_nid_postfix(unmapped, 1, 2); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addopen_nid_postfix(unmapped, 1, "/app0/a", 0, 0); }));
     Check(actions->actions.size() == 4);
 
     Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0);

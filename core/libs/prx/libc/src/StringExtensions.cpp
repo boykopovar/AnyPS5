@@ -8,6 +8,7 @@
 #include <climits>
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 extern "C" {
@@ -40,8 +41,8 @@ char* APS5_VABI basename_r_nid_postfix(const char* path, char* buffer) {
         if (separator != std::string_view::npos) name.remove_prefix(separator + 1);
     }
     if (name.size() >= 1024) { errno = 63; return nullptr; }
-    std::memcpy(buffer, name.data(), name.size());
-    buffer[name.size()] = '\0';
+    const std::string text(name);
+    if (!GuestCopyOut_nid_no_patch(buffer, text.c_str(), text.size() + 1)) { errno = 14; return nullptr; }
     return buffer;
 }
 
