@@ -6478,7 +6478,7 @@ void drawInputMirrorTests(const Device& device) {
     const auto& context = device.GetContext();
     for (std::size_t i = 0; i < bytes; ++i) static_cast<std::uint8_t*>(block)[i] = static_cast<std::uint8_t>(i * 5u + 3u);
     const auto address = reinterpret_cast<std::uint64_t>(block);
-    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto forgetSerial = ForgetSerial();
     const auto generation = CollectWrites(address, bytes);
     Require(generation != 0, "the watched block has no generation");
     const bool mirrors = Recorder::DrawInputMirrors();
@@ -6502,8 +6502,8 @@ void drawInputMirrorTests(const Device& device) {
     const auto fourth = address + 12288;
     const auto firstHost = snapshot(first);
     const auto secondHost = snapshot(second);
-    cache.KeepDrawSnapshot(first, half + 4096, generation, registry, firstHost, Use::Vertex);
-    cache.KeepDrawSnapshot(second, half, generation, registry, secondHost, Use::Vertex);
+    cache.KeepDrawSnapshot(first, half + 4096, generation, forgetSerial, firstHost, Use::Vertex);
+    cache.KeepDrawSnapshot(second, half, generation, forgetSerial, secondHost, Use::Vertex);
     const auto firstMirror = reuse(first);
     if (!mirrors) {
         Require(firstMirror == firstHost && reuse(second) == secondHost && use(2 * half + 4096, 0), "a draw input was mirrored with APS5_NO_INPUT_MIRRORS set");
@@ -6521,7 +6521,7 @@ void drawInputMirrorTests(const Device& device) {
     Require(cache.ReusableDrawSnapshot(first, held, Use::Vertex) == firstHost, "dropping a mirror dropped its snapshot");
     const auto filler = snapshot(third);
     const auto fill = Recorder::DrawInputBudget - (half + 4096);
-    cache.KeepDrawSnapshot(third, fill, generation, registry, filler, Use::Vertex);
+    cache.KeepDrawSnapshot(third, fill, generation, forgetSerial, filler, Use::Vertex);
     Require(reuse(second) == nullptr && use(Recorder::DrawInputBudget, 0), "the draw input budget did not evict the least recently used snapshot and its mirror");
     const auto firstAgain = reuse(first);
     Require(firstAgain != firstHost && !firstAgain->Mapped() && use(2 * half + 8192, half + 4096), "making a mirror did not evict the least recently used snapshot to stay within the draw input budget");
@@ -6540,8 +6540,8 @@ void drawInputMirrorTests(const Device& device) {
     const auto wideHost = std::make_shared<Buffer>(context, wide, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     std::memcpy(wideHost->Bytes().data(), reinterpret_cast<const void*>(wideAt), wide);
     const auto olderHost = snapshot(third);
-    narrow.KeepDrawSnapshot(third, Recorder::DrawInputBudget - wide - 4096, generation, registry, olderHost, Use::Vertex);
-    narrow.KeepDrawSnapshot(wideAt, wide, generation, registry, wideHost, Use::Vertex);
+    narrow.KeepDrawSnapshot(third, Recorder::DrawInputBudget - wide - 4096, generation, forgetSerial, olderHost, Use::Vertex);
+    narrow.KeepDrawSnapshot(wideAt, wide, generation, forgetSerial, wideHost, Use::Vertex);
     Require(narrow.ReusableDrawSnapshot(wideAt, wide, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true) == wideHost && narrow.DrawInputBytes() == std::pair<std::size_t, std::size_t>{Recorder::DrawInputBudget - 4096, 0}, "a mirror whose allocation the device-local headroom refuses was made");
     Require(narrow.ReusableDrawSnapshot(third, held, Use::Vertex) == olderHost, "a mirror the device-local headroom refused evicted an older snapshot");
     narrow.Sync();
@@ -6549,7 +6549,7 @@ void drawInputMirrorTests(const Device& device) {
     for (std::uint32_t heap = 0; heap < unified.memory.memoryHeapCount; ++heap) unified.memory.memoryHeaps[heap].flags |= VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
     Recorder shared(unified);
     const auto sharedHost = snapshot(fourth);
-    shared.KeepDrawSnapshot(fourth, held, generation, registry, sharedHost, Use::Vertex);
+    shared.KeepDrawSnapshot(fourth, held, generation, forgetSerial, sharedHost, Use::Vertex);
     Require(shared.ReusableDrawSnapshot(fourth, held, Use::Vertex, nullptr, 0, nullptr, 0, nullptr, true) == sharedHost && shared.DrawInputBytes().second == 0, "a draw input was mirrored on a device whose memory is all device-local");
 }
 
