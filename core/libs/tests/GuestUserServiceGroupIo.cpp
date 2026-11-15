@@ -39,6 +39,9 @@ int main() {
     errno = 73;
     Require(sceUserServiceGetUserGroupNum(reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(errno == 73);
+    errno = 73;
+    Require(sceUserServiceGetUserGroupName(0, reinterpret_cast<char*>(static_cast<std::uintptr_t>(0x10)), 129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 73);
     char name[129]{};
     Require(sceUserServiceGetUserGroupName(INT_MAX, name, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserGroupName(INT_MIN, name, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);

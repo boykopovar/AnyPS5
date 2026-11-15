@@ -1,9 +1,17 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -107,6 +115,34 @@ int main() {
     Require(std::strcmp(exactBuffer, USER_SERVICE_INITIAL_USER_NAME) == 0);
     Require(exactBuffer[SCE_USER_SERVICE_MAX_USER_NAME_LENGTH] == '\0');
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(exactBuffer)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+
+    auto* const unmapped = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, unmapped, sizeof(exactBuffer)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, unmapped, 4) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+
+#if defined(_WIN32)
+    auto* const readOnly = static_cast<char*>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(readOnly != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(readOnly, 4096, PAGE_READONLY, &previous) != 0);
+    errno = 71;
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, readOnly, sizeof(exactBuffer)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(VirtualFree(readOnly, 0, MEM_RELEASE) != 0);
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    auto* const readOnly = static_cast<char*>(mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(readOnly != MAP_FAILED);
+    Require(mprotect(readOnly, static_cast<std::size_t>(pageSize), PROT_READ) == 0);
+    errno = 71;
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, readOnly, sizeof(exactBuffer)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(munmap(readOnly, static_cast<std::size_t>(pageSize)) == 0);
+#endif
 
     return 0;
 }

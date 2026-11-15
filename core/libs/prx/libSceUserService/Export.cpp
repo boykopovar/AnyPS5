@@ -54,6 +54,30 @@ bool IsUserLoggedIn(int userId) {
  return userConnected[index];
 }
 
+bool CopyOutGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutZeroPadded(char* destination, std::size_t size, const char* source, std::size_t sourceLength) {
+    const std::size_t toCopy = sourceLength < size ? sourceLength : size;
+    if (toCopy > 0 && !CopyOutGuestBytes(destination, source, toCopy)) {
+        return false;
+    }
+    const char zeros[4096]{};
+    std::size_t offset = toCopy;
+    while (offset < size) {
+        const std::size_t chunk = (size - offset) < sizeof(zeros) ? (size - offset) : sizeof(zeros);
+        if (!CopyOutGuestBytes(destination + offset, zeros, chunk)) {
+            return false;
+        }
+        offset += chunk;
+    }
+    return true;
+}
+
 int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
@@ -462,10 +486,15 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  if (size < USER_SERVICE_MAX_USER_NAME_LENGTH + 1) {
-  std::memset(name, 0, size);
+  if (!CopyOutZeroPadded(name, size, "", 0)) {
+   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+  }
   return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
  }
- std::strncpy(name, USER_SERVICE_USER_NAMES[index], size);
+ const char* userName = USER_SERVICE_USER_NAMES[index];
+ if (!CopyOutZeroPadded(name, size, userName, std::strlen(userName))) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -1119,19 +1148,23 @@ int APS5_VABI sceUserServiceGetUserGroupName(int groupIndex, char* name, std::si
     if (!UserGroupSlotExists(groupIndex)) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    std::memset(name, 0, size);
+    if (!CopyOutZeroPadded(name, size, "", 0)) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    char local[129]{};
     char path[64];
     std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
     const int descriptor = sceKernelOpen(path, 0, 0);
+    bool loaded = false;
     if (descriptor >= 0) {
-        const std::int64_t bytesRead = sceKernelRead(descriptor, name, 128);
+        const std::int64_t bytesRead = sceKernelRead(descriptor, local, 128);
         sceKernelClose(descriptor);
-        if (bytesRead > 0) {
-            return USER_SERVICE_OK;
-        }
+        loaded = bytesRead > 0;
     }
-    std::snprintf(name, size, "User Group %d", groupIndex + 1);
-    return USER_SERVICE_OK;
+    if (!loaded) {
+        std::snprintf(local, sizeof(local), "User Group %d", groupIndex + 1);
+    }
+    return CopyOutGuestBytes(name, local, sizeof(local)) ? USER_SERVICE_OK : USER_SERVICE_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceUserServiceSetAutoLoginEnabled(void) {
