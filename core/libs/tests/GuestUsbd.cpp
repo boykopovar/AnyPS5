@@ -524,6 +524,9 @@ int main(int argc, char** argv) {
     descriptor[0] = 0x55;
     Require(sceUsbdGetStringDescriptorAscii(nullptr, 1, descriptor, 18) == invalidArgument, "null handle ASCII string descriptor accepted");
     Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, nullptr, 18) == invalidArgument && sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 0) == invalidArgument, "missing ASCII string buffer accepted");
+    errno = 71;
+    Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unwritable string descriptor buffer accepted");
+    Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unwritable ASCII string buffer accepted");
     Require(descriptor[0] == 0x55, "a rejected ASCII string request wrote the buffer");
     Require(Throws([&] { sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 18); }), "ASCII string request on a handle that was never opened did not throw");
     Require(sceUsbdGetDescriptor(nullptr, 1, 0, descriptor, 18) == invalidArgument, "null handle descriptor request accepted");
