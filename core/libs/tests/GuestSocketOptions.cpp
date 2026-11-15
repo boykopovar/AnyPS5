@@ -574,6 +574,46 @@ void BadPointersFail() {
     UnmapPage(readOnly);
 }
 
+void TimestampOptionBounds() {
+    const int descriptor = socket_nid_postfix(2, Datagram, 0);
+    Require(descriptor >= 0, "socket failed");
+
+    int one = 1;
+    for (const int option : {SoTimestamp, 0x2000}) {
+        Require(setsockopt_nid_postfix(-1, SolSocket, option, &one, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorBadDescriptor, "setsockopt on bad fd must fail with EBADF");
+        int value = 0;
+        std::uint32_t length = sizeof(value);
+        Require(getsockopt_nid_postfix(-1, SolSocket, option, &value, &length) == -1 && *__error_nid_postfix() == ErrorBadDescriptor, "getsockopt on bad fd must fail with EBADF");
+
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, nullptr, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt with null value must fail with EFAULT");
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, reinterpret_cast<void*>(0x10), sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt with invalid pointer value must fail with EFAULT");
+
+        for (const std::uint32_t badLength : {0u, 2u, 3u}) {
+            Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &one, badLength) == -1 && *__error_nid_postfix() == ErrorInvalid, "setsockopt with invalid length must fail with EINVAL");
+        }
+
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, nullptr) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with null length pointer must fail with EFAULT");
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with invalid length pointer must fail with EFAULT");
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, reinterpret_cast<void*>(0x10), &length) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with invalid value pointer must fail with EFAULT");
+
+        std::int64_t wide = 1;
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &wide, sizeof(wide)) == 0, "8-byte wide setsockopt must succeed");
+        value = 0;
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, &length) == 0 && value == option && length == sizeof(int), "getsockopt reads back option value");
+
+        wide = 0;
+        Require(setsockopt_nid_postfix(descriptor, SolSocket, option, &wide, sizeof(wide)) == 0, "8-byte wide setsockopt clear must succeed");
+        value = -1;
+        length = sizeof(value);
+        Require(getsockopt_nid_postfix(descriptor, SolSocket, option, &value, &length) == 0 && value == 0 && length == sizeof(int), "getsockopt reads back 0 after clear");
+    }
+
+    Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "multicast") == 0) {
         return MulticastOnTheHost() ? 0 : 77;
@@ -589,6 +629,7 @@ int main(int argc, char** argv) {
     BuffersFollowThePs5();
     NullValues();
     BadPointersFail();
+    TimestampOptionBounds();
     IpLevelFollowsThePs5();
     MulticastMembership();
     UnknownRequestsFail();
