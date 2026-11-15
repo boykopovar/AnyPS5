@@ -1,5 +1,6 @@
 #include "prx/libSceVideodec2/include/Api.hpp"
 #include "prx/libSceVideodec2/include/PictureMetadata.hpp"
+#include <algorithm>
 #include <array>
 #include <span>
 #include <cstdint>
@@ -67,6 +68,22 @@ bool CopyOutGuestBytes(void* destination, const void* source, std::size_t bytes)
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
     errno = savedErrno;
     return copied;
+}
+
+template<typename TValue>
+bool ReadSizedGuest(TValue& destination, const TValue* source) {
+    if (!source) return false;
+    std::uint64_t thisSize = 0;
+    if (!CopyInGuestBytes(&thisSize, source, sizeof(thisSize))) return false;
+    const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(thisSize, sizeof(TValue)));
+    return CopyInGuestBytes(&destination, source, bytes);
+}
+
+template<typename TValue>
+bool WriteSizedGuest(TValue* destination, const TValue& source) {
+    if (!destination) return false;
+    const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(source.thisSize, sizeof(TValue)));
+    return CopyOutGuestBytes(destination, &source, bytes);
 }
 
 constexpr std::uint64_t WorkMemoryBytes = 1u << 20u;
@@ -484,7 +501,7 @@ void ClearOutput(const Decoder& decoder, FrameBuffer* frame, FrameBuffer* localF
     localOutput.isErrorFrame = false;
     localOutput.pictureCount = 0;
     localOutput.codecType = decoder.codec;
-    if (!CopyOutGuest(output, localOutput)) throw std::runtime_error("Videodec2: invalid argument pointer");
+    if (!WriteSizedGuest(output, localOutput)) throw std::runtime_error("Videodec2: invalid argument pointer");
     if (frame && localFrame) {
         localFrame->isAccepted = false;
         if (!CopyOutGuest(frame, *localFrame)) throw std::runtime_error("Videodec2: invalid argument pointer");
@@ -525,7 +542,7 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Fra
         localOutput.frameFormat = 0;
         localOutput.framePitchInBytes = pitch;
     }
-    if (!CopyOutGuest(frame, *localFrame) || !CopyOutGuest(output, localOutput)) {
+    if (!CopyOutGuest(frame, *localFrame) || !WriteSizedGuest(output, localOutput)) {
         throw std::runtime_error("Videodec2: invalid argument pointer");
     }
     decoder.pictures[localFrame->frameBuffer] = timestamps;
@@ -626,7 +643,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     InputData localInput{};
     OutputInfo localOutput{};
     FrameBuffer localFrame{};
-    if (!input || !output || !CopyInGuest(localInput, input) || !CopyInGuest(localOutput, output)) {
+    if (!input || !output || !CopyInGuest(localInput, input) || !ReadSizedGuest(localOutput, output)) {
         throw std::runtime_error("Videodec2: invalid argument pointer");
     }
     if (frame && !CopyInGuest(localFrame, frame)) {
@@ -722,7 +739,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
 int APS5_VABI sceVideodec2Flush_nid_postfix(std::uint64_t handle, FrameBuffer* frame, OutputInfo* output) {
     OutputInfo localOutput{};
     FrameBuffer localFrame{};
-    if (!output || !CopyInGuest(localOutput, output)) throw std::runtime_error("Videodec2: invalid argument pointer");
+    if (!output || !ReadSizedGuest(localOutput, output)) throw std::runtime_error("Videodec2: invalid argument pointer");
     if (frame && !CopyInGuest(localFrame, frame)) throw std::runtime_error("Videodec2: invalid argument pointer");
     const auto found = FindDecoder(handle);
     if (!found) throw std::runtime_error("Videodec2: invalid decoder handle");
