@@ -33,6 +33,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideodec2>")
     endif()
 
+    add_test_executable(guest_videodec2_hevc_aliases_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideodec2HevcAliases.cpp)
+    target_include_directories(guest_videodec2_hevc_aliases_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_videodec2_hevc_aliases_tests PRIVATE libSceVideodec2 libc)
+    configure_windows_unwind(guest_videodec2_hevc_aliases_tests)
+    add_test(NAME guest_videodec2_hevc_aliases COMMAND guest_videodec2_hevc_aliases_tests)
+    set_tests_properties(guest_videodec2_hevc_aliases PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_videodec2_hevc_aliases PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideodec2>")
+    endif()
+
     add_test_executable(guest_videodec2_unimplemented_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideodec2Unimplemented.cpp)
     target_include_directories(guest_videodec2_unimplemented_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_videodec2_unimplemented_tests PRIVATE libSceVideodec2 libc)

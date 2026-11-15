@@ -84,17 +84,7 @@ int APS5_VABI sceNpUniversalDataSystemIntDestroyHandle(void) {
     return 0;
 }
 
-int APS5_VABI sceNpUniversalDataSystemIntInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceNpUniversalDataSystemIntNetSyncTitles(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpUniversalDataSystemIntTerminate(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

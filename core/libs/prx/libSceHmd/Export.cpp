@@ -7,8 +7,10 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cerrno>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 #include <string>
 
 static_assert(sizeof(HmdCommandBuffer) == 16);
@@ -24,7 +26,12 @@ std::atomic<bool> initialized{false};
 std::int32_t Initialize(const Hmd::InitializeParam* param) {
     if (initialized.load()) return Hmd::AlreadyInitialized;
     if (!param) return Hmd::ParameterNull;
-    if (param->reserved0) return Hmd::UnsupportedFeature;
+    Hmd::InitializeParam localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return Hmd::ParameterNull;
+    if (localParam.reserved0) return Hmd::UnsupportedFeature;
     return initialized.exchange(true) ? Hmd::AlreadyInitialized : 0;
 }
 
@@ -35,6 +42,12 @@ std::uint32_t CompiledSdkVersion() {
     return version;
 }
 
+std::int32_t QueryHandleBeforeInitialize(std::int32_t handle, const char* query) {
+    if (handle != 0) return Hmd::InvalidHandle;
+    if (CompiledSdkVersion() >= Hmd::StartupStateSdkVersion) throw std::runtime_error(std::string(query) + ": handle 0 before sceHmdInitialize from SDK 4.50 is not read");
+    return Hmd::NotInitialized;
+}
+
 std::int32_t CommandQueryHandle(std::int32_t handle, const char* query) {
     if (handle != 0) return Hmd::InvalidHandle;
     if (initialized.load()) NotImplemented_nid_no_patch((std::string(query) + " with handle 0 after sceHmdInitialize").c_str());
@@ -43,18 +56,23 @@ std::int32_t CommandQueryHandle(std::int32_t handle, const char* query) {
 }
 
 template <typename T>
-T ParameterWord(const Hmd2dVrCommandParameter* parameter, std::size_t offset) {
+T ParameterWord(const unsigned char* bytes, std::size_t offset) {
     T value;
-    std::memcpy(&value, reinterpret_cast<const unsigned char*>(parameter) + offset, sizeof(value));
+    std::memcpy(&value, bytes + offset, sizeof(value));
     return value;
 }
 
 std::int32_t Vr2dCommandArguments(const Hmd2dVrCommandParameter* parameter, const HmdCommandBuffer* commandBuffer) {
     if (!parameter || !commandBuffer) return Hmd::ParameterNull;
+    unsigned char bytes[0x40]{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(bytes, parameter, sizeof(bytes));
+    errno = savedErrno;
+    if (!copied) return Hmd::ParameterNull;
     for (const std::size_t offset : {0x00u, 0x08u, 0x20u}) {
-        if (ParameterWord<std::uint64_t>(parameter, offset) == 0) return Hmd::ParameterNull;
+        if (ParameterWord<std::uint64_t>(bytes, offset) == 0) return Hmd::ParameterNull;
     }
-    if (ParameterWord<std::uint32_t>(parameter, 0x34) != 0 || ParameterWord<std::uint64_t>(parameter, 0x38) != 0) return Hmd::ParameterInvalid;
+    if (ParameterWord<std::uint32_t>(bytes, 0x34) != 0 || ParameterWord<std::uint64_t>(bytes, 0x38) != 0) return Hmd::ParameterInvalid;
     return 0;
 }
 
@@ -106,22 +124,32 @@ std::int32_t APS5_VABI sceHmdClose(std::int32_t handle) {
 std::int32_t APS5_VABI sceHmdGetDeviceInformation(Hmd::DeviceInformation* info) {
     if (!info) return Hmd::ParameterNull;
     if (!initialized.load()) return Hmd::NotInitialized;
-    *info = {};
-    info->status = Hmd::DeviceStatus::NotDetected;
-    info->userId = -1;
+    Hmd::DeviceInformation result{};
+    result.status = Hmd::DeviceStatus::NotDetected;
+    result.userId = -1;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) {
+        errno = savedErrno;
+        return Hmd::ParameterNull;
+    }
     return 0;
 }
 
 std::int32_t APS5_VABI sceHmdGetDeviceInformationByHandle(std::int32_t handle,
                                                         Hmd::DeviceInformation* info) {
-    (void)handle;
-    (void)info;
-    return initialized.load() ? Hmd::InvalidHandle : Hmd::NotInitialized;
+    if (initialized.load()) return Hmd::InvalidHandle;
+    const std::int32_t result = QueryHandleBeforeInitialize(handle, __func__);
+    return result == Hmd::NotInitialized && !info ? Hmd::ParameterNull : result;
 }
 
 std::int32_t APS5_VABI sceHmdInternalGetDeviceStatus(Hmd::DeviceStatus* status) {
     if (!status) return Hmd::ParameterNull;
-    *status = Hmd::DeviceStatus::NotDetected;
+    constexpr Hmd::DeviceStatus deviceStatus = Hmd::DeviceStatus::NotDetected;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(status, &deviceStatus, sizeof(deviceStatus))) {
+        errno = savedErrno;
+        return Hmd::ParameterNull;
+    }
     return 0;
 }
 
@@ -434,9 +462,9 @@ int APS5_VABI sceHmdInternalSetM2LedOn(std::int32_t handle, std::uint32_t ledMas
 }
 
 int APS5_VABI sceHmdGetFieldOfView(std::int32_t handle, HmdFieldOfView* fieldOfView) {
-    (void)handle;
     if (!fieldOfView) return Hmd::ParameterNull;
-    return initialized.load() ? Hmd::InvalidHandle : Hmd::NotInitialized;
+    if (initialized.load()) return Hmd::InvalidHandle;
+    return QueryHandleBeforeInitialize(handle, __func__);
 }
 
 int APS5_VABI sceHmdReprojectionAddDisplayBuffer(std::int32_t bufferIndex, const void* reserved) {
@@ -970,12 +998,12 @@ int APS5_VABI libSceHmdUnknown_mVIneDkja6c_nid_no_patch() {
 APS5_EXPORT("mVIneDkja6c", libSceHmdUnknown_mVIneDkja6c_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_miduc55U7q8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("miduc55U7q8", libSceHmdUnknown_miduc55U7q8_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("nlAZlOKJy+c", libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch);
 
@@ -995,7 +1023,7 @@ int APS5_VABI libSceHmdUnknown_qS18I6w2SZM_nid_no_patch() {
 APS5_EXPORT("qS18I6w2SZM", libSceHmdUnknown_qS18I6w2SZM_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("rczCXLh2-b4", libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch);
 
@@ -1005,7 +1033,7 @@ int APS5_VABI libSceHmdUnknown_sWZSZB_minus_mnw4_nid_no_patch() {
 APS5_EXPORT("sWZSZB-mnw4", libSceHmdUnknown_sWZSZB_minus_mnw4_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_smQw6nT8PcA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Hmd::ParameterInvalid;
 }
 APS5_EXPORT("smQw6nT8PcA", libSceHmdUnknown_smQw6nT8PcA_nid_no_patch);
 

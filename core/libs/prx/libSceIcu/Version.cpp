@@ -8,6 +8,7 @@ constexpr std::uint16_t VersionLength = 4;
 constexpr std::int32_t VersionStringLength = 20;
 constexpr char VersionDelimiter = '.';
 constexpr std::uint8_t UnicodeVersion[VersionLength] = {17, 0, 0, 0};
+constexpr const char* IcuVersion = "78.1";
 
 char* WriteField(char* text, std::uint8_t field) {
     if (field >= 100) {
@@ -70,6 +71,10 @@ void APS5_VABI u_versionToString_nid_postfix(const std::uint8_t* version, char* 
 void APS5_VABI u_getUnicodeVersion_nid_postfix(std::uint8_t* version) {
     if (!version) return;
     for (std::uint16_t part = 0; part < VersionLength; ++part) version[part] = UnicodeVersion[part];
+}
+
+void APS5_VABI u_getVersion_nid_postfix(std::uint8_t* version) {
+    u_versionFromString_nid_postfix(version, IcuVersion);
 }
 
 }

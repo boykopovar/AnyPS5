@@ -296,7 +296,7 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
                 Pps pps{bits.Unsigned(31), bytes, {}};
                 if (state.pps[id]) {
                     pps.unsupported = state.pps[id]->unsupported;
-                    if (state.pps[id]->bytes != bytes) pps.unsupported = "H.264 PPS replacement metadata is unsupported until decoder recreation";
+                    if (state.pps[id]->bytes != bytes && state.pps[id]->sps != pps.sps) pps.unsupported = "H.264 PPS replacement naming another SPS is unsupported until decoder recreation";
                 }
                 state.pps[id] = std::move(pps);
             } else if (type == 6) Sei(bytes, flags, timing);

@@ -14,6 +14,7 @@ inline constexpr std::size_t ModalDialogMaxButtons = 3;
 inline constexpr std::uint32_t ModalDialogAnyOwner = 0;
 inline constexpr std::uint32_t ModalDialogOwnerMsgDialog = 1;
 inline constexpr std::uint32_t ModalDialogOwnerErrorDialog = 2;
+inline constexpr std::uint32_t ModalDialogOwnerPsnNotice = 3;
 
 struct ModalDialogRequest {
     std::uint32_t owner = ModalDialogAnyOwner;

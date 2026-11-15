@@ -7,7 +7,7 @@ int main() {
     const auto handle = Voice(rack);
     Control(handle, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0}});
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
-    Ngs2SamplerVoiceFilterParam parameter{{sizeof(parameter), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER}, 0, 1, 1, 2, 1000.0f, 0.75f, 0.5f, {}};
+    Ngs2SamplerVoiceFilterParam parameter{{sizeof(parameter), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER}, 0, 1, 2, 1, 1000.0f, 0.75f, 0.5f, {}};
     Require(sceNgs2VoiceControl(handle, &parameter.header) == SCE_NGS2_OK);
     const auto& voice = *reinterpret_cast<const Ngs2Voice*>(handle);
     Require(voice.rack->system == nullptr && voice.filters.size() == 1);

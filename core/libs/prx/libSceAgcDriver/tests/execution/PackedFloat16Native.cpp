@@ -106,6 +106,7 @@ struct F16x2Math {
     bool add = false;
     bool mul = false;
     bool fma = false;
+    bool fusedFma = false;
 };
 
 F16x2Math FindF16x2Math(std::span<const std::uint32_t> spirv) {
@@ -124,12 +125,13 @@ F16x2Math FindF16x2Math(std::span<const std::uint32_t> spirv) {
             Require(words >= 4u, "packed f16 native: malformed vector type");
             if (half && spirv[offset + 2u] == *half && spirv[offset + 3u] == 2u) pair = spirv[offset + 1u];
         }
-        if (opcode == spv::OpFAdd || opcode == spv::OpFMul || opcode == spv::OpExtInst) {
+        if (opcode == spv::OpFAdd || opcode == spv::OpFMul || opcode == spv::OpExtInst || opcode == spv::OpFmaKHR) {
             Require(words >= 5u, "packed f16 native: malformed arithmetic instruction");
             if (pair && spirv[offset + 1u] == *pair) {
                 math.add = math.add || opcode == spv::OpFAdd;
                 math.mul = math.mul || opcode == spv::OpFMul;
                 math.fma = math.fma || opcode == spv::OpExtInst;
+                math.fusedFma = math.fusedFma || opcode == spv::OpFmaKHR;
             }
         }
         offset += words;
@@ -151,10 +153,15 @@ int main() {
             std::puts("packed f16 native: skipped, the device has no native f16 with RTE rounding and kept denormals");
             return VulkanTestSkipped;
         }
+        const bool fused = supports(spv::CapabilityFMAKHR);
         std::vector<std::uint32_t> withoutFloat16;
         std::ranges::copy_if(target.supportedCapabilities, std::back_inserter(withoutFloat16), [](std::uint32_t capability) { return capability != spv::CapabilityFloat16; });
         auto emulatedTarget = target;
         emulatedTarget.supportedCapabilities = withoutFloat16;
+        std::vector<std::uint32_t> withoutFma;
+        std::ranges::copy_if(target.supportedCapabilities, std::back_inserter(withoutFma), [](std::uint32_t capability) { return capability != spv::CapabilityFMAKHR; });
+        auto unfusedTarget = target;
+        unfusedTarget.supportedCapabilities = withoutFma;
 
         const std::span<const std::uint32_t> code(Code);
         std::vector<std::uint32_t> userData(8, 0u);
@@ -185,28 +192,36 @@ int main() {
         std::uint64_t compared = 0u;
         for (const auto& mode : Modes) {
             const auto native = compile(target, mode);
+            const auto unfused = compile(unfusedTarget, mode);
             const auto emulated = compile(emulatedTarget, mode);
             const F16x2Math nativeMath = FindF16x2Math(native.spirv.Words());
+            const F16x2Math unfusedMath = FindF16x2Math(unfused.spirv.Words());
             const F16x2Math emulatedMath = FindF16x2Math(emulated.spirv.Words());
-            Require(nativeMath.add && nativeMath.mul, std::string("packed f16 native: ") + mode.name + " does not use f16vec2 add and mul");
-            Require(!nativeMath.fma, std::string("packed f16 native: ") + mode.name + " uses an f16vec2 Fma, which Vulkan does not require to be fused");
-            Require(!emulatedMath.add && !emulatedMath.mul && !emulatedMath.fma, std::string("packed f16 native: ") + mode.name + " uses f16vec2 math without Float16");
+            Require(nativeMath.add && nativeMath.mul && unfusedMath.add && unfusedMath.mul, std::string("packed f16 native: ") + mode.name + " does not use f16vec2 add and mul");
+            Require(!nativeMath.fma && !unfusedMath.fma, std::string("packed f16 native: ") + mode.name + " uses an f16vec2 Fma, which Vulkan does not require to be fused");
+            Require(nativeMath.fusedFma == fused, std::string("packed f16 native: ") + mode.name + (fused ? " does not use OpFmaKHR on f16vec2 with FMAKHR" : " uses OpFmaKHR without FMAKHR"));
+            Require(!unfusedMath.fusedFma, std::string("packed f16 native: ") + mode.name + " uses OpFmaKHR without FMAKHR");
+            Require(!emulatedMath.add && !emulatedMath.mul && !emulatedMath.fma && !emulatedMath.fusedFma, std::string("packed f16 native: ") + mode.name + " uses f16vec2 math without Float16");
             for (std::uint32_t batch = 0; batch < Batches; ++batch) {
                 for (auto& word : Input) word = Half() | (Half() << 16u);
-                const auto nativeOutput = run(native);
                 const auto emulatedOutput = run(emulated);
-                for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-                    for (std::uint32_t index = 0; index < Results; ++index) {
-                        const std::uint32_t actual = nativeOutput[tid * Results + index];
-                        const std::uint32_t expected = emulatedOutput[tid * Results + index];
-                        const std::uint32_t* row = &Input[tid * Inputs];
-                        Require(actual == expected, std::string("packed f16 native: ") + mode.name + ", " + Names[index] + " with v4=" + Hex(row[0]) + " v5=" + Hex(row[1]) + " v6=" + Hex(row[2]) + " v7=" + Hex(row[3]) + " is " + Hex(actual) + ", f32 path gives " + Hex(expected));
+                const auto check = [&](const auto& result, const char* path) {
+                    const auto output = run(result);
+                    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+                        for (std::uint32_t index = 0; index < Results; ++index) {
+                            const std::uint32_t actual = output[tid * Results + index];
+                            const std::uint32_t expected = emulatedOutput[tid * Results + index];
+                            const std::uint32_t* row = &Input[tid * Inputs];
+                            Require(actual == expected, std::string("packed f16 native: ") + mode.name + ", " + path + ", " + Names[index] + " with v4=" + Hex(row[0]) + " v5=" + Hex(row[1]) + " v6=" + Hex(row[2]) + " v7=" + Hex(row[3]) + " is " + Hex(actual) + ", f32 path gives " + Hex(expected));
+                        }
                     }
-                }
-                compared += Threads * Results * 2u;
+                    compared += Threads * Results * 2u;
+                };
+                check(native, fused ? "OpFmaKHR" : "native");
+                if (fused) check(unfused, "native without FMAKHR");
             }
         }
-        std::printf("packed f16 native tests passed (%llu halves)\n", static_cast<unsigned long long>(compared));
+        std::printf("packed f16 native tests passed (%llu halves, %s)\n", static_cast<unsigned long long>(compared), fused ? "fused f16 fma" : "no FMAKHR");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

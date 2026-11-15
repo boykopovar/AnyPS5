@@ -19,6 +19,7 @@ namespace Elfpatcher {
         std::uint64_t DynamicSegmentSize;
         std::uint64_t InterpOffset;
         std::uint64_t InterpSize;
+        std::uint64_t MovedLoadAlignment;
     };
 
 }

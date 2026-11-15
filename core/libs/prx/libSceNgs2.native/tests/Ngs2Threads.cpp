@@ -569,7 +569,7 @@ static void TestDetachedSampler() {
     Require(sceNgs2VoiceGetState(voice, &after.voice_state, sizeof(after)) == SCE_NGS2_OK);
     Require(after.voice_state.state_flags == before.voice_state.state_flags && after.num_decoded_samples == before.num_decoded_samples);
     Require(after.decoded_data_size == before.decoded_data_size && after.waveform_data == before.waveform_data);
-    Ngs2SamplerVoiceFilterParam filter{{sizeof(filter), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER}, 0, 1, 1, 0, 1000.0f, 1.0f, 0.5f, {}};
+    Ngs2SamplerVoiceFilterParam filter{{sizeof(filter), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER}, 0, 1, 0, 1, 1000.0f, 1.0f, 0.5f, {}};
     Require(sceNgs2VoiceControl(voice, &filter.header) == SCE_NGS2_OK);
     filter.frequency = 2000.0f;
     filter.q = 0.75f;

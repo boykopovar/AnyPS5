@@ -15,12 +15,12 @@ void Require(bool condition, const char* message) {
 }
 
 int main(int argc, char** argv) {
-    Require(argc == 2, "usage: mimalloc_restart_tests off|on|once");
+    Require(argc == 2, "usage: mimalloc_restart_tests off|on|once|log");
     const std::string_view mode = argv[1];
     Require(std::getenv("APS5_MIMALLOC_RESTARTED") == nullptr, "the restart marker stayed in the environment");
     using InHeap = bool (*)(const void*);
     const auto inHeap = reinterpret_cast<InHeap>(dlsym(RTLD_DEFAULT, "mi_is_in_heap_region"));
-    if (mode != "on") {
+    if (mode != "on" && mode != "log") {
         Require(inHeap == nullptr, "mimalloc was loaded without APS5_MIMALLOC or after a restart");
         return 0;
     }
@@ -31,5 +31,6 @@ int main(int argc, char** argv) {
     Require(inHeap(block), "malloc did not allocate through mimalloc");
     Require(inHeap(object.get()) && inHeap(array.get()), "operator new did not allocate through mimalloc");
     std::free(block);
+    if (mode == "log") std::printf("mimalloc_restart_tests: the restarted process writes to its standard output\n");
     return 0;
 }

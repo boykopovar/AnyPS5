@@ -33,9 +33,11 @@ int AddEvent(KernelEqueue eq, std::uint32_t queue, std::uintptr_t ident, void* u
     event.event.ident = ident;
     event.event.filter = EvfiltGraphicsCore;
     event.event.flags = EV_ADD | EV_CLEAR;
+    event.event.data = static_cast<intptr_t>(queue);
     event.event.udata = udata;
-    event.filter.triggerFunc = [](KernelEqueueEvent* e, void*) {
-        e->event.data = e->triggered ? e->event.data + 1 : 1;
+    event.filter.triggerFunc = [](KernelEqueueEvent* e, void* data) {
+        if (data == nullptr) throw std::runtime_error("graphics event triggered without its interrupt data");
+        e->event.data = static_cast<intptr_t>(*static_cast<const std::uint64_t*>(data));
         e->triggered = true;
     };
     event.filter.resetFunc = [](KernelEqueueEvent* e) {
@@ -54,41 +56,45 @@ int AddEvent(KernelEqueue eq, std::uint32_t queue, std::uintptr_t ident, void* u
 }
 
 int DeleteEvent(KernelEqueue eq, std::uintptr_t ident, const char* caller) {
-    {
-        std::lock_guard lock(g_mutex);
-        std::erase_if(g_registrations, [&](const Registration& r) { return r.eq == eq && r.ident == ident; });
+    if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
+        throw std::runtime_error(std::string(caller) + ": invalid event queue");
     }
     if (EqueueDeleteEvent_nid_postfix(eq, ident, EvfiltGraphicsCore) != EQUEUE_OK) {
         throw std::runtime_error(std::string(caller) + ": event is not registered");
     }
+    std::lock_guard lock(g_mutex);
+    std::erase_if(g_registrations, [&](const Registration& r) { return r.eq == eq && r.ident == ident; });
     return 0;
 }
 
 }
 
-bool AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
+void AgcDriverDeliverEopInterrupt(std::uint32_t queue, std::uint32_t context) {
     std::vector<Registration> registrations;
     {
         std::lock_guard lock(g_mutex);
         registrations = g_registrations;
     }
-    bool delivered = false;
     for (const auto& registration : registrations) {
-        if (registration.queue == queue) {
-            EqueueTriggerEvent_nid_postfix(registration.eq, registration.ident, EvfiltGraphicsCore, nullptr);
-            delivered = true;
-        }
+        if (registration.queue != queue) continue;
+        std::uint64_t data = static_cast<std::uint64_t>(static_cast<std::uint8_t>(registration.queue)) | (static_cast<std::uint64_t>(context) << 16u);
+        EqueueTriggerEvent_nid_postfix(registration.eq, registration.ident, EvfiltGraphicsCore, &data);
     }
-    return delivered;
 }
 
 extern "C" {
 
 int APS5_VABI sceAgcDriverAddEqEvent(KernelEqueue eq, int id, void* udata) {
+    if (id < 0) {
+        throw std::runtime_error(std::string(__func__) + ": negative event id");
+    }
     return AddEvent(eq, static_cast<std::uint32_t>(id), static_cast<std::uintptr_t>(id), udata, __func__);
 }
 
 int APS5_VABI sceAgcDriverDeleteEqEvent(KernelEqueue eq, int id) {
+    if (id < 0) {
+        throw std::runtime_error(std::string(__func__) + ": negative event id");
+    }
     return DeleteEvent(eq, static_cast<std::uintptr_t>(id), __func__);
 }
 

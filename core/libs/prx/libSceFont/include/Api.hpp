@@ -38,7 +38,37 @@ struct FontGraphicsDeviceParam;
 
 struct FontGraphicsService;
 
-struct FontGraphicsServiceParam;
+struct FontGraphicsBackendEntry {
+    std::uint32_t opcode;
+    std::uint32_t reserved;
+    std::uint64_t value;
+};
+
+struct FontGraphicsBackendList {
+    std::uint32_t reserved;
+    std::int32_t count;
+    const FontGraphicsBackendEntry* entries;
+};
+
+using FontGraphicsBackendSink = int (APS5_VABI*)(void* dispatch, const FontGraphicsBackendList* list);
+using FontGraphicsBackendEnumerate = int (APS5_VABI*)(void* dispatch, FontGraphicsBackendSink sink);
+
+struct FontGraphicsServiceParam {
+    std::uint16_t tag;
+    std::uint16_t revision;
+    std::uint32_t level;
+    void** instanceSlot;
+    std::uint32_t instanceSize;
+    std::uint32_t reserved14;
+    FontGraphicsBackendEnumerate enumerate;
+};
+
+static_assert(sizeof(FontGraphicsBackendEntry) == 0x10);
+static_assert(sizeof(FontGraphicsBackendList) == 0x10);
+static_assert(sizeof(FontGraphicsServiceParam) == 0x20);
+static_assert(offsetof(FontGraphicsServiceParam, instanceSlot) == 0x08);
+static_assert(offsetof(FontGraphicsServiceParam, instanceSize) == 0x10);
+static_assert(offsetof(FontGraphicsServiceParam, enumerate) == 0x18);
 
 struct FontWords;
 
@@ -324,7 +354,7 @@ int APS5_VABI sceFontGraphicsUpdateShapeFillPlot(FontGraphicsResource* resource,
 int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support);
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter);
 int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
-int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
+int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, std::uint32_t format, std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1, std::uint32_t option2, std::uint32_t dimension2, void** output);
 int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm, const void* writingLineDetail, void** pWritingLine);
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine);
 int APS5_VABI sceFontWritingLineClear(void* writingLine);
@@ -338,10 +368,10 @@ int APS5_VABI sceFontGraphicsGetDrawingFrameHandle();
 int APS5_VABI sceFontGraphicsGetIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsProcessWaitAllSequences();
 int APS5_VABI sceFontGraphicsStructureVertexesGlyph();
-int APS5_VABI sceFontGraphicsTextureRefersSurface();
+FontGraphicsSurface* APS5_VABI sceFontGraphicsTextureRefersSurface(const FontGraphicsSurfaceTexture* texture);
 int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph();
-int APS5_VABI sceFontGraphicsAppendGradientSegment();
-int APS5_VABI sceFontSupportSystemUpdation();
+int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color);
+int APS5_VABI sceFontSupportSystemUpdation(FontLibrary library, std::uint32_t version);
 int APS5_VABI sceFontGraphicsCanvasRenewal();
 int APS5_VABI sceFontGraphicsDesignStartDrawing();
 int APS5_VABI sceFontGraphicsGetVertexesGlyphMetrics();
@@ -357,15 +387,15 @@ int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyphs();
 int APS5_VABI sceFontGetCharVariationGlyphCode();
 int APS5_VABI sceFontGraphicsSetupSlantShift();
 int APS5_VABI sceFontGraphicsAdjustFillRadialGradient();
-int APS5_VABI sceFontGraphicsDrawupFillFlatColor();
-int APS5_VABI sceFontGraphicsDrawupFillLinearGradient();
+int APS5_VABI sceFontGraphicsDrawupFillFlatColor(FontGraphicsFrame* graphicsObject, const void* color, void** output);
+int APS5_VABI sceFontGraphicsDrawupFillLinearGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1);
 int APS5_VABI sceFontGraphicsSetVertexesGlyphScale();
 int APS5_VABI sceFontGlyphGetOutlineVertexes();
-int APS5_VABI sceFontGraphicsDrawupFillRadialGradient();
+int APS5_VABI sceFontGraphicsDrawupFillRadialGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1);
 int APS5_VABI sceFontGraphicsAdjustGradientSpread();
 int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithLayout();
 int APS5_VABI sceFontGraphicsCanvasGetPreprocess();
-int APS5_VABI sceFontGraphicsReportError();
+int APS5_VABI sceFontGraphicsReportError(int error);
 int APS5_VABI sceFontGraphicsDrawRectangleShape();
 int APS5_VABI sceFontGraphicsProcessSetSyncPolicy();
 int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithMapping();
@@ -375,7 +405,7 @@ int APS5_VABI sceFontGraphicsCanvasClearPreprocess();
 int APS5_VABI sceFontGraphicsFindIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsDefineIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsProcessRenderSequence();
-int APS5_VABI sceFontOutlineVertexesInterfaceInit();
+int APS5_VABI sceFontOutlineVertexesInterfaceInit(void* interface, const void* first, const void* second, std::uint64_t count);
 int APS5_VABI sceFontGraphicsSurfaceSetTargetView();
 
 }

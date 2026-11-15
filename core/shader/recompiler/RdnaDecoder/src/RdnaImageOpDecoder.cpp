@@ -167,7 +167,7 @@ const ImageOpcodeInfo& lookupOpcode(std::uint32_t opcode) {
     }
     char message[48];
     std::snprintf(message, sizeof(message), "unsupported MIMG opcode 0x%02x", opcode);
-    throw UnsupportedInstructionError(message);
+    throw UnsupportedInstructionError(message, "MIMG", opcode, __FILE__, __LINE__);
 }
 
 void validateFlags(std::uint32_t flags) {

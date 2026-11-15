@@ -219,6 +219,14 @@ int main() {
             std::puts("skipped, the device lacks fragmentShaderPixelInterlock");
             return VulkanTestSkipped;
         }
+        if (!device->RasterOrderGroupUsable()) {
+            std::puts("skipped, the device does not support the raster order group the pixel interlock needs");
+            return VulkanTestSkipped;
+        }
+        if (!device->BdaAtomicsUsable()) {
+            std::puts("skipped, the device does not support atomics on buffer device addresses");
+            return VulkanTestSkipped;
+        }
         GuestCounters guest;
         for (const auto waveSize : {64u, 32u}) {
             for (std::uint32_t pass = 0; pass < 3; ++pass) {

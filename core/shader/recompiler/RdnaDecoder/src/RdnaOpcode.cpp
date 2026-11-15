@@ -195,6 +195,7 @@ bool IsVectorAluOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VCvtF16F32:
         case RdnaOpcode::VRcpF32:
         case RdnaOpcode::VRsqF32:
+        case RdnaOpcode::VRsqClampF32:
         case RdnaOpcode::VSqrtF32:
         case RdnaOpcode::VExpF32:
         case RdnaOpcode::VLogF32:
@@ -898,6 +899,32 @@ bool IsExportOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::ExpPos:
         case RdnaOpcode::ExpParam:
         case RdnaOpcode::Exp:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool IsSigned64BitIntegerOpcode(RdnaOpcode opcode) {
+    requireClassifiableOpcode(opcode);
+    switch (opcode) {
+        case RdnaOpcode::VCmpLtI64:
+        case RdnaOpcode::VCmpEqI64:
+        case RdnaOpcode::VCmpLeI64:
+        case RdnaOpcode::VCmpGtI64:
+        case RdnaOpcode::VCmpNeI64:
+        case RdnaOpcode::VCmpGeI64:
+        case RdnaOpcode::VCmpxLtI64:
+        case RdnaOpcode::VCmpxEqI64:
+        case RdnaOpcode::VCmpxLeI64:
+        case RdnaOpcode::VCmpxGtI64:
+        case RdnaOpcode::VCmpxNeI64:
+        case RdnaOpcode::VCmpxGeI64:
+        case RdnaOpcode::VAshrrevI64:
+        case RdnaOpcode::VMadI64I32:
+        case RdnaOpcode::SAshrI64:
+        case RdnaOpcode::SBfeI64:
+        case RdnaOpcode::SFlbitI32I64:
             return true;
         default:
             return false;

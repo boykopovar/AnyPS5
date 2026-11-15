@@ -315,13 +315,18 @@ LandedKeys KeysAfterPendingWrites(const Recorder& recorder, std::uint64_t begin,
                 continue;
             }
             covered = true;
+            if (write.value < 0 && write.word >= 0) {
+                const auto first = std::max(from, write.begin);
+                const auto last = std::min(std::min(to, write.end), first + 4u);
+                for (auto byte = first; byte < last; ++byte) see(static_cast<int>((static_cast<std::uint64_t>(write.word) >> (8u * ((byte - write.begin) % 4u))) & 0xffu));
+            }
             if (from < write.begin) rest.emplace_back(from, write.begin);
             if (write.end < to) rest.emplace_back(write.end, to);
         }
         unwritten = std::move(rest);
         if (!covered) continue;
         if (write.value >= 0) see(write.value);
-        else landed.unknown = true;
+        else if (write.word < 0) landed.unknown = true;
     }
     for (const auto& [from, to] : unwritten) {
         if (landed.mixed) break;
@@ -724,7 +729,7 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
     // The collect precedes the scan: a write landing between them is stamped above `collected`, so
     // the proof it would invalidate is never taken as current.
     const auto collected = count == 0 ? 0 : GuestMemory::CollectWrites(resource.dccAddress, count);
-    if (proof.generation != 0 && collected != 0 && GuestMemory::UnchangedSince(resource.dccAddress, count, proof.generation)) {
+    if (proof.generation != 0 && collected != 0 && GuestMemory::UnchangedSince(resource.dccAddress, count, proof.generation) && PendingKeyProofHolds(resource, guestBytes, proof)) {
         counters.proved.fetch_add(1, std::memory_order_relaxed);
         return proof.keys;
     }
@@ -743,10 +748,34 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
             stable = !Recorder::SnapshotWriteOverlaps(resource.dccAddress, count);
         }
     }
-    proof = stable ? DccKeyProof{keys, collected} : DccKeyProof{};
+    proof = stable ? DccKeyProof{keys, collected} : memoized && collected != 0 ? PendingKeyProof(resource, guestBytes, keys) : DccKeyProof{};
     counters.scanned.fetch_add(1, std::memory_order_relaxed);
     if (!stable) counters.unstable.fetch_add(1, std::memory_order_relaxed);
     return keys;
+}
+
+DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeys keys) {
+    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    if (!KeyFastPath() || resource.dccAddress == 0 || count == 0 || keys == DccKeys::Mixed || keys == DccKeys::Unreadable || !GuestMemory::GpuMutex().HeldByThisThread()) return {};
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return {};
+    const auto info = recorder->DescribePendingWrite(resource.dccAddress, count);
+    if (!info.has_value() || info->signaled) return {};
+    const auto note = recorder->NewestWriteNote(resource.dccAddress, count);
+    if (note == 0) return {};
+    const auto collected = GuestMemory::CollectWrites(resource.dccAddress, count);
+    if (collected == 0) return {};
+    return {keys, collected, note, recorder->Id()};
+}
+
+bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, const DccKeyProof& proof) {
+    if (proof.pendingNote == 0) return true;
+    const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || recorder->Id() != proof.pendingRecorder || recorder->NewestWriteNote(resource.dccAddress, count) != proof.pendingNote) return false;
+    const auto info = recorder->DescribePendingWrite(resource.dccAddress, count);
+    return info.has_value() && !info->signaled;
 }
 
 DccKeyProofCounts KeyProofCounts() {

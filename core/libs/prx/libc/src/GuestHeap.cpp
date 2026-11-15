@@ -65,7 +65,7 @@ void shrink(std::atomic<std::size_t>& current, std::size_t bytes) {
 class ArenaHeap {
 public:
     static ArenaHeap& Get() {
-        static ArenaHeap heap;
+        static ArenaHeap& heap = *new ArenaHeap;
         return heap;
     }
 
@@ -384,8 +384,7 @@ void* GuestHeapRealign_nid_postfix(void* pointer, std::size_t bytes, std::size_t
     const auto block = validatedBlock(pointer, range.bytes);
     if (bytes == 0) {
         if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest heap alignment");
-        if (reinterpret_cast<std::uintptr_t>(pointer) % alignment != 0)
-            throw std::invalid_argument("reallocalign to 0 bytes with an alignment the block does not have is not measured on the console");
+        if (reinterpret_cast<std::uintptr_t>(pointer) % alignment != 0) return allocate(mutation, alignment, 0, range.gpu);
         return emptyInPlace(mutation, pointer, range.gpu);
     }
     if (alignment != 0 && (alignment & (alignment - 1)) == 0 && reinterpret_cast<std::uintptr_t>(pointer) % alignment == 0 && keepsBlockSize(block, pointer, alignment, bytes))
@@ -414,7 +413,8 @@ void* GuestHeapAlignForGpu_nid_postfix(std::size_t alignment, std::size_t bytes)
 
 int GuestHeapStatsFast_nid_postfix(void* stats) {
     auto* managed = static_cast<MallocManagedSize*>(stats);
-    if (managed == nullptr || managed->size < sizeof(MallocManagedSize)) return 22;
+    if (managed == nullptr) throw std::invalid_argument("malloc_stats and malloc_stats_fast with a null block are not measured on the console");
+    if (managed->size != sizeof(MallocManagedSize) || managed->version != 1) return 1;
     auto& value = usage();
     managed->maxSystemSize = value.maxSystem.load(std::memory_order_relaxed);
     managed->currentSystemSize = value.system.load(std::memory_order_relaxed);

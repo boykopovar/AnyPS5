@@ -2,6 +2,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -108,10 +109,6 @@ void NoteLabel(std::vector<RunLabel>& labels, std::uint64_t address, std::span<c
     labels.push_back({address, bytes.size(), value});
 }
 
-bool WritesThroughPointers(const ShaderRecompiler::RecompileResult& compiled) {
-    return std::any_of(compiled.bindings.begin(), compiled.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
-}
-
 bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<RunLabel>& labels) {
     for (const auto& label : labels) {
         for (const auto& region : regions) {
@@ -136,7 +133,6 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
     QueueState scratch = live;
     std::vector<RunLabel> labels;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
-    bool unknownWrites = false;
     for (const auto& label : deferredLabels().labels) NoteLabel(labels, label.address, std::span<const std::byte>(label.bytes).first(label.size));
     struct Resolving {
         std::size_t offset;
@@ -277,7 +273,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                 const auto argumentsEnd = arguments + 3u * sizeof(std::uint32_t);
                 const bool written = std::any_of(writes.begin(), writes.end(), [&](const auto& range) { return range.first < argumentsEnd && arguments < range.second; })
                     || std::any_of(labels.begin(), labels.end(), [&](const RunLabel& label) { return label.address < argumentsEnd && arguments < label.address + label.size; });
-                if ((unknownWrites || written) && indirectArgumentsPath(packet, arguments) != IndirectGpu) {
+                if (written && indirectArgumentsPath(packet, arguments) != IndirectGpu) {
                     ++stats.writtenBefore;
                     break;
                 }
@@ -302,10 +298,31 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     ++stats.writtenBefore;
                     break;
                 }
-                if (found->second.compiledResult != nullptr) appendWrittenRanges(*found->second.compiledResult, writes);
-                if (found->second.compiledResult == nullptr || WritesThroughPointers(*found->second.compiledResult)) unknownWrites = true;
+                if (found->second.compiledResult == nullptr) {
+                    ++stats.unknownWrites;
+                    break;
+                }
+                if (!found->second.cached && found->second.registeredShader != nullptr) {
+                    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+                    const auto& snapshot = *found->second.registeredShader;
+                    std::vector<ShaderRecompiler::MemoryRegion> memory{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}};
+                    if (!snapshot.header.empty()) memory.push_back({snapshot.headerAddress, snapshot.header});
+                    auto lap = std::chrono::steady_clock::now();
+                    std::array<double, DriverPhaseCount> phaseMs{};
+                    auto phaseLap = lap;
+                    DispatchPhaseTiming phaseTiming{profile, lap, phaseMs, phaseLap};
+                    insertDispatch(found->second.address, found->second.key, found->second.noDispatchCache, profile, found->second.registeredShader, found->second.forgetAtCapture, memory, found->second.shaderMemory, found->second.captured, found->second.capture, found->second.compiledResult, found->second.missedEntry, found->second.missedDiffering, found->second.attachVariant, phaseTiming);
+                }
+                bool bounded = false;
+                const auto itemWrites = DispatchWriteRanges(*found->second.compiledResult, bounded);
+                if (!bounded) {
+                    ++stats.unknownWrites;
+                    break;
+                }
+                writes.insert(writes.end(), itemWrites.begin(), itemWrites.end());
             } else {
-                unknownWrites = true;
+                ++stats.unknownWrites;
+                break;
             }
         } else if (opcode == 0x37 || opcode == 0x49) {
             const auto label = Pm4::DecodeLabelWrite(packet);
@@ -334,10 +351,10 @@ void Driver::reportGroupCapture(std::uint32_t queue) {
     auto& stats = groupCaptureStats();
     const auto now = std::chrono::steady_clock::now();
     if (now - stats.reported < std::chrono::seconds(10)) return;
-    AgcDriver::ProfilePrint_nid_no_patch("[groupcap] queue 0x%x (10 s): %llu runs resolved %llu dispatches (%llu cache hits) in %.1f ms (max %.2f ms); %llu adopted %.2f ms after the resolve on average, max %.2f ms; mismatches: address %llu key %llu memory %llu; %llu resolve failures, %llu stale, %llu label overlaps, %llu read an earlier dispatch's output, %llu rejected by the device, %llu dropped because the argument re-read differed\n",
+    AgcDriver::ProfilePrint_nid_no_patch("[groupcap] queue 0x%x (10 s): %llu runs resolved %llu dispatches (%llu cache hits) in %.1f ms (max %.2f ms); %llu adopted %.2f ms after the resolve on average, max %.2f ms; mismatches: address %llu key %llu memory %llu; %llu resolve failures, %llu stale, %llu label overlaps, %llu read an earlier dispatch's output, %llu stopped at unknown writes, %llu rejected by the device, %llu dropped because the argument re-read differed\n",
                                          queue, static_cast<unsigned long long>(stats.runs), static_cast<unsigned long long>(stats.resolved), static_cast<unsigned long long>(stats.resolvedHits), stats.resolveMs, stats.resolveMaxMs,
                                          static_cast<unsigned long long>(stats.adopted), stats.adopted != 0 ? stats.ageMs / static_cast<double>(stats.adopted) : 0.0, stats.ageMaxMs, static_cast<unsigned long long>(stats.addressMismatches), static_cast<unsigned long long>(stats.keyMismatches), static_cast<unsigned long long>(stats.memoryMismatches),
-                                         static_cast<unsigned long long>(stats.failures), static_cast<unsigned long long>(stats.stale), static_cast<unsigned long long>(stats.labelOverlaps), static_cast<unsigned long long>(stats.writtenBefore), static_cast<unsigned long long>(stats.deviceRejects), static_cast<unsigned long long>(stats.argumentMismatches));
+                                         static_cast<unsigned long long>(stats.failures), static_cast<unsigned long long>(stats.stale), static_cast<unsigned long long>(stats.labelOverlaps), static_cast<unsigned long long>(stats.writtenBefore), static_cast<unsigned long long>(stats.unknownWrites), static_cast<unsigned long long>(stats.deviceRejects), static_cast<unsigned long long>(stats.argumentMismatches));
     stats = GroupCaptureStats{};
     stats.reported = now;
 }

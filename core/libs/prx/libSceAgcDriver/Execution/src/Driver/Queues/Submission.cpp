@@ -1,9 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -14,6 +16,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <cmath>
@@ -25,6 +28,43 @@
 namespace AgcDriver::DriverDetail {
 
 namespace {
+
+void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words) {
+    if (submission.commands.size() - start != words || !std::equal(submission.commands.begin() + static_cast<std::ptrdiff_t>(start), submission.commands.end(), target)) return;
+    submission.indirectSegments.push_back({start, target, words});
+}
+
+void collectLabelDwords(std::span<const std::uint32_t> packet, std::set<std::uint64_t>& dwords) {
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if ((packet[0] >> 30u) != 3u || (opcode != 0x49 && opcode != 0x37)) return;
+    const auto label = Pm4::DecodeLabelWrite(packet);
+    if (!label.has_value()) return;
+    const auto bytes = label->Bytes();
+    if (label->address % 4 != 0 || bytes.size() > 64) return;
+    for (std::size_t offset = 0; offset < bytes.size(); offset += 4) dwords.insert(label->address + offset);
+}
+
+bool awaitsAny(std::span<const std::uint32_t> commands, std::size_t cursor, const std::set<std::uint64_t>& dwords) {
+    if (cursor >= commands.size()) return false;
+    const auto packet = commands.subspan(cursor, std::min<std::size_t>(Pm4::PacketWords(commands[cursor]), commands.size() - cursor));
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7) return false;
+    const auto wait = Pm4::DecodeWait(packet);
+    for (std::size_t offset = 0; offset < wait.bytes; offset += 4) {
+        if (dwords.contains(wait.address + offset)) return true;
+    }
+    return false;
+}
+
+template<typename Map>
+void shiftKeys(Map& map, std::size_t start, std::size_t end, std::ptrdiff_t delta) {
+    Map shifted;
+    for (auto& [key, value] : map) {
+        if (key >= start && key < end) continue;
+        shifted.emplace(key >= end ? static_cast<std::size_t>(static_cast<std::ptrdiff_t>(key) + delta) : key, std::move(value));
+    }
+    map = std::move(shifted);
+}
 
 bool& submitsQueue0() {
     struct SubmitsQueue0Storage {};
@@ -104,6 +144,10 @@ std::uint64_t Driver::FlipSubmissions() const {
     return flipSubmissionsOfThread();
 }
 
+std::uint64_t Driver::RewindTailFlips() const {
+    return rewindTailFlips.load(std::memory_order_acquire);
+}
+
 std::deque<const std::uint32_t*>& Driver::releasedTails() {
     struct ReleasedTailsStorage {};
     return HostThreadLocal<std::deque<const std::uint32_t*>, ReleasedTailsStorage>();
@@ -134,11 +178,25 @@ void Driver::noteReleasedTails(const Submission& submission) {
 void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words) {
     submission.commands.clear();
     submission.conditionalEnds.clear();
+    submission.indirectSegments.clear();
     std::size_t budget = std::size_t{1} << 26u;
-    copySegment(submission, guest, words, budget);
+    copySegment(submission, guest, words, budget, 0);
+    std::ranges::sort(submission.indirectSegments, {}, &Submission::IndirectSegment::start);
 }
 
-bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget) {
+bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth) {
+    require(depth < MaximumSegmentDepth, "command buffer jumps nest too deeply (a jump loop?)");
+    for (;;) {
+        const std::uint32_t* chained = nullptr;
+        std::size_t chainedWords = 0;
+        if (copyLink(submission, guest, words, budget, depth, chained, chainedWords)) return true;
+        if (chained == nullptr) return false;
+        guest = chained;
+        words = chainedWords;
+    }
+}
+
+bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords) {
     require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
     budget -= words;
     std::vector<std::pair<std::size_t, std::size_t>> guarded;
@@ -174,10 +232,13 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
             const std::size_t targetWords = guest[cursor + 10] & 0xfffffu;
             if (targetWords != 0) {
                 GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
-                if (copySegment(submission, target, targetWords, budget)) {
+                const auto start = submission.commands.size();
+                if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                     require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                     return true;
                 }
+                noteIndirectSegment(submission, start, target, targetWords);
+                if (guarded.empty()) return false;
             }
             cursor += count;
             continue;
@@ -193,7 +254,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
                 require(!chain, "predicated command buffer chains are not implemented");
                 const auto start = submission.commands.size();
                 submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
-                require(!copySegment(submission, target, targetWords, budget), "a REWIND inside a predicated command buffer is not implemented");
+                require(!copySegment(submission, target, targetWords, budget, depth + 1), "a REWIND inside a predicated command buffer is not implemented");
                 for (auto inner = start + count; inner < submission.commands.size(); inner += Pm4::PacketWords(submission.commands[inner])) {
                     const auto innerHeader = submission.commands[inner];
                     require(innerHeader != FlipPacketHeader && innerHeader != RenderingWaitPacketHeader, "flips and rendering waits in predicated command buffers are not implemented");
@@ -202,27 +263,187 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
                 cursor += count;
                 continue;
             }
-            if (copySegment(submission, target, targetWords, budget)) {
+            if (chain) {
+                chained = target;
+                chainedWords = targetWords;
+                return false;
+            }
+            const auto start = submission.commands.size();
+            if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                 require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                 return true;
             }
-            if (chain) return false;
+            noteIndirectSegment(submission, start, target, targetWords);
             cursor += count;
             continue;
         }
-        if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
-        submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
-        cursor += count;
         if (opcode == 0x59u) {
+            require(count == 2, "a REWIND packet must be two dwords");
             require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
+            submission.commands.push_back(header);
+            submission.commands.push_back(std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(guest + cursor + 1)).load(std::memory_order_acquire));
+            cursor += count;
             submission.rewindTail = guest + cursor;
             submission.rewindWords = words - cursor;
             return true;
         }
+        if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
+        submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
+        cursor += count;
     }
     reach(words, words);
     require(guarded.empty(), "conditional execution range exceeds its command buffer");
     return false;
+}
+
+bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
+    const auto segment = submission.indirectSegments[index];
+    const auto address = reinterpret_cast<std::uint64_t>(segment.target);
+    const auto bytes = segment.words * sizeof(std::uint32_t);
+    const bool pipelineWrites = DrawPipeline::Active() && DrawPipeline::Queue0().Overlaps(address, bytes);
+    const bool finisherWrites = DrawFinisher::Busy() && DrawFinisher::Get().PendingOverlaps(address, address + bytes);
+    const bool recordedWrites = [&] {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        const auto* recorder = Graphics::Recorder::Active();
+        return recorder != nullptr && recorder->PendingWriterSerial(address, bytes) != 0;
+    }();
+    if (!pipelineWrites && !finisherWrites && !recordedWrites) return false;
+    if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (finisherWrites) DrawFinisher::Get().Drain();
+    std::vector<std::uint32_t> words(segment.words);
+    GuestMemory::Read(address, std::as_writable_bytes(std::span(words)), alignof(std::uint32_t));
+    const auto end = segment.start + segment.words;
+    if (std::equal(words.begin(), words.end(), submission.commands.begin() + static_cast<std::ptrdiff_t>(segment.start))) return false;
+    Submission expanded{};
+    expanded.queue = submission.queue;
+    std::size_t budget = std::size_t{1} << 26u;
+    try {
+        if (copySegment(expanded, words.data(), words.size(), budget, 0)) return false;
+        validate(expanded, segment.target, false);
+        readRegisterLists(expanded);
+    } catch (const std::exception& error) {
+        static std::atomic<int> reported{0};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 8) std::fprintf(stderr, "[gpu] indirect buffer 0x%llx (%zu dwords) changed since its submission but runs as copied: %s\n", static_cast<unsigned long long>(address), segment.words, error.what());
+        return false;
+    }
+    const auto inside = [&](std::size_t cursor) { return cursor >= segment.start && cursor < end; };
+    if (std::ranges::any_of(submission.flips, [&](const auto& entry) { return inside(entry.first); })) return false;
+    {
+        std::lock_guard lock(mutex);
+        for (std::size_t cursor = 0; cursor < expanded.commands.size(); cursor += Pm4::FillerPacket(expanded.commands[cursor]) ? 1u : Pm4::PacketWords(expanded.commands[cursor])) {
+            const auto* packet = expanded.commands.data() + cursor;
+            if (packet[0] == FlipPacketHeader) return false;
+            if (EopRelease(std::span(expanded.commands).subspan(cursor)) && eopFlips.contains(packet[7])) return false;
+            if (packet[0] != RenderingWaitPacketHeader) continue;
+            const std::pair<std::uint32_t, std::uint32_t> target{packet[1], packet[2]};
+            const auto prepared = segment.waits != nullptr ? segment.waits->find(target) : Submission::PreparedWaits::const_iterator{};
+            if (segment.waits == nullptr || prepared == segment.waits->end()) {
+                renderingWaitTargets.insert(target);
+                return false;
+            }
+            expanded.renderingWaits.emplace(cursor, prepared->second);
+        }
+    }
+    if (DrawPipeline::Active() && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (DrawFinisher::Busy()) DrawFinisher::Get().Drain();
+    const auto delta = static_cast<std::ptrdiff_t>(expanded.commands.size()) - static_cast<std::ptrdiff_t>(segment.words);
+    const auto moved = [&](std::size_t cursor) { return cursor >= end ? static_cast<std::size_t>(static_cast<std::ptrdiff_t>(cursor) + delta) : cursor; };
+    auto& commands = submission.commands;
+    commands.erase(commands.begin() + static_cast<std::ptrdiff_t>(segment.start), commands.begin() + static_cast<std::ptrdiff_t>(end));
+    commands.insert(commands.begin() + static_cast<std::ptrdiff_t>(segment.start), expanded.commands.begin(), expanded.commands.end());
+    shiftKeys(submission.flips, segment.start, end, delta);
+    shiftKeys(submission.renderingWaits, segment.start, end, delta);
+    for (auto& [cursor, wait] : expanded.renderingWaits) submission.renderingWaits.emplace(segment.start + cursor, std::move(wait));
+    shiftKeys(submission.registerLists, segment.start, end, delta);
+    for (auto& [cursor, list] : expanded.registerLists) submission.registerLists.emplace(segment.start + cursor, std::move(list));
+    std::map<std::size_t, std::size_t> ends;
+    for (const auto& [begin, rangeEnd] : submission.conditionalEnds) {
+        if (!inside(begin)) ends.emplace(moved(begin), moved(rangeEnd));
+    }
+    for (const auto& [begin, rangeEnd] : expanded.conditionalEnds) ends.emplace(segment.start + begin, segment.start + rangeEnd);
+    submission.conditionalEnds = std::move(ends);
+    std::set<std::size_t> held;
+    for (const auto cursor : submission.heldAtSubmit) {
+        if (!inside(cursor)) held.insert(moved(cursor));
+    }
+    submission.heldAtSubmit = std::move(held);
+    std::vector<Submission::IndirectSegment> segments(submission.indirectSegments.begin(), submission.indirectSegments.begin() + static_cast<std::ptrdiff_t>(index));
+    for (const auto& nested : expanded.indirectSegments) segments.push_back({segment.start + nested.start, nested.target, nested.words, segment.waits});
+    for (auto later = submission.indirectSegments.begin() + static_cast<std::ptrdiff_t>(index) + 1; later != submission.indirectSegments.end(); ++later) segments.push_back({moved(later->start), later->target, later->words, later->waits});
+    std::ranges::sort(segments, {}, &Submission::IndirectSegment::start);
+    submission.indirectSegments = std::move(segments);
+    std::set<std::uint64_t> written;
+    for (std::size_t cursor = 0; cursor < expanded.commands.size(); cursor += Pm4::FillerPacket(expanded.commands[cursor]) ? 1u : Pm4::PacketWords(expanded.commands[cursor])) {
+        if (Pm4::FillerPacket(expanded.commands[cursor])) continue;
+        collectLabelDwords(std::span<const std::uint32_t>(expanded.commands).subspan(cursor, std::min<std::size_t>(Pm4::PacketWords(expanded.commands[cursor]), expanded.commands.size() - cursor)), written);
+    }
+    if (!written.empty()) {
+        std::lock_guard lock(mutex);
+        auto& worker = workers[submission.queue];
+        for (const auto dword : written) {
+            submission.labelWrites.push_back(dword);
+            ++worker.unfinishedWrites[dword];
+        }
+        const auto after = segment.start + expanded.commands.size();
+        std::erase_if(submission.heldAtSubmit, [&](std::size_t cursor) { return cursor >= after && awaitsAny(submission.commands, cursor, written); });
+        for (auto& later : worker.pending) std::erase_if(later.heldAtSubmit, [&](std::size_t cursor) { return awaitsAny(later.commands, cursor, written); });
+    }
+    clearResolvedAhead();
+    return true;
+}
+
+ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const std::map<std::size_t, std::vector<std::uint32_t>>& registerLists) {
+    constexpr std::array<std::uint32_t, 7> programRegisters{0x008u, 0x048u, 0x088u, 0x0c8u, 0x108u, 0x148u, 0x20cu};
+    std::array<std::uint32_t, programRegisters.size() * 2> values{};
+    std::array<bool, programRegisters.size() * 2> written{};
+    std::array<bool, programRegisters.size()> bound{};
+    ReferencedProgramScan scan;
+    const auto write = [&](std::uint32_t offset, std::uint32_t value, bool conditional) {
+        const auto base = std::ranges::find_if(programRegisters, [&](std::uint32_t program) { return offset - program < 2u; });
+        if (base == programRegisters.end()) return;
+        if (conditional) {
+            scan.complete = false;
+            return;
+        }
+        const auto slot = static_cast<std::size_t>(base - programRegisters.begin()) * 2u + (offset - *base);
+        values[slot] = value;
+        written[slot] = true;
+        const auto low = slot & ~std::size_t{1};
+        if (written[low] && written[low + 1]) {
+            bound[low / 2] = true;
+            scan.addresses.push_back((static_cast<std::uint64_t>(values[low]) << 8u) | (static_cast<std::uint64_t>(values[low + 1] & 0xffu) << 40u));
+        }
+    };
+    std::size_t guardedEnd = 0;
+    for (std::size_t cursor = 0; cursor < commands.size(); cursor += Pm4::PacketWords(commands[cursor])) {
+        const auto header = commands[cursor];
+        if ((header >> 30u) != 3u) continue;
+        const auto opcode = (header >> 8u) & 0xffu;
+        const auto words = std::min<std::size_t>(Pm4::PacketWords(header), commands.size() - cursor);
+        const bool conditional = (header & 1u) != 0 || cursor < guardedEnd;
+        if (opcode == 0x22u && words == 5) guardedEnd = std::max(guardedEnd, cursor + words + Pm4::ConditionalWords(commands.subspan(cursor, words)));
+        if (Pm4::DrawOpcode(opcode) && !std::any_of(bound.begin(), bound.end() - 1, [](bool pair) { return pair; })) scan.complete = false;
+        if ((opcode == 0x15u || opcode == 0x16u) && !bound.back()) scan.complete = false;
+        if (opcode == 0x76u && words >= 3) {
+            const auto packet = commands.subspan(cursor, words);
+            const auto offset = packet[1] & ~0x70000000u;
+            for (std::size_t i = 2; i < words; ++i) write(offset + static_cast<std::uint32_t>(i - 2), packet[i], conditional);
+        } else if (opcode == 0x63u) {
+            const auto list = registerLists.find(cursor);
+            if (list == registerLists.end()) continue;
+            if (!Pm4::IndirectRegistersValid(list->second)) {
+                scan.complete = false;
+                continue;
+            }
+            for (std::size_t i = 0; i + 1 < list->second.size(); i += 2) write(list->second[i] & ~0x70000000u, list->second[i + 1], conditional);
+        }
+    }
+    for (std::size_t slot = 0; slot < written.size(); slot += 2) {
+        if (written[slot] != written[slot + 1]) scan.complete = false;
+    }
+    std::ranges::sort(scan.addresses);
+    scan.addresses.erase(std::unique(scan.addresses.begin(), scan.addresses.end()), scan.addresses.end());
+    return scan;
 }
 
 void Driver::readRegisterLists(Submission& submission) {
@@ -256,6 +477,25 @@ bool Driver::awaitsTitle(std::uint64_t awaited) const {
     return runningWorkers.load(std::memory_order_acquire) == 0 && orderHolders.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
 }
 
+bool Driver::stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited) {
+    const auto shape = slot.shape.load(std::memory_order_relaxed);
+    if (shape == 0) return (*reinterpret_cast<const volatile std::uint32_t*>(awaited) & Pm4::RewindValid) == 0;
+    const std::uint64_t value = shape >> 32u == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+    return !Pm4::WaitCompares(static_cast<std::uint32_t>(shape), slot.reference.load(std::memory_order_relaxed), slot.mask.load(std::memory_order_relaxed), value);
+}
+
+bool Driver::parkedOnTitle() const {
+    if (!queue0Uncommitted.empty() || DrawPipeline::Queue0().Busy() || DrawFinisher::Busy() || Graphics::Recorder::QueuedLabelsPending()) return false;
+    bool parked = false;
+    for (const auto& [queue, worker] : workers) {
+        const auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+        const auto awaited = slot.address.load(std::memory_order_acquire);
+        if (awaited == 0 ? !worker.pending.empty() : !awaitsTitle(awaited) || !stillAwaited(slot, awaited)) return false;
+        parked = parked || awaited != 0;
+    }
+    return parked;
+}
+
 void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
     if (queue != 0 || flipHolders.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire) || !awaitsTitle(awaited)) return;
     std::lock_guard lock(mutex);
@@ -263,24 +503,72 @@ void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
     changed.notify_all();
 }
 
-void Driver::holdFlipBehindWorker(const Submission& submission) {
-    if (submission.queue != 0 || onWorkerThread()) return;
+bool Driver::holdFlipBehindWorker(const Submission& submission, bool cpuFlip) {
+    if (submission.queue != 0 || onWorkerThread()) return false;
     bool candidate = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !candidate; cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto words = std::span(submission.commands).subspan(cursor);
         candidate = words[0] == FlipPacketHeader || EopRelease(words);
     }
-    if (!candidate) return;
+    if (!candidate) return false;
     std::unique_lock lock(mutex);
     bool flips = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !flips; cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto words = std::span(submission.commands).subspan(cursor);
         flips = words[0] == FlipPacketHeader || (EopRelease(words) && eopFlips.contains(words[7]));
     }
-    if (!flips) return;
+    if (!flips) return false;
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
     changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
     flipHolders.fetch_sub(1, std::memory_order_acq_rel);
+    return !cpuFlip && !(failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested()) && flipsAhead.load(std::memory_order_acquire) == 0;
+}
+
+bool Driver::flipWorkDone(const std::shared_ptr<FlipWork>& work) {
+    if (work == nullptr) return true;
+    if (!work->finished || !flipWorkDone(work->previous)) return false;
+    if (work->previous != nullptr) {
+        work->serial = std::max(work->serial, work->previous->serial);
+        work->previous.reset();
+    }
+    return true;
+}
+
+void Driver::holdFlipBehindWork(const std::shared_ptr<FlipWork>& earlier) {
+    if (earlier == nullptr) return;
+    std::unique_lock lock(mutex);
+    flipHolders.fetch_add(1, std::memory_order_acq_rel);
+    changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkDone(earlier) || queue0AwaitsTitle.load(std::memory_order_acquire); });
+    flipHolders.fetch_sub(1, std::memory_order_acq_rel);
+    if (failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || !flipWorkDone(earlier)) return;
+    const auto workSerial = earlier->serial;
+    lock.unlock();
+    waitFlipWork(workSerial);
+}
+
+void Driver::waitFlipWork(std::uint64_t workSerial) {
+    if (workSerial == 0) return;
+    auto localDevice = device.Load();
+    if (localDevice == nullptr) return;
+    if (localDevice->CanWaitUnlocked()) {
+        try {
+            localDevice->WaitRecorded(workSerial);
+        } catch (...) {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            localDevice.reset();
+            throw;
+        }
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        localDevice->ReapRecorded(workSerial);
+        localDevice.reset();
+        return;
+    }
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    localDevice->WaitIdle();
+    localDevice.reset();
 }
 
 void Driver::releaseFlipHold() {
@@ -289,9 +577,33 @@ void Driver::releaseFlipHold() {
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
 
+void Driver::finishFlipWork(const std::shared_ptr<FlipWork>& work, std::uint64_t workSerial) {
+    std::lock_guard lock(mutex);
+    if (work != nullptr) {
+        work->serial = std::max(work->serial, workSerial);
+        work->finished = true;
+        flipWorkDone(work);
+    }
+    if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
+}
+
 void Driver::reserveOutputs(Submission& submission) {
     std::set<std::uint32_t> eopTokens;
+    const auto prepare = [&](Submission::IndirectSegment& segment) {
+        auto waits = std::make_shared<Submission::PreparedWaits>();
+        for (const auto& target : renderingWaitTargets) {
+            const auto output = outputs.find(target.first);
+            if (output == outputs.end()) continue;
+            try {
+                if (auto wait = output->second->CaptureRenderingWait(target.second)) waits->emplace(target, std::move(wait));
+            } catch (const std::exception&) {
+            }
+        }
+        segment.waits = std::move(waits);
+    };
+    std::size_t nextSegment = 0;
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+        while (nextSegment < submission.indirectSegments.size() && submission.indirectSegments[nextSegment].start <= cursor) prepare(submission.indirectSegments[nextSegment++]);
         const auto* words = submission.commands.data() + cursor;
         if (words[0] == RenderingWaitPacketHeader) {
             const auto output = outputs.find(words[1]);
@@ -299,6 +611,7 @@ void Driver::reserveOutputs(Submission& submission) {
             auto wait = output->second->CaptureRenderingWait(words[2]);
             require(wait != nullptr, "video output returned a null rendering wait");
             submission.renderingWaits.emplace(cursor, std::move(wait));
+            renderingWaitTargets.emplace(words[1], words[2]);
         }
         if (EopRelease(std::span(submission.commands).subspan(cursor))) {
             const auto token = words[7];
@@ -419,6 +732,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
         rethrowFailure();
         checkStopping();
         reserveOutputs(tail);
+        if (!tail.flips.empty()) rewindTailFlips.fetch_add(1, std::memory_order_acq_rel);
         tail.shaders = shaders;
         tail.serial = stalled.serial;
         tail.received = ++eventSerial;
@@ -470,8 +784,19 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     readRegisterLists(submission);
     if (APS5_ENABLE_TIMING_LOG) submission.validatedAt = std::chrono::steady_clock::now();
     waitForFlipRoom(submission);
-    holdFlipBehindWorker(submission);
-    AwaitRegistrationPreparation();
+    const bool holdsWork = holdFlipBehindWorker(submission, cpuFlip);
+    std::shared_ptr<FlipWork> earlierFlipWork;
+    const auto scan = ReferencedPrograms(submission.commands, submission.registerLists);
+    if (!scan.complete || submission.rewindTail != nullptr) {
+        AwaitRegistrationPreparation();
+    } else {
+        std::shared_ptr<const ShaderRegistry> registry;
+        {
+            std::lock_guard lock(mutex);
+            registry = shaders;
+        }
+        if (registry != nullptr) AwaitReferencedPreparations(*registry, scan.addresses);
+    }
     if (LibraryPrebuildsWaiting()) PrioritizeLibraryPrebuilds(BoundGraphicsPrograms(submission));
     if (APS5_ENABLE_TIMING_LOG) submission.roomReadyAt = std::chrono::steady_clock::now();
     static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
@@ -485,6 +810,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     const auto progressDeadline = progress ? std::chrono::steady_clock::now() + std::chrono::milliseconds(2) : std::chrono::steady_clock::time_point{};
     {
         std::unique_lock lock(mutex);
+        if (captureHold.load(std::memory_order_relaxed)) changed.wait(lock, [&] { return !captureHold.load(std::memory_order_relaxed); });
         rethrowFailure();
         checkStopping();
         require(accepted != std::numeric_limits<std::uint64_t>::max(), "submission serial overflow");
@@ -498,11 +824,12 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             submission.flips.begin()->second->GpuReady(frame);
             lock.unlock();
             Graphics::NoteHostImportFrame();
-            AgcDriverDeliverEopInterrupt(0);
             return;
         }
         submission.shaders = shaders;
         submission.serial = accepted + 1;
+        if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu queue=0x%x dwords=%zu at %p%s\n", TraceMs(), static_cast<unsigned long long>(submission.serial), queue, submission.commands.size(),
+                                static_cast<const void*>(descriptor.addr), cpuFlip ? " (cpu flip)" : "");
 
         submission.received = ++eventSerial;
         const auto now = std::chrono::steady_clock::now();
@@ -518,6 +845,10 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         if (queue == 0 && !submission.flips.empty()) {
             submission.holdsFlip = true;
             flipsAhead.fetch_add(1, std::memory_order_acq_rel);
+            submission.flipWork = std::make_shared<FlipWork>();
+            submission.flipWork->previous = lastFlipWork;
+            if (holdsWork) earlierFlipWork = lastFlipWork;
+            lastFlipWork = submission.flipWork;
         }
         if (!submission.flips.empty()) ++flipSubmissionsOfThread();
         enqueue(std::move(submission));
@@ -544,6 +875,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         }
         CheckFailure();
     }
+    holdFlipBehindWork(earlierFlipWork);
 }
 
 void Driver::SuspendPoint() {
@@ -553,12 +885,15 @@ void Driver::SuspendPoint() {
     auto* const capture = SubmissionCapture::Active();
     auto captured = capture != nullptr ? SubmissionCapture::Prepare(0, SubmissionKind::Suspend, {}, {}) : CapturedSubmission{};
     std::unique_lock lock(mutex);
+    if (captureHold.load(std::memory_order_relaxed)) changed.wait(lock, [&] { return !captureHold.load(std::memory_order_relaxed); });
     rethrowFailure();
     checkStopping();
     require(accepted != std::numeric_limits<std::uint64_t>::max(), "submission serial overflow");
     Submission boundary{};
     boundary.serial = accepted + 1;
     boundary.suspend = true;
+    static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu suspend point\n", TraceMs(), static_cast<unsigned long long>(boundary.serial));
 
     boundary.queue = 0;
     boundary.receivedAt = receivedAt;
@@ -625,14 +960,18 @@ void Driver::noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> 
 
 void Driver::noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool blocked) {
     auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
-    if (!blocked) slot.shape.store(0, std::memory_order_relaxed);
+    if (!blocked) {
+        runningWorkers.fetch_add(1, std::memory_order_seq_cst);
+        while (captureHold.load(std::memory_order_seq_cst)) PollSleep();
+        slot.shape.store(0, std::memory_order_relaxed);
+    }
     slot.address.store(blocked ? awaited : 0, std::memory_order_release);
     if (blocked) {
         if (runningWorkers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             idleEpoch.fetch_add(1, std::memory_order_release);
             changed.notify_all();
         }
-    } else runningWorkers.fetch_add(1, std::memory_order_acq_rel);
+    }
     if (queue == 0) queue0Awaited.store(blocked ? awaited : 0, std::memory_order_release);
     if (queue == 0 && !blocked) queue0AwaitsTitle.store(false, std::memory_order_release);
     if (blocked && orderHolders.load(std::memory_order_acquire) != 0) {
@@ -648,7 +987,7 @@ void Driver::enqueue(Submission submission) {
     for (const auto dword : submission.labelWrites) ++worker.unfinishedWrites[dword];
     worker.pending.push_back(std::move(submission));
     worker.queued.fetch_add(1, std::memory_order_acq_rel);
-    if (!worker.thread.joinable()) worker.thread = std::thread([this, queue] {
+    if (!worker.thread.joinable()) worker.thread = Libc::StartHostThread([this, queue] {
         char role[32];
         std::snprintf(role, sizeof(role), "queue 0x%x worker", queue);
         try {

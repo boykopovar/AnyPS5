@@ -3,12 +3,99 @@
 
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/IrMetadata.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
+#include <utility>
 #include <vector>
 
 namespace ShaderRecompiler {
+
+class IrValuePool {
+public:
+    IrValuePool() = default;
+    IrValuePool(const IrValuePool&) = delete;
+    IrValuePool& operator=(const IrValuePool&) = delete;
+    IrValuePool(IrValuePool&& other) noexcept : live(std::exchange(other.live, {})), freeSlots(std::exchange(other.freeSlots, {})), chunks(std::exchange(other.chunks, {})), chunkUsed(std::exchange(other.chunkUsed, 0)), chunkCapacity(std::exchange(other.chunkCapacity, 0)) {}
+    IrValuePool& operator=(IrValuePool&& other) noexcept {
+        if (this != &other) {
+            release();
+            live = std::exchange(other.live, {});
+            freeSlots = std::exchange(other.freeSlots, {});
+            chunks = std::exchange(other.chunks, {});
+            chunkUsed = std::exchange(other.chunkUsed, 0);
+            chunkCapacity = std::exchange(other.chunkCapacity, 0);
+        }
+        return *this;
+    }
+    ~IrValuePool() { release(); }
+
+    IrValue& Create(IrOpcode opcode, IrType type, std::uint32_t id, std::pmr::memory_resource* useArena) {
+        live.push_back(nullptr);
+        const bool reuse = !freeSlots.empty();
+        if (!reuse && chunkUsed == chunkCapacity) {
+            try {
+                grow();
+            } catch (...) {
+                live.pop_back();
+                throw;
+            }
+        }
+        IrValue* slot = reuse ? freeSlots.back() : chunks.back() + chunkUsed;
+        IrValue* value = nullptr;
+        try {
+            value = new (slot) IrValue(opcode, type, id, useArena);
+        } catch (...) {
+            live.pop_back();
+            throw;
+        }
+        if (reuse) freeSlots.pop_back();
+        else ++chunkUsed;
+        live.back() = value;
+        return *value;
+    }
+    template<typename TPredicate>
+    std::size_t EraseIf(TPredicate predicate) {
+        const auto dead = std::count_if(live.begin(), live.end(), [&](IrValue* value) { return predicate(*value); });
+        if (dead == 0) return 0;
+        freeSlots.reserve(freeSlots.size() + static_cast<std::size_t>(dead));
+        const auto removed = std::erase_if(live, [&](IrValue* value) {
+            if (!predicate(*value)) return false;
+            value->~IrValue();
+            freeSlots.push_back(value);
+            return true;
+        });
+        live.shrink_to_fit();
+        return removed;
+    }
+    [[nodiscard]] std::vector<IrValue*>::const_iterator begin() const { return live.begin(); }
+    [[nodiscard]] std::vector<IrValue*>::const_iterator end() const { return live.end(); }
+
+private:
+    void grow() {
+        const std::size_t size = chunkCapacity == 0 ? 64 : std::min<std::size_t>(chunkCapacity * 2, 4096);
+        chunks.reserve(chunks.size() + 1);
+        chunks.push_back(static_cast<IrValue*>(::operator new(size * sizeof(IrValue), std::align_val_t{alignof(IrValue)})));
+        chunkUsed = 0;
+        chunkCapacity = size;
+    }
+    void release() {
+        for (IrValue* value : live) value->~IrValue();
+        for (IrValue* chunk : chunks) ::operator delete(chunk, std::align_val_t{alignof(IrValue)});
+        live.clear();
+        freeSlots.clear();
+        chunks.clear();
+        chunkUsed = 0;
+        chunkCapacity = 0;
+    }
+    std::vector<IrValue*> live;
+    std::vector<IrValue*> freeSlots;
+    std::vector<IrValue*> chunks;
+    std::size_t chunkUsed = 0;
+    std::size_t chunkCapacity = 0;
+};
 
 class IrProgram {
 public:
@@ -41,7 +128,7 @@ private:
     std::vector<std::unique_ptr<IrBlock>> blocks;
     IrUseArena useArena;
     std::vector<IrBlock*> blockOrder;
-    std::vector<std::unique_ptr<IrValue>> values;
+    IrValuePool values;
     IrResourcePlan resourcePlan;
     IrProgramMetadata metadata;
     IrBlock* entryBlock = nullptr;

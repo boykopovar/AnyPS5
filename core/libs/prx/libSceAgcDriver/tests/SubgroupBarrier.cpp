@@ -16,18 +16,19 @@ namespace {
 
 struct Case {
     VkDriverId driver;
-    bool usable;
+    bool controlBarrier;
+    bool workgroupFence;
 };
 
 constexpr Case Cases[]{
-    {VK_DRIVER_ID_AMD_PROPRIETARY, false},
-    {VK_DRIVER_ID_AMD_OPEN_SOURCE, true},
-    {VK_DRIVER_ID_MESA_RADV, true},
-    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, true},
-    {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, true},
-    {VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, true},
-    {VK_DRIVER_ID_MESA_LLVMPIPE, true},
-    {VK_DRIVER_ID_MOLTENVK, true},
+    {VK_DRIVER_ID_AMD_PROPRIETARY, false, false},
+    {VK_DRIVER_ID_AMD_OPEN_SOURCE, true, true},
+    {VK_DRIVER_ID_MESA_RADV, true, true},
+    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, true, true},
+    {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, true, true},
+    {VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, true, true},
+    {VK_DRIVER_ID_MESA_LLVMPIPE, true, true},
+    {VK_DRIVER_ID_MOLTENVK, false, true},
 };
 
 constexpr std::array<std::uint32_t, 19> BranchedLdsStep{
@@ -120,8 +121,8 @@ Barriers recompile(std::uint32_t threads, bool waveLdsMemoryBarriers) {
 
 void verifyDriverQuirk() {
     for (const auto& item : Cases) {
-        require(AgcDriver::SubgroupControlBarrierUsable(item.driver) == item.usable, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected subgroup control barriers to be " + (item.usable ? "usable" : "unusable"));
-        require(AgcDriver::WorkgroupScopeFenceUsable(item.driver) == item.usable, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-scope fences to be " + (item.usable ? "usable" : "unusable"));
+        require(AgcDriver::SubgroupControlBarrierUsable(item.driver) == item.controlBarrier, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected subgroup control barriers to be " + (item.controlBarrier ? "usable" : "unusable"));
+        require(AgcDriver::WorkgroupScopeFenceUsable(item.driver) == item.workgroupFence, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-scope fences to be " + (item.workgroupFence ? "usable" : "unusable"));
     }
 }
 

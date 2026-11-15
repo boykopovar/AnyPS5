@@ -17,6 +17,16 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 namespace {
 
@@ -563,6 +573,26 @@ void requireDrawable(const OverlayContent& content, const std::string& what) {
     }
 }
 
+void overlayScaleRequestTests() {
+    AgcDriver::OverlayContent content;
+    content.below = {"FPS: 60.0"};
+    content.graph = false;
+    const VkExtent2D big{3840, 2160};
+    const VkExtent2D small{320, 240};
+    require(AgcDriver::OverlayScale(big, content, 0) == AgcDriver::OverlayScale(big, content), "a request of 0 is not the automatic scale");
+    require(AgcDriver::OverlayScale(big, content, 2) == 2, "a request of 2 on 3840x2160 is not scale 2");
+    require(AgcDriver::OverlayScale(big, content, 8) == 8, "a request of 8 on 3840x2160 with one line is not scale 8");
+    require(AgcDriver::OverlayScale(small, content, 3) == 1, "a request of 3 on 320x240 is not shrunk to scale 1");
+}
+
+void overlayScaleParseTests() {
+    require(AgcDriver::OverlayScaleRequest(nullptr) == 0, "an unset ANYPS5_OVERLAY_SCALE is not automatic");
+    require(AgcDriver::OverlayScaleRequest("") == 0, "an empty ANYPS5_OVERLAY_SCALE is not automatic");
+    require(AgcDriver::OverlayScaleRequest("1") == 1 && AgcDriver::OverlayScaleRequest("8") == 8, "1 and 8 are not accepted");
+    require(AgcDriver::OverlayScaleRequest("0") == 0 && AgcDriver::OverlayScaleRequest("9") == 0, "a value outside 1 to 8 is accepted");
+    require(AgcDriver::OverlayScaleRequest("3x") == 0 && AgcDriver::OverlayScaleRequest("big") == 0, "a value with other text is accepted");
+}
+
 void pageTwoComposeTests() {
     const auto full = AgcDriver::ComposeOverlayDetails(fullDetailSample());
     require(full.columns == OverlayMetrics::DetailColumns && !full.graph && full.above.empty() && full.frameTimes.empty(), "page 2 is not a 46-column panel without a graph");
@@ -578,7 +608,7 @@ void pageTwoComposeTests() {
         phase("DRIVER.DRAW.CAPTURE_RESOURCES", " 0.9 MS/FRAME"),
         "Q0 WAIT MS/FRAME: MEM 0.4 LOCK 0.2 GPU 1.3",
         "RENDER PASSES/FRAME: 12.0",
-        "PIPELINES: COMPILING 3  NEW/S 12",
+        "PIPELINES: COMPILING 3  NEW/S 12  LEFT 0.25 S",
         "HIT %: DRAW CACHE 97.1  PIPELINES 99.9",
         "FLIPS/S: 60.0  PRESENTS/S: 59.9",
         "DROPPED/S: 1  REPEATED/S: 2",
@@ -643,7 +673,7 @@ void pageTwoLayoutTests() {
         }
     }
     auto stretched = content;
-    while (stretched.below.size() < 60) stretched.below.push_back("PIPELINES: COMPILING 3  NEW/S 12");
+    while (stretched.below.size() < 60) stretched.below.push_back("PIPELINES: COMPILING 3  NEW/S 12  LEFT 0.25 S");
     require(AgcDriver::OverlayScale({3840, 2160}, stretched) == 3, "a 60-line page 2 at 3840x2160 is not shrunk to scale 3");
 }
 
@@ -730,6 +760,38 @@ void presentModeTests() {
     require(content.below.back() == "TITLE: PPSA01234  PRESENT: FIFO_LATEST_READY", "the longest present mode is drawn as '" + content.below.back() + "'");
 }
 
+void frameLimitTests() {
+    const auto limitLine = [](std::optional<double> limit) {
+        AgcDriver::OverlayDetailSample sample;
+        sample.title = "PPSA01234";
+        sample.presentMode = "fifo";
+        sample.fpsLimit = limit;
+        const auto content = AgcDriver::ComposeOverlayDetails(sample);
+        std::string found;
+        for (std::size_t index = 0; index < content.below.size(); ++index) {
+            if (content.below[index].rfind("FPS LIMIT:", 0) != 0) continue;
+            require(found.empty(), "the frame limit is drawn twice");
+            require(index > 0 && content.below[index - 1] == "TITLE: PPSA01234  PRESENT: FIFO" && index + 1 == content.below.size(), "the frame limit does not follow the TITLE and PRESENT line");
+            found = content.below[index];
+        }
+        return found;
+    };
+    require(limitLine(std::nullopt).empty(), "a FPS LIMIT line is drawn without a limit");
+    require(limitLine(30.0) == "FPS LIMIT: 30.0", "a limit of 30 is drawn as '" + limitLine(30.0) + "'");
+    require(limitLine(59.94) == "FPS LIMIT: 59.9", "a limit of 59.94 is drawn as '" + limitLine(59.94) + "'");
+    require(limitLine(144.0) == "FPS LIMIT: 144", "a limit of 144 is drawn as '" + limitLine(144.0) + "'");
+    require(limitLine(0.5) == "FPS LIMIT: 0.50", "a limit of 0.5 is drawn as '" + limitLine(0.5) + "'");
+    require(limitLine(9999.0) == "FPS LIMIT: 9999", "a limit of 9999 is drawn as '" + limitLine(9999.0) + "'");
+    require(limitLine(100000.0) == "FPS LIMIT: 100K", "a limit of 100000 is drawn as '" + limitLine(100000.0) + "'");
+    require(limitLine(1000000.0) == "FPS LIMIT: 1M", "a limit of 1000000 is drawn as '" + limitLine(1000000.0) + "'");
+    AgcDriver::OverlayDetailSample longest;
+    longest.title = "PPSA01234";
+    longest.presentMode = std::string(AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_LATEST_READY_KHR));
+    longest.fpsLimit = 59.94;
+    const auto content = AgcDriver::ComposeOverlayDetails(longest);
+    require(content.below.size() >= 2 && content.below[content.below.size() - 2] == "TITLE: PPSA01234  PRESENT: FIFO_LATEST_READY" && content.below.back() == "FPS LIMIT: 59.9", "the longest present mode and a limit are not drawn on their own lines");
+}
+
 void operatingSystemTests() {
     const auto parsed = AgcDriver::ParseCommitCharge("MemTotal:       16318412 kB\nCommitLimit:     8159204 kB\nCommitted_AS:   12345678 kB\nVmallocTotal:   34359738367 kB\n");
     require(parsed && parsed->used == 12345678ull * 1024 && parsed->budget == 8159204ull * 1024, "Committed_AS and CommitLimit are not read from /proc/meminfo's text");
@@ -741,6 +803,9 @@ void operatingSystemTests() {
     require(!commit, "a commit charge is read on macOS, which reports none");
 #else
     require(commit && commit->used != 0 && commit->budget != 0, "the system's commit charge and limit cannot be read");
+#endif
+#ifdef _WIN32
+    require(commit->used <= commit->budget, "the commit charge exceeds its limit");
 #endif
     static std::uint8_t* volatile touched = nullptr;
     const auto before = AgcDriver::ReadPageFaults();
@@ -874,6 +939,31 @@ void paletteTests() {
 
 }
 
+#ifdef _WIN32
+void constrainedCommitTests() {
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) != 0, "the process's private bytes cannot be read");
+    const HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    require(job != nullptr, "cannot create a job object");
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY;
+    limits.ProcessMemoryLimit = counters.PrivateUsage + (std::size_t{256} << 20u);
+    limits.JobMemoryLimit = limits.ProcessMemoryLimit;
+    const bool limited = SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) != 0 && AssignProcessToJobObject(job, GetCurrentProcess()) != 0;
+    CloseHandle(job);
+    require(limited, "cannot put the test process in a job with a commit limit");
+    PERFORMANCE_INFORMATION system{};
+    system.cb = sizeof(system);
+    require(K32GetPerformanceInfo(&system, sizeof(system)) != 0, "the system's commit charge cannot be read with K32GetPerformanceInfo");
+    const auto commit = AgcDriver::ReadCommitCharge();
+    const auto page = static_cast<std::uint64_t>(system.PageSize);
+    const auto used = static_cast<std::uint64_t>(system.CommitTotal) * page;
+    require(commit && commit->budget == static_cast<std::uint64_t>(system.CommitLimit) * page, "the commit limit is not the system's in a process with a lower commit limit");
+    require(std::max(commit->used, used) - std::min(commit->used, used) < (std::uint64_t{1} << 30u), "the commit charge is not the system's in a process with a lower commit limit");
+}
+#endif
+
 int main() {
     try {
         fpsWindowTests();
@@ -894,16 +984,22 @@ int main() {
         widePanelTests();
         pageCycleTests();
         pageTwoComposeTests();
+        overlayScaleRequestTests();
+        overlayScaleParseTests();
         pageTwoLayoutTests();
         sampleTests();
         traceDeltaTests();
         hitRateTests();
         presentModeTests();
+        frameLimitTests();
         operatingSystemTests();
         addressCopyFoldTests();
         driverSourceTests();
         traceSwitchTests();
         costReport();
+#ifdef _WIN32
+        constrainedCommitTests();
+#endif
         std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory, resolution, page 2 source and trace switch tests passed\n";
         return 0;
     } catch (const std::exception& error) {

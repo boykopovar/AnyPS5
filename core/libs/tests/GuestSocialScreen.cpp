@@ -14,6 +14,7 @@ constexpr int kErrInvalidArg = static_cast<int>(0x81440003);
 
 int main() {
     Require(sceSocialScreenInitializeSeparateModeParameter(nullptr) == kErrInvalidArg);
+    Require(sceSocialScreenInitializeSeparateModeParameter(reinterpret_cast<void*>(0x10)) == kErrInvalidArg);
     std::array<std::uint8_t, 0x40> parameter{};
     parameter.fill(0xaa);
     Require(sceSocialScreenInitializeSeparateModeParameter(parameter.data()) == 0);

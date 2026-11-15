@@ -82,6 +82,21 @@ int main() {
     Require(sceNpEntitlementAccessRequestServiceEntitlementInfo(0, 0, nullptr, nullptr) == signedOut);
     Require(sceNpEntitlementAccessPollServiceEntitlementInfo(0, nullptr, nullptr) == signedOut);
 
+    std::array<unsigned char, 72> transactionId{};
+    std::int64_t requestId = 0x5a5a5a5a5a5a5a5a;
+    std::int32_t result = 0x5a5a5a5a;
+    std::array<unsigned char, 64> info;
+    info.fill(0xa5);
+    const auto originalInfo = info;
+    Require(sceNpEntitlementAccessRequestConsumeEntitlement(1, 0, &label, transactionId.data(), 1, &requestId) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumeEntitlement(1, 0, nullptr, nullptr, 1, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumableEntitlementInfo(1, 0, &label, &requestId) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumableEntitlementInfo(1, 0, nullptr, nullptr) == signedOut);
+    Require(requestId == 0x5a5a5a5a5a5a5a5a);
+    Require(sceNpEntitlementAccessPollConsumableEntitlementInfo(1, &result, info.data()) == signedOut);
+    Require(sceNpEntitlementAccessPollConsumableEntitlementInfo(1, nullptr, nullptr) == signedOut);
+    Require(result == 0x5a5a5a5a && info == originalInfo);
+
     Require(sceRudpActivate(-1, nullptr, 0) == static_cast<int>(0x80770001));
     std::array<unsigned char, 248> status;
     status.fill(0x5a);

@@ -2,7 +2,10 @@
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamSfoParser.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -23,6 +26,7 @@ char g_title[128] = {};
 char g_titleId[12] = {};
 char g_contentVersion[16] = {};
 std::uint64_t g_downloadDataSizeMiB = 0;
+std::optional<std::uint32_t> g_applicationCategoryType;
 std::uint32_t g_attribute3 = 0;
 std::optional<std::uint32_t> g_paramSfoAttribute;
 std::int32_t g_userDefinedParams[4] = {};
@@ -52,11 +56,47 @@ void ensureTitleLoaded() {
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
     if (!parsed.contentVersion.empty() && parsed.contentVersion.size() < sizeof(g_contentVersion)) copyToFixedBuffer(g_contentVersion, sizeof(g_contentVersion), parsed.contentVersion);
     g_downloadDataSizeMiB = parsed.downloadDataSizeMiB;
+    g_applicationCategoryType = parsed.applicationCategoryType;
     g_attribute3 = parsed.attribute3;
     g_paramSfoAttribute = parsed.paramSfoAttribute;
     std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
     g_titleLoaded = true;
+    if (g_titleId[0] != '\0') {
+        const auto app0 = ResolvePath_nid_no_patch("/app0");
+        AddPathAlias_nid_no_patch((std::string("/mnt/sandbox/") + g_titleId + "_000/app0").c_str(), app0.string().c_str());
+    }
 }
+
+bool ProvideRunReportGame(RunReportGame* game) {
+    try {
+        ensureTitleLoaded();
+    } catch (const std::exception&) {
+        return false;
+    }
+    std::lock_guard lock(g_metadataMutex);
+    std::memcpy(game->titleId, g_titleId, std::min(sizeof(g_titleId), sizeof(game->titleId) - 1u));
+    std::memcpy(game->contentVersion, g_contentVersion, std::min(sizeof(g_contentVersion), sizeof(game->contentVersion) - 1u));
+    std::memcpy(game->name, g_title, std::min(sizeof(g_title), sizeof(game->name) - 1u));
+    return true;
+}
+
+APS5_RUN_REPORT_COMPONENT("libkernel")
+
+[[maybe_unused]] const bool g_runReportGameProvider = (LibcRunReportSetGameProvider_nid_no_patch(&ProvideRunReportGame), true);
+
+const bool g_sandboxApp0Mounted = [] {
+    try {
+        const auto run = std::filesystem::current_path();
+        const auto metadata = run / "app0" / "sce_sys";
+        if (!std::filesystem::exists(metadata / "param.json") && !std::filesystem::exists(metadata / "param.sfo")) return false;
+        const auto parsed = parseParams(metadata / "param.json", metadata / "param.sfo");
+        if (parsed.titleId.empty()) return false;
+        AddPathAlias_nid_no_patch((std::string("/mnt/sandbox/") + parsed.titleId + "_000/app0").c_str(), (run / "app0").string().c_str());
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}();
 
 const bool g_downloadDataMounted = [] {
     try {
@@ -154,6 +194,14 @@ AppContentVersion GetAppContentVersion_nid_no_patch() {
     AppContentVersion result{};
     std::memcpy(result.value, g_contentVersion, sizeof(result.value));
     return result;
+}
+
+bool GetAppCategoryType_nid_no_patch(std::uint32_t* categoryType) {
+    if (categoryType == nullptr) return false;
+    ensureTitleLoaded();
+    if (!g_applicationCategoryType) return false;
+    *categoryType = *g_applicationCategoryType;
+    return true;
 }
 
 bool HasAppIcon_nid_postfix() {

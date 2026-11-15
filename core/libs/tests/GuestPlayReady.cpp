@@ -32,7 +32,9 @@ void CheckBufferInit() {
         Require(Filled(buffer, 0, 24, 0) && Filled(buffer, 24, sizeof(buffer), fill), "scePlayReadyBufferInit clears exactly 24 bytes");
     }
     sceBufferInit(nullptr);
+    sceBufferInit(reinterpret_cast<void*>(0x10));
     Require(scePlayReadyBufferInit(nullptr) == InvalidArgument, "scePlayReadyBufferInit rejects a null buffer");
+    Require(scePlayReadyBufferInit(reinterpret_cast<void*>(0x10)) == InvalidArgument, "scePlayReadyBufferInit rejects an unwritable buffer");
 }
 
 void CheckInitParams() {
@@ -51,6 +53,7 @@ void CheckInitParams() {
             Require(Filled(params, 0x138, sizeof(params), fill), "init params leave bytes from 0x138 untouched");
         }
         initialize(nullptr);
+        initialize(reinterpret_cast<void*>(0x10));
     }
 }
 
@@ -63,6 +66,7 @@ void CheckVersion() {
         Require(std::memcmp(version, expected[index], sizeof(expected[index])) == 0, "scePlayReadyApiVersion writes the version");
         Require(Filled(reinterpret_cast<unsigned char*>(version), 32, sizeof(version), 0xA5), "scePlayReadyApiVersion writes 32 bytes");
         Require(scePlayReadyApiVersion(index, nullptr) == InvalidArgument, "scePlayReadyApiVersion rejects a null output");
+        Require(scePlayReadyApiVersion(index, reinterpret_cast<uint64_t*>(0x10)) == InvalidArgument, "scePlayReadyApiVersion rejects an unwritable output");
     }
     for (uint32_t index : {2u, 3u, 0x80000000u, 0xFFFFFFFFu}) {
         uint64_t version[4];

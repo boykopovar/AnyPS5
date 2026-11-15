@@ -40,6 +40,13 @@ alignas(256) constexpr std::array<std::uint32_t, 3> NoReturnCode{
     0xe0d01000, 0x80010702, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 26> NoReturnRunCode{
+    0x34020084, 0x34040085, 0xe0301000, 0x80000701, 0xbf8c3f70, 0x7e100307, 0xe0d01000, 0x80010702,
+    0xbefe03ff, 0x55555555, 0xe0d01004, 0x80010802, 0xbefe03c1, 0xbf8c3f70, 0xbbfd0000, 0xd765000a,
+    0x000100c1, 0xd766000a, 0x000214c1, 0xe0701008, 0x80010702, 0xe070100c, 0x80010802, 0xe0701010,
+    0x80010a02, 0xbf810000,
+};
+
 struct Workgroup {
     std::uint32_t threads;
     std::uint32_t waveSize;
@@ -110,7 +117,7 @@ ShaderRecompiler::RecompileResult Recompile(const AgcDriver::VulkanDevice& devic
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
+void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup, std::span<const std::uint32_t> code = Code) {
     Input.fill(0u);
     Output.fill(Untouched);
     for (std::uint32_t tid = 0; tid < MaxThreads; ++tid) {
@@ -124,7 +131,6 @@ void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
     Output[MaxThreads * Results] = SharedPartial;
     Output[MaxThreads * Results + 1u] = SharedExhausted;
     const auto userData = UserData();
-    const std::span<const std::uint32_t> code(Code);
     const auto result = Recompile(device, code, workgroup, userData);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -168,16 +174,34 @@ void Check(const Workgroup& workgroup) {
     }
 }
 
-void CheckNoReturnRejected(const AgcDriver::VulkanDevice& device) {
-    const auto userData = UserData();
-    const std::string reason = "buffer_atomic_csub without glc is not supported";
-    std::string failure;
-    try {
-        static_cast<void>(Recompile(device, NoReturnCode, Workgroups[0], userData));
-    } catch (const std::exception& error) {
-        failure = error.what();
+void CheckNoReturn(const Workgroup& workgroup) {
+    constexpr std::array<const char*, 4> names{"memory", "memory under a partial exec mask", "data register", "data register under a partial exec mask"};
+    for (std::uint32_t tid = 0; tid < MaxThreads; ++tid) {
+        const Row row = RowOf(tid);
+        const auto* out = &Output[tid * Results];
+        const auto where = "buffer atomic csub without glc: " + workgroup.Name() + " thread " + std::to_string(tid);
+        if (tid >= workgroup.threads) {
+            Require(out[0] == row.memory && out[1] == row.memory, where + " is outside the workgroup but its memory changed");
+            continue;
+        }
+        const auto lane = out[4];
+        Require(lane < workgroup.waveSize, where + " reports lane " + std::to_string(lane));
+        const bool active = lane >= 32u || ((MaskedExecLo >> lane) & 1u) != 0u;
+        const std::uint32_t clamped = SubtractClamped(row.memory, row.subtrahend);
+        const std::array<std::uint32_t, 4> expected{clamped, active ? clamped : row.memory, row.subtrahend, row.subtrahend};
+        for (std::uint32_t j = 0; j < expected.size(); ++j) {
+            Require(out[j] == expected[j], where + " lane " + std::to_string(lane) + " " + names[j] + " is " + Hex(out[j]) + ", expected " + Hex(expected[j]));
+        }
+        for (std::uint32_t j = Written; j < Results; ++j) {
+            Require(out[j] == Untouched, where + " result " + std::to_string(j) + " was written");
+        }
     }
-    Require(failure.find(reason) != std::string::npos, "buffer atomic csub: expected '" + reason + "', got '" + failure + "'");
+}
+
+void CheckNoReturnAccepted(const AgcDriver::VulkanDevice& device) {
+    const auto userData = UserData();
+    const auto recompiled = Recompile(device, NoReturnCode, Workgroups[0], userData);
+    Require(!recompiled.spirv.empty(), "buffer atomic csub: expected valid SPIR-V for instruction without glc");
 }
 
 }
@@ -189,8 +213,10 @@ int main() {
         for (const auto& workgroup : Workgroups) {
             Run(*device, workgroup);
             Check(workgroup);
+            Run(*device, workgroup, NoReturnRunCode);
+            CheckNoReturn(workgroup);
         }
-        CheckNoReturnRejected(*device);
+        CheckNoReturnAccepted(*device);
         std::puts("buffer atomic csub tests passed");
         return 0;
     } catch (const std::exception& error) {

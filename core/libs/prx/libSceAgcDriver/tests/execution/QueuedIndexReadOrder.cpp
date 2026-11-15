@@ -343,8 +343,10 @@ void CopyPendingImage(std::size_t bytes, const char* phase) {
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
+    _putenv_s("APS5_NO_IDLE_STORE", "1");
 #else
     setenv("APS5_PIPELINED_DRAWS", "1", 1);
+    setenv("APS5_NO_IDLE_STORE", "1", 1);
 #endif
     try {
         {

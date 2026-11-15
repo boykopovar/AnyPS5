@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -30,11 +31,21 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -124,6 +135,7 @@ struct DrawSetup {
     std::uint64_t depth = 0;
     bool depthWrite = false;
     bool withoutInterlock = false;
+    const AgcDriver::Graphics::Context* context = nullptr;
 };
 
 struct Block {
@@ -301,7 +313,8 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const Target> targets, std:
         {ShaderStage::Fragment, pixelResult.get(), PixelPushOffset(vertexPush, target)}
     }};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(setup.vertices.size()), 0, 1, 0, false};
-    device.Draw(state, draw, shaders);
+    if (setup.context != nullptr) AgcDriver::Graphics::Draw(*setup.context, state, draw, shaders);
+    else device.Draw(state, draw, shaders);
 }
 
 void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, const BlendCase& blendCase, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, const DrawSetup& setup = {}) {
@@ -463,11 +476,44 @@ void RunCase(AgcDriver::VulkanDevice& device, Block& block, const ColorTargetLay
     Require(outcome.distinguished == testCase.distinguishesClamping, std::string("unclamped blend ") + testCase.name + (testCase.distinguishesClamping ? " does not differ from Vulkan's clamped blend, so it cannot catch a clamping approximation" : " differs from Vulkan's clamped blend, which the case declares equal"));
 }
 
-void RunTwoTargets(AgcDriver::VulkanDevice& device, const std::string& name, std::array<Block*, 2> blocks, std::array<const ColorTargetLayout*, 2> layouts, std::array<AgcDriver::Graphics::ColorTarget, 2> colors, std::array<Case, 2> cases, std::uint32_t seed) {
+struct RecoveryAtImageCreation {
+    static AgcDriver::Graphics::Context Install(const AgcDriver::Graphics::Context& base) {
+        resolver = base.deviceProc;
+        auto context = base;
+        context.deviceProc = resolve;
+        context.functions = nullptr;
+        return context;
+    }
+
+    static inline bool armed = false;
+    static inline unsigned recoveries = 0;
+    static inline std::uint64_t storageBytes = 0;
+
+private:
+    static PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::string_view(name) == "vkCreateImage") return reinterpret_cast<PFN_vkVoidFunction>(createImage);
+        return resolver(device, name);
+    }
+    static VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice device, const VkImageCreateInfo* info, const VkAllocationCallbacks* callbacks, VkImage* image) {
+        if (armed) {
+            armed = false;
+            ++recoveries;
+            const auto before = AgcDriver::Graphics::TextureCacheUsage().storageBytes;
+            static_cast<void>(AgcDriver::Graphics::ReleaseTextureCaches(std::numeric_limits<std::uint64_t>::max(), true));
+            storageBytes = before - AgcDriver::Graphics::TextureCacheUsage().storageBytes;
+        }
+        return reinterpret_cast<PFN_vkCreateImage>(resolver(device, "vkCreateImage"))(device, info, callbacks, image);
+    }
+
+    static inline PFN_vkGetDeviceProcAddr resolver = nullptr;
+};
+
+void RunTwoTargets(AgcDriver::VulkanDevice& device, const std::string& name, std::array<Block*, 2> blocks, std::array<const ColorTargetLayout*, 2> layouts, std::array<AgcDriver::Graphics::ColorTarget, 2> colors, std::array<Case, 2> cases, std::uint32_t seed, const DrawSetup& setup = {}, const std::function<void()>& beforeDraw = {}) {
     std::array<std::vector<std::uint8_t>, 2> before;
     for (std::size_t index = 0; index < 2u; ++index) before[index] = Fill(*blocks[index], seed + static_cast<std::uint32_t>(index));
+    if (beforeDraw) beforeDraw();
     const std::array<Target, 2> targets{{{colors[0], cases[0].blend}, {colors[1], cases[1].blend}}};
-    Draw(device, targets, Float32Export | (Float32Export << 4u), TwoTargetProgram(cases[0].rgba, cases[1].rgba));
+    Draw(device, targets, Float32Export | (Float32Export << 4u), TwoTargetProgram(cases[0].rgba, cases[1].rgba), setup);
     for (std::size_t index = 0; index < 2u; ++index) {
         const auto& testCase = cases[index];
         const auto what = name + ", MRT" + std::to_string(index) + " " + testCase.name;
@@ -569,7 +615,18 @@ int main() {
             {{{"with an out-of-range source and alpha", over, {0.75f, -0.5f, 2.0f, 1.5f}, true}, {"with an out-of-range source", over, {1.5f, 0.25f, -1.0f, 0.5f}, true}}}, 501u);
         RunTwoTargets(*device, "an 8_8_8_8 UNORM MRT0 and an 8_8 UNORM MRT1 with different blend equations in one draw", {&block, &secondPair}, {&layout, &pairLayout}, {unorm, secondTarget},
             {{unormCases[3], unormCases[4]}}, 503u);
-        std::printf("unclamped normalized color blend tests passed: %zu UNORM draws, %zu SNORM draws, 2 same-draw overdraws of 16 layers, 2 draws blending two targets each, 1 refusal without pixel interlock\n", unormCases.size(), snormCases.size());
+        Block thirdPair(pairLayout.Bytes());
+        Block fourthPair(pairLayout.Bytes());
+        const auto thirdTarget = DecodeTarget(thirdPair, Unorm88Info, 0);
+        const auto fourthTarget = DecodeTarget(fourthPair, Unorm88Info, 1);
+        const auto recovering = RecoveryAtImageCreation::Install(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device));
+        RunTwoTargets(*device, "two 8_8 UNORM targets in one draw whose MRT1 image creation releases the texture caches as an out-of-memory allocation does, evicting MRT0's resident image", {&thirdPair, &fourthPair}, {&pairLayout, &pairLayout}, {thirdTarget, fourthTarget},
+            {{{"with an out-of-range source and alpha", over, {0.75f, -0.5f, 2.0f, 1.5f}, true}, {"with an out-of-range source", over, {1.5f, 0.25f, -1.0f, 0.5f}, true}}}, 505u, {.context = &recovering}, [&] {
+                static_cast<void>(AgcDriver::Graphics::CachedStorageSurface(recovering, AgcDriver::Graphics::SurfaceForTarget(thirdTarget)));
+                RecoveryAtImageCreation::armed = true;
+            });
+        Require(RecoveryAtImageCreation::recoveries == 1u && RecoveryAtImageCreation::storageBytes != 0u, "the release at MRT1's image creation did not evict MRT0's resident image");
+        std::printf("unclamped normalized color blend tests passed: %zu UNORM draws, %zu SNORM draws, 2 same-draw overdraws of 16 layers, 3 draws blending two targets each (1 with a texture cache release at MRT1's image creation), 1 refusal without pixel interlock\n", unormCases.size(), snormCases.size());
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

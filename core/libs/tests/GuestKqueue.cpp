@@ -9,7 +9,9 @@
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -29,14 +31,17 @@
 
 static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
-static constexpr int GuestEbadf = 9;
 static constexpr int GuestEinval = 22;
+static constexpr int GuestEspipe = 29;
+static constexpr int GuestEopnotsupp = 45;
+static constexpr int GuestEbadf = 9;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
 static constexpr int SetStatusFlags = 4;
 static constexpr int NonBlocking = 0x0004;
 static constexpr std::int64_t PipeAtomic = 512;
 static constexpr int Unix = 1;
+static constexpr int Inet = 2;
 static constexpr int Stream = 1;
 static constexpr int FirstSocket = 0x10000000;
 static constexpr std::int16_t EvfiltRead = -1;
@@ -44,8 +49,10 @@ static constexpr std::int16_t EvfiltWrite = -2;
 static constexpr std::int16_t EvfiltVnode = -4;
 static constexpr std::int16_t EvfiltAio = -3;
 static constexpr std::int16_t EvfiltProc = -5;
+static constexpr std::int16_t EvfiltSignal = -6;
 static constexpr std::int16_t EvfiltTimer = -7;
 static constexpr std::int16_t EvfiltProcdesc = -8;
+static constexpr std::int16_t EvfiltFs = -9;
 static constexpr std::int16_t EvfiltLio = -10;
 static constexpr std::int16_t EvfiltUser = -11;
 static constexpr std::int16_t EvfiltSendfile = -12;
@@ -74,6 +81,7 @@ static constexpr std::uint32_t NoteAttrib = 0x0008;
 static constexpr std::uint32_t NoteLink = 0x0010;
 static constexpr std::uint32_t NoteRename = 0x0020;
 static constexpr std::uint32_t NoteRevoke = 0x0040;
+static constexpr std::uint32_t NoteExit = 0x80000000;
 static constexpr int ReadWrite = 0x0002;
 static constexpr int Create = 0x0200;
 static constexpr int Directory = 0x00020000;
@@ -82,7 +90,31 @@ static constexpr int SceEnoent = static_cast<int>(0x80020002);
 static constexpr int SceEbadf = static_cast<int>(0x80020009);
 static constexpr int SceEinval = static_cast<int>(0x80020016);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (!value) {
+        std::fprintf(stderr, "kqueue check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
+        std::abort();
+    }
+}
+
+static double ProcessCpuSeconds() {
+#ifdef _WIN32
+    FILETIME creation{};
+    FILETIME exitTime{};
+    FILETIME kernelTime{};
+    FILETIME userTime{};
+    if (GetThreadTimes(GetCurrentThread(), &creation, &exitTime, &kernelTime, &userTime) == 0) return 0.0;
+    ULARGE_INTEGER kernel{};
+    ULARGE_INTEGER user{};
+    kernel.LowPart = kernelTime.dwLowDateTime;
+    kernel.HighPart = kernelTime.dwHighDateTime;
+    user.LowPart = userTime.dwLowDateTime;
+    user.HighPart = userTime.dwHighDateTime;
+    return static_cast<double>(kernel.QuadPart + user.QuadPart) / 10000000.0;
+#else
+    return static_cast<double>(std::clock()) / static_cast<double>(CLOCKS_PER_SEC);
+#endif
+}
 
 static KernelEvent Change(std::uintptr_t ident, std::int16_t filter, std::uint16_t flags, std::uint32_t fflags = 0, std::intptr_t data = 0, void* udata = nullptr) {
     KernelEvent change{};
@@ -152,6 +184,12 @@ static void BadPointersFaultAndBatchesFill() {
     const KernelTimespec zero{0, 0};
     RequireFailure(kevent_nid_postfix(kq, unmapped, 1, nullptr, 0, nullptr), fault);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, 16, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(-1, nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, -1, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    int ends[2];
+    Require(pipe_nid_postfix(ends) == 0);
+    RequireFailure(kevent_nid_postfix(ends[0], nullptr, 0, nullptr, 0, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
     RequireFailure(kevent_nid_postfix(kq, nullptr, 0, unmapped, 16, &zero), fault);
     void* page = nullptr;
     Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
@@ -172,6 +210,21 @@ static void BadPointersFaultAndBatchesFill() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void KqueueDescriptorMetadata() {
+    constexpr int GuestEnotty = 25;
+    constexpr std::uint64_t Fionread = 0x4004667f;
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    FileStat status;
+    std::memset(&status, 0xff, sizeof(status));
+    Require(fstat_nid_disambig1_nid_postfix(kq, &status) == 0);
+    Require(status.st_mode == 0010000 && status.st_size == 0 && status.st_nlink == 0 && status.st_ino == 0);
+    int available = 0;
+    RequireFailure(ioctl_nid_postfix(kq, Fionread, &available), GuestEnotty);
+    RequireFailure(fchmod_nid_postfix(kq, 0644), GuestEinval);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void CreateAndClose() {
     const int kq = kqueue_nid_postfix();
     Require(kq >= 0 && kq < FirstSocket);
@@ -187,6 +240,30 @@ static void CreateAndClose() {
     Require(pipe_nid_postfix(pipe) == 0);
     RequireFailure(Poll(pipe[0], &event, 1), GuestEbadf);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
+static void SocketReplacesDescriptor() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd | EvOneshot, 0, 1, &marker)) == 0);
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(dup2_nid_postfix(pair[0], kq) == kq);
+    KernelEvent event{};
+    RequireFailure(Wait(kq, &event, 1), GuestEbadf);
+    Require(close_nid_postfix(kq) == 0);
+    const int watcher = kqueue_nid_postfix();
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(write_nid_postfix(pipe[1], "x", 1) == 1);
+    Require(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvAdd)) == 0);
+    Require(Poll(watcher, &event, 1) == 1);
+    Require(dup2_nid_postfix(pair[1], pipe[0]) == pipe[0]);
+    Require(Poll(watcher, &event, 1) == 0);
+    RequireFailure(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(watcher) == 0);
 }
 
 static void Timers() {
@@ -319,6 +396,81 @@ static void UnsupportedFilters() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void EqueueIsKqueueDescriptor() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "kqueue descriptor") == SceOk);
+    const int kq = static_cast<int>(static_cast<std::uint32_t>(eq));
+    Require((eq >> 32) != 0 && kq > 0 && kq < FirstSocket);
+    Require(Apply(kq, Change(9, EvfiltUser, EvAdd | EvClear)) == 0);
+    Require(Apply(kq, Change(9, EvfiltUser, 0, NoteTrigger)) == 0);
+    KernelEvent events[2]{};
+    int out = 0;
+    const KernelUseconds none = 0;
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceOk && out == 1 && events[0].ident == 9 && events[0].filter == EvfiltUser);
+    Require(sceKernelDeleteEqueue(eq ^ (KernelEqueue{1} << 32)) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceOk);
+    RequireFailure(Poll(kq, events, 2), GuestEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+
+    Require(sceKernelCreateEqueue(&eq, "closed descriptor") == SceOk);
+    Require(close_nid_postfix(static_cast<int>(static_cast<std::uint32_t>(eq))) == 0);
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+}
+
+static void FilesystemEvents() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvDelete)), GuestEnoent);
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvEnable)), GuestEnoent);
+    const KernelEvent add = Change(0, EvfiltFs, EvAdd | EvReceipt, 7, 9, &marker);
+    Require(kevent_nid_postfix(kq, &add, 1, events, 4, nullptr) == 1);
+    Require(events[0].ident == 0 && events[0].filter == EvfiltFs && events[0].flags == EvError && events[0].data == 0 && events[0].fflags == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvAdd)) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvDisable)) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvForceoneshot, 0, 0, &marker)) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    Require(events[0].ident == 0 && events[0].filter == EvfiltFs && events[0].flags == (EvReceipt | EvClear | EvOneshot));
+    Require(events[0].fflags == 0 && events[0].data == 0 && events[0].udata == &marker);
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvDelete)), GuestEnoent);
+    Require(Apply(kq, Change(0, EvfiltFs, EvAdd)) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void ProcessExitOnSelf() {
+    const int kq = kqueue_nid_postfix();
+    const auto self = static_cast<std::uintptr_t>(getpid_nid_postfix());
+    int marker = 0;
+    KernelEvent events[4]{};
+    RequireFailure(Apply(kq, Change(self, EvfiltProc, EvDelete)), GuestEnoent);
+    const KernelEvent add = Change(self, EvfiltProc, EvAdd | EvReceipt, NoteExit, 9, &marker);
+    Require(kevent_nid_postfix(kq, &add, 1, events, 4, nullptr) == 1);
+    Require(events[0].ident == self && events[0].filter == EvfiltProc && events[0].flags == EvError && events[0].data == 0 && events[0].fflags == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvAdd, NoteExit)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvAdd)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvDisable)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvForceoneshot, 0, 0, &marker)) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    Require(events[0].ident == self && events[0].filter == EvfiltProc && events[0].flags == (EvReceipt | EvClear | EvOneshot));
+    Require(events[0].fflags == 0 && events[0].data == 0 && events[0].udata == &marker);
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(self, EvfiltProc, EvDelete)), GuestEnoent);
+    Require(Apply(kq, Change(self, EvfiltProc, EvAdd | EvOneshot, NoteExit)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(self, EvfiltProc, EvEnable)), GuestEnoent);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void UserEvents() {
     const int kq = kqueue_nid_postfix();
     int marker = 0;
@@ -353,6 +505,74 @@ static void UserEvents() {
     Require(Apply(kq, Change(7, EvfiltUser, 0, NoteTrigger)) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].fflags == 0x55 && events[0].data == 0 && events[0].flags == EvReceipt);
     Require(close_nid_postfix(kq) == 0);
+}
+
+static void UserEventWakesEveryWaiter() {
+    const int kq = kqueue_nid_postfix();
+    Require(Apply(kq, Change(8, EvfiltUser, EvAdd)) == 0);
+    std::chrono::steady_clock::duration waited[2]{};
+    auto wait = [kq, &waited](int index) {
+        const KernelTimespec limit{5, 0};
+        KernelEvent event{};
+        const auto start = std::chrono::steady_clock::now();
+        Require(kevent_nid_postfix(kq, nullptr, 0, &event, 1, &limit) == 1 && event.ident == 8);
+        waited[index] = std::chrono::steady_clock::now() - start;
+    };
+    std::thread first(wait, 0);
+    std::thread second(wait, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(Apply(kq, Change(8, EvfiltUser, 0, NoteTrigger)) == 0);
+    first.join();
+    second.join();
+    Require(waited[0] < std::chrono::seconds(2) && waited[1] < std::chrono::seconds(2));
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void SignalEvents() {
+    constexpr int Sigalrm = 14;
+    constexpr int Sigusr1 = 30;
+    constexpr int Sigusr2 = 31;
+    const auto alrm = static_cast<std::uintptr_t>(Sigalrm);
+    const auto usr1 = static_cast<std::uintptr_t>(Sigusr1);
+    const auto usr2 = static_cast<std::uintptr_t>(Sigusr2);
+    const auto ignore = reinterpret_cast<GuestHandler>(std::uintptr_t{1});
+    const GuestHandler previousUsr1 = signal_nid_postfix(Sigusr1, ignore);
+    const GuestHandler previousAlrm = signal_nid_postfix(Sigalrm, ignore);
+    const int kq = kqueue_nid_postfix();
+    const int self = getpid_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    RequireFailure(Apply(kq, Change(usr1, EvfiltSignal, EvDelete)), GuestEnoent);
+    RequireFailure(Apply(kq, Change(usr1, EvfiltSignal, EvEnable)), GuestEnoent);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvAdd, 7, 9, &marker)) == 0);
+    Require(Apply(kq, Change(usr2, EvfiltSignal, EvAdd)) == 0);
+    Require(Apply(kq, Change(alrm, EvfiltSignal, EvAdd)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(kill_nid_postfix(self, 0) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(kill_nid_postfix(self, Sigusr1) == 0);
+    Require(pthread_kill_nid_postfix(scePthreadSelf(), Sigusr1) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    Require(events[0].ident == usr1 && events[0].filter == EvfiltSignal && events[0].flags == EvClear);
+    Require(events[0].fflags == 0 && events[0].data == 3 && events[0].udata == &marker);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvDisable)) == 0);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == usr1 && events[0].data == 1);
+    const GuestItimerval once{{0, 0}, {0, 20000}};
+    Require(setitimer_nid_postfix(0, &once, nullptr) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == alrm && events[0].filter == EvfiltSignal && events[0].data == 1);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(usr1, EvfiltSignal, EvDelete)), GuestEnoent);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(signal_nid_postfix(Sigusr1, previousUsr1) == ignore);
+    Require(signal_nid_postfix(Sigalrm, previousAlrm) == ignore);
 }
 
 static void PipeRead() {
@@ -404,10 +624,14 @@ static void PipeWrite() {
     Require(empty >= PipeAtomic);
     Require(write_nid_postfix(pipe[1], "abc", 3) == 3);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty - 3);
-#ifndef _WIN32
+    std::int64_t queued = 3;
+#ifdef _WIN32
+    const std::string fill(static_cast<std::size_t>(empty - queued), 'x');
+    Require(write_nid_postfix(pipe[1], fill.data(), static_cast<std::int64_t>(fill.size())) == static_cast<std::int64_t>(fill.size()));
+    queued += static_cast<std::int64_t>(fill.size());
+#else
     Require(fcntl_nid_postfix(pipe[1], SetStatusFlags, NonBlocking) == 0);
     const std::string chunk(4096, 'x');
-    std::int64_t queued = 3;
     for (;;) {
         const std::int64_t written = write_nid_postfix(pipe[1], chunk.data(), static_cast<std::int64_t>(chunk.size()));
         if (written < 0) {
@@ -416,6 +640,7 @@ static void PipeWrite() {
         }
         queued += written;
     }
+#endif
     Require(queued > PipeAtomic);
     Require(Poll(kq, events, 4) == 0);
     const KernelTimespec limit{5, 0};
@@ -436,11 +661,6 @@ static void PipeWrite() {
     Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
     Require(events[0].ident == writeEnd && events[0].data >= PipeAtomic && (events[0].flags & EvEof) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#else
-    char back[3];
-    Require(read_nid_postfix(pipe[0], back, 3) == 3);
-    Require(Poll(kq, events, 4) == 1 && events[0].data == empty);
-#endif
     Require(close_nid_postfix(pipe[0]) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && (events[0].flags & EvEof) != 0);
     const int late = kqueue_nid_postfix();
@@ -469,9 +689,6 @@ static void SocketPair() {
     Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvAdd | EvOneshot)) == 0);
     Require(Wait(kq, events, 4) == 1 && events[0].filter == EvfiltWrite);
     RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvDelete)), GuestEnoent);
-#ifndef __linux__
-    Require(Throws([kq, &pair] { Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltRead, EvAdd | EvClear)); }));
-#endif
     const int space = kqueue_nid_postfix();
     Require(Apply(space, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvAdd)) == 0);
     Require(Poll(space, events, 4) == 1 && events[0].filter == EvfiltWrite);
@@ -757,7 +974,24 @@ static void LowWaterMarks() {
     Require(Poll(kq, events, 4) == 1 && events[0].ident == writer && events[0].data == freeSpace);
     Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, freeSpace + 1)) == 0);
     Require(Poll(kq, events, 4) == 0);
-    Require(Throws([kq, reader] { Apply(kq, Change(reader, EvfiltRead, EvAdd, NoteLowat, 0)); }));
+    Require(Apply(kq, Change(reader, EvfiltRead, EvAdd, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == reader && events[0].data == 4);
+    Require(Apply(kq, Change(reader, EvfiltRead, EvAdd, NoteLowat, 8)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    int idle[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, idle) == 0);
+    const auto idleReader = static_cast<std::uintptr_t>(idle[0]);
+    Require(Apply(kq, Change(idleReader, EvfiltRead, EvAdd, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == idleReader && events[0].data == 0 && (events[0].flags & EvEof) == 0);
+    Require(send_nid_postfix(idle[1], "abc", 3, 0) == 3);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == idleReader && events[0].data == 3);
+    char drained[3];
+    Require(recv_nid_postfix(idle[0], drained, sizeof(drained), 0) == 3);
+    Require(Apply(kq, Change(idleReader, EvfiltRead, EvAdd, NoteLowat, -1)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == idleReader && events[0].data == 0);
+    Require(Apply(kq, Change(idleReader, EvfiltRead, EvAdd, NoteLowat, 1)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(close_nid_postfix(idle[0]) == 0 && close_nid_postfix(idle[1]) == 0);
     int datagrams[2];
     Require(socketpair_nid_postfix(Unix, 2, 0, datagrams) == 0);
     const auto datagram = static_cast<std::uintptr_t>(datagrams[0]);
@@ -820,7 +1054,7 @@ static void SocketShutReadReportsEof() {
     }
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 static void EdgeTriggeredSocketRead() {
     const int kq = kqueue_nid_postfix();
     int pair[2];
@@ -840,9 +1074,9 @@ static void EdgeTriggeredSocketRead() {
 
     const KernelTimespec quiet{0, 150000000};
     const auto idleStart = std::chrono::steady_clock::now();
-    const std::clock_t idleCpu = std::clock();
+    const double idleCpu = ProcessCpuSeconds();
     Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &quiet) == 0);
-    Require(std::clock() - idleCpu < CLOCKS_PER_SEC / 20);
+    Require(ProcessCpuSeconds() - idleCpu < 0.05);
     Require(std::chrono::steady_clock::now() - idleStart >= std::chrono::milliseconds(140));
 
     Require(send_nid_postfix(pair[1], "d", 1, 0) == 1);
@@ -887,9 +1121,20 @@ static void EdgeTriggeredSocketRead() {
     Require(Poll(kq, events, 4) == 1 && events[0].ident == markedReader && events[0].data == 4);
     Require(Poll(kq, events, 4) == 0);
     Require(close_nid_postfix(marked[0]) == 0 && close_nid_postfix(marked[1]) == 0);
+    int always[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, always) == 0);
+    const auto alwaysReader = static_cast<std::uintptr_t>(always[0]);
+    Require(Apply(kq, Change(alwaysReader, EvfiltRead, EvAdd | EvClear, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == alwaysReader && events[0].data == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(send_nid_postfix(always[1], "ab", 2, 0) == 2);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == alwaysReader && events[0].data == 2);
+    Require(Poll(kq, events, 4) == 0);
+    Require(close_nid_postfix(always[0]) == 0 && close_nid_postfix(always[1]) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
 
+#ifdef __linux__
 static void EdgeTriggeredSocketWrite() {
     const int kq = kqueue_nid_postfix();
     int pair[2];
@@ -956,7 +1201,34 @@ static void SocketWriteLowWaterWhileFilling() {
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
+#endif
 
+#endif
+
+static void EdgeTriggeredTcpWriteLowWater() {
+    const int kq = kqueue_nid_postfix();
+    const int tcp = socket_nid_postfix(Inet, Stream, 0);
+    Require(tcp >= 0);
+    const auto writer = static_cast<std::uintptr_t>(tcp);
+    RequireFailure(Apply(kq, Change(writer, EvfiltWrite, EvDelete)), GuestEnoent);
+#ifdef __linux__
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd | EvClear, NoteLowat, 1)) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvDelete)) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 2)) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 3)) == 0);
+    Require(Apply(kq, Change(writer, EvfiltWrite, EvDelete)) == 0);
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    const auto local = static_cast<std::uintptr_t>(pair[1]);
+    Require(Apply(kq, Change(local, EvfiltWrite, EvAdd | EvClear, NoteLowat, 2)) == 0);
+    Require(Apply(kq, Change(local, EvfiltWrite, EvDelete)) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+#endif
+    Require(close_nid_postfix(tcp) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+#if defined(__linux__) || defined(_WIN32)
 static void EdgeTriggeredPipeRead() {
     const int kq = kqueue_nid_postfix();
     int pipe[2];
@@ -980,6 +1252,9 @@ static void EdgeTriggeredPipeRead() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+#endif
+
+#ifdef __linux__
 static void EdgeTriggeredDispatch() {
     const int kq = kqueue_nid_postfix();
     int pair[2];
@@ -1137,12 +1412,6 @@ static void Errors() {
     Require(pipe_nid_postfix(pipe) == 0);
     Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[1]), EvfiltRead, EvAdd)); }));
     Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltWrite, EvAdd)); }));
-#ifdef __APPLE__
-    Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[1]), EvfiltWrite, EvAdd)); }));
-#endif
-#ifndef __linux__
-    Require(Throws([kq, &pipe] { Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvAdd | EvClear)); }));
-#endif
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
     const KernelEvent skipped = Change(1, 0, EvAdd);
     const KernelTimespec zero{0, 0};
@@ -1617,6 +1886,27 @@ static void StandardInput() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void KqueueDescriptorOperations() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    char byte = 0;
+    RequireFailure(static_cast<int>(read_nid_postfix(kq, &byte, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
+    Require(read_nid_postfix(kq, &byte, 0) == 0);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 0)), GuestEopnotsupp);
+    KernelIovec one{&byte, 1};
+    KernelIovec none{&byte, 0};
+    RequireFailure(static_cast<int>(readv_nid_postfix(kq, &one, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(writev_nid_postfix(kq, &one, 1)), GuestEopnotsupp);
+    Require(readv_nid_postfix(kq, &none, 1) == 0);
+    RequireFailure(static_cast<int>(writev_nid_postfix(kq, &none, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(lseek_nid_postfix(kq, 0, 0)), GuestEspipe);
+    RequireFailure(fsync_nid_postfix(kq), GuestEinval);
+    RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
+    RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "cleared-race") {
         ClearedKqueueKeepsConcurrentActivations();
@@ -1625,23 +1915,34 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    EqueueIsKqueueDescriptor();
+    SocketReplacesDescriptor();
+    KqueueDescriptorOperations();
+    KqueueDescriptorMetadata();
     Timers();
     TimerReadd();
     UnsupportedFilters();
     ProcdescOnFiles();
+    SignalEvents();
     PipeRead();
 #ifndef __APPLE__
     PipeWrite();
 #endif
+    FilesystemEvents();
     UserEvents();
+    UserEventWakesEveryWaiter();
+    ProcessExitOnSelf();
     WatchKqueue();
     SocketPair();
     SocketShutReadReportsEof();
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
     EdgeTriggeredSocketRead();
+    EdgeTriggeredPipeRead();
+#endif
+    EdgeTriggeredTcpWriteLowWater();
+#ifdef __linux__
     EdgeTriggeredSocketWrite();
     SocketWriteLowWaterWhileFilling();
-    EdgeTriggeredPipeRead();
     EdgeTriggeredDispatch();
 #endif
     DisableAndDispatch();

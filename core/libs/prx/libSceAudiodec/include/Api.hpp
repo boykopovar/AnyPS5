@@ -4,9 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI sceAudiodecUnregisterCodec();
-int APS5_VABI sceAudiodecGetAjmContext();
-
 int32_t APS5_VABI sceAudiodecInitLibrary(uint32_t codecType);
 int32_t APS5_VABI sceAudiodecTermLibrary(uint32_t codecType);
 int32_t APS5_VABI sceAudiodecCreateDecoder(AudiodecCtrl* ctrl, uint32_t codecType);

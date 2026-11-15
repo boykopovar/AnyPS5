@@ -2,6 +2,12 @@
 
 #include "prx/libSceNpUniversalDataSystem/include/UdsEvent.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
+
+struct NpUniversalDataSystemIntInitParam {
+    std::size_t size;
+    void* memory;
+};
 
 extern "C" {
 
@@ -13,7 +19,7 @@ int APS5_VABI sceNpUniversalDataSystemIntDeleteAllData(void);
 int APS5_VABI sceNpUniversalDataSystemIntDeleteUserDataWithServerData(void);
 int APS5_VABI sceNpUniversalDataSystemIntDestroyContext(void);
 int APS5_VABI sceNpUniversalDataSystemIntDestroyHandle(void);
-int APS5_VABI sceNpUniversalDataSystemIntInitialize(void);
+int APS5_VABI sceNpUniversalDataSystemIntInitialize(const NpUniversalDataSystemIntInitParam* param);
 int APS5_VABI sceNpUniversalDataSystemIntNetSyncTitles(void);
 int APS5_VABI sceNpUniversalDataSystemIntTerminate(void);
 int APS5_VABI sceNpUniversalDataSystemCreateContext(int* context, int userId, uint32_t serviceLabel, uint64_t options);
@@ -58,37 +64,37 @@ int APS5_VABI sceNpUniversalDataSystemTerminate(void);
 int APS5_VABI sceNpUniversalDataSystemGetMemoryStat(NpUniversalDataSystemMemoryStat* stat);
 int APS5_VABI sceNpUniversalDataSystemGetStorageStat(int context, NpUniversalDataSystemStorageStat* stat);
 
-int APS5_VABI sceNpUniversalDataSystemIntCreateRecordArray();
-int APS5_VABI sceNpUniversalDataSystemIntCreateRecordData();
-int APS5_VABI sceNpUniversalDataSystemIntCreateRecordObject();
-int APS5_VABI sceNpUniversalDataSystemIntDeleteAllRecord();
-int APS5_VABI sceNpUniversalDataSystemIntDestroyRecordArray();
-int APS5_VABI sceNpUniversalDataSystemIntDestroyRecordData();
-int APS5_VABI sceNpUniversalDataSystemIntDestroyRecordObject();
-int APS5_VABI sceNpUniversalDataSystemIntGetMemoryStat();
+int APS5_VABI sceNpUniversalDataSystemIntCreateRecordArray(void** record);
+int APS5_VABI sceNpUniversalDataSystemIntCreateRecordData(const char* recordType, void** record);
+int APS5_VABI sceNpUniversalDataSystemIntCreateRecordObject(void** record);
+int APS5_VABI sceNpUniversalDataSystemIntDeleteAllRecord(void);
+int APS5_VABI sceNpUniversalDataSystemIntDestroyRecordArray(void* record);
+int APS5_VABI sceNpUniversalDataSystemIntDestroyRecordData(void* record);
+int APS5_VABI sceNpUniversalDataSystemIntDestroyRecordObject(void* record);
+int APS5_VABI sceNpUniversalDataSystemIntGetMemoryStat(NpUniversalDataSystemMemoryStat* stat);
 int APS5_VABI sceNpUniversalDataSystemIntPostRecordData();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetArray();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBinary();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBool();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetFloat32();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetFloat64();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetInt32();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetInt64();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetObject();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetString();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetUInt32();
-int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetUInt64();
-int APS5_VABI sceNpUniversalDataSystemIntRecordDataEstimateSize();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetArray();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBinary();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBool();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetFloat32();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetFloat64();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetInt32();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetInt64();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetObject();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetString();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetUInt32();
-int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetUInt64();
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetArray(void* record, const void* value, void** valuePtr);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBinary(void* record, const void* value, std::size_t size);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetBool(void* record, bool value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetFloat32(void* record, float value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetFloat64(void* record, double value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetInt32(void* record, std::int32_t value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetInt64(void* record, std::int64_t value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetObject(void* record, const void* value, void** valuePtr);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetString(void* record, const char* value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetUInt32(void* record, std::uint32_t value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetUInt64(void* record, std::uint64_t value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordDataEstimateSize(const void* record, std::size_t* size);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetArray(void* record, const char* key, const void* value, void** valuePtr);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBinary(void* record, const char* key, const void* value, std::size_t size);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetBool(void* record, const char* key, bool value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetFloat32(void* record, const char* key, float value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetFloat64(void* record, const char* key, double value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetInt32(void* record, const char* key, std::int32_t value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetInt64(void* record, const char* key, std::int64_t value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetObject(void* record, const char* key, const void* value, void** valuePtr);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetString(void* record, const char* key, const char* value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetUInt32(void* record, const char* key, std::uint32_t value);
+int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetUInt64(void* record, const char* key, std::uint64_t value);
 
 }

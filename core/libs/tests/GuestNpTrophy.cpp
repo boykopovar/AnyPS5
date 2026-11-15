@@ -1,6 +1,9 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
+#include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -22,8 +25,11 @@ constexpr int AlreadyUnlocked = static_cast<int>(0x8055160cu);
 constexpr int NotRegistered = static_cast<int>(0x8055160fu);
 constexpr int AlreadyRegistered = static_cast<int>(0x80551610u);
 constexpr int ContextAlreadyExists = static_cast<int>(0x80551613u);
+constexpr int InvalidTrpFileFormat = static_cast<int>(0x80551616u);
 constexpr int TitleConfNotInstalled = static_cast<int>(0x80551626u);
 constexpr int TrophyNotUnlocked = static_cast<int>(0x8055161au);
+constexpr int InvalidGroupId = static_cast<int>(0x8055160bu);
+constexpr int IconFileNotFound = static_cast<int>(0x80551614u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -53,6 +59,62 @@ void WritePackage(const std::filesystem::path& path, const std::vector<std::pair
     std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 }
 
+void PatchPackage(const std::filesystem::path& path, std::size_t at, std::uint64_t value, int width) {
+    std::vector<std::uint8_t> bytes(width);
+    PutBigEndian(bytes, 0, value, width);
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    file.seekp(static_cast<std::streamoff>(at));
+    file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    Require(static_cast<bool>(file), "patch the trophy package");
+}
+
+void TestPackageBounds() {
+    const std::filesystem::path path("app0/sce_sys/trophy/trophy02.trp");
+    const std::vector<std::pair<std::string, std::string>> files{{"TROPCONF.ESFM", "conf"}, {"ICON0.PNG", "game-icon"}, {"TROP000.PNG", "first"}, {"TROP001.PNG", "second"}};
+    WritePackage(path, files);
+    const auto fileSize = std::filesystem::file_size(path);
+    int handle = 0;
+    Require(sceNpTrophyCreateHandle(&handle) == 0, "create a package bounds handle");
+    for (const auto& [offset, size] : std::vector<std::pair<std::uint64_t, std::uint64_t>>{
+             {fileSize + 1, 0}, {fileSize + 1, 1}, {fileSize, 1}, {fileSize - 1, 2}, {UINT64_MAX, 1}, {1, UINT64_MAX}, {fileSize - 1, UINT64_MAX}}) {
+        for (const std::size_t index : {0u, 1u, 3u}) {
+            WritePackage(path, files);
+            PatchPackage(path, 0x60 + index * 0x40 + 32, offset, 8);
+            PatchPackage(path, 0x60 + index * 0x40 + 40, size, 8);
+            int context = 0;
+            Require(sceNpTrophyCreateContext(&context, 1, 2, 0) == 0, "create a package bounds context");
+            Require(sceNpTrophyRegisterContext(context, handle, 0) == InvalidTrpFileFormat, "register a package whose entry extends past the file");
+            TrophyFlagArray flags{};
+            std::uint32_t count = 0;
+            Require(sceNpTrophyGetTrophyUnlockState(context, handle, &flags, &count) == NotRegistered, "a rejected package registered its context");
+            WritePackage(path, files);
+            Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "retry registration after repairing the package");
+            std::uint64_t iconSize = 0;
+            Require(sceNpTrophyGetGameIcon(context, handle, nullptr, &iconSize) == 0 && iconSize == 9, "a rejected package left stale icon metadata");
+            Require(sceNpTrophyDestroyContext(context) == 0, "destroy a package bounds context");
+        }
+    }
+    for (const std::uint64_t size : {0u, 4u}) {
+        WritePackage(path, files);
+        PatchPackage(path, 0x60 + 0x40 + 32, fileSize - size, 8);
+        PatchPackage(path, 0x60 + 0x40 + 40, size, 8);
+        int context = 0;
+        Require(sceNpTrophyCreateContext(&context, 1, 2, 0) == 0 && sceNpTrophyRegisterContext(context, handle, 0) == 0, "an entry ending exactly at EOF was rejected");
+        std::uint64_t iconSize = 0;
+        Require(sceNpTrophyGetGameIcon(context, handle, nullptr, &iconSize) == 0 && iconSize == size, "the EOF entry has the wrong size");
+        if (size != 0) {
+            char bytes[4]{};
+            Require(sceNpTrophyGetGameIcon(context, handle, bytes, &iconSize) == 0 && std::memcmp(bytes, "cond", 4) == 0, "the EOF entry has the wrong bytes");
+        }
+        Require(sceNpTrophyDestroyContext(context) == 0, "destroy the EOF entry context");
+    }
+    WritePackage(path, files);
+    PatchPackage(path, 0x10, UINT32_MAX, 4);
+    int context = 0;
+    Require(sceNpTrophyCreateContext(&context, 1, 2, 0) == 0 && sceNpTrophyRegisterContext(context, handle, 0) == InvalidTrpFileFormat, "a table extending past the file was accepted");
+    Require(sceNpTrophyDestroyContext(context) == 0 && sceNpTrophyDestroyHandle(handle) == 0, "destroy the package bounds context and handle");
+}
+
 }
 
 int main() {
@@ -63,6 +125,9 @@ int main() {
 
     int context = 0, handle = 0, missing = 0, platinum = 0;
     Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context");
+    errno = 71;
+    Require(sceNpTrophyCreateContext(reinterpret_cast<int*>(0x10), 1, 0, 0) == InvalidArgument, "unwritable context");
+    Require(errno == 71, "errno preserved");
     Require(sceNpTrophyCreateContext(&context, 1, 0, 1) == InvalidArgument, "context options");
     Require(sceNpTrophyCreateContext(&context, 1, 0, 0) == 0, "create the context");
     Require(sceNpTrophyCreateContext(&missing, 1, 0, 0) == ContextAlreadyExists, "second context for the same user and label");
@@ -70,8 +135,29 @@ int main() {
 
     std::uint32_t flags[4] = {}, count = 0;
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == NotRegistered, "state before registration");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, nullptr, &count) == InvalidArgument, "null unlock flags");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), nullptr) == InvalidArgument, "null unlock count");
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, nullptr) == InvalidArgument, "null platinum id");
+    GameDetails gameDetails{};
+    gameDetails.size = sizeof(gameDetails);
+    GroupDetails groupDetails{};
+    groupDetails.size = sizeof(groupDetails);
+    TrophyDetails trophyDetails{};
+    trophyDetails.size = sizeof(trophyDetails);
+    char unregisteredIcon[16] = {};
+    std::uint64_t unregisteredSize = sizeof(unregisteredIcon);
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, &platinum) == NotRegistered, "unlock before registration");
+    Require(sceNpTrophyGetGameIcon(context, handle, unregisteredIcon, &unregisteredSize) == NotRegistered, "game icon before registration");
+    Require(sceNpTrophyGetGroupIcon(context, handle, 0, unregisteredIcon, &unregisteredSize) == NotRegistered, "group icon before registration");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 0, unregisteredIcon, &unregisteredSize) == NotRegistered, "trophy icon before registration");
+    Require(sceNpTrophyGetGroupInfo(context, handle, -1, &groupDetails, nullptr) == NotRegistered, "group info before registration");
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 0, &trophyDetails, nullptr) == NotRegistered, "trophy info before registration");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "register the context");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == AlreadyRegistered, "register twice");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(0x10), &count) == InvalidArgument, "unwritable flags rejected");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable count rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && count == 2 && flags[0] == 0, "two trophies, none unlocked");
 
     std::uint64_t size = 0;
@@ -85,11 +171,27 @@ int main() {
     size = sizeof(icon);
     Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, &size) == TrophyNotUnlocked, "icon of a locked trophy");
     Require(sceNpTrophyUnlockTrophy(context, handle, 2, &platinum) == InvalidTrophyId, "unlock a trophy past the count");
+    errno = 71;
+    Require(sceNpTrophyUnlockTrophy(context, handle, 1, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "an unwritable platinum id was taken");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == 0 && platinum == -1, "unlock trophy 1");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == AlreadyUnlocked, "unlock trophy 1 twice");
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
     size = sizeof(icon);
     Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, &size) == 0 && size == 6 && std::memcmp(icon, "second", 6) == 0, "icon of the unlocked trophy");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 2, icon, &size) == InvalidTrophyId, "icon of a trophy past the count");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, -1, icon, &size) == InvalidTrophyId, "icon of a negative trophy id");
+    Require(sceNpTrophyGetGroupIcon(context, handle, -1, icon, &size) == InvalidGroupId, "icon of a negative group id");
+    Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, &size) == IconFileNotFound, "icon of a group the package lacks");
+    Require(sceNpTrophyGetGameInfo(context + 100, handle, &gameDetails, nullptr) == InvalidContext, "game info for an unknown context");
+    Require(sceNpTrophyGetGameInfo(context, handle + 100, &gameDetails, nullptr) == InvalidHandle, "game info for an unknown handle");
+    Require(sceNpTrophyGetGameInfo(context + 100, handle + 100, &gameDetails, nullptr) == InvalidContext, "the context is checked before the handle");
+    Require(sceNpTrophyGetGroupIcon(-1, handle, 0, icon, &size) == InvalidContext, "group icon for the invalid context id");
+    GroupData badGroupData{};
+    badGroupData.size = 1;
+    Require(sceNpTrophyGetGroupInfo(context, handle, -1, nullptr, &badGroupData) == InvalidArgument, "invalid group data size");
+    TrophyData badTrophyData{};
+    badTrophyData.size = 1;
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 1, nullptr, &badTrophyData) == InvalidArgument, "invalid trophy data size");
     int saved = -1;
     {
         std::ifstream state(root / "_trophy/trophy00.1");
@@ -112,10 +214,21 @@ int main() {
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
     Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");
+    errno = 71;
+    Require(sceNpTrophyCreateHandle(reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "unwritable handle creation");
     Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context creation");
     Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
     Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetGameInfo(context, handle, reinterpret_cast<GameDetails*>(0x10), nullptr) == InvalidArgument, "unmapped game details refused");
+    Require(errno == 71, "errno preserved across unmapped game details");
+    errno = 71;
+    Require(sceNpTrophyGetGroupInfo(context, handle, 0, reinterpret_cast<GroupDetails*>(0x10), nullptr) == InvalidArgument, "unmapped group details refused");
+    Require(errno == 71, "errno preserved across unmapped group details");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 0, reinterpret_cast<TrophyDetails*>(0x10), nullptr) == InvalidArgument, "unmapped trophy details refused");
+    Require(errno == 71, "errno preserved across unmapped trophy details");
     Require(sceNpTrophyGetGameInfo(context, handle, nullptr, nullptr) == InvalidArgument, "null game info pointers");
     Require(sceNpTrophyGetGroupInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null group info pointers");
     Require(sceNpTrophyGetTrophyInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null trophy info pointers");
@@ -145,6 +258,8 @@ int main() {
     Require(sceNpTrophyDestroyHandle(handle) == 0 && sceNpTrophyDestroyContext(context) == 0, "destroy the handle and context");
     Require(sceNpTrophyAbortHandle(handle) == InvalidHandle, "abort a destroyed handle");
     Require(sceNpTrophyDestroyContext(context) == InvalidContext, "destroy the context twice");
+
+    TestPackageBounds();
 
     std::filesystem::current_path(root.parent_path());
     std::error_code error;

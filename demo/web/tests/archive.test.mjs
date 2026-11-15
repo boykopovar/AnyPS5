@@ -16,6 +16,20 @@ const executable = new Uint8Array(await readFile(path.join(process.argv[3], "mai
 const module = new Uint8Array(await readFile(path.join(process.argv[3], "module.elf")));
 const resource = new Uint8Array(2 * 1024 * 1024).fill(65);
 
+for (const directory of ["sce_modules", "prx"]) {
+  const archive = new Archive([{path: "app/main.elf", file: new Blob([executable])},
+                               {path: `app/${directory}/library.prx`, file: new Blob([module])}]);
+  try {
+    await archive.inspect(() => {});
+    for (const target of ["linux", "windows"]) {
+      const input = await archive.conversionInput(target, false, () => {});
+      const output = native.Convert(input, () => {});
+      assert.equal(output.ok, true, output.error);
+      assert.deepEqual(output.modules.map(item => item.name), [`app0/${directory}/library.prx.guest.prx`]);
+    }
+  } finally { await archive.close(); }
+}
+
 async function zip(entries) {
   const output = new BlobWriter("application/zip");
   const writer = new ZipWriter(output, { zip64: true, level: 9, useWebWorkers: false, useCompressionStream: false });
@@ -136,7 +150,7 @@ console.log("Multiple app packages append under separate roots in a single ZIP")
 
 for (const [entries, error] of [
   [[["one", executable], ["two", executable]], /exactly one/u],
-  [[["readme", new Uint8Array([1])]], /exactly one/u],
+  [[["readme", new Uint8Array([1])]], /doesn't look like a PS5 app/u],
   [[["eboot.bin", new Uint8Array([79, 21, 61, 29])]], /SELF container/u],
   [[["eboot.bin", new Uint8Array([84, 20, 245, 238])]], /SELF container/u],
   [[["app", executable], ["..\/escape", resource]], /Unsafe ZIP/u],
@@ -196,10 +210,10 @@ globalThis.self = { postMessage: message => workerMessages.push(message) };
 const worker = await import(site("worker.mjs"));
 const libraryArchive = await zip([["libs/system.prx", new Uint8Array([1, 2, 3])]]);
 const libraryBytes = new Uint8Array(await libraryArchive.arrayBuffer());
-const libraryPath = "libraries/windows-acde1234.zip";
 const librarySha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", libraryBytes))]
   .map(byte => byte.toString(16).padStart(2, "0"))
   .join("");
+const libraryPath = `libraries/windows-${librarySha256}.zip`;
 const release = {
   tag: "v1",
   platforms: {

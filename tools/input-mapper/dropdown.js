@@ -9,7 +9,7 @@ let visible = [];
 let focused = 0;
 
 export function normalizeSearch(value) {
-    return value.toLowerCase();
+    return value.normalize('NFD').replace(/(\p{Script=Latin})\p{M}+/gu, '$1').toLowerCase().normalize('NFC');
 }
 
 function renderOptions() {

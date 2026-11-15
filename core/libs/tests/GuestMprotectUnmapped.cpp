@@ -7,11 +7,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <limits>
 
 namespace {
 
 constexpr std::size_t Page = 0x4000;
-constexpr int ErrorInvalid = 22;
 constexpr int ProtectRead = 1;
 constexpr int ProtectReadWrite = 3;
 
@@ -63,11 +63,14 @@ int main() {
     Require(Protect(memory + Page - 8, 16, ProtectReadWrite) == 0, "an unaligned range that reaches into the unmapped page protects the mapped page");
     Require(Protect(memory + 100, Page - 200, ProtectReadWrite) == 0, "an unaligned range inside the first page must work");
 
-    Require(Protect(memory + Page, Page, ProtectRead) == SCE_KERNEL_ERROR_EINVAL, "a range that is completely unmapped must return EINVAL");
+    Require(Protect(memory + Page, Page, ProtectRead) == 0, "a range that is completely unmapped must succeed");
     Require(Protect(memory + Page * 2, Page, ProtectReadWrite) == 0, "protecting the last page alone must work");
-    Require(Protect(memory + Page, Page * 2, ProtectRead) == SCE_KERNEL_ERROR_EINVAL, "a range whose start is unmapped must return EINVAL even when later pages are mapped");
-    Require(ProtectionAt(memory + Page * 2) == ProtectReadWrite, "a refused range must not change the mapped pages behind its start");
-    Require(mprotect_nid_postfix(memory + Page, Page, ProtectRead) == -1 && *__error_nid_postfix() == ErrorInvalid, "mprotect over a range that is completely unmapped must fail with EINVAL (22)");
+    Require(Protect(memory + Page, Page * 2, ProtectRead) == 0, "a range whose start is unmapped must succeed for the mapped pages behind it");
+    Require(ProtectionAt(memory + Page * 2) == ProtectRead, "the mapped pages behind an unmapped start must be protected");
+    Require(ProtectionAt(memory) == ProtectReadWrite, "a range that starts in a gap must not change the page before it");
+    Require(mprotect_nid_postfix(memory + Page, Page, ProtectRead) == 0, "mprotect over a range that is completely unmapped must succeed");
+    Require(mprotect_nid_postfix(memory + Page, Page * 2, ProtectReadWrite) == 0 && ProtectionAt(memory + Page * 2) == ProtectReadWrite, "mprotect over an unmapped start must protect the mapped pages behind it");
+    Require(sceKernelMtypeprotect(memory + Page, Page, 0, ProtectRead) == 0, "sceKernelMtypeprotect over a range that is completely unmapped must succeed");
 
     Require(munmap_nid_postfix(memory, Page) == 0 && munmap_nid_postfix(memory + Page * 2, Page) == 0, "munmap of the remaining pages failed");
 
@@ -76,5 +79,24 @@ int main() {
     Require(Protect(tail, Page * 2, ProtectRead) == 0, "a range that ends in an unmapped page must succeed for its mapped part");
     Require(ProtectionAt(tail) == ProtectRead, "the mapped part before a trailing gap must be protected");
     Require(munmap_nid_postfix(tail, Page) == 0, "munmap of the remaining page failed");
+    Require(Protect(tail, Page * 2, ProtectRead) == 0, "a range over pages that were all unmapped must succeed");
+
+    std::int64_t physical = -1;
+    Require(sceKernelAllocateDirectMemory(0, std::numeric_limits<std::int64_t>::max(), Page * 3, 0, 0, &physical) == 0, "direct memory allocation failed");
+    void* direct = nullptr;
+    Require(sceKernelMapDirectMemory(&direct, Page * 3, ProtectReadWrite, 0, physical, 0) == 0, "direct memory map failed");
+    auto* directPages = static_cast<unsigned char*>(direct);
+    Require(munmap_nid_postfix(directPages, Page) == 0, "munmap of the first direct page failed");
+    Require(sceKernelMtypeprotect(directPages, Page * 3, 3, ProtectRead) == 0, "sceKernelMtypeprotect over an unmapped start must succeed for the mapped direct pages");
+    Require(ProtectionAt(directPages + Page) == ProtectRead && ProtectionAt(directPages + Page * 2) == ProtectRead, "the mapped direct pages behind an unmapped start must be protected");
+    for (int page = 0; page < 3; ++page) {
+        int type = -1;
+        std::int64_t start = 0;
+        std::int64_t end = 0;
+        Require(sceKernelGetDirectMemoryType(physical + page * static_cast<std::int64_t>(Page), &type, &start, &end) == 0, "direct memory type query failed");
+        Require(type == (page == 0 ? 0 : 3), "only the mapped direct pages must take the new memory type");
+    }
+    Require(munmap_nid_postfix(directPages + Page, Page * 2) == 0, "munmap of the direct pages failed");
+    Require(sceKernelReleaseDirectMemory(physical, Page * 3) == 0, "direct memory release failed");
     return 0;
 }

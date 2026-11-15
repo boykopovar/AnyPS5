@@ -16,7 +16,7 @@ struct PreparedDescriptorBinding {
     std::vector<bool> identityImageSwizzle;
     std::vector<std::uint32_t> samplerFilterElements;
     std::vector<bool> inactive;
-    std::vector<std::uint32_t> tableSamplerMasks;
+    std::vector<std::uint64_t> tableSamplerMasks;
     std::size_t writtenBuffers = 0;
     std::size_t readOnlyBuffers = 0;
 };
@@ -26,6 +26,19 @@ struct PreparedImageMetadata {
     std::uint32_t offset;
     RuntimeAbi::ResourceMetadata metadata;
 };
+
+struct BufferSubstitute {
+    std::uint32_t word1 = 0;
+    std::uint32_t word3 = 0;
+    std::uint32_t misalignment = 0;
+    std::uint32_t tail = 0;
+    bool known = false;
+
+    bool operator==(const BufferSubstitute&) const = default;
+};
+
+bool BufferDescriptorPresent(const DescriptorValue& descriptor);
+BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index);
 
 struct DescriptorBindingPlan {
     std::vector<PreparedDescriptorBinding> bindings;
@@ -37,7 +50,7 @@ struct DescriptorBindingPlan {
 
 class DescriptorBindingBuilder {
 public:
-    DescriptorBindingPlan Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings = {}, bool registrationModules = false, bool fragmentDescriptorSet = false) const;
+    DescriptorBindingPlan Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings = {}, bool registrationModules = false, bool fragmentDescriptorSet = false, std::span<const BufferSubstitute> substitutes = {}, bool shaderImageMinLod = false) const;
     DescriptorBindingPlan Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings) const;
     void Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables = nullptr) const;
     void Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, std::span<const std::uint8_t> exportMappings = {}) const;

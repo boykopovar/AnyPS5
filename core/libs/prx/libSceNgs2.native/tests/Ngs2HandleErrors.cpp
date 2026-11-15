@@ -1,6 +1,9 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
+#include "tests/ExportLookup.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <array>
 #include <cstdio>
@@ -18,6 +21,45 @@ static void Status(int actual, int expected, const char* message) {
 static void CheckExportLinked() {
     auto* volatile linked = &sceNgs2RackQueryInfo;
     Require(linked != nullptr);
+}
+
+static void CheckPendingExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNgs2ModuleArrayEnumItems, "sceNgs2ModuleArrayEnumItems"},
+        {sceNgs2ModuleEnumConfigs, "sceNgs2ModuleEnumConfigs"},
+        {sceNgs2ModuleQueueEnumItems, "sceNgs2ModuleQueueEnumItems"},
+        {sceNgs2RackRunCommands, "sceNgs2RackRunCommands"},
+        {sceNgs2StreamCreate, "sceNgs2StreamCreate"},
+        {sceNgs2StreamCreateWithAllocator, "sceNgs2StreamCreateWithAllocator"},
+        {sceNgs2StreamDestroy, "sceNgs2StreamDestroy"},
+        {sceNgs2StreamQueryBufferSize, "sceNgs2StreamQueryBufferSize"},
+        {sceNgs2StreamQueryInfo, "sceNgs2StreamQueryInfo"},
+        {sceNgs2StreamResetOption, "sceNgs2StreamResetOption"},
+        {sceNgs2StreamRunCommands, "sceNgs2StreamRunCommands"},
+        {sceNgs2SystemQueryInfo, "sceNgs2SystemQueryInfo"},
+        {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2.native exports do not all resolve by name");
+    }
+}
+
+static void CheckCorePendingExports(const char* path) {
+    struct Export {
+        void (*function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftInit), "sceNgs2FftInit"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftProcess), "sceNgs2FftProcess"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2 exports do not all resolve by name");
+    }
 }
 
 static void CheckResetOption() {
@@ -40,6 +82,12 @@ static void CheckResetOption() {
     Require(std::memcmp(&option, expected, sizeof(expected)) == 0);
     Ngs2ContextBufferInfo query{};
     Status(sceNgs2SystemQueryBufferSize(&option, &query), SCE_NGS2_OK, "reset system option was rejected");
+    errno = 71;
+    Status(sceNgs2SystemResetOption(reinterpret_cast<Ngs2SystemOption*>(0x10)), static_cast<int>(0x804A8010u), "an unwritable system option did not return the invalid out address error");
+    Require(errno == 71);
+    errno = 71;
+    Status(sceNgs2SystemQueryBufferSize(&option, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), static_cast<int>(0x804A8010u), "an unwritable buffer info did not return the invalid out address error");
+    Require(errno == 71);
 }
 
 static int allocations = 0;
@@ -410,6 +458,8 @@ static void CheckFftQuerySize() {
     Require(sceNgs2FftQuerySize(7, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(13, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(8, 0, nullptr) == -1);
+    errno = 71;
+    Require(sceNgs2FftQuerySize(8, 0, reinterpret_cast<std::uint64_t*>(0x10)) == -1 && errno == 71);
 }
 
 static void CheckEnumeration() {
@@ -430,10 +480,15 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemEnumRackHandles(0x1234, handles, 8) == invalidSystem);
     const int racks = sceNgs2SystemEnumRackHandles(system, handles, 8);
     Require(racks == 1 && handles[0] == rack);
+    errno = 71;
+    Require(sceNgs2SystemEnumHandles(reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Require(sceNgs2SystemEnumRackHandles(system, reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Status(sceNgs2SystemGetInfo(system, reinterpret_cast<Ngs2SystemInfo*>(0x10), sizeof(Ngs2SystemInfo)), static_cast<int>(0x804A8010u), "an unwritable system info did not return the invalid out address error");
+    Require(errno == 71);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
         constexpr int rackError = static_cast<int>(0x804A8202u);
@@ -476,6 +531,8 @@ int main() {
         CheckFftQuerySize();
         CheckEnumeration();
         CheckExportLinked();
+        CheckPendingExports(argc > 1 ? argv[1] : nullptr);
+        CheckCorePendingExports(argc > 2 ? argv[2] : nullptr);
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;
     } catch (const std::exception& error) {

@@ -1,0 +1,15 @@
+add_library(libSceMusicFrameworkInterface SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceMusicFrameworkInterface PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceMusicFrameworkInterface)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_music_framework_interface_tests ${LIBS_INCLUDE_DIR}/tests/GuestMusicFrameworkInterface.cpp)
+    target_include_directories(guest_music_framework_interface_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_music_framework_interface_tests PRIVATE libSceMusicFrameworkInterface libc)
+    configure_windows_unwind(guest_music_framework_interface_tests)
+    add_test(NAME guest_music_framework_interface COMMAND guest_music_framework_interface_tests)
+    if(WIN32)
+        set_tests_properties(guest_music_framework_interface PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMusicFrameworkInterface>")
+    endif()
+endif()
