@@ -586,27 +586,29 @@ int APS5_VABI sceVideodec2DeleteDecoder_nid_postfix(std::uint64_t handle) {
 
 int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputData* input, FrameBuffer* frame, OutputInfo* output) {
     if (!input || !output) throw std::runtime_error("Videodec2: invalid argument pointer");
+    InputData localInput{};
+    if (!CopyInGuest(localInput, input)) throw std::runtime_error("Videodec2: invalid argument pointer");
     const auto found = FindDecoder(handle);
     if (!found) throw std::runtime_error("Videodec2: invalid decoder handle");
     auto& decoder = *found;
     std::lock_guard guard(decoder.mutex);
-    if (!input->auData || input->auSize == 0) {
+    if (!localInput.auData || localInput.auSize == 0) {
         ClearOutput(decoder, frame, output);
-        return input->auData ? Videodec2ErrorAccessUnitSize : Videodec2ErrorAccessUnitPointer;
+        return localInput.auData ? Videodec2ErrorAccessUnitSize : Videodec2ErrorAccessUnitPointer;
     }
-    if (Trace() && decoder.decoded < 3) std::fprintf(stderr, "[videodec2] Decode input=%llu frame=%llu output=%llu au=%llu pts=%llu size=%ux%u fb=%p/%llu\n", static_cast<unsigned long long>(input->thisSize), static_cast<unsigned long long>(frame ? frame->thisSize : 0), static_cast<unsigned long long>(output->thisSize), static_cast<unsigned long long>(input->auSize), static_cast<unsigned long long>(input->ptsData), decoder.width, decoder.height, frame ? frame->frameBuffer : nullptr, static_cast<unsigned long long>(frame ? frame->frameBufferSize : 0));
+    if (Trace() && decoder.decoded < 3) std::fprintf(stderr, "[videodec2] Decode input=%llu frame=%llu output=%llu au=%llu pts=%llu size=%ux%u fb=%p/%llu\n", static_cast<unsigned long long>(localInput.thisSize), static_cast<unsigned long long>(frame ? frame->thisSize : 0), static_cast<unsigned long long>(output->thisSize), static_cast<unsigned long long>(localInput.auSize), static_cast<unsigned long long>(localInput.ptsData), decoder.width, decoder.height, frame ? frame->frameBuffer : nullptr, static_cast<unsigned long long>(frame ? frame->frameBufferSize : 0));
     ++decoder.decoded;
-    const Picture picture{input->ptsData, input->dtsData, input->attachedData};
+    const Picture picture{localInput.ptsData, localInput.dtsData, localInput.attachedData};
     if (decoder.flushing) {
         avcodec_flush_buffers(decoder.context);
         decoder.hevc.afterEnd = true;
         decoder.flushing = false;
     }
-    if (input->auSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Videodec2: invalid access unit");
+    if (localInput.auSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Videodec2: invalid access unit");
     if (decoder.codec == CodecVp9) {
         auto references = decoder.vp9References;
         auto colors = decoder.vp9Colors;
-        const auto units = ParseVp9Packet({input->auData, static_cast<std::size_t>(input->auSize)}, references, colors);
+        const auto units = ParseVp9Packet({localInput.auData, static_cast<std::size_t>(localInput.auSize)}, references, colors);
         for (const auto& unit : units) {
             AVPacket* packet = av_packet_alloc();
             if (!packet) throw std::runtime_error("Videodec2: cannot allocate VP9 packet");
@@ -630,7 +632,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
         EmitDecoded(handle, decoder, frame, output);
         return 0;
     }
-    const auto* unit = ToAnnexB(decoder, input->auData, static_cast<std::size_t>(input->auSize));
+    const auto* unit = ToAnnexB(decoder, localInput.auData, static_cast<std::size_t>(localInput.auSize));
     if (decoder.codec == CodecAvc && !CarriesAvcSlice(*unit)) {
         if (decoder.parameterSets.size() + unit->size() > MaxAvcParameterSetsBytes) throw std::runtime_error("Videodec2: invalid access unit");
         Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit);
