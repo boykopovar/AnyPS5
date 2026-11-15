@@ -1232,8 +1232,6 @@ int APS5_VABI _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12
 int APS5_VABI _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE();
 int APS5_VABI _ZN3WTF10ParkingLot9unparkAllEPKv();
 int APS5_VABI _ZN3WTF10ParkingLot9unparkOneEPKv();
-int APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE();
-int APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE();
 int APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_();
