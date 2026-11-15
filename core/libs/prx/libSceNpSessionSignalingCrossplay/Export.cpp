@@ -4,9 +4,16 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int ErrorInvalidArgument = static_cast<int>(0x80553D03u);
+
+} // namespace
+
 extern "C" {
 
-int APS5_VABI sceNpSessionSignalingCrossplayInitialize(void) {
+int APS5_VABI sceNpSessionSignalingCrossplayInitialize(const void* parameter) {
+    if (parameter == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -39,7 +46,8 @@ int APS5_VABI sceNpSessionSignalingCrossplayUnknown01(void) {
 }
 
 APS5_EXPORT("wypjyjGWaLM", sceNpSessionSignalingCrossplayUnknown02);
-int APS5_VABI sceNpSessionSignalingCrossplayUnknown02(void) {
+int APS5_VABI sceNpSessionSignalingCrossplayUnknown02(std::uint64_t argument1, const void* argument2, std::uint64_t argument3, const void* argument4, void* argument5) {
+    if (argument2 == nullptr || argument4 == nullptr || argument5 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch("wypjyjGWaLM");
     return 0;
 }
@@ -62,7 +70,8 @@ int APS5_VABI sceNpSessionSignalingCrossplayUnknown05(void) {
     return 0;
 }
 
-int APS5_VABI sceNpSessionSignalingCrossplayGetMemoryInfo(void) {
+int APS5_VABI sceNpSessionSignalingCrossplayGetMemoryInfo(void* info) {
+    if (info == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

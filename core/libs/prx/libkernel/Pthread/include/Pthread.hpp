@@ -92,6 +92,8 @@ struct PthreadSemPrivate {
     std::mutex _mutex;
     TimedWait::Condition _cv;
     int _count = 0;
+    int _waiters = 0;
+    bool _destroyed = false;
 
     explicit PthreadSemPrivate(unsigned int value) : _count(static_cast<int>(value)) {}
 };
@@ -181,6 +183,7 @@ struct PthreadPrivate {
     std::mutex cancelLock;
     TimedWait::Condition* cancelWait = nullptr;
     bool cancelWaitExiting = false;
+    std::uint32_t hostMxcsr = 0x1f80;
 
     explicit PthreadPrivate(const PthreadAttrPrivate* attr = nullptr);
     ~PthreadPrivate();
