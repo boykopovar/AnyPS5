@@ -1,3 +1,12 @@
+// Derived from icu4c/source/common/cmemory.cpp@84e1f26ea77152936e70d53178a816dbfbf69989 (ICU 68.2): uprv_calloc below.
+// https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/cmemory.cpp
+//
+// The upstream file's notice, verbatim:
+//   © 2016 and later: Unicode, Inc. and others.
+//   License & terms of use: http://www.unicode.org/copyright.html
+//   Copyright (C) 2002-2015, International Business Machines
+//   Corporation and others.  All Rights Reserved.
+
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/Status.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -122,6 +131,13 @@ void* APS5_VABI uprv_realloc_nid_postfix(void* buffer, std::size_t size) {
     }
     const MemoryFunctions functions = CurrentMemory();
     return functions.reallocate ? functions.reallocate(functions.context, buffer, size) : realloc_nid_postfix(buffer, size);
+}
+
+void* APS5_VABI uprv_calloc_nid_postfix(std::size_t count, std::size_t size) {
+    size *= count;
+    void* memory = Allocate(size);
+    if (memory) std::memset(memory, 0, size);
+    return memory;
 }
 
 char* APS5_VABI uprv_strdup_nid_postfix(const char* source) {

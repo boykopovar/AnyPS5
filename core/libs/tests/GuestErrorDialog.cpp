@@ -1,12 +1,18 @@
 #include "prx/libSceErrorDialog/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -127,6 +133,8 @@ void ShownDialog() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     ErrorDialogParam param{16, static_cast<std::int32_t>(0x80020001), 0, 0};
 
     Require(sceErrorDialogGetStatus() == 0);
@@ -144,7 +152,9 @@ int main() {
     Require(sceErrorDialogClose() == kErrInvalidState);
 
     Require(sceErrorDialogOpen(nullptr) == kErrParam);
+    errno = 71;
     Require(sceErrorDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrParam);
+    Require(errno == 71);
     ErrorDialogParam bad{8, 0, 0, 0};
     Require(sceErrorDialogOpen(&bad) == kErrParam);
     ErrorDialogParam badZero{0, 0, 0, 0};
@@ -152,7 +162,9 @@ int main() {
     ErrorDialogParam badLarge{32, 0, 0, 0};
     Require(sceErrorDialogOpen(&badLarge) == kErrParam);
 
+    errno = 71;
     Require(sceErrorDialogOpen(&param) == 0);
+    Require(errno == 71);
     Require(sceErrorDialogGetStatus() == kStatusRunning);
     Require(sceErrorDialogOpen(nullptr) == kErrInvalidState);
     Require(sceErrorDialogOpen(&param) == kErrInvalidState);
@@ -179,4 +191,6 @@ int main() {
     CloseAndFallback();
     WithoutFlips();
     OtherLibraryDialog();
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
