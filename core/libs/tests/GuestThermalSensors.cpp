@@ -107,7 +107,7 @@ int main() {
     Require(sceKernelGetSocSensorTemperature(64, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
     int channel64 = -12345;
     Require(sceKernelGetSocSensorTemperature(64, &channel64) == 0 && channel64 == -49);
-    for (const int measured : {3, 62, 63}) {
+    for (int measured = 3; measured <= 63; ++measured) {
         int channel = -12345;
         const int measuredResult = sceKernelGetSocSensorTemperature(measured, &channel);
         Require(measuredResult == result);
