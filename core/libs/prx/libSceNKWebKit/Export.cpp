@@ -10876,9 +10876,7 @@ int APS5_VABI WKNotificationManagerSetProvider() {
 
 
 
-int APS5_VABI WKPageAreScrollbarAnimationsSuppressed() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageBackgroundExtendsBeyondPage() {
     NotImplemented_nid_no_patch(__func__);
@@ -11510,9 +11508,7 @@ int APS5_VABI WKPageSetScrollPinningBehavior() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetSuppressScrollbarAnimations() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetTextZoomFactor() {
     NotImplemented_nid_no_patch(__func__);
