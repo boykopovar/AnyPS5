@@ -183,6 +183,7 @@ public:
     APS5_VABI int DispatchComputeIndirect(const void* shader, void* userData, const void* indirectArguments, const char* name) override;
 
     bool Open(Manager* owner, const Counters& limit, std::uint32_t runQueue, const char* name);
+    void Abandon();
     int WaitAndClose(std::uint32_t index);
     void Advance();
     void DispatchCompleted(std::uint32_t invocations);
@@ -363,6 +364,12 @@ bool Sequence::Open(Manager* owner, const Counters& limit, std::uint32_t runQueu
     open = true;
     Profile(1);
     return true;
+}
+
+void Sequence::Abandon() {
+    ReturnNode(*manager, reserved);
+    reserved = nullptr;
+    open = false;
 }
 
 void Sequence::RequireOpen() const {
@@ -742,8 +749,14 @@ int CreateIn(Manager* manager, TSequences& sequences, std::uint32_t& free, std::
     const int index = std::countr_zero(free);
     Sequence& sequence = sequences[static_cast<std::size_t>(index)].value;
     if (!sequence.Open(manager, limits, priority, name)) return SequenceNoNodes;
+    ISequence* handle = &sequence;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(out, &handle, sizeof(handle))) {
+        errno = savedErrno;
+        sequence.Abandon();
+        return SequenceNullArgument;
+    }
     free &= ~(std::uint32_t{1} << index);
-    *out = &sequence;
     return 0;
 }
 

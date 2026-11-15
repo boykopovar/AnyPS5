@@ -1,7 +1,32 @@
 add_library(libSceGnmDriver SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
 target_include_directories(libSceGnmDriver PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut)
+target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut libkernel_sys)
 configure_windows_unwind(libSceGnmDriver)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_gnm_vgt_control_tests ${LIBS_INCLUDE_DIR}/tests/GuestGnmVgtControl.cpp)
+    target_include_directories(guest_gnm_vgt_control_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_gnm_vgt_control_tests PRIVATE libc libkernel ${CMAKE_DL_LIBS})
+    add_dependencies(guest_gnm_vgt_control_tests libSceGnmDriver libSceGnmDriverForNeoMode)
+    configure_windows_unwind(guest_gnm_vgt_control_tests)
+    foreach(vgtProvider IN ITEMS normal neo)
+        if(vgtProvider STREQUAL "normal")
+            set(vgtLibrary libSceGnmDriver)
+            set(vgtModes base neo json none)
+        else()
+            set(vgtLibrary libSceGnmDriverForNeoMode)
+            set(vgtModes base neo)
+        endif()
+        foreach(vgtMode IN LISTS vgtModes)
+            set(vgtTest guest_gnm_vgt_${vgtProvider}_${vgtMode})
+            add_test(NAME ${vgtTest} COMMAND guest_gnm_vgt_control_tests ${vgtProvider} ${vgtMode} $<TARGET_FILE:${vgtLibrary}>)
+            set_tests_properties(${vgtTest} PROPERTIES TIMEOUT 20)
+            if(WIN32)
+                set_tests_properties(${vgtTest} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endif()
+        endforeach()
+    endforeach()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_gnm_driver_tests ${LIBS_INCLUDE_DIR}/tests/GuestGnmDriver.cpp)
@@ -30,8 +55,22 @@ if(BUILD_TESTING)
     set_tests_properties(gnm_driver_packets PROPERTIES TIMEOUT 20)
     add_test(NAME gnm_driver_submit_wait COMMAND gnm_driver_submit_tests)
     set_tests_properties(gnm_driver_submit_wait PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+    add_test_executable(gnm_driver_compute_queue_tests tests/ComputeQueue.cpp)
+    target_include_directories(gnm_driver_compute_queue_tests PRIVATE
+            ${LIBS_INCLUDE_DIR}
+            ${CMAKE_SOURCE_DIR}/core/libs/prx/libSceAgcDriver/tests/execution
+            ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+            ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+            ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
+    )
+    target_link_libraries(gnm_driver_compute_queue_tests PRIVATE libSceGnmDriver libSceAgcDriver SDL2-static libc)
+    set_target_properties(gnm_driver_compute_queue_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(gnm_driver_compute_queue_tests)
+    add_test(NAME gnm_driver_compute_queue COMMAND gnm_driver_compute_queue_tests)
+    set_tests_properties(gnm_driver_compute_queue PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(gnm_driver_packets gnm_driver_submit_wait PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(gnm_driver_packets gnm_driver_submit_wait gnm_driver_compute_queue PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
@@ -43,6 +82,17 @@ if(BUILD_TESTING)
     set_tests_properties(gnm_shader_writers PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(gnm_shader_writers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
+    endif()
+
+    add_test_executable(gnm_default_state_200_tests tests/DefaultState200.cpp)
+    target_include_directories(gnm_default_state_200_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(gnm_default_state_200_tests PRIVATE libSceGnmDriver libc)
+    configure_windows_unwind(gnm_default_state_200_tests)
+    add_test(NAME gnm_default_state_200 COMMAND gnm_default_state_200_tests)
+    set_tests_properties(gnm_default_state_200 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(gnm_default_state_200 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
     endif()
 endif()

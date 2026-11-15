@@ -28,6 +28,7 @@ static_assert(offsetof(LibreSsl3PkeyContext, generationInformationCount) == 64);
 
 inline constexpr std::int32_t LibreSsl3PkeyRsa = 6;
 inline constexpr std::int32_t LibreSsl3PkeyRsaPss = 912;
+inline constexpr std::int32_t LibreSsl3PkeyEc = 408;
 inline constexpr std::int32_t LibreSsl3PkeyHmac = 855;
 
 inline constexpr std::int32_t LibreSsl3PkeyOperationUndefined = 0;
