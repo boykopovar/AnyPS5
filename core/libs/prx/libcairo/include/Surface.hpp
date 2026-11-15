@@ -10,9 +10,6 @@ using CairoDestroyFunc = void (APS5_VABI *)(void*);
 using CairoReadFunc = int (APS5_VABI *)(void*, unsigned char*, unsigned int);
 using CairoWriteFunc = int (APS5_VABI *)(void*, const unsigned char*, unsigned int);
 
-// Internal C++ accessor for the immutable, shared Cairo error surfaces.
-CairoSurface* CairoSurfaceError(int status);
-
 extern "C" {
 
 int APS5_VABI cairo_format_stride_for_width(int format, int width);

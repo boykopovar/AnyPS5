@@ -4,18 +4,23 @@
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/general/ThreadName.hpp"
 #include <array>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <vector>
 
 #ifdef _WIN32
 #include <tlhelp32.h>
-#elif defined(__linux__)
+#else
+#include <pthread.h>
+#ifdef __linux__
 #include <dirent.h>
 #include <string>
 #include <sched.h>
 #include <unistd.h>
+#endif
 #endif
 
 namespace AgcDriver::DriverDetail {
@@ -34,6 +39,19 @@ std::uint64_t WorkerAffinityMask() {
     return mask;
 }
 
+void NameDriverThread(const char* name) {
+#ifdef _WIN32
+    const HRESULT nameResult = ThreadName::SetCurrent(name);
+    if (FAILED(nameResult)) std::fprintf(stderr, "[thread-name] could not name %s (0x%08lx)\n", name, static_cast<unsigned long>(nameResult));
+#elif defined(__APPLE__)
+    const int nameResult = pthread_setname_np(name);
+    if (nameResult != 0) std::fprintf(stderr, "[thread-name] could not name %s (%s)\n", name, std::strerror(nameResult));
+#else
+    const int nameResult = pthread_setname_np(pthread_self(), name);
+    if (nameResult != 0) std::fprintf(stderr, "[thread-name] could not name %s (%s)\n", name, std::strerror(nameResult));
+#endif
+}
+
 #ifdef __linux__
 namespace {
 void NoteWorkerThread();
@@ -42,10 +60,6 @@ void NoteWorkerThread();
 
 void PinWorkerThread(const char* role) {
     TracyZone::NameThread(role);
-#ifdef _WIN32
-    const HRESULT nameResult = ThreadName::SetCurrent(role);
-    if (FAILED(nameResult)) std::fprintf(stderr, "[thread-name] could not name %s (0x%08lx)\n", role, static_cast<unsigned long>(nameResult));
-#endif
 #ifdef __linux__
     NoteWorkerThread();
 #endif
