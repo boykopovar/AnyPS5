@@ -116,7 +116,7 @@ bool APS5_VABI _ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_(const String& o
     if (!Data(oldFilename)) return false;
     const auto newFilename = FileSystemRepresentation(newPath);
     if (!Data(newFilename)) return false;
-    return rename_nid_postfix(Data(oldFilename), Data(newFilename)) != -1;
+    return RenameGuestPath_nid_no_patch(Data(oldFilename), Data(newFilename)) != -1;
 }
 
 String APS5_VABI _ZN3WTF14FileSystemImpl8realPathERKNS_6StringE(const String& filePath) {
