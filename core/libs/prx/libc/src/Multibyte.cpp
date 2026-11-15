@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -18,6 +19,20 @@ void StorePending(unsigned char* state, std::int8_t pending) {
     const auto stored = static_cast<std::int16_t>(pending);
     std::memcpy(state + PendingOffset, &stored, sizeof(stored));
 }
+
+struct GuestConversionState {
+    GuestConversionState(void* state, const char* error) : guest(state), error(error) {
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), guest, bytes.size())) throw std::invalid_argument(error);
+    }
+
+    void Store() const {
+        if (!GuestCopyOut_nid_no_patch(guest, bytes.data(), bytes.size())) throw std::invalid_argument(error);
+    }
+
+    void* guest;
+    const char* error;
+    std::array<unsigned char, PendingOffset + sizeof(std::int16_t)> bytes{};
+};
 
 std::size_t EncodeUtf8(char* destination, std::uint64_t value) {
     if (value < 0x80) {
@@ -208,7 +223,8 @@ std::size_t APS5_VABI c16rtomb_nid_postfix(char* destination, std::uint16_t unit
 
 std::size_t APS5_VABI mbrtoc32_nid_postfix(std::uint32_t* destination, const char* source, std::size_t count, void* state) {
     if (!state) throw std::invalid_argument("mbrtoc32: null conversion state");
-    auto* const bytes = static_cast<unsigned char*>(state);
+    GuestConversionState guest(state, "mbrtoc32: an unreadable or unwritable conversion state");
+    auto* const bytes = guest.bytes.data();
     if (!source) {
         destination = nullptr;
         source = "";
@@ -218,40 +234,61 @@ std::size_t APS5_VABI mbrtoc32_nid_postfix(std::uint32_t* destination, const cha
     std::memcpy(&value, bytes, sizeof(value));
     auto pending = static_cast<std::int8_t>(bytes[PendingOffset]);
     for (std::size_t consumed = 0; consumed < count;) {
-        const auto byte = static_cast<unsigned char>(source[consumed++]);
+        unsigned char byte = 0;
+        if (!GuestCopyIn_nid_no_patch(&byte, source + consumed++, 1)) {
+            errno = 14;
+            return static_cast<std::size_t>(-1);
+        }
         if (!DecodeUtf8Byte(byte, value, pending)) {
             errno = 86;
             return static_cast<std::size_t>(-1);
         }
         if (pending == 0) {
-            if (destination) *destination = static_cast<std::uint32_t>(value);
+            const auto character = static_cast<std::uint32_t>(value);
+            if (destination && !GuestCopyOut_nid_no_patch(destination, &character, sizeof(character))) {
+                errno = 14;
+                return static_cast<std::size_t>(-1);
+            }
             StorePending(bytes, 0);
+            guest.Store();
             return value == 0 ? 0 : consumed;
         }
     }
     std::memcpy(bytes, &value, sizeof(value));
     StorePending(bytes, pending);
+    guest.Store();
     return static_cast<std::size_t>(-2);
 }
 
 std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state) {
     if (!state) throw std::invalid_argument("mbrtoc16: null conversion state");
-    auto* const bytes = static_cast<unsigned char*>(state);
+    GuestConversionState guest(state, "mbrtoc16: an unreadable or unwritable conversion state");
+    auto* const bytes = guest.bytes.data();
     if (!source) {
         destination = nullptr;
         source = "";
         count = 1;
     }
+    const auto put = [destination](std::uint16_t unit) {
+        if (!destination || GuestCopyOut_nid_no_patch(destination, &unit, sizeof(unit))) return true;
+        errno = 14;
+        return false;
+    };
     std::uint64_t value = 0;
     std::memcpy(&value, bytes, sizeof(value));
     auto pending = static_cast<std::int8_t>(bytes[PendingOffset]);
     if (pending == LowSurrogatePending) {
-        if (destination) *destination = static_cast<std::uint16_t>((value & 0x3ff) | 0xdc00);
+        if (!put(static_cast<std::uint16_t>((value & 0x3ff) | 0xdc00))) return static_cast<std::size_t>(-1);
         StorePending(bytes, 0);
+        guest.Store();
         return static_cast<std::size_t>(-3);
     }
     for (std::size_t consumed = 0; consumed < count;) {
-        const auto byte = static_cast<unsigned char>(source[consumed++]);
+        unsigned char byte = 0;
+        if (!GuestCopyIn_nid_no_patch(&byte, source + consumed++, 1)) {
+            errno = 14;
+            return static_cast<std::size_t>(-1);
+        }
         if (!DecodeUtf8Byte(byte, value, pending)) {
             errno = 86;
             return static_cast<std::size_t>(-1);
@@ -262,16 +299,19 @@ std::size_t APS5_VABI mbrtoc16_nid_postfix(std::uint16_t* destination, const cha
             return static_cast<std::size_t>(-1);
         }
         if (value >= 0x10000) {
-            if (destination) *destination = static_cast<std::uint16_t>(((value >> 10) + 0x3fc0) | 0xd800);
+            if (!put(static_cast<std::uint16_t>(((value >> 10) + 0x3fc0) | 0xd800))) return static_cast<std::size_t>(-1);
             StorePending(bytes, LowSurrogatePending);
+            guest.Store();
             return consumed;
         }
-        if (destination) *destination = static_cast<std::uint16_t>(value);
+        if (!put(static_cast<std::uint16_t>(value))) return static_cast<std::size_t>(-1);
         StorePending(bytes, 0);
+        guest.Store();
         return value == 0 ? 0 : consumed;
     }
     std::memcpy(bytes, &value, sizeof(value));
     StorePending(bytes, pending);
+    guest.Store();
     return static_cast<std::size_t>(-2);
 }
 

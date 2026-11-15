@@ -75,6 +75,37 @@ int main() {
         *__error_nid_postfix() = 0;
         require(mbrtoc16_nid_postfix(&unit, "\xf4\x90\x80\x80", 4, state) == static_cast<std::size_t>(-1) && *__error_nid_postfix() == 86);
 
+        void* const unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+        const auto throws = [](const std::function<void()>& call) {
+            try {
+                call();
+            } catch (...) {
+                return true;
+            }
+            return false;
+        };
+        std::memset(state, 0, sizeof(state));
+        *__error_nid_postfix() = 0;
+        require(mbrtoc32_nid_postfix(static_cast<std::uint32_t*>(unmapped), "A", 1, state) == static_cast<std::size_t>(-1) && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        require(mbrtoc32_nid_postfix(&wide, static_cast<const char*>(unmapped), 1, state) == static_cast<std::size_t>(-1) && *__error_nid_postfix() == 14);
+        require(mbrtoc32_nid_postfix(&wide, "\xe2\x82", 2, state) == static_cast<std::size_t>(-2) && state[10] == 1);
+        require(mbrtoc32_nid_postfix(static_cast<std::uint32_t*>(unmapped), "\xac", 1, state) == static_cast<std::size_t>(-1) && state[10] == 1);
+        require(mbrtoc32_nid_postfix(&wide, "\xac", 1, state) == 1 && wide == 0x20ac && state[10] == 0);
+        require(throws([&] { mbrtoc32_nid_postfix(&wide, "A", 1, unmapped); }));
+
+        std::memset(state, 0, sizeof(state));
+        *__error_nid_postfix() = 0;
+        require(mbrtoc16_nid_postfix(static_cast<std::uint16_t*>(unmapped), "A", 1, state) == static_cast<std::size_t>(-1) && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        require(mbrtoc16_nid_postfix(&unit, static_cast<const char*>(unmapped), 1, state) == static_cast<std::size_t>(-1) && *__error_nid_postfix() == 14);
+        require(mbrtoc16_nid_postfix(static_cast<std::uint16_t*>(unmapped), "\xf0\x9f\x98\x80", 4, state) == static_cast<std::size_t>(-1) && state[10] == 0);
+        require(mbrtoc16_nid_postfix(&unit, "\xf0\x9f\x98\x80", 4, state) == 4 && unit == 0xd83d && state[10] == 0x10);
+        *__error_nid_postfix() = 0;
+        require(mbrtoc16_nid_postfix(static_cast<std::uint16_t*>(unmapped), "", 1, state) == static_cast<std::size_t>(-1) && *__error_nid_postfix() == 14 && state[10] == 0x10);
+        require(mbrtoc16_nid_postfix(&unit, "", 1, state) == static_cast<std::size_t>(-3) && unit == 0xdc00 && state[10] == 0);
+        require(throws([&] { mbrtoc16_nid_postfix(&unit, "A", 1, unmapped); }));
+
         require(mblen_nid_postfix(nullptr, 1) == 0 && mblen_nid_postfix("ab", 2) == 1 && mblen_nid_postfix("", 1) == 0);
         require(wctomb_nid_postfix(nullptr, 0x41) == 0);
         require(wctomb_nid_postfix(out, 0x42) == 1 && out[0] == 'B');
