@@ -1306,8 +1306,7 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
         case SCE_NGS2_RACK_ID_SAMPLER: {
             const bool commonOnly = PS4_LIBRARY && state_size == sizeof(Ngs2VoiceState);
             if (!commonOnly && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            Ngs2SamplerVoiceState commonResult;
-            auto& sampler = commonOnly ? commonResult : *reinterpret_cast<Ngs2SamplerVoiceState*>(state);
+            Ngs2SamplerVoiceState sampler{};
             if (voice.pendingPlay) {
                 sampler = {};
                 sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE;
@@ -1325,7 +1324,11 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
                     sampler.waveform_data = voice.WaveformData();
                 }
             }
-            if (commonOnly) *state = sampler.voice_state;
+            if (commonOnly) {
+                if (!WriteGuest(state, sampler.voice_state)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+                return SCE_NGS2_OK;
+            }
+            if (!WriteGuestBytes(state, &sampler, sizeof(sampler))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_REVERB: {
