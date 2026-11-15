@@ -4,8 +4,11 @@
 #include "Recompiler.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/SrtWalker.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace ShaderRecompiler {
 
@@ -69,6 +72,7 @@ public:
     std::shared_ptr<const RecompileResult> MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words) const;
     const std::shared_ptr<const IrResourcePlan>& Plan() const;
     std::shared_ptr<const IrResourcePlan> LoadPlan() const;
+    std::shared_ptr<const IrResourcePlan> PlanOrLoad() const;
     std::uint64_t VariantId() const;
 
 private:
@@ -78,6 +82,9 @@ private:
 };
 [[nodiscard]] std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle);
 void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words);
+inline void OverlayUserWords(std::vector<std::uint32_t>& descriptor, std::span<const std::uint32_t> userData) {
+    std::copy_n(userData.begin(), std::min(userData.size(), descriptor.size()), descriptor.begin());
+}
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle);

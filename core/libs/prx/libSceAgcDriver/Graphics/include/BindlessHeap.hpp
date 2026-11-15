@@ -359,9 +359,12 @@ bool HeapPassesActive(const Context& context);
 VkDescriptorSetAndBindingMappingEXT HeapPushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset, VkSpirvResourceTypeFlagsEXT resources = HeapPassStorageBuffers);
 VkDescriptorSetAndBindingMappingEXT HeapPushIndexMapping(const BindlessHeap& heap, std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
                                                          std::uint32_t pushOffset);
+VkDescriptorSetAndBindingMappingEXT HeapPushSampledImageMapping(const BindlessHeap& heap, std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset, const VkSamplerCreateInfo& embeddedSampler);
+VkPipeline CreateHeapStagePipeline(const Context& context, VkGraphicsPipelineCreateInfo info, std::uint32_t stage, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings, const char* what);
 VkPipeline CreateHeapComputePipeline(const Context& context, VkComputePipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings);
 VkPipeline CreateHeapGraphicsPipeline(const Context& context, VkGraphicsPipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings);
 void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values, std::uint32_t offset = 0);
+void CmdPushHeapData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values);
 std::uint64_t NotePushDataWritten() noexcept;
 std::uint64_t PushDataMark() noexcept;
 

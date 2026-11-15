@@ -29,6 +29,19 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
+template <typename TValue>
+class Lazy {
+public:
+    template <typename TCompute>
+    const TValue& Get(TCompute&& compute) {
+        if (!value.has_value()) value.emplace(compute());
+        return *value;
+    }
+
+private:
+    std::optional<TValue> value;
+};
+
 bool DispatchItemsEnabled() {
     static const bool enabled = [] {
         const char* text = std::getenv("APS5_PIPELINE_DISPATCH");
@@ -146,13 +159,23 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     const bool pipelineCandidate = !resolving && !fromAhead && DispatchItemsEnabled() && DrawPipeline::Active() && indirectArguments == 0 && deferredLabels().labels.empty() && !matchesCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesStreamCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesTableCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute) && !MatchesIndexedCopyKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute);
     const bool partialLastGroup = partialGroups != std::array<std::uint32_t, 3>{};
+    Lazy<std::uint64_t> htileClear;
+    Lazy<std::optional<Graphics::MemoryValueFill>> memoryValueFill;
+    Lazy<std::optional<Graphics::HtileMaskClear>> htileBufferMaskClear;
+    const auto htileClearAddress = [&] { return htileClear.Get([&] { return Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); }); };
+    const auto matchedMemoryValueFill = [&]() -> const std::optional<Graphics::MemoryValueFill>& {
+        return memoryValueFill.Get([&] { return Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]}); });
+    };
+    const auto matchedHtileBufferMaskClear = [&]() -> const std::optional<Graphics::HtileMaskClear>& {
+        return htileBufferMaskClear.Get([&] { return Graphics::MatchHtileBufferMaskClear(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments); });
+    };
     if (!resolving && DrawPipeline::Active() && DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) {
         const auto code = std::span(snapshot.code).subspan(codeOffset);
         const bool handled = !pipelineCandidate || Graphics::MatchMultisampledSingleClear(code, userData, compute.numThreads) || matchesFillKernel(code, userData, compute) ||
                              (indirectArguments == 0 && (MatchDwordPatternFill(packet, code, userData, compute) || MatchConstantDwordFill(packet, code, userData, compute) ||
                                                          MatchClampedGlobalFill(packet, code, userData, compute) || MatchMemoryValueBufferFill(packet, code, userData, compute) ||
-                                                         Graphics::MatchMemoryValueFill(code, userData, compute.numThreads, {packet[1], packet[2], packet[3]}).has_value())) ||
-                             Graphics::HtileDepthClearAddress(code, userData, compute.numThreads) != 0 || Graphics::MatchHtileBufferMaskClear(code, userData, compute, packet, indirectArguments).has_value();
+                                                         matchedMemoryValueFill().has_value())) ||
+                             htileClearAddress() != 0 || matchedHtileBufferMaskClear().has_value();
         if (handled) DrawFinisher::Get().Drain();
         DrawFinisher::NoteDrain(DrawFinisher::DrainSite::Dispatch, handled);
     }
@@ -170,7 +193,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             return;
         }
         if (indirectArguments == 0 && (packet[4] & 0x20u) == 0) {
-            if (const auto fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]})) Graphics::NoteMemoryValueFill(*fill);
+            if (const auto& fill = matchedMemoryValueFill()) Graphics::NoteMemoryValueFill(*fill);
         }
         if (!partialLastGroup && fillBuffer(queue, submission.queue, packet, std::span(snapshot.code).subspan(codeOffset), userData, compute, localDevice)) {
             pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
@@ -178,13 +201,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             return;
         }
         if (DrawPipeline::Active() && !pipelineCandidate) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
-        if (const auto htile = Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); htile != 0) {
+        if (const auto htile = htileClearAddress(); htile != 0) {
             const auto threads = (packet[4] & 0x20u) != 0 ? static_cast<std::uint64_t>(packet[1]) : static_cast<std::uint64_t>(packet[1]) * compute.numThreads[0];
             const auto nativeBytes = Graphics::HtileDepthClearBytes_nid_no_patch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments);
             const auto bytes = static_cast<std::size_t>(threads * 16u);
             if (Graphics::NoteHtileDepthClear(htile, bytes, nativeBytes)) htileClearCompletion = std::pair{htile, bytes};
             if (nativeBytes != 0u) htileMask = {htile, nativeBytes, userData[5], userData[4]};
-        } else if (const auto buffered = Graphics::MatchHtileBufferMaskClear(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments)) {
+        } else if (const auto& buffered = matchedHtileBufferMaskClear()) {
             if (Graphics::NoteHtileDepthClear(buffered->address, buffered->bytes, buffered->bytes)) htileClearCompletion = std::pair{buffered->address, buffered->bytes};
             htileMask = *buffered;
         }
@@ -215,9 +238,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (request.target.gpuResolvedImages && HeapStageExcluded(ShaderRecompiler::ShaderStage::Compute)) request.target.gpuResolvedImages = false;
     if (request.target.gpuResolvedImages && HeapClassesExcluded()) {
         const auto invocation = InvocationFor(snapshot, codeOffset, request);
-        const auto plan = invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
-        require(plan != nullptr, "a GPU heap compute stage has no resource plan to apply APS5_GPU_HEAP_EXCLUDE to");
-        if (HeapPlanExcluded(*plan)) {
+        if (HeapExcludedFor(invocation)) {
             Graphics::NoteHeapExcluded(Graphics::HeapExcluded::Dispatch);
             request.target.gpuResolvedImages = false;
         }
@@ -651,10 +672,8 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             }
         };
         if (DrawFinisher::Overlap() && DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) {
-            DrawFinisher::Pending held;
-            held.unknown = false;
-            held.writes = itemWrites;
-            DrawFinisher::Get().Enqueue([commit = std::move(commit), writes = std::move(itemWrites)]() mutable {
+            auto held = itemWrites;
+            DrawFinisher::Get().EnqueueBeside([commit = std::move(commit), writes = std::move(itemWrites)]() mutable {
                 DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Dispatch, std::move(commit), std::move(writes));
             }, std::move(held));
         } else {

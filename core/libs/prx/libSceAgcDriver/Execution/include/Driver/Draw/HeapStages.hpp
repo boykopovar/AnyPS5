@@ -14,11 +14,13 @@
 
 namespace AgcDriver::DriverDetail {
 
+struct DispatchVariant;
+
 bool HeapStageExcluded(ShaderRecompiler::ShaderStage stage);
 bool HeapPreRasterStage(ShaderRecompiler::ShaderStage stage);
 const char* HeapStageIneligibility(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan);
 bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan);
-bool HeapPlanExcluded(const ShaderRecompiler::IrResourcePlan& plan);
+bool HeapExcludedFor(const ShaderRecompiler::PreparedShaderInvocation& invocation);
 bool HeapClassesExcluded();
 void RequireHeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress = false);
 bool HeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress = false);
@@ -34,7 +36,7 @@ struct HeapStageReads {
 
 struct HeapStageMaterialized {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
-    std::shared_ptr<const ShaderRecompiler::HeapStageWords> words;
+    std::shared_ptr<ShaderRecompiler::HeapStageWords> words;
     HeapStageReads reads;
 };
 
@@ -56,6 +58,7 @@ std::uint64_t HeapRingHitsVerified();
 std::uint64_t HeapRingHitsDiffering();
 std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const ShaderRecompiler::RecompileResult& shared,
                                                                            const ShaderRecompiler::HeapStageWords& words);
+void BuildRingWords(const DispatchVariant& variant, std::span<const std::uint32_t> user, const std::vector<std::uint32_t>* refreshedData, ShaderRecompiler::HeapStageWords& words);
 void VerifyHeapAccessor(const Graphics::CompiledShader& stage);
 void VerifyRingWords(const ShaderRecompiler::RecompileResult& kept, const ShaderRecompiler::HeapStageWords& ring,
                      const ShaderRecompiler::RecompileResult& fresh, const ShaderRecompiler::HeapStageWords* freshWords);

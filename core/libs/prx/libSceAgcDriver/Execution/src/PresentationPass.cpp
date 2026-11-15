@@ -276,29 +276,10 @@ const PresentationPass::Target& PresentationPass::target(VkFormat format, VkImag
         pipelineInfo.renderPass = created.renderPass;
         Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.pipeline), "vkCreateGraphicsPipelines presentation pass");
         if (heap) {
-            const auto& bindless = Graphics::BindlessHeap::For(context);
-            std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{{{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT}, {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT}}};
-            mappings[0].firstBinding = 0;
-            mappings[0].bindingCount = 1;
-            mappings[0].resourceMask = VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT;
-            mappings[0].source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
-            mappings[0].sourceData.pushIndex.pushOffset = offsetof(HeapPush, slot);
-            mappings[0].sourceData.pushIndex.heapIndexStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
-            mappings[0].sourceData.pushIndex.heapArrayStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
-            mappings[0].sourceData.pushIndex.pEmbeddedSampler = &samplerInfo;
-            mappings[1].firstBinding = 1;
-            mappings[1].bindingCount = 1;
-            mappings[1].resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT;
-            mappings[1].source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
-            mappings[1].sourceData.pushAddressOffset = offsetof(HeapPush, pqNits);
-            VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
-            mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
-            mappingInfo.pMappings = mappings.data();
-            stages[1].pNext = &mappingInfo;
-            auto heapFlags = Graphics::DescriptorHeapFlags();
-            pipelineInfo.pNext = &heapFlags;
-            pipelineInfo.layout = VK_NULL_HANDLE;
-            Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.heapPipeline), "vkCreateGraphicsPipelines presentation pass heap");
+            const std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{
+                Graphics::HeapPushSampledImageMapping(Graphics::BindlessHeap::For(context), 0, 0, offsetof(HeapPush, slot), samplerInfo),
+                Graphics::HeapPushAddressMapping(0, 1, offsetof(HeapPush, pqNits))};
+            created.heapPipeline = Graphics::CreateHeapStagePipeline(context, pipelineInfo, 1, mappings, "vkCreateGraphicsPipelines presentation pass heap");
         }
     } catch (...) {
         if (created.pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, created.pipeline, nullptr);
@@ -411,10 +392,9 @@ void PresentationPass::draw(VkCommandBuffer commands, Slot& slot, const Target& 
     state.SetViewport(context, {0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f});
     state.SetScissor(context, scissor);
     if (heapSlot) {
-        Graphics::BindlessHeap::For(context).BindDescriptorHeaps(commands);
         HeapPush pushed{{}, 0u, pqNits->DeviceAddress(), *heapSlot, 0u};
         std::copy(std::begin(parameters), std::end(parameters), pushed.parameters);
-        Graphics::CmdPushData(context, commands, sizeof(pushed), &pushed);
+        Graphics::CmdPushHeapData(context, commands, sizeof(pushed), &pushed);
     } else {
         Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, Graphics::SetBindSite::Presentation);
         Graphics::CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);

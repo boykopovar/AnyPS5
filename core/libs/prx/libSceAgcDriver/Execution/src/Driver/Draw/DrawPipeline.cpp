@@ -182,6 +182,15 @@ void DrawFinisher::Enqueue(Job job) {
     Enqueue(std::move(job), Pending{});
 }
 
+void DrawFinisher::EnqueueBeside(Job job, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes) {
+    Pending held;
+    held.unknown = false;
+    held.writes = std::move(writes);
+    held.labelAddress = labelAddress;
+    held.labelBytes = std::move(labelBytes);
+    Enqueue(std::move(job), std::move(held));
+}
+
 void DrawFinisher::Enqueue(Job job, Pending held) {
     finisherProducer = true;
     constexpr std::size_t depth = 16;

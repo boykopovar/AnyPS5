@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "HeapCacheSwitch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RecycledShared.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -29,7 +30,6 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-constexpr std::size_t ThreadCacheLimit = 65536u;
 constexpr std::uint64_t WalkPageBytes = 0x1000u;
 constexpr std::uint64_t WordBytes = sizeof(std::uint32_t);
 
@@ -217,46 +217,34 @@ std::string heapStageFailure(const ShaderRecompiler::RecompileResult& result, bo
     return {};
 }
 
-const std::string& knownHeapStageFailure(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
-    struct MappableStorage {};
-    struct RecentStorage {};
-    struct Recent {
-        std::uint64_t key = 0;
-        const std::string* failure = nullptr;
-    };
-    constexpr std::size_t RecentSlots = 64;
-    auto& known = HostThreadLocal<std::unordered_map<std::uint64_t, std::string>, MappableStorage>();
-    auto& recent = HostThreadLocal<std::array<Recent, RecentSlots>, RecentStorage>();
-    const auto key = result.variantId * 2u + (workgroupAddress ? 1u : 0u);
-    auto& slot = recent[(key ^ (key >> 17u)) % RecentSlots];
-    if (slot.failure != nullptr && slot.key == key) return *slot.failure;
-    auto found = known.find(key);
-    if (found == known.end()) {
-        if (known.size() >= ThreadCacheLimit) {
-            known.clear();
-            recent.fill({});
-        }
-        found = known.emplace(key, heapStageFailure(result, workgroupAddress)).first;
-    }
-    slot = {key, &found->second};
-    return found->second;
+bool knownHeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
+    constexpr std::uint64_t Fits = 2, Fails = 1, VerdictBits = 2;
+    auto& memo = result.heapMappableMemo.verdicts[workgroupAddress ? 1 : 0];
+    const auto capacity = Graphics::BindlessHeap::ImageSlotCapacity();
+    const auto known = memo.load(std::memory_order_relaxed);
+    if (known != 0 && known >> VerdictBits == capacity) return (known & 3u) == Fits;
+    const bool fits = heapStageFailure(result, workgroupAddress).empty();
+    memo.store(static_cast<std::uint64_t>(capacity) << VerdictBits | (fits ? Fits : Fails), std::memory_order_relaxed);
+    return fits;
 }
 
 }
 
 void RequireHeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
-    if (const auto& failure = knownHeapStageFailure(result, workgroupAddress); !failure.empty()) throw std::runtime_error(failure);
+    if (!knownHeapStageFits(result, workgroupAddress)) throw std::runtime_error(heapStageFailure(result, workgroupAddress));
 }
 
 bool HeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
-    return knownHeapStageFailure(result, workgroupAddress).empty();
+    return knownHeapStageFits(result, workgroupAddress);
 }
 
 bool HeapStageExcluded(ShaderRecompiler::ShaderStage stage) {
     return (heapExclusions().stages >> static_cast<std::uint32_t>(stage) & 1u) != 0u;
 }
 
-bool HeapPlanExcluded(const ShaderRecompiler::IrResourcePlan& plan) {
+namespace {
+
+bool heapPlanExcluded(const ShaderRecompiler::IrResourcePlan& plan) {
     using Class = ShaderRecompiler::ImageResourceClass;
     const auto& exclusions = heapExclusions();
     if (exclusions.tables && std::ranges::any_of(plan.descriptorSources, [](const ShaderRecompiler::DescriptorSource& source) { return source.tableColumn.has_value(); }))
@@ -266,6 +254,14 @@ bool HeapPlanExcluded(const ShaderRecompiler::IrResourcePlan& plan) {
     };
     if (std::ranges::any_of(plan.info.images, excludedImage)) return true;
     return std::ranges::any_of(plan.info.runtimeImageModes, [&](const std::vector<ShaderRecompiler::ImageResource>& modes) { return std::ranges::any_of(modes, excludedImage); });
+}
+
+}
+
+bool HeapExcludedFor(const ShaderRecompiler::PreparedShaderInvocation& invocation) {
+    const auto plan = invocation.PlanOrLoad();
+    if (plan == nullptr) throw std::runtime_error("AGC graphics: a GPU heap stage has no resource plan to apply APS5_GPU_HEAP_EXCLUDE to");
+    return heapPlanExcluded(*plan);
 }
 
 bool HeapClassesExcluded() {
@@ -506,8 +502,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const
         if (binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt && !words.flattenedSrt.empty())
             binding.guestDescriptor = words.flattenedSrt;
         if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData)
-            std::copy_n(words.userData.begin(), std::min(words.userData.size(), binding.guestDescriptor.size()),
-                        binding.guestDescriptor.begin());
+            ShaderRecompiler::OverlayUserWords(binding.guestDescriptor, words.userData);
     }
     if (words.base != nullptr && !words.base->bindings.empty()) {
         if (words.base->bindings.size() != result->bindings.size())
@@ -533,6 +528,69 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const
     }
     if (!words.vertexAttributes.empty()) result->vertexAttributes = words.vertexAttributes;
     return result;
+}
+
+void BuildRingWords(const DispatchVariant& variant, std::span<const std::uint32_t> user, const std::vector<std::uint32_t>* refreshedData, ShaderRecompiler::HeapStageWords& words) {
+    for (const auto index : variant.compiled->heapUserWords) {
+        if (index >= user.size()) throw std::runtime_error("a ring vertex template reads a user word the draw does not have");
+        words.userData.push_back(user[index]);
+    }
+    const auto& ringTemplate = *variant.ringTemplate;
+    words.vertexAttributes = ringTemplate.vertexAttributes;
+    words.flattenedSrt.clear();
+    for (auto& descriptor : words.bindings) descriptor.clear();
+    words.base = nullptr;
+    words.dataOrigin = ringTemplate.dataOrigin;
+    if (!ringTemplate.flattenedSrt.empty()) {
+        words.flattenedSrt = ringTemplate.flattenedSrt;
+        if (refreshedData != nullptr) {
+            for (std::size_t k = 0; k < variant.dataPositions.size(); ++k) {
+                if (variant.dataSlots[k] < words.flattenedSrt.size()) words.flattenedSrt[variant.dataSlots[k]] = (*refreshedData)[variant.dataPositions[k]];
+            }
+        }
+    }
+    if (!ringTemplate.bindings.empty()) {
+        const auto& program = variant.compiled->bindings;
+        if (ringTemplate.bindings.size() != program.size()) throw std::runtime_error("a ring vertex hit's bindings differ in number from its template");
+        words.base = variant.ringTemplate;
+        words.bindings.resize(program.size());
+        for (std::size_t index = 0; index < program.size(); ++index) {
+            const auto& shared = ringTemplate.bindings[index];
+            if (program[index].role != ShaderRecompiler::DescriptorRole::ShaderData || shared.empty()) continue;
+            auto& descriptor = words.bindings[index];
+            descriptor.assign(shared.begin(), shared.end());
+            ShaderRecompiler::OverlayUserWords(descriptor, words.userData);
+            if (descriptor == program[index].guestDescriptor) descriptor.clear();
+        }
+    } else {
+        words.bindings.clear();
+    }
+    ShaderRecompiler::CompleteHeapDataWords(*variant.compiled, words);
+    if (variant.ringDescriptorPatches.empty() && variant.ringDataPatches.empty()) return;
+    const auto& program = variant.compiled->bindings;
+    if (words.bindings.empty()) words.bindings.resize(program.size());
+    const auto own = [&](std::size_t index) -> std::vector<std::uint32_t>& {
+        auto& descriptor = words.bindings[index];
+        if (descriptor.empty()) {
+            const auto& source = Graphics::DrawGuestWords(*variant.compiled, &words, program[index]);
+            descriptor.assign(source.begin(), source.end());
+        }
+        return descriptor;
+    };
+    for (const auto& [binding, word, value] : variant.ringDescriptorPatches) {
+        if (binding >= program.size() || word >= program[binding].guestDescriptor.size()) continue;
+        if (program[binding].role == ShaderRecompiler::DescriptorRole::ShaderData && word >= words.userData.size()) words.dataOrigin = 0;
+        auto& descriptor = own(binding);
+        if (word < descriptor.size()) descriptor[word] = value;
+    }
+    for (const auto& [slot, value] : variant.ringDataPatches) {
+        if (slot >= words.userData.size()) words.dataOrigin = 0;
+        for (std::size_t index = 0; index < program.size(); ++index) {
+            if (program[index].role != ShaderRecompiler::DescriptorRole::ShaderData || slot >= program[index].guestDescriptor.size()) continue;
+            auto& descriptor = own(index);
+            if (slot < descriptor.size()) descriptor[slot] = value;
+        }
+    }
 }
 
 void NoteHeapDirect() {

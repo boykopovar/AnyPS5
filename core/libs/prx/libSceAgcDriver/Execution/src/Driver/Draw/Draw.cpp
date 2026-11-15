@@ -715,8 +715,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             ++drawRelocationCounters.hits;
             ++drawRelocationTrials[drawIdentity].hits;
             if (drawHit && drawKey != 0 && !drawCache.contains(drawKey)) {
-                if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
-                admitRelocated = drawKeySightings->SeenBefore(drawKey);
+                admitRelocated = drawKeySightingsTable().SeenBefore(drawKey);
                 if (admitRelocated) ++drawRelocationCounters.admitted;
             }
             if (const auto alias = drawAliases.find(drawAlias); alias != drawAliases.end()) {
@@ -730,16 +729,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
         if (profile && drawRelocationCounters.lookups >= 100000) reportDrawRelocation();
     }
-    if (!userPatches.empty() && !drawHit) {
+    const auto patchedDecode = [&] {
         auto current = std::make_shared<DrawDecode>(*decode);
         for (const auto& patch : userPatches) current->programs[patch.program].userData[patch.index] = patch.value;
-        decode = std::move(current);
-    }
+        return current;
+    };
+    if (!userPatches.empty() && !drawHit) decode = patchedDecode();
     if (admitRelocated && std::all_of(matched.begin(), matched.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant != nullptr; })) {
-        auto current = std::make_shared<DrawDecode>(*decode);
-        for (const auto& patch : userPatches) current->programs[patch.program].userData[patch.index] = patch.value;
         std::vector<std::shared_ptr<DispatchVariant>> fresh(matched.begin(), matched.end());
-        insertDrawEntry(drawKey, fresh, std::move(current), 0, false);
+        insertDrawEntry(drawKey, fresh, patchedDecode(), 0, false);
     }
     tail.patchedStages = std::any_of(stageData.begin(), stageData.end(), [](const StageDataHit& hit) { return hit.compiled != nullptr; });
     tail.relocatedDecode = relocatedDecode;
@@ -944,68 +942,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     };
     const auto buildRingWords = [&](std::size_t i, const DispatchVariant& variant) {
         auto words = RecycledRingWords();
-        const auto& user = programs[i].userData;
-        for (const auto index : variant.compiled->heapUserWords) {
-            require(index < user.size(), "a ring vertex template reads a user word the draw does not have");
-            words->userData.push_back(user[index]);
-        }
-        const auto& ringTemplate = *variant.ringTemplate;
-        words->vertexAttributes = ringTemplate.vertexAttributes;
-        words->flattenedSrt.clear();
-        for (auto& descriptor : words->bindings) descriptor.clear();
-        words->base = nullptr;
-        words->dataOrigin = ringTemplate.dataOrigin;
-        if (!ringTemplate.flattenedSrt.empty()) {
-            words->flattenedSrt = ringTemplate.flattenedSrt;
-            if (&variant == matched[i].get() && stageData[i].compiled != nullptr) {
-                for (std::size_t k = 0; k < variant.dataPositions.size(); ++k) {
-                    if (variant.dataSlots[k] < words->flattenedSrt.size()) words->flattenedSrt[variant.dataSlots[k]] = stageData[i].words[variant.dataPositions[k]];
-                }
-            }
-        }
-        if (!ringTemplate.bindings.empty()) {
-            const auto& program = variant.compiled->bindings;
-            require(ringTemplate.bindings.size() == program.size(), "a ring vertex hit's bindings differ in number from its template");
-            words->base = variant.ringTemplate;
-            words->bindings.resize(program.size());
-            for (std::size_t index = 0; index < program.size(); ++index) {
-                const auto& shared = ringTemplate.bindings[index];
-                if (program[index].role != ShaderRecompiler::DescriptorRole::ShaderData || shared.empty()) continue;
-                auto& descriptor = words->bindings[index];
-                descriptor.assign(shared.begin(), shared.end());
-                std::copy_n(words->userData.begin(), std::min(words->userData.size(), descriptor.size()), descriptor.begin());
-                if (descriptor == program[index].guestDescriptor) descriptor.clear();
-            }
-        } else {
-            words->bindings.clear();
-        }
-        ShaderRecompiler::CompleteHeapDataWords(*variant.compiled, *words);
-        if (!variant.ringDescriptorPatches.empty() || !variant.ringDataPatches.empty()) {
-            const auto& program = variant.compiled->bindings;
-            if (words->bindings.empty()) words->bindings.resize(program.size());
-            const auto own = [&](std::size_t index) -> std::vector<std::uint32_t>& {
-                auto& descriptor = words->bindings[index];
-                if (descriptor.empty()) {
-                    const auto& source = Graphics::DrawGuestWords(*variant.compiled, words.get(), program[index]);
-                    descriptor.assign(source.begin(), source.end());
-                }
-                return descriptor;
-            };
-            for (const auto& [binding, word, value] : variant.ringDescriptorPatches) {
-                if (binding >= program.size() || word >= program[binding].guestDescriptor.size()) continue;
-                if (program[binding].role == ShaderRecompiler::DescriptorRole::ShaderData && word >= words->userData.size()) words->dataOrigin = 0;
-                auto& descriptor = own(binding);
-                if (word < descriptor.size()) descriptor[word] = value;
-            }
-            for (const auto& [slot, value] : variant.ringDataPatches) {
-                if (slot >= words->userData.size()) words->dataOrigin = 0;
-                for (std::size_t index = 0; index < program.size(); ++index) {
-                    if (program[index].role != ShaderRecompiler::DescriptorRole::ShaderData || slot >= program[index].guestDescriptor.size()) continue;
-                    auto& descriptor = own(index);
-                    if (slot < descriptor.size()) descriptor[slot] = value;
-                }
-            }
-        }
+        BuildRingWords(variant, programs[i].userData, &variant == matched[i].get() && stageData[i].compiled != nullptr ? &stageData[i].words : nullptr, *words);
         if (words->vertexAttributes.empty()) return words;
         if (!vertexInfos[i] || graphics.stages.mesh) {
             decodeVertexInfo(i);
@@ -1078,24 +1015,29 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     const auto ringWords = [&](std::size_t i) {
         if (matched[i]->ringTemplate == nullptr) return;
         stageCaptures[i].heapWords = buildRingWords(i, *matched[i]);
-        stageCaptures[i].direct = true;
-        stageCaptures[i].ring = true;
+        stageCaptures[i].origin = StageOrigin::HeapRead;
+    };
+    const auto adoptMatched = [&](std::size_t i) {
+        programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
+        memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
+        ringWords(i);
     };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::size_t completedSubdraws = 0;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
-    const bool heapCheck = !drawHit && Graphics::DescriptorHeapEnabled();
     const DrawStageContext stageContext{queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, meshBarycentrics};
     const bool heapMode = Graphics::DescriptorHeapEnabled();
+    const bool heapCheck = !drawHit && heapMode;
     const bool heapDraw = heapMode && [&] {
+        const bool descriptorMemory = localDevice->Target().descriptorMemory;
         std::uint32_t cursor = pushCursorBytes;
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (roles[i] == Role::GeometryBack) continue;
             const auto stage = programs[i].binary.stage;
             require(stage == Stage::Fragment || HeapPreRasterStage(stage), "a draw stage kind the GPU heap does not take");
-            require(stage == Stage::Fragment || localDevice->Target().descriptorMemory, "a GPU heap draw on a device target without descriptor memory");
+            require(stage == Stage::Fragment || descriptorMemory, "a GPU heap draw on a device target without descriptor memory");
             cursor = Graphics::StagePushOffset(cursor, stage, localDevice->GraphicsPipelineLibraries());
             if (HeapStageExcluded(stage) || (HeapClassesExcluded() && drawStageExcluded(stageContext, i, cursor, drawParameters))) return false;
         }
@@ -1112,9 +1054,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, localDevice->GraphicsPipelineLibraries());
             pushOffsets[i] = pushCursorBytes;
             if (drawHit) {
-                programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
-                memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
-                ringWords(i);
+                adoptMatched(i);
             } else {
                 if (reused[i] && !fitsDraw(*matched[i]->compiled)) {
                     reused[i] = false;
@@ -1123,17 +1063,13 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 }
                 const auto candidate = reused[i] ? dataCandidates[i].end() : candidateForStage(i);
                 if (reused[i]) {
-                    programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
-                    memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
-                    ringWords(i);
+                    adoptMatched(i);
                 } else if (candidate != dataCandidates[i].end() && !verifyDrawDataHits()) {
                     matched[i] = candidate->first;
                     stageCaptures[i].registeredViews = matched[i]->registeredViews;
                     matchedRegions[i] = std::move(candidate->second);
                     reused[i] = true;
-                    programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
-                    memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
-                    ringWords(i);
+                    adoptMatched(i);
                 } else {
                     if (!dataCandidates[i].empty() && !verifyDrawDataHits()) decodeVertexInfo(i);
                     if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
@@ -1144,7 +1080,6 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                         }
                     }
                     compiledStages.push_back(materializeDrawStage(stageContext, i, pushCursorBytes, drawParameters, heapDraw));
-                    if (!rejected.empty()) return DrawVerdict::Rejected;
                     programResults[i] = compiledStages.back().get();
                     if (verifyHit && matched[i] != nullptr && matched[i]->ringTemplate != nullptr) VerifyRingWords(*matched[i]->compiled, *buildRingWords(i, *matched[i]), *programResults[i], stageCaptures[i].heapWords.get());
                     if (candidate != dataCandidates[i].end()) verifyDataStage(i, *candidate->first);
@@ -1272,7 +1207,6 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             const auto pushBytes = programResults[0]->pushConstants.size();
             const auto exports = programResults[0]->parameterExports;
             compiledStages.push_back(materializeDrawStage(stageContext, 0, pushOffsets[0], drawParameters, heapDraw));
-            if (!rejected.empty()) return DrawVerdict::Rejected;
             require(fitsDraw(*compiledStages.back()), "a rebuilt mesh stage left the GPU heap mode of its draw");
             programResults[0] = compiledStages.back().get();
             stages[0].program = programResults[0];
@@ -1453,14 +1387,12 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                     if (!verifyPushWord) continue;
                     const auto fresh = materializeDrawStage(stageContext, programIndex, pushOffsets[programIndex], drawParameters, heapDraw);
                     for (auto& stage : stages) if (stage.program == &result) stage.registeredImageViews = stageCaptures[programIndex].registeredViews.get();
-                    if (!rejected.empty()) return DrawVerdict::Rejected;
                     verifyForwardedWords(programIndex, result, *fresh);
                     continue;
                 }
                 if (pushWord) wordsRefused += static_cast<std::uint64_t>(std::count_if(recordWords.begin(), recordWords.end(), [&](const RecordWord& word) { return word.program == programIndex; }));
                 result = *materializeDrawStage(stageContext, programIndex, pushOffsets[programIndex], programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, heapDraw);
                 for (auto& stage : stages) if (stage.program == &result) stage.registeredImageViews = stageCaptures[programIndex].registeredViews.get();
-                if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
                 require(fitsDraw(result), "a patched program left the GPU heap mode of its draw");
                 for (auto& stage : stages) {

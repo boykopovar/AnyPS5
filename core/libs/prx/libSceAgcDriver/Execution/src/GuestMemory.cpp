@@ -2822,10 +2822,6 @@ std::uint64_t StableTrackerGeneration() {
     return Tracker().stable.load(std::memory_order_acquire);
 }
 
-std::uint64_t TrackerAcquisitions() {
-    return trackerAcquisitions.load(std::memory_order_relaxed);
-}
-
 void AdvanceTrackerGenerationForTest(std::uint64_t generation) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);

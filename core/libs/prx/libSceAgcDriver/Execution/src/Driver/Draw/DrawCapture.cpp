@@ -30,7 +30,7 @@ namespace AgcDriver::DriverDetail {
 
 const ShaderRecompiler::SrtUserDataUse& StageCapture::UserDataUse() const {
     static const ShaderRecompiler::SrtUserDataUse none;
-    return userDataOwner != nullptr ? userDataOwner->userDataUse : none;
+    return capture != nullptr ? capture->userDataUse : none;
 }
 
 
@@ -108,7 +108,7 @@ bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t 
     RequireHeapStageMappable(*materialized.result);
     NoteHeapDirect();
     stageCapture.compiled = std::move(materialized.result);
-    stageCapture.heapWords = stageCapture.compiled->heapTemplateId != 0 ? std::const_pointer_cast<ShaderRecompiler::HeapStageWords>(std::move(materialized.words)) : nullptr;
+    stageCapture.heapWords = stageCapture.compiled->heapTemplateId != 0 ? std::move(materialized.words) : nullptr;
     if (SampleHeapStageVerify()) {
         const auto fullCapture = context.shaderMemory.Capture(invocation);
         const auto expected = invocation.Materialize(*fullCapture);
@@ -116,7 +116,7 @@ bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t 
         NoteHeapDirectVerify(stageCapture.heapWords != nullptr ? *PatchedHeapResult(*stageCapture.compiled, *stageCapture.heapWords) : *stageCapture.compiled, *expected, fullCapture.get());
     }
     stageCapture.regions.clear();
-    stageCapture.direct = true;
+    stageCapture.origin = StageOrigin::HeapUnread;
     auto& reads = materialized.reads;
     if (reads.complete) {
         auto owned = std::move(reads.values);
@@ -129,9 +129,8 @@ bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t 
         stageCapture.heapReadWords = std::move(owned);
         const auto& use = reads.capture->userDataUse;
         stageCapture.userDataMask = UserDataMask(program, context.vertexInfos[i], use.asValue | use.asBase, *stageCapture.compiled);
-        stageCapture.userDataOwner = reads.capture;
         stageCapture.capture = std::move(reads.capture);
-        stageCapture.ring = true;
+        stageCapture.origin = StageOrigin::HeapRead;
         context.memory.insert(context.memory.end(), stageCapture.regions.begin(), stageCapture.regions.end());
     }
     context.recompiled[i] = true;
@@ -179,9 +178,7 @@ bool Driver::drawStageExcluded(const DrawStageContext& context, std::size_t i, s
     auto request = drawStageRequest(context, i, pushOffset, drawParameters);
     request.target.gpuResolvedImages = true;
     const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request);
-    const auto plan = invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
-    if (plan == nullptr) throw std::runtime_error("AGC graphics: a GPU heap stage has no resource plan to apply APS5_GPU_HEAP_EXCLUDE to");
-    return HeapPlanExcluded(*plan);
+    return HeapExcludedFor(invocation);
 }
 
 std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDrawStage(const DrawStageContext& context, std::size_t i, std::uint32_t pushOffset, const Pm4::DrawParameters& drawParameters, bool heapDraw) try {
@@ -205,15 +202,14 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     using StageReason = Graphics::HeapStageReason;
     const StageReason stageReason = heapDraw ? StageReason::Heap : !Graphics::DescriptorHeapEnabled() ? StageReason::Disabled : StageReason::Excluded;
     if (heapDraw) {
-        const auto plan = invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
+        const auto plan = invocation.PlanOrLoad();
         if (const auto* ineligible = HeapStageIneligibility(program.binary.stage, plan.get()))
             throw std::runtime_error(std::string("AGC graphics: a GPU heap stage cannot take the heap: ") + ineligible);
     }
     Graphics::NoteHeapStageReason(stageReason);
     timing.Mark("prepared_invocation");
     auto& stageCapture = context.stageCaptures[i];
-    stageCapture.direct = false;
-    stageCapture.ring = false;
+    stageCapture.origin = StageOrigin::Captured;
     stageCapture.heapReadWords.reset();
     stageCapture.capture.reset();
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
@@ -234,14 +230,13 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
 
     stageCapture.regions = context.shaderMemory.TakeRecentRegions();
     stageCapture.supplied = context.shaderMemory.SuppliedBlocks();
-    stageCapture.userDataOwner = capture;
     stageCapture.registeredViews = std::make_shared<const std::vector<ShaderRecompiler::RegisteredImageView>>(capture->snapshot.registeredImages);
     context.recompiled[i] = true;
     context.memory = context.shaderMemory.Regions();
 
     for (std::size_t j = 0; j < context.programs.size(); ++j) {
         if (context.matched[j] != nullptr && !context.recompiled[j] && (context.drawHit || j < i)) context.memory.insert(context.memory.end(), context.matchedRegions[j].begin(), context.matchedRegions[j].end());
-        if (j < i && context.recompiled[j] && context.stageCaptures[j].direct) context.memory.insert(context.memory.end(), context.stageCaptures[j].regions.begin(), context.stageCaptures[j].regions.end());
+        if (j < i && context.recompiled[j] && context.stageCaptures[j].Direct()) context.memory.insert(context.memory.end(), context.stageCaptures[j].regions.begin(), context.stageCaptures[j].regions.end());
     }
     request.context.memory = context.memory;
     if (dumpGraphics) static_cast<void>(dumpRequest(program.binary.codeAddress, request));
@@ -283,8 +278,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
             words->dataOrigin = NextHeapDataOrigin();
             stageCapture.compiled = std::move(shared);
             stageCapture.heapWords = std::move(words);
-            stageCapture.direct = true;
-            stageCapture.ring = true;
+            stageCapture.origin = StageOrigin::HeapRead;
             if (SampleHeapStageVerify()) NoteHeapDirectVerify(*PatchedHeapResult(*stageCapture.compiled, *stageCapture.heapWords), *invocation.Materialize(*capture));
         }
     }
@@ -365,7 +359,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             variant->forgetSerial = stageCapture.forgetSerial;
             variant->pushOffset = stageCapture.pushOffset;
             variant->userDataMask = stageCapture.userDataMask;
-            if (stageCapture.ring && stageCapture.heapWords != nullptr) {
+            if (stageCapture.origin == StageOrigin::HeapRead && stageCapture.heapWords != nullptr) {
                 auto ringTemplate = std::make_shared<ShaderRecompiler::HeapStageWords>();
                 ringTemplate->vertexAttributes = stageCapture.heapWords->vertexAttributes;
                 ringTemplate->flattenedSrt = stageCapture.heapWords->flattenedSrt;

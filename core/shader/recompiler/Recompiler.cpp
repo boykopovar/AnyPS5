@@ -1971,7 +1971,7 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
 
 // APS5_NO_RESULT_MEMO=1: every Recompile(request, capture) materializes its own result as before.
 bool ResultMemo() {
-    static const bool resultMemo = std::getenv("APS5_NO_RESULT_MEMO") == nullptr && !HeapCacheBypassed(HeapCache::ResultMemo);
+    static const bool resultMemo = HeapCacheEnabled(HeapCache::ResultMemo);
     return resultMemo;
 }
 
@@ -2759,8 +2759,8 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     auto& entry = front.At(source.id, key);
     ++front.lookups;
     std::shared_ptr<const HeapTemplate> hit;
-    const bool templates = !HeapCacheBypassed(HeapCache::Templates);
-    if (templates && !HeapCacheBypassed(HeapCache::TemplateFront) && entry.found != nullptr && entry.source == source.id && entry.key == key) {
+    const bool templates = HeapCacheEnabled(HeapCache::Templates);
+    if (templates && HeapCacheEnabled(HeapCache::TemplateFront) && entry.found != nullptr && entry.source == source.id && entry.key == key) {
         hit = entry.found;
     } else if (templates) {
         {
@@ -2822,6 +2822,11 @@ std::shared_ptr<const IrResourcePlan> PreparedShaderInvocation::LoadPlan() const
     return acquirePlan(request, handle->source, false, handle.get());
 }
 
+std::shared_ptr<const IrResourcePlan> PreparedShaderInvocation::PlanOrLoad() const {
+    const auto& plan = Plan();
+    return plan != nullptr ? plan : LoadPlan();
+}
+
 std::uint64_t PreparedShaderInvocation::VariantId() const {
     return handle != nullptr && handle->artifact != nullptr ? handle->artifact->artifact.variantId : 0u;
 }
@@ -2838,7 +2843,7 @@ void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words)
         if (words.bindings.empty()) words.bindings.resize(count);
         auto& descriptor = words.bindings[index];
         descriptor.assign(binding.guestDescriptor.begin(), binding.guestDescriptor.end());
-        std::copy_n(words.userData.begin(), patched, descriptor.begin());
+        OverlayUserWords(descriptor, words.userData);
     }
 }
 

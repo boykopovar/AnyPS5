@@ -150,6 +150,7 @@ public:
     static bool Busy() { return outstanding.load(std::memory_order_acquire) != 0; }
     void Enqueue(Job job);
     void Enqueue(Job job, Pending held);
+    void EnqueueBeside(Job job, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {});
     void Drain();
     void Settle();
     void ReleaseRan();

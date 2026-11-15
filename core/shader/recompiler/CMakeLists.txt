@@ -254,7 +254,8 @@ function(add_shader_recompiler target runtimeTarget)
     endif()
     set(shaderCacheReviewedNames
             HeapCache
-            HeapCacheBypassed
+            HeapCacheEnabled
+            HeapCacheLegacyBypassed
             HeapCacheBypassMask
             HeapCacheNames
             HeapVerifyEnabled
@@ -271,6 +272,7 @@ function(add_shader_recompiler target runtimeTarget)
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
             CompleteHeapDataWords
+            OverlayUserWords
             HeapTemplateCounts
             BuildPreparedShaderKey
             BuildRectListShaders

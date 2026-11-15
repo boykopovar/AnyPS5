@@ -546,6 +546,16 @@ struct IdentityMemo {
     }
 };
 
+struct HeapMappableMemo {
+    mutable std::atomic<std::uint64_t> verdicts[2]{};
+    HeapMappableMemo() = default;
+    HeapMappableMemo(const HeapMappableMemo&) {}
+    HeapMappableMemo& operator=(const HeapMappableMemo&) {
+        for (auto& verdict : verdicts) verdict.store(0, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
 [[nodiscard]] bool VerifyIdentityMemo();
 
 struct HeapStageWords {
@@ -1043,6 +1053,7 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
     std::vector<std::uint32_t> shaderDataUserWords;
     [[nodiscard]] std::uint64_t PipelineVariantId() const { return specializationId != 0 ? specializationId : variantId; }
     IdentityMemo identityMemo;
+    HeapMappableMemo heapMappableMemo;
     [[nodiscard]] PipelineIdentity Identity() const {
         if (!identityMemo.sealed.load(std::memory_order_acquire)) return ComputeIdentity();
         const auto module = spirv.ContentHash();

@@ -1443,6 +1443,29 @@ VkDescriptorSetAndBindingMappingEXT HeapPushIndexMapping(const BindlessHeap& hea
     return mapping;
 }
 
+VkDescriptorSetAndBindingMappingEXT HeapPushSampledImageMapping(const BindlessHeap& heap, std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset, const VkSamplerCreateInfo& embeddedSampler) {
+    auto mapping = HeapPushIndexMapping(heap, set, binding, VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT, pushOffset);
+    mapping.sourceData.pushIndex.pEmbeddedSampler = &embeddedSampler;
+    return mapping;
+}
+
+VkPipeline CreateHeapStagePipeline(const Context& context, VkGraphicsPipelineCreateInfo info, std::uint32_t stage, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings, const char* what) {
+    std::vector<VkPipelineShaderStageCreateInfo> stages(info.pStages, info.pStages + info.stageCount);
+    VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
+    mappingInfo.pNext = stages[stage].pNext;
+    mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
+    mappingInfo.pMappings = mappings.data();
+    stages[stage].pNext = &mappingInfo;
+    info.pStages = stages.data();
+    auto heapFlags = DescriptorHeapFlags();
+    heapFlags.pNext = info.pNext;
+    info.pNext = &heapFlags;
+    info.layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &pipeline), what);
+    return pipeline;
+}
+
 VkPipeline CreateHeapComputePipeline(const Context& context, VkComputePipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings) {
     if (!HeapPassesActive(context)) return VK_NULL_HANDLE;
     VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
@@ -1509,6 +1532,11 @@ void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t
     const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, offset, {values, bytes}};
     context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
     static_cast<void>(NotePushDataWritten());
+}
+
+void CmdPushHeapData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values) {
+    BindlessHeap::For(context).BindDescriptorHeaps(commands);
+    CmdPushData(context, commands, bytes, values);
 }
 
 void BindlessHeap::BindDescriptorHeaps(VkCommandBuffer commands) const {

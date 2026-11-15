@@ -2333,18 +2333,18 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         VkPhysicalDeviceMaintenance5FeaturesKHR heapMaintenance5{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, &descriptorHeapFeatures};
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &heapMaintenance5};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
-        if (descriptorHeapFeatures.descriptorHeap == VK_TRUE && heapMaintenance5.maintenance5 == VK_TRUE) {
+        const bool heapSupported = descriptorHeapFeatures.descriptorHeap == VK_TRUE && heapMaintenance5.maintenance5 == VK_TRUE;
+        if (heapSupported) {
             VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &state->descriptorHeapProperties};
             state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
         }
-        if (descriptorHeapFeatures.descriptorHeap == VK_TRUE && heapMaintenance5.maintenance5 == VK_TRUE && Graphics::BindlessHeap::Fits(state->descriptorHeapProperties)) {
+        if (heapSupported && Graphics::BindlessHeap::Fits(state->descriptorHeapProperties)) {
             state->descriptorHeap = true;
             state->maintenance5 = true;
             state->heapDataUniformDwords = std::min<std::uint32_t>(HeapDataUniformDwordCap, state->properties.limits.maxUniformBufferRange / 4u);
             if (hasExtension(VK_KHR_UNIFORM_BUFFER_STANDARD_LAYOUT_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 layoutFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &standardLayout};
                 state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &layoutFeatures);
-                standardLayout.pNext = nullptr;
             }
             state->uniformConstantBuffers = Graphics::ChooseUniformConstantBuffers(standardLayout.uniformBufferStandardLayout == VK_TRUE, state->properties.limits);
             if (state->uniformConstantBuffers) deviceExtensions.push_back(VK_KHR_UNIFORM_BUFFER_STANDARD_LAYOUT_EXTENSION_NAME);
@@ -5122,7 +5122,7 @@ namespace {
 // which needs the texture caches: without them every lookup makes a fresh object, so a hit could
 // never validate and would only upload everything twice.
 bool ResourceCacheEnabled() {
-    static const bool noResourceCache = std::getenv("APS5_NO_RESOURCE_CACHE") != nullptr || ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::ResourceCache);
+    static const bool noResourceCache = !ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::ResourceCache);
     static const bool noTextureCache = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     return !noResourceCache && !noTextureCache;
 }
@@ -6135,11 +6135,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     VkDeviceAddress workgroupAddress = 0;
     if (const auto dwords = record.shader->program->workgroupMemoryDwords; dwords != 0) {
         auto memory = state->WorkgroupMemoryFor(context, record.x, record.y, record.z, dwords);
-        const auto workgroupSet = record.shader->program->gpuResolvedImages ? ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet : ShaderRecompiler::WorkgroupMemoryDescriptorSet;
         if (record.objects->descriptorHeap) {
             workgroupAddress = memory->address;
         } else {
-            Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, workgroupSet, 1, &memory->set, Graphics::SetBindSite::Dispatch);
+            Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &memory->set, Graphics::SetBindSite::Dispatch);
         }
         recorder.Keep(std::move(memory));
     }
@@ -6311,6 +6310,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
     objects->resourcesLayout = setLayout;
     const bool gpuMode = shader.gpuResolvedImages;
+    const bool heapDevice = gpuMode && context.descriptorHeap && Graphics::DescriptorHeapEnabled();
     const bool scratchPool = shader.scratchPoolSlotDwords != 0;
     const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes};
     if (!gpuMode) {
@@ -6327,7 +6327,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->pushPlacements = Graphics::PushDataPlacements(std::span(&placed, 1));
     Graphics::PipelineSpecialization specialization(shader);
     specialization.PlacePushData(objects->pushPlacements.front());
-    if (gpuMode && context.descriptorHeap && Graphics::DescriptorHeapEnabled()) specialization.PlaceHeapImageSlots(Graphics::BindlessHeap::For(context).ImageSlots());
+    if (heapDevice) specialization.PlaceHeapImageSlots(Graphics::BindlessHeap::For(context).ImageSlots());
     const auto subgroupSize = computeSubgroupSize(shader);
     const auto stageFlags = computeStageFlags(shader);
     if (const auto* directory = ComputePipelineDumpDirectory(); directory != nullptr && *directory != 0 && !state->probingFloatControls && ComputePipelineCapture::OptionalEnabled() && CaptureComputePipeline(shader.spirv.size())) {
@@ -6360,7 +6360,6 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     if (profile && shader.spirv.size() > 100000) std::fprintf(stderr, "[dispatch] creating a pipeline for %zu SPIR-V words (program 0x%llx)\n", shader.spirv.size(), static_cast<unsigned long long>(programAddress));
     std::vector<VkDescriptorSetAndBindingMappingEXT> heapMappings;
     const bool workgroupAddress = shader.workgroupMemoryDwords != 0;
-    const bool heapDevice = gpuMode && context.descriptorHeap && Graphics::DescriptorHeapEnabled();
     const auto workgroupAddressOffset = workgroupAddress ? Graphics::ComputePushConstantBytes : ~0u;
     const std::span<const std::uint32_t> spirv(shader.spirv.data(), shader.spirv.size());
     objects->descriptorHeap = heapDevice && Graphics::BindlessHeap::For(context).DescriptorHeapMappings(spirv, heapMappings, {.workgroupAddress = workgroupAddress, .gdsAddress = shader.dataAddressPush, .scratchPool = scratchPool}, &objects->pushPlacements.front(), &shader.bindings, workgroupAddressOffset);
@@ -6813,9 +6812,9 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     // writes, every direct region import- or mirror-served), so a hit's proof is the template's
     // Revalidate and nothing needs completion work.
     const bool recipeWanted = recipeOut != nullptr && DispatchRecipes();
-    if (recipeWanted && profile && !(cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()))
-        noteRecipeRefusal(cacheable, overlay != nullptr, objects != nullptr, !contentKey.empty(), *resources);
-    if (recipeWanted && cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty()) {
+    const bool recipeable = recipeWanted && cacheable && overlay == nullptr && resources->Reusable() && !resources->NeedsCompletion() && objects != nullptr && !contentKey.empty();
+    if (recipeWanted && profile && !recipeable) noteRecipeRefusal(cacheable, overlay != nullptr, objects != nullptr, !contentKey.empty(), *resources);
+    if (recipeable) {
         auto recipe = std::make_shared<Recipe>();
         recipe->device = state->device;
         recipe->templateRef = resources;

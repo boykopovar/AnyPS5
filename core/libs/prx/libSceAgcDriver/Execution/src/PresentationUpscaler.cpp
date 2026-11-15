@@ -317,24 +317,8 @@ const PresentationUpscaler::Target& PresentationUpscaler::target(VkFormat format
         const auto lock = context.LockPipelineCacheForUse();
         Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.pipeline), "vkCreateGraphicsPipelines presentation upscaler");
         if (heap) {
-            const auto& bindless = Graphics::BindlessHeap::For(context);
-            VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-            mapping.firstBinding = 0;
-            mapping.bindingCount = 1;
-            mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT;
-            mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
-            mapping.sourceData.pushIndex.pushOffset = offsetof(HeapPush, slot);
-            mapping.sourceData.pushIndex.heapIndexStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
-            mapping.sourceData.pushIndex.heapArrayStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
-            mapping.sourceData.pushIndex.pEmbeddedSampler = &samplerInfo;
-            VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
-            mappingInfo.mappingCount = 1;
-            mappingInfo.pMappings = &mapping;
-            stages[1].pNext = &mappingInfo;
-            auto heapFlags = Graphics::DescriptorHeapFlags();
-            pipelineInfo.pNext = &heapFlags;
-            pipelineInfo.layout = VK_NULL_HANDLE;
-            Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.heapPipeline), "vkCreateGraphicsPipelines presentation upscaler heap");
+            const auto mapping = Graphics::HeapPushSampledImageMapping(Graphics::BindlessHeap::For(context), 0, 0, offsetof(HeapPush, slot), samplerInfo);
+            created.heapPipeline = Graphics::CreateHeapStagePipeline(context, pipelineInfo, 1, std::span(&mapping, 1), "vkCreateGraphicsPipelines presentation upscaler heap");
         }
     } catch (...) {
         if (created.pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, created.pipeline, nullptr);
@@ -390,11 +374,10 @@ void PresentationUpscaler::draw(VkCommandBuffer commands, Slot& slot, const Targ
     recording.SetViewport(context, viewport);
     recording.SetScissor(context, scissor);
     if (heapSlot) {
-        Graphics::BindlessHeap::For(context).BindDescriptorHeaps(commands);
         HeapPush pushed{};
         std::memcpy(pushed.parameters, parameters, size);
         pushed.slot = *heapSlot;
-        Graphics::CmdPushData(context, commands, sizeof(pushed), &pushed);
+        Graphics::CmdPushHeapData(context, commands, sizeof(pushed), &pushed);
     } else {
         bindSource(set, source);
         Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, Graphics::SetBindSite::Presentation);

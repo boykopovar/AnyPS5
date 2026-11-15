@@ -7937,7 +7937,7 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
         return;
     }
     if (!verify) {
-        writeDataRoots(bytes, shaders, placements, rewritten, !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::PushImage));
+        writeDataRoots(bytes, shaders, placements, rewritten, ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::PushImage));
         return;
     }
     std::array<std::byte, PipelinePushConstantBytes> reference;
@@ -8122,7 +8122,7 @@ void ShaderResources::writeHeapTableMap(const BindlessHeap::SpanScope& spans, Bi
     if (table == tableStages.end() || table->mapAllocation == noElement) return;
     const bool verifyMap = ShaderRecompiler::HeapVerifyEnabled();
     auto& stageState = heapStages[stageIndex];
-    const bool mapCurrent = !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::TableMap) && stageState.mapBuilt && stageState.map.table.address != 0u &&
+    const bool mapCurrent = ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::TableMap) && stageState.mapBuilt && stageState.map.table.address != 0u &&
                             HeapStageState::SlotSet::Current(heap, stageState.mapImages, stageState.mapSamplers);
     if (mapCurrent && !verifyMap) {
         stageState.mapTouched = HeapStageState::SlotSet::Touch(heap, stageState.mapImages, stageState.mapSamplers, stageState.mapTouched);
@@ -8147,7 +8147,7 @@ void ShaderResources::writeHeapTableMap(const BindlessHeap::SpanScope& spans, Bi
 }
 
 std::uint64_t ShaderResources::heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words) {
-    if (kept.table.address != 0u && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::StageData) && std::ranges::equal(kept.words, words)) {
+    if (kept.table.address != 0u && ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::StageData) && std::ranges::equal(kept.words, words)) {
         heap.NoteTableKept(spans);
         return kept.table.address;
     }
@@ -8594,7 +8594,7 @@ bool ShaderResources::refreshHeapStageSlots(BindlessHeap& heap, HeapStageState& 
     Require(stageState.laidOutFor == stageBit, "a GPU heap stage was refreshed for a stage its resources were not laid out for");
     const auto& owned = stageState.owned;
     const bool keyed = stageState.keyTaken;
-    static const bool slotsBypassed = ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::Slots);
+    static const bool slotsBypassed = !ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::Slots);
     bool current = !slotsBypassed && (keyed && !verifySlots ? true : heapSlotKeySame(owned, stageState.key));
     if (keyed && verifySlots && !slotsBypassed && !current) throw std::runtime_error("AGC graphics: a GPU heap stage's textures, views or samplers changed after its resources were built");
     const auto slotSerial = heap.SlotSerial();
@@ -8627,7 +8627,7 @@ void ShaderResources::writeHeapDataBinding(const BindlessHeap::SpanScope& spans,
         shader.heap != nullptr ? std::span<const std::uint32_t>(shader.heap->userData) : std::span<const std::uint32_t>{};
     const auto userFront = static_cast<std::ptrdiff_t>(std::min(userData.size(), words.size()));
     const auto origin = shaderData && shader.heap != nullptr ? shader.heap->dataOrigin : 0u;
-    const bool sameShape = shaderData && current && !ShaderRecompiler::HeapCacheBypassed(ShaderRecompiler::HeapCache::StageData) && stageState.dataInput.size() == words.size() + userData.size();
+    const bool sameShape = shaderData && current && ShaderRecompiler::HeapCacheEnabled(ShaderRecompiler::HeapCache::StageData) && stageState.dataInput.size() == words.size() + userData.size();
     const bool sameOrigin = sameShape && origin != 0u && origin == stageState.dataOrigin && stageState.dataProgram == shader.program;
     const bool sameWords = sameShape && (sameOrigin || std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront));
     if (verifySlots && sameOrigin && !std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront))
