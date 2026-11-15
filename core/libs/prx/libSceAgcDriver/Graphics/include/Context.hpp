@@ -224,11 +224,11 @@ struct Context {
     TextureCache* textureCache = nullptr;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     bool depthClamp = false;
-    // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
     bool discreteGpu = false;
     bool integratedGpu = false;
+    bool hostPointerImport = true;
     bool dmaBufImport = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
