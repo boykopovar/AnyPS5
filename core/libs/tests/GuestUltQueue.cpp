@@ -252,10 +252,10 @@ static void GuestPointers() {
     waiter.join();
 
     Object sem;
-    CHECK(sceUltSemaphoreCreate(&sem, "sem", &waitPool, 0, 1, nullptr, 0) == 0);
+    CHECK(sceUltSemaphoreCreate(&sem, "sem", 0, &waitPool, nullptr, 0) == 0);
     std::thread semWaiter([&] {
-        CHECK(sceUltSemaphoreAcquire(&sem) == 0);
-        CHECK(sceUltSemaphoreRelease(&sem) == 0);
+        CHECK(sceUltSemaphoreAcquire(&sem, 1) == 0);
+        CHECK(sceUltSemaphoreRelease(&sem, 1) == 0);
     });
     for (;;) {
         UltSemaphoreInfo pollSem{};
@@ -269,7 +269,7 @@ static void GuestPointers() {
     errno = 71;
     CHECK(sceUltGetSemaphoreInfo(&sem, &probeSem, reinterpret_cast<UltWaitingThreadInfo*>(0x10), 1) == Null && errno == 71);
     CHECK(std::memcmp(&probeSem, &expectedProbeSem, sizeof(probeSem)) == 0);
-    CHECK(sceUltSemaphoreRelease(&sem) == 0);
+    CHECK(sceUltSemaphoreRelease(&sem, 1) == 0);
     semWaiter.join();
     CHECK(sceUltSemaphoreDestroy(&sem) == 0);
 
