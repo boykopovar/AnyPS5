@@ -2269,14 +2269,47 @@ std::uint64_t CollectEpochBumps() {
 namespace {
 std::atomic<std::uint64_t> proofSerial{1};
 thread_local bool proofThread = false;
+thread_local ProofBreakTrace* proofBreakTrace = nullptr;
 }
 
 std::uint64_t ProofSerial() {
     return proofSerial.load(std::memory_order_acquire);
 }
 
-void BreakProofs() {
+const char* ProofBreakSiteName(ProofBreakSite site) {
+    switch (site) {
+        case ProofBreakSite::DriverStore: return "driver store";
+        case ProofBreakSite::Written: return "marked written";
+        case ProofBreakSite::GpuMutex: return "GPU mutex taken off the proof thread";
+        case ProofBreakSite::WriteBack: return "write-back";
+        case ProofBreakSite::WriteBackIfHeld: return "held write-back";
+        case ProofBreakSite::Packet: return "non-draw packet";
+        case ProofBreakSite::CompletionStore: return "completion store";
+        case ProofBreakSite::RecordedWork: return "recorded work";
+        case ProofBreakSite::WrittenBack: return "written back";
+        case ProofBreakSite::KeptDraw: return "kept writing draw";
+        case ProofBreakSite::ResourceWriteBack: return "resource write-back";
+        case ProofBreakSite::Other: break;
+    }
+    return "other";
+}
+
+void BreakProofs(ProofBreakSite site, std::uint64_t address, std::uint64_t bytes) {
     proofSerial.fetch_add(1, std::memory_order_acq_rel);
+    if (proofBreakTrace != nullptr) proofBreakTrace->Note({site, address, bytes});
+}
+
+ProofBreakTrace::ProofBreakTrace() : previous(proofBreakTrace) {
+    proofBreakTrace = this;
+}
+
+ProofBreakTrace::~ProofBreakTrace() {
+    proofBreakTrace = previous;
+}
+
+void ProofBreakTrace::Note(const ProofBreak& entry) {
+    ++count;
+    if (breaks.size() < 8u) breaks.push_back(entry);
 }
 
 void MarkProofThread() {
@@ -2644,7 +2677,7 @@ void SetOwnStoreCompare(bool compare) {
 std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, const std::function<std::pair<std::uint64_t, std::uint64_t>(std::span<std::byte>)>& store, bool complete = true) {
     if (bytes == 0) return 0;
     const auto pinned = pinStoreRanges(address, bytes);
-    BreakProofs();
+    BreakProofs(ProofBreakSite::DriverStore, address, bytes);
     const auto stampStored = [complete](WriteTracker& tracker, std::pair<std::uint64_t, std::uint64_t> stored) -> std::uint64_t {
         if (stored.second <= stored.first) return 0;
         ++tracker.generation;
@@ -2711,7 +2744,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 }
 
 static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, std::uint64_t* order = nullptr) {
-    BreakProofs();
+    BreakProofs(ProofBreakSite::Written, address, bytes);
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
     if (order != nullptr) *order = 0;
@@ -3112,7 +3145,7 @@ void GpuMutexType::acquired() {
     owner.store(CurrentThreadToken(), std::memory_order_relaxed);
     if (++depth == 1) {
         gpuHoldSerial.fetch_add(1, std::memory_order_relaxed);
-        if (!proofThread) BreakProofs();
+        if (!proofThread) BreakProofs(ProofBreakSite::GpuMutex);
     }
 }
 
@@ -3709,7 +3742,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
 
 static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, [[maybe_unused]] std::uint32_t byteStoreLimit, bool keepGuest) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
-    BreakProofs();
+    BreakProofs(ProofBreakSite::WriteBack, address, current.size());
     if (current.empty()) return;
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
     // site above it was doing (the [hooksync] line counts stores apart).
@@ -3774,7 +3807,7 @@ static_assert(std::atomic_ref<std::uint64_t>::is_always_lock_free && std::atomic
 
 std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint64_t unchangedSince) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
-    BreakProofs();
+    BreakProofs(ProofBreakSite::WriteBackIfHeld, address, current.size());
     if (current.empty()) return 0;
     const ReadSiteScope site(ReadSite::Store);
     FlushGpuWrites(address, current.size());

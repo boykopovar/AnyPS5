@@ -26,7 +26,10 @@
 #include <vector>
 
 namespace AgcDriver { class VulkanDevice; }
-namespace AgcDriver::GuestMemory { struct WriteSubscription; }
+namespace AgcDriver::GuestMemory {
+struct WriteSubscription;
+class ProofBreakTrace;
+}
 
 namespace AgcDriver::Graphics {
 
@@ -814,6 +817,8 @@ private:
     std::uint64_t planesClean = 0;
     void recordFlushRanges();
     bool stalePlanesRead();
+    std::string rangeOwner(std::uint64_t address, std::uint64_t bytes) const;
+    void reportVerifiedStore(std::uint64_t exitSerial, std::uint64_t startSerial, std::uint64_t endSerial, const GuestMemory::ProofBreakTrace& trace) const;
     bool refreshPerUseCopies();
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.

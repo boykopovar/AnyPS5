@@ -154,7 +154,29 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
 void BumpCollectEpoch();
 void AdoptLatestCollectEpoch();
 std::uint64_t ProofSerial();
-void BreakProofs();
+enum class ProofBreakSite : std::uint8_t { Other, DriverStore, Written, GpuMutex, WriteBack, WriteBackIfHeld, Packet, CompletionStore, RecordedWork, WrittenBack, KeptDraw, ResourceWriteBack };
+const char* ProofBreakSiteName(ProofBreakSite site);
+void BreakProofs(ProofBreakSite site = ProofBreakSite::Other, std::uint64_t address = 0, std::uint64_t bytes = 0);
+struct ProofBreak {
+    ProofBreakSite site = ProofBreakSite::Other;
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+};
+class ProofBreakTrace {
+public:
+    ProofBreakTrace();
+    ~ProofBreakTrace();
+    ProofBreakTrace(const ProofBreakTrace&) = delete;
+    ProofBreakTrace& operator=(const ProofBreakTrace&) = delete;
+    void Note(const ProofBreak& entry);
+    const std::vector<ProofBreak>& Breaks() const { return breaks; }
+    std::uint64_t Count() const { return count; }
+
+private:
+    std::vector<ProofBreak> breaks;
+    std::uint64_t count = 0;
+    ProofBreakTrace* previous = nullptr;
+};
 void MarkProofThread();
 std::uint64_t CollectEpoch();
 std::uint64_t CollectEpochBumps();

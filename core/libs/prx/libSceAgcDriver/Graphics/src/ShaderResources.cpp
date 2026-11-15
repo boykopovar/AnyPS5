@@ -4188,6 +4188,8 @@ struct ExitVerification {
     std::atomic<std::uint64_t> checks{0};
     std::atomic<std::uint64_t> failures{0};
     std::atomic<std::uint64_t> stores{0};
+    std::atomic<std::uint64_t> concurrent{0};
+    std::atomic<std::uint64_t> reported{0};
     std::atomic<std::uint64_t> misses{0};
     std::array<std::atomic<std::uint64_t>, ExitInputs.size()> moved{};
     std::array<std::atomic<std::uint64_t>, ExitInputs.size()> alone{};
@@ -4219,15 +4221,16 @@ void printExitVerification() {
         alone += alone.empty() ? "" : ", ";
         alone += std::string(ExitInputs[input]) + " " + std::to_string(verification.alone[input].load(std::memory_order_relaxed));
     }
-    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory; %llu proved builds missed the exit, by input moved: %s; moved alone: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str(), alone.c_str());
+    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory, %llu where only other threads broke proofs meanwhile; %llu proved builds missed the exit, by input moved: %s; moved alone: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.concurrent.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str(), alone.c_str());
 }
 
-void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false) {
+void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false, bool concurrent = false) {
     (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
     if (!verified) return;
     auto& verification = exitVerification();
     if (failed) verification.failures.fetch_add(1, std::memory_order_relaxed);
     if (stored) verification.stores.fetch_add(1, std::memory_order_relaxed);
+    if (concurrent) verification.concurrent.fetch_add(1, std::memory_order_relaxed);
     if (reportDue(verification.checks.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
 }
 
@@ -4608,6 +4611,61 @@ bool ShaderResources::stalePlanesRead() {
     return false;
 }
 
+std::string ShaderResources::rangeOwner(std::uint64_t address, std::uint64_t bytes) const {
+    if (bytes == 0) return "no range";
+    const auto end = address + bytes;
+    const auto overlaps = [&](std::uint64_t begin, std::uint64_t stop) { return begin < end && address < stop; };
+    std::string owner;
+    const auto add = [&](const std::string& kind) { owner += (owner.empty() ? "" : ", ") + kind; };
+    for (const auto& region : directRegions) {
+        if (overlaps(region.begin, region.end)) {
+            add("direct region");
+            break;
+        }
+    }
+    for (std::size_t index = 0; index < textures.size() && index < validatedTextures.size(); ++index) {
+        const auto& surface = validatedTextures[index];
+        if (textures[index] != nullptr && overlaps(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes)) add("texture surface " + std::to_string(index) + (surface.depth ? " (depth)" : ""));
+    }
+    for (const auto& image : storageTextures) {
+        if (image != nullptr && overlaps(image->Descriptor().baseAddress, image->Descriptor().baseAddress + image->GuestBytes())) {
+            add("storage image");
+            break;
+        }
+    }
+    if (writeSubscription != nullptr) {
+        for (const auto& [begin, stop] : GuestMemory::SubscriptionSpans(*writeSubscription)) {
+            if (overlaps(begin, stop)) {
+                add("subscription span");
+                break;
+            }
+        }
+    }
+    for (const auto& range : describedRanges) {
+        if (overlaps(range.address, range.address + range.bytes)) {
+            add(range.imageTable ? "described image table" : "described range");
+            break;
+        }
+    }
+    if (owner.empty()) owner = "outside every range the set records";
+    const bool recorded = std::any_of(flushRanges.begin(), flushRanges.end(), [&](const auto& range) { return overlaps(range.first, range.second); });
+    if (!recorded && !flushUnscoped) owner += ", not checked for stale planes";
+    if (DepthSurfaceAt(address)) owner += ", a depth surface";
+    return owner;
+}
+
+void ShaderResources::reportVerifiedStore(std::uint64_t exitSerial, std::uint64_t startSerial, std::uint64_t endSerial, const GuestMemory::ProofBreakTrace& trace) const {
+    auto& verification = exitVerification();
+    if (verification.reported.fetch_add(1, std::memory_order_relaxed) >= 64u) return;
+    std::string breaks;
+    for (const auto& entry : trace.Breaks()) {
+        char where[64];
+        std::snprintf(where, sizeof(where), " at 0x%llx+0x%llx", static_cast<unsigned long long>(entry.address), static_cast<unsigned long long>(entry.bytes));
+        breaks += (breaks.empty() ? "" : "; ") + std::string(GuestMemory::ProofBreakSiteName(entry.site)) + (entry.bytes != 0 ? where : "") + " over " + rangeOwner(entry.address, entry.bytes);
+    }
+    std::fprintf(stderr, "[epoch-proofs] verify: the full proof behind a reused proof broke proofs %llu times (the serial moved %llu times since the exit, %llu before the full proof started): %s\n", static_cast<unsigned long long>(trace.Count()), static_cast<unsigned long long>(endSerial - exitSerial), static_cast<unsigned long long>(startSerial - exitSerial), breaks.c_str());
+}
+
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (!registeredImageViewsCurrent(registeredImageViews)) {
         if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
@@ -4621,8 +4679,13 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const bool copies = matched && !refreshPerUseCopies();
         if (matched && !copies) {
             if (verifyingExits()) {
+                const auto startSerial = GuestMemory::ProofSerial();
+                GuestMemory::ProofBreakTrace trace;
                 const bool ok = revalidateFull(shaders, report);
-                noteEpochProof(true, true, !ok, GuestMemory::ProofSerial() != stamp.proof);
+                const auto endSerial = GuestMemory::ProofSerial();
+                const bool stored = trace.Count() != 0;
+                if (stored) reportVerifiedStore(stamp.proof, startSerial, endSerial, trace);
+                noteEpochProof(true, true, !ok, stored, !stored && endSerial != stamp.proof);
                 return ok;
             }
             if (report != nullptr) *report = {ProofPath::Full, ProofFailure::None};
@@ -7503,7 +7566,7 @@ void ShaderResources::WriteBack() {
     } catch (const BdaUnalignedAccess&) {
         unaligned = std::current_exception();
     }
-    if (!guestMemory.Writes().empty() || std::find(storageWritten.begin(), storageWritten.end(), true) != storageWritten.end() || (usesBda && !bdaReadOnly)) GuestMemory::BreakProofs();
+    if (!guestMemory.Writes().empty() || std::find(storageWritten.begin(), storageWritten.end(), true) != storageWritten.end() || (usesBda && !bdaReadOnly)) GuestMemory::BreakProofs(GuestMemory::ProofBreakSite::ResourceWriteBack);
     if (!SkipWriteBack()) {
         for (std::size_t index = 0; index < storageTextures.size(); ++index) {
             if (!storageWritten[index] || storageTextures[index] == nullptr) continue;
