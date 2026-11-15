@@ -60,13 +60,13 @@ int CreateEndpoint(std::int32_t* id, std::map<std::int32_t, Endpoint>& endpoints
     if (!id) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
     for (std::int32_t candidate = 0; candidate < limit; ++candidate) {
         if (!endpoints.contains(candidate)) {
+            if (!CopyOut(id, &candidate, sizeof(candidate))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
             endpoints.emplace(candidate, Endpoint{});
-            *id = candidate;
             return 0;
         }
     }
-    *id = -1;
-    return SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT;
+    const std::int32_t invalidId = -1;
+    return CopyOut(id, &invalidId, sizeof(invalidId)) ? SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
 }
 
 int DeleteEndpoint(std::int32_t id, std::map<std::int32_t, Endpoint>& endpoints) {

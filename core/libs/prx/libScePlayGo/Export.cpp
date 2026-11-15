@@ -177,8 +177,14 @@ static bool IsKnownChunk(uint16_t id) {
 static int ValidateChunks(const uint16_t* chunk_ids, uint32_t number_of_entries) {
     if (!chunk_ids) return SCE_PLAYGO_ERROR_BAD_POINTER;
     if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
-    for (uint32_t index = 0; index < number_of_entries; ++index)
-        if (!IsKnownChunk(chunk_ids[index])) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
+    for (uint32_t index = 0; index < number_of_entries; ++index) {
+        uint16_t chunkId = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&chunkId, &chunk_ids[index], sizeof(chunkId));
+        errno = savedErrno;
+        if (!copied) return SCE_PLAYGO_ERROR_BAD_POINTER;
+        if (!IsKnownChunk(chunkId)) return SCE_PLAYGO_ERROR_BAD_CHUNK_ID;
+    }
     return 0;
 }
 

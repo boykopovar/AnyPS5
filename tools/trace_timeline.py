@@ -1,5 +1,6 @@
 import argparse
 import html
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -68,9 +69,9 @@ def nonnegative_number(value):
     try:
         number = float(value)
     except ValueError:
-        raise argparse.ArgumentTypeError("must be a number")
-    if number < 0:
-        raise argparse.ArgumentTypeError("must be a number")
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
+    if not math.isfinite(number) or not 0 <= number < 1e300:
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
     return number
 
 
@@ -109,6 +110,8 @@ def main(arguments=None):
     if laid["left_out"]:
         notes.append(f"{laid['left_out']} shorter slices left out by --max-slices")
     output = options.output or options.trace.with_suffix(".html")
+    if output.absolute() == options.trace.absolute() or (output.exists() and output.samefile(options.trace)):
+        raise ValueError("output must not overwrite the input trace")
     output.write_text(page(svg(laid), options.trace.name, notes), encoding="utf-8")
     print(f"wrote {output}")
     return 0
