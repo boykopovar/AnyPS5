@@ -194,6 +194,11 @@ bool memoSwitchedOff() {
     return RuntimeSwitches::Set(RuntimeSwitch::NoTargetMemo);
 }
 
+bool passMemoServes() {
+    static const bool serves = std::getenv("APS5_NO_PASS_ATTACHMENT_MEMO") == nullptr && std::getenv("APS5_VERIFY_PASS_ATTACHMENTS") == nullptr && ShaderResources::EpochProofs();
+    return serves;
+}
+
 bool memoResolves() {
     static const bool resolves = std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr || !ShaderResources::EpochProofs();
     return resolves || memoSwitchedOff();
@@ -1561,7 +1566,51 @@ void unchangedMemo(AgcDriver::VulkanDevice& device) {
     }
 }
 
-const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 16> R3Scenarios{{
+void breakPass() {
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, "no active recorder whose render pass the test can end");
+    static_cast<void>(recorder->Commands());
+}
+
+enum class Server { Pass, Target, Full };
+
+void requireServedBy(AgcDriver::VulkanDevice& device, const ColorTarget& color, Server server, bool consulted, const std::string& what) {
+    const bool verifyTarget = std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr;
+    const auto before = lookups();
+    const MemoEvents events;
+    draw(device, color);
+    const bool looked = server == Server::Full || (server == Server::Target && verifyTarget);
+    const char* expected = server == Server::Pass ? "the pass attachment memo" : server == Server::Target ? "the target memo" : "the full lookup";
+    Require((lookups() != before) == looked, what + ": " + expected + " did not serve (" + events.Text() + ")");
+    requireMemoEvent(events, TargetMemoEvent::Lookup, consulted ? 1u : 0u, what);
+    requireMemoEvent(events, TargetMemoEvent::Hit, server == Server::Target ? 1u : 0u, what);
+    requireMemoEvent(events, TargetMemoEvent::VerifyChecked, server == Server::Target && verifyTarget ? 1u : 0u, what);
+}
+
+void memoOrder(AgcDriver::VulkanDevice& device) {
+    Require(LookupOutcomes::Profiled() && memoCounted(), "the memo order test needs APS5_PROFILE_DRAW");
+    const bool pass = passMemoServes();
+    const bool target = memoServes();
+    const bool targetInPass = target && !pass && (std::getenv("APS5_VERIFY_PASS_ATTACHMENTS") == nullptr || std::getenv("APS5_VERIFY_TARGET_MEMO") != nullptr);
+    const auto inPass = pass ? Server::Pass : targetInPass ? Server::Target : Server::Full;
+    const auto afterBreak = target ? Server::Target : Server::Full;
+    const auto color = colorTarget();
+    reset(device, color);
+    for (int repeat = 0; repeat < 3; ++repeat) draw(device, color);
+    requireServedBy(device, color, inPass, targetInPass, "a repeat inside the open render pass");
+    requireServedBy(device, color, inPass, targetInPass, "a second repeat inside the open render pass");
+    breakPass();
+    requireServedBy(device, color, pass ? Server::Full : afterBreak, target, "the first repeat after the render pass ended, whose target memo proof is the last full lookup's");
+    requireServedBy(device, color, inPass, targetInPass, "a repeat inside the second render pass");
+    breakPass();
+    requireServedBy(device, color, afterBreak, target, "a repeat after the second render pass ended");
+    std::cout << "memo order: pass attachment memo " << (pass ? "on" : "off") << ", target memo " << (target ? "on" : "off") << '\n';
+    expect(device, color, [](std::uint32_t x) { return leftOver(x, Old); }, "repeats served by either memo");
+}
+
+const std::array<std::pair<const char*, void (*)(AgcDriver::VulkanDevice&)>, 17> R3Scenarios{{
+    {"memo-order", memoOrder},
     {"untracked-dcc", untrackedDccClear},
     {"untracked-cmask", untrackedCmaskClear},
     {"untracked-stencil", untrackedStencilWrite},
