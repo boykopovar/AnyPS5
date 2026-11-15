@@ -8,6 +8,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
@@ -374,26 +375,44 @@ int APS5_VABI sceNgs2RackGetInfo(uintptr_t rack_handle, Ngs2RackInfo* info, size
         local.active_channel_work_count += voice.channels;
     }
     if (!WriteGuestBytes(info, &local, sizeof(local))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    auto* tail = reinterpret_cast<std::uint8_t*>(info) + sizeof(Ngs2RackInfo);
+    struct TailWrite {
+        std::size_t offset;
+        const void* source;
+        std::size_t bytes;
+    };
+    const auto& extension = rack->infoExtension;
+    std::vector<TailWrite> writes;
+    std::vector<Ngs2CustomRackModuleInfo> moduleInfos;
+    std::uint64_t modules = 0;
     if (rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER || rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
-        if (info_size >= sizeof(Ngs2RackInfo) + rack->infoExtension.size())
-            std::memcpy(tail + 1104, rack->infoExtension.data() + 1104, rack->infoExtension.size() - 1104);
+        if (info_size >= sizeof(Ngs2RackInfo) + extension.size() && extension.size() > 1104)
+            writes.push_back({1104, extension.data() + 1104, extension.size() - 1104});
         if (info_size >= 1280) {
             const auto ports = rack->voices.front().ports.size();
             if (info_size < 1208 + ports * sizeof(Ngs2CustomRackPortInfo)) throw std::runtime_error("NGS2: the reference custom rack info write exceeds this output size");
-            std::memcpy(tail, rack->infoExtension.data(), 8);
-            const std::uint64_t modules = rack->numModules;
-            std::memcpy(tail + 8, &modules, sizeof(modules));
-            for (std::size_t i = 0; i < rack->customModules.size(); ++i) {
-                Ngs2CustomRackModuleInfo module{};
-                std::memcpy(&module, rack->infoExtension.data() + 16 + i * sizeof(module), sizeof(module));
+            writes.push_back({0, extension.data(), 8});
+            modules = rack->numModules;
+            writes.push_back({8, &modules, sizeof(modules)});
+            moduleInfos.resize(rack->customModules.size());
+            for (std::size_t i = 0; i < moduleInfos.size(); ++i) {
+                auto& module = moduleInfos[i];
+                std::memcpy(&module, extension.data() + 16 + i * sizeof(module), sizeof(module));
                 module.option = rack->customModuleOptions[i].empty() ? nullptr : reinterpret_cast<const Ngs2CustomModuleOption*>(rack->customModuleOptions[i].data());
-                std::memcpy(tail + 16 + i * sizeof(module), &module, sizeof(module));
+                writes.push_back({16 + i * sizeof(module), &module, sizeof(module)});
             }
-            std::memcpy(tail + 976, rack->infoExtension.data() + 976, ports * sizeof(Ngs2CustomRackPortInfo));
+            writes.push_back({976, extension.data() + 976, ports * sizeof(Ngs2CustomRackPortInfo)});
         }
-    } else if (info_size >= sizeof(Ngs2RackInfo) + rack->infoExtension.size())
-        std::memcpy(tail, rack->infoExtension.data(), rack->infoExtension.size());
+    } else if (info_size >= sizeof(Ngs2RackInfo) + extension.size()) {
+        writes.push_back({0, extension.data(), extension.size()});
+    }
+    std::size_t extent = 0;
+    for (const auto& write : writes) extent = std::max(extent, write.offset + write.bytes);
+    if (extent == 0) return SCE_NGS2_OK;
+    auto* tail = reinterpret_cast<std::uint8_t*>(info) + sizeof(Ngs2RackInfo);
+    std::vector<std::uint8_t> image(extent);
+    if (!ReadGuestBytes(image.data(), tail, extent)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    for (const auto& write : writes) std::memcpy(image.data() + write.offset, write.source, write.bytes);
+    if (!WriteGuestBytes(tail, image.data(), extent)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
