@@ -938,6 +938,9 @@ int main(int argc, char** argv) {
     Require(sceHttpUriSweepPath(nullptr, "/foo", 5) == invalidValue);
     char sweptPath[16];
     Require(sceHttpUriSweepPath(sweptPath, nullptr, 5) == invalidValue);
+    errno = 71;
+    Require(sceHttpUriSweepPath(reinterpret_cast<char*>(0x10), "/foo", 5) == invalidValue && errno == 71);
+    Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), 5) == invalidValue && errno == 71);
     Require(sweep("foo/../bar", "foo/../bar"));
     Require(sweep("/foo/../bar", "/bar"));
     Require(sweep("/foo/./bar", "/foo/bar"));
