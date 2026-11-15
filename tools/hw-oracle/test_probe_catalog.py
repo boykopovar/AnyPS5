@@ -2,6 +2,7 @@ import copy
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -227,6 +228,28 @@ class ProbeGenerationTests(unittest.TestCase):
                 probe_catalog.generate([probe], self.digest, output)
             self.assertEqual(marker.read_text(encoding="utf-8"), "existing")
 
+    def test_failed_promotion_removes_already_promoted_cases(self):
+        probes = self.catalog["probes"][:2]
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            destinations = [output / probe["id"] for probe in probes]
+            original_replace = os.replace
+            calls = []
+
+            def replace(source, destination):
+                calls.append(destination)
+                if len(calls) == 2:
+                    raise OSError("second promotion failed")
+                return original_replace(source, destination)
+
+            with patch.object(probe_catalog.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                probe_catalog.generate(probes, self.digest, output)
+            self.assertEqual([path.exists() for path in destinations], [False, False])
+            self.assertEqual([path for path in output.iterdir() if path.name.startswith(".probe-catalog-")], [])
+            generated = probe_catalog.generate(probes, self.digest, output)
+            self.assertEqual(generated, destinations)
+            self.assertTrue(all((path / "probe.json").is_file() for path in destinations))
+
 
 class ProbeRunTests(unittest.TestCase):
     def setUp(self):
@@ -408,6 +431,19 @@ class ProbeCatalogCliTests(unittest.TestCase):
                 ])
             self.assertEqual(result, 0)
             self.assertTrue((Path(temporary) / "v-add-f32-edge-values" / "body.s").is_file())
+
+    def test_generate_reports_a_non_ascii_output_directory_as_utf8(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "界"
+            output = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with contextlib.redirect_stdout(output):
+                result = probe_catalog.main([
+                    "generate", "--output-dir", str(directory),
+                    "--probe", "v-add-f32-edge-values",
+                ])
+                output.flush()
+            self.assertEqual(result, 0)
+            self.assertIn(str(directory / "v-add-f32-edge-values"), output.buffer.getvalue().decode("utf-8"))
 
     def test_coverage_cli_emits_json_for_missing_measurements(self):
         with tempfile.TemporaryDirectory() as temporary:

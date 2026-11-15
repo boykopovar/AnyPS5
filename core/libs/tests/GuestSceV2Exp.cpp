@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 
+#include <bit>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -83,7 +84,25 @@ const FloatCase FloatCases[] = {
     {"minus infinity", -Infinity, 0x1p+0, 0, 0x00000000u, 0},
     {"nan argument", NotANumber, 0x1p+0, 0, 0x7fc00000u, 2},
     {"nan factor", 0x1p+0, NotANumber, 0, 0x7fc00000u, 2},
-    {"nan both", NotANumber, -NotANumber, 0, 0xffc00000u, 2},
+};
+
+struct ConsoleCase {
+    const char* label;
+    std::uint32_t x;
+    std::uint32_t y;
+    std::uint32_t bits;
+    short code;
+};
+
+const ConsoleCase ConsoleCases[] = {
+    {"minus ten", 0xc1200000u, 0x3f800000u, 0x383e6bceu, -1},
+    {"just below the overflow", 0x42b19999u, 0x3f800000u, 0x7f800000u, 1},
+    {"at the overflow", 0x42b20000u, 0x3f800000u, 0x7f800000u, 1},
+    {"minus 87", 0xc2ae0000u, 0x3f800000u, 0x00b33687u, -1},
+    {"nan argument payload", 0x7fc00001u, 0x3f800000u, 0x7fc00001u, 2},
+    {"second nan argument payload", 0x7fc00002u, 0x3f800000u, 0x7fc00002u, 2},
+    {"nan factor against a different nan argument", 0x7fc00001u, 0x7fc00002u, 0x7fc00001u, 2},
+    {"finite argument with a nan factor payload", 0x3f800000u, 0x7fc00003u, 0x7fc00003u, 2},
 };
 
 void Require(bool condition, const char* kind, const char* label) {
@@ -110,6 +129,13 @@ int main() {
         std::uint32_t bits;
         std::memcpy(&bits, &value, sizeof(bits));
         Require(code == entry.code && bits == entry.bits && errno == 0, "float", entry.label);
+    }
+    for (const auto& entry : ConsoleCases) {
+        const float x = std::bit_cast<float>(entry.x);
+        float value = x;
+        errno = 0;
+        const short code = _ZNSt8__sce_v25_FExpEPffs_nid_postfix(&value, std::bit_cast<float>(entry.y), 0);
+        Require(code == entry.code && std::bit_cast<std::uint32_t>(value) == entry.bits && errno == 0, "console", entry.label);
     }
     return 0;
 }
