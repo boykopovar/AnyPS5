@@ -101,6 +101,8 @@ def main(arguments=None):
     end_of_trace = max((ts + dur for slices in trace.slices.values() for ts, dur, _, _, _ in slices), default=0.0)
     start_us = options.from_ms * 1000.0
     end_us = end_of_trace if options.to_ms is None else options.to_ms * 1000.0
+    if end_us < start_us:
+        raise ValueError("window end must be at or after its start")
     slices = window_slices(trace, start_us, end_us, options.thread)
     laid = layout(slices, start_us, end_us, options.width, options.max_slices)
     notes = [f"window {start_us / 1000.0:.3f} to {end_us / 1000.0:.3f} ms, {len(laid['threads'])} threads, {len(laid['bars'])} bars"]
