@@ -18,3 +18,4 @@
 #include "prx/libSceJsc/include/WtfStringSearchExports.hpp"
 #include "prx/libSceJsc/include/WtfUrlExports.hpp"
 #include "prx/libSceJsc/include/YarrFlagsExports.hpp"
+#include "prx/libSceJsc/include/ClassInfoExports.hpp"

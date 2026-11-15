@@ -301,7 +301,6 @@ int APS5_VABI _ZNK3JSC4Yarr17RegularExpression9searchRevERKN3WTF6StringE();
 int APS5_VABI _ZNK3JSC7JSValue14toThisSlowCaseEPNS_14JSGlobalObjectENS_8ECMAModeE();
 int APS5_VABI _ZNK3JSC8JSObject43anyObjectInChainMayInterceptIndexedAccessesERNS_2VME();
 int APS5_VABI _ZNK3JSC8Profiler8Database4toJSEPNS_14JSGlobalObjectE();
-int APS5_VABI _ZNK3JSC9ClassInfo35hasStaticSetterOrReadonlyPropertiesEv();
 int APS5_VABI _ZNK3WTF10StackTrace4dumpERNS_11PrintStreamEPKc();
 int APS5_VABI _ZNK3WTF10StringImpl10tryGetUtf8ENS_14ConversionModeE();
 int APS5_VABI _ZNK3WTF10StringImpl18tryGetUtf8ForRangeEjjNS_14ConversionModeE();

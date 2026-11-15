@@ -1893,10 +1893,6 @@ int APS5_VABI _ZNK3JSC8Profiler8Database4toJSEPNS_14JSGlobalObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3JSC9ClassInfo35hasStaticSetterOrReadonlyPropertiesEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3WTF10StackTrace4dumpERNS_11PrintStreamEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
