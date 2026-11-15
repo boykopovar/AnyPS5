@@ -358,15 +358,22 @@ int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* siz
 int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function) {
     if (!from.digest) return Fail(InputNotInitialized);
     RequireNoEngineOrKey(from, function);
+    if (&to == &from) return 1;
     void* reused = nullptr;
-    if (to.digest == from.digest) {
+    if (from.mdData && to.digest == from.digest && !(to.flags & FlagReuse)) {
         reused = to.mdData;
         to.flags |= FlagReuse;
     }
     CleanupContext(to, function);
     std::memcpy(&to, &from, sizeof(to));
+    to.mdData = nullptr;
+    to.pkeyContext = nullptr;
+    to.flags &= ~FlagReuse;
     if (from.mdData && to.digest->contextSize) {
-        if (to.digest->contextSize < 0) throw std::invalid_argument(std::string(function) + ": negative digest context size");
+        if (to.digest->contextSize < 0) {
+            free_nid_postfix(reused);
+            throw std::invalid_argument(std::string(function) + ": negative digest context size");
+        }
         const auto size = static_cast<std::size_t>(to.digest->contextSize);
         to.mdData = reused ? reused : malloc_nid_postfix(size);
         if (!to.mdData) {
@@ -375,6 +382,8 @@ int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function
             return Fail(MallocFailure);
         }
         std::memmove(to.mdData, from.mdData, size);
+    } else {
+        free_nid_postfix(reused);
     }
     to.update = from.update;
     if (from.pkeyContext) {

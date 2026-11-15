@@ -554,15 +554,17 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
     std::size_t count = 0;
     int status = 0;
     char* out = dst;
+    bool unwritable = false;
     auto emit = [&](const char* bytes, std::size_t length, std::size_t consumed) {
         if (out != nullptr) {
-            std::memcpy(out, bytes, length);
+            unwritable = unwritable || !GuestCopyOut_nid_no_patch(out, bytes, length);
             out += length;
         }
         count += length;
         src += consumed;
     };
     while (src < end) {
+        if (unwritable) return NP_UTIL_ERROR_INVALID_ARGUMENT;
         if (dst != nullptr && count + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
         const std::size_t remaining = static_cast<std::size_t>(end - src);
         if (src[0] != '\\' || remaining < 2) {
@@ -611,10 +613,12 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
         if (dst != nullptr && count + length > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
         emit(encoded, length, JSON_SURROGATE_PAIR_LENGTH);
     }
+    if (unwritable) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     ++count;
     if (dst != nullptr && count > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (dstLength != nullptr) *dstLength = count;
-    if (out != nullptr) *out = '\0';
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &count, sizeof(count))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const char terminator = '\0';
+    if (out != nullptr && !GuestCopyOut_nid_no_patch(out, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return status;
 }
 
