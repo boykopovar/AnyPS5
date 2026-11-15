@@ -185,11 +185,20 @@ int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClass
 int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* class_data) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr || class_data == nullptr) return PAD_ERROR_INVALID_ARG;
- std::memset(class_data, 0, sizeof(*class_data));
- if (SpecialHandle(handle)) return PAD_OK;
- class_data->deviceClass = PAD_DEVICE_CLASS_STANDARD;
- class_data->dataValid = data->connected;
- return PAD_OK;
+ PadDeviceClassData local{};
+ if (!SpecialHandle(handle)) {
+  local.deviceClass = PAD_DEVICE_CLASS_STANDARD;
+  bool connected = false;
+  const int savedErrno = errno;
+  const bool copiedIn = GuestCopyIn_nid_no_patch(&connected, &data->connected, sizeof(connected));
+  errno = savedErrno;
+  if (!copiedIn) return PAD_ERROR_INVALID_ARG;
+  local.dataValid = connected;
+ }
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(class_data, &local, sizeof(local));
+ errno = savedErrno;
+ return copied ? PAD_OK : PAD_ERROR_INVALID_ARG;
 }
 
 int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformation* info) {
@@ -465,7 +474,12 @@ int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
- Pad::SetLightBar(PortOf(handle), true, param->r, param->g, param->b);
+ PadLightBarParam local{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
+ Pad::SetLightBar(PortOf(handle), true, local.r, local.g, local.b);
  return PAD_OK;
 }
 
@@ -508,7 +522,12 @@ int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
- Pad::SetVibration(PortOf(handle), param->large_motor, param->small_motor);
+ PadVibrationParam local{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
+ Pad::SetVibration(PortOf(handle), local.large_motor, local.small_motor);
  return PAD_OK;
 }
 
@@ -543,7 +562,12 @@ int APS5_VABI scePadSetVolumeGain(int handle, const PadVolumeGain* gain) {
  if (gain == nullptr) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (SpecialHandle(handle)) return PAD_OK;
- Pad::SetVolumeGain(PortOf(handle), gain->speakerVolume, gain->headsetVolume, gain->micGain);
+ PadVolumeGain local{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&local, gain, sizeof(local));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
+ Pad::SetVolumeGain(PortOf(handle), local.speakerVolume, local.headsetVolume, local.micGain);
  return PAD_OK;
 }
 
@@ -786,7 +810,12 @@ int APS5_VABI scePadSetVibrationForce(std::int32_t handle, const PadVibrationPar
     if (SpecialHandle(handle)) return PAD_OK;
     const int port = PortOf(handle);
     if (port < 0) NotImplemented_nid_no_patch("scePadSetVibrationForce: a handle with no pad port");
-    Pad::SetVibration(port, param->large_motor, param->small_motor);
+    PadVibrationParam local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, param, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
+    Pad::SetVibration(port, local.large_motor, local.small_motor);
     return PAD_OK;
 }
 
