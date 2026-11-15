@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -34,5 +35,21 @@ int main() {
     Require(errno == 71);
     Require(sceHttpUriParse(&element, "http://example.com/", pool, nullptr, sizeof(pool)) == 0);
     Require(element.hostname != nullptr && std::string(element.hostname) == "example.com");
+
+    std::memset(&element, 0xAB, sizeof(element));
+    std::memset(pool, 0, sizeof(pool));
+    errno = 71;
+    Require(sceHttpUriCopy(&element, reinterpret_cast<const SceHttpUriElement*>(0x10), pool, sizeof(pool), nullptr) == invalidUrl);
+    Require(errno == 71);
+
+    SceHttpUriElement source{};
+    source.hostname = const_cast<char*>("example.com");
+    source.port = 8080;
+    Require(sceHttpUriCopy(&element, &source, pool, sizeof(pool), nullptr) == 0);
+    Require(std::string(element.hostname) == "example.com" && element.port == 8080);
+
+    source.hostname = reinterpret_cast<char*>(0x10);
+    Require(sceHttpUriCopy(&element, &source, pool, sizeof(pool), nullptr) == invalidUrl);
+
     return 0;
 }
