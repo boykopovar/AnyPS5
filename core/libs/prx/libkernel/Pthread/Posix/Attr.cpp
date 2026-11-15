@@ -33,10 +33,13 @@ int APS5_VABI pthread_attr_destroy_nid_postfix(PthreadAttr* attr) {
 }
 
 int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr) {
-    if (!thread || !Valid(attr)) return PosixThread::GUEST_EINVAL;
+    if (!thread || !attr) return PosixThread::GUEST_EINVAL;
+    PthreadAttr handle = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return PosixThread::GUEST_EFAULT;
+    if (!handle) return PosixThread::GUEST_EINVAL;
     const auto live = LockLiveGuestThread(thread);
     if (!live) return PosixThread::GUEST_ESRCH;
-    auto* p = *attr;
+    auto* p = handle;
     p->_stacksize = thread->stackSize;
     p->stackAddress = thread->stackAddress;
     p->_detachstate = thread->_detached ? 1 : 0;

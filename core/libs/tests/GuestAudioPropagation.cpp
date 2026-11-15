@@ -226,6 +226,12 @@ int main() {
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemQueryMemory(&probeOptions, &probeMemory); }, "unknown GPU memory query returned a size");
 
     AudioPropagationHandle system = 0;
+    errno = 72;
+    Require(sceAudioPropagationSystemCreate(reinterpret_cast<const AudioPropagation::SystemOptions*>(0x10), &memory, &system) == AudioPropagation::ErrorNullPointer, "create with unreadable options");
+    Require(errno == 72, "errno preserved for unreadable create options");
+    errno = 72;
+    Require(sceAudioPropagationSystemCreate(&options, reinterpret_cast<const AudioPropagationSystemMemory*>(0x10), &system) == AudioPropagation::ErrorNullPointer, "create with unreadable memory");
+    Require(errno == 72, "errno preserved for unreadable create memory");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &system); }, "create without cpu memory");
     memory.p_cpu_mem = arena + 1;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &system); }, "misaligned cpu memory");
@@ -250,6 +256,7 @@ int main() {
     errno = 71;
     Require(sceAudioPropagationSystemQueryInfo(system, reinterpret_cast<AudioPropagation::SystemInfo*>(0x10), sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted unmapped output");
     Require(errno == 71, "system query info preserved errno");
+    Require(sceAudioPropagationRoomCreate(system, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "room create accepted unmapped output");
     Require(sceAudioPropagationSystemQueryInfo(system, nullptr, sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted null output");
     Require(sceAudioPropagationSystemUnlock(system) == AudioPropagation::ErrorInvalidArgument, "unbalanced system unlock was accepted");
     Require(sceAudioPropagationSystemLock(system) == 0, "system lock failed");
@@ -267,6 +274,7 @@ int main() {
     Require(sceAudioPropagationSystemEnumHandles(nullptr, 1) == AudioPropagation::ErrorInvalidArgument, "null handle array with capacity");
     AudioPropagationHandle enumerated[2]{};
     Require(sceAudioPropagationSystemEnumHandles(enumerated, 1) == 1 && enumerated[0] == system, "single system enumeration");
+    Require(sceAudioPropagationSystemEnumHandles(reinterpret_cast<AudioPropagationHandle*>(0x10), 1) == AudioPropagation::ErrorNullPointer, "enum handles into an unwritable array");
     AudioPropagationHandle twice = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &twice); }, "second system in the same memory");
 
@@ -290,6 +298,8 @@ int main() {
     AudioPropagationHandle rooms[2]{};
     Require(sceAudioPropagationRoomCreate(system, &rooms[0]) == 0 && sceAudioPropagationRoomCreate(system, &rooms[1]) == 0, "room create failed");
     Require(rooms[0] != 0 && rooms[0] != rooms[1], "room handles are not distinct");
+    AudioPropagationHandle unreadablePortal = 0;
+    Require(sceAudioPropagationPortalCreate(system, reinterpret_cast<const AudioPropagation::PortalParams*>(0x10), &unreadablePortal) == AudioPropagation::ErrorNullPointer, "portal create with unreadable params");
     AudioPropagation::PortalParams portalParams{};
     portalParams.desc = {AudioPropagation::PortalParamsId, AudioPropagation::PortalParamsSize};
     portalParams.rooms[0] = rooms[0];
@@ -310,6 +320,18 @@ int main() {
     AudioPropagation::Attribute resets[13]{};
     Require(sceAudioPropagationResetAttributes(nullptr, 1) == AudioPropagation::ErrorNullPointer, "reset on a null array");
     Require(sceAudioPropagationResetAttributes(resets, 0) == AudioPropagation::ErrorInvalidArgument, "reset of zero attributes");
+    errno = 71;
+    Require(sceAudioPropagationResetAttributes(reinterpret_cast<AudioPropagation::Attribute*>(0x10), 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted an unreadable attribute array");
+    Require(errno == 71, "reset altered errno on an unreadable attribute array");
+    AudioPropagation::Attribute badValue{};
+    badValue.id = 0x10001;
+    badValue.value = reinterpret_cast<void*>(0x10);
+    badValue.valueSize = 16;
+    Require(sceAudioPropagationResetAttributes(&badValue, 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted unreadable nested room handles");
+    Require(errno == 71, "reset altered errno on unreadable nested room handles");
+    badValue.id = 0;
+    Require(sceAudioPropagationResetAttributes(&badValue, 1) == AudioPropagation::ErrorNullPointer, "reset accepted an unwritable attribute value");
+    Require(errno == 71, "reset altered errno on an unwritable attribute value");
     std::uint32_t resetValues[13][6]{};
     std::memset(resetValues, 0xff, sizeof(resetValues));
     constexpr std::uint32_t resetIds[13]{0, 1, 2, 3, 4, 5, 6, 7, 0x10001, 0x10002, 0x10003, 0x10004, 0x20000};
@@ -366,6 +388,9 @@ int main() {
 
     std::uint32_t count = 7;
     Require(sceAudioPropagationSourceGetAudioPathCount(source, &count) == 0 && count == AudioPropagation::MaxPaths, "source path pool size");
+    errno = 71;
+    Require(sceAudioPropagationSourceGetAudioPathCount(source, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable count output");
+    Require(errno == 71, "errno preserved on unwritable count output");
     AudioPropagationHandle path = 0;
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, &path) == 0 && path != 0, "path lookup immediately after source creation");
     AudioPropagationHandle repeated = 0;
@@ -425,6 +450,7 @@ int main() {
     Require(sceAudioPropagationSystemGetRays(system, rays, &count) == 0 && count == 0, "system requested rays");
     count = 7;
     Require(sceAudioPropagationSourceGetRays(source, rays, &count) == 0 && count == 0, "source requested rays");
+    Require(sceAudioPropagationSourceGetRays(source, rays, reinterpret_cast<std::uint32_t*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable source ray count");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceGetRays(source, rays, nullptr); }, "rays without count");
     Require(sceAudioPropagationSystemSetRays(system, rays, 0) == 0, "empty ray results failed");
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemSetRays(system, rays, 1); }, "unrequested ray results");
@@ -510,6 +536,7 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 0); }, "render without infos");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 3); }, "render exceeds source capacity");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, nullptr, 1); }, "render with null infos");
+    Require(sceAudioPropagationSourceRender(system, reinterpret_cast<AudioPropagation::RenderInfo*>(0x10), 1) == AudioPropagation::ErrorNullPointer, "render with unreadable infos");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system + 16, infos, 1); }, "render on an unknown system");
     infos[1].desc.id = AudioPropagation::RayId;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 2); }, "render info with a wrong descriptor id");
@@ -647,6 +674,9 @@ int main() {
     Require(sceAudioPropagationReportRegisterHandler(2, CaptureReport, &probe, &registration) == -4, "invalid report category");
     Require(sceAudioPropagationReportRegisterHandler(3, CaptureReport, &probe, &registration) == -4, "out of bounds report category");
     Require(sceAudioPropagationReportRegisterHandler(0, nullptr, &probe, &registration) == -2, "null report handler");
+    errno = 71;
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureReport, &probe, reinterpret_cast<AudioPropagation::ReportRegistration**>(0x10)) == -1, "unwritable report registration output");
+    Require(errno == 71, "errno preserved on unwritable report registration output");
     Require(sceAudioPropagationReportRegisterHandler(0, CaptureReport, &probe, &registration) == 0 && registration, "report handler registration");
     Require(sceAudioPropagationReportApi(0, 0x1234, -7, 9, "sceAudioPropagationTest", "%d %s %f", 42, "ok", 3.25) == 0, "report dispatch");
     Require(probe.calls == 1 && probe.fieldsMatch && probe.integerArgument == 42 && std::strcmp(probe.stringArgument, "ok") == 0 && probe.floatingArgument == 3.25, "report info or va_list capture");
