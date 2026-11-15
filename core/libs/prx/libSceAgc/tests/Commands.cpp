@@ -43,6 +43,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <string>
+#include <map>
 
 namespace {
 
@@ -1082,7 +1083,67 @@ void testDebugRaiseException() {
     check(result == 0, "debug exception did not return 0");
 }
 
+template <typename TRead>
+int readDefaultRange(TRead read, void* destination, std::uint32_t first, std::uint32_t last, std::uint32_t instance) {
+    if constexpr (requires { read(destination, first, last, instance); }) {
+        return read(destination, first, last, instance);
+    } else {
+        return read(destination, first);
+    }
+}
+
+std::map<std::uint32_t, std::uint32_t> expectedContextRegisters(std::uint32_t version) {
+    std::map<std::uint32_t, std::uint32_t> values;
+    for (const auto* root : {sceAgcGetRegisterDefaults2(version), sceAgcGetRegisterDefaults2Internal(version)}) {
+        ShaderRegister** blocks = nullptr;
+        std::uint32_t count = 0;
+        std::memcpy(&blocks, root, sizeof(blocks));
+        std::memcpy(&count, static_cast<const unsigned char*>(root) + 0x20, sizeof(count));
+        if (count != 0) check(blocks != nullptr && *blocks != nullptr, "context defaults have no source block");
+        for (std::uint32_t index = 0; index < count; ++index) values[(*blocks)[index].offset] = (*blocks)[index].value;
+    }
+    return values;
+}
+
+void testDefaultRangesBeforeInit() {
+    for (const auto first : {0u, 4u, 8u}) {
+        check(readDefaultRange(sceAgcGetDefaultCxStateFlat, nullptr, first, first == 8 ? 4u : first, 0xffffffffu) == 0, "empty context range inspected the ignored pointer or instance");
+    }
+    for (const auto instance : {0u, 1u}) {
+        std::array<std::uint32_t, 32> words;
+        words.fill(0xdeadbeefu);
+        check(readDefaultRange(sceAgcGetDefaultCxStateFlat, words.data(), 0, words.size(), instance) == 0, "uninitialized context range failed");
+        check(std::all_of(words.begin(), words.end(), [](auto word) { return word == 0xdeadbeefu; }), "uninitialized context range wrote output");
+    }
+}
+
+void testInitializedDefaultRanges() {
+    for (const auto instance : {0u, 1u}) {
+        const auto values = expectedContextRegisters(instance == 0 ? 8u : 13u);
+        check(!values.empty() && values.rbegin()->first < 1024, "context fixture exceeds the register range");
+        std::array<std::uint32_t, 1025> words;
+        words.fill(0xdeadbeefu);
+        check(readDefaultRange(sceAgcGetDefaultCxStateFlat, words.data(), 0, 1024, instance) == 0, "initialized context range failed");
+        for (std::uint32_t index = 0; index < 1024; ++index) {
+            const auto found = values.find(index);
+            const auto expected = index > values.rbegin()->first + 1 ? 0xdeadbeefu : found == values.end() ? 0u : found->second;
+            check(words[index] == expected, "context range mixed versions, register banks, holes or untouched tail");
+        }
+        check(words.back() == 0xdeadbeefu, "context range wrote past its output");
+        const auto before = words;
+        check(readDefaultRange(sceAgcGetDefaultCxStateFlat, words.data(), 9, 9, instance) == 0 && words == before, "empty initialized context range changed output");
+        check(readDefaultRange(sceAgcGetDefaultCxStateFlat, nullptr, 0, 1, instance) == static_cast<int>(0x80890001u), "null populated context destination was accepted");
+        std::array<std::uint32_t, 4> tail{0xdeadbeefu, 0xdeadbeefu, 0xdeadbeefu, 0xdeadbeefu};
+        check(readDefaultRange(sceAgcGetDefaultCxStateFlat, tail.data(), 0xfffffffeu, 0xffffffffu, instance) == 0, "high context range failed");
+        check(tail == std::array<std::uint32_t, 4>{0, 0xdeadbeefu, 0xdeadbeefu, 0xdeadbeefu}, "context reader filled beyond its terminal zero");
+    }
+    check(sceAgcInit(8) == 0 && sceAgcInit(13) == 0, "existing context default instances were not reused");
+    check(sceAgcInit(7) == static_cast<int>(0x8a6c0004u), "a third context default version was accepted");
+    expectFailure([] { readDefaultRange(sceAgcGetDefaultCxStateFlat, nullptr, 0, 1, 2); });
+}
+
 void testDefaults() {
+    testDefaultRangesBeforeInit();
     std::uint32_t state = 0x12345678;
     check(sceAgcInit_0090(&state, 8) == 0 && state == 0x12345678, "AGC initialization failed or modified caller state");
     check(sceAgcInit_0090(&state, 13) == 0 && state == 0x12345678, "AGC version 13 initialization changed caller state");
@@ -1108,21 +1169,7 @@ void testDefaults() {
     auto* internalDefaults = sceAgcGetRegisterDefaultsInternal();
     check(internalDefaults != nullptr && internalDefaults == Agc::Command::GetRegisterDefaults(0, true, __func__) && internalDefaults == sceAgcGetRegisterDefaults2Internal(0), "internal register defaults are not the baseline internal table");
     check(internalDefaults != sceAgcGetRegisterDefaults(), "internal register defaults returned the public table");
-    constexpr int kInvalidArgument = static_cast<int>(0x80890001u);
-    std::array<std::uint32_t, 512> flatCxBuffer{};
-    check(sceAgcGetDefaultCxStateFlat(nullptr, sizeof(flatCxBuffer)) == kInvalidArgument, "null destination was accepted");
-    check(sceAgcGetDefaultCxStateFlat(flatCxBuffer.data(), 0) == 0, "zero size copy failed");
-    check(sceAgcGetDefaultCxStateFlat(flatCxBuffer.data(), sizeof(flatCxBuffer)) == 0, "flat CX state default retrieval failed");
-    check(flatCxBuffer[0x001] == 0x11000100u, "flat CX state register 0x001 mismatch");
-    check(flatCxBuffer[0x007] == 0x0000ffffu, "flat CX state register 0x007 mismatch");
-    check(flatCxBuffer[0x12d] == 0x3f800000u, "flat CX state register 0x12d mismatch");
-    check(flatCxBuffer[0x1e0] == 0x20010001u, "flat CX state register 0x1e0 mismatch");
-    std::array<std::uint32_t, 513> overBuffer{};
-    overBuffer[512] = 0x12345678u;
-    check(sceAgcGetDefaultCxStateFlat(overBuffer.data(), sizeof(overBuffer)) == 0, "oversized copy failed");
-    check(overBuffer[512] == 0x12345678u, "oversized copy overflowed buffer");
-    check(Agc::Command::GetDefaultCxStateFlat(nullptr, sizeof(flatCxBuffer)) == kInvalidArgument, "null command destination was accepted");
-    check(Agc::Command::GetDefaultCxStateFlat(flatCxBuffer.data(), sizeof(flatCxBuffer)) == 0, "command flat CX state retrieval failed");
+    testInitializedDefaultRanges();
     expectFailure([] { Agc::Command::GetRegisterDefaults(14, false, __func__); });
     expectFailure([] { Agc::Command::GetRegisterDefaults(0xffffffffu, true, __func__); });
 }

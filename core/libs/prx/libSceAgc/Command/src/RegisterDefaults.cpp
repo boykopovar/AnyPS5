@@ -1,11 +1,14 @@
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
+#include <limits>
 #include <vector>
 
 namespace Agc::Command {
@@ -54,32 +57,14 @@ struct Storage {
 std::mutex defaultsMutex;
 std::array<std::array<std::array<Storage, 14>, 2>, 2> storage;
 
-struct AgcContextState {
-    std::uint32_t data[512];
+struct DefaultContext {
+    std::array<ShaderRegister, 1024> registers{};
+    std::uint32_t count = 0;
+    std::uint32_t version = 0;
 };
 
-static_assert(sizeof(AgcContextState) == 2048);
-
 std::mutex defaultStateMutex;
-AgcContextState defaultState{};
-bool defaultStateInitialized = false;
-
-void InitDefaultCxState() {
-    std::memset(&defaultState, 0, sizeof(defaultState));
-    const auto* source = agcPublicRegDefaultsByVersion[8];
-    for (std::size_t bank = 0; bank < 4; ++bank) {
-        const auto& b = source->banks[bank];
-        if (b.registers == nullptr) continue;
-        for (std::uint32_t r = 0; r < b.registerCount; ++r) {
-            const auto offset = b.registers[r].offset;
-            const auto value = b.registers[r].value;
-            if (offset < 512) {
-                defaultState.data[offset] = value;
-            }
-        }
-    }
-    defaultStateInitialized = true;
-}
+std::array<DefaultContext, 2> defaultContexts;
 
 }
 
@@ -129,15 +114,61 @@ void* GetRegisterDefaults(std::uint32_t version, bool internal, const char* func
     return &destination.defaults;
 }
 
-int GetDefaultCxStateFlat(void* destination, std::uint32_t size) {
-    if (destination == nullptr) return static_cast<int>(0x80890001);
+int InitializeDefaultCxState(std::uint32_t version) {
+    Require(version < 14, __func__, "unsupported context defaults version");
     std::lock_guard lock(defaultStateMutex);
-    if (!defaultStateInitialized) {
-        InitDefaultCxState();
+    for (const auto& context : defaultContexts) {
+        if (context.version == version) return 0;
     }
-    const auto copyBytes = std::min(size, static_cast<std::uint32_t>(sizeof(AgcContextState)));
-    std::memcpy(destination, defaultState.data, copyBytes);
+    auto slot = std::find_if(defaultContexts.begin(), defaultContexts.end(), [](const auto& context) { return context.version == 0; });
+    if (slot == defaultContexts.end()) return static_cast<int>(0x8a6c0004u);
+    DefaultContext next;
+    next.registers.fill({0xffffffffu, 0});
+    for (const auto* source : {agcPublicRegDefaultsByVersion[version], agcInternalRegDefaultsByVersion[version]}) {
+        const auto& bank = source->banks[0];
+        Require(bank.registerCount == 0 || bank.registers != nullptr, __func__, "missing context register defaults");
+        for (std::uint32_t index = 0; index < bank.registerCount; ++index) {
+            const auto& entry = bank.registers[index];
+            Require(entry.offset < next.registers.size(), __func__, "context register default exceeds hardware range");
+            next.registers[entry.offset] = entry;
+        }
+    }
+    std::sort(next.registers.begin(), next.registers.end(), [](const auto& left, const auto& right) { return left.offset < right.offset; });
+    const auto end = std::find_if(next.registers.begin(), next.registers.end(), [](const auto& entry) { return entry.offset == 0xffffffffu; });
+    next.count = static_cast<std::uint32_t>(end - next.registers.begin());
+    if (sceKernelIsTrinityMode() && (version < 11 || version == 12)) {
+        const auto found = std::find_if(next.registers.begin(), end, [](const auto& entry) { return entry.offset == 0x212u; });
+        Require(found != end, __func__, "missing Trinity context register default");
+        found->value = 0x2400u;
+    }
+    next.version = version;
+    *slot = next;
     return 0;
+}
+
+int CopyDefaultCxStateRange(void* destination, std::uint32_t first, std::uint32_t last, std::span<const ShaderRegister> registers) {
+    if (first >= last || registers.empty()) return 0;
+    constexpr int InvalidArgument = static_cast<int>(0x80890001u);
+    if (destination == nullptr) return InvalidArgument;
+    auto next = std::lower_bound(registers.begin(), registers.end(), first, [](const auto& entry, auto offset) { return entry.offset < offset; });
+    auto output = reinterpret_cast<std::uintptr_t>(destination);
+    for (auto offset = first; offset < last; ++offset) {
+        std::uint32_t value = 0;
+        const bool finished = next == registers.end();
+        if (!finished && next->offset == offset) value = (next++)->value;
+        if (output > std::numeric_limits<std::uintptr_t>::max() - sizeof(value) || !GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(output), &value, sizeof(value))) return InvalidArgument;
+        if (finished) break;
+        output += sizeof(value);
+    }
+    return 0;
+}
+
+int GetDefaultCxStateFlat(void* destination, std::uint32_t first, std::uint32_t last, std::uint32_t instance) {
+    if (first >= last) return 0;
+    std::lock_guard lock(defaultStateMutex);
+    Require(instance < defaultContexts.size(), __func__, "invalid context defaults instance");
+    const auto& context = defaultContexts[instance];
+    return CopyDefaultCxStateRange(destination, first, last, {context.registers.data(), context.count});
 }
 
 }
