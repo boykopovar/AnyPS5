@@ -5,6 +5,8 @@
 #include <cstdint>
 #include "prx/libSceCamera/libSceCamera.hpp"
 #include "prx/libSceCamera/include/Camera.hpp"
+#include "prx/libc/include/General.hpp"
+#include <cerrno>
 
 namespace {
 
@@ -86,9 +88,14 @@ int APS5_VABI sceCameraGetFrameData(std::int32_t handle, CameraFrameData* frameD
 }
 
 int APS5_VABI sceCameraIsValidFrameData(std::int32_t handle, const CameraFrameData* frameData) {
-    if (handle < 1 || !frameData || frameData->sizeThis > MAX_FRAME_DATA_SIZE) return SCE_CAMERA_ERROR_PARAM;
+    if (handle < 1 || !frameData) return SCE_CAMERA_ERROR_PARAM;
+    CameraFrameData localData{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localData, frameData, sizeof(localData));
+    errno = savedErrno;
+    if (!copied || localData.sizeThis > MAX_FRAME_DATA_SIZE) return SCE_CAMERA_ERROR_PARAM;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
-    return frameData->status[0] == 1 && frameData->status[1] == 1;
+    return localData.status[0] == 1 && localData.status[1] == 1;
 }
 
 }

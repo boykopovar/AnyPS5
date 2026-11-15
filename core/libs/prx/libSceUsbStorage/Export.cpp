@@ -276,8 +276,9 @@ Map MapDirectory(Device& device, std::uint32_t slot, const char* directory, cons
     const auto names = DirectoryNames(directory, function);
     auto path = MountPoint(slot);
     for (const auto& name : names) path += "/" + name;
+    const auto host = HostDirectory(device, names);
     std::error_code error;
-    if (!std::filesystem::is_directory(HostDirectory(device, names), error)) {
+    if (!std::filesystem::is_directory(host, error)) {
         throw std::runtime_error(std::string(function) + ": mapping a directory the device does not hold is not implemented");
     }
     if (path.size() >= UsbStorage::MountPointSize) throw std::runtime_error(std::string(function) + ": a mount point longer than 127 bytes is not implemented");
@@ -286,8 +287,11 @@ Map MapDirectory(Device& device, std::uint32_t slot, const char* directory, cons
         if (!canonical.empty()) canonical += '/';
         canonical += name;
     }
-    if (std::any_of(device.maps.begin(), device.maps.end(), [&](const auto& map) { return map.directory == canonical; })) {
-        throw std::runtime_error(std::string(function) + ": mapping a mapped directory again is not implemented");
+    for (const auto& map : device.maps) {
+        std::error_code compared;
+        if (map.directory == canonical || std::filesystem::equivalent(host, HostDirectory(device, DirectoryNames(map.directory.c_str(), function)), compared)) {
+            throw std::runtime_error(std::string(function) + ": mapping a mapped directory again is not implemented");
+        }
     }
     device.maps.push_back({canonical, path});
     return {std::move(canonical), std::move(path)};
