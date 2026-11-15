@@ -2,12 +2,16 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -424,11 +428,180 @@ void gcnTilingTests() {
     }
 }
 
+bool sameMip(const TileMipLayout& a, const TileMipLayout& b) {
+    return a.tiledOffset == b.tiledOffset && a.tiledSize == b.tiledSize && a.linearOffset == b.linearOffset && a.linearSize == b.linearSize && a.width == b.width && a.height == b.height && a.blocksPerRow == b.blocksPerRow && a.pitchBytes == b.pitchBytes && a.tail == b.tail && a.tailX == b.tailX && a.tailY == b.tailY && a.gcnMicroTiled == b.gcnMicroTiled && a.gcnSplitStride == b.gcnSplitStride;
+}
+
+template<typename TAction>
+std::string failure(TAction action) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return std::string("rejected: ") + error.what();
+    }
+    return {};
+}
+
+TileMipLayout sentinelMip() {
+    TileMipLayout mip{};
+    mip.tiledOffset = 0x5a5a5a5a5a5a5a5aull;
+    mip.tiledSize = 0xa5a5a5a5a5a5a5a5ull;
+    mip.width = 0xdeadbeefu;
+    mip.gcnSplitStride = 0x1234u;
+    return mip;
+}
+
+struct SizeOnlyCounts {
+    std::size_t layouts = 0;
+    std::size_t layoutRejections = 0;
+    std::size_t sizeOnly = 0;
+    std::size_t described = 0;
+    std::size_t rejected = 0;
+    std::size_t switched = 0;
+};
+
+void compareMipLayoutInto(TextureTileMode mode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, std::uint32_t linearPitch, SizeOnlyCounts& counts) {
+    std::vector<TileMipLayout> full;
+    const auto fullError = failure([&] { full = ComputeMipLayout(mode, format, width, height, mipCount, linearPitch); });
+    MipLayoutStorage storage;
+    storage.fill(sentinelMip());
+    std::span<const TileMipLayout> into;
+    const auto intoError = failure([&] { into = ComputeMipLayoutInto(storage, mode, format, width, height, mipCount, linearPitch); });
+    Require(intoError == fullError, "ComputeMipLayoutInto rejects unlike ComputeMipLayout: '" + intoError + "' / '" + fullError + "'");
+    if (!fullError.empty()) {
+        ++counts.layoutRejections;
+        return;
+    }
+    Require(into.data() == storage.data() && into.size() == full.size() && std::equal(into.begin(), into.end(), full.begin(), sameMip), "ComputeMipLayoutInto differs from ComputeMipLayout");
+    Require(std::all_of(storage.begin() + static_cast<std::ptrdiff_t>(into.size()), storage.end(), [](const TileMipLayout& mip) { return sameMip(mip, sentinelMip()); }), "ComputeMipLayoutInto wrote past its mip count");
+    ++counts.layouts;
+}
+
+void compareSurfaceBytes(const GuestTextureResource& resource, bool checkSwitch, SizeOnlyCounts& counts) {
+    std::uint64_t expected = 0;
+    const auto expectedError = failure([&] { expected = DescribeSurface(resource).guestBytes; });
+    std::uint64_t bytes = 0;
+    const auto error = failure([&] { bytes = DescribeSurfaceGuestBytes(resource); });
+    Require(error == expectedError, "DescribeSurfaceGuestBytes rejects unlike DescribeSurface: '" + error + "' / '" + expectedError + "'");
+    Require(bytes == expected, "DescribeSurfaceGuestBytes differs from DescribeSurface: " + std::to_string(bytes) + " / " + std::to_string(expected));
+    if (checkSwitch) {
+        for (const auto set : {true, false}) {
+            RuntimeSwitches::Assign(RuntimeSwitch::NoSizeOnlySurfaceBytes, set);
+            std::uint64_t switched = 0;
+            Require(failure([&] { switched = SurfaceGuestBytes(resource); }) == expectedError && switched == expected, "SurfaceGuestBytes differs from DescribeSurface");
+        }
+        ++counts.switched;
+    }
+    const bool multisampled = resource.samples != 1u && resource.tileMode != TextureTileMode::kLinear;
+    const bool thin = resource.gcnPitch == 0 && !multisampled && resource.dimension != TextureDimension::k3D && (resource.dimension != TextureDimension::k2DMsaa || resource.tileMode == TextureTileMode::kLinear);
+    if (!expectedError.empty()) ++counts.rejected;
+    else ++(thin ? counts.sizeOnly : counts.described);
+}
+
+GuestTextureResource sweptResource(TextureTileMode mode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, TextureDimension dimension, std::uint32_t lastLayer, std::uint32_t samples, bool pitched) {
+    GuestTextureResource resource{};
+    resource.width = width;
+    resource.height = height;
+    resource.depthOrLastArray = lastLayer;
+    resource.mipCount = mipCount;
+    resource.allocatedMipCount = mipCount;
+    resource.lastLevel = mipCount - 1u;
+    resource.tileMode = mode;
+    resource.dimension = dimension;
+    resource.format = format;
+    resource.samples = samples;
+    if (pitched && IsGcnTiled(mode)) resource.gcnPitch = (width + 63u) & ~63u;
+    else if (pitched) resource.linearPitch = width + 13u;
+    return resource;
+}
+
+void sizeOnlySurfaceTests() {
+    constexpr TextureTileMode modes[] = {TextureTileMode::kLinear, TextureTileMode::kStandard256B, TextureTileMode::kStandard4KB, TextureTileMode::kStandard64KB, TextureTileMode::kZ64KBX, TextureTileMode::kS64KBX, TextureTileMode::kD64KBX, TextureTileMode::kR64KBX, TextureTileMode::kD256B, TextureTileMode::kD4KB, TextureTileMode::kD64KB, TextureTileMode::kS64KBT, TextureTileMode::kD64KBT, TextureTileMode::kS4KBX, TextureTileMode::kD4KBX};
+    constexpr TextureTileMode pitchModes[] = {TextureTileMode::kLinear, TextureTileMode::kR64KBX, TextureTileMode::kGcnThin1D, TextureTileMode::kGcnDisplay2D};
+    constexpr TextureTileMode edgeModes[] = {TextureTileMode::kLinear, TextureTileMode::kStandard64KB, TextureTileMode::kR64KBX, TextureTileMode::kD4KBX, TextureTileMode::kGcnThin1D};
+    constexpr std::pair<TextureDimension, std::uint32_t> dimensionLayers[] = {{TextureDimension::k1D, 0u}, {TextureDimension::k2D, 0u}, {TextureDimension::k2DArray, 5u}, {TextureDimension::kCube, 5u}, {TextureDimension::k1DArray, 5u}, {TextureDimension::k3D, 5u}, {TextureDimension::k2DMsaa, 0u}};
+    constexpr std::uint32_t widths[] = {1, 333, 1920};
+    constexpr std::uint32_t heights[] = {5, 1080};
+    constexpr std::uint32_t mipCounts[] = {1, 5, 16};
+    constexpr std::uint32_t sampleCounts[] = {1, 4, 8};
+    constexpr std::array<std::uint32_t, 4> edges[] = {{0u, 5u, 1u, 1u}, {7u, 0u, 1u, 1u}, {7u, 5u, 0u, 1u}, {7u, 5u, 17u, 1u}, {7u, 5u, 0xffffffffu, 1u}, {64u, 64u, 1u, 2u}, {64u, 64u, 3u, 8u}, {16384u, 16384u, 1u, 8u}, {16385u, 64u, 1u, 2u}};
+    const auto noSizeOnly = RuntimeSwitches::Set(RuntimeSwitch::NoSizeOnlySurfaceBytes);
+    std::vector<std::uint32_t> formats;
+    std::vector<std::array<std::uint32_t, 3>> shapes;
+    std::vector<std::uint32_t> shapeFormats;
+    for (std::uint32_t format = 0; format < 256; ++format) {
+        std::array<std::uint32_t, 3> shape{};
+        if (!failure([&] { shape = {BytesPerElement(format), BlockWidth(format), BlockHeight(format)}; }).empty()) continue;
+        formats.push_back(format);
+        if (std::find(shapes.begin(), shapes.end(), shape) != shapes.end()) continue;
+        shapes.push_back(shape);
+        shapeFormats.push_back(format);
+    }
+    SizeOnlyCounts counts;
+    std::size_t index = 0;
+    for (const auto format : shapeFormats) {
+        for (const auto mode : modes) {
+            for (const auto width : widths) {
+                for (const auto height : heights) {
+                    for (const auto mipCount : mipCounts) {
+                        compareMipLayoutInto(mode, format, width, height, mipCount, 0u, counts);
+                        for (const auto& [dimension, lastLayer] : dimensionLayers) compareSurfaceBytes(sweptResource(mode, format, width, height, mipCount, dimension, lastLayer, 1u, false), index++ % 5u == 0u, counts);
+                    }
+                }
+            }
+        }
+        for (const auto mode : pitchModes) {
+            for (const auto mipCount : {1u, 17u}) {
+                for (const auto linearPitch : {0u, 333u, 346u}) compareMipLayoutInto(mode, format, 333u, 5u, mipCount, linearPitch, counts);
+                for (const auto& [dimension, lastLayer] : dimensionLayers) {
+                    for (const auto samples : sampleCounts) {
+                        for (const auto pitched : {false, true}) compareSurfaceBytes(sweptResource(mode, format, 333u, 5u, mipCount, dimension, lastLayer, samples, pitched), index++ % 3u == 0u, counts);
+                    }
+                }
+            }
+        }
+        for (const auto mode : edgeModes) {
+            for (const auto& [width, height, mipCount, samples] : edges) {
+                compareMipLayoutInto(mode, format, width, height, mipCount, 0u, counts);
+                for (const auto& [dimension, lastLayer] : dimensionLayers) compareSurfaceBytes(sweptResource(mode, format, width, height, mipCount, dimension, lastLayer, samples, false), index++ % 3u == 0u, counts);
+            }
+        }
+    }
+    for (const auto format : formats) {
+        for (const auto mode : modes) {
+            for (const auto mipCount : {1u, 11u}) {
+                compareMipLayoutInto(mode, format, 333u, 1080u, mipCount, 0u, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, mipCount, TextureDimension::k2D, 0u, 1u, false), index++ % 3u == 0u, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, mipCount, TextureDimension::k2DArray, 5u, 1u, false), false, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, mipCount, TextureDimension::k3D, 5u, 1u, false), false, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, 1u, TextureDimension::k2DMsaa, 0u, 4u, false), false, counts);
+            }
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::NoSizeOnlySurfaceBytes, noSizeOnly);
+    Require(formats.size() > 60 && shapes.size() > 6 && counts.layouts > 3000 && counts.layoutRejections > 500 && counts.sizeOnly > 10000 && counts.described > 2500 && counts.rejected > 5000 && counts.switched > 4000, "the size-only surface sweep covered too little");
+
+    GuestTextureResource array{};
+    array.width = 4;
+    array.height = 4;
+    array.mipCount = 2;
+    array.allocatedMipCount = 2;
+    array.lastLevel = 1;
+    array.tileMode = TextureTileMode::kLinear;
+    array.dimension = TextureDimension::k2DArray;
+    array.format = 1;
+    array.depthOrLastArray = 5;
+    Require(DescribeSurfaceGuestBytes(array) == 1536u * 6u && DescribeSurface(array).guestBytes == 1536u * 6u, "a six-layer linear 4x4 chain of two levels holds six 1536-byte slices");
+    array.mipCount = 17;
+    reject([&] { DescribeSurfaceGuestBytes(array); }, "texture mip count is out of range");
+}
+
 }
 
 void RunTextureTilingTests() {
     gcnTilingTests();
     gcnThickTilingTests();
+    sizeOnlySurfaceTests();
     {
         const auto mips = ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 2);
         Require(mips.size() == 2, "linear mip chain must contain the requested mip count");

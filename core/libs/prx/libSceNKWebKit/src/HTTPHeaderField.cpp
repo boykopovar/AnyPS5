@@ -1,3 +1,4 @@
+// Derived from Source/WebCore/loader/HTTPHeaderField.cpp@78802c1a045dfa8b124c52833f908f3e7f4edd8e
 /*
  * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
@@ -26,14 +27,18 @@
  */
 
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
 
 namespace {
 
 using NKWebKit::WebCoreAbi::HTTPHeaderField;
+using NKWebKit::WebCoreAbi::OptionalHTTPHeaderField;
 using NKWebKit::WtfAbi::String;
+using NKWebKit::WtfAbi::StringImpl;
 
 HTTPHeaderField& Checked(HTTPHeaderField* self) {
     if (!self) throw std::invalid_argument("null WebCore::HTTPHeaderField");
@@ -65,6 +70,162 @@ void ConstructCopy(HTTPHeaderField* self, const HTTPHeaderField* other) {
     String value(source.value);
     field.name.impl = std::exchange(name.impl, nullptr);
     field.value.impl = std::exchange(value.impl, nullptr);
+}
+
+struct Characters {
+    const StringImpl* impl;
+    unsigned start;
+    unsigned length;
+
+    char16_t operator[](unsigned index) const {
+        if (impl->hashAndFlags & 4) return static_cast<const unsigned char*>(impl->data)[start + index];
+        return static_cast<const char16_t*>(impl->data)[start + index];
+    }
+};
+
+bool IsASCIIAlphanumeric(char16_t c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+bool IsTokenCharacter(char16_t c) {
+    return IsASCIIAlphanumeric(c)
+        || c == '!' || c == '#' || c == '$'
+        || c == '%' || c == '&' || c == '\''
+        || c == '*' || c == '+' || c == '-'
+        || c == '.' || c == '^' || c == '_'
+        || c == '`' || c == '|' || c == '~';
+}
+
+bool IsDelimiter(char16_t c) {
+    return c == '(' || c == ')' || c == ','
+        || c == '/' || c == ':' || c == ';'
+        || c == '<' || c == '=' || c == '>'
+        || c == '?' || c == '@' || c == '['
+        || c == '\\' || c == ']' || c == '{'
+        || c == '}' || c == '"';
+}
+
+bool IsWhitespace(char16_t c) {
+    return c == ' ' || c == '\t';
+}
+
+bool IsInRange(char16_t c, char16_t min, char16_t max) {
+    return c >= min && c <= max;
+}
+
+bool IsOBSText(char16_t c) {
+    return IsInRange(c, 0x80, 0xFF);
+}
+
+bool IsQuotedTextCharacter(char16_t c) {
+    return IsWhitespace(c) || c == 0x21 || IsInRange(c, 0x23, 0x5B) || IsInRange(c, 0x5D, 0x7E) || IsOBSText(c);
+}
+
+bool IsQuotedPairSecondOctet(char16_t c) {
+    return IsWhitespace(c) || IsTokenCharacter(c) || IsDelimiter(c) || IsOBSText(c);
+}
+
+bool IsCommentText(char16_t c) {
+    return IsWhitespace(c) || IsInRange(c, 0x21, 0x27) || IsInRange(c, 0x2A, 0x5B) || IsInRange(c, 0x5D, 0x7E) || IsOBSText(c);
+}
+
+bool IsValidName(const Characters& name) {
+    if (!name.length) return false;
+    for (unsigned i = 0; i < name.length; ++i) {
+        if (!IsTokenCharacter(name[i])) return false;
+    }
+    return true;
+}
+
+bool IsValidValue(const Characters& value) {
+    enum class State { OptionalWhitespace, Token, QuotedString, Comment };
+    State state = State::OptionalWhitespace;
+    std::size_t commentDepth = 0;
+    bool hadNonWhitespace = false;
+    for (unsigned i = 0; i < value.length; ++i) {
+        char16_t c = value[i];
+        switch (state) {
+        case State::OptionalWhitespace:
+            if (IsWhitespace(c)) continue;
+            hadNonWhitespace = true;
+            if (IsTokenCharacter(c)) {
+                state = State::Token;
+                continue;
+            }
+            if (c == '"') {
+                state = State::QuotedString;
+                continue;
+            }
+            if (c == '(') {
+                ++commentDepth;
+                state = State::Comment;
+                continue;
+            }
+            return false;
+        case State::Token:
+            if (!IsTokenCharacter(c)) state = State::OptionalWhitespace;
+            continue;
+        case State::QuotedString:
+            if (c == '"') {
+                state = State::OptionalWhitespace;
+                continue;
+            }
+            if (c == '\\') {
+                if (++i == value.length || !IsQuotedPairSecondOctet(value[i])) return false;
+                continue;
+            }
+            if (!IsQuotedTextCharacter(c)) return false;
+            continue;
+        case State::Comment:
+            if (c == '(') {
+                ++commentDepth;
+                continue;
+            }
+            if (c == ')') {
+                if (!--commentDepth) state = State::OptionalWhitespace;
+                continue;
+            }
+            if (c == '\\') {
+                if (++i == value.length || !IsQuotedPairSecondOctet(value[i])) return false;
+                continue;
+            }
+            if (!IsCommentText(c)) return false;
+            continue;
+        }
+    }
+    return (state == State::OptionalWhitespace || state == State::Token) && hadNonWhitespace;
+}
+
+Characters StripWhitespace(const String& string) {
+    Characters characters{string.impl, 0, string.impl ? string.impl->length : 0};
+    while (characters.length && IsWhitespace(characters[0])) {
+        ++characters.start;
+        --characters.length;
+    }
+    while (characters.length && IsWhitespace(characters[characters.length - 1])) --characters.length;
+    return characters;
+}
+
+String TakeOrCopy(String& original, const Characters& stripped) {
+    if (stripped.length == original.impl->length) return String(std::move(original));
+    if (original.impl->hashAndFlags & 4)
+        return _ZN3WTF10StringImpl6createEPKhj(static_cast<const unsigned char*>(original.impl->data) + stripped.start, stripped.length);
+    return _ZN3WTF10StringImpl6createEPKDsj(static_cast<const char16_t*>(original.impl->data) + stripped.start, stripped.length);
+}
+
+OptionalHTTPHeaderField Create(String* unparsedName, String* unparsedValue) {
+    auto& nameString = Checked(unparsedName);
+    auto& valueString = Checked(unparsedValue);
+    auto strippedName = StripWhitespace(nameString);
+    auto strippedValue = StripWhitespace(valueString);
+    OptionalHTTPHeaderField result;
+    if (!IsValidName(strippedName) || !IsValidValue(strippedValue)) return result;
+    String name = TakeOrCopy(nameString, strippedName);
+    String value = TakeOrCopy(valueString, strippedValue);
+    result.field.name.impl = std::exchange(name.impl, nullptr);
+    result.field.value.impl = std::exchange(value.impl, nullptr);
+    result.hasValue = true;
+    return result;
 }
 
 void Destroy(HTTPHeaderField* self) {
@@ -109,6 +270,10 @@ HTTPHeaderField& APS5_VABI _ZN7WebCore15HTTPHeaderFieldaSERKS0_(HTTPHeaderField*
     String oldName(std::exchange(field.name.impl, std::exchange(name.impl, nullptr)));
     String oldValue(std::exchange(field.value.impl, std::exchange(value.impl, nullptr)));
     return field;
+}
+
+OptionalHTTPHeaderField APS5_VABI _ZN7WebCore15HTTPHeaderField6createEON3WTF6StringES3_(String* name, String* value) {
+    return Create(name, value);
 }
 
 const String& APS5_VABI _ZNK7WebCore15HTTPHeaderField4nameEv(const HTTPHeaderField* self) {
