@@ -34,4 +34,19 @@ int APS5_VABI sceLibcInternalCodecvtBaseEncoding_nid_no_patch(const void*) noexc
 }
 APS5_EXPORT("MwAySqTo+-M", sceLibcInternalCodecvtBaseEncoding_nid_no_patch);
 
+const char* APS5_VABI sceLibcInternalFutureErrorMap_nid_no_patch(int code) noexcept {
+    switch (code) {
+    case 1: return "broken promise";
+    case 2: return "future already retrieved";
+    case 3: return "promise already satisfied";
+    case 4: return "no state";
+    default: return nullptr;
+    }
+}
+APS5_EXPORT("0r8rbw2SFqk", sceLibcInternalFutureErrorMap_nid_no_patch);
+
+const char* APS5_VABI _ZSt22_Get_future_error_whati_nid_postfix(int code) noexcept {
+    return sceLibcInternalFutureErrorMap_nid_no_patch(code);
+}
+
 }

@@ -46,8 +46,8 @@ std::uint32_t APS5_VABI sceAgcDcbDmaDataGetSize() {
     return 28;
 }
 
-std::uint32_t* APS5_VABI sceAgcDcbAtomicMem(CommandBuffer* buf, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval) {
-    return Agc::Command::WriteAtomicMem(buf, atomicOp, command, cachePolicy, address, srcData, compareData, loopInterval, __func__);
+std::uint32_t* APS5_VABI sceAgcDcbAtomicMem(CommandBuffer* buf, std::uint8_t engine, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval) {
+    return Agc::Command::WriteAtomicMem(buf, engine, atomicOp, command, cachePolicy, reinterpret_cast<std::uintptr_t>(address), srcData, compareData, loopInterval, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbAtomicMemGetSize() {
