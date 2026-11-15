@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <cerrno>
 
 #include "NpUniversalDataSystem.hpp"
 #include "SceTypes.hpp"
@@ -86,7 +87,11 @@ int APS5_VABI sceNpUniversalDataSystemPostEvent(int context, int handle, const v
 int APS5_VABI sceNpUniversalDataSystemEventEstimateSize(const NpUniversalDataSystemEvent* event, size_t* size) {
     if (event == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT;
     if (size == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
-    *size = Uds::MessagePackSize(*event);
+    const size_t calculatedSize = Uds::MessagePackSize(*event);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(size, &calculatedSize, sizeof(calculatedSize));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
