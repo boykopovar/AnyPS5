@@ -2069,7 +2069,7 @@ ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t 
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
     if (state.TableMapAddressed()) {
         const auto value = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, EmitStageRingWordPointer(state, RuntimeAbi::RootItem::TableMap, index), spv::MemoryAccessAlignedMask, 4u);
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, EmitRootAddressReadOnlyWordPointer(state, RuntimeAbi::RootItem::TableMap, index), spv::MemoryAccessAlignedMask, 4u);
         return value;
     }
     const auto pointer = state.module.AllocateId();

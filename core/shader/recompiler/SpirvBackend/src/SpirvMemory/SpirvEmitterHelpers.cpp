@@ -498,6 +498,84 @@ void DefineOutputs(SpirvEmitterState& state) {
 
 namespace {
 
+std::uint32_t UniformWordsBlockType(SpirvEmitterState& state, std::uint32_t elementType, std::uint32_t stride, std::uint32_t count) {
+    const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, stride}}}, elementType, ConstantU32(state, count));
+    return state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+}
+
+std::vector<std::uint32_t> UniformConstantBufferWords(SpirvEmitterState& state, std::uint32_t count) {
+    std::vector<std::uint32_t> uniformWords(count, 0u);
+    if (!state.uniformConstantBuffers) return uniformWords;
+    std::vector<bool> eligible(count, true);
+    std::vector<std::uint32_t> end(count, 0u);
+    const auto& memory = state.program.Resources().memoryInfo;
+    for (const auto& block : state.program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            const auto op = inst->Opcode();
+            if (op != IrOpcode::ReadConstBuffer && BufferAccessOf(op) == BufferAccess::None) continue;
+            const auto index = inst->Flags<MemoryFlags>().index;
+            if (index >= memory.size()) continue;
+            const auto& info = memory[index];
+            if (info.gpuDescriptor || info.planningOnly || (info.kind != ResourceKind::Buffer && info.kind != ResourceKind::ScalarBuffer)) continue;
+            const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, info.resource);
+            if (element >= count) continue;
+            const auto* offset = inst->ArgumentCount() > 1u ? inst->Argument(1u) : nullptr;
+            if (op != IrOpcode::ReadConstBuffer || info.coherent || offset == nullptr || !offset->HasImmediate()) {
+                eligible[element] = false;
+                continue;
+            }
+            const auto byte = static_cast<std::uint64_t>(offset->ImmediateU32()) + info.offset;
+            end[element] = std::max(end[element], static_cast<std::uint32_t>(std::min<std::uint64_t>((byte & ~std::uint64_t{3u}) + 8u, 0xffffffffu)));
+        }
+    }
+    for (std::uint32_t element = 0; element < count; ++element) {
+        const auto bytes = static_cast<std::uint64_t>(end[element]) + RuntimeAbi::UniformViewAdjustmentLimit;
+        if (eligible[element] && end[element] != 0u && bytes <= RuntimeAbi::UniformConstantBufferBytes) uniformWords[element] = static_cast<std::uint32_t>((bytes + 3u) / 4u);
+    }
+    return uniformWords;
+}
+
+std::uint32_t DefinePushedBufferVariable(SpirvEmitterState& state, std::uint32_t pointee, std::uint32_t storage, std::uint32_t element, const std::string& name) {
+    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, pointee), storage);
+    state.module.AddName(variable, name.c_str());
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::PushedBufferSet);
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, element);
+    return variable;
+}
+
+PushedBufferVariables DefinePushedStorageBuffer(SpirvEmitterState& state, std::uint32_t element) {
+    const auto storage = [&](std::uint32_t type, const char* name) { return DefinePushedBufferVariable(state, type, spv::StorageClassStorageBuffer, element, std::string(name) + "_" + std::to_string(element)); };
+    const bool aliased = state.requirements.coherentBufferAlias || state.requirements.bufferU64View;
+    PushedBufferVariables variables;
+    variables.plain = storage(StorageBufferBlockType(state), "pushed_buffer");
+    variables.coherent = state.requirements.coherentBufferAlias ? storage(StorageBufferBlockType(state), "pushed_buffer_coherent") : 0u;
+    variables.u64 = state.requirements.bufferU64View ? storage(StorageBufferU64BlockType(state), "pushed_buffer_u64") : 0u;
+    for (const auto variable : {variables.plain, variables.coherent, variables.u64}) {
+        if (variable != 0u && aliased) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
+    }
+    if (state.requirements.coherentBuffers) {
+        state.module.AddAnnotation(spv::OpDecorate, variables.coherent != 0u ? variables.coherent : variables.plain, spv::DecorationCoherent);
+        if (variables.u64 != 0u) state.module.AddAnnotation(spv::OpDecorate, variables.u64, spv::DecorationCoherent);
+    }
+    return variables;
+}
+
+void DefinePushedBuffers(SpirvEmitterState& state, const IrBindingLayout& layout) {
+    state.addressedBuffers = true;
+    const auto count = layout.bufferAddressDwords / RuntimeAbi::BufferAddressWords;
+    const auto uniformWords = UniformConstantBufferWords(state, count);
+    for (std::uint32_t element = 0; element < count; ++element) {
+        PushedBufferVariables variables;
+        if (uniformWords[element] != 0u) {
+            const auto block = UniformWordsBlockType(state, TypeU32(state), 4u, uniformWords[element]);
+            variables.uniform = DefinePushedBufferVariable(state, block, spv::StorageClassUniform, element, "pushed_constant_buffer_" + std::to_string(element));
+        } else {
+            variables = DefinePushedStorageBuffer(state, element);
+        }
+        state.pushedBuffers.push_back(variables);
+    }
+}
+
 std::uint32_t defineHeapArray(SpirvEmitterState& state, std::uint32_t slotCount, std::uint32_t elementType, const char* name, std::uint32_t heapKind) {
     const auto type = state.module.Type(spv::OpTypeArray, elementType, slotCount);
     const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
@@ -537,71 +615,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         switch (binding.kind) {
         case DescriptorBindingKind::Buffers: {
             if (layout.bufferAddressDwords != 0u) {
-                state.addressedBuffers = true;
-                const auto count = layout.bufferAddressDwords / RuntimeAbi::BufferAddressWords;
-                const auto pushedBuffer = [&](std::uint32_t type, std::uint32_t element, const char* name) {
-                    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, type), spv::StorageClassStorageBuffer);
-                    state.module.AddName(variable, (std::string(name) + "_" + std::to_string(element)).c_str());
-                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::PushedBufferSet);
-                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, element);
-                    return variable;
-                };
-                const bool aliased = state.requirements.coherentBufferAlias || state.requirements.bufferU64View;
-                std::vector<std::uint32_t> uniformWords(count, 0u);
-                if (state.uniformConstantBuffers) {
-                    std::vector<bool> eligible(count, true);
-                    std::vector<std::uint32_t> end(count, 0u);
-                    const auto& memory = state.program.Resources().memoryInfo;
-                    for (const auto& block : state.program.Blocks()) {
-                        for (const IrValue* inst : block->Instructions()) {
-                            const auto op = inst->Opcode();
-                            if (op != IrOpcode::ReadConstBuffer && BufferAccessOf(op) == BufferAccess::None) continue;
-                            const auto index = inst->Flags<MemoryFlags>().index;
-                            if (index >= memory.size()) continue;
-                            const auto& info = memory[index];
-                            if (info.gpuDescriptor || info.planningOnly || (info.kind != ResourceKind::Buffer && info.kind != ResourceKind::ScalarBuffer)) continue;
-                            const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, info.resource);
-                            if (element >= count) continue;
-                            const auto* offset = inst->ArgumentCount() > 1u ? inst->Argument(1u) : nullptr;
-                            if (op != IrOpcode::ReadConstBuffer || info.coherent || offset == nullptr || !offset->HasImmediate()) {
-                                eligible[element] = false;
-                                continue;
-                            }
-                            const auto byte = static_cast<std::uint64_t>(offset->ImmediateU32()) + info.offset;
-                            end[element] = std::max(end[element], static_cast<std::uint32_t>(std::min<std::uint64_t>((byte & ~std::uint64_t{3u}) + 8u, 0xffffffffu)));
-                        }
-                    }
-                    for (std::uint32_t element = 0; element < count; ++element) {
-                        const auto bytes = static_cast<std::uint64_t>(end[element]) + RuntimeAbi::UniformViewAdjustmentLimit;
-                        if (eligible[element] && end[element] != 0u && bytes <= RuntimeAbi::UniformConstantBufferBytes) uniformWords[element] = static_cast<std::uint32_t>((bytes + 3u) / 4u);
-                    }
-                }
-                for (std::uint32_t element = 0; element < count; ++element) {
-                    if (uniformWords[element] != 0u) {
-                        const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, TypeU32(state), ConstantU32(state, uniformWords[element]));
-                        const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
-                        const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniform, block), spv::StorageClassUniform);
-                        state.module.AddName(variable, ("pushed_constant_buffer_" + std::to_string(element)).c_str());
-                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::PushedBufferSet);
-                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, element);
-                        state.pushedBufferUniformVariables.push_back(variable);
-                        state.pushedBufferVariables.push_back(0u);
-                        state.pushedBufferCoherentVariables.push_back(0u);
-                        state.pushedBufferU64Variables.push_back(0u);
-                        continue;
-                    }
-                    state.pushedBufferUniformVariables.push_back(0u);
-                    state.pushedBufferVariables.push_back(pushedBuffer(StorageBufferBlockType(state), element, "pushed_buffer"));
-                    state.pushedBufferCoherentVariables.push_back(state.requirements.coherentBufferAlias ? pushedBuffer(StorageBufferBlockType(state), element, "pushed_buffer_coherent") : 0u);
-                    state.pushedBufferU64Variables.push_back(state.requirements.bufferU64View ? pushedBuffer(StorageBufferU64BlockType(state), element, "pushed_buffer_u64") : 0u);
-                    for (const auto variable : {state.pushedBufferVariables.back(), state.pushedBufferCoherentVariables.back(), state.pushedBufferU64Variables.back()}) {
-                        if (variable != 0u && aliased) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
-                    }
-                    if (state.requirements.coherentBuffers) {
-                        state.module.AddAnnotation(spv::OpDecorate, state.pushedBufferCoherentVariables.back() != 0u ? state.pushedBufferCoherentVariables.back() : state.pushedBufferVariables.back(), spv::DecorationCoherent);
-                        if (state.pushedBufferU64Variables.back() != 0u) state.module.AddAnnotation(spv::OpDecorate, state.pushedBufferU64Variables.back(), spv::DecorationCoherent);
-                    }
-                }
+                DefinePushedBuffers(state, layout);
                 break;
             }
             state.storageBufferVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers");
@@ -638,16 +652,12 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 state.shaderDataStorageVariable = Define(StorageBufferBlockType(state), "shader_data");
                 state.module.AddAnnotation(spv::OpDecorate, state.shaderDataStorageVariable, spv::DecorationNonWritable);
             } else if (layout.ShaderDataDwords() != 0u && layout.ShaderDataDwords() <= state.heapDataUniformDwords) {
-                const auto vectors = (layout.ShaderDataDwords() + 3u) / 4u;
-                const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 16u}}}, TypeU32Vector(state, 4), ConstantU32(state, vectors));
-                const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+                const auto block = UniformWordsBlockType(state, TypeU32Vector(state, 4), 16u, (layout.ShaderDataDwords() + 3u) / 4u);
                 state.shaderDataUniformVariable = Define(block, "shader_data", spv::StorageClassUniform);
                 state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::ShaderData);
             }
             if (layout.UsesDataAddress() && SplitUserData(state) && layout.userDataRegisters.size() <= state.heapDataUniformDwords) {
-                const auto vectors = static_cast<std::uint32_t>((layout.userDataRegisters.size() + 3u) / 4u);
-                const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 16u}}}, TypeU32Vector(state, 4), ConstantU32(state, vectors));
-                const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+                const auto block = UniformWordsBlockType(state, TypeU32Vector(state, 4), 16u, static_cast<std::uint32_t>((layout.userDataRegisters.size() + 3u) / 4u));
                 state.userDataUniformVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniform, block), spv::StorageClassUniform);
                 state.module.AddName(state.userDataUniformVariable, "user_data");
                 state.module.AddAnnotation(spv::OpDecorate, state.userDataUniformVariable, spv::DecorationDescriptorSet, RuntimeAbi::GpuDataSet);

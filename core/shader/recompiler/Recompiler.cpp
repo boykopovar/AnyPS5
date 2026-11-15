@@ -474,7 +474,19 @@ struct HeapTemplate {
     std::vector<DescriptorValue> images;
     std::vector<DescriptorValue> samplers;
     std::uint64_t bytes = 0;
+    bool tableRoles = false;
 };
+
+bool HasTableRoles(const UsedBindingPlan& used) {
+    return used.plan != nullptr && std::ranges::any_of(used.plan->bindings, [](const PreparedDescriptorBinding& entry) {
+        const auto role = entry.descriptor.role;
+        return role == DescriptorRole::ImageTable || role == DescriptorRole::ImageStorageTable || role == DescriptorRole::SamplerTable || role == DescriptorRole::ImageTableMap;
+    });
+}
+
+bool HasImageTableBindings(const CompiledBindingLayout& bindings) {
+    return std::ranges::any_of(bindings.layout.descriptors, [](const IrDescriptorBinding& descriptor) { return descriptor.kind == DescriptorBindingKind::ImageTable || descriptor.kind == DescriptorBindingKind::SamplerTable || descriptor.kind == DescriptorBindingKind::ImageTableMap; });
+}
 
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::mutex mutex;
@@ -2573,6 +2585,7 @@ std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& reques
         bool cacheHit = false;
         std::lock_guard lock(handle->source->mutex);
         handle->artifact = findOrCompileVariant(*handle->source, request, cacheHit, preparation);
+        handle->imageTableBindings = HasImageTableBindings(handle->artifact->bindings);
         return handle;
     });
     trimResourcePlansOverBudget();
@@ -2695,11 +2708,7 @@ void HeapBindingWords(const RecompileRequest& request, const CompiledVariant& va
         if (AllEmpty(words.bindings)) words.bindings.clear();
         return;
     }
-    const bool tableRoles = std::ranges::any_of(shared.plan.plan->bindings, [](const PreparedDescriptorBinding& entry) {
-        const auto role = entry.descriptor.role;
-        return role == DescriptorRole::ImageTable || role == DescriptorRole::ImageStorageTable || role == DescriptorRole::SamplerTable || role == DescriptorRole::ImageTableMap;
-    });
-    const auto tables = tableRoles ? std::optional(ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, variant.artifact.variantId)) : std::nullopt;
+    const auto tables = shared.tableRoles ? std::optional(ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, variant.artifact.variantId)) : std::nullopt;
     DescriptorBindingBuilder{}.PopulateGuestWords(words.bindings, variant.bindings, *shared.plan.plan, variant.info.userDataBase, snapshot, partialThreads(request), tables ? &*tables : nullptr);
     if (words.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ from its template");
     if (HeapVerifyEnabled()) {
@@ -2742,10 +2751,11 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     }
     words.flattenedSrt.assign(snapshot.flattenedSrt.begin(), snapshot.flattenedSrt.end());
     words.bindings.clear();
-    const bool tables = std::ranges::any_of(layout.descriptors, [](const IrDescriptorBinding& descriptor) { return descriptor.kind == DescriptorBindingKind::ImageTable || descriptor.kind == DescriptorBindingKind::SamplerTable || descriptor.kind == DescriptorBindingKind::ImageTableMap; });
-    const bool perDrawBindings = (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex) && !tables;
+    const bool perDrawBindings = (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex) && !handle->imageTableBindings;
     auto& source = *handle->source;
-    const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
+    static thread_local std::vector<BufferSubstitute> substitutes;
+    substitutes.clear();
+    if (bufferSubstitutesEnabled() && variant->substitutes != nullptr) variant->substitutes->CopySlots(substitutes);
     ResourceSnapshot mergedStorage;
     const auto& merged = mergeTargetImage(*variant, request, snapshot, false, mergedStorage);
     const std::uint64_t key = HeapTemplateKey(request, *variant, merged, perDrawBindings, substitutes);
@@ -2785,6 +2795,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     built->heapTemplateId = NextTemplateId();
     auto created = std::make_shared<HeapTemplate>(HeapTemplate{std::move(built), std::move(usedPlan), perDrawBindings ? merged.buffers : std::vector<DescriptorValue>{}, perDrawBindings ? merged.images : std::vector<DescriptorValue>{}, perDrawBindings ? merged.samplers : std::vector<DescriptorValue>{}});
     created->bytes = HeapTemplateBytes(*created);
+    created->tableRoles = HasTableRoles(created->plan);
     std::shared_ptr<const HeapTemplate> shared = std::move(created);
     if (!templates) {
         complete(shared);

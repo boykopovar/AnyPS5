@@ -22,6 +22,11 @@ public:
         return slots;
     }
 
+    void CopySlots(std::vector<BufferSubstitute>& out) const {
+        std::lock_guard lock(mutex);
+        out.assign(slots.begin(), slots.end());
+    }
+
     void Learn(std::size_t slot, const BufferSubstitute& value) {
         std::lock_guard lock(mutex);
         if (slot >= slots.size() || slots[slot].known) return;

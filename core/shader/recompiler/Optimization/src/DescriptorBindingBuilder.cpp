@@ -21,7 +21,6 @@ namespace ShaderRecompiler {
 
 static_assert(PipelineSpecialization::ImageBase + ShaderInfo::MaxImages * PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase);
 static_assert(PipelineSpecialization::MipCountBase + ShaderInfo::MaxImages <= PipelineSpecialization::RootItemPositionBase);
-static_assert(PipelineSpecialization::RootItemPositionBase + PipelineSpecialization::RootItemPositions <= PipelineSpecialization::StoreQuantizeBase);
 static_assert(PipelineSpecialization::StoreQuantizeBase + ShaderInfo::MaxImages * PipelineSpecialization::StoreQuantizeWords <= PipelineSpecialization::DescriptorIndexBase);
 static_assert(PipelineSpecialization::CompareBase + ShaderInfo::MaxImages * PipelineSpecialization::CompareWords <= PipelineSpecialization::FoldOffsetBase);
 static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedBaseLevelBase);
@@ -769,9 +768,9 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
 namespace {
 
 void guestBindingWords(const PreparedDescriptorBinding& entry, std::vector<std::uint32_t>& words, const ResourceSnapshot& snapshot, const ResolvedImageTables* tables) {
+    words.clear();
     switch (entry.descriptor.role) {
     case DescriptorRole::GuestBuffers:
-        words.clear();
         words.reserve(entry.resources.size() * 4u);
         for (const std::uint32_t resource : entry.resources) {
             if (resource >= snapshot.buffers.size()) fail("DescriptorBindingBuilder::Populate guest buffer index is out of range");
@@ -917,7 +916,6 @@ void DescriptorBindingBuilder::PopulateGuestWords(std::vector<std::vector<std::u
     for (std::size_t index = 0; index < plan.bindings.size(); ++index) {
         const auto& entry = plan.bindings[index];
         if (entry.descriptor.role != DescriptorRole::ShaderData) {
-            words[index].assign(entry.descriptor.guestDescriptor.begin(), entry.descriptor.guestDescriptor.end());
             guestBindingWords(entry, words[index], snapshot, tables);
         } else if (layout.UsesPushData() || plan.storageData) {
             words[index] = ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState);

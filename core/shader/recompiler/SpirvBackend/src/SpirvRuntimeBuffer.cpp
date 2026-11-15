@@ -233,19 +233,20 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
     if (state.addressedBuffers) {
         const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource);
         const auto word = [&](std::uint32_t index) { return EmitBufferRootDword(state, element, index); };
-        if (element >= state.pushedBufferVariables.size()) context.Fail(instruction, "a pushed buffer has no storage buffer variable");
-        if (state.pushedBufferUniformVariables[element] != 0u) {
+        if (element >= state.pushedBuffers.size()) context.Fail(instruction, "a pushed buffer has no storage buffer variable");
+        if (state.pushedBuffers[element].uniform != 0u) {
             if (instruction.Opcode() != IrOpcode::ReadConstBuffer || wide) context.Fail(instruction, "a pushed constant buffer is read by an access other than a scalar load");
             MemoryResourceAccess access;
             access.kind = memory.kind;
-            access.objectPointer = state.pushedBufferUniformVariables[element];
+            access.objectPointer = state.pushedBuffers[element].uniform;
             access.softwareBounds = true;
             access.uniform = true;
             access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, 2u));
             access.byteOffset = state.memoryByteOffsets.at(element);
             return access;
         }
-        const auto variable = wide ? state.pushedBufferU64Variables[element] : plainLoad || state.pushedBufferCoherentVariables[element] == 0u ? state.pushedBufferVariables[element] : state.pushedBufferCoherentVariables[element];
+        const auto& pushed = state.pushedBuffers[element];
+        const auto variable = wide ? pushed.u64 : plainLoad || pushed.coherent == 0u ? pushed.plain : pushed.coherent;
         if (variable == 0u) context.Fail(instruction, "a pushed buffer lacks the view this access needs");
         MemoryResourceAccess access;
         access.kind = memory.kind;

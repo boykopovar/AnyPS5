@@ -60,6 +60,7 @@ struct SourceHandle {
     std::shared_ptr<SourceEntry> source;
     std::shared_ptr<const CompiledVariant> artifact;
     std::vector<std::uint64_t> staticKey;
+    bool imageTableBindings = false;
 };
 class PreparedShaderInvocation {
 public:

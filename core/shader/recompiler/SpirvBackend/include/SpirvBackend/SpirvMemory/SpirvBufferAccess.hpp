@@ -18,7 +18,6 @@ std::uint32_t EmitBufferRootDword(SpirvEmitterState& state, std::uint32_t buffer
 std::uint32_t EmitRootAddressWordPointer(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index);
 std::uint32_t EmitRootAddressReadOnlyWordPointer(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index);
 std::uint32_t EmitRootAddress(SpirvEmitterState& state, RuntimeAbi::RootItem item);
-std::uint32_t EmitStageRingWordPointer(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index);
 std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index);
 bool HasFlattenedSrt(const SpirvEmitterState& state);
 bool SplitUserData(const SpirvEmitterState& state);
