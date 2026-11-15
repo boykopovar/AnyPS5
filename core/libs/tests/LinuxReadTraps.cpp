@@ -170,6 +170,19 @@ void CheckTrapped() {
     Require(count() == 0, "a resolved range was still reported as trapped");
 }
 
+void CheckGeneration() {
+    Region region(4);
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(1), region.page), "a read-write page was not trapped");
+    const auto held = GuestWriteWatchReadTrapGeneration_nid_postfix();
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(1), region.page) && GuestWriteWatchReadTrapGeneration_nid_postfix() == held, "setting a held trap again changed the generation");
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(3), region.page) && GuestWriteWatchReadTrapGeneration_nid_postfix() == held, "setting another trap changed the generation");
+    GuestWriteWatchReleaseReads_nid_postfix(region.Address(3), region.page);
+    const auto released = GuestWriteWatchReadTrapGeneration_nid_postfix();
+    Require(released != held, "releasing a trap kept the generation");
+    Require(region.ReadFromThread(region.page) == Stored, "a read of a trapped page did not see the resolver's store");
+    Require(GuestWriteWatchReadTrapGeneration_nid_postfix() != released, "resolving a trap kept the generation");
+}
+
 void CheckUnknown() {
     Region region(2, PROT_READ);
     Require(!GuestWriteWatchTrapReads_nid_postfix(region.Address(), region.page), "a read-only mapping was trapped");
@@ -231,7 +244,7 @@ void CheckThreads() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister, threads, holder or trapped");
+        Require(argc == 2, "expected trap, release, protect, host, unknown, unregister, threads, holder, trapped or generation");
         if (!GuestWriteWatchAvailable_nid_postfix()) {
             std::puts("the userfaultfd write watch is not available");
             return Skipped;
@@ -250,6 +263,7 @@ int main(int argc, char** argv) {
         else if (mode == "unregister") CheckUnregister();
         else if (mode == "threads") CheckThreads();
         else if (mode == "trapped") CheckTrapped();
+        else if (mode == "generation") CheckGeneration();
         else throw std::runtime_error("unknown mode");
         return 0;
     } catch (const std::exception& error) {

@@ -504,7 +504,7 @@ public:
     void Registered(std::uintptr_t begin, std::uintptr_t end) {
         if (end <= begin) return;
         const std::lock_guard lock(_lock);
-        for (auto it = _traps.begin(); it != _traps.end();) it = it->owner == 0 && it->first < pageEnd(end) && pageStart(begin) < it->last ? _traps.erase(it) : std::next(it);
+        if (std::erase_if(_traps, [&](const Trap& trap) { return trap.owner == 0 && trap.first < pageEnd(end) && pageStart(begin) < trap.last; }) != 0) _dropped.fetch_add(1, std::memory_order_release);
         eraseProtections(begin, end);
         cut(_unlearned, begin, end);
         _unlearned.emplace(begin, end);
@@ -523,6 +523,7 @@ public:
             }
         }
         for (const auto& trap : dropped) restore(trap);
+        if (!dropped.empty()) _dropped.fetch_add(1, std::memory_order_release);
         eraseProtections(begin, end);
         cut(_unlearned, begin, end);
     }
@@ -577,6 +578,10 @@ public:
         return true;
     }
 
+    std::uint64_t Generation() const {
+        return _dropped.load(std::memory_order_acquire);
+    }
+
     void ReleaseReads(std::uintptr_t begin, std::uintptr_t end) {
         if (end <= begin) return;
         const std::lock_guard lock(_lock);
@@ -584,6 +589,7 @@ public:
         if (found == _traps.end()) return;
         const auto released = std::move(*found);
         _traps.erase(found);
+        _dropped.fetch_add(1, std::memory_order_release);
         restore(released);
     }
 
@@ -841,6 +847,7 @@ private:
                     if (trap.owner != 0 || trap.last <= first || last <= trap.first) continue;
                     trap.owner = self;
                     trap.batch = batch;
+                    _dropped.fetch_add(1, std::memory_order_release);
                     taken.emplace_back(trap.begin, trap.end);
                     first = std::min(first, trap.first);
                     last = std::max(last, trap.last);
@@ -981,6 +988,7 @@ private:
 
     TrapLock _lock;
     std::vector<Trap> _traps;
+    std::atomic<std::uint64_t> _dropped{1};
     std::map<std::uintptr_t, Protection> _protections;
     std::map<std::uintptr_t, std::uintptr_t> _unlearned;
     std::uint64_t _protects = 0;
@@ -1925,6 +1933,15 @@ void GuestWriteWatchReleaseReads_nid_postfix(std::uintptr_t address, std::size_t
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
+#endif
+}
+
+std::uint64_t GuestWriteWatchReadTrapGeneration_nid_postfix() {
+#if defined(APS5_LINUX_READ_TRAPS)
+    return ReadTraps::Get().Generation();
+#else
+    static std::atomic<std::uint64_t> asked{1};
+    return asked.fetch_add(1, std::memory_order_relaxed);
 #endif
 }
 

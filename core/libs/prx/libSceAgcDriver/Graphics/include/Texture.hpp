@@ -849,6 +849,7 @@ private:
     bool dirty = false;
     bool drawnListed = false;
     mutable std::atomic<bool> readTrapped{false};
+    mutable std::uint64_t readTrapGeneration = 0;
     bool drawnWhole = false;
     bool drawingTarget = false;
     bool pendingFromOthers = false;

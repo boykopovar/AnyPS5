@@ -1833,6 +1833,7 @@ public:
         if (indexed != version) rebuild();
         return !textures.empty() && Overlaps(ranges, address, bytes);
     }
+    std::uint64_t Version() const { return version; }
     bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
         const auto current = published.load(std::memory_order_acquire);
         return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
@@ -1884,6 +1885,12 @@ struct PendingWrites {
     // Images taken out of `textures` by a FlushPending still storing them (see adjacentPendingUnchanged).
     std::vector<StorageTexture*> flushing;
     std::atomic<std::size_t> flushingCount{0};
+    std::uint64_t flushingChanges = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> labelSpans;
+    std::vector<std::uint64_t> labelReach;
+    std::uint64_t labelVersion = ~std::uint64_t{0};
+    std::uint64_t labelFlushing = ~std::uint64_t{0};
+    bool labelSettled = false;
     struct Drawn {
         StorageTexture* texture;
         std::uint64_t bytes;
@@ -5017,6 +5024,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
 #endif
         // Still pending for the adjacency rule of writeBack until each one is stored.
         for (const auto& texture : flush) pending.flushing.push_back(texture.get());
+        ++pending.flushingChanges;
         pending.flushingCount.store(pending.flushing.size(), std::memory_order_release);
         if (!flush.empty()) BumpPendingSerial();
         for (const auto& texture : flush) {
@@ -5038,6 +5046,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             auto& pending = Pending();
             std::lock_guard lock(pending.mutex);
             for (const auto& texture : flush) std::erase(pending.flushing, texture.get());
+            ++pending.flushingChanges;
             pending.flushingCount.store(pending.flushing.size(), std::memory_order_release);
             BumpPendingSerial();
         }
@@ -5538,21 +5547,29 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
         const bool trap = LabelTrapsEnabled();
         if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
         const auto page = TrapPage();
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
-        std::vector<std::uint64_t> reach;
-        if (trap) {
-            const auto add = [&](const StorageTexture* texture) {
-                if (texture->guestBytes != 0) spans.emplace_back(texture->descriptor.baseAddress, texture->descriptor.baseAddress + texture->guestBytes);
-            };
-            for (const auto* texture : pending.textures) {
-                if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes) add(texture);
-            }
-            for (const auto* texture : pending.flushing) add(texture);
-            std::sort(spans.begin(), spans.end());
-            reach.reserve(spans.size());
-            for (const auto& span : spans) reach.push_back(reach.empty() ? span.second : std::max(reach.back(), span.second));
-        }
+        const auto generation = trap ? GuestWriteWatch::GuestWriteWatchReadTrapGeneration_nid_postfix() : 0;
+        auto& spans = pending.labelSpans;
+        auto& reach = pending.labelReach;
+        bool spansCurrent = pending.labelVersion == pending.textures.Version() && pending.labelFlushing == pending.flushingChanges;
+        if (!spansCurrent) pending.labelSettled = false;
+        bool settled = true;
         const auto sharesPage = [&](const StorageTexture* texture) {
+            if (!spansCurrent) {
+                spans.clear();
+                reach.clear();
+                const auto add = [&](const StorageTexture* other) {
+                    if (other->guestBytes != 0) spans.emplace_back(other->descriptor.baseAddress, other->descriptor.baseAddress + other->guestBytes);
+                };
+                for (const auto* other : pending.textures) {
+                    if (other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= SmallStoreBytes) add(other);
+                }
+                for (const auto* other : pending.flushing) add(other);
+                std::sort(spans.begin(), spans.end());
+                for (const auto& span : spans) reach.push_back(reach.empty() ? span.second : std::max(reach.back(), span.second));
+                pending.labelVersion = pending.textures.Version();
+                pending.labelFlushing = pending.flushingChanges;
+                spansCurrent = true;
+            }
             const auto first = texture->descriptor.baseAddress & ~(page - 1);
             const auto last = (texture->descriptor.baseAddress + texture->guestBytes + page - 1) & ~(page - 1);
             if (last == first) return false;
@@ -5566,13 +5583,22 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
         for (const auto* texture : pending.textures) {
             if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
 #if defined(__APPLE__) || defined(__linux__)
-            if (trap && !sharesPage(texture) && (texture->readTrapped.load(std::memory_order_acquire) || (storesOverImport(texture) && !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes)))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
-                texture->readTrapped.store(true, std::memory_order_release);
-                continue;
+            if (trap) {
+                const bool trapped = texture->readTrapped.load(std::memory_order_acquire);
+                if (trapped && pending.labelSettled && texture->readTrapGeneration == generation) continue;
+                if (!sharesPage(texture) && (trapped || (storesOverImport(texture) && !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes)))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
+                    texture->readTrapped.store(true, std::memory_order_release);
+                    texture->readTrapGeneration = generation;
+                    continue;
+                }
+                if (trapped) settled = false;
             }
 #endif
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
+#if defined(__APPLE__) || defined(__linux__)
+        if (trap) pending.labelSettled = settled;
+#endif
         for (auto* texture : pending.textures) {
             if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
             if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
