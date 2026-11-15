@@ -8,8 +8,11 @@
 #include "prx/libkernel/File/include/HostStreams.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
@@ -494,6 +497,25 @@ int KernelEqueuePrivate::WaitForEventsUntil(KernelEvent* ev, int num, std::uint6
     }
 }
 
+void KernelEqueuePrivate::NoteDroppedPendingEvents(std::size_t dropped, const KernelEqueueEvent& ev) {
+    if (dropped == 0) {
+        return;
+    }
+    const auto before = m_droppedPendingEvents;
+    m_droppedPendingEvents += dropped;
+    static const bool trace = std::getenv("APS5_TRACE_EQUEUE") != nullptr;
+    if (!trace) {
+        return;
+    }
+    if (before != 0 && std::bit_width(m_droppedPendingEvents) == std::bit_width(before)) {
+        return;
+    }
+    std::fprintf(stderr,
+        "[equeue] %s: dropped %zu oldest pending event(s) for ident=0x%llx filter=%d past cap=%zu (total dropped %llu)\n",
+        m_name.c_str(), dropped, static_cast<unsigned long long>(ev.event.ident), static_cast<int>(ev.event.filter),
+        kMaxPendingEvents, static_cast<unsigned long long>(m_droppedPendingEvents));
+}
+
 int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
     std::unique_lock lock(m_mutex);
     if (m_closed) {
@@ -515,9 +537,11 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
             pending.udata = event.event.udata;
         }
         if (it->pendingEvents.size() > kMaxPendingEvents) {
+            NoteDroppedPendingEvents(it->pendingEvents.size() - kMaxPendingEvents, *it);
             it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - kMaxPendingEvents));
         }
     } else if (event.pendingEvents.size() > kMaxPendingEvents) {
+        NoteDroppedPendingEvents(event.pendingEvents.size() - kMaxPendingEvents, event);
         KernelEqueueEvent truncated;
         truncated.triggered = event.triggered;
         truncated.enabled = event.enabled;
@@ -559,6 +583,7 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
             it->triggered = true;
         }
         if (it->pendingEvents.size() > KernelEqueuePrivate::kMaxPendingEvents) {
+            NoteDroppedPendingEvents(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents, *it);
             it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents));
         }
         if (!was && it->triggered) ++m_activations;

@@ -1,4 +1,5 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -15,6 +16,17 @@ void JxrInitZigzagScan_nid_no_patch(void* context);
 namespace {
 
 constexpr std::size_t MaxChannels = 16;
+
+struct QuantizerLayout {
+    std::uint8_t index;
+    std::int32_t qp;
+    std::int32_t offset;
+    std::int32_t mantissa;
+    std::int32_t exponent;
+};
+
+static_assert(sizeof(QuantizerLayout) == 20);
+static_assert(offsetof(QuantizerLayout, qp) == 4);
 
 void Require(bool condition, const char* function, const char* message) {
     if (!condition) throw std::invalid_argument(std::string(function) + ": " + message);
@@ -54,6 +66,24 @@ std::int32_t APS5_VABI getACPredMode_nid_postfix(void* macroblock, std::int32_t 
 
 void APS5_VABI InitZigzagScan_nid_postfix(void* context) {
     JxrInitZigzagScan_nid_no_patch(context);
+}
+
+int APS5_VABI allocateQuantizer_nid_postfix(void** quantizers, std::size_t channels, std::size_t quantizerCount) {
+    if (quantizerCount > MaxChannels || channels > MaxChannels) return -1;
+    if (!quantizers) throw std::invalid_argument(std::string(__func__) + ": null quantizer table");
+
+    auto* const allocation = static_cast<QuantizerLayout*>(
+        malloc_nid_postfix(quantizerCount * sizeof(QuantizerLayout) * channels));
+    quantizers[0] = allocation;
+    if (!allocation) return -1;
+    for (std::size_t channel = 1; channel < channels; ++channel)
+        quantizers[channel] = quantizerCount == 0 ? allocation : allocation + channel * quantizerCount;
+    return 0;
+}
+
+void APS5_VABI freeQuantizer_nid_postfix(void** quantizers) {
+    Require(quantizers != nullptr, __func__, "null quantizer table");
+    if (quantizers[0]) free_nid_postfix(quantizers[0]);
 }
 
 } // extern "C"

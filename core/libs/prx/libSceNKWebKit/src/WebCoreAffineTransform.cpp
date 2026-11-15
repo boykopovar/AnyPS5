@@ -26,9 +26,13 @@
  */
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include <cmath>
+#include <cstddef>
+#include <limits>
+#include <stdexcept>
 
 namespace WebCore {
 
@@ -162,6 +166,40 @@ void APS5_VABI _ZN7WebCore15AffineTransform5blendERKS0_d(
     srA.translateY += progress * (srB.translateY - srA.translateY);
 
     WebCore::Recompose(*self, srA);
+}
+
+WebCore::Region APS5_VABI _ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE(
+    const WebCore::AffineTransform* self, const WebCore::Region& region) {
+    if (!self)
+        throw std::invalid_argument("WebCore::AffineTransform::mapRegion: null transform");
+    if (self->m_transform[0] == 1.0 && self->m_transform[1] == 0.0 &&
+        self->m_transform[2] == 0.0 && self->m_transform[3] == 1.0) {
+        WebCore::Region mappedRegion;
+        _ZN7WebCore6RegionaSERKS0_(&mappedRegion, region);
+        auto clampToInt = [](float value) -> int {
+            if (value >= static_cast<float>(std::numeric_limits<int>::max()))
+                return std::numeric_limits<int>::max();
+            if (!(value > static_cast<float>(std::numeric_limits<int>::min())))
+                return std::numeric_limits<int>::min();
+            return static_cast<int>(value);
+        };
+        WebCore::IntSize offset{
+            clampToInt(std::roundf(static_cast<float>(self->m_transform[4]))),
+            clampToInt(std::roundf(static_cast<float>(self->m_transform[5])))
+        };
+        _ZN7WebCore6Region9translateERKNS_7IntSizeE(&mappedRegion, offset);
+        return mappedRegion;
+    }
+
+    WebCore::Region mappedRegion;
+    auto rectList = _ZNK7WebCore6Region5rectsEv(&region);
+    for (std::size_t i = 0; i < rectList.size(); ++i) {
+        WebCore::IntRect mappedRect = _ZNK7WebCore15AffineTransform7mapRectERKNS_7IntRectE(self, rectList[i]);
+        WebCore::Region rectRegion;
+        rectRegion.m_bounds = mappedRect;
+        _ZN7WebCore6Region5uniteERKS0_(&mappedRegion, rectRegion);
+    }
+    return mappedRegion;
 }
 
 }
