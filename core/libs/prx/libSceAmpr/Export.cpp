@@ -1057,9 +1057,13 @@ int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name) {
     constexpr std::size_t objectNameLimit = 32;
     constexpr int guestNameTooLong = 63;
     constexpr int threadError = 4;
-    if (name != nullptr && std::strlen(name) >= objectNameLimit) {
-        errno = guestNameTooLong;
-        return threadError;
+    if (name != nullptr) {
+        std::string copied;
+        const int copyError = CopyGuestString_nid_no_patch(name, objectNameLimit, copied);
+        if (copyError != 0) {
+            errno = copyError == 63 ? guestNameTooLong : copyError;
+            return threadError;
+        }
     }
     return _Cnd_init_nid_postfix(handle);
 }

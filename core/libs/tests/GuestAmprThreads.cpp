@@ -357,6 +357,8 @@ static void TestConditionSignal() {
     _Cnd_destroy_nid_postfix(&limited);
     errno = 0;
     Require(_Cnd_init_with_name_nid_postfix(&limited, tooLongName.c_str()) == ThrdError && errno == 63 && limited == nullptr);
+    errno = 0;
+    Require(_Cnd_init_with_name_nid_postfix(&limited, reinterpret_cast<const char*>(0x10)) == ThrdError && errno == 14 && limited == nullptr);
     Require(_Cnd_init_with_name_nid_postfix(&limited, "") == ThrdSuccess && limited != nullptr);
     _Cnd_destroy_nid_postfix(&limited);
 
