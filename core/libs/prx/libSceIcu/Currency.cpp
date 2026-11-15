@@ -148,6 +148,7 @@ const char16_t* ReadNameCurrency(void* context, bool terminated) {
 
 const char* ReadNamePlural(void* context) {
     auto& input = *static_cast<NameInput*>(context);
+    if (!input.plural) return nullptr;
     input.keyword = ReadString(input.plural);
     return input.keyword.c_str();
 }
@@ -176,6 +177,11 @@ const char16_t* Name(const char16_t* currency, const char* locale, std::int32_t 
 struct EnumerationBox {
     UEnumeration guest{};
     void* native = nullptr;
+    IcuCurrency::NextResult pending;
+    std::int32_t pendingStatus = 0;
+    bool hasPending = false;
+    bool pendingUnicode = false;
+    bool pendingStatusChanged = false;
 };
 
 std::unordered_map<UEnumeration*, std::unique_ptr<EnumerationBox>> Enumerations;
@@ -211,11 +217,24 @@ const void* NextEnumeration(UEnumeration* enumeration, std::int32_t* length, std
     Status status(output);
     if (status.value > 0) return nullptr;
     auto& box = FindEnumeration(enumeration);
-    if (length) Probe(length, sizeof(*length));
-    status.ProbeOutput();
-    const auto result = IcuCurrency::NextEnumeration_nid_no_patch(box.native, unicode, status.value);
+    if (box.hasPending) {
+        if (box.pendingUnicode != unicode) NotImplemented_nid_no_patch("ucurr: pending enumeration encoding changed");
+        if (box.pendingStatusChanged) status.value = box.pendingStatus;
+    } else {
+        const auto incoming = status.value;
+        box.pending = IcuCurrency::NextEnumeration_nid_no_patch(box.native, unicode, status.value);
+        box.pendingStatus = status.value;
+        box.pendingStatusChanged = status.value != incoming;
+        box.pendingUnicode = unicode;
+        box.hasPending = true;
+    }
+    const auto result = box.pending;
+    if (length && result.length != INT32_MIN) Probe(length, sizeof(*length));
+    status.ProbeChanged();
     if (length && result.length != INT32_MIN) Write(length, &result.length, sizeof(*length));
-    return status.Finish(result.text);
+    status.Publish();
+    box.hasPending = false;
+    return result.text;
 }
 
 const char16_t* APS5_VABI UnicodeNextEnumeration(UEnumeration* enumeration, std::int32_t* length, std::int32_t* status) {
@@ -234,6 +253,7 @@ void APS5_VABI ResetEnumeration(UEnumeration* enumeration, std::int32_t* output)
     auto& box = FindEnumeration(enumeration);
     IcuCurrency::ResetEnumeration_nid_no_patch(box.native, status.value);
     status.Publish();
+    box.hasPending = false;
 }
 
 template<class T>

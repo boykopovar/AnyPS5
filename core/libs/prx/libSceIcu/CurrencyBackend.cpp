@@ -15,7 +15,10 @@
 #include "unicode/uloc.h"
 #include "unicode/ures.h"
 #include "unicode/ustring.h"
+#include "cmemory.h"
 #include "cstring.h"
+#include "uenumimp.h"
+#include "ulist.h"
 #include "ulocimp.h"
 #include "uresimp.h"
 #include "ureslocs.h"
@@ -172,6 +175,120 @@ NameResult PluralName(const char* locale, bool choice, CurrencyReader currency, 
     }
 }
 
+struct KeywordResources {
+    UResourceBundle* bundle = nullptr;
+    std::array<UResourceBundle, 4> fields{};
+    bool closed = false;
+    KeywordResources() {
+        for (auto& field : fields) ures_initStackObject(&field);
+    }
+    void Close() {
+        if (closed) return;
+        closed = true;
+        for (auto iterator = fields.rbegin(); iterator != fields.rend(); ++iterator) ures_close(&*iterator);
+        ures_close(std::exchange(bundle, nullptr));
+    }
+};
+
+const UEnumeration KeywordEnumeration = {
+    nullptr, nullptr, ulist_close_keyword_values_iterator, ulist_count_keyword_values,
+    uenum_unextDefault, ulist_next_keyword_value, ulist_reset_keyword_values_iterator
+};
+
+UEnumeration* KeywordValues(const char* locale, UBool commonlyUsed, UErrorCode& status) {
+    const auto region = ulocimp_getRegionForSupplementalData(locale, true, status);
+    auto* values = ulist_createEmptyList(&status);
+    auto* otherValues = ulist_createEmptyList(&status);
+    auto* enumeration = static_cast<UEnumeration*>(uprv_malloc(sizeof(UEnumeration)));
+    if (U_FAILURE(status) || !enumeration) {
+        if (!enumeration) status = U_MEMORY_ALLOCATION_ERROR;
+        uprv_free(enumeration);
+        ulist_deleteList(values);
+        ulist_deleteList(otherValues);
+        return nullptr;
+    }
+    std::memcpy(enumeration, &KeywordEnumeration, sizeof(UEnumeration));
+    enumeration->context = values;
+    KeywordResources resources;
+    try {
+        resources.bundle = ures_openDirect(U_ICUDATA_CURR, "supplementalData", &status);
+        auto* map = ures_getByKey(resources.bundle, "CurrencyMap", resources.bundle, &status);
+        auto* item = &resources.fields[0];
+        auto* country = &resources.fields[1];
+        auto* currency = &resources.fields[2];
+        auto* end = &resources.fields[3];
+        while (U_SUCCESS(status) && ures_hasNext(map)) {
+            ures_getNextResource(map, item, &status);
+            if (U_FAILURE(status)) break;
+            const auto* name = ures_getKey(item);
+            const bool preferred = region == name;
+            if (!preferred && commonlyUsed) continue;
+            ures_getByKey(map, name, country, &status);
+            while (U_SUCCESS(status) && ures_hasNext(country)) {
+                ures_getNextResource(country, currency, &status);
+                if (ures_getType(currency) != URES_TABLE) continue;
+                auto* code = static_cast<char*>(uprv_malloc(ULOC_KEYWORDS_CAPACITY));
+                if (!code) {
+                    status = U_MEMORY_ALLOCATION_ERROR;
+                    break;
+                }
+                std::int32_t length = ULOC_KEYWORDS_CAPACITY;
+                ures_getUTF8StringByKey(currency, "id", code, &length, true, &status);
+                if (U_FAILURE(status)) {
+                    uprv_free(code);
+                    break;
+                }
+                ures_getByKey(currency, "to", end, &status);
+                const bool hasEnd = U_SUCCESS(status);
+                if (status == U_MISSING_RESOURCE_ERROR) status = U_ZERO_ERROR;
+                if (U_FAILURE(status)) {
+                    uprv_free(code);
+                    break;
+                }
+                if (preferred && !hasEnd && !ulist_containsString(values, code, static_cast<std::int32_t>(std::strlen(code)))) {
+                    ulist_addItemEndList(values, code, true, &status);
+                } else if (!commonlyUsed && !ulist_containsString(otherValues, code, static_cast<std::int32_t>(std::strlen(code)))) {
+                    ulist_addItemEndList(otherValues, code, true, &status);
+                } else {
+                    uprv_free(code);
+                }
+            }
+        }
+        if (U_SUCCESS(status)) {
+            if (commonlyUsed && ulist_getListSize(values) == 0) {
+                uenum_close(enumeration);
+                enumeration = nullptr;
+                enumeration = KeywordValues("und", true, status);
+            } else if (!commonlyUsed) {
+                ulist_resetList(otherValues);
+                while (auto* value = static_cast<char*>(ulist_getNext(otherValues))) {
+                    if (ulist_containsString(values, value, static_cast<std::int32_t>(std::strlen(value)))) continue;
+                    auto* copy = static_cast<char*>(uprv_malloc(ULOC_KEYWORDS_CAPACITY));
+                    if (!copy) {
+                        status = U_MEMORY_ALLOCATION_ERROR;
+                        break;
+                    }
+                    std::memcpy(copy, value, std::strlen(value) + 1);
+                    ulist_addItemEndList(values, copy, true, &status);
+                    if (U_FAILURE(status)) break;
+                }
+            }
+            if (enumeration) ulist_resetList(static_cast<UList*>(enumeration->context));
+        } else {
+            uenum_close(enumeration);
+            enumeration = nullptr;
+        }
+        resources.Close();
+        ulist_deleteList(otherValues);
+        return enumeration;
+    } catch (...) {
+        resources.Close();
+        uenum_close(enumeration);
+        ulist_deleteList(otherValues);
+        throw;
+    }
+}
+
 HistoricalResult Historical(const char* locale, double date, std::int32_t index, std::int32_t capacity, bool select, UErrorCode& status) {
     HistoricalResult result;
     if (U_FAILURE(status)) return result;
@@ -300,7 +417,7 @@ void* OpenISO_nid_no_patch(std::uint32_t type, std::int32_t& error) {
 
 void* OpenKeywords_nid_no_patch(const char* locale, std::int8_t commonlyUsed, std::int32_t& error) {
     auto status = static_cast<UErrorCode>(error);
-    auto* result = ucurr_getKeywordValuesForLocale(nullptr, locale, commonlyUsed, &status);
+    auto* result = KeywordValues(locale, commonlyUsed, status);
     error = status;
     return result;
 }
