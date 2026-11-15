@@ -2,9 +2,11 @@
 #include "prx/libc/include/General.hpp"
 #include "ubidi_props.h"
 #include "unicode/ubidi.h"
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -60,9 +62,7 @@ const UBiDi* Native(const Icu::BiDi* bidi) {
 bool EnterStatus(std::int32_t* error, UErrorCode& status, std::int32_t& previous, const char* caller) {
     if (!CopyInPreservingErrno(&previous, error, sizeof(previous))) NotImplemented_nid_no_patch(caller);
     status = static_cast<UErrorCode>(previous);
-    if (U_FAILURE(status)) return false;
-    if (!WritablePreservingErrno(error, sizeof(*error))) NotImplemented_nid_no_patch(caller);
-    return true;
+    return !U_FAILURE(status);
 }
 
 void LeaveStatus(std::int32_t* error, UErrorCode status, std::int32_t previous, const char* caller) {
@@ -70,18 +70,12 @@ void LeaveStatus(std::int32_t* error, UErrorCode status, std::int32_t previous, 
     if (updated != previous && !CopyOutPreservingErrno(error, &updated, sizeof(updated))) NotImplemented_nid_no_patch(caller);
 }
 
-template <typename T>
-T* PrepareOutput(T* guest, T& host, const char* caller) {
-    if (!guest) return nullptr;
-    if (!CopyInPreservingErrno(&host, guest, sizeof(host)) || !WritablePreservingErrno(guest, sizeof(*guest))) {
-        NotImplemented_nid_no_patch(caller);
-    }
-    return &host;
-}
-
-template <typename T>
-void CommitOutput(T* guest, const T& host, const char* caller) {
-    if (guest && !CopyOutPreservingErrno(guest, &host, sizeof(host))) NotImplemented_nid_no_patch(caller);
+template <typename TFirst, typename TSecond>
+void CommitOutputs(TFirst* first, const TFirst& hostFirst, TSecond* second, const TSecond& hostSecond,
+                   const char* caller) {
+    if (first && second && !WritablePreservingErrno(second, sizeof(*second))) NotImplemented_nid_no_patch(caller);
+    if (first && !CopyOutPreservingErrno(first, &hostFirst, sizeof(hostFirst))) NotImplemented_nid_no_patch(caller);
+    if (second && !CopyOutPreservingErrno(second, &hostSecond, sizeof(hostSecond))) NotImplemented_nid_no_patch(caller);
 }
 
 }
@@ -136,11 +130,9 @@ std::int32_t APS5_VABI ubidi_getVisualRun_nid_postfix(Icu::BiDi* bidi, std::int3
                                                       std::int32_t* length) {
     std::int32_t hostStart = 0;
     std::int32_t hostLength = 0;
-    auto* outStart = PrepareOutput(logicalStart, hostStart, __func__);
-    auto* outLength = PrepareOutput(length, hostLength, __func__);
-    const auto direction = ubidi_getVisualRun(Native(bidi), run, outStart, outLength);
-    CommitOutput(logicalStart, hostStart, __func__);
-    CommitOutput(length, hostLength, __func__);
+    const auto direction =
+        ubidi_getVisualRun(Native(bidi), run, logicalStart ? &hostStart : nullptr, length ? &hostLength : nullptr);
+    CommitOutputs(logicalStart, hostStart, length, hostLength, __func__);
     return direction;
 }
 
@@ -149,11 +141,8 @@ void APS5_VABI ubidi_getLogicalRun_nid_postfix(const Icu::BiDi* bidi, std::int32
     if (!bidi) APS5_INVALID_ARG_EX;
     std::int32_t hostLimit = 0;
     std::uint8_t hostLevel = 0;
-    auto* outLimit = PrepareOutput(logicalLimit, hostLimit, __func__);
-    auto* outLevel = PrepareOutput(level, hostLevel, __func__);
-    ubidi_getLogicalRun(Native(bidi), position, outLimit, outLevel);
-    CommitOutput(logicalLimit, hostLimit, __func__);
-    CommitOutput(level, hostLevel, __func__);
+    ubidi_getLogicalRun(Native(bidi), position, logicalLimit ? &hostLimit : nullptr, level ? &hostLevel : nullptr);
+    CommitOutputs(logicalLimit, hostLimit, level, hostLevel, __func__);
 }
 
 std::int32_t APS5_VABI ubidi_getBaseDirection_nid_postfix(const char16_t* text, std::int32_t length) {
@@ -165,13 +154,20 @@ void APS5_VABI ubidi_reorderVisual_nid_postfix(const std::uint8_t* levels, std::
         ubidi_reorderVisual(levels, length, indexMap);
         return;
     }
-    constexpr std::int32_t MaxReorderCount = 4096;
-    if (length > MaxReorderCount) NotImplemented_nid_no_patch(__func__);
     const auto count = static_cast<std::size_t>(length);
-    std::vector<std::uint8_t> hostLevels(count);
-    if (!CopyInPreservingErrno(hostLevels.data(), levels, hostLevels.size())) NotImplemented_nid_no_patch(__func__);
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(std::int32_t)) NotImplemented_nid_no_patch(__func__);
     const std::size_t mapBytes = count * sizeof(std::int32_t);
     if (!WritablePreservingErrno(indexMap, mapBytes)) NotImplemented_nid_no_patch(__func__);
+    constexpr std::size_t ProbeChunk = 4096;
+    if (count > ProbeChunk) {
+        std::uint8_t probe[ProbeChunk];
+        for (std::size_t offset = 0; offset < count; offset += ProbeChunk) {
+            const std::size_t chunk = std::min(ProbeChunk, count - offset);
+            if (!CopyInPreservingErrno(probe, levels + offset, chunk)) NotImplemented_nid_no_patch(__func__);
+        }
+    }
+    std::vector<std::uint8_t> hostLevels(count);
+    if (!CopyInPreservingErrno(hostLevels.data(), levels, hostLevels.size())) NotImplemented_nid_no_patch(__func__);
     std::vector<std::int32_t> hostMap(count);
     ubidi_reorderVisual(hostLevels.data(), length, hostMap.data());
     if (!CopyOutPreservingErrno(indexMap, hostMap.data(), mapBytes)) NotImplemented_nid_no_patch(__func__);
@@ -199,8 +195,12 @@ void APS5_VABI ubidi_setClassCallback_nid_postfix(Icu::BiDi* bidi, Icu::BiDiClas
     callback->function = function;
     callback->context = context;
     ubidi_setClassCallback(Native(bidi), function ? ForwardClass : nullptr, callback.get(), nullptr, nullptr, &status);
-    CommitOutput(oldFunction, previousFunction, __func__);
-    CommitOutput(oldContext, previousContext, __func__);
+    if (oldFunction && !CopyOutPreservingErrno(oldFunction, &previousFunction, sizeof(previousFunction))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+    if (oldContext && !CopyOutPreservingErrno(oldContext, &previousContext, sizeof(previousContext))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
     LeaveStatus(error, status, previous, __func__);
 }
 

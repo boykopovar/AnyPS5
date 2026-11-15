@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -325,11 +326,16 @@ void TestGuestPointers() {
         RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 1, roMap); },
                        "ubidi_reorderVisual ro map");
         ExpectInt(*roMap, 55, "ro map unchanged");
-        RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 4097, map); },
-                       "ubidi_reorderVisual oversize count");
+        std::vector<std::uint8_t> longLevels(5000, 1);
+        std::vector<std::int32_t> longMap(5000, -1);
+        ubidi_reorderVisual_nid_postfix(longLevels.data(), 5000, longMap.data());
+        ExpectInt(longMap[0], 4999, "ubidi_reorderVisual long paragraph start");
+        ExpectInt(longMap[4999], 0, "ubidi_reorderVisual long paragraph end");
+        RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 0x7fffffff, map); },
+                       "ubidi_reorderVisual huge count with short arrays");
         RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(badByte, 0x7fffffff, badInt); },
                        "ubidi_reorderVisual huge bad arrays");
-        Expect(map[0] == 11 && map[1] == 22, "map untouched on oversize reorder");
+        Expect(map[0] == 11 && map[1] == 22, "map untouched on huge reorder");
     }
 
     {
