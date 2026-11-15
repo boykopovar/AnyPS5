@@ -52,6 +52,9 @@ void Check(std::string_view systemId, std::string_view defaultName) {
 
 int main(int argc, char** argv) {
     const std::string_view scenario = argc > 1 ? argv[1] : "";
+    for (const char* name : {"LC_ALL", "LC_MESSAGES", "LANG"}) {
+        Require(unsetenv_nid_postfix(name) == 0);
+    }
     if (scenario == "posix") {
         Check("en_US_POSIX", "en_US_POSIX");
     } else if (scenario == "messages") {
