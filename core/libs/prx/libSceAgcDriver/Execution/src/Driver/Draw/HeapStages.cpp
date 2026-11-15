@@ -357,6 +357,10 @@ struct WalkReads {
 
 bool readWalkWord(void* context, std::uint64_t address, std::uint32_t* value) {
     auto& reads = *static_cast<WalkReads*>(context);
+    if (address % WordBytes != 0u) {
+        reads.failed = true;
+        return false;
+    }
     if (!reads.Verified(address, sizeof(*value))) {
         const auto page = address & ~(WalkPageBytes - 1u);
         const bool crossesPage = (address & (WalkPageBytes - 1u)) > WalkPageBytes - sizeof(*value);

@@ -369,6 +369,8 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.origin = StageOrigin::Captured;
     stageCapture.heapReadWords.reset();
     stageCapture.capture.reset();
+    stageCapture.registeredViews.reset();
+    stageCapture.supplied.clear();
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
     stageCapture.pushOffset = pushOffset;
     static const bool dumpGraphics = std::getenv("APS5_DUMP_GRAPHICS_SHADERS") != nullptr;
