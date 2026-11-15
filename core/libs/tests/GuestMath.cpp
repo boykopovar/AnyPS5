@@ -3003,6 +3003,39 @@ static void CheckScaledSineBits() {
         Require(std::bit_cast<std::uint32_t>(_FSinh_nid_postfix(test.x, test.y)) == std::bit_cast<std::uint32_t>(test.expected));
 }
 
+static void CheckScaledCosineBits() {
+    const struct {
+        float x;
+        std::array<std::uint32_t, 3> bits;
+    } cases[] = {
+        {0.0f, {0x3f800000u, 0x40000000u, 0x3f000000u}},
+        {-0.0f, {0x3f800000u, 0x40000000u, 0x3f000000u}},
+        {0.5f, {0x3f90560cu, 0x4010560cu, 0x3f10560cu}},
+        {1.0f, {0x3fc583aau, 0x404583aau, 0x3f4583aau}},
+        {-1.0f, {0x3fc583aau, 0x404583aau, 0x3f4583aau}},
+        {2.0f, {0x4070c7d0u, 0x40f0c7d0u, 0x3ff0c7d0u}},
+        {10.0f, {0x462c14eeu, 0x46ac14eeu, 0x45ac14eeu}},
+        {88.0f, {0x7e7882b7u, 0x7ef882b7u, 0x7df882b7u}},
+        {89.0f, {0x7f28e166u, 0x7f800000u, 0x7ea8e166u}},
+        {90.0f, {0x7f800000u, 0x7f800000u, 0x7f658848u}},
+        {1e-20f, {0x3f800000u, 0x40000000u, 0x3f000000u}},
+        {3.0f, {0x41211525u, 0x41a11525u, 0x40a11525u}},
+    };
+    const float scales[] = {1.0f, 2.0f, 0.5f};
+    const int rounding = std::fegetround();
+    Require(std::fesetround(FE_TONEAREST) == 0);
+    for (const auto& test : cases) {
+        for (std::size_t index = 0; index < test.bits.size(); ++index) {
+            const auto result = std::bit_cast<std::uint32_t>(_FCosh_nid_postfix(test.x, scales[index]));
+            if (result != test.bits[index])
+                std::fprintf(stderr, "_FCosh(%a, %a): got %08x, console %08x\n", static_cast<double>(test.x),
+                    static_cast<double>(scales[index]), result, test.bits[index]);
+            Require(result == test.bits[index]);
+        }
+    }
+    Require(std::fesetround(rounding) == 0);
+}
+
 static void CheckLog10fLog2fConsoleBits() {
     constexpr struct {
         std::uint32_t input;
@@ -3045,8 +3078,9 @@ static void CheckScaledHyperbolic() {
             float expected = static_cast<float>(value * static_cast<long double>(y));
             bool exact = expected == 0.0f || std::isinf(expected);
             for (const auto& measured : MeasuredScaledSines) {
-                if (sine && measured.x == std::fabs(x) && measured.y == std::fabs(y)) {
-                    expected = std::bit_cast<float>(measured.bits | (std::signbit(x) != std::signbit(y) ? 0x80000000u : 0u));
+                if ((sine || measured.x >= 8.675f) && measured.x == std::fabs(x) && measured.y == std::fabs(y)) {
+                    const bool negative = sine ? std::signbit(x) != std::signbit(y) : std::signbit(y);
+                    expected = std::bit_cast<float>(measured.bits | (negative ? 0x80000000u : 0u));
                     exact = true;
                 }
             }
@@ -4769,6 +4803,7 @@ int main() {
     CheckCoshfMsunBoundaries();
     CheckExp2fConsoleBits();
     CheckAsinhfMsunBoundaries();
+    CheckScaledCosineBits();
     CheckScaledHyperbolic();
     CheckScaledSineBits();
     CheckLog10fLog2fConsoleBits();

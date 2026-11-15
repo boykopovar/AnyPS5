@@ -471,22 +471,11 @@ float ScaledHyperbolic(float x, float y, bool sine) {
     if (xMagnitude == infinity) return sine ? x * y : std::copysign(std::numeric_limits<float>::infinity(), y);
     if (xMagnitude == 0 || yMagnitude == 0 || yMagnitude == infinity) return sine ? x * y : y;
     if (sine) return ScaledSine(x, y);
-    constexpr double limit = 2.0 * std::numeric_limits<float>::max_exponent;
     const float magnitude = std::bit_cast<float>(xMagnitude);
-    const double argument = magnitude < limit ? static_cast<double>(magnitude) : limit;
-    const double value = static_cast<double>(y) * std::cosh(argument);
     const bool exponential = magnitude >= 8.675f;
-    float result;
-    if (exponential && std::fabs(value) >= 0x1p128) {
-        result = std::copysign(std::numeric_limits<float>::infinity(), y);
-    } else {
-        result = static_cast<float>(value);
-    }
-    if (exponential && std::isinf(result)) {
-        errno = ERANGE;
-        std::feraiseexcept(FE_OVERFLOW | FE_INEXACT);
-    }
-    return result;
+    float result = magnitude;
+    _FExp_nid_postfix(&result, exponential ? y : 1.0f, -1);
+    return exponential ? result : y * (result + 0.25f / result);
 }
 
 }
