@@ -195,8 +195,12 @@ const UEnumeration KeywordEnumeration = {
     uenum_unextDefault, ulist_next_keyword_value, ulist_reset_keyword_values_iterator
 };
 
-UEnumeration* KeywordValues(const char* locale, UBool commonlyUsed, UErrorCode& status) {
-    const auto region = ulocimp_getRegionForSupplementalData(locale, true, status);
+UEnumeration* KeywordValues(const char* locale, UBool commonlyUsed, UErrorCode& status, bool defaultRegion = false) {
+    auto region = ulocimp_getRegionForSupplementalData(locale, true, status);
+    if (U_SUCCESS(status) && region.isEmpty()) {
+        const auto expanded = ulocimp_addLikelySubtags(locale, status);
+        if (U_SUCCESS(status)) region = ulocimp_getRegion(expanded.toStringPiece(), status);
+    }
     auto* values = ulist_createEmptyList(&status);
     auto* otherValues = ulist_createEmptyList(&status);
     auto* enumeration = static_cast<UEnumeration*>(uprv_malloc(sizeof(UEnumeration)));
@@ -258,7 +262,8 @@ UEnumeration* KeywordValues(const char* locale, UBool commonlyUsed, UErrorCode& 
             if (commonlyUsed && ulist_getListSize(values) == 0) {
                 uenum_close(enumeration);
                 enumeration = nullptr;
-                enumeration = KeywordValues("und", true, status);
+                if (defaultRegion) NotImplemented_nid_no_patch("ucurr: default currency region unavailable");
+                enumeration = KeywordValues("und", true, status, true);
             } else if (!commonlyUsed) {
                 ulist_resetList(otherValues);
                 while (auto* value = static_cast<char*>(ulist_getNext(otherValues))) {

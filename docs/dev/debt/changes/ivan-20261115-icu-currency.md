@@ -10,7 +10,7 @@
 
 - [Rejected currency iterator writes](../../../core/libs/prx/libSceIcu/Currency.cpp) retain one native result for a retry with the same ASCII/Unicode operation; reset discards that result. Changing encoding while such a rejected publication is pending throws. This retry protocol is a checked host boundary, not measured console behavior after invalid output memory. Closes when: cross-encoding retry after a rejected write is qualified.
 
-- [Currency keyword allocation failures](../../../core/libs/prx/libSceIcu/CurrencyBackend.cpp) are not console-compared. The source-derived list reader checks the recursive default-region result before resetting its cursor and releases partial resources. Resource failures other than a missing `to` field are propagated rather than treated as absent dates. The pinned native reader dereferences a failed recursive result and can suppress resource errors. Closes when: allocation-failure behavior is compared with the console.
+- [Currency keyword allocation failures](../../../core/libs/prx/libSceIcu/CurrencyBackend.cpp) are not console-compared. The source-derived list reader checks the default-region result before resetting its cursor, propagates suppressed likely-region inference errors and releases partial resources. A default region with no currencies throws rather than recursing indefinitely. Failed native singleton initialization can require `u_cleanup` before retry. Resource failures other than a missing `to` field are propagated rather than treated as absent dates. The pinned native reader dereferences a failed recursive result and can suppress resource errors. Closes when: allocation-failure behavior is compared with the console.
 
 ## change [Enumeration dispatch]
 

@@ -688,7 +688,11 @@ std::size_t KeywordAllocationAttempt(std::size_t failed) {
     } else {
         Require(status == 7);
     }
+    u_cleanup_nid_postfix();
+    Require(memory.allocations == memory.frees);
     status = 0;
+    u_setMemoryFunctions_nid_postfix(&memory, AllocateCurrency, ReallocateCurrency, FreeCurrency, &status);
+    Require(status == 0);
     enumeration = ucurr_getKeywordValuesForLocale_nid_postfix("currency", "en_QQ", 1, &status);
     Require(enumeration && status <= 0 && uenum_count_nid_postfix(enumeration, &status) == 2);
     std::int32_t length = -99;
