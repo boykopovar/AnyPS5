@@ -97,6 +97,25 @@ int main() {
     Require(sceSaveDataSyncSaveDataMemory(reinterpret_cast<const void*>(0x10)) == static_cast<int>(0x809F0000u));
     Require(errno == 71);
     Require(sceSaveDataSyncSaveDataMemory(syncParamUninit) == static_cast<int>(0x809F0001u));
+    Require(sceSaveDataSetSaveDataMemory2(nullptr) == static_cast<int>(0x809F0000u));
+    errno = 71;
+    Require(sceSaveDataSetSaveDataMemory2(reinterpret_cast<const SaveDataMemorySet2*>(0x10)) == static_cast<int>(0x809F0000u));
+    Require(errno == 71);
+    SaveDataMemorySet2 badDataSet{};
+    badDataSet.user_id = 7531;
+    badDataSet.slot_id = 0;
+    badDataSet.data_num = 1;
+    badDataSet.data = reinterpret_cast<const SaveDataMemoryData*>(0x10);
+    errno = 72;
+    Require(sceSaveDataSetSaveDataMemory2(&badDataSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 72);
+    SaveDataMemorySet2 badParamSet{};
+    badParamSet.user_id = 7531;
+    badParamSet.slot_id = 0;
+    badParamSet.param = reinterpret_cast<const SaveDataParam*>(0x10);
+    errno = 73;
+    Require(sceSaveDataSetSaveDataMemory2(&badParamSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 73);
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() /
         ("anyps5-metadata-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
