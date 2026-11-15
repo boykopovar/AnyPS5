@@ -517,6 +517,28 @@ static void CheckMutations(const std::string& directory) {
     REQUIRE(g_completed == 2 && sceFiosOpSyncWait(removed) == SCE_FIOS_OK);
 }
 
+static void CheckDirectoryCreateWithModeAnswers(const std::string& directory) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    const std::string withMode = directory + "/mode777";
+    const SceFiosOp created = sceFiosDirectoryCreateWithMode(nullptr, withMode.c_str(), 0x1ff);
+    REQUIRE(created > 0);
+    REQUIRE(sceFiosOpWait(created) == SCE_FIOS_OK);
+    sceFiosOpDelete(created);
+    REQUIRE(sceFiosDirectoryExistsSync(nullptr, withMode.c_str()));
+
+    const SceFiosOp duplicate = sceFiosDirectoryCreateWithMode(nullptr, withMode.c_str(), 0x1b6);
+    REQUIRE(sceFiosOpWait(duplicate) == SCE_FIOS_ERROR_ALREADY_EXISTS);
+    sceFiosOpDelete(duplicate);
+    REQUIRE(sceFiosDirectoryCreateWithModeSync(nullptr, withMode.c_str(), 0x1b6) == SCE_FIOS_ERROR_ALREADY_EXISTS);
+
+    const std::string syncForm = directory + "/mode666";
+    REQUIRE(sceFiosDirectoryCreateWithModeSync(nullptr, syncForm.c_str(), 0x1b6) == SCE_FIOS_OK);
+    REQUIRE(sceFiosDirectoryExistsSync(nullptr, syncForm.c_str()));
+
+    REQUIRE(sceFiosDirectoryDeleteSync(nullptr, withMode.c_str()) == SCE_FIOS_OK);
+    REQUIRE(sceFiosDirectoryDeleteSync(nullptr, syncForm.c_str()) == SCE_FIOS_OK);
+}
+
 static void CheckFileHandles(const std::string& directory) {
     const std::string path = directory + "/handle.bin";
     SceFiosOpenParams writer{};
@@ -993,6 +1015,7 @@ int main() {
     CheckCallbacks(file);
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
+    CheckDirectoryCreateWithModeAnswers(directory.generic_string());
     CheckOpenFlagsAndVectors(directory.generic_string(), file);
     CheckAsyncHandleAnswers(directory.generic_string(), file);
     CheckFileHandles(directory.generic_string());
