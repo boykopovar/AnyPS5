@@ -9352,10 +9352,6 @@ int APS5_VABI _ZN3JSC20TypedArrayControllerC2Ev() {
 }
 
 
-int APS5_VABI _ZN3WTF21RefCountedLeakCounter16suppressMessagesEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector26LayerTreeBackendDispatcherD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14295,10 +14291,6 @@ int APS5_VABI _ZN3WTF11setDataFileEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF11setNonBlockEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF12CountingLock10unlockSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14566,10 +14558,6 @@ int APS5_VABI _ZN3WTF14createIteratorENS_10StringViewE() {
 }
 
 int APS5_VABI _ZN3WTF14dataLogFStringEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14dupCloseOnExecEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -14869,26 +14857,6 @@ int APS5_VABI _ZN3WTF21MemoryPressureHandler9singletonEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF21RefCountedLeakCounter24cancelMessageSuppressionEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF21RefCountedLeakCounter9decrementEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF21RefCountedLeakCounter9incrementEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF21RefCountedLeakCounterC1EPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF21RefCountedLeakCounterC2EPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF21sentenceBreakIteratorENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15078,10 +15046,6 @@ int APS5_VABI _ZN3WTF5MutexD1Ev() {
 }
 
 int APS5_VABI _ZN3WTF5MutexD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF5sleepENS_7SecondsE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
