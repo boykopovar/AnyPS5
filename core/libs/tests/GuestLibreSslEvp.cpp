@@ -375,6 +375,7 @@ static void TestMdCtxCopy() {
         caught = true;
     }
     Require(caught);
+    badMd.contextSize = 16;
     Require(EVP_MD_CTX_cleanup_nid_postfix(&badTarget) == 1);
     Require(EVP_MD_CTX_cleanup_nid_postfix(&badSource) == 1);
     Require(liveBlocks == 0);
