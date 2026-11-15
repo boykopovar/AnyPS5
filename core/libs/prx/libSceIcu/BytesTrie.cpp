@@ -218,7 +218,7 @@ std::int32_t APS5_VABI _ZN6icu_689BytesTrie4nextEPKci_nid_postfix(BytesTrie* sel
                 return Current(trie);
             }
             Require(text);
-            input = static_cast<std::int8_t>(*text++);
+            input = static_cast<std::uint8_t>(*text++);
             if (length > 0) --length;
             if (remaining < 0) {
                 trie.remaining = remaining;
@@ -234,7 +234,7 @@ std::int32_t APS5_VABI _ZN6icu_689BytesTrie4nextEPKci_nid_postfix(BytesTrie* sel
                 if (!result) return 0;
                 if (length == 0 || (length < 0 && !Require(text))) return result;
                 Require(text);
-                input = static_cast<std::int8_t>(*text++);
+                input = static_cast<std::uint8_t>(*text++);
                 if (length > 0) --length;
                 if (result == 2) return Stop(trie);
                 position = trie.position;

@@ -59,7 +59,7 @@ void Matching() {
     Check(_ZN6icu_689BytesTrie4nextEi_nid_postfix(&trie, -1) == 2);
     trie = {nullptr, high, high, -1};
     const char signedByte[]{static_cast<char>(0xff), 0};
-    Check(_ZN6icu_689BytesTrie4nextEPKci_nid_postfix(&trie, signedByte, 1) == 0);
+    Check(_ZN6icu_689BytesTrie4nextEPKci_nid_postfix(&trie, signedByte, 1) == 2);
     trie = {nullptr, bytes, bytes, -1};
     Check(_ZN6icu_689BytesTrie8nextImplEPKhi_nid_postfix(&trie, bytes, 'a') == 1);
     Invalid([&] { _ZN6icu_689BytesTrie4nextEPKci_nid_postfix(&trie, nullptr, -1); });
