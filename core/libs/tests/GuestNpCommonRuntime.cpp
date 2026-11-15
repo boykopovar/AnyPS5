@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -176,6 +177,8 @@ void TestSharedEventFlags() {
 
 void TestThreads() {
     Require(sceNpThreadGetId(nullptr) == NpInvalidArgument, "a null thread id output is refused");
+    errno = 71;
+    Require(sceNpThreadGetId(reinterpret_cast<Pthread*>(0x10)) == NpInvalidArgument && errno == 71, "an unwritable thread id output is refused and errno is kept");
     Pthread thread {};
     int marker = 0;
     Require(sceNpCreateThread(&thread, ReturnArgument, &marker, 0, 0x10000, 0, "NpThread") == 0, "a thread is created");
@@ -1457,6 +1460,9 @@ void TestTitleIds() {
     char titleId[13] = {};
     Require(sceNpUtilBuildTitleId(&parts, titleId, sizeof(titleId)) == 0 && Equals(titleId, "ABCD12345_07"), "the index is two digits");
     Require(sceNpUtilBuildTitleId(&parts, titleId, 12) == NpUtilBufferTooSmall, "a title id needs 13 bytes");
+    errno = 71;
+    Require(sceNpUtilBuildTitleId(reinterpret_cast<const NpTitleIdParts*>(0x10), titleId, sizeof(titleId)) == NpUtilInvalid && errno == 71, "unreadable title id parts are refused and errno is kept");
+    Require(sceNpUtilBuildTitleId(&parts, reinterpret_cast<char*>(0x10), sizeof(titleId)) == NpUtilInvalid && errno == 71, "an unwritable title id is refused and errno is kept");
     parts.index = 100;
     Require(sceNpUtilBuildTitleId(&parts, titleId, sizeof(titleId)) == NpUtilOutOfRange, "the index is at most 99");
 }
