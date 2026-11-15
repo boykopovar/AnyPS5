@@ -185,14 +185,24 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordData(const char* recordType
     if (!g_initialized.load()) return kNotInitialized;
     if (!ValidKey(recordType)) return kInvalidName;
     if (record == nullptr) return kInvalidArgument;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(record, sizeof(*record))) {
+        errno = savedErrno;
+        return kInvalidArgument;
+    }
+    void* handle = nullptr;
     try {
         auto* data = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
         data->Set("recordType", std::string(recordType));
         data->Set("context", std::make_shared<NpUniversalDataSystemEventPropertyObject>());
-        *record = data;
+        handle = data;
     } catch (const std::bad_alloc&) {
+        errno = savedErrno;
         return kOutOfMemory;
     }
+    const bool copied = GuestCopyOut_nid_no_patch(record, &handle, sizeof(handle));
+    errno = savedErrno;
+    if (!copied) return kInvalidArgument;
     return 0;
 }
 

@@ -71,6 +71,8 @@ int main() {
     Require(sceNpUniversalDataSystemIntCreateRecordData(nullptr, &data) == kInvalidName, "null record type");
     Require(sceNpUniversalDataSystemIntCreateRecordData("", &data) == kInvalidName, "empty record type");
     Require(sceNpUniversalDataSystemIntCreateRecordData("type", nullptr) == kInvalidArgument, "null data output");
+    errno = 71;
+    Require(sceNpUniversalDataSystemIntCreateRecordData("type", reinterpret_cast<void**>(0x10)) == kInvalidArgument && errno == 71, "unwritable data output");
     Require(sceNpUniversalDataSystemIntCreateRecordData("type", &data) == 0 && data != nullptr, "create data");
 
     std::size_t size = 0;
