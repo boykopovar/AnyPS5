@@ -1,8 +1,17 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -151,6 +160,205 @@ void TestArguments() {
     ubidi_close_nid_postfix(nullptr);
 }
 
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Expect(data != nullptr, "VirtualAlloc");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Expect(page > 0, "sysconf");
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Expect(data != nullptr && data != MAP_FAILED, "mmap");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Expect(sizeof(value) <= bytes, "ReadOnlyPage size");
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Expect(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect");
+#else
+        Expect(mprotect(data, bytes, PROT_READ) == 0, "mprotect");
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+void RejectsFaulted(TCall call, const char* what) {
+    errno = EINVAL;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Expect(threw, what);
+    ExpectInt(errno, EINVAL, "errno preserved");
+}
+
+void TestGuestPointers() {
+    auto* badInt = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    auto* badByte = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
+    auto* badCallback = reinterpret_cast<Icu::BiDiClassCallback*>(std::uintptr_t{0x10});
+
+    RejectsFaulted([&] { ubidi_setPara_nid_postfix(nullptr, u"a", -1, 0, nullptr, badInt); },
+                   "ubidi_setPara bad error");
+    RejectsFaulted([&] { ubidi_countRuns_nid_postfix(nullptr, badInt); },
+                   "ubidi_countRuns bad error");
+    RejectsFaulted([&] { ubidi_setClassCallback_nid_postfix(nullptr, MarkXRightToLeft, nullptr, nullptr, nullptr, badInt); },
+                   "ubidi_setClassCallback bad error");
+
+    {
+        ReadOnlyPage page;
+        auto* roStatus = page.Set<std::int32_t>(IllegalArgument);
+        page.Protect();
+        errno = EINVAL;
+        ubidi_setPara_nid_postfix(nullptr, u"a", -1, 0, nullptr, roStatus);
+        ExpectInt(*roStatus, IllegalArgument, "ro failure status unchanged by setPara");
+        ExpectInt(errno, EINVAL, "errno preserved");
+        ExpectInt(ubidi_countRuns_nid_postfix(nullptr, roStatus), -1, "countRuns short-circuits on ro failure");
+        ExpectInt(*roStatus, IllegalArgument, "ro failure status unchanged by countRuns");
+        ExpectInt(errno, EINVAL, "errno preserved");
+        ubidi_setClassCallback_nid_postfix(nullptr, MarkXRightToLeft, nullptr, nullptr, nullptr, roStatus);
+        ExpectInt(*roStatus, IllegalArgument, "ro failure status unchanged by setClassCallback");
+        ExpectInt(errno, EINVAL, "errno preserved");
+    }
+
+    {
+        ReadOnlyPage page;
+        auto* roSuccess = page.Set<std::int32_t>(Success);
+        page.Protect();
+        RejectsFaulted([&] { ubidi_setPara_nid_postfix(nullptr, u"a", -1, 0, nullptr, roSuccess); },
+                       "ubidi_setPara ro error");
+        ExpectInt(*roSuccess, Success, "ro error unchanged after setPara");
+        RejectsFaulted([&] { ubidi_countRuns_nid_postfix(nullptr, roSuccess); },
+                       "ubidi_countRuns ro error");
+        ExpectInt(*roSuccess, Success, "ro error unchanged after countRuns");
+        RejectsFaulted([&] { ubidi_setClassCallback_nid_postfix(nullptr, MarkXRightToLeft, nullptr, nullptr, nullptr, roSuccess); },
+                       "ubidi_setClassCallback ro error");
+        ExpectInt(*roSuccess, Success, "ro error unchanged after setClassCallback");
+    }
+
+    auto* bidi = ubidi_open_nid_postfix();
+    Expect(bidi != nullptr, "ubidi_open");
+    std::int32_t status = Success;
+    const char16_t text[] = u"abc אב";
+    ubidi_setPara_nid_postfix(bidi, text, -1, DefaultLtr, nullptr, &status);
+    ExpectInt(status, Success, "ubidi_setPara setup");
+
+    {
+        ReadOnlyPage page;
+        auto* roInt = page.Set<std::int32_t>(77);
+        page.Protect();
+        std::int32_t localStart = -5;
+        std::int32_t localLength = -6;
+        RejectsFaulted([&] { ubidi_getVisualRun_nid_postfix(bidi, 0, roInt, &localLength); },
+                       "ubidi_getVisualRun ro start");
+        ExpectInt(*roInt, 77, "ro start unchanged");
+        ExpectInt(localLength, -6, "length untouched when start unwritable");
+        RejectsFaulted([&] { ubidi_getVisualRun_nid_postfix(bidi, 0, &localStart, roInt); },
+                       "ubidi_getVisualRun ro length");
+        ExpectInt(*roInt, 77, "ro length unchanged");
+        ExpectInt(localStart, -5, "start untouched when length unwritable");
+        RejectsFaulted([&] { ubidi_getVisualRun_nid_postfix(bidi, 0, badInt, &localLength); },
+                       "ubidi_getVisualRun bad start");
+        ExpectInt(localLength, -6, "length untouched on bad start");
+    }
+
+    {
+        ReadOnlyPage intPage;
+        auto* roLimit = intPage.Set<std::int32_t>(88);
+        intPage.Protect();
+        ReadOnlyPage bytePage;
+        auto* roLevel = bytePage.Set<std::uint8_t>(99);
+        bytePage.Protect();
+        std::int32_t localLimit = -7;
+        std::uint8_t localLevel = 250;
+        RejectsFaulted([&] { ubidi_getLogicalRun_nid_postfix(bidi, 0, roLimit, &localLevel); },
+                       "ubidi_getLogicalRun ro limit");
+        ExpectInt(*roLimit, 88, "ro limit unchanged");
+        ExpectInt(localLevel, 250, "level untouched when limit unwritable");
+        RejectsFaulted([&] { ubidi_getLogicalRun_nid_postfix(bidi, 0, &localLimit, roLevel); },
+                       "ubidi_getLogicalRun ro level");
+        ExpectInt(*roLevel, 99, "ro level unchanged");
+        ExpectInt(localLimit, -7, "limit untouched when level unwritable");
+        RejectsFaulted([&] { ubidi_getLogicalRun_nid_postfix(bidi, 0, &localLimit, badByte); },
+                       "ubidi_getLogicalRun bad level");
+        ExpectInt(localLimit, -7, "limit untouched on bad level");
+    }
+
+    {
+        const std::uint8_t levels[] = {0, 1};
+        std::int32_t map[2] = {11, 22};
+        RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(badByte, 2, map); },
+                       "ubidi_reorderVisual bad levels");
+        Expect(map[0] == 11 && map[1] == 22, "map untouched on bad levels");
+        RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 2, badInt); },
+                       "ubidi_reorderVisual bad map");
+        ReadOnlyPage page;
+        auto* roMap = page.Set<std::int32_t>(55);
+        page.Protect();
+        RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 1, roMap); },
+                       "ubidi_reorderVisual ro map");
+        ExpectInt(*roMap, 55, "ro map unchanged");
+    }
+
+    {
+        std::int32_t calls = 0;
+        status = Success;
+        Icu::BiDiClassCallback localOldFunction = DefaultClass;
+        const void* localOldContext = &status;
+        RejectsFaulted([&] {
+            ubidi_setClassCallback_nid_postfix(bidi, MarkXRightToLeft, &calls, badCallback, &localOldContext, &status);
+        }, "ubidi_setClassCallback bad oldFunction");
+        Expect(localOldContext == &status, "oldContext untouched when oldFunction invalid");
+        ExpectInt(status, Success, "status unchanged when oldFunction invalid");
+
+        ReadOnlyPage contextPage;
+        const void* sentinel = &calls;
+        auto* roOldContext = contextPage.Set<const void*>(sentinel);
+        contextPage.Protect();
+        RejectsFaulted([&] {
+            ubidi_setClassCallback_nid_postfix(bidi, MarkXRightToLeft, &calls, &localOldFunction, roOldContext, &status);
+        }, "ubidi_setClassCallback ro oldContext");
+        Expect(localOldFunction == DefaultClass && *roOldContext == sentinel,
+               "oldFunction and ro oldContext untouched on failure");
+
+        status = Success;
+        const char16_t checkText[] = u"axb";
+        ubidi_setPara_nid_postfix(bidi, checkText, -1, 0, nullptr, &status);
+        ExpectInt(status, Success, "ubidi_setPara after failed setClassCallback");
+        ExpectInt(calls, 0, "failed setClassCallback did not install callback");
+        ExpectInt(ubidi_countRuns_nid_postfix(bidi, &status), 1, "original callback state preserved");
+    }
+
+    ubidi_close_nid_postfix(bidi);
+}
+
 }
 
 int main() {
@@ -158,5 +366,6 @@ int main() {
     TestClassCallback();
     TestStatelessHelpers();
     TestArguments();
+    TestGuestPointers();
     return 0;
 }
