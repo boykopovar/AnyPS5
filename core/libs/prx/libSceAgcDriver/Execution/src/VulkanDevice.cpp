@@ -823,11 +823,11 @@ struct VulkanDevice::State {
     }
 
     template<typename TFunction>
-    TFunction DeviceFunction(const char* name) const {
+    TFunction DeviceFunction(Graphics::FunctionName name) const {
         ++Graphics::DeviceProcLookups();
-        auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
+        auto function = reinterpret_cast<TFunction>(deviceProc(device, name.Value()));
         if (function == nullptr) {
-            throw std::runtime_error(std::string("Vulkan device function missing: ") + name);
+            throw std::runtime_error(std::string("Vulkan device function missing: ") + name.Value());
         }
         return function;
     }
@@ -1202,6 +1202,7 @@ struct VulkanDevice::State {
             Graphics::ClearRetainedSpaces(device);
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
+            Graphics::ClearUploadCopies(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
@@ -2539,7 +2540,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         const auto host = std::ranges::find_first_of(hosts, available);
         if (std::ranges::find(available, VK_TIME_DOMAIN_DEVICE_KHR) != available.end() && host != hosts.end()) {
             state->hostTimeDomain = *host;
-            state->calibratedTimestamps = state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>(khr ? "vkGetCalibratedTimestampsKHR" : "vkGetCalibratedTimestampsEXT");
+            state->calibratedTimestamps = khr ? state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>("vkGetCalibratedTimestampsKHR") : state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>("vkGetCalibratedTimestampsEXT");
         }
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
@@ -2953,6 +2954,10 @@ void VulkanDevice::WaitIdle() {
     }
     std::unique_lock presentQueueLock(state->presentQueueMutex, std::defer_lock);
     if (state->presentQueue != VK_NULL_HANDLE) presentQueueLock.lock();
+    std::unique_lock settleQueueLock(state->settleQueueMutex, std::defer_lock);
+    if (state->settleQueue != VK_NULL_HANDLE) settleQueueLock.lock();
+    std::unique_lock sparseQueueLock(state->sparseQueueMutex, std::defer_lock);
+    if (state->sparseQueue != VK_NULL_HANDLE) sparseQueueLock.lock();
     check(state->DeviceFunction<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(state->device), "vkDeviceWaitIdle");
     Graphics::CheckPixelFunctionLds(graphicsContext());
     APS5_LOG_CHARS_OUT_DEBUG("VulkanDevice::WaitIdle complete");
@@ -4615,6 +4620,10 @@ std::string VulkanDevice::DriverInfo() const {
     return state->driverInfo.empty() ? std::to_string(state->properties.driverVersion) : state->driverInfo;
 }
 
+VkDriverId VulkanDevice::DriverId() const {
+    return state->driverId;
+}
+
 bool VulkanDevice::BdaAtomicsUsable() const {
     return AgcDriver::BdaAtomicsUsable(state->driverId);
 }
@@ -4700,6 +4709,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
     target.ldsLockFences = state->ldsLockFences;
     target.meshWindowBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_WINDOW_BUFFER") == nullptr;
+    target.meshInlineFunctions = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_INLINE_FUNCTIONS") == nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
     target.maxImageArrayLayers = limits.maxImageArrayLayers;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
@@ -5961,7 +5971,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             recorder.Keep(std::move(checked));
         }
     }
-    context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->pipeline);
+    context.BindComputePipeline(commands, record.objects->pipeline);
     if (record.bindings != nullptr) Graphics::Require(record.bindings->allocation.set != VK_NULL_HANDLE, "dispatch overlay has no descriptor set");
     if (record.bindings != nullptr) context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, 0, 1, &record.bindings->allocation.set, 0, nullptr);
     else resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout);
@@ -6041,7 +6051,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
                 std::snprintf(text, sizeof(text), "Vulkan dispatch: workgroup count %ux%ux%u%s exceeds device limits %ux%ux%u and the shader takes no workgroup offset", record.x, record.y, record.z, counted, limit[0], limit[1], limit[2]);
                 throw std::runtime_error(text);
             }
-            const auto bindPipeline = context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline");
             const auto dispatchChunk = context.Resolved(&Graphics::DeviceFunctions::cmdDispatch, "vkCmdDispatch");
             bool firstChunk = true;
             for (std::uint32_t zBase = 0; zBase < record.z; zBase += limit[2]) {
@@ -6049,7 +6058,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
                     for (std::uint32_t xBase = 0; xBase < record.x; xBase += limit[0]) {
                         if (!firstChunk) {
                             Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-                            bindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, splitComputePipeline(context, *record.shader->program, *record.objects, {xBase, yBase, zBase}));
+                            context.BindComputePipeline(commands, splitComputePipeline(context, *record.shader->program, *record.objects, {xBase, yBase, zBase}));
                         }
                         firstChunk = false;
                         dispatchChunk(commands, std::min(limit[0], record.x - xBase), std::min(limit[1], record.y - yBase), std::min(limit[2], record.z - zBase));

@@ -53,6 +53,7 @@ public:
     }
     void RewindTailFlips(std::uint64_t flips);
     static void MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks);
+    static void SetStartIdleWaitForTest(std::function<bool()> wait);
 
 private:
     enum class State { Waiting, Recording, Done };
@@ -138,6 +139,8 @@ private:
     std::uint64_t snapshotBytes = 0;
     std::uint64_t recordedCalls = 0;
     std::uint64_t startAttempts = 0;
+    std::atomic<std::uint64_t> unrecordedAccepts{0};
+    inline static std::function<bool()> startIdleWaitForTest;
     std::uint64_t unreadableBytes = 0;
     std::uint64_t hostOnlySampleBytes = 0;
     std::uint64_t allocationsGeneration = 0;
