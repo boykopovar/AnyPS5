@@ -8,6 +8,7 @@
 #include "Invariant.hpp"
 #include "CaseProperties.hpp"
 #include "Iterator.hpp"
+#include "UText.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
 #include "Numeric.hpp"
@@ -44,4 +45,3 @@
 #include "Utf16Search.hpp"
 #include "RecoveredSignatures.hpp"
 #include "Copy.hpp"
-#include "UText.hpp"
