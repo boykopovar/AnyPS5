@@ -28,16 +28,6 @@ int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalPending4_005_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
