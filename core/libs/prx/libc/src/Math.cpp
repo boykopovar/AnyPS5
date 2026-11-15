@@ -498,12 +498,6 @@ std::lldiv_t wrappingLldiv(long long numerator, long long denominator) {
     return std::lldiv(numerator, denominator);
 }
 
-template <typename T>
-T StoreOutput(T* output, T value) {
-    GuestCopyOut_nid_no_patch(output, &value, sizeof(value));
-    return value;
-}
-
 }
 
 extern "C" {
@@ -2580,8 +2574,8 @@ float APS5_VABI tanf_nid_postfix(float x) {
 }
 
 void APS5_VABI sincosf_nid_postfix(float x, float* sinp, float* cosp) {
-    StoreOutput(sinp, sinf_nid_postfix(x));
-    StoreOutput(cosp, cosf_nid_postfix(x));
+    *sinp = sinf_nid_postfix(x);
+    *cosp = cosf_nid_postfix(x);
 }
 
 static std::int32_t HighWord(double x) {
@@ -4577,27 +4571,27 @@ double APS5_VABI modf_nid_postfix(double x, double* integral) {
     const auto exponent = (bits >> 52u) & 0x7ffull;
     const auto zero = std::bit_cast<double>(bits & 0x8000000000000000ull);
     if (exponent < 1023u) {
-        StoreOutput(integral, zero);
+        *integral = zero;
         return x;
     }
     if (exponent >= 1075u) {
-        StoreOutput(integral, x);
+        *integral = x;
         return exponent == 0x7ffu && (bits & 0xfffffffffffffull) != 0 ? x : zero;
     }
     const auto mask = (std::uint64_t{1} << (1075u - exponent)) - 1u;
-    const double whole = StoreOutput(integral, std::bit_cast<double>(bits & ~mask));
-    return (bits & mask) == 0 ? zero : x - whole;
+    *integral = std::bit_cast<double>(bits & ~mask);
+    return (bits & mask) == 0 ? zero : x - *integral;
 }
 float APS5_VABI modff_nid_postfix(float x, float* integral) {
     const auto bits = std::bit_cast<std::uint32_t>(x);
     const auto exponent = (bits >> 23u) & 0xffu;
     const auto zero = std::bit_cast<float>(bits & 0x80000000u);
     if (exponent < 127u) {
-        StoreOutput(integral, zero);
+        *integral = zero;
         return x;
     }
     if (exponent >= 150u) {
-        StoreOutput(integral, x);
+        *integral = x;
         if (exponent == 0xffu && (bits & 0x7fffffu) != 0) {
             GuestCpu::RaiseInvalidForSignalingNan(x);
             return x;
@@ -4605,8 +4599,8 @@ float APS5_VABI modff_nid_postfix(float x, float* integral) {
         return zero;
     }
     const auto mask = (std::uint32_t{1} << (150u - exponent)) - 1u;
-    const float whole = StoreOutput(integral, std::bit_cast<float>(bits & ~mask));
-    return (bits & mask) == 0 ? zero : x - whole;
+    *integral = std::bit_cast<float>(bits & ~mask);
+    return (bits & mask) == 0 ? zero : x - *integral;
 }
 double APS5_VABI tanh_nid_postfix(double x) {
     const double huge = 1.0e300;
@@ -4967,14 +4961,14 @@ double APS5_VABI remainder_nid_postfix(double x, double y) {
 double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
-    StoreOutput(quo, RemquoQuotient(status, std::signbit(x) != std::signbit(y)));
+    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
     SetRemainderDomainError(x, y);
     return static_cast<double>(remainder);
 }
 float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) {
     std::uint16_t status;
     const long double remainder = PartialRemainder(x, y, &status);
-    StoreOutput(quo, RemquoQuotient(status, std::signbit(x) != std::signbit(y)));
+    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
     SetRemainderDomainError(x, y);
     return static_cast<float>(remainder);
 }
