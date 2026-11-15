@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace NKWebKit {
@@ -196,6 +197,19 @@ public:
     Retained<URL> absolutePDFURL;
     Retained<String> linkLabel;
     Retained<String> linkTitle;
+    Retained<String> linkSuggestedFilename;
+    bool isSelected = false;
+    bool isDownloadableMedia = false;
+    bool mediaHasAudio = false;
+    bool mediaIsInFullscreen = false;
+    std::uint32_t mediaType = 0;
+};
+
+class BundleNodeHandle final : public ObjectOf<ObjectType::BundleNodeHandle> {
+public:
+    Retained<BundleNodeHandle> document;
+    Retained<BundleFrame> documentFrame;
+    Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
@@ -239,7 +253,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -247,7 +261,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }
@@ -267,7 +281,7 @@ public:
     void Allow() {
         state = State::Allowed;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(true);
         }
     }
@@ -275,7 +289,7 @@ public:
     void Deny() {
         state = State::Denied;
         if (decisionHandler) {
-            auto handler = std::move(decisionHandler);
+            auto handler = std::exchange(decisionHandler, nullptr);
             handler(false);
         }
     }
@@ -333,6 +347,81 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
+};
+
+class Image final : public ObjectOf<ObjectType::Image> {
+public:
+    explicit Image(int width, int height) : width(width), height(height) {}
+
+    int width = 0;
+    int height = 0;
+};
+
+class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
+public:
+    NavigationAction() = default;
+    explicit NavigationAction(bool shouldPerformDownload) : shouldPerformDownload_(shouldPerformDownload) {}
+    bool shouldPerformDownload() const noexcept { return shouldPerformDownload_; }
+private:
+    bool shouldPerformDownload_ = false;
+};
+
+class NavigationResponse final : public ObjectOf<ObjectType::NavigationResponse> {
+public:
+    NavigationResponse() = default;
+    explicit NavigationResponse(bool canShowMIMEType) : canShowMIMEType_(canShowMIMEType) {}
+    bool canShowMIMEType() const noexcept { return canShowMIMEType_; }
+private:
+    bool canShowMIMEType_ = true;
+};
+
+class AuthenticationDecisionListener final : public ObjectOf<ObjectType::AuthenticationDecisionListener> {
+public:
+    enum class Decision { None, Cancel, UseCredential, RejectProtectionSpace };
+    Decision decision = Decision::None;
+    Retained<Object> credential;
+};
+
+class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
+public:
+    std::string requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener;
+    int previousFailureCount = 0;
+    Retained<Object> proposedCredential;
+    Retained<Object> protectionSpace;
+    bool isForMainResource = false;
+    bool isInMainFrame = false;
+};
+
+class SecurityOrigin final : public ObjectOf<ObjectType::SecurityOrigin> {
+public:
+    SecurityOrigin() = default;
+    SecurityOrigin(const String& protocol, const String& host, std::optional<std::uint16_t> port)
+        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
+
+    std::u16string protocol;
+    std::u16string host;
+    std::optional<std::uint16_t> port;
+    bool protocolNull = false;
+    bool hostNull = false;
+};
+
+class ResourceCacheManager final : public ObjectOf<ObjectType::CacheManager> {
+public:
+    std::uint32_t lastCachesCleared = 0;
+    bool clearedAll = false;
+    std::vector<std::string> origins;
+
+    void ClearAll(std::uint32_t cachesToClear) {
+        lastCachesCleared = cachesToClear;
+        clearedAll = true;
+        origins.clear();
+    }
+
+    void ClearForOrigin(const std::string& origin, std::uint32_t cachesToClear) {
+        lastCachesCleared = cachesToClear;
+        std::erase(origins, origin);
+    }
 };
 
 }  // namespace NKWebKit

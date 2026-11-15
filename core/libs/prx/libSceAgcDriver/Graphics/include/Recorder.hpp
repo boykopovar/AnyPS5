@@ -31,6 +31,104 @@ namespace AgcDriver::Graphics {
 class Buffer;
 class DeviceBuffer;
 
+class CommandState {
+public:
+    enum Slot : std::uint32_t {
+        Viewport,
+        Scissor,
+        DepthBias,
+        DepthBounds,
+        CullMode,
+        FrontFace,
+        DepthTest,
+        DepthWrite,
+        DepthCompare,
+        DepthBoundsTest,
+        StencilTest,
+        StencilOpFront,
+        StencilOpBack,
+        CompareMaskFront,
+        CompareMaskBack,
+        WriteMaskFront,
+        WriteMaskBack,
+        ReferenceFront,
+        ReferenceBack,
+        ColorWriteMask,
+        SlotCount
+    };
+    static constexpr std::uint32_t Mask(Slot slot) { return 1u << slot; }
+    static std::uint32_t DynamicSlots(std::span<const VkDynamicState> states);
+
+    CommandState() = default;
+    CommandState(const CommandState&) = delete;
+    CommandState& operator=(const CommandState&) = delete;
+
+    void Begin(VkCommandBuffer commands, bool suppress = true);
+    void Invalidate() noexcept;
+    VkCommandBuffer Commands() const { return commands; }
+    bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
+    VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
+    void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
+    void SetViewport(const Context& context, const VkViewport& viewport);
+    void SetScissor(const Context& context, const VkRect2D& scissor);
+    void SetDepthBias(const Context& context, float constant, float clamp, float slope);
+    void SetDepthBounds(const Context& context, float minimum, float maximum);
+    void SetCullMode(const Context& context, VkCullModeFlags mode);
+    void SetFrontFace(const Context& context, VkFrontFace face);
+    void SetDepthTestEnable(const Context& context, VkBool32 enable);
+    void SetDepthWriteEnable(const Context& context, VkBool32 enable);
+    void SetDepthCompareOp(const Context& context, VkCompareOp compare);
+    void SetDepthBoundsTestEnable(const Context& context, VkBool32 enable);
+    void SetStencilTestEnable(const Context& context, VkBool32 enable);
+    void SetStencilOp(const Context& context, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp);
+    void SetStencilCompareMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask);
+    void SetStencilWriteMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask);
+    void SetStencilReference(const Context& context, VkStencilFaceFlags faces, std::uint32_t reference);
+    void SetColorWriteMasks(const Context& context, std::span<const VkColorComponentFlags> masks);
+
+private:
+    struct StencilOps {
+        VkStencilOp failOp;
+        VkStencilOp passOp;
+        VkStencilOp depthFailOp;
+        VkCompareOp compareOp;
+        bool operator==(const StencilOps&) const = default;
+    };
+    struct ColorWriteMasks {
+        std::uint32_t count;
+        std::array<VkColorComponentFlags, 8> masks;
+    };
+    void wrote(std::uint32_t slots) { valid |= slots & trackable; overwritten |= slots; }
+    template<typename TValue, typename TEqual, typename TEmit>
+    void apply(Slot slot, TValue CommandState::*field, const TValue& value, TEqual equal, TEmit emit);
+    template<typename TValue, typename TEmit>
+    void applyFaces(Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit);
+
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+    std::uint32_t trackable = 0;
+    std::uint32_t valid = 0;
+    std::uint32_t overwritten = 0;
+    std::uint32_t dynamicSlots = 0;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    bool pipelineKnown = false;
+    VkViewport viewport{};
+    VkRect2D scissor{};
+    std::array<float, 3> depthBias{};
+    std::array<float, 2> depthBounds{};
+    VkCullModeFlags cullMode = 0;
+    VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    VkBool32 depthTest = 0;
+    VkBool32 depthWrite = 0;
+    VkCompareOp depthCompare = VK_COMPARE_OP_NEVER;
+    VkBool32 depthBoundsTest = 0;
+    VkBool32 stencilTest = 0;
+    std::array<StencilOps, 2> stencilOps{};
+    std::array<std::uint32_t, 2> compareMasks{};
+    std::array<std::uint32_t, 2> writeMasks{};
+    std::array<std::uint32_t, 2> references{};
+    ColorWriteMasks colorWriteMasks{};
+};
+
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
 // Sync waits for every batch, then runs its completion actions (write-backs) in order. Objects handed
@@ -90,7 +188,7 @@ public:
         PassBreak reason = PassBreak::Continued;
     };
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
-    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass = {});
+    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
@@ -129,9 +227,12 @@ public:
     static constexpr std::size_t UnwrittenSnapshotEntries = 4096;
     static constexpr std::size_t DrawInputBudget = std::size_t{1024} << 20u;
     static constexpr std::size_t DrawInputEntries = 16384;
+    static constexpr std::size_t DrawInputMirrorBudget = std::size_t{512} << 20u;
+    static bool DrawInputMirrors();
+    std::pair<std::size_t, std::size_t> DrawInputBytes() const;
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
-    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr);
+    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr, bool mirrored = false);
     struct OwnedDrawInputProof {
         std::vector<std::uint64_t> words;
         std::uint64_t since = 0;
@@ -139,11 +240,12 @@ public:
         std::uint64_t forget = 0;
         std::uint64_t note = 0;
     };
+    std::size_t OwnedDrawInputEntries() const { return ownedDrawInputs; }
     OwnedDrawInputProof ArmOwnedDrawInput(std::uint64_t address, std::size_t bytes) const;
-    std::shared_ptr<Buffer> ReusableOwnedDrawInput(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived);
-    void KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived);
+    std::shared_ptr<Buffer> ReusableOwnedDrawInput(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::size_t from = 0, std::uint32_t* lowest = nullptr);
+    void KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived, std::size_t from = 0, std::uint32_t lowest = 0);
     static constexpr std::size_t ContainingSnapshotProbes = 16;
-    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t forgetSerial, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0, bool ownedInsertion = false);
+    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t forgetSerial, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0, std::size_t from = 0, std::uint32_t lowest = 0, bool ownedInsertion = false);
     static constexpr std::size_t DrawUploadChunk = std::size_t{1} << 20u;
     struct UploadSlice {
         std::shared_ptr<Buffer> buffer;
@@ -153,14 +255,15 @@ public:
     UploadSlice DrawUpload(std::size_t bytes);
     static constexpr std::size_t IndexRangeEntries = 16384;
     static constexpr std::size_t KeptIndexRangeIndices = 4096;
-    bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest);
-    void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t forgetSerial, std::optional<std::uint32_t> highest);
+    bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest, std::uint32_t* lowest = nullptr);
+    void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t forgetSerial, std::optional<std::uint32_t> highest, std::uint32_t lowest = 0);
     void OnComplete(std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
     void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void NoteStampedWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static constexpr std::int16_t ReachValue = -2;
     void NotePendingReach(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
@@ -170,6 +273,8 @@ public:
     // memory; its completion stores are the caller's business, see VulkanDevice::CopyBuffer).
     bool PendingWriteSettled(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t LastWriteNote(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t WriteNoteCount() const { return writeNoteCount; }
+    std::vector<std::uint64_t> StampedNotesSince(std::uint64_t note) const;
     std::uint64_t NewestWriteNote(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t NewestStoreNote(std::uint64_t address, std::size_t bytes) const;
     struct PendingWrite {
@@ -260,6 +365,11 @@ public:
     bool CountingSamples() const { return countingSamples; }
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
     bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
+    struct BoundWords {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+    };
+    bool RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords result, BoundWords snapshot, BoundWords target, std::uint32_t dwords, VkBuffer counter = VK_NULL_HANDLE);
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
@@ -268,7 +378,8 @@ public:
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
-    void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
+    void RecordUncounted(const std::function<void(CommandState&)>& record);
+    CommandState& GraphicsState();
     struct SampleDumpStatistics {
         std::uint64_t queued;
         std::uint64_t queuedInPass;
@@ -472,6 +583,8 @@ public:
     // The recorder of the current device, for code that only has guest addresses (the flush hook)
     // and for helpers that must not recycle resources the recorded work still uses.
     static Recorder* Active();
+    bool RenderPassOpen() const;
+    std::uint64_t RenderPassGeneration() const { return passGeneration; }
     VkDevice Device() const { return context.device; }
     std::uint64_t Id() const { return id; }
     static bool Alive(std::uint64_t id);
@@ -542,7 +655,7 @@ public:
     // or APS5_PROFILE_GPU). A class range covers the command with its own barriers (a dispatch's
     // barriers are classes of their own, its program range stays keyed by the program), so the
     // union of every range of a batch and the batch span differ by what no class times ('untimed').
-    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, Count };
+    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, InputMirror, Count };
     static constexpr std::uint64_t ClassKey(CommandClass which) { return 0x10 + static_cast<std::uint64_t>(which); }
     std::uint32_t BeginGpuTiming(CommandClass which) { return BeginGpuTiming(ClassKey(which)); }
     static void CountBarriers(CommandClass which, std::uint32_t count = 1);
@@ -621,6 +734,7 @@ private:
     };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
+        CommandState graphicsState;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
@@ -629,6 +743,7 @@ private:
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
+        std::vector<std::uint64_t> stampedNotes;
         std::vector<std::int16_t> writeValues;
         std::vector<std::int64_t> writeWords;
         // In-place reads (see NotePendingRead), dying with the batch: a finished batch's reads are done.
@@ -744,7 +859,7 @@ private:
             bool fenced = false;
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
-            std::function<void(VkCommandBuffer)> afterPass;
+            std::function<void(CommandState&)> afterPass;
             PassBreak closedBy = PassBreak::NewBatch;
         } renderPass;
         PassHazards passHazards;
@@ -807,6 +922,11 @@ private:
     int changedCopyState = 0;
     VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
     VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
+    int boundChangedCopyState = 0;
+    VkDescriptorSetLayout boundChangedCopySetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout boundChangedCopyLayout = VK_NULL_HANDLE;
+    VkPipeline boundChangedCopyPipeline = VK_NULL_HANDLE;
+    PFN_vkCmdPushDescriptorSetKHR cmdPushChangedCopySet = nullptr;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
@@ -837,11 +957,10 @@ private:
     PFN_vkCmdEndQuery cmdEndQuery = nullptr;
     PFN_vkCmdResetQueryPool cmdResetQueryPool = nullptr;
     PFN_vkCmdCopyQueryPoolResults cmdCopyQueryPoolResults = nullptr;
-    PFN_vkCmdBindPipeline cmdBindPipeline = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
-    TFunction function(TFunction resolved, const char* name) const {
+    TFunction function(TFunction resolved, FunctionName name) const {
         return resolved != nullptr ? resolved : context.Function<TFunction>(name);
     }
     VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
@@ -931,6 +1050,7 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
     std::deque<std::unique_ptr<Batch>> inFlight;
@@ -956,6 +1076,9 @@ private:
         std::list<DrawSnapshotKey>::iterator recent;
         std::shared_ptr<Buffer> buffer;
         std::uint32_t derived;
+        std::size_t from;
+        std::uint32_t lowest;
+        std::shared_ptr<Buffer> mirror;
         OwnedDrawInputProof owned;
     };
     struct DrawSnapshotPool {
@@ -973,12 +1096,17 @@ private:
     std::size_t unwrittenBytes = 0;
     void retireUnwrittenSnapshots(const std::array<std::uint64_t, 3>& stamp);
     std::array<DrawSnapshotPool, 2> drawSnapshotPools;
+    std::size_t ownedDrawInputs = 0;
     void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
+    std::size_t drawInputMirrorBytes = 0;
+    void dropDrawInputMirror(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
+    std::shared_ptr<Buffer> mirrorDrawInput(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     struct IndexRange {
         std::uint64_t generation;
         std::uint64_t forgetSerial;
         std::list<DrawSnapshotKey>::iterator recent;
         std::optional<std::uint32_t> highest;
+        std::uint32_t lowest;
     };
     std::map<DrawSnapshotKey, IndexRange> indexRanges;
     std::list<DrawSnapshotKey> indexRangeRecency;

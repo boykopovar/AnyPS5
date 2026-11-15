@@ -15,6 +15,10 @@ constexpr std::int32_t Decompose = 1;
 constexpr std::int32_t No = 0;
 constexpr std::int32_t Yes = 1;
 constexpr std::int32_t Maybe = 2;
+constexpr std::uint32_t ExcludeSpecialI = 1;
+constexpr std::uint32_t CodePointOrder = 0x8000;
+constexpr std::uint32_t IgnoreCase = 0x10000;
+constexpr std::uint32_t Unicode32 = 0x20u << 20;
 
 void Expect(bool condition, const char* what) {
     if (condition) return;
@@ -163,6 +167,68 @@ void TestArguments() {
     ExpectThrow<std::invalid_argument>([] { unorm2_composePair_nid_postfix(nullptr, u'e', 0x0301); }, "unorm2_composePair(null)");
 }
 
+void TestFiltered() {
+    const auto* nfc = Nfc();
+    std::int32_t error = Success;
+    Expect(unorm2_openFiltered_nid_postfix(nfc, nullptr, &error) == nullptr && error == IllegalArgument,
+           "filtered normalizer requires a set");
+    auto* set = uset_openEmpty_nid_postfix();
+    Expect(set != nullptr, "allocate normalization set");
+    Expect(unorm2_openFiltered_nid_postfix(nfc, set, &error) == nullptr && error == IllegalArgument,
+           "filtered normalizer preserves incoming failure");
+    error = Success;
+    uset_add_nid_postfix(set, u'e');
+    uset_add_nid_postfix(set, 0x0301);
+    auto* filtered = unorm2_openFiltered_nid_postfix(nfc, set, &error);
+    Expect(filtered != nullptr && error == Success, "open filtered NFC");
+    char16_t result[16]{};
+    ExpectInt(unorm2_normalize_nid_postfix(filtered, u"e\u0301a\u0301", -1, result, 16, &error), 3, "filtered output length");
+    Expect(std::u16string(result) == u"\u00e9a\u0301", "only matching runs are normalized");
+    ExpectInt(unorm2_composePair_nid_postfix(filtered, u'e', 0x0301), 0x00e9, "included pair composes");
+    ExpectInt(unorm2_composePair_nid_postfix(filtered, u'a', 0x0301), -1, "excluded pair is unchanged");
+    unorm2_close_nid_postfix(filtered);
+    unorm2_close_nid_postfix(nullptr);
+    uset_close_nid_postfix(set);
+}
+
+std::int32_t Compare(const char16_t* first, std::int32_t firstLength, const char16_t* second, std::int32_t secondLength,
+                     std::uint32_t options, const char* what) {
+    std::int32_t error = Success;
+    const auto result = unorm_compare_nid_postfix(first, firstLength, second, secondLength, options, &error);
+    ExpectInt(error, Success, what);
+    return result;
+}
+
+void TestCompare() {
+    ExpectInt(Compare(u"\u00e9", -1, u"e\u0301", -1, 0, "precomposed and decomposed e acute"), 0, "canonical equivalence");
+    ExpectInt(Compare(u"a\u0323\u0302", -1, u"a\u0302\u0323", -1, 0, "reordered marks"), 0, "canonical reordering");
+    Expect(Compare(u"abc", -1, u"abd", -1, 0, "abc and abd") < 0, "abc sorts before abd");
+    Expect(Compare(u"abd", -1, u"abc", -1, 0, "abd and abc") > 0, "abd sorts after abc");
+    ExpectInt(Compare(u"abcX", 3, u"abc", -1, 0, "explicit length"), 0, "explicit length bounds the first string");
+    Expect(Compare(u"\u00c9", -1, u"e\u0301", -1, 0, "case-sensitive E acute") != 0, "case-sensitive comparison differs");
+    ExpectInt(Compare(u"\u00c9", -1, u"e\u0301", -1, IgnoreCase, "caseless E acute"), 0, "canonical caseless match");
+    ExpectInt(Compare(u"\u0130", -1, u"i\u0307", -1, IgnoreCase, "dotted capital I"), 0, "full case folding of U+0130");
+    ExpectInt(Compare(u"I", -1, u"i", -1, IgnoreCase, "default I folding"), 0, "I folds to i by default");
+    Expect(Compare(u"I", -1, u"\u0131", -1, IgnoreCase, "default dotless i") != 0, "I does not fold to dotless i by default");
+    ExpectInt(Compare(u"I", -1, u"\u0131", -1, IgnoreCase | ExcludeSpecialI, "Turkic I folding"), 0, "Turkic I folds to dotless i");
+    Expect(Compare(u"\u0130", -1, u"i", -1, IgnoreCase | ExcludeSpecialI, "Turkic dotted I") != 0,
+           "Turkic folding decomposes U+0130 first");
+    Expect(Compare(u"\U00010000", -1, u"\uffff", -1, 0, "code unit order") < 0, "surrogates sort below U+FFFF by code unit");
+    Expect(Compare(u"\U00010000", -1, u"\uffff", -1, CodePointOrder, "code point order") > 0, "U+10000 sorts above U+FFFF by code point");
+    ExpectInt(Compare(u"\u00e9", -1, u"e\u0301", -1, Unicode32, "Unicode 3.2 filter"), 0, "Unicode 3.2 filtered equivalence");
+
+    std::int32_t error = Success;
+    ExpectInt(unorm_compare_nid_postfix(nullptr, 0, u"a", -1, 0, &error), 0, "unorm_compare(null first)");
+    ExpectInt(error, IllegalArgument, "null first string is an illegal argument");
+    error = Success;
+    ExpectInt(unorm_compare_nid_postfix(u"a", -2, u"a", -1, 0, &error), 0, "unorm_compare(length -2)");
+    ExpectInt(error, IllegalArgument, "length below -1 is an illegal argument");
+    std::int32_t failing = BufferOverflow;
+    ExpectInt(unorm_compare_nid_postfix(u"a", -1, u"b", -1, 0, &failing), 0, "unorm_compare with failing status");
+    ExpectInt(failing, BufferOverflow, "failing status unchanged by unorm_compare");
+    ExpectThrow<std::invalid_argument>([] { unorm_compare_nid_postfix(u"a", -1, u"a", -1, 0, nullptr); }, "unorm_compare(null status)");
+}
+
 }
 
 int main() {
@@ -172,5 +238,7 @@ int main() {
     TestDecompositions();
     TestAppend();
     TestArguments();
+    TestFiltered();
+    TestCompare();
     return 0;
 }

@@ -51,7 +51,7 @@ def public_headers(root):
         visited.add(header)
         text = header.read_text(encoding="utf-8-sig").replace("\\\n", "").replace("\\\r\n", "")
         text = CPP_TOKEN.sub(lambda match: re.sub(r"[^\n]", " ", match.group()) if match.group("comment") or match.group("raw") else match.group(), text)
-        for keyword, line in re.findall(r"^[ \t]*#[ \t]*(include(?:_next)?)\b([^\n]*)", text, re.M):
+        for keyword, line in re.findall(r"^[ \t]*(?:#|%:)[ \t]*(include(?:_next)?)\b([^\n]*)", text, re.M):
             if keyword == "include_next":
                 raise RuntimeError(f"Unsupported include_next in {header}: {line.strip()}")
             match = re.fullmatch(r'\s*(?:"([^"\n]+)"|<([^>\n]+)>)\s*', line)
@@ -108,18 +108,17 @@ def package(root, output, version):
                 archive.add(source, destination)
         previous = staging / "previous"
         previous.mkdir()
-        backed_up = []
-        replaced = []
         try:
             for name in names:
                 destination = output / name
                 if destination.exists() or destination.is_symlink():
                     destination.replace(previous / name)
-                    backed_up.append(name)
             for name in names:
                 (staging / name).replace(output / name)
-                replaced.append(name)
-        except OSError as promotion_error:
+        except BaseException as promotion_error:
+            preserve_staging = True
+            backed_up = [name for name in names if os.path.lexists(previous / name)]
+            replaced = [name for name in names if not os.path.lexists(staging / name)]
             restore_error = None
             unrestored = []
             leftovers = []
@@ -147,6 +146,7 @@ def package(root, output, version):
                     paths = ", ".join(str(output / name) for name in leftovers)
                     message += f"; promoted archives could not be removed and remain at {paths}; remaining staged archives retained at {staging}"
                 raise RuntimeError(message) from restore_error
+            preserve_staging = False
             raise
     finally:
         if not preserve_staging:

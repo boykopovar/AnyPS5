@@ -1,10 +1,14 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <thread>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -146,6 +150,9 @@ void CheckRecord() {
     NpScoreGameInfo info{};
     std::uint32_t tmpRank = 77;
     const int req = NewRequest();
+    errno = 71;
+    Require(sceNpScoreRecordScore(req, 1, 5, nullptr, reinterpret_cast<const NpScoreGameInfo*>(0x10), &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "unmapped game info was taken");
+    Require(errno == 71, "sceNpScoreRecordScore", "errno was preserved");
     info.infoSize = 190;
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, &info) == InvalidArgument, "sceNpScoreRecordScore", "an option was taken");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "190 bytes of game info were taken");
@@ -205,7 +212,13 @@ void CheckFriends() {
     const NpScoreFriendRankingOption rankFive{24, &five, nullptr};
     Require(sceNpScoreGetFriendsRanking(req, 1, 0, nullptr, 0x80, nullptr, 0, nullptr, 0, 0, nullptr, nullptr, &shortOption) == InvalidArgument, "sceNpScoreGetFriendsRanking", "a null rank array was taken");
     Require(sceNpScoreGetFriendsRanking(req, 1, 0, ranks, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, &shortOption) == InvalidAlignment, "sceNpScoreGetFriendsRanking", "the rank array size was not checked before the option");
-    Require(sceNpScoreGetFriendsRanking(req, 1, 0, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, &rankFive) == InvalidArgument, "sceNpScoreGetFriendsRanking", "an option without includeSelf was taken");
+    errno = 71;
+    Require(sceNpScoreGetFriendsRanking(req, 1, 1, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, reinterpret_cast<const NpScoreFriendRankingOption*>(0x10)) == InvalidArgument, "sceNpScoreGetFriendsRanking", "unmapped option was taken");
+    Require(errno == 71, "sceNpScoreGetFriendsRanking", "errno was not preserved");
+    const NpScoreFriendRankingOption unmappedRank{24, reinterpret_cast<const std::uint32_t*>(0x10), nullptr};
+    errno = 71;
+    Require(sceNpScoreGetFriendsRanking(req, 1, 1, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, &unmappedRank) == InvalidArgument, "sceNpScoreGetFriendsRanking", "unmapped start rank was taken");
+    Require(errno == 71, "sceNpScoreGetFriendsRanking", "errno was not preserved");
     Require(sceNpScoreGetFriendsRanking(req, 1, 1, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, &shortOption) == InvalidArgument, "sceNpScoreGetFriendsRanking", "an option size other than 24 was taken");
     Require(sceNpScoreGetFriendsRanking(req, 1, 1, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, &rankZero) == InvalidArgument, "sceNpScoreGetFriendsRanking", "start rank 0 was taken");
     Require(sceNpScoreGetFriendsRanking(req, 1, 1, ranks, 101 * 0x80, nullptr, 0, nullptr, 0, 101, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpScoreGetFriendsRanking", "101 friends were taken");
@@ -348,6 +361,27 @@ void CheckContextsAndWaiting() {
     sceNpScoreDeleteRequest(aborted);
 }
 
+void CheckBlockingWait() {
+    const auto waitAsync = Resolve<WaitAsyncFn>("sceNpScoreWaitAsync");
+    for (const bool abort : {false, true}) {
+        const int req = NewRequest();
+        std::atomic<bool> returned = false;
+        int status = 1;
+        int result = 0;
+        std::thread waiter([&] {
+            status = waitAsync(req, &result);
+            returned = true;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        Require(!returned, "sceNpScoreWaitAsync", "a request with no operation started did not block");
+        if (abort) Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a waited request failed");
+        else Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
+        waiter.join();
+        Require(status == 0 && result == (abort ? Aborted : SignedOut), "sceNpScoreWaitAsync", "a blocked wait did not report the request's result");
+        sceNpScoreDeleteRequest(req);
+    }
+}
+
 void CheckCrossSave() {
     const auto byRange = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSave");
     const auto byRangeAsync = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSaveAsync");
@@ -482,6 +516,7 @@ int main() {
     CheckNpIdPcId();
     CheckGameDataAndBoard();
     CheckContextsAndWaiting();
+    CheckBlockingWait();
     CheckCrossSave();
     CheckSettings();
     CheckCommentsAndGameData();

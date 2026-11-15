@@ -56,6 +56,28 @@ void Empty() {
     uset_close_nid_postfix(set);
 }
 
+void BinaryPropertySet() {
+    constexpr std::int32_t alphabetic = 0;
+    std::int32_t error = Success;
+    const auto* set = u_getBinaryPropertySet_nid_postfix(alphabetic, &error);
+    Require(set != nullptr && error == Success, "alphabetic property set");
+    Require(u_getBinaryPropertySet_nid_postfix(alphabetic, &error) == set, "borrowed identity");
+    Require(uset_contains_nid_postfix(set, 'A') && uset_contains_nid_postfix(set, 0x10400), "letter membership");
+    Require(!uset_contains_nid_postfix(set, '1'), "nonletter is excluded");
+    const auto ranges = Items(set);
+    Require(std::ranges::find(ranges, std::pair{0x41, 0x5a}) != ranges.end(), "alphabetic range enumeration");
+    auto* copy = uset_openEmpty_nid_postfix();
+    Require(copy != nullptr, "mutable set allocation");
+    uset_addAll_nid_postfix(copy, set);
+    Require(Items(copy) == ranges, "copy borrowed ranges into a mutable set");
+    uset_add_nid_postfix(copy, '1');
+    Require(uset_contains_nid_postfix(copy, '1') && !uset_contains_nid_postfix(set, '1'), "copy is independent");
+    uset_close_nid_postfix(copy);
+    Require(u_getBinaryPropertySet_nid_postfix(-1, &error) == nullptr && error == IllegalArgument, "invalid property");
+    Require(u_getBinaryPropertySet_nid_postfix(alphabetic, &error) == nullptr && error == IllegalArgument,
+            "incoming error is preserved");
+}
+
 void SingleCodePoints() {
     USet* set = uset_openEmpty_nid_postfix();
     uset_add_nid_postfix(set, 0x61);
@@ -204,6 +226,7 @@ void Random() {
 
 int main() {
     Empty();
+    BinaryPropertySet();
     SingleCodePoints();
     CodePointRanges();
     Union();

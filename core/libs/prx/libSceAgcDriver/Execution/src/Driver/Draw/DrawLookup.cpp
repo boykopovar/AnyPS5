@@ -199,6 +199,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 counters.stageDataWords += dataWords;
                 if (registerKey) ++counters.registerKeyHits;
                 ++drawCacheHits;
+                drawCacheUseful().fetch_add(1, std::memory_order_relaxed);
                 bool rotate = false;
                 for (std::size_t i = 0; i < programs.size(); ++i) {
                     if (matched[i] == nullptr) continue;

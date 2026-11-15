@@ -1,12 +1,14 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -93,11 +95,13 @@ void APS5_VABI _ZN3sce2np10NpOnlineId5ClearEv(NpOnlineIdObject* self) {
 
 int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(NpOnlineIdObject* self, const char* text) {
     if (text == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    const std::size_t length = std::strlen(text);
-    if (length > NP_ONLINE_ID_SIZE) return NP_ERROR_ONLINE_ID_TOO_LONG;
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_ONLINE_ID_SIZE + 1, copy);
+    if (error == 63) return NP_ERROR_ONLINE_ID_TOO_LONG;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
     std::memset(self->data, 0, sizeof(self->data));
     self->term = 0;
-    std::memcpy(self->data, text, length);
+    std::memcpy(self->data, copy.data(), copy.size());
     return 0;
 }
 
@@ -223,10 +227,12 @@ bool APS5_VABI _ZNK3sce2np4User7IsGuestEv(const UserObject* self) {
 
 int APS5_VABI _ZNK3sce2np4User12GetAccountIdEPm(const UserObject* self, std::uint64_t* accountId) {
     if (accountId == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    *accountId = 0;
-    const int result = sceUserServiceGetNpAccountId(self->userId, accountId);
+    std::uint64_t value = 0;
+    if (!GuestCopyOut_nid_no_patch(accountId, &value, sizeof(value))) return NP_ERROR_INVALID_ARGUMENT;
+    const int result = sceUserServiceGetNpAccountId(self->userId, &value);
     if (result < 0) return result;
-    if (*accountId == 0) return NP_ERROR_ACCOUNT_ID_MISSING;
+    if (!GuestCopyOut_nid_no_patch(accountId, &value, sizeof(value))) return NP_ERROR_INVALID_ARGUMENT;
+    if (value == 0) return NP_ERROR_ACCOUNT_ID_MISSING;
     return 0;
 }
 
@@ -235,7 +241,8 @@ int APS5_VABI _ZNK3sce2np4User12HasAccountIdEPb(const UserObject* self, bool* ha
     std::uint64_t accountId = 0;
     const int result = sceUserServiceGetNpAccountId(self->userId, &accountId);
     if (result < 0) return result;
-    *hasAccountId = accountId != 0;
+    const bool has = accountId != 0;
+    if (!GuestCopyOut_nid_no_patch(hasAccountId, &has, sizeof(has))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -253,7 +260,7 @@ int APS5_VABI _ZN3sce2np4User7GetUserEiPS1_(int userId, UserObject* out) {
     if (std::find(std::begin(users.user_id), std::end(users.user_id), userId) == std::end(users.user_id)) {
         return NP_ERROR_USER_INVALID;
     }
-    out->userId = userId;
+    if (!GuestCopyOut_nid_no_patch(&out->userId, &userId, sizeof(userId))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
