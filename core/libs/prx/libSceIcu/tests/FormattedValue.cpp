@@ -162,7 +162,7 @@ void Run() {
 
 } // namespace UfmtvalNextPosition
 
-namespace GuestPointers {
+namespace UfmtvalGuestPointers {
 
 void Run() {
     auto rejectsRuntime = [](auto&& call) {
@@ -221,10 +221,10 @@ void Run() {
 #endif
 }
 
-}
+} // namespace UfmtvalGuestPointers
 
 void CheckIcuFormattedValue() {
     UfmtvalGetString::Run();
     UfmtvalNextPosition::Run();
-    GuestPointers::Run();
+    UfmtvalGuestPointers::Run();
 }
