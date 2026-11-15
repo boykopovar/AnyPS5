@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -220,19 +221,12 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput_2() {
 int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_commands, size_t batch_size, AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_commands;
     (void)batch_size;
-    if (!batch) return SCE_ACM_ERROR_BAD_POINTER;
+    if (!batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
     if (context == 0) return SCE_ACM_ERROR_BAD_CONTEXT;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    if (batch_error) {
-        AcmBatchError err{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(batch_error, &err, sizeof(err));
-        errno = savedErrno;
-        if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
-    }
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
     errno = savedErrno;
@@ -243,19 +237,12 @@ int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_com
 int APS5_VABI sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_count, const AcmBatchInfo* const batch_info[], AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_info_count;
     (void)batch_info;
-    if (!batch) return SCE_ACM_ERROR_BAD_POINTER;
+    if (!batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
     if (context == 0) return SCE_ACM_ERROR_BAD_CONTEXT;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
     AcmBatchId id = g_nextId.fetch_add(1, std::memory_order_relaxed);
     while (id == 0) id = g_nextId.fetch_add(1, std::memory_order_relaxed);
-    if (batch_error) {
-        AcmBatchError err{};
-        const int savedErrno = errno;
-        const bool copied = GuestCopyOut_nid_no_patch(batch_error, &err, sizeof(err));
-        errno = savedErrno;
-        if (!copied) return SCE_ACM_ERROR_BAD_POINTER;
-    }
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(batch, &id, sizeof(id));
     errno = savedErrno;
@@ -511,23 +498,32 @@ extern "C" {
 
 void* APS5_VABI libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(void* ring) {
     if (!ring) return nullptr;
-    auto* const fields = static_cast<std::byte*>(ring);
+    constexpr std::size_t ringBytes = 0x14;
+    const auto address = reinterpret_cast<std::uintptr_t>(ring);
+    if (address > std::numeric_limits<std::uintptr_t>::max() - ringBytes) return nullptr;
+    std::array<std::byte, ringBytes> fields{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(fields.data(), ring, fields.size());
+    errno = savedErrno;
+    if (!readable) return nullptr;
     std::uint64_t base = 0;
     std::uint32_t capacity = 0;
     std::uint32_t count = 0;
     std::uint32_t index = 0;
-    std::memcpy(&base, fields, sizeof(base));
-    std::memcpy(&capacity, fields + 0x8, sizeof(capacity));
-    std::memcpy(&count, fields + 0xc, sizeof(count));
+    std::memcpy(&base, fields.data(), sizeof(base));
+    std::memcpy(&capacity, fields.data() + 0x8, sizeof(capacity));
+    std::memcpy(&count, fields.data() + 0xc, sizeof(count));
     const std::uint32_t nextCount = std::min(count + 1u, capacity);
-    std::memcpy(fields + 0xc, &nextCount, sizeof(nextCount));
     std::uint32_t next = capacity;
     if (count != 0) {
-        std::memcpy(&index, fields + 0x10, sizeof(index));
+        std::memcpy(&index, fields.data() + 0x10, sizeof(index));
         next = index + 1u;
     }
     if (next == capacity) next = 0;
-    std::memcpy(fields + 0x10, &next, sizeof(next));
+    const std::array<std::uint32_t, 2> updated{nextCount, next};
+    const bool writable = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + 0xc), updated.data(), sizeof(updated));
+    errno = savedErrno;
+    if (!writable) return nullptr;
     return reinterpret_cast<void*>(base + (static_cast<std::uint64_t>(next << 8) << 2));
 }
 APS5_EXPORT("9+f3tPdeyP0", libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch);

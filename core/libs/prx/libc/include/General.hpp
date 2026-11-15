@@ -32,6 +32,7 @@ extern "C" std::FILE* HostStandardErrorFile_nid_no_patch();
 
 extern "C" bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value);
 extern "C" void LibcRegisterProgramName_nid_no_patch(const char* const* name);
+extern "C" void BindGuestEnvironment_nid_no_patch(char*** storage);
 extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maximum, std::string& destination);
 extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination);
 

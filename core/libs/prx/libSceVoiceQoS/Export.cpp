@@ -37,6 +37,13 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
     return copied;
 }
 
+bool CopyIn(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
 struct Connection {
     std::int32_t local;
     std::int32_t remote;
@@ -232,17 +239,18 @@ int APS5_VABI sceVoiceQoSSetLocalEndpointAttribute(int32_t localId, int32_t attr
         const std::uint32_t outPort = endpoint->outPort;
         switch (attributeId) {
         case 0:
+        case 2: {
             if (size != 4) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
-            return sceVoiceSetVolume(inPort, *static_cast<const float*>(value));
-        case 1:
+            float volume = 0;
+            if (!CopyIn(&volume, value, sizeof(volume))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+            return sceVoiceSetVolume(attributeId == 0 ? inPort : outPort, volume);
+        }
+        default: {
             if (size != 1) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
-            return sceVoiceSetMuteFlag(inPort, *static_cast<const std::uint8_t*>(value));
-        case 2:
-            if (size != 4) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
-            return sceVoiceSetVolume(outPort, *static_cast<const float*>(value));
-        default:
-            if (size != 1) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
-            return sceVoiceSetMuteFlag(outPort, *static_cast<const std::uint8_t*>(value));
+            std::uint8_t mute = 0;
+            if (!CopyIn(&mute, value, sizeof(mute))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+            return sceVoiceSetMuteFlag(attributeId == 1 ? inPort : outPort, mute);
+        }
         }
     });
 }
