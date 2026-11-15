@@ -10940,9 +10940,7 @@ int APS5_VABI WKPageCopyCustomTextEncodingName() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageCopyCustomUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageCopyPageConfiguration() {
     NotImplemented_nid_no_patch(__func__);
@@ -11370,9 +11368,7 @@ int APS5_VABI WKPageSetCustomBackingScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetCustomUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetEnableHorizontalRubberBanding() {
     NotImplemented_nid_no_patch(__func__);
