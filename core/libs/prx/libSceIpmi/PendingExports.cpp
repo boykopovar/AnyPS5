@@ -1,46 +1,98 @@
 #include "prx/libSceIpmi/include/Api.hpp"
+#include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 
 namespace {
 
+bool ValidSpan(const void* address, std::size_t bytes) {
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    return start != 0 && (bytes == 0 || bytes - 1 <= std::numeric_limits<std::uintptr_t>::max() - start);
+}
+
+void EnsureWritable(std::byte* config, std::size_t bytes, const char* message) {
+    const int savedErrno = errno;
+    const bool writable = ValidSpan(config, bytes) && GuestWritable_nid_no_patch(config, bytes);
+    errno = savedErrno;
+    if (!writable) throw std::runtime_error(message);
+}
+
+void CopyOutChecked(std::byte* object, std::size_t offset, const void* source, std::size_t bytes, const char* message) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(object + offset, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(message);
+}
+
+void CopyInChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
+    const int savedErrno = errno;
+    const bool copied = ValidSpan(source, bytes) && GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error(message);
+}
+
+void Store8(std::byte* object, std::size_t offset, std::uint8_t value) {
+    CopyOutChecked(object, offset, &value, sizeof(value), "IPMI::Config: unwritable config");
+}
+
 void Store32(std::byte* object, std::size_t offset, std::uint32_t value) {
-    std::memcpy(object + offset, &value, sizeof(value));
+    CopyOutChecked(object, offset, &value, sizeof(value), "IPMI::Config: unwritable config");
 }
 
 void Store64(std::byte* object, std::size_t offset, std::uint64_t value) {
-    std::memcpy(object + offset, &value, sizeof(value));
+    CopyOutChecked(object, offset, &value, sizeof(value), "IPMI::Config: unwritable config");
 }
 
-void InitInvocationConfig(std::byte* config) {
+void WriteZeros(std::byte* object, std::size_t offset, std::size_t bytes) {
+    static constexpr std::array<std::byte, 0x100> zeros{};
+    if (bytes > zeros.size()) throw std::runtime_error("IPMI::Config: zero fill overflow");
+    CopyOutChecked(object, offset, zeros.data(), bytes, "IPMI::Config: unwritable config");
+}
+
+void WriteInvocationFields(std::byte* config) {
     Store32(config, 0x00, 1);
     Store64(config, 0x08, 0xf00);
     Store64(config, 0x10, 0xf00);
 }
 
-void InitMsgQueueConfig(std::byte* config) {
+void WriteMsgQueueFields(std::byte* config) {
     Store32(config, 0x00, 0);
-    std::memset(config + 0x08, 0, 0x100);
+    WriteZeros(config, 0x08, 0x100);
+}
+
+void InitInvocationConfig(std::byte* config) {
+    EnsureWritable(config, 0x18, "IPMI::InvocationConfig: unwritable config");
+    WriteInvocationFields(config);
+}
+
+void InitMsgQueueConfig(std::byte* config) {
+    EnsureWritable(config, 0x108, "IPMI::MsgQueueConfig: unwritable config");
+    WriteMsgQueueFields(config);
 }
 
 void InitClientConfig(std::byte* config) {
-    config[0x00] = std::byte{0};
-    config[0x19] = std::byte{0};
+    EnsureWritable(config, 0x158, "IPMI::Client::Config: unwritable config");
+    Store8(config, 0x00, 0);
+    Store8(config, 0x19, 0);
     Store32(config, 0x1c, 0);
-    InitInvocationConfig(config + 0x20);
-    InitInvocationConfig(config + 0x38);
-    InitMsgQueueConfig(config + 0x50);
+    WriteInvocationFields(config + 0x20);
+    WriteInvocationFields(config + 0x38);
+    WriteMsgQueueFields(config + 0x50);
 }
 
 void InitServerConfig(std::byte* config) {
+    EnsureWritable(config, 0x34, "IPMI::Server::Config: unwritable config");
     Store64(config, 0x00, 0xf00);
     Store64(config, 0x08, 0xf00);
     Store64(config, 0x10, 0);
-    std::memset(config + 0x18, 0, 2);
-    std::memset(config + 0x32, 0, 2);
+    WriteZeros(config, 0x18, 2);
+    WriteZeros(config, 0x32, 2);
 }
 
 }
@@ -149,7 +201,8 @@ std::size_t APS5_VABI _ZN4IPMI7Session6Config25estimateSessionMemorySizeEv(void*
     return 0;
 }
 std::size_t APS5_VABI _ZNK4IPMI6Server6Config29estimateTempWorkingMemorySizeEv(const void* self) {
-    const auto* values = static_cast<const std::uint64_t*>(self);
+    std::uint64_t values[2]{};
+    CopyInChecked(values, self, sizeof(values), "IPMI::Server::Config: unreadable config");
     const std::uint64_t fromFirst = values[0] + 0x100;
     const std::uint64_t fromSecond = values[1] + 0x100;
     return fromFirst >= fromSecond ? fromFirst : fromSecond;
