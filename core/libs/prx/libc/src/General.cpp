@@ -561,17 +561,17 @@ extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maxi
     if (source == nullptr) return 14;
     const auto address = reinterpret_cast<std::uintptr_t>(source);
     std::vector<char> bytes;
-    try {
-        bytes.resize(maximum);
-    } catch (const std::bad_alloc&) {
-        return 12;
-    }
     std::size_t offset = 0;
-    while (offset < bytes.size()) {
+    while (offset < maximum) {
         if (address > std::numeric_limits<std::uintptr_t>::max() - offset) return 14;
         const auto current = address + offset;
         const auto pageRemaining = HostPageSize() - current % HostPageSize();
-        const auto count = std::min(pageRemaining, bytes.size() - offset);
+        const auto count = std::min(pageRemaining, maximum - offset);
+        try {
+            bytes.resize(offset + count);
+        } catch (const std::bad_alloc&) {
+            return 12;
+        }
         if (!CopyGuestBytes(bytes.data() + offset, reinterpret_cast<const void*>(current), count)) return 14;
         if (const auto* end = static_cast<const char*>(std::memchr(bytes.data() + offset, 0, count))) {
             try {
