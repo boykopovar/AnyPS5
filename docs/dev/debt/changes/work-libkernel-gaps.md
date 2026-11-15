@@ -1,0 +1,5 @@
+# libkernel
+
+## change [madvise and posix_madvise]
+
+- [madvise and posix_madvise](../../../core/libs/prx/libkernel/DirectMemory/PosixMemory.cpp) (libkernel) - the `MADV_PROTECT` advice (10) fails with `EPERM` before the range is looked at, as [madvise(2)](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/sys/madvise.2) reports for a process without superuser privileges: FreeBSD 11.4's [`kern_madvise`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/vm/vm_mmap.c) handles it before the address check, ignores the address and length, and calls `kern_procctl(PROC_SPROTECT)`, whose `priv_check(PRIV_VM_MADV_PROTECT)` [`prison_priv_check`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_jail.c) denies a jailed root. `madvise` returns -1 with `EPERM`, and `posix_madvise` the number `EPERM` with `errno` untouched, since madvise(2) calls them identical but for the error return. Other advices change no process protection. Console behaviour is unverified.

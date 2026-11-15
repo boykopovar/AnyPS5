@@ -337,7 +337,10 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
 }
 
 int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice) {
-    if (advice == GuestAdviceProtect) return 0;
+    if (advice == GuestAdviceProtect) {
+        SetError(GuestNotPermitted);
+        return -1;
+    }
     const auto start = reinterpret_cast<std::uintptr_t>(address);
     if (advice < 0 || advice > GuestAdviceCore || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
         SetError(GuestInvalid);
@@ -347,7 +350,7 @@ int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice)
 }
 
 int APS5_VABI posix_madvise_nid_postfix(void* address, std::size_t length, int advice) {
-    if (advice == GuestAdviceProtect) return 0;
+    if (advice == GuestAdviceProtect) return GuestNotPermitted;
     const auto start = reinterpret_cast<std::uintptr_t>(address);
     if (advice < 0 || advice > GuestAdviceCore || start < GuestUserAddressStart || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
         return GuestInvalid;
