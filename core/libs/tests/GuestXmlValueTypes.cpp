@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -99,6 +100,13 @@ void TestStrings() {
         Require(string.Bytes(0, 16, 0) && string.GuardsIntact(), "String(nullptr) has size 0");
         construct(string.As<XmlString>(), "");
         Require(string.As<XmlString>()->size == 0 && string.As<XmlString>()->buffer != nullptr, "String(\"\") keeps the pointer");
+        const char* const unmapped = reinterpret_cast<const char*>(0x10);
+        construct(string.As<XmlString>(), unmapped);
+        Require(string.As<XmlString>()->buffer == unmapped && string.As<XmlString>()->size == 0 && string.GuardsIntact(),
+                "String(const char*) keeps an unreadable pointer with size 0");
+        const std::string longText(10000, 'x');
+        construct(string.As<XmlString>(), longText.c_str());
+        Require(string.As<XmlString>()->size == longText.size() && string.GuardsIntact(), "String(const char*) measures text across pages");
     }
     const XmlString source{text + 1, 7};
     for (Copy copy : {_ZN3sce3Xml6StringC1ERKS1_, _ZN3sce3Xml6StringC2ERKS1_}) {

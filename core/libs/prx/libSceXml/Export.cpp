@@ -733,9 +733,20 @@ const char* APS5_VABI _ZN3sce3Xml4Util9strResultEi(int result) {
     }
 }
 
+static std::size_t GuestTextLength(const char* text) {
+    char chunk[4096];
+    for (std::size_t offset = 0;;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, count)) return 0;
+        if (const void* end = std::memchr(chunk, 0, count)) return offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
+        offset += count;
+    }
+}
+
 void APS5_VABI _ZN3sce3Xml6StringC1EPKc(XmlString* self, const char* buffer) {
     self->buffer = buffer;
-    self->size = buffer != nullptr ? std::strlen(buffer) : 0;
+    self->size = buffer != nullptr ? GuestTextLength(buffer) : 0;
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC1EPKcm(XmlString* self, const char* buffer, std::size_t size) {
@@ -755,7 +766,7 @@ void APS5_VABI _ZN3sce3Xml6StringC1Ev(XmlString* self) {
 
 void APS5_VABI _ZN3sce3Xml6StringC2EPKc(XmlString* self, const char* buffer) {
     self->buffer = buffer;
-    self->size = buffer != nullptr ? std::strlen(buffer) : 0;
+    self->size = buffer != nullptr ? GuestTextLength(buffer) : 0;
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC2EPKcm(XmlString* self, const char* buffer, std::size_t size) {
