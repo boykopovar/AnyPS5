@@ -278,7 +278,10 @@ int APS5_VABI sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const
 
 int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    if (allocator == nullptr || allocator->alloc_handler == nullptr || allocator->free_handler == nullptr) APS5_INVALID_ARG_EX;
+    if (allocator == nullptr) APS5_INVALID_ARG_EX;
+    Ngs2BufferAllocator localAllocator{};
+    if (!ReadGuest(allocator, localAllocator)) return SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
+    if (localAllocator.alloc_handler == nullptr || localAllocator.free_handler == nullptr) APS5_INVALID_ARG_EX;
     RackOptions options{};
     const int checked = CheckedRackOption(rack_id, option, options);
     if (checked != SCE_NGS2_OK) return checked;
@@ -286,17 +289,17 @@ int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t r
     if (Ngs2FindSystem(system_handle) == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
     Ngs2ContextBufferInfo bufferInfo{};
     bufferInfo.host_buffer_size = sizeof(Ngs2Rack);
-    bufferInfo.user_data = allocator->user_data;
-    const int result = allocator->alloc_handler(&bufferInfo);
+    bufferInfo.user_data = localAllocator.user_data;
+    const int result = localAllocator.alloc_handler(&bufferInfo);
     if (result != SCE_NGS2_OK) throw std::runtime_error("NGS2: the allocator handler failed with " + std::to_string(result));
     int created;
     try {
-        created = CreateRack(system_handle, rack_id, options, bufferInfo, *allocator, handle);
+        created = CreateRack(system_handle, rack_id, options, bufferInfo, localAllocator, handle);
     } catch (...) {
-        Ngs2ReleaseBuffer(*allocator, bufferInfo, nullptr);
+        Ngs2ReleaseBuffer(localAllocator, bufferInfo, nullptr);
         throw;
     }
-    if (created != SCE_NGS2_OK) Ngs2ReleaseBuffer(*allocator, bufferInfo, nullptr);
+    if (created != SCE_NGS2_OK) Ngs2ReleaseBuffer(localAllocator, bufferInfo, nullptr);
     return created;
 }
 
