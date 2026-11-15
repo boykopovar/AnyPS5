@@ -15,18 +15,6 @@ static std::mutex g_usersLock;
 static AudioOut2UserHandle g_nextUser = 1;
 static std::unordered_set<AudioOut2UserHandle> g_users;
 
-static bool CopyUserInput_nid_no_patch(void* destination, const void* source, std::size_t size) {
-    const int savedErrno = errno;
-    try {
-        const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
-        errno = savedErrno;
-        return copied;
-    } catch (...) {
-        errno = savedErrno;
-        throw;
-    }
-}
-
 static bool CopyUserOutput_nid_no_patch(void* destination, const void* value, std::size_t size) {
     const int savedErrno = errno;
     try {
@@ -82,15 +70,10 @@ int APS5_VABI sceAudioOut2UserGetSupportedAttributes(AudioOut2UserHandle handle,
         throw std::runtime_error("sceAudioOut2UserGetSupportedAttributes: unknown user handle");
     const std::uint32_t context = 0;
     const std::uint32_t port = (1u << 0) | (1u << 1);
-    std::uint32_t previousContext = 0;
-    const bool hadContext = contextAttributes && CopyUserInput_nid_no_patch(&previousContext, contextAttributes, sizeof(previousContext));
     if (contextAttributes && !CopyUserOutput_nid_no_patch(contextAttributes, &context, sizeof(context)))
         return static_cast<int>(0x80268001);
-    if (portAttributes && !CopyUserOutput_nid_no_patch(portAttributes, &port, sizeof(port))) {
-        if (hadContext)
-            CopyUserOutput_nid_no_patch(contextAttributes, &previousContext, sizeof(previousContext));
+    if (portAttributes && !CopyUserOutput_nid_no_patch(portAttributes, &port, sizeof(port)))
         return static_cast<int>(0x80268001);
-    }
     return 0;
 }
 
