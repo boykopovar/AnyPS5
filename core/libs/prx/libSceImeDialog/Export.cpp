@@ -241,21 +241,45 @@ int APS5_VABI sceImeDialogAbort(void) {
 }
 
 int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
-    if (form == nullptr) return ErrorNotOpened;
+    std::lock_guard lock(g_mutex);
+    if (g_dialog.status == StatusNone) return ErrorNotOpened;
+    if (form == nullptr) return ErrorInvalidAddress;
     PositionAndForm localForm{};
     localForm.width = 1920;
     localForm.height = 1080;
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(form, &localForm, sizeof(localForm));
     errno = savedErrno;
-    if (!copied) return ErrorNotOpened;
+    if (!copied) return ErrorInvalidAddress;
     return 0;
 }
 
 int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
     (void)param;
-    if (width != nullptr) *width = 1920;
-    if (height != nullptr) *height = 1080;
+    constexpr uint32_t defaultWidth = 1920;
+    constexpr uint32_t defaultHeight = 1080;
+    if (width == nullptr || height == nullptr) return ErrorInvalidAddress;
+    uint32_t savedWidth{};
+    uint32_t heightProbe{};
+    const int savedErrno = errno;
+    const bool readWidth = GuestCopyIn_nid_no_patch(&savedWidth, width, sizeof(savedWidth));
+    const bool readHeight = readWidth && GuestCopyIn_nid_no_patch(&heightProbe, height, sizeof(heightProbe));
+    (void)heightProbe;
+    if (!readHeight) {
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
+    const bool wroteWidth = GuestCopyOut_nid_no_patch(width, &defaultWidth, sizeof(defaultWidth));
+    if (!wroteWidth) {
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
+    if (!GuestCopyOut_nid_no_patch(height, &defaultHeight, sizeof(defaultHeight))) {
+        GuestCopyOut_nid_no_patch(width, &savedWidth, sizeof(savedWidth));
+        errno = savedErrno;
+        return ErrorInvalidAddress;
+    }
+    errno = savedErrno;
     return 0;
 }
 
