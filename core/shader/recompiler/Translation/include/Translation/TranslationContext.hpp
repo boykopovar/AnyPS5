@@ -28,6 +28,7 @@ public:
     void SetNativeFloat16(bool enabled, bool fma) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; }
     void SetNativeInteger16(bool enabled) { nativeInteger16 = enabled; }
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
+    void SetFloat32SingleNans(bool enabled) { float32SingleNans = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
     void SetFloat64(bool enabled) { float64 = enabled; }
@@ -415,6 +416,7 @@ private:
     bool float32FlushToZero = false;
     bool float32FlushDeclared = false;
     bool float32DenormPreserve = false;
+    bool float32SingleNans = false;
     bool float64 = false;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;

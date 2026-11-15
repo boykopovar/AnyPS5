@@ -671,6 +671,15 @@ bool TranslationContext::floatBinary(const RdnaInstruction& inst, IrOpcode opcod
         const RdnaOperand& operand = sourceAt(inst, reverse ? 1u - index : index);
         args[index] = readOperand(operand, IrOpcodeArgumentType(opcode, index));
     }
+    if (float32SingleNans && !ieeeMode && ExactF32Arithmetic() && (!floatMode.has_value() || (floatMode->floatMode & 3u) == 0u) && (opcode == IrOpcode::FPAdd32 || opcode == IrOpcode::FPMul32 || opcode == IrOpcode::FPSub32)) {
+        const std::uint32_t first = opcode == IrOpcode::FPSub32 && reverse ? 1u : 0u;
+        IrValue& nan = ir.UGreaterThan(ir.BitwiseAnd(ir.BitCastU32(*args[first]), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u));
+        args[1u - first] = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&nan, &ir.ConstantF32(0.0f), args[1u - first]});
+        IrValue* guarded = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1]});
+        if (opcode == IrOpcode::FPMul32) guarded = &flushTinyProduct(args[0], args[1], guarded).Value();
+        writeOperand(inst.destination, guarded);
+        return true;
+    }
     IrValue* result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1]});
     if (opcode == IrOpcode::FPMul32) result = &flushTinyProduct(args[0], args[1], result).Value();
     if (opcode == IrOpcode::FPAdd32) result = propagatedNanResultF32({args[0], args[1]}, result);

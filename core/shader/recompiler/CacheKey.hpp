@@ -389,6 +389,7 @@ private:
         append(key, value.float16WidenNans);
         append(key, value.float16NarrowNans);
         append(key, value.meshInlineFunctions);
+        append(key, value.float32SingleNans);
     }
 };
 
