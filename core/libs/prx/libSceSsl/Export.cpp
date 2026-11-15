@@ -28,6 +28,8 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 
+#include "prx/libSceSsl/MbedSocketIo.hpp"
+
 #include <algorithm>
 #include <array>
 #include <climits>
@@ -323,47 +325,6 @@ struct Context {
     explicit Context(std::size_t size) : pool{size, 0, 0, {}} {}
 };
 
-int HostError() {
-#ifdef _WIN32
-    return WSAGetLastError();
-#else
-    return errno;
-#endif
-}
-
-bool HostWouldBlock(int error) {
-#ifdef _WIN32
-    return error == WSAEWOULDBLOCK;
-#else
-    return error == EAGAIN || error == EWOULDBLOCK;
-#endif
-}
-
-bool HostInterrupted(int error) {
-#ifdef _WIN32
-    return error == WSAEINTR;
-#else
-    return error == EINTR;
-#endif
-}
-
-bool HostReset(int error) {
-#ifdef _WIN32
-    return error == WSAECONNRESET || error == WSAECONNABORTED || error == WSAENETRESET;
-#else
-    return error == ECONNRESET || error == EPIPE;
-#endif
-}
-
-bool HostTimedOut(int error) {
-#ifdef _WIN32
-    return error == WSAETIMEDOUT;
-#else
-    (void)error;
-    return false;
-#endif
-}
-
 enum class Operation { Connect, Read, Write, Close };
 
 struct Session {
@@ -464,46 +425,12 @@ struct Session {
 
     static int Send(void* argument, const unsigned char* buffer, std::size_t length) {
         auto& session = *static_cast<Session*>(argument);
-        const auto chunk = static_cast<int>(std::min<std::size_t>(length, INT_MAX));
-        for (;;) {
-#ifdef _WIN32
-            auto* owner = static_cast<KernelSocketPoll::NativeOwner*>(session.socketOwner.get());
-            const auto sent = owner && owner->transfer
-                ? owner->transfer(owner, true, const_cast<unsigned char*>(buffer), chunk)
-                : ::send(static_cast<SOCKET>(session.socket), reinterpret_cast<const char*>(buffer), chunk, 0);
-#else
-            const auto sent = ::send(static_cast<int>(session.socket), buffer, static_cast<std::size_t>(chunk), MSG_NOSIGNAL);
-#endif
-            if (sent >= 0) return static_cast<int>(sent);
-            const int error = HostError();
-            if (HostInterrupted(error)) continue;
-            if (HostWouldBlock(error) || HostTimedOut(error)) return MBEDTLS_ERR_SSL_WANT_WRITE;
-            if (HostReset(error)) return MBEDTLS_ERR_NET_CONN_RESET;
-            session.hostError = error;
-            return MBEDTLS_ERR_NET_SEND_FAILED;
-        }
+        return MbedSocketIo::Send(session.socketOwner, session.socket, session.hostError, buffer, length);
     }
 
     static int Receive(void* argument, unsigned char* buffer, std::size_t length) {
         auto& session = *static_cast<Session*>(argument);
-        const auto chunk = static_cast<int>(std::min<std::size_t>(length, INT_MAX));
-        for (;;) {
-#ifdef _WIN32
-            auto* owner = static_cast<KernelSocketPoll::NativeOwner*>(session.socketOwner.get());
-            const auto received = owner && owner->transfer
-                ? owner->transfer(owner, false, buffer, chunk)
-                : ::recv(static_cast<SOCKET>(session.socket), reinterpret_cast<char*>(buffer), chunk, 0);
-#else
-            const auto received = ::recv(static_cast<int>(session.socket), buffer, static_cast<std::size_t>(chunk), 0);
-#endif
-            if (received >= 0) return static_cast<int>(received);
-            const int error = HostError();
-            if (HostInterrupted(error)) continue;
-            if (HostWouldBlock(error) || HostTimedOut(error)) return MBEDTLS_ERR_SSL_WANT_READ;
-            if (HostReset(error)) return MBEDTLS_ERR_NET_CONN_RESET;
-            session.hostError = error;
-            return MBEDTLS_ERR_NET_RECV_FAILED;
-        }
+        return MbedSocketIo::Receive(session.socketOwner, session.socket, session.hostError, buffer, length);
     }
 
     void Verify() {

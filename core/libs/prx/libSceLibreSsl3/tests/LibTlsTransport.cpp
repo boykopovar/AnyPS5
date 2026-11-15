@@ -54,7 +54,7 @@ constexpr int GuestNonBlocking = 0x1200;
 constexpr short PollIn = 1;
 constexpr short PollOut = 4;
 
-enum class ServerMode { Exchange, DelayedExchange, HandshakeOnly };
+enum class ServerMode { Exchange, DelayedExchange, HandshakeOnly, Reset };
 
 void Require(bool condition, int line) {
     if (condition) return;
@@ -124,20 +124,35 @@ struct Server {
                     std::this_thread::sleep_for(std::chrono::milliseconds(30));
                 }
                 if (mbedtls_ssl_handshake(&ssl) == 0 && mode != ServerMode::HandshakeOnly) {
-                    std::array<unsigned char, 4> request{};
-                    std::size_t received = 0;
-                    while (received < request.size()) {
-                        const int count = mbedtls_ssl_read(&ssl, request.data() + received,
-                            request.size() - received);
-                        if (count <= 0) break;
-                        received += static_cast<std::size_t>(count);
-                    }
-                    if (received == request.size() && std::memcmp(request.data(), "ping", 4) == 0) {
-                        if (mode == ServerMode::DelayedExchange) {
-                            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                    if (mode == ServerMode::Reset) {
+                        unsigned char signal = 0;
+                        if (mbedtls_ssl_read(&ssl, &signal, 1) == 1) {
+                            linger immediate{1, 0};
+                            Check(setsockopt(client.fd, SOL_SOCKET, SO_LINGER,
+                                reinterpret_cast<const char*>(&immediate), sizeof(immediate)) == 0);
+#ifdef _WIN32
+                            closesocket(client.fd);
+#else
+                            close(client.fd);
+#endif
+                            client.fd = -1;
                         }
-                        mbedtls_ssl_write(&ssl, reinterpret_cast<const unsigned char*>("pong"), 4);
-                        mbedtls_ssl_close_notify(&ssl);
+                    } else {
+                        std::array<unsigned char, 4> request{};
+                        std::size_t received = 0;
+                        while (received < request.size()) {
+                            const int count = mbedtls_ssl_read(&ssl, request.data() + received,
+                                request.size() - received);
+                            if (count <= 0) break;
+                            received += static_cast<std::size_t>(count);
+                        }
+                        if (received == request.size() && std::memcmp(request.data(), "ping", 4) == 0) {
+                            if (mode == ServerMode::DelayedExchange) {
+                                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                            }
+                            mbedtls_ssl_write(&ssl, reinterpret_cast<const unsigned char*>("pong"), 4);
+                            mbedtls_ssl_close_notify(&ssl);
+                        }
                     }
                 }
             }
@@ -533,6 +548,29 @@ void TestSystemCaFallback(Server& server) {
     }
 }
 
+void TestReset(Server& server) {
+    auto thread = server.Spawn(ServerMode::Reset);
+    const int sock = OpenGuestSocket(server.port);
+    TlsConfig* config = MakeConfig(RootPem, sizeof(RootPem) - 1);
+    TlsContext* client = tls_client_nid_postfix();
+    Check(client != nullptr);
+    Check(tls_configure_nid_postfix(client, config) == 0);
+    Check(tls_connect_socket_nid_postfix(client, sock, "localhost") == 0);
+    Check(tls_handshake_nid_postfix(client) == 0);
+    Check(tls_write_nid_postfix(client, "p", 1) == 1);
+
+    std::array<char, 8> reply{};
+    Check(tls_read_nid_postfix(client, reply.data(), reply.size()) == -1);
+    const char* err = tls_error_nid_postfix(client);
+    Check(err != nullptr && std::strncmp(err, "read:", 5) == 0);
+    Check(std::strstr(err, "host socket error") == nullptr);
+
+    tls_free_nid_postfix(client);
+    tls_config_free_nid_postfix(config);
+    Check(close_nid_postfix(sock) == 0);
+    thread.join();
+}
+
 }
 
 int main() {
@@ -543,6 +581,7 @@ int main() {
     TestNonBlockingPoll(server);
     TestErrors(server);
     TestSystemCaFallback(server);
+    TestReset(server);
     std::puts("libtls transport tests passed");
     return 0;
 }
