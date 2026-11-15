@@ -77,6 +77,33 @@ class ReportTests(unittest.TestCase):
             "probe": ["UNASSIGNED-Device address out of bounds", "UNASSIGNED-Threading-Info"]})
         self.assertEqual(report["exit_code"], 1)
 
+    def test_validation_messages_with_any_id_are_compared(self):
+        inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
+        text = ('<testsuite><testcase name="probe"><system-err>' + inserted + '\n'
+                'Validation Error: [ Undefined-Value-ShaderFragmentOutputMismatch ] pStages[1] writes to location 2\n'
+                'Validation Warning: [ WARNING-Shader-OutputNotConsumed ] vertex output [ 3 ] is not consumed\n'
+                'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
+                'Validation Error: [ SubmitValidation-WaitEvents-WrongQueue ] wrong queue\n'
+                'Validation Error: [ VUID-Real-1 ] pAttachments[0] is invalid\n'
+                'environment: Validation-Fake-Configuration [ Fake-Id ]'
+                '</system-err></testcase></testsuite>')
+        tests, problems = self.report(text)
+        self.assertEqual(tests["probe"]["diagnostics"], {
+            "Undefined-Value-ShaderFragmentOutputMismatch": 1,
+            "WARNING-Shader-OutputNotConsumed": 1,
+            "SubmitValidation-WaitEvents-WrongQueue": 2,
+            "VUID-Real-1": 1,
+        })
+        self.assertEqual(problems, [])
+        report = gate.compare([
+            {"side": "baseline", "iteration": 1, "returncode": 0, "problems": [],
+             "tests": {"probe": {"diagnostics": {"VUID-Real-1": 1}}}},
+            {"side": "candidate", "iteration": 1, "returncode": 0, "problems": [], "tests": tests},
+        ])
+        self.assertEqual(report["new_diagnostics"], {
+            "probe": ["SubmitValidation-WaitEvents-WrongQueue", "Undefined-Value-ShaderFragmentOutputMismatch", "WARNING-Shader-OutputNotConsumed"]})
+        self.assertEqual(report["exit_code"], 1)
+
     def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
         inserted = '[Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (layer.json)'
         for line, problems in ((inserted, []), ('Insert instance layer "VK_LAYER_OTHER" (layer.json)', ["probe"]), ("", ["probe"])):
@@ -162,6 +189,27 @@ class ReportTests(unittest.TestCase):
                     self.assertEqual(raised.exception.code, 2)
                     self.assertIn("Cygwin and MSYS", stderr.getvalue())
                     self.assertFalse(output.exists())
+
+
+@unittest.skipUnless(shutil.which("git"), "requires Git")
+class EncodingTests(unittest.TestCase):
+    def test_a_non_ascii_source_path_error_reports_as_utf8(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary).resolve() / "界"
+            source = repository / "sub"
+            source.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            output = Path(temporary) / "evidence"
+            arguments = ["--baseline", str(source), "0" * 40, "--candidate", str(source), "0" * 40,
+                         "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+            stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with contextlib.redirect_stderr(stderr):
+                code = gate.main(arguments)
+                stderr.flush()
+            self.assertEqual(code, 2)
+            self.assertIn(f"validation gate: {source}: must be a source worktree root",
+                          stderr.buffer.getvalue().decode("utf-8"))
+            self.assertFalse(output.exists())
 
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
@@ -732,7 +780,8 @@ class NestedContainmentTests(FixtureTests):
             f"    Path({str(direct_status)!r}).write_text('spawned', encoding='utf-8')\n"
             f"except OSError as error:\n"
             f"    Path({str(direct_status)!r}).write_text(str(error.winerror), encoding='utf-8')\n")
-        self.assertEqual(gate.run([sys.executable, "-c", direct_parent], self.root / "breakaway-direct.log", os.environ, 10), 0)
+        interpreter = getattr(sys, "_base_executable", sys.executable)
+        self.assertEqual(gate.run([interpreter, "-c", direct_parent], self.root / "breakaway-direct.log", os.environ, 10), 0)
         self.assertEqual(direct_status.read_text(encoding="utf-8"), "5")
         self.assertFalse(direct_marker.exists())
 

@@ -178,6 +178,10 @@ class QueueTests(unittest.TestCase):
 
     def test_long_titles_are_cut(self):
         self.assertEqual(len(pr_ready.clean("a" * 500)), 100)
+        self.assertEqual(pr_ready.clean("a" * 99 + "*b"), "a" * 99 + "\\*")
+
+    def test_backslashes_in_titles_do_not_unescape_markdown(self):
+        self.assertEqual(pr_ready.clean(r"fix: \[click\](https://example.invalid) \*bold\*"), r"fix: \\\[click\\\](https://example.invalid) \\\*bold\\\*")
 
 
 class MainTests(unittest.TestCase):
@@ -276,6 +280,37 @@ class MainTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 pr_ready.main([])
         self.assertIn("boom", err.getvalue())
+
+    def test_open_pages_reject_invalid_next_cursors_without_restarting(self):
+        for cursor in (None, "", 17, []):
+            with self.subTest(cursor=cursor):
+                page = {"data": {"repository": {"pullRequests": {"nodes": [node()],
+                        "pageInfo": {"hasNextPage": True, "endCursor": cursor}}}}}
+                calls = []
+                def fake(*args):
+                    calls.append(args)
+                    if len(calls) > 2:
+                        raise ValueError("fixture read budget exceeded")
+                    return json.dumps(page)
+                with patch("pr_ready.pr_labels.gh", fake), self.assertRaisesRegex(ValueError, "no cursor"):
+                    pr_ready.fetch("o/r")
+                self.assertEqual(len(calls), 1)
+
+    def test_open_and_closed_page_cursors_must_advance(self):
+        for closed in (False, True):
+            for cursors in (("repeat", "repeat"), ("first", "second", "first")):
+                with self.subTest(closed=closed, cursors=cursors):
+                    calls = []
+                    def fake(*args):
+                        calls.append(args)
+                        if len(calls) > len(cursors):
+                            raise ValueError("fixture read budget exceeded")
+                        return json.dumps({"data": {"repository": {"pullRequests": {"nodes": [node()],
+                            "pageInfo": {"hasNextPage": True, "endCursor": cursors[len(calls) - 1]}}}}})
+                    action = pr_ready.closed_with_label if closed else pr_ready.fetch
+                    with patch("pr_ready.pr_labels.gh", fake), self.assertRaisesRegex(ValueError, "did not advance"):
+                        action("o/r")
+                    self.assertEqual(len(calls), len(cursors))
 
     def test_pages_are_followed(self):
         first = {"data": {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True, "endCursor": "c1"}, "nodes": [node(number=1)]}}}}
