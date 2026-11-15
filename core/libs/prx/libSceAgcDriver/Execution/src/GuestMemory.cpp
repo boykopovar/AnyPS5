@@ -3598,6 +3598,42 @@ void ReadCommittedUnsynced(std::uint64_t address, std::span<std::byte> destinati
     copyCommitted(address, destination);
 }
 
+void ReadCommittedCheckedUnsynced(std::uint64_t address, std::span<std::byte> destination) {
+    if (destination.empty()) return;
+    require(address <= std::numeric_limits<std::uintptr_t>::max() && destination.size() <= std::numeric_limits<std::uintptr_t>::max() - address, "address range overflow");
+    GuardRead(address, destination.size());
+    const TimedAccess timed(CounterRead, destination.size());
+    CountReadCaller(__builtin_return_address(0));
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+    const auto copy = [](std::uint64_t source, std::span<std::byte> out) {
+#ifdef _WIN32
+        return readPages(out.data(), source, out.size());
+#elif defined(__APPLE__)
+        mach_vm_size_t copied = 0;
+        const auto result = mach_vm_read_overwrite(mach_task_self(), source, out.size(), reinterpret_cast<mach_vm_address_t>(out.data()), &copied);
+        if (result == KERN_SUCCESS) {
+            require(copied == out.size(), "short committed guest memory read");
+            return true;
+        }
+        require(result == KERN_INVALID_ADDRESS || result == KERN_PROTECTION_FAILURE, "cannot read committed guest memory");
+        return false;
+#else
+        return CopyMapped(source, out) == Compare::Equal;
+#endif
+    };
+    if (copy(address, destination)) return;
+    for (std::size_t offset = 0; offset < destination.size();) {
+        const auto cursor = address + offset;
+        const auto length = std::min<std::size_t>(destination.size() - offset, PageBytes - cursor % PageBytes);
+        const auto part = destination.subspan(offset, length);
+        if (!copy(cursor, part)) std::memset(part.data(), 0, part.size());
+        offset += length;
+    }
+#else
+    copyCommitted(address, destination);
+#endif
+}
+
 bool EqualsCommitted(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return true;
     FlushGpuWrites(address, bytes.size());

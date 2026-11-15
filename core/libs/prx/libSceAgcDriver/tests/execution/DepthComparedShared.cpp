@@ -16,6 +16,7 @@
 #include <exception>
 #include <string>
 #include <string_view>
+#include <utility>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -185,7 +186,17 @@ void ClearDepthImage(const Context& context, VkImageView view, float value) {
     destroy();
 }
 
-void Run(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, DirectMemory& memory, bool share) {
+DirectMemory* lateWriteMemory = nullptr;
+bool lateWriteObserved = false;
+
+void WriteAfterFirstUnit(std::uint64_t address, std::size_t bytes) {
+    if (lateWriteMemory == nullptr || address != lateWriteMemory->Address() + Block || bytes != Block) return;
+    auto* memory = std::exchange(lateWriteMemory, nullptr);
+    memory->FillUnit(0, 0.25f, true);
+    lateWriteObserved = true;
+}
+
+void Run(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, DirectMemory& memory, bool share, bool lateWrite = false) {
     const std::string kind = share ? "late-shared compared depth" : "resident private depth";
     alignas(256) std::array<std::byte, static_cast<std::size_t>(Width) * Height * 4> pixels{};
     const auto swizzle = XorSwizzleMode(TextureTileMode::kZ64KBX);
@@ -258,7 +269,47 @@ void Run(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& 
     Require(draw({.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Width * Height, kind + ": restoring pending depth after the clear did not cover the target");
     memory.FillUnit(0, 0.75f, share);
     expect({true, false}, share ? "an alias write after a partial flush reloads only the left unit" : "a CPU write after a partial flush reloads only the left unit");
+    if (lateWrite) {
+        memory.FillUnit(1, 0.25f, true);
+        struct ResetReadGuard {
+            ~ResetReadGuard() {
+                AgcDriver::GuestMemory::SetReadGuard(nullptr);
+                lateWriteMemory = nullptr;
+            }
+        } reset;
+        lateWriteMemory = &memory;
+        lateWriteObserved = false;
+        AgcDriver::GuestMemory::SetReadGuard(&WriteAfterFirstUnit);
+        expect({true, false}, "the current observation only reloads the unit changed before its read");
+        AgcDriver::GuestMemory::SetReadGuard(nullptr);
+        Require(lateWriteObserved, "the late CPU store did not occur between unit reads");
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        expect({false, false}, "the next observation still detects the CPU edit behind the previous scan");
+    }
     memory.CheckTracking(kind + " after its CPU updates");
+}
+
+void LargeUnit(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, DirectMemory& memory) {
+    memory.FillUnit(0, 0.75f);
+    memory.FillUnit(1, 0.75f);
+    Require(AgcDriver::GuestMemory::ImportWatched(memory.Address(), Bytes, [] { return true; }), "cannot prepare large-unit compared depth");
+    memory.Share();
+    memory.CheckTracking("large-unit shared depth");
+    const auto address = memory.Address() + 256u;
+    alignas(256) std::array<std::byte, static_cast<std::size_t>(Width) * Height * 4> pixels{};
+    const auto swizzle = XorSwizzleMode(TextureTileMode::kZ64KBX);
+    const DepthFastClearHarness::Surface depth{address, 0, 0, false, VK_FORMAT_D32_SFLOAT, 0, 0, swizzle};
+    Require(DepthFastClearHarness::Draw(device, shaders, depth, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}, Extent, pixels) == Width * Height, "large-unit depth did not establish its GPU image");
+    reinterpret_cast<float*>(address)[UnitTexels + 1u] = 0.25f;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(DepthFastClearHarness::Draw(device, shaders, depth, {}, Extent, pixels) == Width * Height - 1u, "a late chunk change did not reload its entire unaligned tracking unit");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    DepthTarget target{address, 0, Extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0};
+    target.depthSwizzle = swizzle;
+    ClearDepthImage(context, DepthSurfaceView(context, target, false), 0.25f);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(DepthFastClearHarness::Draw(device, shaders, depth, {}, Extent, pixels) == 0, "an unchanged large-unit prefix was not retained in the observation baseline");
+    std::puts("large tracking units retain earlier equal chunks and preserve later GPU clears");
 }
 
 void OwnerSwitch(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, DirectMemory& memory) {
@@ -357,6 +408,14 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         const auto shaders = DepthFastClearHarness::Compile(*device);
         if (argc == 2 && std::string_view(argv[1]) == "--completion-unmap") {
             CompletionUnmap(*device, shaders, shared);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--late-cpu-write") {
+            Run(*device, shaders, shared, true, true);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--large-unit") {
+            LargeUnit(*device, shaders, shared);
             return 0;
         }
         Run(*device, shaders, resident, false);

@@ -1543,11 +1543,12 @@ public:
     std::vector<bool> WrittenUnits(const GuestTextureResource& resource, std::uint64_t& generation, std::vector<std::byte>* observed = nullptr) {
         Syncing guard{syncing};
         const auto bytes = static_cast<std::size_t>(MirrorBytes());
+        Require(bytes <= std::numeric_limits<std::uint64_t>::max() - resource.baseAddress, "depth memory range overflow");
         SizeUnits(bytes);
         Require(awaitGuestSnapshot(), "depth memory cannot be compared during its write-back completion");
         if (guestSnapshot->bytes.size() != bytes) {
             guestSnapshot->bytes.resize(bytes);
-            GuestMemory::ReadCommittedUnsynced(resource.baseAddress, guestSnapshot->bytes);
+            GuestMemory::ReadCommittedCheckedUnsynced(resource.baseAddress, guestSnapshot->bytes);
         }
         const auto collected = GuestMemory::CollectWrites(resource.baseAddress, bytes);
         generation = GuestMemory::TrackerGeneration();
@@ -1587,21 +1588,13 @@ public:
                 }
             }
         }
-        if (collected == 0u || anyUnit(changed)) {
-            if (collected == 0u) {
-                GuestMemory::FlushGpuWrites(resource.baseAddress, bytes);
-                Require(awaitGuestSnapshot(), "depth memory cannot be compared during its write-back completion");
-            }
-            std::vector<std::byte> current(bytes);
-            GuestMemory::ReadCommittedUnsynced(resource.baseAddress, current);
-            if (collected == 0u) {
-                for (std::size_t unit = 0; unit < unitGeneration.size(); ++unit) {
-                    const auto offset = unit * unitBytes;
-                    const auto length = std::min<std::uint64_t>(unitBytes, bytes - offset);
-                    if (std::memcmp(guestSnapshot->bytes.data() + offset, current.data() + offset, static_cast<std::size_t>(length)) != 0) mark(unit);
-                }
-            }
-            if (observed != nullptr) *observed = std::move(current);
+        if (collected == 0u) {
+            GuestMemory::FlushGpuWrites(resource.baseAddress, bytes);
+            Require(awaitGuestSnapshot(), "depth memory cannot be compared during its write-back completion");
+            observeComparedUnits(resource.baseAddress, bytes, changed, observed);
+        } else if (observed != nullptr && anyUnit(changed)) {
+            observed->resize(bytes);
+            GuestMemory::ReadCommittedCheckedUnsynced(resource.baseAddress, *observed);
         }
         return changed;
     }
@@ -1913,6 +1906,8 @@ private:
         }
     }
 
+    void observeComparedUnits(std::uint64_t address, std::size_t bytes, std::vector<bool>& changed, std::vector<std::byte>* observed);
+
     std::map<std::array<std::uint32_t, 13>, std::shared_ptr<Texture>> textures;
     struct FirstSampleTextures {
         FirstSampleTextures(const Context& context, VkFormat format, VkExtent2D extent) : copy(context, format, extent) {}
@@ -2222,6 +2217,28 @@ private:
         memory = VK_NULL_HANDLE;
     }
 };
+
+void DepthSurface::observeComparedUnits(std::uint64_t address, std::size_t bytes, std::vector<bool>& changed, std::vector<std::byte>* observed) {
+    std::array<std::byte, 65536> current;
+    for (std::size_t unit = 0; unit < unitGeneration.size(); ++unit) {
+        const auto first = static_cast<std::size_t>(unit * unitBytes);
+        const auto length = static_cast<std::size_t>(std::min<std::uint64_t>(unitBytes, bytes - first));
+        for (std::size_t done = 0; done < length;) {
+            const auto offset = first + done;
+            const auto count = std::min(current.size(), length - done);
+            GuestMemory::ReadCommittedCheckedUnsynced(address + offset, std::span(current).first(count));
+            if (std::memcmp(guestSnapshot->bytes.data() + offset, current.data(), count) != 0) {
+                if (changed.empty()) changed.assign(unitGeneration.size(), false);
+                changed[unit] = true;
+            }
+            if (observed != nullptr && !changed.empty() && changed[unit]) {
+                if (observed->empty()) *observed = guestSnapshot->bytes;
+                std::memcpy(observed->data() + offset, current.data(), count);
+            }
+            done += count;
+        }
+    }
+}
 
 struct DepthPlaneSlice {
     VkImage image = VK_NULL_HANDLE;
