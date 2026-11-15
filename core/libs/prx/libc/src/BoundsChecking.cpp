@@ -291,11 +291,14 @@ char* APS5_VABI gets_s_nid_postfix(char* buffer, std::size_t size) {
         return buffer;
     }
     if (value != guestEof) {
-        if (!GuestCopyOut_nid_no_patch(buffer, line.data(), line.size())) return unwritable(value);
+        std::string kept = line.empty() ? std::string(1, terminator) : line;
+        kept[0] = terminator;
+        if (!GuestCopyOut_nid_no_patch(buffer, kept.data(), kept.size())) return unwritable(value);
         violation("gets_s: short buffer", guestErange);
         while (value != guestEof && value != '\n') value = getchar_nid_postfix();
+        return nullptr;
     }
-    GuestCopyOut_nid_no_patch(buffer, &terminator, sizeof(terminator));
+    if (!GuestCopyOut_nid_no_patch(buffer, &terminator, sizeof(terminator))) return unwritable(guestEof);
     return nullptr;
 }
 
