@@ -123,6 +123,11 @@ void CheckKnownTitle(int runningAppId) {
     std::memset(dirty.bytes, 'x', 10);
     Require(sceSystemServiceGetAppTitleId(runningAppId, dirty.bytes) == 0);
     Require(std::strcmp(dirty.bytes, "PPSA00000") == 0 && dirty.GuardIntact());
+    auto* const inaccessible = reinterpret_cast<char*>(0x10);
+    Require(Throws([&] { static_cast<void>(sceSystemServiceGetAppTitleId(runningAppId, inaccessible)); }));
+    Require(Throws([&] { static_cast<void>(sceLncUtilGetAppTitleId(runningAppId, inaccessible)); }));
+    Require(sceSystemServiceGetAppTitleId(runningAppId, dirty.bytes) == 0);
+    Require(std::strcmp(dirty.bytes, "PPSA00000") == 0 && dirty.GuardIntact());
 
     CheckOtherApplications(runningAppId);
     CheckNullBuffers(runningAppId);

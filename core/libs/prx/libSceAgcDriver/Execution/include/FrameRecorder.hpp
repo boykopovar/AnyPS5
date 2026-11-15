@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "SceShaders.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -44,6 +45,7 @@ public:
     void PresentBuffer(const DisplayBuffer& buffer);
     void FrameBoundary();
     void RewindTailFlips(std::uint64_t flips);
+    static void SetStartIdleWaitForTest(std::function<bool()> wait);
 
 private:
     enum class State { Waiting, Recording, Done };
@@ -112,6 +114,8 @@ private:
     std::uint64_t snapshotBytes = 0;
     std::uint64_t recordedCalls = 0;
     std::uint64_t startAttempts = 0;
+    std::atomic<std::uint64_t> unrecordedAccepts{0};
+    inline static std::function<bool()> startIdleWaitForTest;
     std::uint64_t unreadableBytes = 0;
     std::uint64_t hostOnlySampleBytes = 0;
     std::uint64_t allocationsGeneration = 0;

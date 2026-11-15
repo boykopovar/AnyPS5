@@ -1,8 +1,12 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/General.hpp"
+#include "unicode/uchar.h"
+#include "unicode/uniset.h"
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <new>
 #include <vector>
 
@@ -25,8 +29,10 @@ std::int32_t Pin(std::int32_t codePoint) {
 struct CodePointSet {
     std::int32_t magic = SetMagic;
     std::vector<Range> ranges;
+    bool frozen{};
 
     void Add(std::int32_t start, std::int32_t end) {
+        if (frozen) return;
         auto first = std::lower_bound(ranges.begin(), ranges.end(), start, [](const Range& range, std::int32_t value) {
             return range.end + 1 < value;
         });
@@ -65,6 +71,43 @@ CodePointSet& Check(USet* set) {
 
 extern "C" {
 
+const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    if (*error > 0) return nullptr;
+    if (property < UCHAR_BINARY_START || property >= UCHAR_BINARY_LIMIT) {
+        *error = U_ILLEGAL_ARGUMENT_ERROR;
+        return nullptr;
+    }
+    if (Icu::PropertyNeedsData(property)) NotImplemented_nid_no_patch(__func__);
+
+    static std::array<CodePointSet, UCHAR_BINARY_LIMIT> sets;
+    static std::mutex mutex;
+    const std::lock_guard lock(mutex);
+    auto& set = sets[property];
+    if (!set.frozen) {
+        try {
+            auto status = U_ZERO_ERROR;
+            const auto* source = u_getBinaryPropertySet(static_cast<UProperty>(property), &status);
+            if (U_FAILURE(status)) {
+                *error = status;
+                return nullptr;
+            }
+            const auto* nativeSet = icu::UnicodeSet::fromUSet(source);
+            std::vector<Range> ranges;
+            const auto count = nativeSet->getRangeCount();
+            ranges.reserve(count);
+            for (std::int32_t index = 0; index < count; ++index)
+                ranges.push_back({nativeSet->getRangeStart(index), nativeSet->getRangeEnd(index)});
+            set.ranges = std::move(ranges);
+            set.frozen = true;
+        } catch (const std::bad_alloc&) {
+            *error = U_MEMORY_ALLOCATION_ERROR;
+            return nullptr;
+        }
+    }
+    return reinterpret_cast<const USet*>(&set);
+}
+
 USet* APS5_VABI uset_openEmpty_nid_postfix() {
     return reinterpret_cast<USet*>(new (std::nothrow) CodePointSet());
 }
@@ -72,6 +115,7 @@ USet* APS5_VABI uset_openEmpty_nid_postfix() {
 void APS5_VABI uset_close_nid_postfix(USet* set) {
     if (!set) return;
     auto& target = Check(set);
+    if (target.frozen) NotImplemented_nid_no_patch(__func__);
     target.magic = 0;
     delete &target;
 }
@@ -90,6 +134,7 @@ void APS5_VABI uset_addRange_nid_postfix(USet* set, std::int32_t start, std::int
 
 void APS5_VABI uset_addAll_nid_postfix(USet* set, const USet* additionalSet) {
     auto& target = Check(set);
+    if (target.frozen) return;
     const std::vector<Range> ranges = Check(additionalSet).ranges;
     for (const auto& range : ranges) target.Add(range.start, range.end);
 }

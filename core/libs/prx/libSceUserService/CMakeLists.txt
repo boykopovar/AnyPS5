@@ -51,6 +51,18 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_user_service_shell_core_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceShellCore.cpp)
+    target_include_directories(guest_user_service_shell_core_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_shell_core_tests PRIVATE libSceUserService libSceSystemService)
+    add_test(NAME guest_user_service_shell_core COMMAND guest_user_service_shell_core_tests)
+    set_tests_properties(guest_user_service_shell_core PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_shell_core PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_user_service_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceLifecycle.cpp)
     target_include_directories(guest_user_service_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_user_service_lifecycle_tests PRIVATE libSceSystemService libc libkernel)

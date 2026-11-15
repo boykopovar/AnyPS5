@@ -1,8 +1,15 @@
 #include "prx/libScePngEnc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "Decoder/Png.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <vector>
+
+static void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = EACCES;
+}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -16,17 +23,23 @@ struct PngEncContextMirror {
 };
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int invalidParam = static_cast<int>(0x80690103);
     constexpr int invalidHandle = static_cast<int>(0x80690104);
 
     for (const std::uint32_t width : {1u, 3u, 7u, 9u}) {
         for (std::uint32_t filterNumber = 0; filterNumber <= 4; ++filterNumber) {
             PngEncCreateParam create{sizeof(PngEncCreateParam), 0, width, filterNumber};
+            errno = EAGAIN;
             const int memorySize = scePngEncQueryMemorySize(&create);
+            Require(errno == EAGAIN);
             std::vector<std::uint8_t> memory(memorySize + 16);
             const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(memory.data()) + 5;
             void* handle = nullptr;
+            errno = EAGAIN;
             Require(scePngEncCreate(&create, reinterpret_cast<void*>(address), static_cast<std::uint32_t>(memory.size()), &handle) == 0);
+            Require(errno == EAGAIN);
             const std::uintptr_t aligned = (address + 15) & ~std::uintptr_t{15};
             const auto* context = reinterpret_cast<const PngEncContextMirror*>(handle);
             Require(context->self == aligned);
@@ -35,8 +48,12 @@ int main() {
             Require(context->maxImageWidth == ((width + 7) & ~std::uint32_t{7}));
             Require(context->maxFilterNumber == filterNumber);
             Require(context->scratchSize == static_cast<std::uint32_t>(memorySize) - 112u);
+            errno = EAGAIN;
             Require(scePngEncDelete(handle) == 0);
+            Require(errno == EAGAIN);
+            errno = EAGAIN;
             Require(scePngEncDelete(handle) == invalidHandle);
+            Require(errno == EAGAIN);
         }
     }
 
@@ -61,7 +78,9 @@ int main() {
     PngEncEncodeParam encode{image.data(), png.data(), static_cast<std::uint32_t>(image.size()), static_cast<std::uint32_t>(png.size()),
                              8, rows, 36u, 0, 19, 8, 0, 15, 6};
     PngEncOutputInfo info{};
+    errno = EAGAIN;
     const int encoded = scePngEncEncode(narrowHandle, &encode, &info);
+    Require(errno == EAGAIN);
     Require(encoded > 1 && static_cast<std::size_t>(encoded) < png.size()
             && info.data_size == static_cast<std::uint32_t>(encoded) && info.processed_height == rows);
     const auto decoded = Decoder::Png::Decode(std::span<const std::uint8_t>(png.data(), encoded));
@@ -75,8 +94,12 @@ int main() {
         }
     }
     encode.image_width = 9;
+    errno = EAGAIN;
     Require(scePngEncEncode(narrowHandle, &encode, &info) == invalidParam);
+    Require(errno == EAGAIN);
+    errno = EAGAIN;
     Require(scePngEncDelete(narrowHandle) == 0);
+    Require(errno == EAGAIN);
 
     PngEncCreateParam tall{sizeof(PngEncCreateParam), 0, 8u, 4};
     const int tallSize = scePngEncQueryMemorySize(&tall);
@@ -100,5 +123,9 @@ int main() {
     for (std::size_t i = 0; i < tallImage.size(); ++i) {
         Require(tallDecoded->pixels[i] == channel[i % 4]);
     }
+    errno = EAGAIN;
     Require(scePngEncDelete(tallHandle) == 0);
+    Require(errno == EAGAIN);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }
