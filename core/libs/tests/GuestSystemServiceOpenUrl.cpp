@@ -430,6 +430,7 @@ void CheckLaunchWebBrowser() {
     Require(call("HTTP://example.com/") == static_cast<int>(0x80a10008));
     Require(call("file:///etc/passwd") == static_cast<int>(0x80a10008));
     Require(call(nullptr) == static_cast<int>(0x80a10003));
+    Require(call(reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80a10003));
     const std::string tooLong = "https://example.com/" + std::string(5990, 'a');
     Require(call(tooLong.c_str()) == unavailable);
     const std::string overLimit = "https://example.com/" + std::string(6000, 'a') + std::string(100, 'a');

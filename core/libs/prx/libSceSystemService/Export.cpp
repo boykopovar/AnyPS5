@@ -667,11 +667,13 @@ int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
 
 int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     if (!uri) return static_cast<int>(0x80a10003);
-    std::size_t length = 0;
-    while (length < 6016 && uri[length] != 0) ++length;
-    if (length > 6015) return static_cast<int>(0x80a10007);
-    if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return OpenWebBrowserUrl(uri);
+    std::string copied;
+    const int copyError = CopyGuestString_nid_no_patch(uri, 6016, copied);
+    if (copyError == 63) return static_cast<int>(0x80a10007);
+    if (copyError != 0) return static_cast<int>(0x80a10003);
+    const char* const text = copied.c_str();
+    if (std::strncmp(text, "http:", 5) != 0 && std::strncmp(text, "https:", 6) != 0 && std::strncmp(text, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
+    return OpenWebBrowserUrl(text);
 }
 
 extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
