@@ -259,10 +259,6 @@ int APS5_VABI uloc_getCharacterOrientation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getDefault() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_minimizeSubtags() {
     NotImplemented_nid_no_patch(__func__);
 }
