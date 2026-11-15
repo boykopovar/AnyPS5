@@ -1,4 +1,6 @@
+#include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 
 #include <algorithm>
@@ -17,7 +19,7 @@ void RegisterScheme(const void* contextRef, const void* urlSchemeRef, std::vecto
     }
 }
 
-}  // namespace
+}
 
 extern "C" {
 
@@ -39,6 +41,18 @@ void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef,
 
 void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef) {
     RegisterScheme(contextRef, urlSchemeRef, &NKWebKit::ProcessPool::secureSchemes, __func__);
+}
+
+void APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme(const void* contextRef, const void* urlSchemeRef) {
+    RegisterScheme(contextRef, urlSchemeRef, &NKWebKit::ProcessPool::domainRelaxationForbiddenSchemes, __func__);
+    const auto* scheme = NKWebKit::Cast<NKWebKit::String>(urlSchemeRef, __func__);
+    NKWebKit::WtfAbi::String wtfScheme;
+    if (scheme->null) {
+        wtfScheme.impl = nullptr;
+    } else {
+        _ZN3WTF6StringC1EPKDsj(&wtfScheme, scheme->characters.data(), static_cast<unsigned>(scheme->characters.size()));
+    }
+    _ZN7WebCore20LegacySchemeRegistry40setDomainRelaxationForbiddenForURLSchemeEbRKN3WTF6StringE(true, wtfScheme);
 }
 
 }

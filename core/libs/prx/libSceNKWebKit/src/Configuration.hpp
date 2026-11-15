@@ -77,6 +77,7 @@ public:
     std::vector<std::string> bypassingCSPSchemes;
     std::vector<std::string> cachePartitionedSchemes;
     std::vector<std::string> canDisplayOnlyIfCanRequestSchemes;
+    std::vector<std::string> domainRelaxationForbiddenSchemes;
     std::vector<std::string> emptyDocumentSchemes;
     std::vector<std::string> secureSchemes;
 };
