@@ -49,9 +49,11 @@ EGLint APS5_VABI eglGetError_nid_postfix() {
 EGLBoolean APS5_VABI eglInitialize_nid_postfix(EGLDisplay display, EGLint* major, EGLint* minor) {
     std::lock_guard lock(mutex);
     if (display != &displayToken) return EglError_nid_no_patch(0x3008);
+    const EGLint majorValue = 1;
+    const EGLint minorValue = 4;
+    if (major && !GuestCopyOut_nid_no_patch(major, &majorValue, sizeof(majorValue))) return EglError_nid_no_patch(0x300c);
+    if (minor && !GuestCopyOut_nid_no_patch(minor, &minorValue, sizeof(minorValue))) return EglError_nid_no_patch(0x300c);
     initialized = true;
-    if (major) *major = 1;
-    if (minor) *minor = 4;
     return 1;
 }
 

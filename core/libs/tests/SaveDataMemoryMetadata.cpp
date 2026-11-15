@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -92,6 +93,9 @@ int main() {
     Require(sceSaveDataDeleteTransactionResource(1) == kSaveDataNotInitialized);
     const std::uint32_t syncParamUninit[2] = {7531u, 0u};
     Require(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000u));
+    errno = 71;
+    Require(sceSaveDataSyncSaveDataMemory(reinterpret_cast<const void*>(0x10)) == static_cast<int>(0x809F0000u));
+    Require(errno == 71);
     Require(sceSaveDataSyncSaveDataMemory(syncParamUninit) == static_cast<int>(0x809F0001u));
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() /
