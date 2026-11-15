@@ -3,6 +3,7 @@
 
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
+#include <cstdint>
 
 extern "C" {
 
@@ -17,5 +18,16 @@ void LibreSslOcspResponseBytesFree_nid_no_patch(LibreSslOcspResponseBytes* bytes
 
 LibreSslStack* LibreSslStackNew_nid_no_patch();
 bool LibreSslStackPush_nid_no_patch(LibreSslStack* stack, void* element);
+
+enum class LibreSslExtensionValue { GeneralizedTime, Null, Object, CrlId };
+
+struct LibreSslOcspCrlId {
+    Asn1String* crlUrl;
+    Asn1String* crlNum;
+    Asn1String* crlTime;
+};
+
+void* LibreSslExtensionValueDecode_nid_no_patch(LibreSslExtensionValue type, const unsigned char* data, std::int64_t length);
+void LibreSslExtensionValueFree_nid_no_patch(LibreSslExtensionValue type, void* value);
 
 #endif

@@ -470,13 +470,38 @@ int APS5_VABI sceAcm_IFFT(AcmBatchInfo* batch, std::int32_t transformSize, std::
 int APS5_VABI sceAcmBatchJobNotification(AcmBatchInfo* batch, std::uint32_t value, void* notification) {
     if (value == 0 || !batch || !notification) return SCE_ACM_ERROR_BAD_POINTER;
     if (reinterpret_cast<std::uintptr_t>(notification) & 0x7f) return SCE_ACM_ERROR_ALIGNMENT;
-    const std::uint64_t offset = batch->offset;
-    const std::uint64_t end = offset + 0x10;
-    if (end > batch->buffer_size) return SCE_ACM_ERROR_BATCH_FULL;
-    std::memset(notification, 0, 0x80);
+    AcmBatchInfo localBatch{};
+    const int savedErrno = errno;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(&localBatch, batch, sizeof(localBatch));
+    errno = savedErrno;
+    if (!copiedIn) return SCE_ACM_ERROR_BAD_POINTER;
+    const std::uint64_t offset = localBatch.offset;
+    if (offset > localBatch.buffer_size || localBatch.buffer_size - offset < 0x10) return SCE_ACM_ERROR_BATCH_FULL;
+    const int savedErrnoProbe = errno;
+    const bool batchWritable = GuestCopyOut_nid_no_patch(&batch->offset, &localBatch.offset, sizeof(localBatch.offset));
+    errno = savedErrnoProbe;
+    if (!batchWritable) return SCE_ACM_ERROR_BAD_POINTER;
+    std::byte existingWords[0x10]{};
+    const int savedErrnoBufProbe = errno;
+    const bool bufWritable = GuestCopyIn_nid_no_patch(existingWords, static_cast<const std::byte*>(localBatch.buffer) + offset, sizeof(existingWords)) &&
+        GuestCopyOut_nid_no_patch(static_cast<std::byte*>(localBatch.buffer) + offset, existingWords, sizeof(existingWords));
+    errno = savedErrnoBufProbe;
+    if (!bufWritable) return SCE_ACM_ERROR_BAD_POINTER;
+    const std::byte zeroNotification[0x80]{};
+    const int savedErrnoNotif = errno;
+    const bool copiedNotif = GuestCopyOut_nid_no_patch(notification, zeroNotification, sizeof(zeroNotification));
+    errno = savedErrnoNotif;
+    if (!copiedNotif) return SCE_ACM_ERROR_BAD_POINTER;
     const std::uint64_t words[2] = {0xeu | (static_cast<std::uint64_t>(static_cast<std::uint8_t>(value)) << 24), reinterpret_cast<std::uintptr_t>(notification)};
-    std::memcpy(static_cast<std::byte*>(batch->buffer) + offset, words, sizeof(words));
-    batch->offset = end;
+    const int savedErrnoBuf = errno;
+    const bool copiedBuf = GuestCopyOut_nid_no_patch(static_cast<std::byte*>(localBatch.buffer) + offset, words, sizeof(words));
+    errno = savedErrnoBuf;
+    if (!copiedBuf) return SCE_ACM_ERROR_BAD_POINTER;
+    const std::uint64_t end = offset + sizeof(words);
+    const int savedErrnoBack = errno;
+    const bool copiedBack = GuestCopyOut_nid_no_patch(&batch->offset, &end, sizeof(end));
+    errno = savedErrnoBack;
+    if (!copiedBack) return SCE_ACM_ERROR_BAD_POINTER;
     return 0;
 }
 
