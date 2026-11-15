@@ -420,12 +420,12 @@ def markdown(result):
     lines.append("")
     for frame in result["slowest_frames"]:
         parts = ", ".join(f"{markdown_text(entry['name'])} ({markdown_text(entry['thread'])}) {entry['ms']:.1f}" for entry in frame["slices"])
-        lines.append(f"- present {frame['present']}: {frame['ms']:.1f} ms at {frame['at_ms']:.0f} ms: {parts}")
+        lines.append(f"- present {markdown_text(frame['present'])}: {frame['ms']:.1f} ms at {frame['at_ms']:.0f} ms: {parts}")
     lines.append("")
     lines.append("**Persistent spikes** (frame time above the fastest frame that separates it from a longer frame; one entry per stall, not per frame)")
     lines.append("")
     for spike in result["persistent_spikes"]:
-        lines.append(f"- present {spike['present']}: {spike['ms']:.1f} ms at {spike['at_ms']:.0f} ms, persistence {spike['persistence_ms']:.1f} ms")
+        lines.append(f"- present {markdown_text(spike['present'])}: {spike['ms']:.1f} ms at {spike['at_ms']:.0f} ms, persistence {spike['persistence_ms']:.1f} ms")
     lines.append("")
     lines.append("**Threads** (ms per frame)")
     lines.append("")
@@ -441,7 +441,7 @@ def markdown(result):
     lines.append("**Longest waits**")
     lines.append("")
     for wait in result["longest_waits"]:
-        lines.append(f"- {markdown_text(wait['name'])} ({markdown_text(wait['thread'])}) {wait['ms']:.1f} ms at {wait['at_ms']:.0f} ms, present {wait['present']}")
+        lines.append(f"- {markdown_text(wait['name'])} ({markdown_text(wait['thread'])}) {wait['ms']:.1f} ms at {wait['at_ms']:.0f} ms, present {markdown_text(wait['present'])}")
     if "largest_gpu_batches" in result:
         lines.append("")
         lines.append("**Largest GPU batches** (GPU ranges inside, and the CPU slices that recorded each, inclusive)")
@@ -449,7 +449,7 @@ def markdown(result):
         for batch in result["largest_gpu_batches"]:
             ranges = ", ".join(f"{markdown_text(entry['name'])} {entry['ms']:.1f}" for entry in batch["gpu_ranges"]) or "no ranges"
             recorded = ", ".join(f"{markdown_text(entry['name'])} ({markdown_text(entry['thread'])}) {entry['ms']:.1f}" for entry in batch["recorded_by"]) or "no CPU slices"
-            lines.append(f"- batch {batch['batch']}: {batch['ms']:.1f} ms at {batch['at_ms']:.0f} ms, present {batch['present']}: GPU {ranges}; recorded by {recorded}")
+            lines.append(f"- batch {markdown_text(batch['batch'])}: {batch['ms']:.1f} ms at {batch['at_ms']:.0f} ms, present {markdown_text(batch['present'])}: GPU {ranges}; recorded by {recorded}")
     if "stacks" in result:
         stacks = result["stacks"]
         lines.append("")

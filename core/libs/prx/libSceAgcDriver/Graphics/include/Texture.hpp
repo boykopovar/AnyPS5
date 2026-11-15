@@ -70,7 +70,7 @@ struct OwnedImage {
 
 class Texture {
 public:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool layerRows = false, const VkClearColorValue* clear = nullptr, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool layerRows = false, const VkClearColorValue* clear = nullptr, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt, const HostImport* source = nullptr);
     Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::shared_ptr<Buffer> staging, bool depthCompare = false, bool layerRows = false, std::optional<std::span<const std::uint32_t>> packedSlabs = std::nullopt);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
@@ -144,7 +144,7 @@ public:
     void MarkReleased() { released.store(true, std::memory_order_release); }
 
 private:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::shared_ptr<Buffer> staging, bool depthCompare, bool layerRows, const VkClearColorValue* clear, std::optional<std::span<const std::uint32_t>> packedSlabs, const HostImport* source);
     void release() noexcept;
     bool refreshBlockCopy();
     bool refreshSrgbExpand();
@@ -342,6 +342,7 @@ public:
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
+    static void SetPendingHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
     static constexpr std::uint64_t OccasionalWriteFlips = 8;
@@ -577,6 +578,10 @@ private:
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
+    void rebaseBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
+    void applyRebase(std::uint64_t ticket, std::uint32_t unit);
+    void readBaseline(std::uint32_t unit);
+    void awaitRebase(std::uint32_t unit);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
@@ -874,6 +879,7 @@ private:
     bool pendingFromOthers = false;
     std::vector<DrawnRect> drawnRects;
     std::vector<std::uint64_t> storeNotes;
+    std::vector<std::uint64_t> flushNotes;
     std::uint64_t writtenFlip = 0;
     std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
@@ -884,6 +890,10 @@ private:
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;
     std::uint64_t lastSaveTicket = 0;
+    std::vector<bool> baselineDue;
+    std::atomic<bool> anyBaselineDue{false};
+    std::vector<std::uint64_t> rebaseTicket;
+    std::uint64_t lastRebaseTicket = 0;
     std::function<void(std::uint64_t, std::span<const std::byte>)> writeBackObserver;
     std::size_t pendingWriteBackObservers = 0;
     bool writeBackObserverFailed = false;

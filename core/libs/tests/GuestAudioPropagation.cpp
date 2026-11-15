@@ -320,6 +320,18 @@ int main() {
     AudioPropagation::Attribute resets[13]{};
     Require(sceAudioPropagationResetAttributes(nullptr, 1) == AudioPropagation::ErrorNullPointer, "reset on a null array");
     Require(sceAudioPropagationResetAttributes(resets, 0) == AudioPropagation::ErrorInvalidArgument, "reset of zero attributes");
+    errno = 71;
+    Require(sceAudioPropagationResetAttributes(reinterpret_cast<AudioPropagation::Attribute*>(0x10), 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted an unreadable attribute array");
+    Require(errno == 71, "reset altered errno on an unreadable attribute array");
+    AudioPropagation::Attribute badValue{};
+    badValue.id = 0x10001;
+    badValue.value = reinterpret_cast<void*>(0x10);
+    badValue.valueSize = 16;
+    Require(sceAudioPropagationResetAttributes(&badValue, 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted unreadable nested room handles");
+    Require(errno == 71, "reset altered errno on unreadable nested room handles");
+    badValue.id = 0;
+    Require(sceAudioPropagationResetAttributes(&badValue, 1) == AudioPropagation::ErrorNullPointer, "reset accepted an unwritable attribute value");
+    Require(errno == 71, "reset altered errno on an unwritable attribute value");
     std::uint32_t resetValues[13][6]{};
     std::memset(resetValues, 0xff, sizeof(resetValues));
     constexpr std::uint32_t resetIds[13]{0, 1, 2, 3, 4, 5, 6, 7, 0x10001, 0x10002, 0x10003, 0x10004, 0x20000};
