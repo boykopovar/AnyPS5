@@ -295,17 +295,24 @@ void MeasureDispatchOverhead() {
     const auto batch = DispatchBatch(PerBatch);
     std::array<std::vector<double>, 2> perDispatchUs;
     std::array<std::uint64_t, 2> drains{};
+    std::array<DrawPipeline::HandoffCounts, 2> handoffs{};
     for (std::size_t round = 0; round <= Batches; ++round) {
         for (const bool off : {round % 2u == 0u, round % 2u != 0u}) {
             RuntimeSwitches::Assign(RuntimeSwitch::NoPipelineDispatch, off);
             auto words = batch;
             const auto drainsBefore = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode);
+            const auto handoffsBefore = DrawPipeline::Handoffs();
             const auto start = std::chrono::steady_clock::now();
             Submit(words);
             AgcDriverWaitIdle_nid_postfix();
             const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
             const auto batchDrains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore;
+            const auto handoffsAfter = DrawPipeline::Handoffs();
             if (round == 0u) continue;
+            auto& arm = handoffs[off ? 1u : 0u];
+            arm.committerWakes += handoffsAfter.committerWakes - handoffsBefore.committerWakes;
+            arm.fullWaits += handoffsAfter.fullWaits - handoffsBefore.fullWaits;
+            arm.producerWakes += handoffsAfter.producerWakes - handoffsBefore.producerWakes;
             perDispatchUs[off ? 1u : 0u].push_back(elapsed / static_cast<double>(PerBatch));
             drains[off ? 1u : 0u] += batchDrains;
         }
@@ -321,6 +328,8 @@ void MeasureDispatchOverhead() {
     const auto inlined = Median(perDispatchUs[1]);
     const auto ratio = Median(ratios);
     std::printf("pipelined dispatch: overhead over %zu batches of %zu cached dispatches per arm: median %.2f us per dispatch pipelined (%llu dispatch drains), %.2f us inline (%llu dispatch drains), median ratio of adjacent batches %.2f\n", Batches, PerBatch, pipelined, static_cast<unsigned long long>(drains[0]), inlined, static_cast<unsigned long long>(drains[1]), ratio);
+    const auto perDispatch = [](std::uint64_t count) { return static_cast<double>(count) / static_cast<double>(Batches * PerBatch); };
+    std::printf("pipelined dispatch: hand-offs per pipelined dispatch: %.3f committer wakes, %.3f full-queue waits, %.3f producer wakes; per inline dispatch: %.3f committer wakes\n", perDispatch(handoffs[0].committerWakes), perDispatch(handoffs[0].fullWaits), perDispatch(handoffs[0].producerWakes), perDispatch(handoffs[1].committerWakes));
     check(drains[0] == 0u, "dispatch overhead: the pipelined arm drained the pipeline " + std::to_string(drains[0]) + " times at a dispatch, so it did not measure pipelined dispatches");
     check(drains[1] >= Batches * PerBatch, "dispatch overhead: the inline arm drained the pipeline " + std::to_string(drains[1]) + " times for " + std::to_string(Batches * PerBatch) + " dispatches");
     if (ThreadSanitized) return;

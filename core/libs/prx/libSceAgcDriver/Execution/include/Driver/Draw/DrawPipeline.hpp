@@ -51,6 +51,12 @@ public:
     void Stop();
     void ReleaseRetired();
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
+    struct HandoffCounts {
+        std::uint64_t committerWakes = 0;
+        std::uint64_t fullWaits = 0;
+        std::uint64_t producerWakes = 0;
+    };
+    static HandoffCounts Handoffs();
     static std::uint64_t DrainRequestsByReason(DrainReason reason);
     bool Busy() const;
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
@@ -101,6 +107,8 @@ private:
     std::atomic<std::uint64_t> retiredItems{0};
     std::atomic<std::uint64_t> producerWaits{0};
     std::atomic<std::uint64_t> drainWaits{0};
+    std::atomic<std::uint64_t> committerWakes{0};
+    std::atomic<std::uint64_t> producerWakes{0};
     std::atomic<std::uint64_t> decodeDrains{0};
     std::uint64_t reportedDecodeDrains = 0;
     std::uint32_t producersWaiting = 0;
