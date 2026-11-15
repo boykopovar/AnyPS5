@@ -151,6 +151,7 @@ void TestRejectedArguments() {
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, reinterpret_cast<std::uint64_t*>(0x10), &scatterState) == invalidPointer);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferReset(reinterpret_cast<Apr::CommandBufferObject*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
     alignas(8) std::uint64_t target = 0;
     Require(sceAmprCommandBufferWriteAddress_04_00(nullptr, &target, 0x1122334455667788ull, 0) == invalidArgument);
@@ -414,6 +415,17 @@ void TestNops() {
     std::memset(recorder.memory.data() + emptyPayloadOffset, 0x5A, sceAmprMeasureCommandSizeNopWithData(4));
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 3, nullptr) == 0);
     for (std::size_t index = 0; index < 12; ++index) Require(recorder.memory[emptyPayloadOffset + Apr::NopHeaderBytes + index] == 0x5A);
+    const auto* invalidData = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(0x10));
+    const auto rejectedOffset = recorder.Offset();
+    const auto rejectedCommands = recorder.Commands();
+    std::memset(recorder.memory.data() + rejectedOffset, 0xA5, 16);
+    Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 3, invalidData) == invalidPointer);
+    Require(recorder.Offset() == rejectedOffset && recorder.Commands() == rejectedCommands);
+    for (std::size_t index = 0; index < 16; ++index) Require(recorder.memory[rejectedOffset + index] == 0xA5);
+    Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 16, invalidData) == invalidArgument);
+    Require(recorder.Offset() == rejectedOffset && recorder.Commands() == rejectedCommands);
+    Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 0, invalidData) == 0);
+    RequireAppended(recorder, rejectedOffset, rejectedCommands, Apr::Opcode::Nop, sizeof(std::uint32_t));
     Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
 
     const auto rejected = static_cast<std::uint64_t>(static_cast<std::uint32_t>(invalidArgument));
@@ -612,6 +624,17 @@ void TestConstructed() {
     commands = recorder.Commands();
     Require(sceAmprCommandBufferConstructNop(&recorder.buffer, 0, nullptr, 0, nullptr) == 0);
     RequireAppended(recorder, offset, commands, Apr::Opcode::Nop, sceAmprMeasureCommandSizeNopWithData(1));
+
+    const auto* invalidPayload = reinterpret_cast<const std::uint8_t*>(static_cast<std::uintptr_t>(0x10));
+    const auto* invalidWord = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(0x10));
+    const auto rejectedOffset = recorder.Offset();
+    const auto rejectedCommands = recorder.Commands();
+    std::memset(recorder.memory.data() + rejectedOffset, 0xA5, 16);
+    Require(sceAmprCommandBufferConstructNop(&recorder.buffer, 0, invalidPayload, 4, nullptr) == invalidPointer);
+    Require(sceAmprCommandBufferConstructNop(&recorder.buffer, 0, payload, 4, invalidWord) == invalidPointer);
+    Require(sceAmprCommandBufferConstructNop(&recorder.buffer, 0, invalidPayload, 61, nullptr) == invalidArgument);
+    Require(recorder.Offset() == rejectedOffset && recorder.Commands() == rejectedCommands);
+    for (std::size_t index = 0; index < 16; ++index) Require(recorder.memory[rejectedOffset + index] == 0xA5);
 
     const std::pair<std::uint32_t, Apr::Opcode> markers[] = {{1, Apr::Opcode::SetMarker}, {2, Apr::Opcode::PushMarker}, {5, Apr::Opcode::SetMarker}, {6, Apr::Opcode::PushMarker}};
     for (const auto& [type, opcode] : markers) {
@@ -1907,6 +1930,43 @@ void TestConstructNopPayloadIntoBuffer() {
     Require(sceAmprCommandBufferDestructor(&buffer) == 0);
 }
 
+static void TestGuestPointerAndErrnoPreservation() {
+    Require(sceAmprCommandBufferClearBuffer(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetCurrentOffset(nullptr) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(nullptr) == 0);
+    Require(sceAmprCommandBufferGetSize(nullptr) == 0);
+    Require(sceAmprCommandBufferGetType(nullptr) == 0);
+
+    Apr::CommandBufferObject buffer{};
+    std::array<std::uint8_t, 512> storage{};
+    const std::uint32_t color = 0x11223344u;
+    AmmUsageStatsData stats{sizeof(AmmUsageStatsData), 0, 0};
+
+    errno = EILSEQ;
+    Require(sceAmprCommandBufferConstructor(&buffer) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetBuffer(&buffer, storage.data(), static_cast<std::uint32_t>(storage.size())) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == storage.data());
+    Require(sceAmprCommandBufferGetSize(&buffer) == storage.size());
+    Require(sceAmprCommandBufferGetCurrentOffset(&buffer) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 0);
+    Require(sceAmprCommandBufferGetType(&buffer) == static_cast<std::uint32_t>(Apr::BufferType::Generic));
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetMarkerWithColor(&buffer, "marker", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferConstructMarker(&buffer, 5, "marker2", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 2);
+    Require(sceAmprCommandBufferClearBuffer(&buffer) == storage.data());
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == nullptr);
+    Require(sceAmprAmmGetUsageStatsData(&stats) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferDestructor(&buffer) == 0);
+}
+
 int main() {
     TestRecording("frame");
     TestRecording("");
@@ -1954,5 +2014,6 @@ int main() {
     TestAmmSubmitAfterGrowth();
     TestExpandedBufferLifecycle();
     TestConstructNopPayloadIntoBuffer();
+    TestGuestPointerAndErrnoPreservation();
     return 0;
 }

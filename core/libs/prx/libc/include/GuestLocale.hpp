@@ -35,6 +35,19 @@ struct Facet {
     std::uint32_t reserved;
 };
 
+struct CtypeFacet {
+    Facet base;
+    const std::int16_t* classification;
+    const std::int16_t* lower;
+    const std::int16_t* upper;
+    std::int32_t deleteTable;
+    std::uint32_t reserved;
+};
+
+static_assert(offsetof(CtypeFacet, lower) == 0x18);
+static_assert(offsetof(CtypeFacet, upper) == 0x20);
+static_assert(sizeof(CtypeFacet) == 0x30);
+
 struct TimeInfo {
     const char* amPm;
     const char* days;
@@ -204,6 +217,14 @@ struct TimePutVtable {
     OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
 };
 
+struct WideTimePutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
+};
+
+static_assert(offsetof(WideTimePutVtable, put) == 0x20);
+static_assert(sizeof(WideTimePutVtable) == 0x28);
+
 struct TimeGetVtable {
     FacetVtable facet;
     std::int32_t (APS5_VABI *dateOrder)(const Facet* self);
@@ -244,6 +265,50 @@ struct CtypeVtable {
     char (APS5_VABI *narrow)(const Facet* self, char character, char fallback);
     const char* (APS5_VABI *narrowRange)(const Facet* self, const char* first, const char* last, char fallback, char* destination);
 };
+
+struct WideCtypeVtable {
+    FacetVtable facet;
+    const void* classificationMethods[4];
+    const void* caseMethods[4];
+    const void* widenMethods[2];
+    char (APS5_VABI *narrow)(const Facet* self, std::uint16_t character, char fallback);
+    const void* narrowRange;
+};
+
+static_assert(offsetof(WideCtypeVtable, narrow) == 0x70);
+static_assert(sizeof(WideCtypeVtable) == 0x80);
+
+template<typename TString>
+struct MoneyGetVtable {
+    FacetVtable facet;
+    InputIterator (APS5_VABI *getLongDouble)(const Facet* self, InputIterator first, InputIterator last, bool international, IosBase* stream, std::int32_t* state, long double* value);
+    InputIterator (APS5_VABI *getString)(const Facet* self, InputIterator first, InputIterator last, bool international, IosBase* stream, std::int32_t* state, TString* value);
+};
+
+template<typename TCharacter, typename TString>
+struct MoneyPutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *putLongDouble)(const Facet* self, OutputIterator out, bool international, IosBase* stream, TCharacter fill, long double units);
+    OutputIterator (APS5_VABI *putString)(const Facet* self, OutputIterator out, bool international, IosBase* stream, TCharacter fill, const TString* digits);
+};
+
+using CharMoneyGetVtable = MoneyGetVtable<String>;
+using WideMoneyGetVtable = MoneyGetVtable<void>;
+using CharMoneyPutVtable = MoneyPutVtable<char, String>;
+using WideMoneyPutVtable = MoneyPutVtable<std::uint16_t, void>;
+
+static_assert(offsetof(CharMoneyGetVtable, getLongDouble) == 0x20);
+static_assert(offsetof(CharMoneyGetVtable, getString) == 0x28);
+static_assert(sizeof(CharMoneyGetVtable) == 0x30);
+static_assert(offsetof(WideMoneyGetVtable, getLongDouble) == 0x20);
+static_assert(offsetof(WideMoneyGetVtable, getString) == 0x28);
+static_assert(sizeof(WideMoneyGetVtable) == 0x30);
+static_assert(offsetof(CharMoneyPutVtable, putLongDouble) == 0x20);
+static_assert(offsetof(CharMoneyPutVtable, putString) == 0x28);
+static_assert(sizeof(CharMoneyPutVtable) == 0x30);
+static_assert(offsetof(WideMoneyPutVtable, putLongDouble) == 0x20);
+static_assert(offsetof(WideMoneyPutVtable, putString) == 0x28);
+static_assert(sizeof(WideMoneyPutVtable) == 0x30);
 
 static_assert(offsetof(StreambufVtable, overflow) == 0x20);
 static_assert(offsetof(Streambuf, putNext) == 0x40);
@@ -301,10 +366,13 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 }
 
 extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last);
+extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source);
+extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source);
 
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+extern "C" const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch();
 inline constexpr std::size_t kCodecvtCharVtableSlots = 13;
 static_assert(kCodecvtCharVtableSlots * sizeof(std::uintptr_t) == 104);
 extern "C" std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots];
@@ -317,6 +385,9 @@ extern "C" std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_tr
 inline constexpr std::size_t kTimePutWideVtableSlots = 7;
 static_assert(kTimePutWideVtableSlots * sizeof(std::uintptr_t) == 56);
 extern "C" std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots];
+extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last);
+extern "C" GuestLocale::OutputIterator LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
+extern "C" std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 inline constexpr std::size_t kMoneyPutCharVtableSlots = 8;
 static_assert(kMoneyPutCharVtableSlots * sizeof(std::uintptr_t) == 64);
 extern "C" std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots];

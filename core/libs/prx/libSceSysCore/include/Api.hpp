@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 struct ApplicationInfo {
     std::byte data[152];
@@ -10,7 +11,7 @@ extern "C" {
 
 int APS5_VABI sceApplicationGetAppInfoByAppId(std::uint32_t applicationId, ApplicationInfo* info);
 
-int APS5_VABI _sceApplicationGetAppId();
+int APS5_VABI _sceApplicationGetAppId(std::uint64_t, std::uint32_t* appId);
 int APS5_VABI sceApplicationAddProcess2();
 int APS5_VABI sceApplicationBeginSclkChange();
 int APS5_VABI sceApplicationBlockingKill2();
@@ -34,8 +35,8 @@ int APS5_VABI sceApplicationGetProcs();
 int APS5_VABI sceApplicationGetShellCoreAppId();
 int APS5_VABI sceApplicationGetStateForDebugger();
 int APS5_VABI sceApplicationInitialize();
-int APS5_VABI sceApplicationInitializeForShellCore();
-int APS5_VABI sceApplicationIsCrashReportBeingProcessed();
+int APS5_VABI sceApplicationInitializeForShellCore(const void* parameter);
+bool APS5_VABI sceApplicationIsCrashReportBeingProcessed();
 int APS5_VABI sceApplicationIsPrimaryProcess();
 int APS5_VABI sceApplicationIsResumable();
 int APS5_VABI sceApplicationIsSuspendable();

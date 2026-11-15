@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -176,6 +177,8 @@ void TestSharedEventFlags() {
 
 void TestThreads() {
     Require(sceNpThreadGetId(nullptr) == NpInvalidArgument, "a null thread id output is refused");
+    errno = 71;
+    Require(sceNpThreadGetId(reinterpret_cast<Pthread*>(0x10)) == NpInvalidArgument && errno == 71, "an unwritable thread id output is refused and errno is kept");
     Pthread thread {};
     int marker = 0;
     Require(sceNpCreateThread(&thread, ReturnArgument, &marker, 0, 0x10000, 0, "NpThread") == 0, "a thread is created");
@@ -225,6 +228,9 @@ void TestHeaps() {
     UseAllocator(allocator);
     NpHeapStat stat {};
     Require(sceNpHeapGetStat(&heap, &stat) == 0 && stat.maxInuseSize >= stat.currentInuseSize, "heap statistics are reported");
+    errno = 71;
+    Require(sceNpHeapGetStat(reinterpret_cast<const NpHeap*>(0x10), &stat) == NpInvalidArgument && errno == 71, "an unreadable heap is refused and errno is kept");
+    Require(sceNpHeapGetStat(&heap, reinterpret_cast<NpHeapStat*>(0x10)) == NpInvalidArgument && errno == 71, "an unwritable heap statistics output is refused and errno is kept");
     sceNpHeapDestroy(&heap);
 
     Require(heap.mspace == nullptr, "destroying clears the heap");
@@ -673,6 +679,59 @@ void TestRingBuf() {
     sceNpMemoryHeapDestroy(&memoryHeap);
 }
 
+void TestRingBufBounds() {
+    constexpr int NoSpace = static_cast<int>(0x80559E0A);
+    std::uint8_t storage[8];
+    NpRingBuf ring {};
+    _ZN3sce2np7RingBufC1Ev(&ring);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, storage, sizeof(storage)) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&ring, "abc", 3) == 0,
+        "a ring buffer holds three bytes");
+    char out[16] = {};
+    Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 1, out, SIZE_MAX) == NoSpace && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 3,
+        "a peek whose size wraps the offset sum is refused");
+    _ZN3sce2np7RingBuf7DestroyEv(&ring);
+
+    NpRingBuf empty {};
+    _ZN3sce2np7RingBufC1Ev(&empty);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&empty, storage, sizeof(storage)) == 0, "an empty ring buffer takes the storage");
+    bool refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, 9);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write past the end of the storage leaves the ring unchanged");
+    refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, SIZE_MAX - 7);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write whose size wraps the write pointer is refused");
+    _ZN3sce2np7RingBuf7DestroyEv(&empty);
+
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-expand") == 0, "a memory heap is created for expansion");
+    NpAllocatorEx heapAllocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1235, &heapAllocator);
+    NpRingBufMemory expanding {};
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(&expanding, &heapAllocator);
+    Require(_ZN3sce2np13RingBufMemory4InitEm(&expanding, 4) == 0, "a memory ring buffer is initialized for expansion");
+    std::uint8_t* const original = expanding.ringBuf.buf;
+    refused = false;
+    try {
+        _ZN3sce2np13RingBufMemory6ExpandEm(&expanding, SIZE_MAX - 2);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && expanding.ringBuf.bufSize == 4 && expanding.ringBuf.buf == original,
+        "an expansion whose new size overflows is refused before the storage is reallocated");
+    _ZN3sce2np13RingBufMemory7DestroyEv(&expanding);
+    sceNpMemoryHeapDestroy(&memoryHeap);
+}
+
 void TestTitleIdObjects() {
     NpTitleIdObject parsed {};
     std::memset(&parsed, 0x77, sizeof(parsed));
@@ -912,6 +971,31 @@ void TestCallouts() {
         "the later callout is still pending after the rejected start");
     Require(sceNpCalloutStopOnCtx(&context, &queuedFirst, &wasPending) == 0 && wasPending == 1, "the earlier callout is still pending");
 
+    NpCalloutContext wide {};
+    NpCallout sixtyFirst {};
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 0, RecordFirst, nullptr) == NpNotInitialized,
+        "the 64-bit start needs an initialised context");
+    Require(sceNpCalloutInitCtx(&wide, "np-callout-64", 0x4000, 0, 0) == 0, "a second callout context starts");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 60ull * 1000000ull, RecordUnexpected, nullptr) == 0,
+        "the 64-bit start queues a distant callout");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 60ull * 1000000ull, RecordUnexpected, nullptr) == NpAlreadyQueued,
+        "the 64-bit start rejects a queued callout");
+    Require(sixtyFirst.handler == RecordUnexpected && sixtyFirst.arg == nullptr,
+        "a rejected 64-bit start leaves the callout unchanged");
+    NpCallout sixtyTail {};
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyTail, 1ull << 32, RecordUnexpected, nullptr) == 0,
+        "a 64-bit deadline beyond the 32-bit range is queued");
+    Require(sixtyFirst.next == &sixtyTail, "the 64-bit queue keeps its order");
+    Require(sceNpCalloutStartOnCtx64(&wide, &sixtyFirst, 1000, RecordFirst, &wide) == NpAlreadyQueued,
+        "a rejected 64-bit restart reports the queued answer for the earlier callout");
+    Require(sixtyFirst.handler == RecordUnexpected && sixtyFirst.arg == nullptr && sixtyFirst.next == &sixtyTail,
+        "the rejected 64-bit restart leaves the entry and the queue unchanged");
+    Require(sceNpCalloutStopOnCtx(&wide, &sixtyTail, &wasPending) == 0 && wasPending == 1,
+        "the later callout is still pending after the rejected 64-bit restart");
+    Require(sceNpCalloutStopOnCtx(&wide, &sixtyFirst, &wasPending) == 0 && wasPending == 1,
+        "the earlier callout is still pending after the rejected 64-bit restart");
+    sceNpCalloutTermCtx(&wide);
+
     NpCallout later {};
     Require(sceNpCalloutStartOnCtx(&context, &later, 20000, RecordSecond, nullptr) == 0, "a later callout is queued");
     Require(sceNpCalloutStartOnCtx(&context, &callout, 1000, RecordFirst, nullptr) == 0, "an earlier callout is queued");
@@ -927,6 +1011,7 @@ void TestCallouts() {
 struct SelfTermination {
     NpCalloutContext* context {};
     std::atomic<int> finished {0};
+    std::atomic<int> reused {0};
     std::string message;
 };
 
@@ -941,6 +1026,10 @@ void APS5_VABI TerminateOwnContext(void*) {
     g_selfTermination.finished.store(1, std::memory_order_release);
 }
 
+void APS5_VABI MarkReused(void*) {
+    g_selfTermination.reused.store(1, std::memory_order_release);
+}
+
 void TestCalloutSelfTermination() {
     NpCalloutContext context {};
     NpCallout callout {};
@@ -950,12 +1039,19 @@ void TestCalloutSelfTermination() {
     for (int i = 0; i < 2000 && g_selfTermination.finished.load(std::memory_order_acquire) == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     Require(g_selfTermination.finished.load(std::memory_order_acquire) == 1, "the terminating callout returns");
-    Require(g_selfTermination.message.find("sceNpCalloutTermCtx") == 0, "terminating a context from its own callout is refused");
-    Require(context.initialized == 1, "a refused termination leaves the context running");
-
+    Require(g_selfTermination.message.empty(), "terminating a context from its own callout returns");
+    Require(context.initialized == 0, "a callout's termination of its own context clears it");
     sceNpCalloutTermCtx(&context);
 
-    Require(context.initialized == 0, "the context terminates from another thread");
+    NpCallout again {};
+    Require(sceNpCalloutInitCtx(&context, "np-self-term-again", 0x4000, 0, 0) == 0, "the context starts again");
+    Require(sceNpCalloutStartOnCtx(&context, &again, 0, MarkReused, nullptr) == 0, "a callout is queued on the restarted context");
+    for (int i = 0; i < 2000 && g_selfTermination.reused.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(g_selfTermination.reused.load(std::memory_order_acquire) == 1, "a callout runs on the restarted context");
+    sceNpCalloutTermCtx(&context);
+
+    Require(context.initialized == 0, "the restarted context terminates from another thread");
 }
 
 bool Equals(const char* actual, const char* expected) {
@@ -1026,6 +1122,11 @@ void TestJsonText() {
     std::memset(guarded.buffer, 'x', sizeof(guarded.buffer));
     Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "a", 1) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
         "escaping into a buffer without a terminator is refused");
+    std::memset(&guarded, 0, sizeof(guarded));
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "abcdefghijkl", 12) == NpUtilBufferTooSmall &&
+                Equals(guarded.buffer, "abcdefghij") && guarded.canary[0] == 0,
+        "escaping that runs out of room keeps the text it appended");
+    Require(sceNpUtilJsonEscape(reinterpret_cast<char*>(0x10), 64, "a", 1) == NpUtilInvalid, "escaping into an unmapped buffer is refused");
 
     char text[32] = {};
     std::size_t length = 0;
@@ -1367,6 +1468,9 @@ void TestTitleIds() {
     char titleId[13] = {};
     Require(sceNpUtilBuildTitleId(&parts, titleId, sizeof(titleId)) == 0 && Equals(titleId, "ABCD12345_07"), "the index is two digits");
     Require(sceNpUtilBuildTitleId(&parts, titleId, 12) == NpUtilBufferTooSmall, "a title id needs 13 bytes");
+    errno = 71;
+    Require(sceNpUtilBuildTitleId(reinterpret_cast<const NpTitleIdParts*>(0x10), titleId, sizeof(titleId)) == NpUtilInvalid && errno == 71, "unreadable title id parts are refused and errno is kept");
+    Require(sceNpUtilBuildTitleId(&parts, reinterpret_cast<char*>(0x10), sizeof(titleId)) == NpUtilInvalid && errno == 71, "an unwritable title id is refused and errno is kept");
     parts.index = 100;
     Require(sceNpUtilBuildTitleId(&parts, titleId, sizeof(titleId)) == NpUtilOutOfRange, "the index is at most 99");
 }
@@ -1425,6 +1529,8 @@ void TestJid() {
     const NpJid shapes[] = {{"u", "a1.-2.np.playstation.net", nullptr, 0}, {"u", "a1.b2.np.playstation.network", nullptr, 0}};
     for (const NpJid& bad : shapes) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "the domain code is alphanumeric and the suffix exact");
     Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid &&sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
+    errno = 71;
+    Require(sceNpUtilJidToNpId(reinterpret_cast<NpIdFull*>(0x10), &psn) == NpUtilInvalid && errno == 71, "an unwritable npid is refused and errno is kept");
 }
 
 void TestLanguagesAndDebugIds() {
@@ -1808,6 +1914,9 @@ void TestCommIdObjects() {
     Require(sceNpUtilParseTitleId(&parts, "WXYZ54321-07") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, "WXYZ54321_007") == NpUtilParseOutOfRange
             && sceNpUtilParseTitleId(&parts, "WXYZ") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, nullptr) == NpUtilInvalid,
         "sceNpUtilParseTitleId needs an underscore at index 9 and at most 12 characters");
+    errno = 71;
+    Require(sceNpUtilParseTitleId(reinterpret_cast<NpCommunicationId*>(0x10), "WXYZ54321_07") == NpUtilInvalid && errno == 71,
+        "sceNpUtilParseTitleId refuses an unwritable output and keeps errno");
 
     NpCommIdObject commId {};
     std::memset(&commId, 0x77, sizeof(commId));
@@ -1868,6 +1977,7 @@ int main() {
     TestMutexAndCondObjects();
     TestAllocatorExRecorded();
     TestRingBuf();
+    TestRingBufBounds();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestTitleSecretObjects();

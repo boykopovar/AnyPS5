@@ -10,6 +10,7 @@
 #include <thread>
 
 static constexpr int GUEST_ENOENT = 2;
+static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EEXIST = 17;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EAGAIN = 35;
@@ -52,6 +53,9 @@ static int Value(void* sem) {
 }
 
 static void CheckNames() {
+    const auto* unreadable = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+    REQUIRE(OpenFails(unreadable, O_CREAT_FLAG, GUEST_EFAULT));
+    REQUIRE(UnlinkFails(unreadable, GUEST_EFAULT));
     REQUIRE(OpenFails("relative", O_CREAT_FLAG, GUEST_EINVAL));
     REQUIRE(OpenFails("/anyps5-named-flags", 0x1, GUEST_EINVAL));
     REQUIRE(OpenFails("/anyps5-named-flags", O_CREAT_FLAG | 0x2, GUEST_EINVAL));
