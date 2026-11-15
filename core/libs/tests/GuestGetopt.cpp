@@ -353,6 +353,15 @@ void LongOptions() {
         ExpectText(capture.Text(), test.message, std::string("getopt_long message ") + test.arguments);
     }
     {
+        ArgumentVector beyond("foo --required bar");
+        StderrCapture capture;
+        Reset();
+        optopt_nid_postfix = -1;
+        Expect(getopt_long_nid_postfix(2, beyond.Values(), "", options, nullptr) == '?' && optind_nid_postfix == 2, "required argument beyond argc");
+        Expect(optopt_nid_postfix == 'r' && optarg_nid_postfix == nullptr, "required argument beyond argc optopt");
+        ExpectText(capture.Text(), "eboot.bin: option `--required' requires an argument\n", "required argument beyond argc message");
+    }
+    {
         ArgumentVector arguments("foo --ver -x");
         StderrCapture capture;
         Reset();
