@@ -341,36 +341,39 @@ int APS5_VABI sceNgs2RackGetInfo(uintptr_t rack_handle, Ngs2RackInfo* info, size
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (info_size < sizeof(Ngs2RackInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
     if (rack->system == nullptr) throw std::runtime_error("NGS2: information for a detached rack is rejected because the reference dereferences its absent system");
-    std::memcpy(info->name, rack->name, std::strlen(rack->name) + 1);
-    info->rack_handle = rack_handle;
-    info->buffer_info = rack->bufferInfo;
-    info->owner_system_handle = reinterpret_cast<Ngs2Handle>(rack->system);
-    info->type = rack->rackId == SCE_NGS2_RACK_ID_SAMPLER || rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER ? 0 :
+    Ngs2RackInfo local{};
+    if (!ReadGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    std::memcpy(local.name, rack->name, std::strlen(rack->name) + 1);
+    local.rack_handle = rack_handle;
+    local.buffer_info = rack->bufferInfo;
+    local.owner_system_handle = reinterpret_cast<Ngs2Handle>(rack->system);
+    local.type = rack->rackId == SCE_NGS2_RACK_ID_SAMPLER || rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER ? 0 :
         rack->rackId == SCE_NGS2_RACK_ID_MASTERING || rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING ? 2 : 1;
-    info->rack_id = rack->rackId;
-    info->uid = rack->uid;
-    info->min_grain_samples = MIN_GRAIN_SAMPLES;
-    info->max_grain_samples = rack->maxGrainSamples;
-    info->max_voices = static_cast<std::uint32_t>(rack->voices.size());
-    info->max_channel_works = rack->maxChannelWorks;
-    info->max_inputs = rack->maxInputs;
-    info->max_matrices = static_cast<std::uint32_t>(rack->voices.front().matrices.size());
-    info->max_ports = static_cast<std::uint32_t>(rack->voices.front().ports.size());
-    info->max_voice_channels = rack->maxVoiceChannels;
-    info->max_output_channels = rack->maxOutputChannels;
-    info->num_modules = rack->numModules;
-    info->num_buffers = rack->numBuffers;
-    info->state_flags = rack->lockDepth == 0 ? 1 : 5;
-    info->last_process_ratio = 0;
-    info->last_processed_tick = 0;
-    info->render_count = rack->renderCount;
-    info->active_voice_count = 0;
-    info->active_channel_work_count = 0;
+    local.rack_id = rack->rackId;
+    local.uid = rack->uid;
+    local.min_grain_samples = MIN_GRAIN_SAMPLES;
+    local.max_grain_samples = rack->maxGrainSamples;
+    local.max_voices = static_cast<std::uint32_t>(rack->voices.size());
+    local.max_channel_works = rack->maxChannelWorks;
+    local.max_inputs = rack->maxInputs;
+    local.max_matrices = static_cast<std::uint32_t>(rack->voices.front().matrices.size());
+    local.max_ports = static_cast<std::uint32_t>(rack->voices.front().ports.size());
+    local.max_voice_channels = rack->maxVoiceChannels;
+    local.max_output_channels = rack->maxOutputChannels;
+    local.num_modules = rack->numModules;
+    local.num_buffers = rack->numBuffers;
+    local.state_flags = rack->lockDepth == 0 ? 1 : 5;
+    local.last_process_ratio = 0;
+    local.last_processed_tick = 0;
+    local.render_count = rack->renderCount;
+    local.active_voice_count = 0;
+    local.active_channel_work_count = 0;
     for (const auto& voice : rack->voices) {
         if (!voice.pendingPlay && (voice.stateFlags & SCE_NGS2_VOICE_STATE_FLAG_INUSE) == 0) continue;
-        ++info->active_voice_count;
-        info->active_channel_work_count += voice.channels;
+        ++local.active_voice_count;
+        local.active_channel_work_count += voice.channels;
     }
+    if (!WriteGuestBytes(info, &local, sizeof(local))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     auto* tail = reinterpret_cast<std::uint8_t*>(info) + sizeof(Ngs2RackInfo);
     if (rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER || rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
         if (info_size >= sizeof(Ngs2RackInfo) + rack->infoExtension.size())
