@@ -20,6 +20,7 @@ REWRITTEN_FORMS = {
 FORMS = {
     "gs-short-register-address": bytes.fromhex("65 48 8b 00"),
     "gs-rip-relative": bytes.fromhex("65 48 8b 05 00 01 00 00"),
+    "gs-rip-relative-rexb": bytes.fromhex("65 49 8b 05 00 01 00 00"),
     "gs-address-size": bytes.fromhex("65 67 48 8b 04 25 30 00 00 00"),
     "gs-vex-load": bytes.fromhex("65 c5 fa 6f 04 25 30 00 00 00"),
     "gs-push": bytes.fromhex("65 ff 34 25 30 00 00 00"),
