@@ -344,7 +344,7 @@ def open_prs(base):
 
 
 def fetch(base, prs):
-    return fetch_heads(base_commit(base), prs)
+    return fetch_heads(base_commit(base), prs, check_existing=True)
 
 
 def base_commit(base):
