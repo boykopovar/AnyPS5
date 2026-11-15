@@ -17,10 +17,12 @@
 
 ### Functional
 
+- [Guest output fallback](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - the system, room, material, portal and source creates and the system and source ray count getters write their outputs through `GuestCopyOut_nid_no_patch`; an unwritable pointer returns `0x8a700003` (`ErrorNullPointer`). Console behaviour on unmapped output pointers is not measured.
 - [sceAudioPropagationSourceGetAudioPath](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `outPath` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 - [sceAudioPropagationPathGetNumPoints](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `count` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 - [sceAudioPropagationReportRegisterHandler](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `-1` when the `registration` output pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 - [sceAudioPropagationSourceGetAudioPathCount](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning `ErrorNullPointer` (`0x8A700003`) when the `count` pointer is unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
+- [sceAudioPropagationResetAttributes](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - the two-pass reset reads guest attribute records and room-handle values through checked guest copies and writes only each attribute's original filled prefix through a checked guest copy. An inaccessible attribute array or nested room-handle value returns `ErrorInvalidArgument`; an unwritable reset destination returns `ErrorNullPointer`, preserving host errno. Console handling of inaccessible guest addresses and partial updates after a later write failure is unmeasured.
 
 ### Silent stubs
 
@@ -43,3 +45,4 @@
 ### Functional
 
 - [sceAudioPropagationSystemQueryInfo](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - returning 0x8a700002 (ErrorInvalidHandle) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+- [sceAudioPropagationSystemCreate, sceAudioPropagationPortalCreate, sceAudioPropagationSourceRender and sceAudioPropagationSystemEnumHandles](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) (libSceAudioPropagation) - now read their options/params/render-info records and write the handle array through `GuestCopyIn_nid_no_patch`/`GuestCopyOut_nid_no_patch`; returning ErrorNullPointer (0x8A700003) for an unreadable or unwritable pointer is a host-safety decision, console behavior unmeasured.

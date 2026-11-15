@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <algorithm>
 
 extern "C" {
 
@@ -92,7 +93,13 @@ int APS5_VABI libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(std::uint32_t us
     if (size <= 0x25) {
         return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
     }
-    std::snprintf(path, size, "/%s/eap/rodata/home/%08x", sceKernelGetFsSandboxRandomWord(), userId);
+    char text[64];
+    const int length = std::snprintf(text, sizeof(text), "/%s/eap/rodata/home/%08x", sceKernelGetFsSandboxRandomWord(), userId);
+    const std::size_t count = std::min({static_cast<std::size_t>(length), sizeof(text) - 1, size - 1});
+    text[count] = '\0';
+    if (!GuestCopyOut_nid_no_patch(path, text, count + 1)) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     return USER_SERVICE_OK;
 }
 APS5_EXPORT("ErTMkmSho4E", libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch);

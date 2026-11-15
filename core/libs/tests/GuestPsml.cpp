@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -119,6 +120,9 @@ void CreateContext1300SizeCheck() {
     setDims(7680, 4320);
     Require(scePsmlMfsrCreateContext1300(&context, param.data()) == kErrNotInitialized);
     Require(scePsmlMfsrCreateContext1300(&context, nullptr) == kErrNotInitialized);
+    errno = 71;
+    Require(scePsmlMfsrCreateContext1300(&context, reinterpret_cast<const void*>(0x10)) == kErrNotInitialized);
+    Require(errno == 71);
     Require(context == sentinel);
 }
 
