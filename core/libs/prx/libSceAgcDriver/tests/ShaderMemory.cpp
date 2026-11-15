@@ -10608,6 +10608,11 @@ void verifyUnnormalizedSamplers() {
         const auto oneD = recompile(offsetProgram(0xf0dc0f00u, source, 0x3du), imageData(unnormalized, Type1D, Format8888UNorm, 0u));
         require(proven(oneD, true), "unnormalized texel offsets: a 1D image_sample_lz_o through an unnormalized S# was not flagged");
         auditSpirv(oneD.spirv.Words());
+        if (!foldedSamples(oneD.spirv.Words())) {
+            std::cerr << "UNNORMALIZED_OFFSET_SPIRV";
+            for (const auto word : oneD.spirv.Words()) std::cerr << ' ' << word;
+            std::cerr << '\n';
+        }
         require(foldedSamples(oneD.spirv.Words()), "unnormalized texel offsets: a 1D offset was not added to the coordinate");
     }
     const auto constantLz = offsetProgram(0xf0dc0f08u, 0xffu, 0x3du | (2u << 8u));
