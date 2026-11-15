@@ -9,6 +9,7 @@
 #include "Recompiler.hpp"
 #include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -229,6 +230,7 @@ public:
             std::shared_ptr<Buffer> buffer;
             VkDeviceSize offset = 0;
             std::size_t bytes = 0;
+            VkBuffer handle = VK_NULL_HANDLE;
             std::span<std::byte> Bytes() const { return buffer->Bytes().subspan(static_cast<std::size_t>(offset), bytes); }
         };
         DescriptorCache* cache = nullptr;
@@ -244,6 +246,9 @@ public:
         std::uint64_t address;
         std::size_t size;
         std::span<const std::uint32_t> words;
+        VkBuffer inPlace = VK_NULL_HANDLE;
+        VkDeviceSize inPlaceOffset = 0;
+        std::uint32_t adjustment = 0;
     };
     struct DrawUse {
         DrawUse() = default;
@@ -377,6 +382,18 @@ public:
     static std::uint64_t DataWordsHash(const CompiledShader& shader);
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
         for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
+    }
+    bool PatchMovedPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const MovedBuffer> moved) const {
+        bool patched = false;
+        for (const auto& entry : moved) {
+            if (entry.inPlace == VK_NULL_HANDLE || allocations[entry.allocation].pushByte < 0) continue;
+            bytes[static_cast<std::size_t>(allocations[entry.allocation].pushByte)] = static_cast<std::byte>(entry.adjustment);
+            patched = true;
+        }
+        return patched;
+    }
+    static bool MovedPushPatches(std::span<const MovedBuffer> moved) {
+        return std::any_of(moved.begin(), moved.end(), [](const MovedBuffer& entry) { return entry.inPlace != VK_NULL_HANDLE; });
     }
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
@@ -534,6 +551,7 @@ private:
     std::uint64_t guestBufferBytes(std::span<const std::uint32_t> words) const;
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
+    bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);

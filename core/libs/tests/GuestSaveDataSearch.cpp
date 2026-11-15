@@ -313,6 +313,40 @@ static void CheckNullArguments() {
     Require(sceSaveDataDebugTarget() == 0, "sceSaveDataDebugTarget succeeds");
 }
 
+static void CheckUnmappedArguments() {
+    SceSaveDataDirName pattern{};
+    std::snprintf(pattern.data, sizeof(pattern.data), "SORT_%%");
+    SaveDataDirNameSearchCond cond{};
+    cond.user_id = 1;
+    cond.dir_name = &pattern;
+    SceSaveDataDirName names[1]{};
+    SaveDataParam params[1]{};
+    SaveDataDirNameSearchResult result{};
+    result.dir_names = names;
+    result.dir_names_num = 1;
+    result.params = params;
+    Require(sceSaveDataDirNameSearch(reinterpret_cast<const SaveDataDirNameSearchCond*>(0x10), &result) == SaveDataErrorParameter, "unmapped cond returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch(&cond, reinterpret_cast<SaveDataDirNameSearchResult*>(0x10)) == SaveDataErrorParameter, "unmapped result returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(reinterpret_cast<const SaveDataDirNameSearchCond*>(0x10), &result) == SaveDataErrorParameter, "unmapped cond returns PARAMETER in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataDirNameSearch2(&cond, reinterpret_cast<SaveDataDirNameSearchResult*>(0x10)) == SaveDataErrorParameter, "unmapped result returns PARAMETER in sceSaveDataDirNameSearch2");
+    SaveDataDirNameSearchCond unmappedName = cond;
+    unmappedName.dir_name = reinterpret_cast<const SceSaveDataDirName*>(0x10);
+    Require(sceSaveDataDirNameSearch(&unmappedName, &result) == SaveDataErrorParameter, "unmapped dir_name returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(&unmappedName, &result) == SaveDataErrorParameter, "unmapped dir_name returns PARAMETER in sceSaveDataDirNameSearch2");
+    SaveDataDirNameSearchCond unmappedTitle = cond;
+    unmappedTitle.title_id = reinterpret_cast<const SceSaveDataTitleId*>(0x10);
+    Require(sceSaveDataDirNameSearch(&unmappedTitle, &result) == SaveDataErrorParameter, "unmapped title_id returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(&unmappedTitle, &result) == SaveDataErrorParameter, "unmapped title_id returns PARAMETER in sceSaveDataDirNameSearch2");
+    SaveDataDirNameSearchResult unmappedNames = result;
+    unmappedNames.dir_names = reinterpret_cast<SceSaveDataDirName*>(0x10);
+    Require(sceSaveDataDirNameSearch(&cond, &unmappedNames) == SaveDataErrorParameter, "unmapped dir_names returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(&cond, &unmappedNames) == SaveDataErrorParameter, "unmapped dir_names returns PARAMETER in sceSaveDataDirNameSearch2");
+    SaveDataDirNameSearchResult unmappedParams = result;
+    unmappedParams.params = reinterpret_cast<SaveDataParam*>(0x10);
+    Require(sceSaveDataDirNameSearch(&cond, &unmappedParams) == SaveDataErrorParameter, "unmapped params returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(&cond, &unmappedParams) == SaveDataErrorParameter, "unmapped params returns PARAMETER in sceSaveDataDirNameSearch2");
+}
+
 static void BlockSize() {
     CreateSized("BLOCK_A", 48, 70000);
     auto info = MountInfo("BLOCK_A");
@@ -372,6 +406,7 @@ int main() {
         BlockSize();
         UnsetParamsReportDirectoryTime();
         CheckNullArguments();
+        CheckUnmappedArguments();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         status = 1;

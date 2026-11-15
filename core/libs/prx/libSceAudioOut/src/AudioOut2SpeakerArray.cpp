@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <cstddef>
@@ -88,6 +89,20 @@ float Sn3d(std::uint32_t acn, const AudioOut2Position& direction) {
 
 }
 
+static bool ReadGuest(void* local, const void* guest, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local, guest, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+static bool WriteGuest(void* guest, const void* local, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(guest, local, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
 extern "C" {
 
 int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params) {
@@ -137,8 +152,10 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandl
 }
 
 int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(const void* params, float* coefficients, AudioOut2Position direction) {
-    const auto* param = static_cast<const AmbisonicsEncodeParam*>(params);
-    if (param == nullptr || coefficients == nullptr) return AmbisonicsErrorInvalidParam;
+    if (params == nullptr || coefficients == nullptr) return AmbisonicsErrorInvalidParam;
+    AmbisonicsEncodeParam localParam{};
+    if (!ReadGuest(&localParam, params, sizeof(localParam))) return AmbisonicsErrorInvalidParam;
+    const auto* param = &localParam;
     const bool acn = param->kind == AmbisonicsKindAcn;
     const std::int32_t order = param->order;
     if (!acn && param->kind != AmbisonicsKindFuma) return AmbisonicsErrorInvalidParam;
@@ -151,15 +168,16 @@ int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(const void* params, fl
         return 0;
     }
     const auto channels = static_cast<std::uint32_t>((order + 1) * (order + 1));
+    std::array<float, (MaxAmbisonicsOrder + 1) * (MaxAmbisonicsOrder + 1)> local{};
     if (zero) {
-        std::fill_n(coefficients, channels, 0.0f);
-        coefficients[0] = acn ? 1.0f : static_cast<float>(FumaChannels[0].weight);
-        return 0;
+        local[0] = acn ? 1.0f : static_cast<float>(FumaChannels[0].weight);
+    } else {
+        const AudioOut2Position axes{direction.z, -direction.x, direction.y};
+        for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            local[channel] = acn ? Sn3d(channel, axes) : static_cast<float>(FumaChannels[channel].weight * Sn3d(FumaChannels[channel].acn, axes));
+        }
     }
-    const AudioOut2Position axes{direction.z, -direction.x, direction.y};
-    for (std::uint32_t channel = 0; channel < channels; ++channel) {
-        coefficients[channel] = acn ? Sn3d(channel, axes) : static_cast<float>(FumaChannels[channel].weight * Sn3d(FumaChannels[channel].acn, axes));
-    }
+    if (!WriteGuest(coefficients, local.data(), channels * sizeof(float))) return AmbisonicsErrorInvalidParam;
     return 0;
 }
 
