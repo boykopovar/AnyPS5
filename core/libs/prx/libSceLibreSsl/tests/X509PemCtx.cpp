@@ -918,6 +918,23 @@ void PemRecords() {
     Require(!ReadCertificate(Record("XY", SignedCertificate(RsaKey(64, 0x04), "Leaf"))), "a short label is refused");
     RequireCodes({Code(PemLibrary, NoStartLine)}, "a short label queues the missing start line");
 
+    const std::string skippedThenLeaf = Record("RSA PRIVATE KEY", SignedCertificate(EcKey(), "Skipped")) +
+        Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x28), "Decoded"));
+    auto* afterSkipped = ReadCertificate(skippedThenLeaf);
+    Require(afterSkipped, "a record under another label is skipped and the next record is decoded");
+    RequireNoCodes("skipping a record under another label queues nothing");
+    Require(afterSkipped && Holds(afterSkipped->certificateInfo->key->algorithm->algorithm, RsaEncryption),
+        "the record that is decoded is the one under the CERTIFICATE label");
+    X509_free_nid_postfix(afterSkipped);
+
+    const std::string skippedThenTrusted = Record("RSA PRIVATE KEY", SignedCertificate(EcKey(), "Skipped")) +
+        Trusted(SignedCertificate(RsaKey(64, 0x29), "Trusted"), AuxiliaryAllFields());
+    auto* trustedAfterSkipped = ReadTrusted(skippedThenTrusted);
+    Require(trustedAfterSkipped, "a trusted read skips a record under another label");
+    RequireNoCodes("the trusted read that skipped a record queues nothing");
+    Require(trustedAfterSkipped && trustedAfterSkipped->auxiliary, "the trusted certificate keeps its auxiliary data");
+    X509_free_nid_postfix(trustedAfterSkipped);
+
     const std::string truncated = std::string(RsaCertificatePem).substr(0, std::string(RsaCertificatePem).find("-----END"));
     Require(!ReadCertificate(truncated), "a record without an end line is refused");
     RequireCodes({Code(PemLibrary, BadEndLine)}, "a missing end line queues the bad end line");
@@ -1728,6 +1745,8 @@ void Allocator() {
     const Bytes leaf = SignedCertificate(RsaKey(64, 0x08), "Leaf");
     Sweep(Record("CERTIFICATE", leaf), false, true);
     Sweep(Trusted(leaf, AuxiliaryInvalidObject()), true, false);
+    Sweep(Record("RSA PRIVATE KEY", SignedCertificate(EcKey(), "Skipped")) + Record("CERTIFICATE", leaf), false, true);
+    Sweep(Record("RSA PRIVATE KEY", SignedCertificate(EcKey(), "Skipped")) + Trusted(leaf, AuxiliaryAllFields()), true, true);
     SweepKey(Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x09), "Leaf")), true, false,
         "a decoded RSA public key and its certificate leave nothing behind");
     SweepKey(Record("CERTIFICATE", SignedCertificate(EcKey(), "Leaf")), true, false,
