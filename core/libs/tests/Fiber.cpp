@@ -300,6 +300,9 @@ void RunAttachedContext() {
     Require(sceFiberRename(g_attached, longName.c_str()) == 0, "rename to a long name");
     Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strlen(info.name) == FIBER_MAX_NAME_LENGTH && longName.compare(0, FIBER_MAX_NAME_LENGTH, info.name) == 0, "a long name is cut at the limit");
     Require(sceFiberRename(g_attached, "attached") == 0, "restore the fiber's name");
+    errno = 71;
+    Require(_sceFiberInitializeImpl_nid_postfix(g_attached, reinterpret_cast<const char*>(0x10), AttachedEntry, 34, nullptr, 0, nullptr, 0) == FiberErrorInvalid && errno == 71, "initialize with an unreadable name");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "attached") == 0 && info.arg_on_initialize == 33, "an unreadable name leaves the fiber unchanged");
     Require(_sceFiberAttachContextAndRun(nullptr, g_attachedContext.data(), g_attachedContext.size(), 0, nullptr) == FiberErrorNull, "attach and run a null fiber");
     Require(_sceFiberAttachContextAndRun(g_attached, nullptr, g_attachedContext.size(), 0, nullptr) == FiberErrorInvalid, "attach a null context with a size");
     Require(_sceFiberAttachContextAndRun(g_attached, g_attachedContext.data(), 0, 0, nullptr) == FiberErrorRange, "attach a context without a size");
@@ -320,6 +323,8 @@ void RunAttachedContext() {
 void RunInternalOptions() {
     auto* fiber = reinterpret_cast<FiberObject*>(&g_checkedStorage);
     Require(_sceFiberInitializeWithInternalOptionImpl(nullptr, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorNull, "internal option null fiber");
+    errno = 71;
+    Require(_sceFiberInitializeWithInternalOptionImpl(fiber, reinterpret_cast<const char*>(0x10), CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorInvalid && errno == 71, "internal option unreadable name");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), 256, nullptr, 0, 0) == FiberErrorRange, "internal option small context");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0x1, 0) == 0, "internal option without object registration");
     FiberInfo info{};

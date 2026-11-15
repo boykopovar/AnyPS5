@@ -159,6 +159,8 @@ class CheckSkipsTests(unittest.TestCase):
                     result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
+
+class CtestSkipPolicyTests(unittest.TestCase):
     def test_ctest_status_and_prefixed_device_reasons_are_expected(self):
         reports = (
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
@@ -270,6 +272,8 @@ class CheckSkipsTests(unittest.TestCase):
                         self.assertNotIn("Traceback", result.stderr)
                         self.assertNotIn("all expected", result.stdout)
 
+
+class DeviceSkipPolicyTests(unittest.TestCase):
     def test_missing_high_refresh_display_is_expected_in_both_jobs(self):
         reason = "current display does not provide 120 Hz"
         reports = (
@@ -370,6 +374,8 @@ class CheckSkipsTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertFalse(check_skips.DEVICE_LIMITATION.search(message))
 
+
+class SkipCliOutputTests(unittest.TestCase):
     def test_only_unexpected_skip_is_reported(self):
         xml = (
             '<testsuites><testsuite>'

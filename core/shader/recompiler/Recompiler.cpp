@@ -277,6 +277,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
     translateOptions.nativeFloat16Fma = translateOptions.nativeFloat16 && supports(spv::CapabilityFMAKHR);
+    translateOptions.float16HostNans = translateOptions.nativeFloat16 && request.target.float16HostNans;
     translateOptions.nativeInteger16 = supports(spv::CapabilityInt16);
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
@@ -1692,6 +1693,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             loaded.layout = request.layout;
             loaded.artifact.variantId = nextVariantId();
             attachSubstitutes(loaded);
+            ShaderDiskCache::ReleaseMapped(loaded.artifact.spirv);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
             NoteShader(2);
         }
@@ -2145,15 +2147,25 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
 // The memo'd result of `source`'s variant for the snapshot (design13 R5): a hit returns the shared
 // object, a miss materializes outside the source mutex and inserts (a concurrent miss's object is
 // as good). `memoHit` reports the hit.
-std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& source, const std::shared_ptr<const CompiledVariant>& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool cacheHit, bool* memoHit) {
+std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& source, const std::shared_ptr<const CompiledVariant>& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool cacheHit, bool* memoHit, bool memoOnly = false, bool* contended = nullptr) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto variantId = variant->artifact.variantId;
     const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
     const auto hash = snapshotHash(request, snapshot, false, substitutes);
     const auto index = (variantId * 0x9e3779b97f4a7c15ull) ^ hash;
     auto& counters = resultMemoCounters();
+    const auto acquire = [&](std::unique_lock<std::mutex>& lock) {
+        if (!memoOnly) {
+            lock.lock();
+            return true;
+        }
+        if (lock.try_lock()) return true;
+        if (contended != nullptr) *contended = true;
+        return false;
+    };
     {
-        std::lock_guard lock(source.mutex);
+        std::unique_lock lock(source.mutex, std::defer_lock);
+        if (!acquire(lock)) return nullptr;
         if (auto* set = memoSet(source.memo, index)) {
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
@@ -2172,7 +2184,8 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     std::shared_ptr<const RecompileResult> donor;
     std::shared_ptr<const MemoPatch> donorPatch;
     if (masking) {
-        std::lock_guard lock(source.mutex);
+        std::unique_lock lock(source.mutex, std::defer_lock);
+        if (!acquire(lock)) return nullptr;
         if (auto* set = memoSet(source.maskedMemo, maskedIndex)) {
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
@@ -2184,6 +2197,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             }
         }
     }
+    if (memoOnly && donor == nullptr) return nullptr;
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::shared_ptr<RecompileResult> result;
     std::shared_ptr<MemoPatch> patch;
@@ -2431,6 +2445,27 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(con
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot));
     result->cacheHit = true;
     return result;
+}
+
+std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeIfMemoized(const ResourceCapture& capture, bool* contended) const {
+    if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
+    if (!request.useCache || !ResultMemo()) return nullptr;
+    return materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr, true, contended);
+}
+
+PreparedShaderInvocation PreparedShaderInvocation::Rebound(const RecompileRequest& request) const {
+    return PreparedShaderInvocation(request, handle);
+}
+
+std::uint64_t PreparedShaderInvocation::SnapshotKey(const ResourceCapture& capture) const {
+    if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
+    const auto substitutes = bufferSubstitutesEnabled() && handle->artifact->substitutes != nullptr ? handle->artifact->substitutes->Slots() : std::vector<BufferSubstitute>{};
+    std::uint64_t key = snapshotHash(request, capture.snapshot, false, substitutes);
+    for (const std::uint64_t value : {static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(handle.get())), static_cast<std::uint64_t>(handle->artifact->artifact.variantId), static_cast<std::uint64_t>(request.layout.descriptorSet), static_cast<std::uint64_t>(request.layout.pushConstantSizeBytes)}) {
+        key ^= value;
+        key *= 0x100000001b3ull;
+    }
+    return key;
 }
 
 const CompiledShaderArtifact& GetPreparedArtifact(const SourceHandle& handle) {

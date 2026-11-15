@@ -99,6 +99,28 @@ void RequireFlagsTrackMemory() {
     Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15entryLimitIsSetEv(model));
 }
 
+void RequireSortAndUpdateModes() {
+    Storage storage{};
+    Fill(storage);
+    const void* model = storage.bytes;
+    Put32(storage, 0x6c, 0xffffffff);
+    storage.bytes[0x70] = 0x80;
+    Put32(storage, 0x74, 0x7fffffff);
+    storage.bytes[0x78] = 0;
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody11getSortModeEv(model) == -1);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(model));
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13getUpdateModeEv(model) == 0x7fffffff);
+    Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15updateModeIsSetEv(model));
+    Put32(storage, 0x6c, 0x11223344);
+    storage.bytes[0x70] = 0;
+    Put32(storage, 0x74, 0);
+    storage.bytes[0x78] = 1;
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody11getSortModeEv(model) == 0x11223344);
+    Require(!_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(model));
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13getUpdateModeEv(model) == 0);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15updateModeIsSetEv(model));
+}
+
 }  // namespace
 
 int main() {
@@ -106,5 +128,6 @@ int main() {
     RequireScoreLimits();
     RequireWidthsDoNotOverlap();
     RequireFlagsTrackMemory();
+    RequireSortAndUpdateModes();
     return 0;
 }
