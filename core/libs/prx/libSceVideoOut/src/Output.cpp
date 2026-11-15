@@ -508,6 +508,13 @@ int APS5_VABI sceVideoOutAdjustColorSpaceConversion(int handle, const VideoOutCo
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
+    VideoOutColorSpaceConversionSettings localSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
