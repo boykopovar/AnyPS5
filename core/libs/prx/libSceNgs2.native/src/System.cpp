@@ -363,14 +363,16 @@ int APS5_VABI sceNgs2JobSchedulerResetOption(Ngs2JobSchedulerOption* option) {
 
 int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2ContextBufferInfo* buffer_info) {
     if (buffer_info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    std::memset(buffer_info, 0, offsetof(Ngs2ContextBufferInfo, user_data));
+    const Ngs2ContextBufferInfo cleared{};
+    if (!WriteGuestBytes(buffer_info, &cleared, offsetof(Ngs2ContextBufferInfo, user_data))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     Ngs2SystemOption checked{};
     const int result = CheckSystemOption(option, checked);
     if (result != SCE_NGS2_OK) return result;
     Ngs2JobPlan plan;
     const int planned = PlanJobs(checked, plan);
     if (planned < 0) return planned;
-    buffer_info->host_buffer_size = plan.size;
+    const std::size_t size = plan.size;
+    if (!WriteGuest(&buffer_info->host_buffer_size, size)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -601,7 +603,7 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
 
 int APS5_VABI sceNgs2SystemResetOption(Ngs2SystemOption* option) {
     if (option == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *option = DefaultSystemOption();
+    if (!WriteGuest(option, DefaultSystemOption())) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 

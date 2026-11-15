@@ -3,6 +3,7 @@
 #include "prx/libSceNgs2/include/Api.hpp"
 #include "tests/ExportLookup.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <array>
 #include <cstdio>
@@ -81,6 +82,12 @@ static void CheckResetOption() {
     Require(std::memcmp(&option, expected, sizeof(expected)) == 0);
     Ngs2ContextBufferInfo query{};
     Status(sceNgs2SystemQueryBufferSize(&option, &query), SCE_NGS2_OK, "reset system option was rejected");
+    errno = 71;
+    Status(sceNgs2SystemResetOption(reinterpret_cast<Ngs2SystemOption*>(0x10)), static_cast<int>(0x804A8010u), "an unwritable system option did not return the invalid out address error");
+    Require(errno == 71);
+    errno = 71;
+    Status(sceNgs2SystemQueryBufferSize(&option, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), static_cast<int>(0x804A8010u), "an unwritable buffer info did not return the invalid out address error");
+    Require(errno == 71);
 }
 
 static int allocations = 0;
