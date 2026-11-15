@@ -492,6 +492,8 @@ int main(int argc, char** argv) {
     int foreign = 0;
     void* handle = &foreign;
     Require(sceUsbdOpen(&foreign, nullptr) == invalidArgument, "null handle output accepted");
+    errno = 71;
+    Require(sceUsbdOpen(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable handle output accepted");
     Require(Throws([&] { sceUsbdOpen(nullptr, &handle); }), "opening a null device did not throw");
     Require(Throws([&] { sceUsbdOpen(&foreign, &handle); }), "opening a device that was never listed did not throw");
     sceUsbdClose(nullptr);
