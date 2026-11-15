@@ -244,6 +244,11 @@ void FirmwareExSignatures() {
     Require(errno == 73, "an unwritable port attribute value changed host errno");
     FreePage(readOnlyValue);
     getVolume.value = readBack;
+    volume[0] = 0.75f;
+    volume[1] = 0.125f;
+    Require(sceAudioOut2PortSetAttributesEx(exPort, &setVolume, 1) == 0, "the attribute set through sceAudioOut2PortSetAttributesEx was refused");
+    Require(sceAudioOut2LoPortGetAttributes(exPort, &getVolume, 1) == 0 && readBack[0] == 0.75f && readBack[1] == 0.125f, "the volume set through sceAudioOut2PortSetAttributesEx did not round trip");
+    Require(sceAudioOut2PortSetAttributesEx(portSentinel, &setVolume, 1) == errorInvalidHandle, "sceAudioOut2PortSetAttributesEx accepted a dead port");
     AudioOut2Attribute badAttribute{};
     badAttribute.attribute_id = 5;
     badAttribute.value = readBack;

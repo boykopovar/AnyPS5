@@ -90,6 +90,23 @@ void APS5_VABI SelfUnregisteringCallback(int, std::uint32_t, void* userdata) {
     context->result = sceNpUnregisterStateCallbackA(context->id);
 }
 
+StateCall toolkitStateCall;
+
+void APS5_VABI ToolkitStateCallback(int userId, std::uint32_t state, void* userdata) {
+    toolkitStateCall = {toolkitStateCall.calls + 1, userId, state, nullptr, userdata};
+}
+
+struct ToolkitSelfUnregister {
+    int calls;
+    int result;
+};
+
+void APS5_VABI ToolkitSelfUnregisteringCallback(int, std::uint32_t, void* userdata) {
+    auto* context = static_cast<ToolkitSelfUnregister*>(userdata);
+    ++context->calls;
+    context->result = sceNpUnregisterStateCallbackForToolkit();
+}
+
 void CheckStateCallbacksA() {
     constexpr int CallbackMax = static_cast<int>(0x8055001Du);
     void* const callbacks[] = {
@@ -213,6 +230,53 @@ void CheckGamePresenceCallbacksA() {
     Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == NotRegistered, "double unregistering reused id");
 }
 
+void CheckToolkitStateCallback() {
+    int userdata = 0;
+    auto* callback = reinterpret_cast<void*>(&StateCallbackA<0>);
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister before any register");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), &userdata) == 0, "register with a dummy callback");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), nullptr) == 0, "register again (overwrite)");
+    Require(sceNpUnregisterStateCallbackForToolkit() == 0, "unregister");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister again");
+    Require(sceNpRegisterStateCallbackForToolkit(nullptr, &userdata) == 0, "register with nullptr callback");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister empty slot (callback is null)");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register the toolkit callback for delivery");
+    Require(toolkitStateCall.calls == 0, "registering does not invoke the toolkit callback");
+    Require(sceNpCheckCallback() == 0, "check with a pending toolkit callback");
+    Require(SignedOutOnce(toolkitStateCall, &userdata), "the toolkit callback gets SIGNED_OUT once with its user data");
+    Require(sceNpCheckCallback() == 0, "second check with the toolkit slot already delivered");
+    Require(toolkitStateCall.calls == 1, "the toolkit callback got the state again");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register again to cancel by unregistering");
+    Require(sceNpUnregisterStateCallbackForToolkit() == 0, "unregister before the check");
+    Require(sceNpCheckCallback() == 0, "check after unregistering before delivery");
+    Require(toolkitStateCall.calls == 1, "unregistering before the check cancelled the delivery");
+    int secondUserdata = 0;
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &userdata) == 0, "register before the replacement");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &secondUserdata) == 0, "registering again overwrites the pending slot");
+    Require(sceNpCheckCallback() == 0, "check after the replacement");
+    Require(toolkitStateCall.calls == 2 && toolkitStateCall.userId == InitialUserId && toolkitStateCall.state == StateSignedOut &&
+        toolkitStateCall.userdata == &secondUserdata, "the replaced slot delivers once with the new user data");
+    Require(sceNpRegisterStateCallbackForToolkit(nullptr, &userdata) == 0, "register a null callback for delivery");
+    Require(sceNpCheckCallback() == 0, "check with a null toolkit callback");
+    Require(toolkitStateCall.calls == 2, "a null toolkit callback was called");
+    void* const aCallback = reinterpret_cast<void*>(&StateCallbackA<8>);
+    const int aId = sceNpRegisterStateCallbackA(reinterpret_cast<NpStateCallbackA>(aCallback), &userdata);
+    Require(aId >= 1 && aId <= 8, "free state callback slot for the isolation check");
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitStateCallback, &secondUserdata) == 0, "register the toolkit callback beside an A callback");
+    Require(sceNpCheckCallback() == 0, "check with the toolkit slot and one A callback");
+    Require(stateCallsA[8].calls == 1 && stateCallsA[8].userdata == &userdata, "the A callback gets its own single delivery");
+    Require(toolkitStateCall.calls == 3 && toolkitStateCall.userdata == &secondUserdata, "the toolkit callback delivers once beside the A callback");
+    Require(legacyStateCall.calls == 1, "the toolkit slot delivered to the legacy callback");
+    Require(sceNpCheckCallback() == 0, "check again after the isolation check");
+    Require(stateCallsA[8].calls == 1 && toolkitStateCall.calls == 3, "a check repeated the toolkit or A delivery");
+    Require(sceNpUnregisterStateCallbackA(aId) == 0, "unregister the A callback of the isolation check");
+    ToolkitSelfUnregister self{};
+    Require(sceNpRegisterStateCallbackForToolkit(&ToolkitSelfUnregisteringCallback, &self) == 0, "register a self-unregistering toolkit callback");
+    Require(sceNpCheckCallback() == 0, "check with a toolkit callback that unregisters itself");
+    Require(self.calls == 1 && self.result == 0, "a toolkit callback must be able to unregister itself");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "the toolkit callback did not unregister itself");
+}
+
 void CheckRequestTimeouts() {
     Require(sceNpSetTimeout(0x7fffffff, 2, 0, 0, 0, 0) == RequestNotFound, "never created request");
     Require(sceNpSetTimeout(0x7fffffff, 0, 0, 0, 0, 0) == InvalidArgument, "arguments checked before the request");
@@ -259,6 +323,8 @@ void CheckAsyncRequestLifecycle() {
     }
 
     int result = resultSentinel;
+    errno = 71;
+    Require(sceNpPollAsync(unusedAsyncResult, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "poll with unwritable result");
     Require(sceNpPollAsync(unusedAsyncResult, &result) == 0, "poll on a live async request");
     Require(result == SignedOut, "poll must report the signed-out result on a live async request");
     Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
@@ -282,6 +348,8 @@ void CheckWaitAsync() {
         Require(sceNpWaitAsync(id, nullptr) == InvalidArgument, "wait must reject a null result before the id");
     }
     Require(sceNpWaitAsync(liveId, nullptr) == InvalidArgument, "wait must reject a null result for a live request");
+    errno = 71;
+    Require(sceNpWaitAsync(liveId, reinterpret_cast<int*>(0x10)) == InvalidArgument && errno == 71, "wait with unwritable result");
 
     for (int round = 0; round < 2; ++round) {
         int result = resultSentinel;
@@ -433,6 +501,8 @@ void CheckPushLifecycle() {
     std::int32_t connectionState = 0x5a5a5a5a;
     Require(sceNpPushIntGetConnectionState(&connectionState) == 0 && connectionState == 0, "sceNpPushIntGetConnectionState must report the offline state");
     Require(sceNpPushIntGetConnectionState(nullptr) == PushInvalidArgument, "sceNpPushIntGetConnectionState must refuse a null output");
+    errno = 71;
+    Require(sceNpPushIntGetConnectionState(reinterpret_cast<void*>(0x10)) == PushInvalidArgument && errno == 71, "sceNpPushIntGetConnectionState must refuse an unwritable output and keep errno");
     Require(sceNpPushCheckCallback() == 0, "sceNpPushCheckCallback must answer an initialized library");
     Require(sceNpPushTerm() == 0, "sceNpPushTerm must terminate the library");
     Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse a second termination");
@@ -502,6 +572,8 @@ void CheckManagerIntProfileGetters() {
     std::int32_t accountType = 0x5a5a5a5a;
     Require(sceNpManagerIntGetAccountType(-1, &accountType) == InvalidArgument && accountType == 0x5a5a5a5a, "sceNpManagerIntGetAccountType must refuse user id -1");
     Require(sceNpManagerIntGetAccountType(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountType must refuse a null output");
+    errno = 71;
+    Require(sceNpManagerIntGetAccountType(InitialUserId, reinterpret_cast<std::int32_t*>(0x10)) == InvalidArgument && errno == 71, "sceNpManagerIntGetAccountType unwritable output");
     Require(sceNpManagerIntGetAccountType(InitialUserId, &accountType) == SignedOut && accountType == 0, "sceNpManagerIntGetAccountType must zero the account type");
     SentinelBuffer npEnv;
     Require(sceNpManagerIntGetNpEnv(nullptr) == InvalidArgument, "sceNpManagerIntGetNpEnv must refuse a null output");
@@ -816,6 +888,9 @@ static void CheckSandboxInfo() {
     for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
     for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+    errno = 71;
+    Require(sceNpGetSandboxInfo(reinterpret_cast<void*>(0x10)) == InvalidArgument, "sceNpGetSandboxInfo must reject an unmapped buffer");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckValueClasses() {
@@ -835,6 +910,9 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdefg") == OnlineIdTooLong, "a longer online id must be refused");
     Require(std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0, "a refused online id must leave the text untouched");
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, nullptr) == InvalidArgument, "a null online id text must be refused");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, reinterpret_cast<const char*>(0x10)) == InvalidArgument
+            && std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0,
+        "an unreadable online id text must be refused and leave the text untouched");
 
     NpOnlineIdObject onlineIdCopy;
     _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
@@ -908,14 +986,23 @@ void CheckValueClasses() {
     Require(_ZN3sce2np4User7GetUserEiPS1_(123, &fetchedUser) == UserInvalid, "GetUser must refuse a user that is not registered");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, &fetchedUser) == 0 && fetchedUser.userId == USER_SERVICE_INITIAL_USER_ID, "GetUser must return the registered user");
     Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, nullptr) == InvalidArgument, "GetUser must refuse a null output");
+    errno = 71;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&initialUser, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id output must be refused");
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&initialUser, reinterpret_cast<bool*>(0x10)) == InvalidArgument && errno == 71, "an unwritable account id flag must be refused");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<UserObject*>(0x10)) == InvalidArgument && errno == 71, "GetUser must refuse an unwritable output");
 
     SceNpOnlineId onlineIdOut {};
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, &onlineIdOut) == SignedOut, "GetNpOnlineId must report a signed-out user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, nullptr) == InvalidArgument, "GetNpOnlineId must refuse a null SDK output");
+    errno = 71;
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(reinterpret_cast<const UserObject*>(0x10), &onlineIdOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, reinterpret_cast<SceNpOnlineId*>(0x10)) == InvalidArgument && errno == 71, "an unwritable SDK output must be refused");
     NpOnlineIdObject onlineIdObjectOut;
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, &onlineIdObjectOut) == SignedOut, "GetNpOnlineId must report a signed-out object output");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(nullptr, &onlineIdObjectOut) == InvalidArgument, "GetNpOnlineId must refuse a null user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(reinterpret_cast<const UserObject*>(0x10), &onlineIdObjectOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, reinterpret_cast<NpOnlineIdObject*>(0x10)) == InvalidArgument && errno == 71, "an unwritable object output must be refused");
 
     NpTitleTokenObject titleToken;
     _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
@@ -1086,6 +1173,7 @@ int main() {
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
     CheckGamePresenceCallbacksA();
+    CheckToolkitStateCallback();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
     CheckWaitAsync();

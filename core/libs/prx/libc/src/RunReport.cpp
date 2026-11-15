@@ -1,5 +1,6 @@
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1105,7 +1106,7 @@ int OpenFolderNoFollow(const fs::path& folder) {
         if (current < 0) return -1;
         const bool last = index + 1u == parts.size();
         int next = ::openat(current, parts[index].c_str(), (last ? O_RDONLY : passThrough) | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-        if (next < 0 && last && errno == EACCES) next = ::openat(current, parts[index].c_str(), passThrough | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (next < 0 && last && (errno == EACCES || errno == EPERM)) next = ::openat(current, parts[index].c_str(), passThrough | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (next < 0 && index == 0 && rootLinks < 8) {
             struct stat entry {};
             char target[PATH_MAX];
@@ -1613,10 +1614,11 @@ void Collector::NoteDescriptor(int type, Status status, int usage) {
     else ++tables->dropped.descriptors;
 }
 
-void Collector::NoteQuitRequested() noexcept {
+void Collector::NoteQuitRequested(bool windowClosed) noexcept {
     try {
         std::lock_guard guard(mutex);
         quitRequested = true;
+        quitWithoutWindowClose = !windowClosed;
     } catch (...) {
     }
 }
@@ -1716,7 +1718,10 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                 return;
             }
             state = 1;
-            if (stop.reason == Reason::GuestExit && quitRequested) stop.reason = Reason::QuitRequested;
+            if (stop.reason == Reason::GuestExit && quitRequested) {
+                stop.reason = Reason::QuitRequested;
+                if (quitWithoutWindowClose && !stop.message) stop.message = "The run was asked to quit without its window being closed, for example by SIGTERM from a time cap, Ctrl+C or a Quit command.";
+            }
         }
         if (exit == Exit::Clean) RefreshGame(true);
         try {
@@ -1783,9 +1788,10 @@ struct MissingFunctionStop {
     std::optional<std::string> source;
 };
 
+struct MissingFunctionStopTag {};
+
 MissingFunctionStop& lastMissing() {
-    thread_local MissingFunctionStop missing;
-    return missing;
+    return HostThreadLocal<MissingFunctionStop, MissingFunctionStopTag>();
 }
 
 [[maybe_unused]] void FinishAtExit() {
@@ -1906,8 +1912,8 @@ extern "C" void LibcRunReportTerminate_nid_no_patch(const char* what) noexcept {
     }
 }
 
-extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept {
-    if (collector != nullptr) collector->NoteQuitRequested();
+extern "C" void LibcRunReportQuitRequested_nid_no_patch(bool windowClosed) noexcept {
+    if (collector != nullptr) collector->NoteQuitRequested(windowClosed);
 }
 
 extern "C" bool LibcRunReportEnabled_nid_no_patch() noexcept {
