@@ -1604,6 +1604,10 @@ void TestNumbers() {
     std::int32_t value32 = 0;
     std::size_t parsed = 0;
     Require(sceNpStrToInt32("-567abc", &value32, 10, &parsed) == 0 && value32 == -567 && parsed == 4, "parsing stops at the first non-digit");
+    Require(sceNpStrToInt32("-567abc", nullptr, 10, &parsed) == NpInvalidArgument, "null value pointer is refused");
+    errno = 71;
+    Require(sceNpStrToInt32("-567abc", reinterpret_cast<std::int32_t*>(0x10), 10, &parsed) == NpInvalidArgument && errno == 71,
+        "unwritable value pointer is refused and errno is kept");
     Require(sceNpStrToInt32("0x1A", &value32, 0, &parsed) == 0 && value32 == 26, "base zero follows the prefix");
     Require(sceNpStrToInt32("invalid", &value32, 10, &parsed) == NpOutOfRange, "no digits is an error");
     parsed = 0;
