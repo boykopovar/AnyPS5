@@ -579,6 +579,51 @@ void CheckWideTimePutDoPut() {
 #endif
 }
 
+using WideTimePutGetcatExport = std::size_t (APS5_VABI*)(GuestLocale::Facet**, const GuestLocale::Implementation* const*);
+
+std::u16string PutThroughBuiltWideFacet(const GuestLocale::Facet* facet, const std::u16string& pattern) {
+    const GuestTm time = MakeWideDoPutTime();
+    GuestLocale::IosBase ios{};
+    ios.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
+    auto stream = MakeWideStream(64);
+    const auto* first = reinterpret_cast<const std::uint16_t*>(pattern.data());
+    const GuestLocale::OutputIterator out = Export<WideTimePutPatternExport>("Sc0lXhQG5Ko")(facet, GuestLocale::OutputIterator{false, &stream.buffer}, &ios, g_wideFill, &time, first, first + pattern.size());
+    Require(!out.failed && out.buffer == &stream.buffer, "time_put<wchar_t>::put through the facet _Getcat built keeps a good iterator");
+    return stream.accepted;
+}
+
+void CheckWideTimePutGetcat() {
+    const auto getcat = Export<WideTimePutGetcatExport>("bF2uVCqVhBY");
+    const GuestLocale::Implementation* const* classic = &_ZSt21_sceLibcClassicLocale_nid_postfix;
+    Require(getcat(nullptr, nullptr) == 5 && getcat(nullptr, classic) == 5, "_Getcat without a facet pointer returns the time category");
+    GuestLocale::Facet existing{&g_testFacet, 7, 0};
+    GuestLocale::Facet* facet = &existing;
+    Require(getcat(&facet, nullptr) == 5 && facet == &existing && existing.references == 7, "_Getcat leaves an existing facet alone without reading the locale");
+    facet = nullptr;
+    Require(getcat(&facet, classic) == 5 && facet != nullptr && facet->references == 0, "_Getcat builds a facet with no references when the facet pointer holds null");
+    Require(PutThroughBuiltWideFacet(facet, u"%Y-%m-%d %H:%M:%S %Ey 中 %") == u"2026-11-14 09:05:07 26 中 %", "the facet _Getcat builds formats through time_put<wchar_t>::do_put");
+    facet->vtable->retain(facet);
+    facet->vtable->retain(facet);
+    Require(facet->references == 2 && facet->vtable->release(facet) == nullptr && facet->vtable->release(facet) == facet && facet->references == 0, "the built facet's _Incref and _Decref count references and _Decref returns the facet when none remain");
+    facet->vtable->deleteObject(facet);
+    GuestLocale::Implementation named{{nullptr, 1, 0}, nullptr, 0, 0, false, "fr_FR.UTF-8"};
+    const GuestLocale::Implementation* namedPointer = &named;
+    const GuestLocale::Implementation* noImplementation = nullptr;
+    GuestLocale::Facet* namedFacet = nullptr;
+    GuestLocale::Facet* emptyFacet = nullptr;
+    Require(getcat(&namedFacet, &namedPointer) == 5 && getcat(&emptyFacet, &noImplementation) == 5 && PutThroughBuiltWideFacet(namedFacet, u"%A %B %p") == u"Saturday November AM" && PutThroughBuiltWideFacet(emptyFacet, u"%A %B %p") == u"Saturday November AM", "a locale with another name or no implementation gets the C locale's facet, as setlocale accepts only C");
+    namedFacet->vtable->deleteObject(namedFacet);
+    emptyFacet->vtable->deleteObject(emptyFacet);
+    facet = nullptr;
+    try {
+        getcat(&facet, nullptr);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_Getcat") != std::string::npos && facet == nullptr, "_Getcat with a null locale throws before building a facet");
+        return;
+    }
+    Require(false, "_Getcat with a null locale must throw");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -611,6 +656,7 @@ int main(int argc, char** argv) {
     CheckWideStreamCtype();
     CheckWideStreamWrite();
     CheckWideTimePutDoPut();
+    CheckWideTimePutGetcat();
 
     std::puts("libc internal num_put and time_put put checks passed");
     return 0;

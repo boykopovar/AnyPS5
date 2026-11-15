@@ -417,6 +417,9 @@ static void CheckReadQueue(int handle) {
     Require(data[0].timestamp <= data[1].timestamp);
     Require(scePadRead_nid_postfix(handle, data, 4) == 1);
     Require(data[0].buttons == 0);
+    errno = 71;
+    Require(scePadRead_nid_postfix(handle, reinterpret_cast<PadData*>(std::uintptr_t{0x10}), 4) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 }
 
 static void CheckTapBetweenReads() {

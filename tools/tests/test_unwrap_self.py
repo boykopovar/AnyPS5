@@ -25,6 +25,7 @@ PT_NOTE = 4
 PT_PHDR = 6
 SCE_COMMENT = 0x6FFFFF00
 SCE_VERSION = 0x6FFFFF01
+SCE_DYNLIBDATA = 0x61000000
 FIRST_REGION = 0x400
 
 HEADER = b"\x7fELF\x02\x01\x01\x09" + b"\x00" * 56
@@ -200,6 +201,23 @@ class UnwrapTest(unittest.TestCase):
                 self.assertEqual(headers[2][2], headers[0][2])
                 self.assertEqual(headers[2][5:7], (0x10, 0x10))
                 self.assertEqual(data[headers[2][2]:headers[2][2] + 0x10], pattern(1, 0x10))
+
+    def test_dynamic_without_an_address_inside_a_recorded_segment_is_read_from_it(self):
+        segments = default_segments() + [(SCE_DYNLIBDATA, 4, 0x1600, 0x0, 0x40, 0x10)]
+        segments[2] = (PT_DYNAMIC, 6, 0x1620, 0x0, 0x20, 8)
+        records = default_records() + [(0x302804, 0xAA0, 0x40)]
+        payloads = dict(default_payloads())
+        payloads[0xAA0] = pattern(11, 0x40)
+        result, output = self.convert(build_container(segments, records, payloads))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        dynamic = [header for header in headers if header[0] == PT_DYNAMIC][0]
+        library_data = [header for header in headers if header[0] == SCE_DYNLIBDATA][0]
+        self.assertEqual(data[library_data[2]:library_data[2] + library_data[5]], pattern(11, 0x40))
+        self.assertEqual((dynamic[2], dynamic[5]), (library_data[2] + 0x20, 0x20))
+        self.assertEqual(data[dynamic[2]:dynamic[2] + dynamic[5]], pattern(11, 0x40)[0x20:])
+        self.assertEqual(len(data), library_data[2] + library_data[5])
+        self.assertEqual(data[headers[0][2]:headers[0][2] + 0x100], pattern(1, 0x100))
 
     def test_unsupported_inner_elf_machines_are_refused(self):
         for machine in (0, 3, 40, 183, 0x3E00, 0xFFFF):
