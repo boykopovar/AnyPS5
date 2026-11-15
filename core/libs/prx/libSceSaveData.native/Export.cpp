@@ -1632,12 +1632,19 @@ int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
     if (sync_param == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::uint32_t syncWords[2]{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(syncWords, sync_param, sizeof(syncWords));
+    errno = savedErrno;
+    if (!copied) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     // Every Set already writes straight through to disk; sync only has to confirm the memory exists.
-    const std::int32_t user_id = *static_cast<const std::int32_t*>(sync_param);
-    const std::uint32_t slot_id = reinterpret_cast<const std::uint32_t*>(sync_param)[1];
+    const auto user_id = static_cast<std::int32_t>(syncWords[0]);
+    const std::uint32_t slot_id = syncWords[1];
     std::lock_guard<std::mutex> lk(g_mem_mutex);
     replay_memory_journal(user_id, slot_id);
     std::size_t size = 0;
@@ -1716,18 +1723,35 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
     return rc;
 }
 
-static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
+static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, int* traceUser) {
     if (cond == nullptr || result == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    result->hit_num = 0;
-    result->set_num = 0;
+    SaveDataDirNameSearchCond localCond{};
+    SaveDataDirNameSearchResult localResult{};
+    const int savedErrno = errno;
+    const bool copiedCond = GuestCopyIn_nid_no_patch(&localCond, cond, sizeof(localCond));
+    const bool copiedResultIn = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    errno = savedErrno;
+    if (!copiedCond || !copiedResultIn) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (traceUser != nullptr) *traceUser = localCond.user_id;
+    localResult.hit_num = 0;
+    localResult.set_num = 0;
+    const int savedCopyErrno = errno;
+    const bool copiedResultOut = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedCopyErrno;
+    if (!copiedResultOut) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
-    const int rc = dirNameSearchPs4(cond, result);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<unsigned>(rc));
+    int user = -1;
+    const int rc = dirNameSearchPs4(cond, result, &user);
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", user, static_cast<unsigned>(rc));
     return rc;
 }
 
