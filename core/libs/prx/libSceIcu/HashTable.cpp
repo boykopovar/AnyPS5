@@ -3,10 +3,25 @@
 // https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uhash_us.cpp
 // https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/ustring.cpp
 //
-// The upstream files' notice, verbatim:
+// The upstream files' notices, verbatim (uhash.cpp):
 //   © 2016 and later: Unicode, Inc. and others.
 //   License & terms of use: http://www.unicode.org/copyright.html
 //   Copyright (C) 1997-2016, International Business Machines
+//   Corporation and others.  All Rights Reserved.
+// uhash_us.cpp:
+//   © 2016 and later: Unicode, Inc. and others.
+//   License & terms of use: http://www.unicode.org/copyright.html
+//   Copyright (C) 1997-2011, International Business Machines
+//   Corporation and others.  All Rights Reserved.
+// ustring.cpp:
+//   © 2016 and later: Unicode, Inc. and others.
+//   License & terms of use: http://www.unicode.org/copyright.html
+//   Copyright (C) 1998-2016, International Business Machines
+//   Corporation and others.  All Rights Reserved.
+// uhash.h (signatures and layouts):
+//   © 2016 and later: Unicode, Inc. and others.
+//   License & terms of use: http://www.unicode.org/copyright.html
+//   Copyright (C) 1997-2015, International Business Machines
 //   Corporation and others.  All Rights Reserved.
 
 #include "prx/libSceIcu/libSceIcu.hpp"
