@@ -337,10 +337,12 @@ void OpenIndexed(Directory& directory) {
 extern "C" {
 void* APS5_VABI opendir_nid_postfix(const char* path) {
     if (!path) { errno = 14; return nullptr; }
-    if (!*path) { errno = 2; return nullptr; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return nullptr; }
+    if (copy.empty()) { errno = 2; return nullptr; }
     try {
         auto directory = std::make_unique<Directory>();
-        if (const int error = ResolvePathError_nid_no_patch(path, directory->path, false, true)) { errno = error; return nullptr; }
+        if (const int error = ResolvePathError_nid_no_patch(copy.c_str(), directory->path, false, true)) { errno = error; return nullptr; }
         if (AppArchiveHasDirectory_nid_no_patch(directory->path)) {
             OpenIndexed(*directory);
         } else {
@@ -374,11 +376,18 @@ int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, Gu
     {
         std::lock_guard lock(directory.mutex);
         next = ReadEntry(directory, 1);
-        if (next) std::memcpy(entry, next, next->recordLength);
+        if (next && !GuestCopyOut_nid_no_patch(entry, next, next->recordLength)) {
+            errno = savedError;
+            return 14;
+        }
     }
     if (!next && errno) return errno;
     errno = savedError;
-    *result = next ? entry : nullptr;
+    const GuestDirectoryEntry* const output = next ? entry : nullptr;
+    if (!GuestCopyOut_nid_no_patch(result, &output, sizeof(output))) {
+        errno = savedError;
+        return 14;
+    }
     return 0;
 }
 

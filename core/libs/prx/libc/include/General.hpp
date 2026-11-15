@@ -36,6 +36,7 @@ extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maxi
 extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
+extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes);
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" bool GuestCopyInUnsynced_nid_no_patch(void* destination, const void* source, std::size_t bytes);
