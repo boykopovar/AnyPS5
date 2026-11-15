@@ -74,7 +74,7 @@ void Run() {
 
 } // namespace UldnOpenForContext
 
-namespace GuestPointers {
+namespace LocaleDisplayNamesGuestPointers {
 
 void Run() {
     errno = 71;
@@ -92,5 +92,5 @@ void Run() {
 void CheckIcuLocaleDisplayNames() {
     UldnClose::Run();
     UldnOpenForContext::Run();
-    GuestPointers::Run();
+    LocaleDisplayNamesGuestPointers::Run();
 }
