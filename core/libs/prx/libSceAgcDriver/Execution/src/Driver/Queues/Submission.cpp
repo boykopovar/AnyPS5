@@ -496,6 +496,25 @@ bool Driver::parkedOnTitle() const {
     return parked;
 }
 
+bool Driver::submissionPaced() const {
+    if (!queue0Uncommitted.empty() || DrawPipeline::Queue0().Busy() || DrawFinisher::Busy() || Graphics::Recorder::QueuedLabelsPending()) return false;
+    const auto q0 = workers.find(0);
+    if (q0 != workers.end()) {
+        if (!q0->second.pending.empty() || queue0Executing != 0) return false;
+    }
+    for (const auto& [queue, worker] : workers) {
+        if (queue == 0) continue;
+        const auto& slot = awaitedSlots[queue - 0x20 + 1];
+        const auto awaited = slot.address.load(std::memory_order_acquire);
+        if (awaited == 0) {
+            if (!worker.pending.empty() || worker.executingWaitFree != 0 || worker.executingWaits) return false;
+        } else {
+            if (!awaitsTitle(awaited) || !stillAwaited(slot, awaited)) return false;
+        }
+    }
+    return true;
+}
+
 void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
     if (queue != 0 || flipHolders.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire) || !awaitsTitle(awaited)) return;
     std::lock_guard lock(mutex);

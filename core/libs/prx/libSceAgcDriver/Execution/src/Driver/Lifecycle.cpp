@@ -307,6 +307,23 @@ bool Driver::WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout) {
     return idle();
 }
 
+bool Driver::WaitSubmissionPacedFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto paced = [&] {
+        if (failure != nullptr || stopping) return true;
+        return submissionPaced();
+    };
+    ++idleWaiters;
+    bool done = paced();
+    while (!done && std::chrono::steady_clock::now() < deadline) done = changed.wait_for(lock, std::chrono::milliseconds(1), paced);
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return done;
+}
+
 bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
     require(!onWorkerThread(), "worker cannot wait for itself");
     std::unique_lock lock(mutex);
