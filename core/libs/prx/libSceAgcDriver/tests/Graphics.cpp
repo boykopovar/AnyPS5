@@ -14520,16 +14520,20 @@ void recordedDrawRetentionTests() {
     auto replacement = std::make_shared<Buffer>(context, sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     recorder.KeepDrawSnapshot(draw.indexAddress, sizeof(indices), 1, 0, replacement, Recorder::SnapshotUse::Index16);
     recorder.KeepDrawSnapshot(vertexAddress, sizeof(vertices), 1, 0, replacement, Recorder::SnapshotUse::Vertex);
-    const auto available = [&](VkBuffer buffer, std::size_t bytes) {
+    const auto indexUsage = mock.bufferUsage.at(retentionIndex);
+    const auto vertexUsage = mock.bufferUsage.at(retentionVertex);
+    Require((indexUsage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "retention probe would look for indices in a non-index buffer");
+    Require((vertexUsage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "retention probe would look for vertices in a non-vertex buffer");
+    const auto available = [&](VkBuffer buffer, std::size_t bytes, VkBufferUsageFlags usage) {
         if (retentionDestroyed.contains(buffer)) return true;
         auto pool = GetBufferPool(context);
-        auto allocation = pool->Take(bytes, mock.bufferUsage.at(buffer));
+        auto allocation = pool->Take(bytes, usage);
         const bool returned = allocation && allocation->buffer == buffer;
         if (allocation) pool->Put(*allocation);
         return returned;
     };
-    Require(!available(retentionIndex, sizeof(indices)), "recorded indices were recycled before completion");
-    Require(!available(retentionVertex, sizeof(vertices)), "recorded vertices were recycled before completion");
+    Require(!available(retentionIndex, sizeof(indices), indexUsage), "recorded indices were recycled before completion");
+    Require(!available(retentionVertex, sizeof(vertices), vertexUsage), "recorded vertices were recycled before completion");
     auto pipeline = recipe->pipeline.lock();
     Require(pipeline != nullptr, "recorded pipeline expired");
     for (std::uint32_t size = 17; size < 30; ++size) pipeline->AcquireFramebuffer({}, {}, {size, size});
@@ -14544,8 +14548,8 @@ void recordedDrawRetentionTests() {
         throw std::runtime_error("retention completion failure");
     });
     recorder.Sync();
-    Require(available(retentionIndex, sizeof(indices)), "recorded indices survived completion");
-    Require(available(retentionVertex, sizeof(vertices)), "recorded vertices survived completion");
+    Require(available(retentionIndex, sizeof(indices), indexUsage), "recorded indices survived completion");
+    Require(available(retentionVertex, sizeof(vertices), vertexUsage), "recorded vertices survived completion");
     Require(recipe->pipeline.expired() && recipe->framebuffer.expired() && recipe->templateRef.expired(), "recorded owners survived completion");
 
     mock.deferFences = true;
