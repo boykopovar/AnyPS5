@@ -22,5 +22,17 @@ int main() {
     errno = 71;
     Require(sceHttpUriParse(nullptr, "http://example.com/", nullptr, reinterpret_cast<std::size_t*>(0x10), 0) == static_cast<int>(0x804311FEu));
     Require(errno == 71);
+
+    constexpr int invalidValue = static_cast<int>(0x804311FEu);
+    SceHttpUriElement element{};
+    std::uint8_t pool[1024]{};
+    errno = 71;
+    Require(sceHttpUriParse(reinterpret_cast<SceHttpUriElement*>(0x10), "http://example.com/", pool, nullptr, sizeof(pool)) == invalidValue);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceHttpUriParse(&element, "http://example.com/", reinterpret_cast<void*>(0x10), nullptr, sizeof(pool)) == invalidValue);
+    Require(errno == 71);
+    Require(sceHttpUriParse(&element, "http://example.com/", pool, nullptr, sizeof(pool)) == 0);
+    Require(element.hostname != nullptr && std::string(element.hostname) == "example.com");
     return 0;
 }
