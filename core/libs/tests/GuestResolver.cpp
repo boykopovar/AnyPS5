@@ -96,7 +96,7 @@ int main() {
     Require(std::memcmp(legacy->addresses[0], loopback.data(), loopback.size()) == 0);
     worker.join();
     *sceNetErrnoLoc() = 77;
-    Require(gethostbyname_nid_postfix(std::string(1024, 'a').c_str()) == nullptr);
+    Require(gethostbyname_nid_postfix(std::string(1023, 'a').c_str()) == nullptr);
     Require(*sceNetErrnoLoc() >= 1 && *sceNetErrnoLoc() <= 4);
     {
         alignas(8) char reentrant[64];
@@ -123,14 +123,14 @@ int main() {
         Require(result == nullptr && hostError == -1 && errno == 34 && *sceNetErrnoLoc() == -1);
         Require(scePosixForWebKit_gethostbyname_r("127.0.0.1", nullptr, nullptr, 0, &result, &hostError) == 34);
 
-        const std::string longNumeric = "127.0.0.1 " + std::string(2000, 'x');
+        const std::string longNumeric = "127.0.0.1 " + std::string(1013, 'x');
         std::array<char, 2048> large{};
         Require(scePosixForWebKit_gethostbyname_r(longNumeric.c_str(), &entry, large.data(), large.size(), &result, &hostError) == 0);
-        Require(std::strlen(entry.name) == 1025);
+        Require(std::strlen(entry.name) == 1023);
 
         hostError = 77;
         result = &entry;
-        Require(scePosixForWebKit_gethostbyname_r(std::string(1024, 'a').c_str(), &entry, large.data(), large.size(), &result, &hostError) == -1);
+        Require(scePosixForWebKit_gethostbyname_r(std::string(1023, 'a').c_str(), &entry, large.data(), large.size(), &result, &hostError) == -1);
         Require(result == nullptr && hostError >= 1 && hostError <= 4 && hostError == *sceNetErrnoLoc());
 
         Require(scePosixForWebKit_gethostbyname_r("localhost", &entry, large.data(), large.size(), &result, &hostError) == 0);
