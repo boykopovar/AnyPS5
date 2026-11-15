@@ -1390,8 +1390,10 @@ std::string DepthMaintenanceRejection(const QueueState& queue) {
     constexpr std::uint32_t maintenance = 0x0000101cu;
     if ((control->second & maintenance) == 0) return {};
     const auto depthControl = find(queue.context, 0x200);
+    const auto colorControl = find(queue.context, 0x202);
+    const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
-    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
+    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && (colorDisabled || (colorMasks && ColorWriteMask(queue.context) == 0))) return {};
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
 }
 
