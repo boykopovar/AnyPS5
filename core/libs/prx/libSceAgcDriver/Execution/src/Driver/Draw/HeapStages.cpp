@@ -409,12 +409,12 @@ bool walkPending(const WalkReads& reads, std::uint64_t address, std::uint64_t by
 
 ShaderRecompiler::SrtWriteStamp stampWalkWrites(void* context, std::uint64_t address, std::uint64_t bytes) {
     auto& reads = *static_cast<WalkReads*>(context);
-    if (bytes == 0u || address > std::numeric_limits<std::uint64_t>::max() - bytes) return {};
+    if (bytes == 0u || address > std::numeric_limits<std::uint64_t>::max() - bytes || walkPending(reads, address, bytes)) return {};
     reads.collected = true;
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
-    if (generation == 0u || walkPending(reads, address, bytes)) return {};
+    if (generation == 0u) return {};
     return {generation, layout};
 }
 
@@ -497,10 +497,12 @@ void copyRangeValues(const AddressRanges& ranges, std::span<const std::shared_pt
     }
 }
 
-bool rangesSettled(const AddressRanges& ranges, const Graphics::Recorder::WriteRanges* before, std::uint64_t generation) {
+enum class Settle { Settled, Pending, Stamped };
+
+Settle rangesSettled(const AddressRanges& ranges, const Graphics::Recorder::WriteRanges* before, std::uint64_t generation) {
     const bool queuedWrite = DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().OverlapsAny(ranges);
-    if (queuedWrite || !Graphics::Recorder::ReadsSettled(ranges, before)) return false;
-    return GuestMemory::NoStampAfter(ranges, generation);
+    if (queuedWrite || !Graphics::Recorder::ReadsSettled(ranges, before)) return Settle::Pending;
+    return GuestMemory::NoStampAfter(ranges, generation) ? Settle::Settled : Settle::Stamped;
 }
 
 void guardRanges(const AddressRanges& ranges) {
@@ -596,8 +598,10 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
         }
         CoalesceWalkReads(reads.runs, ranges);
         if (!reads.failed) copyRangeValues(ranges, reads.supplied, values);
-        if (rangesSettled(ranges, before.get(), generation)) break;
-        if (attempt != 0u || !reads.collected) return {};
+        reads.supplied.clear();
+        const auto settle = rangesSettled(ranges, before.get(), generation);
+        if (settle == Settle::Settled) break;
+        if (settle != Settle::Stamped || attempt != 0u || !reads.collected) return {};
     }
 
     guardRanges(ranges);
