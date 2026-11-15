@@ -34,12 +34,18 @@ struct ParsedParam {
     std::string text;
 };
 
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
 inline bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
     const int savedErrno = errno;
     const bool read = GuestCopyIn_nid_no_patch(destination, source, bytes);
     errno = savedErrno;
     return read;
 }
+#else
+inline bool ReadGuest(void*, const void*, std::size_t) {
+    return false;
+}
+#endif
 
 inline ParsedParam ParseParam(const void* param) {
     ParsedParam parsed;
