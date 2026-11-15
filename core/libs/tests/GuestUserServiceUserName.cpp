@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -107,6 +108,11 @@ int main() {
     Require(std::strcmp(exactBuffer, USER_SERVICE_INITIAL_USER_NAME) == 0);
     Require(exactBuffer[SCE_USER_SERVICE_MAX_USER_NAME_LENGTH] == '\0');
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(exactBuffer)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), sizeof(exactBuffer)) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), 4) == SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 
     return 0;
 }

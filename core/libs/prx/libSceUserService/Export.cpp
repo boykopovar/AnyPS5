@@ -462,10 +462,23 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
   return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  if (size < USER_SERVICE_MAX_USER_NAME_LENGTH + 1) {
-  std::memset(name, 0, size);
+  char zeros[USER_SERVICE_MAX_USER_NAME_LENGTH + 1]{};
+  const int savedErrno = errno;
+  const bool copied = GuestCopyOut_nid_no_patch(name, zeros, size);
+  errno = savedErrno;
+  if (!copied) {
+   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+  }
   return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
  }
- std::strncpy(name, USER_SERVICE_USER_NAMES[index], size);
+ std::vector<char> local(size, '\0');
+ std::strncpy(local.data(), USER_SERVICE_USER_NAMES[index], size);
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(name, local.data(), size);
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 

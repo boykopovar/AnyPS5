@@ -169,6 +169,9 @@ int main() {
         Require(sceUserServiceGetUserName(userId, nameBuffer, sizeof(nameBuffer)) == USER_SERVICE_OK);
         Require(std::strcmp(nameBuffer, USER_SERVICE_USER_NAMES[i]) == 0);
         Require(std::strlen(nameBuffer) <= USER_SERVICE_MAX_USER_NAME_LENGTH);
+        errno = 71;
+        Require(sceUserServiceGetUserName(userId, reinterpret_cast<char*>(0x10), sizeof(nameBuffer)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
 
         int32_t number = -1;
         Require(sceUserServiceGetUserNumber(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
