@@ -40,6 +40,8 @@ constexpr int ErrorReasonEcLibrary = 16;
 constexpr int RsaLibrary = 4;
 constexpr int ErrorReasonRsaLibrary = 4;
 constexpr int Asn1NestedAsn1Error = 58;
+constexpr int Asn1LengthMismatch = 62;
+constexpr int Asn1FieldMissing = 121;
 constexpr int Asn1WrongTag = 168;
 
 constexpr char RsaTraditionalPem[] =
@@ -364,6 +366,29 @@ std::vector<unsigned char> BodyBytes(const std::vector<unsigned char>& pem) {
         bytes.push_back(static_cast<unsigned char>((accumulator >> 2) & 0xff));
     }
     return bytes;
+}
+
+std::vector<unsigned char> EncodePemRecord(const std::string& label, const std::vector<unsigned char>& der) {
+    constexpr char Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string text = "-----BEGIN " + label + "-----\n";
+    std::size_t col = 0;
+    for (std::size_t i = 0; i < der.size(); i += 3) {
+        const unsigned int b0 = der[i];
+        const unsigned int b1 = (i + 1 < der.size()) ? der[i + 1] : 0;
+        const unsigned int b2 = (i + 2 < der.size()) ? der[i + 2] : 0;
+        const unsigned int triple = (b0 << 16) | (b1 << 8) | b2;
+        text.push_back(Alphabet[(triple >> 18) & 0x3f]);
+        text.push_back(Alphabet[(triple >> 12) & 0x3f]);
+        text.push_back((i + 1 < der.size()) ? Alphabet[(triple >> 6) & 0x3f] : '=');
+        text.push_back((i + 2 < der.size()) ? Alphabet[triple & 0x3f] : '=');
+        col += 4;
+        if (col == 64 && i + 3 < der.size()) {
+            text.push_back('\n');
+            col = 0;
+        }
+    }
+    text += "\n-----END " + label + "-----\n";
+    return std::vector<unsigned char>(text.begin(), text.end());
 }
 
 void ExpectErrorCode(int expectedLibrary, int expectedReason,
@@ -881,7 +906,7 @@ void TestPkcs8InTraditionalLabelFallback() {
     Require(EVP_PKEY_base_id_nid_postfix(keyEcInRsa1) == EcType);
     CompareEc(static_cast<const EcKey*>(keyEcInRsa1->key), static_cast<const EcKey*>(ecReference->key), Secp256r1, true);
     CompareEc(static_cast<const EcKey*>(keyEcInRsa1->key), static_cast<const EcKey*>(ecTraditional->key), Secp256r1, true);
-    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag},
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
         {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary}});
 
     ERR_clear_error_nid_postfix();
@@ -895,7 +920,7 @@ void TestPkcs8InTraditionalLabelFallback() {
     Require(EVP_PKEY_id_nid_postfix(keyEcInRsaNull) == EcType);
     Require(EVP_PKEY_base_id_nid_postfix(keyEcInRsaNull) == EcType);
     CompareEc(static_cast<const EcKey*>(keyEcInRsaNull->key), static_cast<const EcKey*>(ecReference->key), Secp256r1, true);
-    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag},
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
         {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary}});
 
     ERR_clear_error_nid_postfix();
@@ -910,7 +935,7 @@ void TestPkcs8InTraditionalLabelFallback() {
     Require(EVP_PKEY_id_nid_postfix(keyEcInRsaReplace) == EcType);
     Require(EVP_PKEY_base_id_nid_postfix(keyEcInRsaReplace) == EcType);
     CompareEc(static_cast<const EcKey*>(keyEcInRsaReplace->key), static_cast<const EcKey*>(ecReference->key), Secp256r1, true);
-    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag},
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
         {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary}});
     ERR_clear_error_nid_postfix();
     ExpectEmptyQueue();
@@ -925,7 +950,8 @@ void TestPkcs8InTraditionalLabelFallback() {
     Require(EVP_PKEY_base_id_nid_postfix(keyRsaInEc1) == RsaType);
     CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEc1->key), static_cast<const LibreSsl3Rsa*>(rsaReference->key), true);
     CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEc1->key), static_cast<const LibreSsl3Rsa*>(rsaTraditional->key), true);
-    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
 
     ERR_clear_error_nid_postfix();
     LibreSsl3EvpPkey* slotRsaNull = nullptr;
@@ -938,7 +964,8 @@ void TestPkcs8InTraditionalLabelFallback() {
     Require(EVP_PKEY_id_nid_postfix(keyRsaInEcNull) == RsaType);
     Require(EVP_PKEY_base_id_nid_postfix(keyRsaInEcNull) == RsaType);
     CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEcNull->key), static_cast<const LibreSsl3Rsa*>(rsaReference->key), true);
-    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
 
     ERR_clear_error_nid_postfix();
     auto* ecPreExisting = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
@@ -952,7 +979,8 @@ void TestPkcs8InTraditionalLabelFallback() {
     Require(EVP_PKEY_id_nid_postfix(keyRsaInEcReplace) == RsaType);
     Require(EVP_PKEY_base_id_nid_postfix(keyRsaInEcReplace) == RsaType);
     CompareRsa(static_cast<const LibreSsl3Rsa*>(keyRsaInEcReplace->key), static_cast<const LibreSsl3Rsa*>(rsaReference->key), true);
-    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary}});
     ERR_clear_error_nid_postfix();
     ExpectEmptyQueue();
 
@@ -1065,6 +1093,86 @@ void TestNormalTraditionalCleanQueue() {
     EVP_PKEY_free_nid_disambig1_nid_postfix(ecRef);
 }
 
+void TestTraditionalDerValidationAndContext() {
+    const std::vector<unsigned char> ec384Pkcs8Der = BodyBytes(BytesOf(Ec384Pkcs8Pem));
+    auto* ec384Ref = KeyFromPkcs8Der(ec384Pkcs8Der);
+    const std::vector<unsigned char> ec384InRsaPem = EncodePemRecord("RSA PRIVATE KEY", ec384Pkcs8Der);
+    ERR_clear_error_nid_postfix();
+    auto* ec384FromRsaLabel = ReadPrivateKey(ec384InRsaPem, nullptr, nullptr, nullptr);
+    Require(ec384FromRsaLabel != nullptr);
+    Require(ec384FromRsaLabel->type == EcType);
+    CompareEc(static_cast<const EcKey*>(ec384FromRsaLabel->key), static_cast<const EcKey*>(ec384Ref->key), Secp384r1, true);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary}});
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ec384FromRsaLabel);
+    EVP_PKEY_free_nid_disambig1_nid_postfix(ec384Ref);
+
+    auto* preservedSlot = KeyFromPkcs8Der(BodyBytes(BytesOf(Ec256Pkcs8Pem)));
+    LibreSsl3EvpPkey* originalSlot = preservedSlot;
+
+    const std::vector<unsigned char> ecVer0WrongKeyTagPem = EncodePemRecord(
+        "EC PRIVATE KEY", {0x30, 0x05, 0x02, 0x01, 0x00, 0x05, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(ecVer0WrongKeyTagPem, &preservedSlot, nullptr, nullptr) == nullptr);
+    Require(preservedSlot == originalSlot);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {EcLibrary, ErrorReasonEcLibrary},
+        {ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> ecMissingPrivKeyPem = EncodePemRecord(
+        "EC PRIVATE KEY", {0x30, 0x03, 0x02, 0x01, 0x01});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(ecMissingPrivKeyPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1FieldMissing}, {EcLibrary, ErrorReasonEcLibrary},
+        {ErrorReasonAsn1Library, Asn1FieldMissing}, {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> rsaWrongModTagPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x05, 0x02, 0x01, 0x00, 0x04, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaWrongModTagPem, &preservedSlot, nullptr, nullptr) == nullptr);
+    Require(preservedSlot == originalSlot);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary},
+        {ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {PemLibrary, ErrorReasonAsn1Library}});
+    EVP_PKEY_free_nid_disambig1_nid_postfix(preservedSlot);
+
+    const std::vector<unsigned char> rsaVer1WrongModTagPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x05, 0x02, 0x01, 0x01, 0x04, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaVer1WrongModTagPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary},
+        {ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> rsaWideVersionWrongModTagPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x09, 0x02, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaWideVersionWrongModTagPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {RsaLibrary, ErrorReasonRsaLibrary},
+        {ErrorReasonAsn1Library, Asn1WrongTag}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> rsaEmptyModIntPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x05, 0x02, 0x01, 0x00, 0x02, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaEmptyModIntPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1LengthMismatch}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {RsaLibrary, ErrorReasonRsaLibrary}, {ErrorReasonAsn1Library, Asn1WrongTag},
+        {ErrorReasonAsn1Library, Asn1NestedAsn1Error}, {ErrorReasonAsn1Library, Asn1NestedAsn1Error},
+        {PemLibrary, ErrorReasonAsn1Library}});
+
+    const std::vector<unsigned char> rsaMissingModPem = EncodePemRecord(
+        "RSA PRIVATE KEY", {0x30, 0x03, 0x02, 0x01, 0x00});
+    ERR_clear_error_nid_postfix();
+    Require(ReadPrivateKey(rsaMissingModPem, nullptr, nullptr, nullptr) == nullptr);
+    ExpectErrorSequence({{ErrorReasonAsn1Library, Asn1FieldMissing}, {RsaLibrary, ErrorReasonRsaLibrary},
+        {ErrorReasonAsn1Library, Asn1FieldMissing}, {PemLibrary, ErrorReasonAsn1Library}});
+}
+
 void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size == 0 ? 1 : size); }
 void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI HeapCallocate(std::size_t count, std::size_t size) {
@@ -1107,5 +1215,6 @@ int main() {
     TestErrors();
     TestPkcs8InTraditionalLabelFallback();
     TestNormalTraditionalCleanQueue();
+    TestTraditionalDerValidationAndContext();
     return 0;
 }
