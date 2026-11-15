@@ -64,7 +64,7 @@ FcBool APS5_VABI FcConfigSubstitute(FcConfig* config, FcPattern*, int kind) {
 }
 
 int APS5_VABI FcInit() {
-    NotImplemented_nid_no_patch(__func__);
+    return FcInitBringUptoDate();
 }
 
 int APS5_VABI FcInitBringUptoDate() {
