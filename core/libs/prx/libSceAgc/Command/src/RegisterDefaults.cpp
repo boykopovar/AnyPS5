@@ -124,11 +124,11 @@ int InitializeDefaultCxState(std::uint32_t version) {
     if (slot == defaultContexts.end()) return static_cast<int>(0x8a6c0004u);
     DefaultContext next;
     next.registers.fill({0xffffffffu, 0});
-    for (const auto* source : {agcPublicRegDefaultsByVersion[version], agcInternalRegDefaultsByVersion[version]}) {
-        const auto& bank = source->banks[0];
-        Require(bank.registerCount == 0 || bank.registers != nullptr, __func__, "missing context register defaults");
-        for (std::uint32_t index = 0; index < bank.registerCount; ++index) {
-            const auto& entry = bank.registers[index];
+    for (const auto* source : {static_cast<const RegisterDefaults*>(GetRegisterDefaults(version, false, __func__)), static_cast<const RegisterDefaults*>(GetRegisterDefaults(version, true, __func__))}) {
+        if (source->tables[0] == nullptr || source->registerCounts[0] == 0) continue;
+        Require(source->tables[0][0] != nullptr, __func__, "missing context register defaults");
+        for (std::uint32_t index = 0; index < source->registerCounts[0]; ++index) {
+            const auto& entry = source->tables[0][0][index];
             Require(entry.offset < next.registers.size(), __func__, "context register default exceeds hardware range");
             next.registers[entry.offset] = entry;
         }
