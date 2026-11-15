@@ -5,9 +5,11 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <limits>
@@ -321,6 +323,9 @@ constexpr std::size_t WalkVerifiedSpans = 8;
 
 struct WalkReads {
     AddressRanges runs;
+    const Graphics::Recorder::WriteRanges* before = nullptr;
+    std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied;
+    bool collected = false;
     std::array<std::pair<std::uint64_t, std::uint64_t>, WalkVerifiedSpans> verified{};
     std::size_t verifiedCount = 0;
     std::size_t verifiedNext = 0;
@@ -328,6 +333,8 @@ struct WalkReads {
 
     void Reset() {
         runs.clear();
+        supplied.clear();
+        collected = false;
         failed = false;
         verifiedCount = 0;
         verifiedNext = 0;
@@ -393,6 +400,54 @@ bool readWalkWords(void* context, std::uint64_t address, std::uint32_t* values, 
     return true;
 }
 
+bool walkPending(const WalkReads& reads, std::uint64_t address, std::uint64_t bytes) {
+    const std::array range{std::pair{address, address + bytes}};
+    const bool queuedWrite = DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().OverlapsAny(range);
+    return queuedWrite || !Graphics::Recorder::ReadsSettled(range, reads.before);
+}
+
+ShaderRecompiler::SrtWriteStamp stampWalkWrites(void* context, std::uint64_t address, std::uint64_t bytes) {
+    auto& reads = *static_cast<WalkReads*>(context);
+    if (bytes == 0u || address > std::numeric_limits<std::uint64_t>::max() - bytes) return {};
+    reads.collected = true;
+    GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
+    const auto layout = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto generation = GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
+    if (generation == 0u || walkPending(reads, address, bytes)) return {};
+    return {generation, layout};
+}
+
+bool walkUnchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp) {
+    auto& reads = *static_cast<WalkReads*>(context);
+    if (bytes == 0u || address > std::numeric_limits<std::uint64_t>::max() - bytes || walkPending(reads, address, bytes)) return false;
+    reads.collected = true;
+    return ShaderMemory::Vouched(nullptr, address, bytes, stamp);
+}
+
+bool supplyWalkWords(void* context, const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>& words) {
+    auto& reads = *static_cast<WalkReads*>(context);
+    if (words == nullptr || words->runs.empty()) return false;
+    std::uint64_t total = 0;
+    for (const auto& [address, count] : words->runs) {
+        const auto bytes = static_cast<std::uint64_t>(count) * WordBytes;
+        if (count == 0u || address % WordBytes != 0u || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;
+        total += count;
+    }
+    if (total != words->words.size()) return false;
+    for (const auto& [address, count] : words->runs) {
+        const auto bytes = static_cast<std::uint64_t>(count) * WordBytes;
+        const auto first = address & ~(WalkPageBytes - 1u);
+        const auto past = (address + bytes + WalkPageBytes - 1u) & ~(WalkPageBytes - 1u);
+        if (!reads.Verified(address, bytes)) {
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(first), static_cast<std::size_t>(past - first))) return false;
+            reads.Verify(first, past - first);
+        }
+    }
+    for (const auto& [address, count] : words->runs) reads.runs.emplace_back(address, address + static_cast<std::uint64_t>(count) * WordBytes);
+    reads.supplied.push_back(words);
+    return true;
+}
+
 bool walkAccessible(void* context, std::uint64_t address, std::uint64_t bytes) {
     auto& reads = *static_cast<WalkReads*>(context);
     if (bytes != 0 && reads.Verified(address, bytes)) return true;
@@ -404,12 +459,40 @@ bool walkAccessible(void* context, std::uint64_t address, std::uint64_t bytes) {
 
 
 
-void copyRangeValues(const AddressRanges& ranges, std::vector<std::uint32_t>& values) {
+void copyRangeValues(const AddressRanges& ranges, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied, std::vector<std::uint32_t>& values) {
+    struct Reused {
+        std::uint64_t address;
+        std::uint64_t past;
+        const std::uint32_t* words;
+    };
+    std::vector<Reused> reused;
+    for (const auto& block : supplied) {
+        std::size_t at = 0;
+        for (const auto& [address, count] : block->runs) {
+            reused.push_back({address, address + static_cast<std::uint64_t>(count) * WordBytes, block->words.data() + at});
+            at += count;
+        }
+    }
+    std::sort(reused.begin(), reused.end(), [](const Reused& left, const Reused& right) { return left.address < right.address; });
     values.clear();
+    auto next = reused.begin();
     for (const auto& [begin, end] : ranges) {
         const auto offset = values.size();
         values.resize(offset + static_cast<std::size_t>((end - begin) / WordBytes));
-        std::memcpy(values.data() + offset, reinterpret_cast<const void*>(begin), static_cast<std::size_t>(end - begin));
+        auto* const out = values.data() + offset;
+        auto cursor = begin;
+        const auto live = [&](std::uint64_t past) {
+            if (past > cursor) std::memcpy(out + (cursor - begin) / WordBytes, reinterpret_cast<const void*>(cursor), static_cast<std::size_t>(past - cursor));
+            cursor = std::max(cursor, past);
+        };
+        for (; next != reused.end() && next->address < end; ++next) {
+            if (next->address < begin || next->past > end) throw std::runtime_error("a heap walk's reused table words lie outside its read ranges");
+            live(next->address);
+            const auto first = std::max(next->address, cursor);
+            if (next->past > first) std::memcpy(out + (first - begin) / WordBytes, next->words + (first - next->address) / WordBytes, static_cast<std::size_t>(next->past - first));
+            cursor = std::max(cursor, next->past);
+        }
+        live(end);
     }
 }
 
@@ -432,6 +515,9 @@ captureWalk(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::s
     runtime.userContext = &reads;
     runtime.readMemory = readWalkWord;
     runtime.readWords = readWalkWords;
+    runtime.stampWrites = stampWalkWrites;
+    runtime.unchangedSince = walkUnchangedSince;
+    runtime.supplyWords = supplyWalkWords;
     runtime.accessible = walkAccessible;
     return invocation.Capture(runtime);
 }
@@ -494,23 +580,24 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     auto& reads = HostThreadLocal<WalkReads, ReadsStorage>();
     auto sharedRanges = takeRecycledRanges();
     auto& ranges = *sharedRanges;
-    reads.Reset();
-    const auto before = Graphics::Recorder::PendingWriteSnapshot();
-    const auto generation = GuestMemory::StableTrackerGeneration();
-    const auto variant = invocation.VariantId();
-
-    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
-    try {
-        capture = captureWalk(invocation, userData, shaderBase, reads);
-    } catch (const std::exception&) {
-        return {};
-    }
-    CoalesceWalkReads(reads.runs, ranges);
     auto sharedValues = takeRecycledValues();
     auto& values = *sharedValues;
-    if (!reads.failed) copyRangeValues(ranges, values);
-    const bool settled = rangesSettled(ranges, before.get(), generation);
-    if (!settled) return {};
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
+    for (std::uint32_t attempt = 0;; ++attempt) {
+        reads.Reset();
+        const auto before = Graphics::Recorder::PendingWriteSnapshot();
+        reads.before = before.get();
+        const auto generation = GuestMemory::StableTrackerGeneration();
+        try {
+            capture = captureWalk(invocation, userData, shaderBase, reads);
+        } catch (const std::exception&) {
+            return {};
+        }
+        CoalesceWalkReads(reads.runs, ranges);
+        if (!reads.failed) copyRangeValues(ranges, reads.supplied, values);
+        if (rangesSettled(ranges, before.get(), generation)) break;
+        if (attempt != 0u || !reads.collected) return {};
+    }
 
     guardRanges(ranges);
     auto words = recycledStageWords();
