@@ -434,6 +434,28 @@ float GuestBesselSecondKindZero() {
     return -std::numeric_limits<float>::infinity();
 }
 
+float ScaledSine(float x, float y) {
+    const float magnitude = std::fabs(x);
+    float result;
+    if (magnitude < 0x1p-12f) {
+        result = y == 1.0f ? magnitude : magnitude * y;
+    } else if (magnitude < 0x1.193ea8p-1f) {
+        const float z = magnitude * magnitude;
+        const float denominator = (z * 0x1.e256c4p-10f + -0x1.f401b8p-5f) * z + 1.0f;
+        result = (magnitude + magnitude * z * 0x1.b0a9d8p-4f) / denominator * y;
+    } else if (magnitude < 4.0f) {
+        const float rising = expm1f_nid_postfix(magnitude);
+        result = (expm1f_nid_postfix(-magnitude) * (rising * 0.5f) + rising) * y;
+    } else if (magnitude < 7.7f) {
+        const float rising = expm1f_nid_postfix(magnitude);
+        result = (expm1f_nid_postfix(-magnitude) * 0.5f + 1.0f) * rising * y;
+    } else {
+        result = magnitude;
+        _FExp_nid_postfix(&result, y, -1);
+    }
+    return x < 0.0f ? -result : result;
+}
+
 float ScaledHyperbolic(float x, float y, bool sine) {
     const auto xBits = std::bit_cast<std::uint32_t>(x);
     const auto xMagnitude = xBits & 0x7fffffffu;
@@ -448,11 +470,12 @@ float ScaledHyperbolic(float x, float y, bool sine) {
     }
     if (xMagnitude == infinity) return sine ? x * y : std::copysign(std::numeric_limits<float>::infinity(), y);
     if (xMagnitude == 0 || yMagnitude == 0 || yMagnitude == infinity) return sine ? x * y : y;
+    if (sine) return ScaledSine(x, y);
     constexpr double limit = 2.0 * std::numeric_limits<float>::max_exponent;
     const float magnitude = std::bit_cast<float>(xMagnitude);
     const double argument = magnitude < limit ? static_cast<double>(magnitude) : limit;
-    const double value = static_cast<double>(y) * (sine ? std::sinh(argument) : std::cosh(argument));
-    const bool exponential = magnitude >= (sine ? 7.7f : 8.675f);
+    const double value = static_cast<double>(y) * std::cosh(argument);
+    const bool exponential = magnitude >= 8.675f;
     float result;
     if (exponential && std::fabs(value) >= 0x1p128) {
         result = std::copysign(std::numeric_limits<float>::infinity(), y);
@@ -463,7 +486,7 @@ float ScaledHyperbolic(float x, float y, bool sine) {
         errno = ERANGE;
         std::feraiseexcept(FE_OVERFLOW | FE_INEXACT);
     }
-    return sine && (xBits & 0x80000000u) != 0 ? -result : result;
+    return result;
 }
 
 }
@@ -1434,6 +1457,14 @@ long double APS5_VABI log2l_nid_postfix(long double x) { return _LLog_nid_postfi
 long double APS5_VABI lgammal_nid_postfix(long double x) { return std::lgamma(x); }
 long double APS5_VABI tgammal_nid_postfix(long double x) { return std::tgamma(x); }
 float APS5_VABI tgammaf_nid_postfix(float x) { return GuestTgammaf(x); }
+double APS5_VABI tgamma_nid_postfix(double x) {
+    const int savedErrno = errno;
+    const double result = std::tgamma(x);
+    errno = std::isfinite(x) && x < 0.0 && std::trunc(x) == x ? EDOM : savedErrno;
+    if (result != 0.0 || !std::isfinite(x) || x >= 0.0 || std::trunc(x) == x) return result;
+    const bool negative = std::fmod(std::floor(-x), 2.0) == 0.0;
+    return std::copysign(0.0, negative ? -1.0 : 1.0);
+}
 long double APS5_VABI hypotl_nid_postfix(long double x, long double y) {
     if (std::isinf(x) || std::isinf(y)) return std::numeric_limits<long double>::infinity();
     return std::hypot(x, y);
@@ -2097,13 +2128,44 @@ double APS5_VABI erfc_nid_postfix(double x) {
 float APS5_VABI erfcf_nid_postfix(float x) { return std::erfc(x); }
 int signgam_nid_postfix = 0;
 
-double APS5_VABI lgamma_nid_postfix(double x) {
+double APS5_VABI lgamma_r_nid_postfix(double x, int* signgamp) {
+    if (signgamp == nullptr) throw std::invalid_argument("lgamma_r: null signgamp");
     const double whole = std::floor(x);
-    if (x == 0) signgam_nid_postfix = std::signbit(x) ? -1 : 1;
-    else signgam_nid_postfix = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    *signgamp = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
     const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
     if (magnitude != 0 && magnitude < 0x3c70000000000000ull) return -std::log(std::fabs(x));
-    return std::lgamma(x);
+    const int saved_errno = errno;
+    const double result = std::lgamma(x);
+    errno = std::isfinite(x) && x <= 0 && whole == x ? ERANGE : saved_errno;
+    return result;
+}
+
+double APS5_VABI lgamma_nid_postfix(double x) {
+    return lgamma_r_nid_postfix(x, &signgam_nid_postfix);
+}
+
+float APS5_VABI lgammaf_r_nid_postfix(float x, int* signgamp) {
+    return static_cast<float>(lgamma_r_nid_postfix(static_cast<double>(x), signgamp));
+}
+
+float APS5_VABI lgammaf_nid_postfix(float x) {
+    return lgammaf_r_nid_postfix(x, &signgam_nid_postfix);
+}
+
+double APS5_VABI gamma_nid_postfix(double x) {
+    return lgamma_nid_postfix(x);
+}
+
+float APS5_VABI gammaf_nid_postfix(float x) {
+    return lgammaf_nid_postfix(x);
+}
+
+double APS5_VABI gamma_r_nid_postfix(double x, int* signgamp) {
+    return lgamma_r_nid_postfix(x, signgamp);
+}
+
+float APS5_VABI gammaf_r_nid_postfix(float x, int* signgamp) {
+    return lgammaf_r_nid_postfix(x, signgamp);
 }
 
 static const std::int32_t RemPio2Ipio2[] = {
@@ -5029,7 +5091,7 @@ double APS5_VABI _Sinh_nid_postfix(double x, double y) {
     return SonySinh(x, y);
 }
 
-double APS5_VABI _Cosh_nid_postfix(double x, double y) {
+static double CoshProduct(double x, double y) {
     if (!std::isfinite(x) || !std::isfinite(y)) return y * std::cosh(x);
     if (y == 0.0) return std::copysign(0.0, y);
     constexpr double Ln2High = 0x1.62e42fefa0000p-1;
@@ -5047,6 +5109,13 @@ double APS5_VABI _Cosh_nid_postfix(double x, double y) {
     const int exponent = static_cast<int>(magnitude * InverseLn2);
     const double reduced = std::fma(-exponent, Ln2Low, std::fma(-exponent, Ln2High, magnitude));
     return std::scalbn(scale * (0.5 * std::exp(reduced)), scaleExponent + exponent);
+}
+
+double APS5_VABI _Cosh_nid_postfix(double x, double y) {
+    const double result = CoshProduct(x, y);
+    if (std::isnan(result) && !std::isnan(x) && !std::isnan(y)) errno = EDOM;
+    else if (std::isinf(result) && std::isfinite(x) && std::isfinite(y)) errno = ERANGE;
+    return result;
 }
 
 long double APS5_VABI _LCosh_nid_postfix(long double x, long double y) {
@@ -5105,7 +5174,8 @@ static_assert(sizeof(GuestFloatingPointEnvironment) == 32 && alignof(GuestFloati
 
 int APS5_VABI feupdateenv_nid_postfix(const GuestFloatingPointEnvironment* environment) {
     if (environment == nullptr) throw std::invalid_argument("feupdateenv: null environment");
-    const auto saved = *environment;
+    GuestFloatingPointEnvironment saved{};
+    if (!GuestCopyIn_nid_no_patch(&saved, environment, sizeof(saved))) throw std::invalid_argument("feupdateenv: unreadable environment");
     if ((saved.mxcsr & ~GuestCpu::MxcsrMask()) != 0) throw std::invalid_argument("feupdateenv: unsupported MXCSR bits");
     const auto pending = (GuestCpu::X87Status() | GuestCpu::Mxcsr()) & 0x3f;
     std::array<std::uint32_t, 7> x87;
@@ -5121,8 +5191,10 @@ int APS5_VABI feupdateenv_nid_postfix(const GuestFloatingPointEnvironment* envir
 int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment* environment) {
     if (environment == nullptr) throw std::invalid_argument("fegetenv: null environment");
     const auto x87 = GuestCpu::X87Environment();
-    std::memcpy(environment, x87.data(), sizeof(x87));
-    environment->mxcsr = GuestCpu::Mxcsr();
+    GuestFloatingPointEnvironment current{};
+    std::memcpy(&current, x87.data(), sizeof(x87));
+    current.mxcsr = GuestCpu::Mxcsr();
+    if (!GuestCopyOut_nid_no_patch(environment, &current, sizeof(current))) throw std::invalid_argument("fegetenv: unwritable environment");
     return 0;
 }
 
@@ -5130,10 +5202,12 @@ int APS5_VABI feholdexcept_nid_postfix(GuestFloatingPointEnvironment* environmen
     if (environment == nullptr) throw std::invalid_argument("feholdexcept: null environment");
     const auto csr = GuestCpu::Mxcsr();
     const auto x87 = GuestCpu::X87Environment();
-    std::memcpy(environment, x87.data(), sizeof(x87));
+    GuestFloatingPointEnvironment held{};
+    std::memcpy(&held, x87.data(), sizeof(x87));
+    held.mxcsr = csr;
+    if (!GuestCopyOut_nid_no_patch(environment, &held, sizeof(held))) throw std::invalid_argument("feholdexcept: unwritable environment");
     GuestCpu::X87ClearExceptions();
     GuestCpu::SetX87Control(static_cast<std::uint16_t>(x87[0] | 0x3fu));
-    environment->mxcsr = csr;
     GuestCpu::SetMxcsr((csr & ~0x3fu) | 0x1f80u);
     return 0;
 }
@@ -5184,11 +5258,13 @@ SonyDconst _ZNSt8__sce_v26_LXbigE_nid_postfix {{0, 0, 0, 0xb000, 0x4003, 0, 0, 0
 
 int APS5_VABI fesetenv_nid_postfix(const GuestFloatingPointEnvironment* environment) {
     if (environment == nullptr) throw std::invalid_argument("fesetenv: null environment");
-    if ((environment->mxcsr & ~GuestCpu::MxcsrMask()) != 0) throw std::invalid_argument("fesetenv: unsupported MXCSR bits");
+    GuestFloatingPointEnvironment requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, environment, sizeof(requested))) throw std::invalid_argument("fesetenv: unreadable environment");
+    if ((requested.mxcsr & ~GuestCpu::MxcsrMask()) != 0) throw std::invalid_argument("fesetenv: unsupported MXCSR bits");
     std::array<std::uint32_t, 7> x87;
-    std::memcpy(x87.data(), environment, sizeof(x87));
+    std::memcpy(x87.data(), &requested, sizeof(x87));
     GuestCpu::SetX87Environment(x87);
-    GuestCpu::SetMxcsr(environment->mxcsr);
+    GuestCpu::SetMxcsr(requested.mxcsr);
     return 0;
 }
 }
