@@ -965,26 +965,65 @@ static SaveDataSearchInfo search_info(const std::string& real_path) {
     return SaveDataSearchInfo{blocks, freeBlocks, {}};
 }
 
-static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
+struct SearchTrace {
+    bool readable = false;
+    std::int32_t user_id = -1;
+    bool named = false;
+    SceSaveDataDirName name{};
+    std::uint32_t hit_num = 0;
+    std::uint32_t set_num = 0;
+};
+
+static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, SearchTrace* trace) {
     if (cond == nullptr || result == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    result->hit_num = 0;
-    result->set_num = 0;
-    const std::uint32_t key = cond->key;
-    if ((key > SAVE_DATA_SORT_KEY_MTIME && key != SAVE_DATA_SORT_KEY_FREE_BLOCKS) || cond->order > SAVE_DATA_SORT_ORDER_DESCENT) {
+    SaveDataDirNameSearchCond localCond{};
+    if (!GuestCopyIn_nid_no_patch(&localCond, cond, sizeof(localCond))) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (cond->dir_name != nullptr) {
-        const auto* nameEnd = static_cast<const char*>(std::memchr(cond->dir_name->data, '\0', sizeof(cond->dir_name->data)));
+    SaveDataDirNameSearchResult localResult{};
+    if (!GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult)) ||
+        !GuestWritable_nid_no_patch(result, sizeof(localResult))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (trace != nullptr) {
+        trace->readable = true;
+        trace->user_id = localCond.user_id;
+    }
+    localResult.hit_num = 0;
+    localResult.set_num = 0;
+    if (!GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    const std::uint32_t key = localCond.key;
+    if ((key > SAVE_DATA_SORT_KEY_MTIME && key != SAVE_DATA_SORT_KEY_FREE_BLOCKS) || localCond.order > SAVE_DATA_SORT_ORDER_DESCENT) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SceSaveDataDirName localName{};
+    if (localCond.dir_name != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localName, localCond.dir_name, sizeof(localName))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        const auto* nameEnd = static_cast<const char*>(std::memchr(localName.data, '\0', sizeof(localName.data)));
         if (nameEnd == nullptr) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
+        if (trace != nullptr) {
+            trace->named = true;
+            trace->name = localName;
+        }
     }
-    if (cond->title_id != nullptr && std::strncmp(cond->title_id->data, GetAppTitleId_nid_postfix().value, sizeof(cond->title_id->data)) != 0) {
-        return SAVE_DATA_OK;
+    if (localCond.title_id != nullptr) {
+        SceSaveDataTitleId localTitle{};
+        if (!GuestCopyIn_nid_no_patch(&localTitle, localCond.title_id, sizeof(localTitle))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        if (std::strncmp(localTitle.data, GetAppTitleId_nid_postfix().value, sizeof(localTitle.data)) != 0) {
+            return SAVE_DATA_OK;
+        }
     }
-    const char* pattern = (cond->dir_name != nullptr) ? cond->dir_name->data : nullptr;
+    const char* pattern = (localCond.dir_name != nullptr) ? localName.data : nullptr;
     const std::string root = save_root();
     if (!std::filesystem::is_directory(root)) {
         return SAVE_DATA_OK;
@@ -1021,27 +1060,53 @@ static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameS
     } else if (key == SAVE_DATA_SORT_KEY_FREE_BLOCKS) {
         std::stable_sort(matches.begin(), matches.end(), [](const Match& a, const Match& b) { return a.info.free_blocks < b.info.free_blocks; });
     }
-    if (cond->order == SAVE_DATA_SORT_ORDER_DESCENT) {
+    if (localCond.order == SAVE_DATA_SORT_ORDER_DESCENT) {
         std::reverse(matches.begin(), matches.end());
     }
-    const std::uint32_t set = result->dir_names == nullptr ? 0 : static_cast<std::uint32_t>(std::min<std::size_t>(result->dir_names_num, matches.size()));
-    for (std::uint32_t i = 0; i < set; i++) {
-        std::snprintf(result->dir_names[i].data, sizeof(result->dir_names[i].data), "%s", matches[i].name.c_str());
-        if (result->params != nullptr) {
-            result->params[i] = sortByParam ? matches[i].param : load_param(matches[i].path);
+    const std::uint32_t set = localResult.dir_names == nullptr ? 0 : static_cast<std::uint32_t>(std::min<std::size_t>(localResult.dir_names_num, matches.size()));
+    if (set != 0) {
+        if (!GuestWritable_nid_no_patch(localResult.dir_names, sizeof(SceSaveDataDirName) * set)) {
+            return SAVE_DATA_ERROR_PARAMETER;
         }
-        if (result->infos != nullptr) {
-            result->infos[i] = matches[i].info;
+        if (localResult.params != nullptr && !GuestWritable_nid_no_patch(localResult.params, sizeof(SaveDataParam) * set)) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        if (localResult.infos != nullptr && !GuestWritable_nid_no_patch(localResult.infos, sizeof(SaveDataSearchInfo) * set)) {
+            return SAVE_DATA_ERROR_PARAMETER;
         }
     }
-    result->hit_num = static_cast<std::uint32_t>(matches.size());
-    result->set_num = set;
+    for (std::uint32_t i = 0; i < set; i++) {
+        SceSaveDataDirName entry{};
+        std::snprintf(entry.data, sizeof(entry.data), "%s", matches[i].name.c_str());
+        if (!GuestCopyOut_nid_no_patch(&localResult.dir_names[i], &entry, sizeof(entry))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        if (localResult.params != nullptr) {
+            const SaveDataParam param = sortByParam ? matches[i].param : load_param(matches[i].path);
+            if (!GuestCopyOut_nid_no_patch(&localResult.params[i], &param, sizeof(param))) {
+                return SAVE_DATA_ERROR_PARAMETER;
+            }
+        }
+        if (localResult.infos != nullptr && !GuestCopyOut_nid_no_patch(&localResult.infos[i], &matches[i].info, sizeof(matches[i].info))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+    }
+    localResult.hit_num = static_cast<std::uint32_t>(matches.size());
+    localResult.set_num = set;
+    if (!GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (trace != nullptr) {
+        trace->hit_num = localResult.hit_num;
+        trace->set_num = localResult.set_num;
+    }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
-    const int rc = dirNameSearch(cond, result);
-    SAVEDATA_TRACE("dirNameSearch user=%d pattern=%.*s hit=%u set=%u -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), cond != nullptr && cond->dir_name != nullptr ? cond->dir_name->data : "(all)", result != nullptr ? result->hit_num : 0u, result != nullptr ? result->set_num : 0u, static_cast<unsigned>(rc));
+    SearchTrace trace;
+    const int rc = dirNameSearch(cond, result, &trace);
+    SAVEDATA_TRACE("dirNameSearch user=%d pattern=%.*s hit=%u set=%u -> 0x%08x", trace.readable ? trace.user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.named ? trace.name.data : "(all)", trace.hit_num, trace.set_num, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1736,8 +1801,9 @@ int APS5_VABI sceSaveDataCancel(std::uint32_t cancelArgument) {
 }
 
 int APS5_VABI sceSaveDataDirNameSearch2(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
-    const int rc = dirNameSearch(cond, result);
-    SAVEDATA_TRACE("dirNameSearch2 user=%d pattern=%.*s hit=%u set=%u -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), cond != nullptr && cond->dir_name != nullptr ? cond->dir_name->data : "(all)", result != nullptr ? result->hit_num : 0u, result != nullptr ? result->set_num : 0u, static_cast<unsigned>(rc));
+    SearchTrace trace;
+    const int rc = dirNameSearch(cond, result, &trace);
+    SAVEDATA_TRACE("dirNameSearch2 user=%d pattern=%.*s hit=%u set=%u -> 0x%08x", trace.readable ? trace.user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), trace.named ? trace.name.data : "(all)", trace.hit_num, trace.set_num, static_cast<unsigned>(rc));
     return rc;
 }
 
