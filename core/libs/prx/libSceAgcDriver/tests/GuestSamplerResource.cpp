@@ -502,8 +502,16 @@ void RunGuestSamplerResourceTests() {
     auto truncatedBlend = pack(unnormalizedBase);
     truncatedBlend[0] |= 1u << 19u;
     requireUnnormalized(DecodeSamplerResource(truncatedBlend, true), "unnormalized MC_COORD_TRUNC sampler");
-    truncatedBlend[0] |= 1u << 29u;
-    reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized MC_COORD_TRUNC with a min or max reduction");
+    for (const auto mode : {1u, 2u}) {
+        auto reduced = truncatedBlend;
+        reduced[2] &= ~(3u << 26u);
+        reduced[0] |= mode << 29u;
+        const auto decoded = DecodeSamplerResource(reduced, true);
+        requireUnnormalized(decoded, "unnormalized MC_COORD_TRUNC reduction sampler");
+        Require(decoded.reductionMode == (mode == 1u ? VK_SAMPLER_REDUCTION_MODE_MIN_EXT : VK_SAMPLER_REDUCTION_MODE_MAX_EXT), "MC sampler lost its reduction mode");
+        reduced[2] |= 2u << 26u;
+        reject([&] { DecodeSamplerResource(reduced, true); }, "min or max reduction with a linear mip filter");
+    }
     rejectUnnormalized(base, "bound as unnormalized without FORCE_UNNORMALIZED");
 
     Fields forcedSrgb = base;

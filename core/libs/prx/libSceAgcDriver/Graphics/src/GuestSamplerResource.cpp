@@ -64,7 +64,6 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     const auto depthCompareFunc = (words[0] >> 12u) & 0x7u;
     const auto forceUnormCoords = ((words[0] >> 15u) & 0x1u) != 0;
     const auto anisoThreshold = (words[0] >> 16u) & 0x7u;
-    const auto mcCoordTrunc = ((words[0] >> 19u) & 0x1u) != 0;
     const auto forceSrgb = ((words[0] >> 20u) & 0x1u) != 0;
     const auto anisoBias = (words[0] >> 21u) & 0x3fu;
     const auto truncCoord = ((words[0] >> 27u) & 0x1u) != 0;
@@ -93,7 +92,6 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
         Require(clampX <= 3u || clampX >= 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only wrap, mirror, clamp-to-last-texel, mirror-once, clamp-to-border and mirror-once-border are implemented");
         Require(clampY <= 3u || clampY >= 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only wrap, mirror, clamp-to-last-texel, mirror-once, clamp-to-border and mirror-once-border are implemented");
-        Require(!mcCoordTrunc || filterMode == 0u, "guest sampler descriptor uses unnormalized MC_COORD_TRUNC with a min or max reduction, which is not implemented");
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");
     }

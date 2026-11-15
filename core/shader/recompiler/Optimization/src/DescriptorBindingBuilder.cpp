@@ -356,7 +356,6 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
                 const auto supportedClamp = [](std::uint32_t clamp) { return clamp <= 3u || clamp == 6u; };
                 if (!supportedClamp(samplerWords[0] & 7u) || (image.dimension == RdnaImageDimension::Dim2D && !supportedClamp((samplerWords[0] >> 3u) & 7u))) failUnnormalized("uses MC_COORD_TRUNC with an unimplemented clamp mode");
                 if (sampler.forcePointFiltering || IsConvertedUnormTextureFormat(image.conversionFormat)) failUnnormalized("uses MC_COORD_TRUNC with shader-emulated texture filtering");
-                if (((samplerWords[0] >> 29u) & 3u) != 0u) failUnnormalized("uses MC_COORD_TRUNC with a min or max reduction");
             }
             sampled = true;
             proof.images[pair.image] = true;
