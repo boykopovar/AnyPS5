@@ -11310,9 +11310,7 @@ int APS5_VABI WKPageRubberBandsAtRight() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageRubberBandsAtTop() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerCall() {
     NotImplemented_nid_no_patch(__func__);
@@ -11498,9 +11496,7 @@ int APS5_VABI WKPageSetRubberBandsAtRight() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetRubberBandsAtTop() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
