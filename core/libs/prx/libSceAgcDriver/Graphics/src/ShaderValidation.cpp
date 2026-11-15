@@ -143,10 +143,6 @@ struct Module {
                 position = true;
                 return;
             }
-            if (stage == Stage::TessellationEvaluation && !input && value == spv::BuiltInLayer && generatedLayerStage && layerOutput && signature == "u32" && !layer) {
-                layer = true;
-                return;
-            }
             if (stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation) {
                 if (stage == Stage::TessellationEvaluation && !input && value == spv::BuiltInLayer && layerOutput && (signature == "u32" || signature == "i32")) return;
                 const bool clipInput = value == spv::BuiltInClipDistance && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']';
