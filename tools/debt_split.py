@@ -1,5 +1,6 @@
 import argparse
 import difflib
+import os
 import posixpath
 import re
 import subprocess
@@ -375,6 +376,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+        if os.name == "nt" and not root.is_dir():
+            root = (Path.cwd() / git(Path.cwd(), "rev-parse", "--show-cdup").strip()).resolve()
     except subprocess.CalledProcessError as error:
         parser.error(f"not a git repository: {error}")
     command_split(root) if args.command == "split" else command_resolve(root)

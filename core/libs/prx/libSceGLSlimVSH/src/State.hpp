@@ -183,8 +183,8 @@ void Generate_nid_no_patch(GLsizei count, GLuint* names, std::map<GLuint, std::s
             next.emplace(name, nullptr);
             result.push_back(name);
         }
+        if (!GuestCopyOut_nid_no_patch(names, result.data(), result.size() * sizeof(GLuint))) { Error_nid_no_patch(0x0505); return; }
         objects.swap(next);
-        std::copy(result.begin(), result.end(), names);
     } catch (const std::bad_alloc&) { Error_nid_no_patch(0x0505); }
 }
 

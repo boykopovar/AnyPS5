@@ -132,6 +132,13 @@ void FillPlots() {
     FontGraphicsRegion region;
     Require(sceFontGraphicsRegionInitRoundish(&region, 1.0f, 2.0f, 10.0f, 8.0f, 4.0f, 2.0f, 0x5) == 0);
     FontGraphicsFillPlot plot;
+    errno = 71;
+    RequireError(sceFontGraphicsFillPlotInit(reinterpret_cast<FontGraphicsFillPlot*>(0x10), &region), InvalidFillPlot);
+    Require(errno == 71);
+    Fill(plot, 0xa5);
+    errno = 71;
+    RequireError(sceFontGraphicsFillPlotInit(&plot, reinterpret_cast<const FontGraphicsRegion*>(0x10)), InvalidRegion);
+    Require(errno == 71 && plot.tag == 0 && AllBytes(plot, 0, 24, 0xa5) && AllBytes(plot, 26, 64, 0xa5));
     Fill(plot, 0xa5);
     Require(sceFontGraphicsFillPlotInit(&plot, &region) == 0);
     Require(plot.mapping[0] == 1.0f && plot.mapping[1] == 2.0f && plot.mapping[2] == 11.0f && plot.mapping[3] == 10.0f);
@@ -968,6 +975,9 @@ void GraphicsServiceValidation() {
     param.tag = 0x0e09;
     RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
     RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, nullptr), InvalidParameter);
+    errno = 71;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, reinterpret_cast<FontGraphicsService**>(0x10)), InvalidParameter);
+    Require(errno == 71);
     param = f.param;
     param.level = 0xff;
     RequireError(sceFontCreateGraphicsServiceWithEdition(&f.memory, &param, 0, &service), Uninitialized);
