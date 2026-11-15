@@ -10880,10 +10880,6 @@ int APS5_VABI WKPageAreScrollbarAnimationsSuppressed() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageBackgroundExtendsBeyondPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageBeginPrinting() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11351,10 +11347,6 @@ int APS5_VABI WKPageSetAllowsRemoteInspection() {
 }
 
 int APS5_VABI WKPageSetApplicationNameForUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetBackgroundExtendsBeyondPage() {
     NotImplemented_nid_no_patch(__func__);
 }
 
