@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
 #include "prx/libSceAgcDriver/tests/AllocationFailure.hpp"
 #include <algorithm>
@@ -1076,6 +1077,64 @@ void ProducerAheadOfTheChunkPoolWaits() {
     Require(Recorded(commands) == Windows && counts.waits != 0, "a producer that waited for the chunk pool recorded " + std::to_string(Recorded(commands)) + " of " + std::to_string(Windows) + " commands after " + std::to_string(counts.waits) + " waits");
 }
 
+std::pair<std::uint64_t, std::uint64_t> TracedEncoderWaits() {
+    const auto threads = AgcDriver::PerformanceTrace::ThreadTotals();
+    Require(threads.has_value(), "the trace thread totals were busy");
+    std::pair<std::uint64_t, std::uint64_t> traced{0, 0};
+    for (const auto& thread : *threads) {
+        for (const auto& total : thread.totals) {
+            if (total.stage != nullptr || std::string_view(total.scope) != AgcDriver::TraceFormat::EncoderWaitScope) continue;
+            traced.first += total.count;
+            traced.second += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(total.length).count());
+        }
+    }
+    return traced;
+}
+
+void ChunkPoolWaitsReachTheTrace() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x53);
+    const auto commands = Handle<VkCommandBuffer>(0x1600);
+    constexpr std::uint32_t Windows = 64;
+    std::atomic<bool> release{false};
+    CommandEncoder::Statistics counts{};
+    AgcDriver::PerformanceTrace::SetOverlayTotals(true);
+    if (!AgcDriver::PerformanceTrace::OverlayTotals()) {
+        std::cout << "a configured trace owns the totals: chunk pool wait tracing not tested\n";
+        return;
+    }
+    AgcDriver::PerformanceTrace::BindThread("encoder test");
+    const auto before = TracedEncoderWaits();
+    CommandEncoder::SetDelayForTesting([&] {
+        while (!release.load()) std::this_thread::yield();
+    });
+    {
+        const auto attached = Attached(device, table);
+        auto& encoder = *attached;
+        std::thread producer([&] {
+            AgcDriver::PerformanceTrace::BindThread("encoder test producer");
+            for (std::uint32_t index = 0; index < Windows; ++index) {
+                encoder.Open(commands, RecordingOf(commands));
+                table.cmdDraw(commands, index, 1, 0, 0);
+                encoder.Close();
+            }
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        release.store(true);
+        producer.join();
+        encoder.Quiesce();
+        counts = encoder.Counts();
+    }
+    CommandEncoder::SetDelayForTesting({});
+    const auto after = TracedEncoderWaits();
+    AgcDriver::PerformanceTrace::SetOverlayTotals(false);
+    const auto tracedWaits = after.first - before.first;
+    const auto tracedNs = after.second - before.second;
+    Require(Recorded(commands) == Windows && counts.waits != 0, "a producer held on the chunk pool recorded " + std::to_string(Recorded(commands)) + " of " + std::to_string(Windows) + " commands after " + std::to_string(counts.waits) + " waits");
+    Require(tracedWaits == counts.waits && tracedNs == counts.waitNs, "the trace holds " + std::to_string(tracedWaits) + " encoder waits over " + std::to_string(tracedNs) + " ns, but the encoder counted " + std::to_string(counts.waits) + " over " + std::to_string(counts.waitNs) + " ns");
+}
+
 void ReplayFailureNeedsNoAllocation() {
     Reset();
     auto table = FakeTable();
@@ -1468,6 +1527,7 @@ int main(int argc, char** argv) {
         FailedWorkerStartFreesItsPoolAndSlot();
         PostingNeverAllocates();
         ProducerAheadOfTheChunkPoolWaits();
+        ChunkPoolWaitsReachTheTrace();
         EncoderParksBetweenSpacedPosts();
         ReplayFailureNeedsNoAllocation();
         WaitsAreAttributedToTheirCallSites();

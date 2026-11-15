@@ -828,9 +828,11 @@ void CommandEncoder::awaitSpare() noexcept {
         if (spare != nullptr) return;
     }
     executed.wait(seen, std::memory_order_acquire);
-    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    const auto end = std::chrono::steady_clock::now();
+    const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
     waitCount.fetch_add(1, std::memory_order_relaxed);
     waitNs.fetch_add(ns, std::memory_order_relaxed);
+    traceWait(start, end);
     note(WaitSite{Wait::ChunkPool, nullptr, 0}, ns, true, false);
 }
 
