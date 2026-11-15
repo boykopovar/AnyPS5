@@ -10642,9 +10642,7 @@ int APS5_VABI WKContextSetMaximumNumberOfProcesses() {
 }
 
 
-int APS5_VABI WKContextSetPrewarmsProcessesAutomatically() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKContextSetUseSeparateServiceWorkerProcess() {
     NotImplemented_nid_no_patch(__func__);
