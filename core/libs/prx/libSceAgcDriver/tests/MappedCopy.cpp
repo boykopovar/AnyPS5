@@ -12,6 +12,12 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -87,6 +93,17 @@ void CheckCommitted() {
     hole.fill(std::byte{0xa5});
     ReadCommittedCheckedUnsynced(0, hole);
     Require(std::all_of(hole.begin(), hole.end(), [](std::byte byte) { return byte == std::byte{}; }), "a null checked range was not zeroed");
+#ifdef _WIN32
+    constexpr std::size_t Page = 4096;
+    DWORD previous = 0;
+    Require(VirtualProtect(range.Data() + Page, Page, PAGE_READWRITE | PAGE_GUARD, &previous) != 0, "cannot protect a checked-read guard page");
+    hole.fill(std::byte{0xa5});
+    ReadCommittedCheckedUnsynced(range.Address() + Page - 128u, hole);
+    for (std::size_t index = 0; index < hole.size(); ++index) Require(hole[index] == (index < 128u ? std::byte{0x5b} : std::byte{}), "a checked committed read did not preserve bytes around a guard page");
+    MEMORY_BASIC_INFORMATION memory{};
+    Require(VirtualQuery(range.Data() + Page, &memory, sizeof(memory)) == sizeof(memory) && memory.Protect == (PAGE_READWRITE | PAGE_GUARD), "a checked committed read consumed a guard page");
+    Require(VirtualProtect(range.Data() + Page, Page, previous, &previous) != 0, "cannot restore a checked-read guard page");
+#endif
     bool rejected = false;
     try {
         ReadCommittedCheckedUnsynced(std::numeric_limits<std::uintptr_t>::max() - 7u, hole);
