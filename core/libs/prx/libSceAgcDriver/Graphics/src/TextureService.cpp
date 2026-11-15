@@ -41,6 +41,18 @@ double Milliseconds(std::uint64_t nanoseconds) {
 
 constexpr std::array<const char*, static_cast<std::size_t>(BindlessRefusalKind::Count)> RefusalKindNames{"storage", "msaa", "compare", "unmapped", "no-mode", "sampler", "interface", "other"};
 
+static_assert(TextureService::MaxRejectionDetails + 1u < Abi::FaultFlag, "a fault record must be able to name every retained rejection");
+
+std::string RejectionDetail(const DeviceImageKeys::Key& key, const std::string& reason) {
+    std::string message = "(words";
+    for (std::uint32_t word = 0; word < Abi::DescriptorWords; ++word) {
+        char text[12];
+        std::snprintf(text, sizeof(text), " %08x", key[word]);
+        message += text;
+    }
+    return message + "): rejected by the driver: " + reason;
+}
+
 std::string NormalizedReason(std::string_view reason) {
     std::string normalized;
     for (std::size_t index = 0; index < reason.size();) {
@@ -349,26 +361,30 @@ BindlessResolution TextureService::settle(const BindlessPrepared& prepared) {
 
 std::uint32_t TextureService::refuse(const DeviceImageKeys::Key& key, const std::string& reason, bool permanent) {
     ++totals.refusals[static_cast<std::size_t>(ClassifyBindlessRefusal(reason))];
-    if (permanent) permanentRefusals.insert(key);
+    if (permanent) {
+        permanentRefusals.insert(key);
+    } else {
+        permanentRefusals.erase(key);
+    }
     if (BindlessStatsRequested()) {
         if (auto normalized = NormalizedReason(reason); reportedReasons.insert(normalized).second) std::fprintf(stderr, "[bindless] refusal reason (first of its kind, %s, %s): %s\n", RefusalKindNames[static_cast<std::size_t>(ClassifyBindlessRefusal(reason))], permanent ? "kept" : "retried on mapping changes", normalized.c_str());
     }
-    std::string message = "(words";
-    for (std::uint32_t word = 0; word < Abi::DescriptorWords; ++word) {
-        char text[12];
-        std::snprintf(text, sizeof(text), " %08x", key[word]);
-        message += text;
-    }
-    message += "): rejected by the driver: " + reason;
     if (const auto found = rejectionIndex.find(key); found != rejectionIndex.end()) {
-        rejections[found->second] = message;
+        if (found->second + 1u != cappedRejection) rejections[found->second] = RejectionDetail(key, reason);
         return found->second + 1u;
     }
-    Require(rejections.size() + 1u < Abi::FaultFlag, "the texture service holds more refusals than a fault record can name");
-    rejections.push_back(message);
-    rejectionIndex.emplace(key, static_cast<std::uint32_t>(rejections.size() - 1u));
+    if (cappedRejection == 0u) {
+        if (rejections.size() < MaxRejectionDetails) {
+            rejections.push_back(RejectionDetail(key, reason));
+        } else {
+            rejections.push_back("further texture service refusal details were suppressed because the detail cap was reached");
+            cappedRejection = static_cast<std::uint32_t>(rejections.size());
+        }
+    }
+    const auto fault = cappedRejection != 0u ? cappedRejection : static_cast<std::uint32_t>(rejections.size());
+    rejectionIndex.emplace(key, fault - 1u);
     ++totals.refused;
-    return static_cast<std::uint32_t>(rejections.size());
+    return fault;
 }
 
 std::uint32_t TextureService::acquireImage(VkImageView view, VkImageLayout layout) {
@@ -480,6 +496,7 @@ BindlessResolution TextureService::take(const DeviceImageKeys::Key& key) {
     Require(found != entries.end(), "the texture service dropped an entry it does not hold");
     auto resolution = std::move(found->second.resolution);
     entries.erase(found);
+    permanentRefusals.erase(key);
     ++surfaceEpoch;
     if (perUseKeys.erase(key) != 0u) ++perUseEpoch;
     return resolution;

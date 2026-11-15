@@ -94,6 +94,7 @@ public:
 class TextureService {
 public:
     static constexpr std::uint64_t PageBytes = 4096u;
+    static constexpr std::size_t MaxRejectionDetails = 64u;
 
     struct Options {
         bool lazy = false;
@@ -276,6 +277,7 @@ private:
     std::set<std::string> reportedReasons;
     std::vector<std::string> rejections;
     std::map<DeviceImageKeys::Key, std::uint32_t> rejectionIndex;
+    std::uint32_t cappedRejection = 0;
     std::uint64_t nextId = 1;
     std::uint64_t evictionEpoch = 0;
     std::uint64_t perUseEpoch = 0;
