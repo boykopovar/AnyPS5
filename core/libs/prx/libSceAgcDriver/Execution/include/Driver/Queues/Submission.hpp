@@ -20,6 +20,12 @@
 
 namespace AgcDriver::DriverDetail {
 
+struct FlipWork {
+    bool finished = false;
+    std::uint64_t serial = 0;
+    std::shared_ptr<FlipWork> previous;
+};
+
 struct Submission {
     std::uint64_t serial;
     std::uint32_t queue;
@@ -34,6 +40,7 @@ struct Submission {
     bool suspend = false;
     bool waitFree = false;
     bool holdsFlip = false;
+    std::shared_ptr<FlipWork> flipWork;
 
     std::uint64_t received = 0;
     std::vector<std::uint64_t> labelWrites;

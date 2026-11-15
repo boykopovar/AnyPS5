@@ -693,6 +693,10 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     if (res == nullptr) return 0;
     if (IsCpuClock(clockId))
         return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
+    if (clockId >= 32) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     if (clockId == 1 || clockId == 2) {
         std::uint64_t nanos = 0;
         if (!ProcessCpuResolutionNanos(&nanos)) return -1;

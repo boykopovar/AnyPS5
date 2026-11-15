@@ -5,6 +5,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <thread>
 #include <chrono>
@@ -278,7 +279,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x11: case 0x12: case 0x13: case 0x15: case 0x16: case 0x20: case 0x22: case 0x26: case 0x27:
         case 0x2a: case 0x2d: case 0x2f: case 0x35: case 0x37: case 0x40: case 0x42: case 0x45: case 0x46: case 0x50:
         case 0x58: case 0x63: case 0x64: case 0x69: case 0x76: case 0x79: case 0x7a:
-        case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: return {};
+        case 0x51: case 0x81: case 0x83: case 0x91: case 0x9f: case 0x28: return {};
         case 0x24: case 0x25: case 0x2c: case 0x38:
             if (IndirectDrawsDisabled()) return "graphics draw, shader stages and guest render-target materialization are not implemented";
             return {};
@@ -360,13 +361,18 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet[1] == 1 && (packet[2] & 3u) == 0 && packet[3] <= 0xffffu, "unsupported indirect base index, alignment or address bits");
             if ((header & 2u) == 0) graphics();
             break;
+        case 0x51:
+            graphics();
+            size(4);
+            require((packet[1] & 0xffff0000u) == 0, "CONTEXT_REG_RMW reserved offset bits are not implemented");
+            break;
         case 0x12: graphics(); size(2); require((packet[1] & ~0xfu) == 0, "unsupported CLEAR_STATE payload bits"); break;
         case 0x20: {
             graphics();
             size(4);
             const auto operation = (packet[1] >> 16u) & 7u;
-            require(operation != 1 && operation != 2, "GPU query predication is not implemented");
-            require(operation == 0 || operation == 3 || operation == 4, "invalid predication operation");
+            require(operation != 2, "GPU primitive-count predication is not implemented");
+            require(operation == 0 || operation == 1 || operation == 3 || operation == 4, "invalid predication operation");
             require((packet[1] & ~0x71100u) == 0, "unsupported SET_PREDICATION bits");
             if (operation != 0) require(address(packet[2], packet[3]) != 0 && (packet[2] & 0xfu) == 0, "unaligned predication address");
             break;
@@ -532,10 +538,14 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x45: {
             size(9);
             require((packet[1] & ~0x317u) == 0, "COND_WRITE reserved fields are not implemented");
-            require((packet[1] & 0x10u) != 0, "register-space COND_WRITE poll is not implemented");
+            const bool memoryPoll = (packet[1] & 0x10u) != 0;
+            require(memoryPoll || (packet[3] == 0 && registerBankBase(packet[2]) != 0), "register-space COND_WRITE poll outside modeled banks is not implemented");
             require((packet[1] & 7u) <= 6u, "invalid COND_WRITE compare function");
-            require(((packet[1] >> 8u) & 3u) == 1u, "register or scratch COND_WRITE destination is not implemented");
-            require((packet[2] & 3u) == 0 && (packet[6] & 3u) == 0, "misaligned COND_WRITE address");
+            const auto destination = (packet[1] >> 8u) & 3u;
+            require(destination <= 1u, "scratch or reserved COND_WRITE destination is not implemented");
+            require(destination != 0 || (packet[7] == 0 && registerBankBase(packet[6]) != 0), "COND_WRITE destination outside modeled banks is not implemented");
+            if (destination == 0 && registerBankBase(packet[6]) != ShaderRegisterBase) graphics();
+            require((!memoryPoll || (packet[2] & 3u) == 0) && (destination != 1 || (packet[6] & 3u) == 0), "misaligned COND_WRITE address");
             break;
         }
         case 0x49: {
@@ -665,12 +675,33 @@ std::size_t ConditionalWords(std::span<const std::uint32_t> packet) {
     return packet[4] & ConditionalWordsMask;
 }
 
+std::size_t PredicationBytes(const Predication& predication) {
+    if (predication.operation == 1) return SampleDumpBytes + SampleDumpBlockBytes;
+    return predication.operation == 3 ? 8 : 4;
+}
+
 bool PredicationPasses(const QueueState& queue) {
     const auto& predication = queue.predication;
     if (predication.operation == 0) return true;
-    const std::size_t bytes = predication.operation == 3 ? 8 : 4;
-    std::uint64_t value = 0;
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
+    if (predication.operation == 1) {
+        constexpr std::uint64_t ready = 1ull << 63u;
+        std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
+        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(PredicationBytes(predication)), 8);
+        std::uint64_t samples = 0;
+        for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
+            const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
+            const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
+            if ((begin & ready) == 0 || (end & ready) == 0) {
+                require(predication.runWhenUnwritten, "Z-pass predication waits for a counter pair that was never written");
+                return true;
+            }
+            samples += (end & ~ready) - (begin & ~ready);
+        }
+        return (samples != 0) == predication.executeWhenSet;
+    }
+    const std::size_t bytes = PredicationBytes(predication);
+    std::uint64_t value = 0;
     GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(&value, 1)).first(bytes), bytes);
     return (value != 0) == predication.executeWhenSet;
 }
@@ -815,6 +846,7 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
         }
         case 0x45: {
             const auto write = DecodeConditionalWrite(packet);
+            if (((packet[1] >> 8u) & 3u) != 1u) return {};
             auto store = known(write.destination, std::as_bytes(std::span(&write.value, 1)));
             store.conditional = true;
             return {store};
@@ -1141,7 +1173,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x13: queue.indexBufferSize = packet[1]; return;
         case 0x20: {
             const auto operation = (packet[1] >> 16u) & 7u;
-            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0};
+            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0, (packet[1] & 0x1000u) != 0};
             return;
         }
         case 0x3f: throw std::runtime_error(std::string(UnsupportedReason(packet[0])));
@@ -1218,6 +1250,13 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             GuestMemory::Write(destination, std::as_bytes(std::span(&value, 1)).first(dataSelect == 1 ? 4 : 8), dataSelect == 1 ? 4 : 8);
             return;
         }
+        case 0x51: {
+            const auto offset = packet[1];
+            require(queue.context.contains(offset), "CONTEXT_REG_RMW register has no known value");
+            const auto value = (queue.context.at(offset) & ~packet[2]) | (packet[3] & packet[2]);
+            writeRegister(queue, 0x69, offset, value);
+            return;
+        }
         case 0x69: case 0x76: case 0x79: case 0x7a: {
             if (IsTagMarker(packet)) return;
             const auto offset = registerOffset(packet[1]);
@@ -1235,9 +1274,21 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x45: {
             const auto write = DecodeConditionalWrite(packet);
             std::uint32_t value = 0;
-            {
+            if ((packet[1] & 0x10u) != 0) {
                 const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
                 GuestMemory::Read(write.compared, std::as_writable_bytes(std::span(&value, 1)), 4);
+            } else {
+                const auto base = registerBankBase(packet[2]);
+                const auto& bank = base == ShaderRegisterBase ? queue.shader : base == ContextRegisterBase ? queue.context : queue.userConfig;
+                require(base != 0 && bank.contains(packet[2] - base), "COND_WRITE poll register has no known value");
+                value = bank.at(packet[2] - base);
+            }
+            if (((packet[1] >> 8u) & 3u) == 0) {
+                if (waitCompares(packet, false, value)) {
+                    const auto base = registerBankBase(packet[6]);
+                    writeRegister(queue, base == ShaderRegisterBase ? 0x76u : base == ContextRegisterBase ? 0x69u : 0x79u, packet[6] - base, write.value);
+                }
+                return;
             }
             if (waitCompares(packet, false, value)) GuestMemory::Write(write.destination, std::as_bytes(std::span(&write.value, 1)), 4);
             return;

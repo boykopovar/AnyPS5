@@ -4,10 +4,18 @@
 #include FT_FREETYPE_H
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -45,6 +53,57 @@ struct Counter {
 void Require(bool value) {
     if (!value) std::abort();
 }
+
+template <class F>
+bool Rejects(F call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+class ReadOnlyPage {
+    void* page = nullptr;
+    std::size_t size = 4096;
+
+public:
+    explicit ReadOnlyPage(std::uint64_t initialValue) {
+#ifdef _WIN32
+        page = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(page != nullptr);
+        std::memcpy(page, &initialValue, sizeof(initialValue));
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(page, size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096;
+        page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+        std::memcpy(page, &initialValue, sizeof(initialValue));
+        Require(mprotect(page, size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!page) return;
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template <typename T>
+    T* As() const {
+        return static_cast<T*>(page);
+    }
+};
 
 void* APS5_VABI GuestAlloc(FreeType::GuestMemoryRec* memory, std::int64_t size) {
     auto* counter = static_cast<Counter*>(memory->user);
@@ -160,5 +219,27 @@ int main() {
     length = output.size();
     Require(Uncompress(initFails, Gzip, output.data(), length) == InvalidArgument);
     Require(length == output.size());
+
+    auto* badMemory = reinterpret_cast<FreeType::GuestMemoryRec*>(std::uintptr_t{0x10});
+    auto* badLength = reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10});
+    auto* badBuffer = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
+    length = output.size();
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(badMemory, output.data(), &length, Gzip.data(), Gzip.size()); }));
+    Require(length == output.size());
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), badLength, Gzip.data(), Gzip.size()); }));
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), &length, badBuffer, Gzip.size()); }));
+    Require(length == output.size() && counter.allocations == counter.frees);
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, badBuffer, &length, Gzip.data(), Gzip.size()); }));
+    Require(length == output.size() && counter.allocations == counter.frees);
+
+    const ReadOnlyPage readOnlyOutput(output.size());
+    std::array<std::uint8_t, 64> untouched{};
+    untouched.fill(0x5a);
+    output = untouched;
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), readOnlyOutput.As<std::uint64_t>(), Gzip.data(), Gzip.size()); }));
+    Require(output == untouched && counter.allocations == counter.frees);
+    length = output.size();
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, readOnlyOutput.As<std::uint8_t>(), &length, Gzip.data(), Gzip.size()); }));
+    Require(length == output.size() && counter.allocations == counter.frees);
     return 0;
 }

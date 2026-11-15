@@ -133,23 +133,47 @@ std::vector<std::size_t> allocated;
 int frees = 0;
 int failAt = 0;
 int calls = 0;
+int throwAt = 0;
+unsigned throwFrees = 0;
+std::array<void*, 4> allocationPointers{};
+std::array<void*, 4> releasePointers{};
+
+struct AllocationFailure {};
+struct FreeFailure { int ordinal; };
 
 void ResetAllocations(int failing) {
     allocated.clear();
     frees = calls = 0;
     failAt = failing;
+    throwAt = 0;
+    throwFrees = 0;
+    allocationPointers = {};
+    releasePointers = {};
 }
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
-    if (++calls == failAt) return nullptr;
+    ++calls;
+    if (calls == throwAt) throw AllocationFailure{};
+    if (calls == failAt) return nullptr;
     void* const pointer = std::malloc(size);
-    if (pointer) allocated.push_back(size);
+    if (pointer) {
+        Require(allocated.size() < allocationPointers.size(), "allocation ledger capacity");
+        allocationPointers[allocated.size()] = pointer;
+        allocated.push_back(size);
+    }
     return pointer;
 }
 
 void APS5_VABI Free_nid_no_patch(void* pointer) {
-    if (pointer) ++frees;
+    if (!pointer) return;
+    bool found = false;
+    for (void* allocation : allocationPointers) found = found || allocation == pointer;
+    Require(found, "free uses the matching application allocation");
+    for (void* release : releasePointers) Require(release != pointer, "each pointer is freed at most once");
+    Require(static_cast<std::size_t>(frees) < releasePointers.size(), "release ledger capacity");
+    releasePointers[frees++] = pointer;
     std::free(pointer);
+    if (throwFrees & (1u << (frees - 1))) throw FreeFailure{frees};
 }
 
 void* APS5_VABI Calloc_nid_no_patch(std::size_t, std::size_t) { throw std::runtime_error("unexpected calloc"); }
@@ -157,6 +181,72 @@ void* APS5_VABI Reallocate_nid_no_patch(void*, std::size_t) { throw std::runtime
 void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
 void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
 int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
+
+void CheckCleanup(std::size_t count) {
+    bool matching = allocated.size() == count && static_cast<std::size_t>(frees) == count;
+    for (std::size_t i = 0; i < count; ++i) matching = matching && releasePointers[i] == allocationPointers[count - 1 - i];
+    if (!matching) {
+        std::fprintf(stderr, "CONF cleanup failed: allocations=%zu releases=%d expected=%zu\n", allocated.size(), frees, count);
+        std::abort();
+    }
+}
+
+void CleanupExceptions(const HostDirectory& host) {
+    for (unsigned cleanupThrows : {0u, 1u}) {
+        QueueEarlierError();
+        ResetAllocations(0);
+        throwAt = 2;
+        throwFrees = cleanupThrows;
+        bool caught = false;
+        try {
+            CONF_modules_load_file_nid_postfix(nullptr, nullptr, IgnoreMissingFile);
+        } catch (const AllocationFailure&) {
+            caught = true;
+        } catch (...) {
+            Require(false, "default-path allocation exception keeps precedence");
+        }
+        throwAt = 0;
+        throwFrees = 0;
+        Require(caught && calls == 2, "the second allocation callback throws before allocating the default path");
+        CheckCleanup(1);
+        Require(allocated == std::vector<std::size_t>{32}, "only the CONF allocation completed");
+        Require(Drain() == Codes{NoSuchEngine}, "allocation exceptions preserve the error queue");
+    }
+
+    for (bool existing : {false, true}) {
+        if (existing) std::ofstream(host.path / "openssl.cnf") << "existing configuration\n";
+        for (bool useDefault : {false, true}) {
+            const unsigned limit = useDefault ? 4 : 2;
+            for (unsigned mask = 0; mask < limit; ++mask) {
+                QueueEarlierError();
+                ResetAllocations(0);
+                throwFrees = mask;
+                bool returned = false;
+                bool unsupported = false;
+                int freeFailure = 0;
+                try {
+                    returned = CONF_modules_load_file_nid_postfix(useDefault ? nullptr :
+                        (existing ? "/etc/ssl/plain" : "/etc/ssl/missing.cnf"), nullptr, IgnoreMissingFile) == 1;
+                } catch (const FreeFailure& error) {
+                    freeFailure = error.ordinal;
+                } catch (const std::exception&) {
+                    unsupported = true;
+                } catch (...) {
+                    Require(false, "unexpected CONF cleanup exception");
+                }
+                throwFrees = 0;
+                CheckCleanup(useDefault ? 2 : 1);
+                Require(calls == (useDefault ? 2 : 1), "cleanup failure reaches the expected allocation stage");
+                Require(mask ? freeFailure == ((mask & 1) ? 1 : 2) : freeFailure == 0,
+                    "the first free exception is propagated without retry");
+                Require(unsupported == (existing && mask == 0), "existing files still throw after successful cleanup");
+                Require(returned == (!existing && mask == 0), "missing-file success is preserved");
+                Require(Drain() == (existing ? Codes{NoSuchEngine} : Codes{}), "cleanup preserves the existing error-queue policy");
+            }
+        }
+    }
+    Require(std::filesystem::remove(host.path / "openssl.cnf"), "remove the existing default configuration");
+}
 
 void Allocator(const HostDirectory& host) {
     std::array<void*, 10> api{
@@ -192,6 +282,7 @@ void Allocator(const HostDirectory& host) {
     Require(GuestErrno() == 12, "asprintf's ENOMEM is left in errno");
     Require(allocated == std::vector<std::size_t>{32} && frees == 1, "the CONF object is freed");
 
+    CleanupExceptions(host);
     ResetAllocations(0);
     RemovePathAlias_nid_no_patch("/etc/ssl");
 }

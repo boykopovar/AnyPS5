@@ -158,14 +158,15 @@ static void RequireNeverDecreases(int clockId) {
 
 static void Clock20UsesScaledMonotonicTime() {
     constexpr int clockId = 20;
-    constexpr std::int64_t tickCeilingNanos = 30519;
+    constexpr std::int64_t tickCeilingNanos = 30518;
+    constexpr std::int64_t microsecondTruncationNanos = 1000;
     const auto before = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
     const auto posix = Nanos(clockId);
     KernelTimespec sceTime{-1, -1};
     Require(sceKernelClockGettime(clockId, &sceTime) == SCE_OK);
     const auto sce = sceTime.tv_sec * NANOS_PER_SECOND + sceTime.tv_nsec;
     const auto after = Nanos(GUEST_CLOCK_MONOTONIC) / 64;
-    Require(before - tickCeilingNanos <= posix && posix <= sce && sce <= after);
+    Require(before - tickCeilingNanos - microsecondTruncationNanos <= posix && posix <= sce && sce <= after);
     Require(posix % 1000 == 0 && sce % 1000 == 0);
 }
 

@@ -2,6 +2,7 @@ import copy
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -226,6 +227,28 @@ class ProbeGenerationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "refusing to replace generated probe directories"):
                 probe_catalog.generate([probe], self.digest, output)
             self.assertEqual(marker.read_text(encoding="utf-8"), "existing")
+
+    def test_failed_promotion_removes_already_promoted_cases(self):
+        probes = self.catalog["probes"][:2]
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "generated"
+            destinations = [output / probe["id"] for probe in probes]
+            original_replace = os.replace
+            calls = []
+
+            def replace(source, destination):
+                calls.append(destination)
+                if len(calls) == 2:
+                    raise OSError("second promotion failed")
+                return original_replace(source, destination)
+
+            with patch.object(probe_catalog.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                probe_catalog.generate(probes, self.digest, output)
+            self.assertEqual([path.exists() for path in destinations], [False, False])
+            self.assertEqual([path for path in output.iterdir() if path.name.startswith(".probe-catalog-")], [])
+            generated = probe_catalog.generate(probes, self.digest, output)
+            self.assertEqual(generated, destinations)
+            self.assertTrue(all((path / "probe.json").is_file() for path in destinations))
 
 
 class ProbeRunTests(unittest.TestCase):
