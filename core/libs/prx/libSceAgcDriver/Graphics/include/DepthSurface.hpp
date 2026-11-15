@@ -24,6 +24,8 @@ DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const D
 enum class DepthPlaneScope { Overlapped, Whole };
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope = DepthPlaneScope::Overlapped);
 bool DepthPlanesStale();
+bool DepthPlanesStaleOver(std::uint64_t address, std::size_t bytes);
+std::uint64_t StalePlanesSerial();
 struct DepthPlaneStoreStatistics {
     std::uint64_t stores = 0;
     std::uint64_t units = 0;

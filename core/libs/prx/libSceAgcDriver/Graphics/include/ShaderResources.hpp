@@ -809,6 +809,11 @@ private:
     std::uint64_t pendingSerialSeen = 0;
     ExitStamp currentExitStamp() const;
     ExitStamp proved;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> flushRanges;
+    bool flushUnscoped = true;
+    std::uint64_t planesClean = 0;
+    void recordFlushRanges();
+    bool stalePlanesRead();
     bool refreshPerUseCopies();
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.

@@ -4578,6 +4578,36 @@ ShaderResources::ExitStamp ShaderResources::currentExitStamp() const {
     return {GuestMemory::CollectEpoch(), GuestMemory::ProofSerial(), StorageTexture::PendingSerial(), textureReleases.load(std::memory_order_acquire), GuestMemory::UnwatchSerial(), imported ? HostImportSetGeneration() : 0, imported ? GuestAllocations::GuestAllocationsGeneration_nid_postfix() : 0, DepthSurfacesSerial()};
 }
 
+void ShaderResources::recordFlushRanges() {
+    flushRanges.clear();
+    planesClean = 0;
+    flushUnscoped = textures.size() > validatedTextures.size();
+    for (const auto& region : directRegions) flushRanges.emplace_back(region.begin, region.end);
+    for (std::size_t index = 0; index < textures.size() && index < validatedTextures.size(); ++index) {
+        if (textures[index] == nullptr) continue;
+        const auto& surface = validatedTextures[index];
+        if (!surface.valid || (!surface.depth && surface.bytes == 0)) flushUnscoped = true;
+        flushRanges.emplace_back(surface.resource.baseAddress, surface.resource.baseAddress + surface.bytes);
+    }
+    for (const auto& image : storageTextures) {
+        if (image != nullptr) flushRanges.emplace_back(image->Descriptor().baseAddress, image->Descriptor().baseAddress + image->GuestBytes());
+    }
+    if (writeSubscription == nullptr) return;
+    for (const auto& span : GuestMemory::SubscriptionSpans(*writeSubscription)) flushRanges.push_back(span);
+}
+
+bool ShaderResources::stalePlanesRead() {
+    if (!DepthPlanesStale()) return false;
+    if (flushUnscoped) return true;
+    const auto serial = StalePlanesSerial();
+    if (serial == planesClean) return false;
+    for (const auto& [begin, end] : flushRanges) {
+        if (DepthPlanesStaleOver(begin, static_cast<std::size_t>(end - begin))) return true;
+    }
+    planesClean = serial;
+    return false;
+}
+
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (!registeredImageViewsCurrent(registeredImageViews)) {
         if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
@@ -4586,7 +4616,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     }
     if (EpochProofs()) {
         const auto stamp = currentExitStamp();
-        const bool stalePlanes = DepthPlanesStale();
+        const bool stalePlanes = proved.epoch != 0 && stalePlanesRead();
         const bool matched = stamp.epoch != 0 && proved == stamp && !stalePlanes;
         const bool copies = matched && !refreshPerUseCopies();
         if (matched && !copies) {
@@ -4603,6 +4633,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const bool ok = revalidateFull(shaders, report);
         noteEpochProof(false, false, false);
         proved = stamp;
+        recordFlushRanges();
         if (!ok || std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); })) proved.epoch = 0;
         return ok;
     }

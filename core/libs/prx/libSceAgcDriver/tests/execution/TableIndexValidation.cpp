@@ -1,7 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -30,6 +33,14 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -61,6 +72,7 @@ alignas(256) constexpr std::array<std::uint32_t, 11> PixelArrayCode{
     0xf42c0300u, 0xfa000060u, 0x7e140280u, 0x7e160280u, 0xbf8cc07fu, 0xf0000f08u, 0x0003100au, 0xbf8c3f70u, 0xf800180fu, 0x13121110u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 4> DepthPixelCode{0x7e0002f2u, 0xf800180fu, 0x00000000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
     0x7e040300u, 0x7e060280u, 0x7e0202ffu, 0x12345678u, 0xf0200108u, 0x00020102u, 0xbf810000u,
 };
@@ -144,7 +156,7 @@ struct Scene {
     std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{};
     AgcDriver::Graphics::State state{};
 
-    Scene() : blocks(2u * BlockBytes), table(BlockBytes), textures(static_cast<std::size_t>(Images) * BlockBytes) {}
+    explicit Scene(std::size_t tableBytes = BlockBytes) : blocks(2u * BlockBytes), table(tableBytes), textures(static_cast<std::size_t>(Images) * BlockBytes) {}
 
     float* Texels(std::uint32_t image) const { return reinterpret_cast<float*>(textures.base + static_cast<std::size_t>(image) * BlockBytes); }
     std::uint32_t* Table() const { return reinterpret_cast<std::uint32_t*>(table.base); }
@@ -153,11 +165,11 @@ struct Scene {
 
 std::vector<std::unique_ptr<Scene>> Scenes;
 
-Scene& NewScene() {
-    return *Scenes.emplace_back(std::make_unique<Scene>());
+Scene& NewScene(std::size_t tableBytes = BlockBytes) {
+    return *Scenes.emplace_back(std::make_unique<Scene>(tableBytes));
 }
 
-void Build(AgcDriver::VulkanDevice& device, Scene& scene, bool arrays = false) {
+void Build(AgcDriver::VulkanDevice& device, Scene& scene, bool arrays = false, std::uint32_t tableSpan = 0) {
     const auto target = device.Target();
     const std::uint32_t stride = arrays ? 8u : 4u;
     for (std::uint32_t image = 0; image < Images; ++image) {
@@ -193,10 +205,10 @@ void Build(AgcDriver::VulkanDevice& device, Scene& scene, bool arrays = false) {
     pixel.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(12, 0u);
     const std::span<const std::uint32_t> code = arrays ? std::span<const std::uint32_t>(PixelArrayCode) : std::span<const std::uint32_t>(PixelTableCode);
-    const auto tableWords = Buffer(scene.Table(), Images * stride * 4u);
+    const auto tableWords = Buffer(scene.Table(), tableSpan != 0 ? tableSpan : Images * stride * 4u);
     std::copy(tableWords.begin(), tableWords.end(), pixelUserData.begin());
     pixelUserData[4] = Key;
-    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {reinterpret_cast<std::uintptr_t>(scene.Table()), std::as_bytes(std::span(scene.Table(), Images * stride))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {reinterpret_cast<std::uintptr_t>(scene.Table()), std::as_bytes(std::span(scene.Table(), tableSpan != 0 ? tableSpan / 4u : Images * stride))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
@@ -319,6 +331,75 @@ void TableWord(AgcDriver::VulkanDevice& device) {
     outcome = Draw(device, scene);
     Require(outcome.accepted == 0.0, "table word: restoring the T# word did not invalidate the O(1) proof (" + outcome.Describe() + ")");
     Settle(device, scene, "table word (after)");
+}
+
+void DepthPlane(AgcDriver::VulkanDevice& device) {
+    using AgcDriver::Graphics::ShaderResources;
+    auto& scene = NewScene(2u * BlockBytes);
+    Build(device, scene, false, static_cast<std::uint32_t>(2u * BlockBytes));
+    Settle(device, scene, "depth plane");
+    const auto table = reinterpret_cast<std::uintptr_t>(scene.table.base);
+    auto depth = scene.state;
+    depth.colors.clear();
+    depth.blends.clear();
+    depth.hasColorTarget = false;
+    depth.depth = AgcDriver::Graphics::DepthTarget{table + BlockBytes, 0, {128, 128}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    depth.depth->depthSwizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
+    depth.depthTest = true;
+    depth.depthWrite = true;
+    depth.depthCompare = VK_COMPARE_OP_ALWAYS;
+    depth.renderExtent = {128, 128};
+    depth.viewport = {0, 128.0f, 128.0f, -128.0f, 0, 1};
+    depth.scissor = {{0, 0}, {128, 128}};
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.wave32 = true;
+    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
+    pixel.posX = true;
+    pixel.posY = true;
+    pixel.targetOutputMode[0] = 9;
+    pixel.targetExportMapping.fill(0xe4u);
+    const std::vector<std::uint32_t> pixelUserData(4, 0u);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(DepthPixelCode.data()), std::as_bytes(std::span(DepthPixelCode))}}};
+    const auto vertexPush = static_cast<std::uint32_t>(scene.vertex.pushConstants.size());
+    const ShaderRecompiler::RecompileRequest fragment{
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(DepthPixelCode.data()), DepthPixelCode, 0, {}},
+        {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
+        device.Target(),
+        PixelPushLayout(vertexPush, device.Target())
+    };
+    const auto depthPixel = ShaderRecompiler::Recompile(fragment);
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> depthShaders{{{ShaderStage::Vertex, &scene.vertex, 0}, {ShaderStage::Fragment, &depthPixel, PixelPushOffset(vertexPush, device.Target())}}};
+    const auto drawDepth = [&] {
+        device.Draw(depth, TriangleDraw, depthShaders);
+        device.WaitIdle();
+    };
+    const auto reuses = [] { return AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum(); };
+    drawDepth();
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "depth plane: epoch proofs are off");
+    GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, std::span<const AgcDriver::Graphics::CompiledShader>(scene.shaders), scene.state.color, 1u, 0, 0);
+    Require(resources->Reusable(), "depth plane: the table build is not reusable");
+    Require(resources->Revalidate(scene.shaders), "depth plane: the table build did not prove current");
+    auto before = reuses();
+    bool settled = false;
+    for (int round = 0; round < 4 && !settled; ++round) {
+        before = reuses();
+        settled = resources->Revalidate(scene.shaders) && reuses() != before;
+    }
+    drawDepth();
+    const bool stale = AgcDriver::Graphics::DepthPlanesStale();
+    before = reuses();
+    const bool proved = resources->Revalidate(scene.shaders);
+    const bool exited = reuses() != before;
+    const bool left = !AgcDriver::Graphics::FlushDepthPlanes(table, 2u * BlockBytes).empty();
+    std::printf("depth plane: an unchanged table build %s the resource epoch exit; a depth draw over the T# table's span %s its plane stale, and the next proof %s the exit and %s, leaving the plane %s\n", settled ? "took" : "did not take", stale ? "left" : "did not leave", exited ? "took" : "did not take", proved ? "proved current" : "refused", left ? "unstored" : "stored");
+    Require(settled, "depth plane: an unchanged table build in one collect epoch did not take the resource epoch exit");
+    Require(stale, "depth plane: the depth draw over the T# table's span left no stale plane");
+    Require(!left, "depth plane: a table build proved without storing the stale depth plane over its T# table's span");
+    resources.reset();
 }
 
 void PendingWrite(AgcDriver::VulkanDevice& device) {
@@ -527,7 +608,7 @@ int main(int argc, char** argv) {
         TargetBytes = AgcDriver::Graphics::ColorTargetLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4).Bytes();
         GuestBlocks target((TargetBytes + BlockBytes - 1) / BlockBytes * BlockBytes);
         Target = &target;
-        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 11> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
+        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 12> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"depth", &DepthPlane}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
         for (const auto& [name, run] : cases) {
             if (!args.empty() && std::find(args.begin(), args.end(), name) == args.end()) continue;
             run(*device);
