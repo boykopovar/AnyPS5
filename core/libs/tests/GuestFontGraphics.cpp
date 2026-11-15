@@ -968,6 +968,9 @@ void GraphicsServiceValidation() {
     param.tag = 0x0e09;
     RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
     RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, nullptr), InvalidParameter);
+    errno = 71;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, reinterpret_cast<FontGraphicsService**>(0x10)), InvalidParameter);
+    Require(errno == 71);
     param = f.param;
     param.level = 0xff;
     RequireError(sceFontCreateGraphicsServiceWithEdition(&f.memory, &param, 0, &service), Uninitialized);
