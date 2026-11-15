@@ -22,6 +22,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -350,6 +351,39 @@ private:
     bool open = false;
 };
 
+class HeldCall {
+public:
+    HeldCall(AgcDriver::FrameRecorder& recorder, const Packet& packet) : thread([this, &recorder, &packet] {
+        try {
+            recorder.Submit(packet, 0, [&] {
+                entered.Open();
+                check(release.Wait(), "the test did not release a call held in its acceptance");
+                check(sceAgcDriverSubmitDcb(const_cast<Packet*>(&packet)) == 0, "a held call's submission was refused");
+            });
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }) {}
+    HeldCall(const HeldCall&) = delete;
+    HeldCall& operator=(const HeldCall&) = delete;
+    ~HeldCall() {
+        release.Open();
+        if (thread.joinable()) thread.join();
+    }
+    bool Entered() { return entered.Wait(); }
+    void Finish() {
+        release.Open();
+        thread.join();
+        if (failure) std::rethrow_exception(failure);
+    }
+
+private:
+    Latch entered;
+    Latch release;
+    std::exception_ptr failure;
+    std::thread thread;
+};
+
 void finishedWithin(const std::function<void()>& call, const char* what) {
     auto done = std::make_shared<std::promise<void>>();
     auto finished = done->get_future();
@@ -408,32 +442,24 @@ void testRecorderStartsAfterAdmittedCalls() {
     const std::array<std::uint32_t, 5> write{0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 1u};
     std::memcpy(block + 1024, write.data(), sizeof(write));
     const Packet labelled{reinterpret_cast<std::uint32_t*>(block + 1024), static_cast<std::uint32_t>(write.size()), 0, {}};
-    Latch entered;
-    Latch release;
-    std::exception_ptr failure;
-    std::thread admitted([&] {
-        try {
-            recorder->Submit(labelled, 0, [&] {
-                holding.store(true);
-                entered.Open();
-                check(release.Wait(), "the test did not release the call held in its acceptance");
-                check(sceAgcDriverSubmitDcb(const_cast<Packet*>(&labelled)) == 0, "the held call's submission was refused");
-            });
-        } catch (...) {
-            failure = std::current_exception();
-        }
-    });
-    check(entered.Wait(), "the held call did not reach its acceptance");
+    std::optional<HeldCall> first(std::in_place, *recorder, labelled);
+    std::optional<HeldCall> second(std::in_place, *recorder, labelled);
+    check(first->Entered() && second->Entered(), "the held calls did not reach their acceptance");
+    holding.store(true);
     { std::ofstream(trigger) << 1; }
-    finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary while a call was being accepted");
-    const bool deferred = !started();
+    finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary while two calls were being accepted");
+    const bool deferredBoth = !started();
+    first->Finish();
+    first.reset();
+    finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary while the second of two calls was being accepted");
+    const bool deferredSecond = !started();
     holding.store(false);
-    release.Open();
-    admitted.join();
-    if (failure) std::rethrow_exception(failure);
-    check(deferred, "the frame recorder started while a call it does not record was still being accepted");
+    second->Finish();
+    second.reset();
+    check(deferredBoth, "the frame recorder started while two calls it does not record were still being accepted");
+    check(deferredSecond, "the frame recorder started once the first of two overlapping calls was accepted, while the second was still being accepted");
     check(waitsWhileHeld.load() == 0, "the frame recorder waited for the driver to go idle while a call it does not record was still being accepted");
-    finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary after the held call");
+    finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary after the held calls");
     check(started(), "the frame recorder did not start once no call was being accepted, so a call whose acceptance threw or re-entered is still counted");
     check(waits.load() == 1, "the frame recorder did not wait for the driver to go idle exactly once, at the start");
     finishedWithin([&] { recorder->FrameBoundary(); }, "the frame boundary that ends the capture");
