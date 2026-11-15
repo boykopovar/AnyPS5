@@ -12,12 +12,15 @@ constexpr std::uint32_t SCALE_FORMAT_Y8 = 0x4;
 constexpr std::uint32_t RESOLUTION_1280X800 = 0x0;
 constexpr std::uint32_t FRAMERATE_60 = 60;
 
-bool ValidConfig(const CameraConfig* config) {
-    return config && config->sizeThis == sizeof(CameraConfig);
-}
-
 int CheckConfig(std::int32_t handle, const CameraConfig* config) {
-    if (handle < 1 || !ValidConfig(config)) return SCE_CAMERA_ERROR_PARAM;
+    if (handle < 1 || !config) return SCE_CAMERA_ERROR_PARAM;
+    std::uint32_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &config->sizeThis, sizeof(size)) || size != sizeof(CameraConfig)) {
+        errno = savedErrno;
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    errno = savedErrno;
     if (!Camera::IsOpen(handle)) return SCE_CAMERA_ERROR_NOT_OPEN;
     return 0;
 }

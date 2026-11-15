@@ -1,6 +1,8 @@
 #include "prx/libSceMbus/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -363,7 +365,16 @@ int APS5_VABI sceMbusEventBusStatusChangeUnsubscribe(std::uint64_t unusedSlot, s
 }
 
 void APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size) {
-    if (callbacks != nullptr) std::memset(callbacks, 0, size);
+    if (callbacks == nullptr || size == 0) return;
+    constexpr std::array<std::byte, 256> zero{};
+    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(callbacks);
+    if (address > UINTPTR_MAX - size) return;
+    const int savedErrno = errno;
+    for (std::size_t offset = 0; offset < size; offset += zero.size()) {
+        const std::size_t bytes = std::min<std::size_t>(size - offset, zero.size());
+        if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + offset), zero.data(), bytes)) break;
+    }
+    errno = savedErrno;
 }
 
 int APS5_VABI sceMbusEventCreate_(std::uint32_t flags, MbusEvent* buffer, std::uint32_t capacity, const MbusEventCallbacks* callbacks, void* userData) {

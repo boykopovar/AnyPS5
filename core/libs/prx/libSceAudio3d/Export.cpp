@@ -253,7 +253,10 @@ std::uint32_t QueueLevel() {
 int CheckFloatAttribute(const void* attribute, std::size_t attribute_size, float minimum, float maximum) {
     if (attribute == nullptr || attribute_size != sizeof(float)) return AUDIO3D_ERROR_INVALID_PARAMETER;
     float value = 0.0f;
-    if (!GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value))) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, attribute, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
     if (!std::isfinite(value) || value < minimum || value > maximum) return AUDIO3D_ERROR_INVALID_PARAMETER;
     return 0;
 }
@@ -573,18 +576,27 @@ int APS5_VABI sceAudio3dObjectSetAttributes(uint32_t port_id, uint32_t object_id
         if (num_attributes == 0 || attribute_array == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
         std::lock_guard lock(g_mutex);
         if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
+        const auto address = reinterpret_cast<std::uintptr_t>(attribute_array);
+        if (num_attributes > (UINTPTR_MAX - address) / sizeof(Audio3dAttribute)) return AUDIO3D_ERROR_INVALID_PARAMETER;
+        const auto copyIn = [](void* destination, const void* source, std::size_t size) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+            errno = savedErrno;
+            return copied;
+        };
+        bool missingValue = false;
         for (std::uint64_t i = 0; i < num_attributes; ++i) {
-            const Audio3dAttribute& attribute = attribute_array[i];
+            Audio3dAttribute attribute{};
+            const auto* source = reinterpret_cast<const void*>(address + i * sizeof(Audio3dAttribute));
+            if (!copyIn(&attribute, source, sizeof(attribute))) return AUDIO3D_ERROR_INVALID_PARAMETER;
             if (attribute.attribute_id < AUDIO3D_OBJECT_ATTRIBUTE_PCM || attribute.attribute_id > AUDIO3D_OBJECT_ATTRIBUTE_OUTPUT_ROUTE) return AUDIO3D_ERROR_INVALID_PARAMETER;
+            if (attribute.attribute_id != AUDIO3D_OBJECT_ATTRIBUTE_RESET_STATE && attribute.value == nullptr) missingValue = true;
             if (attribute.attribute_id != AUDIO3D_OBJECT_ATTRIBUTE_PCM) continue;
-            const auto* pcm = static_cast<const Audio3dPcm*>(attribute.value);
-            if (pcm == nullptr || pcm->num_samples == 0 || pcm->format > AUDIO3D_FORMAT_FLOAT) return AUDIO3D_ERROR_INVALID_PARAMETER;
+            Audio3dPcm pcm{};
+            if (attribute.value == nullptr || !copyIn(&pcm, attribute.value, sizeof(pcm)) || pcm.num_samples == 0 || pcm.format > AUDIO3D_FORMAT_FLOAT) return AUDIO3D_ERROR_INVALID_PARAMETER;
         }
         if (!g_port.objects.contains(object_id & AUDIO3D_OBJECT_ID_MASK)) return AUDIO3D_ERROR_INVALID_OBJECT;
-        for (std::uint64_t i = 0; i < num_attributes; ++i) {
-            if (attribute_array[i].attribute_id == AUDIO3D_OBJECT_ATTRIBUTE_RESET_STATE) continue;
-            if (attribute_array[i].value == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
-        }
+        if (missingValue) return AUDIO3D_ERROR_INVALID_PARAMETER;
         return 0;
     }();
     Report(port_id, object_id, result, __func__, "HOA", port_id, object_id, num_attributes, attribute_array);
@@ -631,9 +643,12 @@ int APS5_VABI sceAudio3dBedWrite2(uint32_t port_id, uint32_t num_channels, uint3
         const std::uint32_t samples = std::min(num_samples, g_port.granularity);
         const std::size_t bytes = static_cast<std::size_t>(samples) * num_channels * sample_size;
         if (g_port.beds.size() >= g_port.queue_depth) return AUDIO3D_ERROR_NOT_READY;
-        const auto* first = static_cast<const std::uint8_t*>(buffer);
         Audio3dBed bed;
-        bed.pcm.assign(first, first + bytes);
+        bed.pcm.resize(bytes);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(bed.pcm.data(), buffer, bytes);
+        errno = savedErrno;
+        if (!copied) return AUDIO3D_ERROR_INVALID_PARAMETER;
         bed.channels = num_channels;
         bed.format = format;
         bed.samples = samples;
@@ -819,8 +834,19 @@ int APS5_VABI sceAudio3dReportRegisterHandler(uint32_t type, Audio3dReportHandle
             registered = reinterpret_cast<std::uintptr_t>(slot);
             result = 0;
         }
+        if (handle != nullptr) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(handle, &registered, sizeof(registered));
+            errno = savedErrno;
+            if (!copied) {
+                if (result == 0) {
+                    *slot = Audio3dReportSlot{};
+                    if (type == AUDIO3D_REPORT_TYPE_CALL) --g_call_report_handlers;
+                }
+                throw std::runtime_error("sceAudio3dReportRegisterHandler: unwritable guest handle");
+            }
+        }
     }
-    if (handle != nullptr) *handle = registered;
     return result;
 }
 

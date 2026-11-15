@@ -195,6 +195,9 @@ static void CheckStickDeadZones(int handle) {
 
 static void CheckTouchContact(int handle) {
     Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadReadState(handle, reinterpret_cast<PadData*>(std::uintptr_t{0x10})) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
     for (const int invalid : {-1, 0, handle + 1, 9999}) {
         Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -265,6 +268,9 @@ static void CheckHandleQueries(int user, int handle) {
 
     float value = 1.0f;
     Require(scePadGetMotionTimerUnit(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetMotionTimerUnit(handle, reinterpret_cast<float*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetMotionTimerUnit(closed, &value) == PAD_ERROR_INVALID_HANDLE && value == 0.0f);
     value = 1.0f;
     Require(scePadGetMotionTimerUnit(handle, &value) == notConnected && value == 0.0f);
@@ -310,6 +316,43 @@ static void CheckHandleQueries(int user, int handle) {
     Require(scePadResetLightBarAll() == PAD_OK && !LightBarValid());
     Require(scePadClose_nid_postfix(special) == PAD_OK);
     Require(!scePadIsValidHandle(special, PAD_PORT_TYPE_SPECIAL));
+}
+
+static void CheckSetParameterGuestMemory(int handle) {
+    errno = 91;
+    Require(scePadSetVibration(handle, reinterpret_cast<const PadVibrationParam*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 91);
+    errno = 92;
+    Require(scePadSetVibrationForce(handle, reinterpret_cast<const PadVibrationParam*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 92);
+    errno = 93;
+    Require(scePadSetLightBar(handle, reinterpret_cast<const PadLightBarParam*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 93);
+    errno = 94;
+    Require(scePadSetVolumeGain(handle, reinterpret_cast<const PadVolumeGain*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 94);
+    PadDeviceClassData classData;
+    std::memset(&classData, 0xaa, sizeof(classData));
+    errno = 95;
+    Require(scePadDeviceClassParseData(handle, reinterpret_cast<const PadData*>(0x10), &classData) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 95);
+    for (std::size_t index = 0; index < sizeof(classData); ++index) {
+        Require(reinterpret_cast<const std::uint8_t*>(&classData)[index] == 0xaa);
+    }
+    const PadData padData{};
+    errno = 96;
+    Require(scePadDeviceClassParseData(handle, &padData, reinterpret_cast<PadDeviceClassData*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 96);
+    const PadVibrationParam vibration{9, 10};
+    const PadLightBarParam color{11, 12, 13};
+    const PadVolumeGain gain{14, 15, 0, 16};
+    Require(scePadSetVibration(handle, &vibration) == PAD_OK);
+    Require(scePadSetVibrationForce(handle, &vibration) == PAD_OK);
+    Require(scePadSetLightBar(handle, &color) == PAD_OK && LightBarValid());
+    Require(scePadSetVolumeGain(handle, &gain) == PAD_OK);
+    PadDeviceClassData parsed{};
+    Require(scePadDeviceClassParseData(handle, &padData, &parsed) == PAD_OK);
+    Require(parsed.deviceClass == PAD_DEVICE_CLASS_STANDARD && !parsed.dataValid);
 }
 
 static void CheckVirtualTouchContact(int handle) {
@@ -374,6 +417,9 @@ static void CheckReadQueue(int handle) {
     Require(data[0].timestamp <= data[1].timestamp);
     Require(scePadRead_nid_postfix(handle, data, 4) == 1);
     Require(data[0].buttons == 0);
+    errno = 71;
+    Require(scePadRead_nid_postfix(handle, reinterpret_cast<PadData*>(std::uintptr_t{0x10}), 4) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 }
 
 static void CheckTapBetweenReads() {
@@ -704,6 +750,9 @@ static void CheckRemoteController(int handle) {
     Require(scePadIsRemoteController(handle + 1, &remote) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadIsRemoteController(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(remote);
+    errno = 71;
+    Require(scePadIsRemoteController(handle, reinterpret_cast<bool*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadIsRemoteController(handle, &remote) == PAD_OK);
     Require(!remote);
 }
@@ -993,6 +1042,9 @@ static void CheckTriggerEffect(int user, int handle) {
     Require(scePadGetTriggerEffectState(0, &info) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetTriggerEffectState(0, nullptr) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetTriggerEffectState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadGetTriggerEffectState(handle, reinterpret_cast<PadTriggerEffectStateInformation*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
     Require(scePadGetTriggerEffectState(handle, &info) == PAD_OK);
     std::array<std::uint8_t, 120> param{};
     const auto command = [&](int trigger, std::uint32_t mode, const std::array<std::uint8_t, 3>& data) {
@@ -1590,6 +1642,7 @@ int main() {
     CheckHandleQueries(user, handle);
     CheckVirtualTouchContact(handle);
     CheckTouchPadInformation(handle);
+    CheckSetParameterGuestMemory(handle);
     CheckStickDeadZones(handle);
     CheckExtControllerInformation(handle);
     CheckPartialTrigger();
@@ -1735,6 +1788,9 @@ int main() {
     Require(scePadSetTriggerEffect(handle2 + 99, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(-1, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTriggerEffect(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+    errno = 71;
+    Require(scePadSetTriggerEffect(handle2, reinterpret_cast<const void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 
     PadInputState p0MotionSample{};
     p0MotionSample.hasMotion = true;

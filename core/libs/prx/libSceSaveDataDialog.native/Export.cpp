@@ -1,5 +1,6 @@
 #include "prx/libSceSaveDataDialog.native/include/Api.hpp"
 #include "prx/libSceSaveDataDialog/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -7,6 +8,24 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+ errno = savedErrno;
+ return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+ errno = savedErrno;
+ return copied;
+}
+
+} // namespace
 
 static int g_status = SAVE_DATA_DIALOG_STATUS_NONE;
 static int g_mode = 0;
@@ -42,7 +61,7 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  void* dir_name = nullptr;
- if (!GuestCopyIn_nid_no_patch(&dir_name, static_cast<const char*>(result) + offsetof(SaveDataDialogResult, dir_name), sizeof(dir_name))) {
+ if (!CopyInPreservingErrno(&dir_name, static_cast<const char*>(result) + offsetof(SaveDataDialogResult, dir_name), sizeof(dir_name))) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  struct ResultHeader {
@@ -50,16 +69,16 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
   std::int32_t result;
   std::int32_t button_id;
  } header{g_mode, SAVE_DATA_DIALOG_RESULT_OK, SAVE_DATA_DIALOG_BUTTON_ID_OK};
- if (!GuestCopyOut_nid_no_patch(result, &header, sizeof(header))) {
+ if (!CopyOutPreservingErrno(result, &header, sizeof(header))) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  void* user_data = g_user_data;
- if (!GuestCopyOut_nid_no_patch(static_cast<char*>(result) + offsetof(SaveDataDialogResult, user_data), &user_data, sizeof(user_data))) {
+ if (!CopyOutPreservingErrno(static_cast<char*>(result) + offsetof(SaveDataDialogResult, user_data), &user_data, sizeof(user_data))) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  if (dir_name != nullptr) {
   const std::size_t len = std::strlen(g_dir_name) + 1;
-  if (!GuestCopyOut_nid_no_patch(dir_name, g_dir_name, len)) {
+  if (!CopyOutPreservingErrno(dir_name, g_dir_name, len)) {
    return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
   }
  }
