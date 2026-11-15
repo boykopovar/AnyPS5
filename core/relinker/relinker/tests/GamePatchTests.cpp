@@ -476,6 +476,55 @@ std::vector<std::uint8_t> framedLeafFixture() {
     return bytes;
 }
 
+std::vector<std::uint8_t> unwindRangeFixture(const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
+    auto bytes = conversionFixture();
+    Io::WriteU64(bytes, 64 + 32, 0x400);
+    Io::WriteU64(bytes, 64 + 40, 0x400);
+    std::fill(bytes.begin() + 0x1000, bytes.begin() + 0x1400, 0xcc);
+    std::fill(bytes.begin() + 0x1040, bytes.begin() + 0x1100, 0x90);
+    bytes[0x1100] = 0xc3;
+    const std::vector<std::uint8_t> caller{0xe8, 0xfb, 0x01, 0x00, 0x00, 0xc3};
+    std::copy(caller.begin(), caller.end(), bytes.begin() + 0x1000);
+    const std::vector<std::uint8_t> shape{0x49, 0x83, 0xc4, 0x18, 0xe9, 0x64, 0xfe, 0xff, 0xff, 0x45, 0x31, 0xe4, 0x31, 0xed, 0xc3};
+    std::copy(shape.begin(), shape.end(), bytes.begin() + 0x1200);
+    const auto ehFrameHeader = 64 + 7 * 56;
+    Io::WriteU32(bytes, ehFrameHeader, 0x6474e550);
+    Io::WriteU32(bytes, ehFrameHeader + 4, 4);
+    for (const auto field : {8, 16, 24}) Io::WriteU64(bytes, ehFrameHeader + field, 0x2900);
+    Io::WriteU64(bytes, ehFrameHeader + 32, 16 + 16 * ranges.size());
+    Io::WriteU64(bytes, ehFrameHeader + 40, 16 + 16 * ranges.size());
+    Io::WriteU64(bytes, ehFrameHeader + 48, 4);
+    Io::WriteU32(bytes, 0x2800, 9);
+    const std::vector<std::uint8_t> cie{1, 0, 1, 0x78, 16};
+    std::copy(cie.begin(), cie.end(), bytes.begin() + 0x2808);
+    bytes[0x2900] = 1;
+    bytes[0x2902] = 3;
+    Io::WriteU64(bytes, 0x2904, 0x2800);
+    Io::WriteU32(bytes, 0x290c, static_cast<std::uint32_t>(ranges.size()));
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        const auto fde = 0x2840 + 0x30 * index;
+        Io::WriteU32(bytes, fde, 20);
+        Io::WriteU32(bytes, fde + 4, static_cast<std::uint32_t>(fde + 4 - 0x2800));
+        Io::WriteU64(bytes, fde + 8, ranges[index].first);
+        Io::WriteU64(bytes, fde + 16, ranges[index].second - ranges[index].first);
+        Io::WriteU64(bytes, 0x2910 + 16 * index, ranges[index].first);
+        Io::WriteU64(bytes, 0x2918 + 16 * index, fde);
+    }
+    return bytes;
+}
+
+void unwindRangeInsideInstruction() {
+    TestProgress progress;
+    const Conversion converter(progress);
+    ConversionOptions options;
+    options.TargetName = "custom-name.bin";
+    options.Target = TargetSystem::Windows;
+    using Ranges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+    for (const auto& ranges : {Ranges{{0x1200, 0x120f}, {0x1205, 0x1206}}, Ranges{{0x1200, 0x1209}, {0x1205, 0x1206}}, Ranges{{0x1200, 0x1209}, {0x1209, 0x120f}}})
+        converter.Convert(conversionInput(unwindRangeFixture(ranges)), options);
+    rejects([&] { converter.Convert(conversionInput(unwindRangeFixture({{0x1205, 0x1206}})), options); }, "Instruction truncated after prefixes");
+}
+
 void framedLeafPatches() {
     TestProgress progress;
     const Conversion converter(progress);
@@ -686,6 +735,7 @@ int main() {
         overlapWithWriters();
         conversion();
         framedLeafPatches();
+        unwindRangeInsideInstruction();
         targets();
         verify();
         rangeFailureInVerify();

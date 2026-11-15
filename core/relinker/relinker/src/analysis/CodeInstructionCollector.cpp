@@ -545,7 +545,32 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
     for (const auto& [begin, end] : functions) functionBytes += end - begin;
     std::uint64_t decodedBytes = 0;
     report(1000);
+    std::vector<std::uint64_t> decodedStarts;
+    const auto insideDecodedInstruction = [&](std::uint64_t address) {
+        if (decodedStarts.size() != instructionList.size()) {
+            decodedStarts = instructionList;
+            std::sort(decodedStarts.begin(), decodedStarts.end());
+            decodedStarts.erase(std::unique(decodedStarts.begin(), decodedStarts.end()), decodedStarts.end());
+        }
+        const auto next = std::upper_bound(decodedStarts.begin(), decodedStarts.end(), address);
+        if (next == decodedStarts.begin()) return false;
+        const auto start = *std::prev(next);
+        if (start == address) return false;
+        const auto offset = fileOffset(start, 1);
+        try {
+            const auto length = decoder.DecodeInstruction(bytes.data() + offset, std::min<std::uint64_t>(15, bytes.size() - offset)).Length;
+            return start + length > address;
+        } catch (const Codegen::CodegenException&) {
+            return false;
+        }
+    };
+    std::uint64_t decodedEnd = 0;
     for (const auto& [begin, end] : functions) {
+        if (begin < decodedEnd && insideDecodedInstruction(begin)) {
+            roots.erase(begin);
+            continue;
+        }
+        decodedEnd = std::max(decodedEnd, end);
         const auto offset = fileOffset(begin, end - begin);
         for (auto address = begin; address < end;) {
             Codegen::DecodedInstructionInfo info;
