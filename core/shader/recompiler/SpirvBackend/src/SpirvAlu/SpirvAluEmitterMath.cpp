@@ -1900,8 +1900,72 @@ std::uint32_t EmitBitCastF32U32(SpirvEmitterState& state, std::uint32_t arg0) {
     return EmitNative<spv::OpBitcast, IrType::F32>(state, arg0);
 }
 
-std::uint32_t EmitConvertF32U32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return EmitNative<spv::OpConvertUToF, IrType::F32>(state, arg0);
+bool SignExtendedU32(const IrValue& root) {
+    std::vector<const IrValue*> work{&root};
+    std::unordered_set<const IrValue*> visited;
+    while (!work.empty()) {
+        const IrValue* value = Resolved(work.back());
+        work.pop_back();
+        if (value == nullptr || value->HasImmediate() || !visited.insert(value).second) continue;
+        switch (value->Opcode()) {
+            case IrOpcode::BitFieldSExtract:
+            case IrOpcode::ShiftRightArithmetic32:
+                return true;
+            case IrOpcode::Phi:
+                for (std::size_t index = 0; index < value->ArgumentCount(); ++index) work.push_back(value->Argument(index));
+                break;
+            case IrOpcode::Select:
+            case IrOpcode::SelectU32:
+                if (value->ArgumentCount() >= 3u) {
+                    work.push_back(value->Argument(1u));
+                    work.push_back(value->Argument(2u));
+                }
+                break;
+            case IrOpcode::WriteLane:
+                if (value->ArgumentCount() >= 3u) {
+                    work.push_back(value->Argument(0u));
+                    work.push_back(value->Argument(2u));
+                }
+                break;
+            case IrOpcode::DppUpdateU32:
+                if (value->ArgumentCount() >= 2u) {
+                    work.push_back(value->Argument(0u));
+                    work.push_back(value->Argument(1u));
+                }
+                break;
+            case IrOpcode::Permlane16U32: {
+                const auto flags = value->Flags<PermlaneFlags>();
+                if (value->ArgumentCount() >= 1u) work.push_back(value->Argument(0u));
+                if (!flags.fetchInactive && !flags.boundControl && value->ArgumentCount() > 4u) work.push_back(value->Argument(4u));
+                break;
+            }
+            case IrOpcode::ReadFirstLane:
+            case IrOpcode::ReadLane:
+            case IrOpcode::DppMoveU32:
+            case IrOpcode::BpermuteU32:
+            case IrOpcode::PermuteU32:
+            case IrOpcode::HalfSwapU32:
+            case IrOpcode::SwizzleU32:
+            case IrOpcode::BitCastU32F32:
+            case IrOpcode::ConvertU32U16:
+            case IrOpcode::ConvertU32U8:
+                if (value->ArgumentCount() >= 1u) work.push_back(value->Argument(0u));
+                break;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+std::uint32_t EmitConvertF32U32(SpirvEmitterState& state, const IrValue& inst, std::uint32_t arg0) {
+    if (!SignExtendedU32(*inst.Argument(0))) return EmitNative<spv::OpConvertUToF, IrType::F32>(state, arg0);
+    const auto u32 = TypeU32(state);
+    const auto f32 = TypeF32(state);
+    const auto negative = Binary(state, spv::OpSLessThan, TypeBool(state), Unary(state, spv::OpBitcast, TypeI32(state), arg0), ConstantI32(state, 0));
+    const auto half = Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpShiftRightLogical, u32, arg0, ConstantU32(state, 1u)), Binary(state, spv::OpBitwiseAnd, u32, arg0, ConstantU32(state, 1u)));
+    const auto magnitude = Unary(state, spv::OpConvertSToF, f32, Unary(state, spv::OpBitcast, TypeI32(state), Select(state, u32, negative, half, arg0)));
+    return Select(state, f32, negative, ExactMul(state, magnitude, ConstantF32(state, 0x40000000u)), magnitude);
 }
 
 std::uint32_t EmitCompositeConstructU64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {

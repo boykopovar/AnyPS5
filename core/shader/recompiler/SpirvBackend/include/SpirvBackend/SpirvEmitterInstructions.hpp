@@ -117,7 +117,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitUnreachable(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitBitCastU16F16(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitBitCastF32U32(SpirvEmitterState& state, std::uint32_t arg0);
-std::uint32_t EmitConvertF32U32(SpirvEmitterState& state, std::uint32_t arg0);
+std::uint32_t EmitConvertF32U32(SpirvEmitterState& state, const IrValue& inst, std::uint32_t arg0);
 std::uint32_t EmitCompositeConstructU64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitCompositeConstructU32x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);
 std::uint32_t EmitCompositeConstructU32x3(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2);
@@ -220,7 +220,7 @@ std::uint32_t EmitFPInterpolateF16(SpirvEmitterState& state, std::uint32_t arg0,
 std::uint32_t EmitConvertF32F64(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitConvertF64F32(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitConvertF64S32(SpirvEmitterState& state, std::uint32_t arg0);
-std::uint32_t EmitConvertF64U32(SpirvEmitterState& state, std::uint32_t arg0);
+std::uint32_t EmitConvertF64U32(SpirvEmitterState& state, const IrValue& inst, std::uint32_t arg0);
 std::uint32_t EmitConvertS32F64(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitConvertU32F64(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitBitCastF16U16(SpirvEmitterState& state, std::uint32_t arg0);
