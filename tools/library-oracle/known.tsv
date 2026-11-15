@@ -45,7 +45,6 @@ agcbuild_DcbAtomicMem_a	diff	more than six arguments; the console's stack argume
 agcbuild_DcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicMem_c	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbContextStateOp_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbContextStateOp_b	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbContextStateOp_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbCopyData_a	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
 agcbuild_DcbCopyData_b	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded

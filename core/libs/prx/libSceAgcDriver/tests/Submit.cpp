@@ -210,9 +210,13 @@ void testClearState() {
     packet.dw_num = 1;
     expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
     packet.dw_num = 2;
-    for (std::uint32_t state = 0; state <= 0xf; ++state) {
+    for (const std::uint32_t state : {0u, 1u, 2u, 3u, 2u}) {
         words[1] = state;
         check(sceAgcDriverSubmitDcb(&packet) == 0, "CLEAR_STATE submit failed");
+    }
+    for (const std::uint32_t state : {4u, 0xfu}) {
+        words[1] = state;
+        expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
     }
     AgcDriverWaitIdle_nid_postfix();
 }
