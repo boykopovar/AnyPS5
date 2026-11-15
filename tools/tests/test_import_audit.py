@@ -3400,6 +3400,20 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((named[MESSAGE_NID]["name"], named[MESSAGE_NID]["name_verified"]), (MESSAGE_NAME, True))
         self.assertEqual((named["DDDDDDDDDDD"]["name"], named["DDDDDDDDDDD"]["name_verified"]), ("wrongname", False))
 
+    def test_names_file_without_nid_records_is_an_audit_error(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        names = work.root / "empty.csv"
+        for content in ("", "# no records\n"):
+            with self.subTest(content=content):
+                names.write_text(content)
+                code, out, err = work.run(registry, "--names", str(names))
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("FAIL: ", err)
+                self.assertIn("database contains no valid NID records", err)
+
     def test_conservation_check_fires(self):
         records = [{"references": 2, "class": "absent"}, {"references": 1, "class": "stub"}]
         import_audit.check_conservation(3, records)

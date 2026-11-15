@@ -41,6 +41,7 @@
 ### Functional
 
 - [sceAjmInstanceCreate guest output](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - returning SCE_AJM_ERROR_INVALID_PARAMETER with caller errno preserved for an unwritable instance pointer via GuestCopyOut_nid_no_patch is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
+- [sceAjmBatchInitialize guest output](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - returning SCE_AJM_ERROR_INVALID_PARAMETER with caller errno preserved for an unwritable info pointer via GuestCopyOut_nid_no_patch is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 
 - [sceAjmDecAt9ParseConfigData](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - non-null unwritable output or unreadable input pointers return SCE_AJM_ERROR_INVALID_PARAMETER with caller errno preserved via GuestCopyIn_nid_no_patch and GuestCopyOut_nid_no_patch as host-safety fallbacks. Console results for invalid guest pointers are unmeasured.
 - [sceAjmDecWVorbisCreateHeaderPacket](../../../core/libs/prx/libSceAjm.native/Export.cpp) (libSceAjmWVorbis, implemented in libSceAjm.native) - refuses an output smaller than the whole packet (56 bytes plus the setup packet) with `0x8A6E0003`. The PS5 13.60 bit writer only checks that each write starts inside the buffer, so the console can accept a buffer a few bytes short and write past it
