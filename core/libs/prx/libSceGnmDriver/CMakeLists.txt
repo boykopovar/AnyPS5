@@ -80,8 +80,10 @@ if(BUILD_TESTING)
     configure_windows_unwind(gnm_driver_compute_queue_tests)
     add_test(NAME gnm_driver_compute_queue COMMAND gnm_driver_compute_queue_tests)
     set_tests_properties(gnm_driver_compute_queue PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME gnm_driver_compute_queue_ordered COMMAND gnm_driver_compute_queue_tests --ordered)
+    set_tests_properties(gnm_driver_compute_queue_ordered PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_GNM_ORDER_COMPUTE_GRAPHICS=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(gnm_driver_packets gnm_driver_submit_wait gnm_driver_compute_queue PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(gnm_driver_packets gnm_driver_submit_wait gnm_driver_compute_queue gnm_driver_compute_queue_ordered PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 

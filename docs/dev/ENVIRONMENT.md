@@ -641,6 +641,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `APS5_GNM_ORDER_COMPUTE_GRAPHICS` | presence | `core/libs/prx/libSceGnmDriver/Export.cpp` |  | makes each `sceGnmDingDong` wait for the work already queued, and the next command buffer submission after it wait for that compute work, so graphics and compute queue passes that share GDS run in submission order; serializes the queues and can stall up to 5 seconds per wait |
 | `APS5_GNM_SUBMIT_WAIT_IDLE` | presence | `core/libs/prx/libSceGnmDriver/Export.cpp` |  | makes each command buffer submission after the first wait for the work already queued, so the GPU trails the title by at most one submission |
 
 ### libSceIme

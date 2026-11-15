@@ -190,7 +190,8 @@ constexpr std::array<std::uint32_t, 118> BaseHardwareState200 = [] {
 
 std::mutex g_submitMutex;
 bool g_frameStarted = false;
-bool g_workQueued = false;
+std::atomic<bool> g_workQueued{false};
+std::atomic<bool> g_computeQueued{false};
 
 int CheckSubmission(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     if (count != 0 && (!dcbs || !dcbBytes)) return GNM_ERROR_SUBMISSION_FAILED_INVALID_ARGUMENT;
@@ -378,7 +379,9 @@ ComputeRing& MappedRing(std::uint32_t id, const char* unmapped) {
 void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     static FrameStart frameStart;
     static const bool waitIdle = std::getenv("APS5_GNM_SUBMIT_WAIT_IDLE") != nullptr;
-    if (waitIdle && g_workQueued) AgcDriverWaitSubmissionPaced_nid_postfix(5000);
+    static const bool orderCompute = std::getenv("APS5_GNM_ORDER_COMPUTE_GRAPHICS") != nullptr;
+    if (waitIdle && g_workQueued.load(std::memory_order_acquire)) AgcDriverWaitSubmissionPaced_nid_postfix(5000);
+    if (orderCompute && g_computeQueued.exchange(false, std::memory_order_acq_rel)) AgcDriverWaitSubmissionPaced_nid_postfix(5000);
     std::vector<std::vector<std::uint32_t>> merged;
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto constantWords = ccbBytes ? ccbBytes[i] / 4 : 0;
@@ -390,7 +393,7 @@ void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::ui
         g_frameStarted = true;
     }
     for (auto& commands : merged) AgcDriverSubmitGraphics_nid_postfix(commands.data(), static_cast<std::uint32_t>(commands.size()));
-    g_workQueued = true;
+    g_workQueued.store(true, std::memory_order_release);
 }
 
 std::uintptr_t BufferLabel(std::uint32_t handle, std::uint32_t index) {
@@ -739,6 +742,10 @@ int APS5_VABI sceGnmDingDong(std::uint32_t id, std::uint32_t nextOffsetInDwords)
         if (!IsFiller(packet[0])) LowerCompute(lowered, packet, 0);
     }
     if (!lowered.empty()) {
+        static const bool orderCompute = std::getenv("APS5_GNM_ORDER_COMPUTE_GRAPHICS") != nullptr;
+        if (orderCompute && g_workQueued.exchange(false, std::memory_order_acq_rel)) AgcDriverWaitSubmissionPaced_nid_postfix(5000);
+        if (orderCompute) g_computeQueued.store(true, std::memory_order_release);
+        g_workQueued.store(true, std::memory_order_release);
         const Packet packet{lowered.data(), static_cast<std::uint32_t>(lowered.size()), 0, {}};
         sceAgcDriverSubmitAcb(FirstComputeQueue + id - 1, &packet);
     }
