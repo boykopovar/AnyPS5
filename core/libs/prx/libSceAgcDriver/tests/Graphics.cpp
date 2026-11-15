@@ -1788,6 +1788,34 @@ void UnexportedPixelInputTests() {
     Require(std::ranges::equal(unchanged.interpolatorSettings, pixel.interpolatorSettings), "inputs of exported parameters were changed");
 }
 
+void ShaderDeclaredPixelInputTests() {
+    using namespace AgcDriver::Graphics;
+    auto queue = makeState();
+    queue.context[0x1b3] = queue.context[0x1b4] = 0x302;
+    queue.context[0x1b6] = 1;
+    for (std::uint32_t i = 0; i < 5; ++i) queue.context[0x191 + i] = i;
+    const std::array<std::uint8_t, 8> exports{};
+    const auto stateOnly = DecodePixelStageInfo(queue.context, exports);
+    Require(stateOnly.interpolatorCount == 1, "the queued input count was not decoded without a shader header");
+    std::vector<std::byte> header(sizeof(Shader));
+    Shader shader{};
+    shader.num_input_semantics = 5;
+    std::memcpy(header.data(), &shader, sizeof(shader));
+    const auto declared = DecodePixelStageInfo(queue.context, exports, false, header);
+    Require(declared.interpolatorCount == 5, "the fragment header's declared inputs did not extend the input count");
+    for (std::uint32_t i = 0; i < 5; ++i) Require(declared.interpolatorSettings[i] == i, "a declared input lost its queued SPI_PS_INPUT_CNTL setting");
+    auto missing = queue;
+    missing.context.erase(0x193);
+    const auto defaulted = DecodePixelStageInfo(missing.context, exports, false, header);
+    Require(defaulted.interpolatorCount == 5 && defaulted.interpolatorSettings[2] == 2, "an unwritten input beyond the queued count did not read parameter 2");
+    queue.context[0x1b6] |= 1u << 9u;
+    expectFailure([&] { DecodePixelStageInfo(queue.context, exports, false, header); }, "per-primitive pixel inputs");
+    queue.context[0x1b6] = 1u;
+    shader.num_input_semantics = 33;
+    std::memcpy(header.data(), &shader, sizeof(shader));
+    expectFailure([&] { DecodePixelStageInfo(queue.context, exports, false, header); }, "input count exceeds 32");
+}
+
 void PixelInputLayoutTests() {
     using ShaderRecompiler::PixelInput;
     using ShaderRecompiler::PixelInputVgpr;
@@ -8378,6 +8406,67 @@ void unifiedHeapImportBudgetTests() {
     split.heapBudget[1] = 12 * GiB;
     split.heapUsage[1] = 0;
     Require(HostImportBudgetFor(discrete, &split, 20 * GiB, 0) == 10752 * MiB, "a device with a separate host heap used its device-local heap for the import budget");
+}
+
+void textureBudgetsWithoutHostImportsTests() {
+    using AgcDriver::Graphics::HostImportsInHeapUsage;
+    using AgcDriver::Graphics::SampledTextureBudget;
+    using AgcDriver::Graphics::StorageTextureBudget;
+    using AgcDriver::Graphics::UsageWithoutHostImports;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    const bool moltenVk = HostImportsInHeapUsage(VK_DRIVER_ID_MOLTENVK);
+    Require(moltenVk, "MoltenVK, whose heap usage counts host imports, was not treated as counting them");
+    for (const auto driver : {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, VK_DRIVER_ID_AMD_PROPRIETARY, VK_DRIVER_ID_MESA_RADV, VK_DRIVER_ID_NVIDIA_PROPRIETARY, VK_DRIVER_ID_MESA_KOSMICKRISP, VK_DRIVER_ID_MESA_LLVMPIPE}) Require(!HostImportsInHeapUsage(driver), "a driver not shown to count host imports in its heap usage was treated as counting them");
+    VkPhysicalDeviceMemoryProperties unified{};
+    unified.memoryHeapCount = 1;
+    unified.memoryHeaps[0] = {24 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    unified.memoryTypeCount = 2;
+    unified.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    unified.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT report{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    report.heapBudget[0] = 18 * GiB;
+    report.heapUsage[0] = 12 * GiB + 2 * GiB + GiB + 512 * MiB;
+    Require(StorageTextureBudget(unified, &report, GiB, 512 * MiB) == 768 * MiB, "the fixture no longer shows 12 GiB of imports shrinking the storage cache on a unified heap");
+    Require(SampledTextureBudget(unified, &report, GiB + 512 * MiB, 512 * MiB) == 2 * GiB, "the fixture no longer shows 12 GiB of imports holding the sampled cache at its floor on a unified heap");
+    const auto owned = UsageWithoutHostImports(unified, report, 12 * GiB, moltenVk);
+    Require(owned.heapUsage[0] == 3 * GiB + 512 * MiB && owned.heapBudget[0] == 18 * GiB, "a unified heap that counts its live imports kept them in the usage the texture caches read, or changed its budget");
+    Require(StorageTextureBudget(unified, &owned, GiB, 512 * MiB) == 9 * GiB, "the storage cache on a unified heap was not given its ceiling once the imports it does not own were left out");
+    Require(SampledTextureBudget(unified, &owned, GiB + 512 * MiB, 512 * MiB) == 7936 * MiB, "the sampled cache on a unified heap was still held down by imports it does not own");
+    Require(UsageWithoutHostImports(unified, report, 20 * GiB, moltenVk).heapUsage[0] == 0, "imports above the reported usage did not leave a usage of zero");
+
+    VkPhysicalDeviceMemoryProperties integrated{};
+    integrated.memoryHeapCount = 1;
+    integrated.memoryHeaps[0] = {16 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    integrated.memoryTypeCount = 2;
+    integrated.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    integrated.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT shared{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    shared.heapBudget[0] = 12 * GiB;
+    shared.heapUsage[0] = 7 * GiB;
+    for (const auto driver : {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, VK_DRIVER_ID_MESA_RADV}) {
+        const auto kept = UsageWithoutHostImports(integrated, shared, 6 * GiB, HostImportsInHeapUsage(driver));
+        Require(kept.heapUsage[0] == 7 * GiB && kept.heapBudget[0] == 12 * GiB, "live imports were taken out of the usage of a single-heap device not shown to count them");
+        Require(StorageTextureBudget(integrated, &kept, GiB, 512 * MiB) == StorageTextureBudget(integrated, &shared, GiB, 512 * MiB) && SampledTextureBudget(integrated, &kept, GiB + 512 * MiB, 512 * MiB) == SampledTextureBudget(integrated, &shared, GiB + 512 * MiB, 512 * MiB), "live imports changed a texture cache budget on a single-heap device not shown to count them");
+    }
+
+    VkPhysicalDeviceMemoryProperties discrete{};
+    discrete.memoryHeapCount = 2;
+    discrete.memoryHeaps[0] = {16 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    discrete.memoryHeaps[1] = {32 * GiB, 0};
+    discrete.memoryTypeCount = 2;
+    discrete.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    discrete.memoryTypes[1] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT split{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    split.heapBudget[0] = 15 * GiB;
+    split.heapUsage[0] = 9 * GiB;
+    split.heapBudget[1] = 24 * GiB;
+    split.heapUsage[1] = 14 * GiB;
+    const auto discreteOwned = UsageWithoutHostImports(discrete, split, 12 * GiB, true);
+    Require(discreteOwned.heapUsage[0] == 9 * GiB && discreteOwned.heapUsage[1] == 2 * GiB, "imports were taken out of a device-local heap on a device with a separate host heap");
+    Require(StorageTextureBudget(discrete, &discreteOwned, GiB, GiB) == StorageTextureBudget(discrete, &split, GiB, GiB) && SampledTextureBudget(discrete, &discreteOwned, 2 * GiB, GiB) == SampledTextureBudget(discrete, &split, 2 * GiB, GiB), "imports in the host heap changed a texture cache budget that reads the device-local heap");
+    const auto discreteKept = UsageWithoutHostImports(discrete, split, 12 * GiB, HostImportsInHeapUsage(VK_DRIVER_ID_NVIDIA_PROPRIETARY));
+    Require(discreteKept.heapUsage[0] == 9 * GiB && discreteKept.heapUsage[1] == 14 * GiB, "a discrete device not shown to count host imports had them taken out of its heap usage");
 }
 
 void tableUpdateAfterBindTests() {
@@ -15342,6 +15431,7 @@ int main(int argc, char** argv) {
         PolygonPrimitiveTests();
         vertexPointListTests();
         TuningFieldTests();
+        ShaderDeclaredPixelInputTests();
         PixelInputLayoutTests();
         UnexportedPixelInputTests();
         ColorPipeBankXorTests();
@@ -15375,6 +15465,7 @@ int main(int argc, char** argv) {
         debugBranchTests();
         hostImportBudgetTests();
         unifiedHeapImportBudgetTests();
+        textureBudgetsWithoutHostImportsTests();
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
