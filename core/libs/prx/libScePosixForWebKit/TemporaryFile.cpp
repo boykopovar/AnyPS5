@@ -30,10 +30,10 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
-#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include <cerrno>
 #include <cstring>
 #include <random>
 #include <stdexcept>
@@ -45,12 +45,25 @@ constexpr char Characters[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklm
 constexpr int SharedLock = 0x10;
 constexpr int ExclusiveLock = 0x20;
 
+struct HostErrnoGuard {
+    int saved = errno;
+    ~HostErrnoGuard() { errno = saved; }
+};
+
 int Failure(int error) {
     *__error_nid_postfix() = error;
     return -1;
 }
 
+bool CopyOutPatternSuffix(char* destination, const char* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return ok;
+}
+
 int TemporaryFile(char* pattern, int flags) {
+    const HostErrnoGuard errnoGuard;
     if (!pattern) return Failure(14);
     std::string copy;
     if (const int error = CopyGuestPath_nid_no_patch(pattern, copy)) return Failure(error);
@@ -58,23 +71,22 @@ int TemporaryFile(char* pattern, int flags) {
     if (length == 0) return Failure(22);
     auto start = length;
     while (start > 0 && copy[start - 1] == 'X') --start;
-    const GuestArena::HostWrite destination(pattern + start, length - start);
-    if (!destination.Open() || !GuestWritable_nid_no_patch(pattern + start, length - start)) return Failure(14);
     if (start != length) {
         std::random_device random;
         std::uniform_int_distribution<unsigned int> character(0, sizeof(Characters) - 2);
         for (auto position = start; position < length; ++position)
-            pattern[position] = Characters[character(random)];
+            copy[position] = Characters[character(random)];
+        if (!CopyOutPatternSuffix(pattern + start, copy.data() + start, length - start)) return Failure(14);
     }
-    const std::string initial(pattern + start, length - start);
-    if (const auto slash = std::string_view(pattern, start).find_last_of('/'); slash != std::string_view::npos && slash > 0) {
-        const std::string directory(pattern, slash);
+    const std::string initial = copy.substr(start);
+    if (const auto slash = std::string_view(copy.data(), start).find_last_of('/'); slash != std::string_view::npos && slash > 0) {
+        const std::string directory = copy.substr(0, slash);
         FileStat status{};
         if (stat_nid_postfix(directory.c_str(), &status) != 0) return -1;
         if ((status.st_mode & 0170000) != 0040000) return Failure(20);
     }
     for (;;) {
-        const int descriptor = open_nid_postfix(pattern, SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL |
+        const int descriptor = open_nid_postfix(copy.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL |
             (flags & ~(SharedLock | ExclusiveLock)), 0600);
         if (descriptor >= 0) {
             try {
@@ -95,11 +107,17 @@ int TemporaryFile(char* pattern, int flags) {
         if (*__error_nid_postfix() != 17) return -1;
         auto position = start;
         for (; position < length; ++position) {
-            const auto index = std::strchr(Characters, pattern[position]) - Characters;
-            pattern[position] = Characters[(index + 1) % (sizeof(Characters) - 1)];
-            if (pattern[position] != initial[position - start]) break;
+            const auto index = std::strchr(Characters, copy[position]) - Characters;
+            copy[position] = Characters[(index + 1) % (sizeof(Characters) - 1)];
+            if (copy[position] != initial[position - start]) break;
         }
-        if (position == length) return -1;
+        if (position == length) {
+            if (start != length) CopyOutPatternSuffix(pattern + start, copy.data() + start, length - start);
+            return -1;
+        }
+        if (start != length && !CopyOutPatternSuffix(pattern + start, copy.data() + start, length - start)) {
+            return Failure(14);
+        }
     }
 }
 

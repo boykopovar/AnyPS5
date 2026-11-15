@@ -2,9 +2,11 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +26,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+
+static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -147,7 +151,13 @@ static void CheckProtectedTemporary(const std::filesystem::path& root, const cha
         Require(*__error_nid_postfix() == 22);
     }
     std::fprintf(stderr, "temporary template stage=%s export=%s qualified=1 expectedError=%d\n", mode, flagged ? "mkostemp" : "mkstemp", expectedError);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+    errno = 71;
     const int descriptor = flagged ? mkostemp_nid_postfix(pattern, 0) : mkstemp_nid_postfix(pattern);
+    Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     if (expectedError) {
         Require(descriptor == -1 && *__error_nid_postfix() == expectedError);
         Require(std::filesystem::is_empty(root));
@@ -377,6 +387,33 @@ int main(int argc, char** argv) {
     std::string tooLong(1024, 'X');
     Require(mkstemp_nid_postfix(tooLong.data()) == -1 && *__error_nid_postfix() == 63);
     Require(tooLong == std::string(1024, 'X'));
+    {
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+        errno = 71;
+        Require(mkstemp_nid_postfix(reinterpret_cast<char*>(0x10)) == -1 && *__error_nid_postfix() == 14 && errno == 71);
+        errno = 71;
+        Require(mkostemp_nid_postfix(reinterpret_cast<char*>(0x10), 0) == -1 && *__error_nid_postfix() == 14 && errno == 71);
+        errno = 71;
+        Require(mkostemp_nid_postfix(nullptr, 4) == -1 && *__error_nid_postfix() == 22 && errno == 71);
+        std::string missingErrno = "/anyps5-posix-test/missing/file-XXXXXX";
+        errno = 71;
+        Require(mkstemp_nid_postfix(missingErrno.data()) == -1 && *__error_nid_postfix() == 2 && errno == 71);
+        std::string validStemp = "/anyps5-posix-test/errno-stemp-XXXXXX";
+        errno = 71;
+        const int stempFd = mkstemp_nid_postfix(validStemp.data());
+        Require(stempFd >= 0 && errno == 71);
+        Require(close_nid_postfix(stempFd) == 0);
+        Require(unlink_nid_postfix(validStemp.c_str()) == 0);
+        std::string validOstemp = "/anyps5-posix-test/errno-ostemp-XXXXXX";
+        errno = 71;
+        const int ostempFd = mkostemp_nid_postfix(validOstemp.data(), closeOnExec);
+        Require(ostempFd >= 0 && errno == 71);
+        Require(close_nid_postfix(ostempFd) == 0);
+        Require(unlink_nid_postfix(validOstemp.c_str()) == 0);
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+    }
     Require(isatty_nid_postfix(-1) == 0 && *__error_nid_postfix() == 9);
     Require(isatty_nid_postfix(100000) == 0 && *__error_nid_postfix() == 9);
     int pipes[2]{};
