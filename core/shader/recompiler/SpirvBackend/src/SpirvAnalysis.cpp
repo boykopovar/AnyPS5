@@ -18,6 +18,7 @@ bool ReadsNeighbourLanes(const IrProgram& program, const IrValue& inst) {
     case IrOpcode::SwizzleU32:
     case IrOpcode::BpermuteU32:
     case IrOpcode::PermuteU32:
+    case IrOpcode::HalfSwapU32:
     case IrOpcode::Permlane16U32:
     case IrOpcode::ReadLane:
     case IrOpcode::ReadFirstLane:
@@ -32,6 +33,14 @@ bool ReadsNeighbourLanes(const IrProgram& program, const IrValue& inst) {
     default:
         return false;
     }
+}
+
+bool ReadsOffsetBarycentric(const IrValue& inst) {
+    if (inst.Opcode() != IrOpcode::GetBuiltin) return false;
+    const auto* kind = inst.Argument(0)->Resolve();
+    if (kind == nullptr || !kind->HasImmediate()) return false;
+    const auto input = static_cast<StageInputKind>(kind->ImmediateU32());
+    return BarycentricInputOf(input) != input;
 }
 
 bool UniformSource(const IrValue& value) {
@@ -69,6 +78,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::Permlane16U32:
     case IrOpcode::PermuteU32:
     case IrOpcode::BpermuteU32:
+    case IrOpcode::HalfSwapU32:
     case IrOpcode::SwizzleU32:
     case IrOpcode::WriteLane:
     case IrOpcode::DataAppend:
@@ -438,6 +448,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 }
             }
             requirements.neighbourLaneReads = requirements.neighbourLaneReads || ReadsNeighbourLanes(program, *inst);
+            requirements.offsetBarycentricReads = requirements.offsetBarycentricReads || ReadsOffsetBarycentric(*inst);
             switch (inst->Opcode()) {
             case IrOpcode::Ballot:
                 requirements.subgroupBallot = true;
@@ -466,7 +477,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             }
             case IrOpcode::SwizzleU32:
             case IrOpcode::PermuteU32:
-            case IrOpcode::BpermuteU32: {
+            case IrOpcode::BpermuteU32:
+            case IrOpcode::HalfSwapU32: {
                 requirements.subgroupBallot = true;
                 requirements.subgroupShuffle = true;
                 requirements.subgroupLocalInvocationId = true;

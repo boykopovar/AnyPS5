@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -38,6 +39,11 @@ int _toSce(int result) {
     return result == 0 ? 0 : SceKernelError(result);
 }
 
+bool _slotUsable(PthreadMutex* mutex) {
+    PthreadMutex current = nullptr;
+    return GuestCopyIn_nid_no_patch(&current, mutex, sizeof(current)) && GuestCopyOut_nid_no_patch(mutex, &current, sizeof(current));
+}
+
 void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
     if (!mutex) throw std::runtime_error(std::string(funcName) + ": null mutex");
     std::atomic_ref<PthreadMutex> slot(*mutex);
@@ -55,14 +61,22 @@ extern "C" {
 
 int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
     if (!mutex) throw std::runtime_error("pthread_mutex_destroy: null mutex");
-    if (_isStaticInitializer(*mutex)) {
-        *mutex = nullptr;
+    PthreadMutex current = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&current, mutex, sizeof(current))) return PosixThread::GUEST_EFAULT;
+    if (_isStaticInitializer(current)) {
+        if (current && !GuestCopyOut_nid_no_patch(mutex, &(current = nullptr), sizeof(current))) return PosixThread::GUEST_EFAULT;
         return 0;
     }
     return PosixThread::ToErrno(scePthreadMutexDestroy(mutex));
 }
 
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+    if (attr) {
+        PthreadMutexattr handle = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return PosixThread::GUEST_EFAULT;
+        if (handle && (handle->type < MutexType::ErrorCheck || handle->type > MutexType::Adaptive)) return POSIX_EINVAL;
+    }
+    if (mutex && !_slotUsable(mutex)) return PosixThread::GUEST_EFAULT;
     const int result = scePthreadMutexInit(mutex, attr, nullptr);
     if (result == 0 && (!attr || !*attr)) (*mutex)->_type = MutexType::ErrorCheck;
     return PosixThread::ToErrno(result);
@@ -101,7 +115,13 @@ int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(const PthreadMutex* mutex
     auto* current = _priorityProtected(const_cast<PthreadMutex*>(mutex), "pthread_mutex_getprioceiling");
     if (!current) return POSIX_EINVAL;
     if (!prioceiling) throw std::runtime_error("pthread_mutex_getprioceiling: null prioceiling");
-    *prioceiling = current->_ceiling;
+    const int savedErrno = errno;
+    const int ceiling = current->_ceiling;
+    if (!GuestCopyOut_nid_no_patch(prioceiling, &ceiling, sizeof(ceiling))) {
+        errno = savedErrno;
+        throw std::runtime_error("pthread_mutex_getprioceiling: unwritable prioceiling");
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -110,6 +130,15 @@ int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(PthreadMutex* mutex, int 
     if (!current) return POSIX_EINVAL;
     if (ceiling < sched_get_priority_min_nid_postfix(POSIX_SCHED_RR) || ceiling > sched_get_priority_max_nid_postfix(POSIX_SCHED_RR))
         throw std::runtime_error("pthread_mutex_setprioceiling: ceiling " + std::to_string(ceiling) + " outside the SCHED_RR priority range");
+    if (oldCeiling) {
+        const int probeValue = current->_ceiling;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(oldCeiling, &probeValue, sizeof(probeValue))) {
+            errno = savedErrno;
+            throw std::runtime_error("pthread_mutex_setprioceiling: unwritable oldCeiling");
+        }
+        errno = savedErrno;
+    }
     const bool owned = MutexOperations::IsOwned(mutex);
     if (!owned) {
         if (const int result = scePthreadMutexLock(mutex)) return PosixThread::ToErrno(result);
@@ -117,7 +146,14 @@ int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(PthreadMutex* mutex, int 
     const int previous = current->_ceiling;
     current->_ceiling = ceiling;
     if (!owned && scePthreadMutexUnlock(mutex) != 0) throw std::runtime_error("pthread_mutex_setprioceiling: unlock failed");
-    if (oldCeiling) *oldCeiling = previous;
+    if (oldCeiling) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(oldCeiling, &previous, sizeof(previous))) {
+            errno = savedErrno;
+            throw std::runtime_error("pthread_mutex_setprioceiling: unwritable oldCeiling");
+        }
+        errno = savedErrno;
+    }
     return 0;
 }
 
