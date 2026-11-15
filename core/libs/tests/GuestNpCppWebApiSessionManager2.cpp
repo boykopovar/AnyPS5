@@ -26,6 +26,7 @@ constexpr auto InvitationIteratorAdvance = _ZN3sce2Np9CppWebApi6Common8IteratorI
 constexpr auto InvitationIteratorDereference = _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEEdeEv;
 constexpr auto InvitationIteratorNotEqual = _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEEneERKS9_;
 constexpr auto StringVectorReserve = _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi;
+constexpr auto StringVectorPushBack = _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_;
 
 void TestInvitationVectorIteration() {
     IntrusivePtr empty{};
@@ -53,6 +54,12 @@ void TestStringVectorReserve() {
     Require(StringVectorReserve(&vector, 2) == 0);
     Require(StringVectorReserve(&vector, -1) == 0);
     Require(vector.object != nullptr);
+
+    CommonString element{};
+    Require(StringVectorPushBack(&vector, &element) == 0);
+    Require(StringVectorPushBack(&vector, &element) == 0);
+    Require(StringVectorReserve(&vector, 1) == 0);
+    Require(StringVectorReserve(&vector, 4) == 0);
 }
 
 }

@@ -6682,7 +6682,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matche
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi(IntrusivePtr* self, const std::int32_t count) {
     if (count < 0) return 0;
     auto* body = VectorBodyFor(self, 2, __func__);
-    if (body == nullptr) return 0;
+    if (body == nullptr) return VectorOutOfMemory;
     if (body->size > static_cast<std::uint64_t>(count)) return 0;
     if (!VectorReserve(body, sizeof(CommonString), static_cast<std::uint64_t>(count))) return VectorOutOfMemory;
     return 0;
