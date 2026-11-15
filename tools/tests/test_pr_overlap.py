@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
@@ -118,18 +119,76 @@ class TopInsertTests(unittest.TestCase):
 
 
 class FetchTests(unittest.TestCase):
+    def test_concurrent_fetches_do_not_replace_shared_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote = root / "remote.git"
+            source = root / "source"
+            consumer = root / "consumer"
+            source.mkdir()
+            consumer.mkdir()
+
+            def run(where, *args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Overlap Test", "-c", "user.email=test@example.com", *args],
+                    cwd=where, capture_output=True, text=True, check=True, encoding="utf-8",
+                ).stdout.strip()
+
+            run(root, "init", "--bare", "-q", str(remote))
+            run(source, "init", "-q", "-b", "main")
+            run(source, "commit", "-qm", "base", "--allow-empty")
+            base = run(source, "rev-parse", "HEAD")
+            run(source, "commit", "-qm", "head", "--allow-empty")
+            head = run(source, "rev-parse", "HEAD")
+            run(source, "commit", "-qm", "newer head", "--allow-empty")
+            newer_head = run(source, "rev-parse", "HEAD")
+            run(source, "remote", "add", "origin", str(remote))
+            run(source, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+            run(consumer, "init", "-q")
+            run(consumer, "fetch", "-q", str(remote), "refs/heads/main")
+            run(consumer, "fetch", "-q", str(remote), base)
+            run(consumer, "update-ref", "refs/pr/base", base)
+            run(consumer, "update-ref", "refs/pr/7", base)
+            prs = {7: {"ref": "refs/pr/7", "sha": head, "author": "one", "depends": set()}}
+            newer_prs = {7: {"ref": "refs/pr/7", "sha": newer_head, "author": "one", "depends": set()}}
+            original = Path.cwd()
+            try:
+                os.chdir(consumer)
+                pr_overlap._REPO_ROOTS.clear()
+                redirect = {
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": f"url.{remote.as_uri()}.insteadOf",
+                    "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git",
+                }
+                with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.dict(os.environ, redirect):
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        bases = list(executor.map(lambda requests: pr_overlap.fetch("main", requests), (prs, newer_prs)))
+            finally:
+                os.chdir(original)
+                pr_overlap._REPO_ROOTS.clear()
+
+            self.assertEqual(run(consumer, "rev-parse", "refs/pr/base"), base)
+            self.assertEqual(run(consumer, "rev-parse", "refs/pr/7"), base)
+            self.assertEqual(run(consumer, "rev-parse", "FETCH_HEAD"), base)
+            self.assertEqual(bases, [newer_head, newer_head])
+            self.assertEqual(prs[7]["ref"], head)
+            self.assertEqual(newer_prs[7]["ref"], newer_head)
+
     def test_fetches_each_head_commit_the_api_reported(self):
         prs = {
             7: {"ref": "refs/pr/7", "sha": "a" * 40, "author": "one", "depends": set()},
             9: {"ref": "refs/pr/9", "sha": "b" * 40, "author": "two", "depends": set()},
         }
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
-                patch.object(pr_overlap, "git", return_value="") as git:
-            pr_overlap.fetch("main", prs)
-        git.assert_called_once_with(
-            "fetch", "--no-tags", "-q", "https://github.com/owner/project.git",
-            "+refs/heads/main:refs/pr/base", f"+{'a' * 40}:refs/pr/7", f"+{'b' * 40}:refs/pr/9",
-        )
+                patch.object(pr_overlap, "git", side_effect=[f"{'c' * 40}\trefs/heads/main\n", ""]) as git:
+            self.assertEqual(pr_overlap.fetch("main", prs), "c" * 40)
+        self.assertEqual([call.args for call in git.call_args_list], [
+            ("ls-remote", "--exit-code", "https://github.com/owner/project.git", "refs/heads/main"),
+            ("fetch", "--no-write-fetch-head", "--no-tags", "-q", "https://github.com/owner/project.git",
+             "c" * 40, "a" * 40, "b" * 40),
+        ])
+        self.assertEqual([prs[7]["ref"], prs[9]["ref"]], ["a" * 40, "b" * 40])
 
     def test_batches_large_sets_of_pull_request_heads(self):
         prs = {
@@ -140,12 +199,12 @@ class FetchTests(unittest.TestCase):
             for number in range(250)
         }
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
-                patch.object(pr_overlap, "git", return_value="") as git:
+                patch.object(pr_overlap, "git", side_effect=[f"{'f' * 40}\trefs/heads/main\n", "", "", ""]) as git:
             pr_overlap.fetch("main", prs)
-        self.assertEqual(git.call_count, 3)
-        self.assertEqual([len(call.args) - 4 for call in git.call_args_list], [100, 100, 51])
-        self.assertEqual(git.call_args_list[0].args[4], "+refs/heads/main:refs/pr/base")
-        self.assertEqual(git.call_args_list[-1].args[-1], "+00000000000000000000000000000000000000f9:refs/pr/249")
+        self.assertEqual(git.call_count, 4)
+        self.assertEqual([len(call.args) - 5 for call in git.call_args_list[1:]], [100, 100, 51])
+        self.assertEqual(git.call_args_list[1].args[5], "f" * 40)
+        self.assertEqual(git.call_args_list[-1].args[-1], "00000000000000000000000000000000000000f9")
 
 
 class ConflictTests(unittest.TestCase):

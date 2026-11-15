@@ -567,6 +567,43 @@ void CheckContextLeavesWriteWatch() {
 }
 #endif
 
+FiberStorage g_unwritableAStorage;
+FiberStorage g_unwritableBStorage;
+alignas(16) std::array<unsigned char, 16 * 1024> g_unwritableAContext;
+alignas(16) std::array<unsigned char, 16 * 1024> g_unwritableBContext;
+
+void APS5_VABI UnwritableEntryA(std::uint64_t, std::uint64_t) {
+    auto* b = reinterpret_cast<FiberObject*>(&g_unwritableBStorage);
+    errno = 71;
+    Require(sceFiberSwitch(b, 0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable switch output pointer");
+    Require(errno == 71, "errno preserved");
+    errno = 71;
+    Require(sceFiberReturnToThread(0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable return output pointer");
+    Require(errno == 71, "errno preserved");
+    std::uint64_t received = 0;
+    sceFiberReturnToThread(42, &received);
+}
+
+void APS5_VABI UnwritableEntryB(std::uint64_t, std::uint64_t) {
+    auto* a = reinterpret_cast<FiberObject*>(&g_unwritableAStorage);
+    std::uint64_t received = 0;
+    Require(sceFiberSwitch(a, 0, &received) == 0, "switch back to fiber A");
+}
+
+void RunUnwritablePointerCheck() {
+    auto* a = reinterpret_cast<FiberObject*>(&g_unwritableAStorage);
+    auto* b = reinterpret_cast<FiberObject*>(&g_unwritableBStorage);
+    Require(_sceFiberInitializeImpl_nid_postfix(a, "unwritableA", UnwritableEntryA, 0, g_unwritableAContext.data(), g_unwritableAContext.size(), nullptr, 0) == 0, "init A");
+    Require(_sceFiberInitializeImpl_nid_postfix(b, "unwritableB", UnwritableEntryB, 0, g_unwritableBContext.data(), g_unwritableBContext.size(), nullptr, 0) == 0, "init B");
+    std::uint64_t returned = 0;
+    errno = 71;
+    Require(sceFiberRun_nid_postfix(a, 0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable run output pointer");
+    Require(errno == 71, "errno preserved");
+    Require(sceFiberRun_nid_postfix(a, 0, &returned) == 0 && returned == 42, "run A successfully");
+    Require(sceFiberFinalize(a) == 0, "finalize A");
+    Require(sceFiberFinalize(b) == 0, "finalize B");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -638,4 +675,5 @@ int main(int argc, char** argv) {
     RunOnLargeContext();
     RunAttachedContext();
     RunInternalOptions();
+    RunUnwritablePointerCheck();
 }

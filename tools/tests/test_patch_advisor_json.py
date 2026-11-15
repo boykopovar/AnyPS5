@@ -1,10 +1,13 @@
 import contextlib
 import io
 import json
+from pathlib import Path
 import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_suggest_patches as fixtures
 from test_suggest_patches import suggest_patches, VERIFIED
 
@@ -64,11 +67,14 @@ class PatchAdvisorJsonTests(unittest.TestCase):
         self.write_index([self.entry, stale, invalid, other, other, dict(self.entry, id="slow")])
         code, data = self.run_json(side_effect=[verified, verified, verified, subprocess.TimeoutExpired([], 7)])
         self.assertEqual(code, 0)
+        self.assertEqual(data["schemaVersion"], 1)
         self.assertEqual(data["status"], "recommended")
         self.assertEqual(data["recommended_entry"], 1)
         first, second, third, fourth, fifth, sixth = data["entries"]
         self.assertEqual(first, {"number": 1, "patch": "patch.toml", "status": "verified",
                                  "targets": self.entry["targets"], "metadata": {"id": "fix"},
+                                 "conversion_options": ["--patches", str(self.catalog / "patch.toml"),
+                                                        "--module-dir", "Media/Modules"],
                                  "verification": {"exit_code": 0, "summary": [1, 1, 0, 0],
                                                   "stdout": VERIFIED, "stderr": "warn"}})
         self.assertEqual((second["status"], second["reason"].startswith("Media/Modules/module.prx")), ("rejected", True))
@@ -76,20 +82,95 @@ class PatchAdvisorJsonTests(unittest.TestCase):
         for record in (fourth, fifth):
             self.assertEqual((record["status"], record["reason"]), ("rejected", "duplicate verified id 'other'"))
         self.assertEqual((sixth["status"], sixth["reason"]), ("rejected", "verification_timeout"))
+        for record in (second, third, fourth, fifth, sixth):
+            self.assertNotIn("conversion_options", record)
 
     def test_json_failure_statuses(self):
         self.write_index([dict(self.entry, contentVersion="02.000.000")])
-        self.assertEqual(self.run_json(), (1, {"status": "no_match", "entries": []}))
+        self.assertEqual(self.run_json(), (1, {"schemaVersion": 1, "status": "no_match", "entries": []}))
         self.write_index()
         code, data = self.run_json(return_value=subprocess.CompletedProcess([], 2, "", "FAIL: invalid patch"))
-        self.assertEqual((code, data["status"], data["error"]), (2, "error", "relinker errors occurred"))
+        self.assertEqual((code, data["schemaVersion"], data["status"], data["error"]),
+                         (2, 1, "error", "relinker errors occurred"))
+        self.assertEqual((data["entries"][0]["status"], data["entries"][0].get("reason")),
+                         ("rejected", "relinker_error"))
         self.param.write_text("[]")
-        self.assertEqual(self.run_json(), (2, {"status": "error", "entries": [], "error": "param.json must be an object"}))
+        self.assertEqual(self.run_json(), (2, {"schemaVersion": 1, "status": "error", "entries": [],
+                                              "error": "param.json must be an object"}))
+
+    def test_json_verification_rejection_reasons(self):
+        mismatch_out = ("mismatch: Media/Modules/module.prx va=0x1000 off=0x1000 expected 00 found 01\n"
+                        "Verified 1 patches: 0 ok, 0 not-checked, 1 mismatch\n")
+        unconfirmed_out = ("not-checked: Media/Modules/module.prx va=0x1000 "
+                           "(module, or executable not named with --executable)\n"
+                           "Verified 1 patches: 0 ok, 1 not-checked, 0 mismatch\n")
+        mismatch = subprocess.CompletedProcess([], 1, mismatch_out, "")
+        relinker_error = subprocess.CompletedProcess([], 2, "", "FAIL: invalid patch\n")
+        unconfirmed = subprocess.CompletedProcess([], 0, unconfirmed_out, "")
+        verified = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        self.write_index([self.entry, self.entry, self.entry, self.entry])
+        code, data = self.run_json(side_effect=[mismatch, relinker_error, unconfirmed, verified])
+        self.assertEqual((code, data["status"], data["recommended_entry"]), (0, "recommended", 4))
+        first, second, third, fourth = data["entries"]
+        self.assertEqual(first, {"number": 1, "patch": "patch.toml", "status": "rejected",
+                                 "reason": "verification_mismatch",
+                                 "verification": {"exit_code": 1, "summary": [1, 0, 0, 1],
+                                                  "stdout": mismatch_out, "stderr": ""}})
+        self.assertEqual(second, {"number": 2, "patch": "patch.toml", "status": "rejected",
+                                  "reason": "relinker_error",
+                                  "verification": {"exit_code": 2, "summary": None,
+                                                   "stdout": "", "stderr": "FAIL: invalid patch\n"}})
+        self.assertEqual(third, {"number": 3, "patch": "patch.toml", "status": "rejected",
+                                 "reason": "verification_unconfirmed",
+                                 "verification": {"exit_code": 0, "summary": [1, 0, 1, 0],
+                                                  "stdout": unconfirmed_out, "stderr": ""}})
+        self.assertEqual(fourth["status"], "verified")
+        self.assertNotIn("reason", fourth)
+        for summary_line, expected_summary in (
+            ("Verified 0 patches: 0 ok, 0 not-checked, 0 mismatch\n", [0, 0, 0, 0]),
+            ("Verified 2 patches: 1 ok, 0 not-checked, 0 mismatch\n", [2, 1, 0, 0]),
+            ("Verified 1 patches: 0 ok, 1 not-checked, 0 mismatch\n", [1, 0, 1, 0]),
+            ("Verified 1 patches: 0 ok, 0 not-checked, 1 mismatch\n", [1, 0, 0, 1]),
+        ):
+            with self.subTest(summary_line=summary_line):
+                self.write_index()
+                code, data = self.run_json(return_value=subprocess.CompletedProcess([], 0, summary_line, ""))
+                self.assertEqual((code, data["status"]), (1, "rejected"))
+                self.assertEqual(data["entries"], [{"number": 1, "patch": "patch.toml", "status": "rejected",
+                                                    "reason": "verification_unconfirmed",
+                                                    "verification": {"exit_code": 0, "summary": expected_summary,
+                                                                     "stdout": summary_line, "stderr": ""}}])
+        for process, expected_error in (
+            (subprocess.CompletedProcess([], 0, "unrecognized verifier\n", ""), "relinker produced no verification summary"),
+            (subprocess.CompletedProcess([], 1, "", "FAIL: invalid option\n"), "relinker error (exit 1): FAIL: invalid option"),
+            (subprocess.CompletedProcess([], 1, VERIFIED, ""), "relinker error (exit 1):"),
+            (subprocess.CompletedProcess([], 3, "", "crash\n"), "relinker error (exit 3): crash"),
+        ):
+            with self.subTest(exit_code=process.returncode, stdout=process.stdout):
+                self.write_index()
+                code, data = self.run_json(return_value=process)
+                self.assertEqual((code, data["status"]), (2, "error"))
+                self.assertIn(expected_error, data["error"])
+                self.assertNotIn("reason", data["entries"][0])
+
+    def test_json_conversion_options_preserve_repeated_arguments_and_spaces(self):
+        self.additional_executable()
+        self.catalog.rename(self.root / "patch catalog")
+        self.catalog = self.root / "patch catalog"
+        result = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        code, data = self.run_json("--sce-module-path", str(self.root), "--module-dir", "Other Modules",
+                                   "--executable", "picker/picker.bin", return_value=result)
+        self.assertEqual(code, 0)
+        self.assertEqual(data["entries"][0]["conversion_options"],
+                         ["--patches", str(self.catalog / "patch.toml"), "--sce-module-path", str(self.root),
+                          "--module-dir", "Media/Modules", "--module-dir", "Other Modules",
+                          "--executable", "picker/picker.bin"])
 
 
     setUp = fixtures.PatchAdvisorTests.setUp
     write_index = fixtures.PatchAdvisorTests.write_index
     advise = fixtures.PatchAdvisorTests.advise
+    additional_executable = fixtures.PatchAdvisorTests.additional_executable
 
     def test_json_recommendation_and_hash_rejection(self):
         result = subprocess.CompletedProcess([], 0, VERIFIED, "")
