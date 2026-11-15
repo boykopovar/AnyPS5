@@ -297,8 +297,7 @@ int APS5_VABI sceFontGetKerning(FontHandle fontHandle, std::uint32_t preCode, st
 }
 
 int APS5_VABI sceFontGetRenderScaledKerning(FontHandle fontHandle, std::uint32_t preCode, std::uint32_t code, FontKerning* kerning) {
-    if (!kerning) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *kerning = {};
+    if (!kerning || !CopyOutGuest(kerning, FontKerning{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* font = GetNativeFont(fontHandle);
     std::uint32_t fontLock = 0;
     if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
@@ -308,15 +307,17 @@ int APS5_VABI sceFontGetRenderScaledKerning(FontHandle fontHandle, std::uint32_t
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
     int rc = SCE_FONT_ERROR_NOT_BOUND_RENDERER;
+    FontKerning localKerning{};
     if (font->renderer) {
         float scaleW = 0.0f;
         float scaleH = 0.0f;
         rc = StyleStateGetScalePixel(&font->cached_style.state, &scaleW, &scaleH);
         const FontState* state = TryGetState(fontHandle);
-        if (rc == SCE_FONT_OK && state) LoadKerning(*state, scaleW, scaleH, preCode, code, kerning);
+        if (rc == SCE_FONT_OK && state) LoadKerning(*state, scaleW, scaleH, preCode, code, &localKerning);
     }
     ReleaseCachedStyleLock(font, cachedLock);
     ReleaseFontLock(font, fontLock);
+    if (rc == SCE_FONT_OK && !CopyOutGuest(kerning, localKerning)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return rc;
 }
 

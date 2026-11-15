@@ -1067,6 +1067,9 @@ int main() {
     kerning = {1.0f, 1.0f, 1.0f, 1.0f};
     Require(sceFontGetRenderScaledKerning(font, 'A', 'B', &kerning) == SCE_FONT_OK && KerningIs(kerning, 0.0f));
     Require(sceFontGetRenderScaledKerning(font, 'A', 'V', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderScaledKerning(font, 'A', 'V', reinterpret_cast<FontKerning*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     kerning = {1.0f, 1.0f, 1.0f, 1.0f};
     Require(sceFontGetRenderScaledKerning(nullptr, 'A', 'V', &kerning) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && KerningIs(kerning, 0.0f));
     kerning = {1.0f, 1.0f, 1.0f, 1.0f};
