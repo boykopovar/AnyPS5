@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -61,6 +62,9 @@ void CheckAuthEnabled(int context) {
     Require(Get(sceHttpGetAuthEnabled, connection) == 1 && Get(sceHttpGetAuthEnabled, pattern) == 1, "setting a request changed its parent options");
     int value = -1;
     Require(sceHttpGetAuthEnabled(request, nullptr) == InvalidValue, "a null authentication output was not refused");
+    errno = 71;
+    Require(sceHttpGetAuthEnabled(request, reinterpret_cast<int*>(0x10)) == InvalidValue, "an unwritable authentication output pointer was not refused");
+    Require(errno == 71, "errno was not preserved across sceHttpGetAuthEnabled");
     Require(sceHttpGetAuthEnabled(UnknownId, nullptr) == InvalidValue, "the authentication output pointer is not checked before the id");
     Require(sceHttpGetAuthEnabled(UnknownId, &value) == InvalidId && sceHttpSetAuthEnabled(UnknownId, 1) == InvalidId, "an unknown id was not refused for authentication options");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpGetAuthEnabled(request, &value) == InvalidId, "a deleted request still has authentication options");
@@ -80,6 +84,9 @@ void CheckCookieEnabled(int context) {
     Require(Get(sceHttpGetCookieEnabled, connection) == 256 && Get(sceHttpGetCookieEnabled, pattern) == 256, "changing a child changed its parent or sibling");
     int value = -1;
     Require(sceHttpGetCookieEnabled(request, nullptr) == InvalidValue, "a null cookie output was not refused");
+    errno = 71;
+    Require(sceHttpGetCookieEnabled(request, reinterpret_cast<int*>(0x10)) == InvalidValue, "an unwritable cookie output pointer was not refused");
+    Require(errno == 71, "errno was not preserved across sceHttpGetCookieEnabled");
     Require(sceHttpGetCookieEnabled(UnknownId, &value) == InvalidId && value == -1 && sceHttpSetCookieEnabled(UnknownId, 2) == InvalidId, "an unknown id was not refused for cookie options");
     Require(sceHttpDeleteRequest(request) == 0 && sceHttpGetCookieEnabled(request, &value) == InvalidId && value == -1 && sceHttpSetCookieEnabled(request, 2) == InvalidId, "a deleted request retained its cookie option");
     Require(sceHttpDeleteConnection(connection) == 0 && sceHttpDeleteTemplate(pattern) == 0, "delete failed");

@@ -727,7 +727,11 @@ int APS5_VABI sceHttpGetAuthEnabled(int id, int* enable) {
     if (!enable) return ERROR_INVALID_VALUE;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->authEnabled ? 1 : 0;
+    const int localEnable = options->authEnabled ? 1 : 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable));
+    errno = savedErrno;
+    if (!copied) return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -745,7 +749,11 @@ int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable) {
     if (!enable) return HttpInitialised() ? ERROR_INVALID_VALUE : ERROR_BEFORE_INIT;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->cookieEnabled;
+    const int localEnable = options->cookieEnabled;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(enable, &localEnable, sizeof(localEnable));
+    errno = savedErrno;
+    if (!copied) return ERROR_INVALID_VALUE;
     return 0;
 }
 
