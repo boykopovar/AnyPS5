@@ -121,6 +121,45 @@ def append_dynamic_tags(image, entries):
 
 
 class ImportRelocationTests(unittest.TestCase):
+    def test_conflicting_load_mappings_cannot_supply_symbol_tables(self):
+        for address in (DATA_ADDRESS + 4, DATA_ADDRESS + 0x58, DATA_ADDRESS + 0x110, DATA_ADDRESS + 0x288):
+            for reverse in (False, True):
+                with self.subTest(address=address, reverse=reverse):
+                    image = bytearray(build_module())
+                    struct.pack_into("<H", image, 0x38, 4)
+                    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, 0x2900, address, 0, 8, 8, 1)
+                    if reverse:
+                        first, last = 64 + 56, 64 + 3 * 56
+                        image[first:first + 56], image[last:last + 56] = image[last:last + 56], image[first:first + 56]
+                    with self.assertRaisesRegex(annotate_module.ModuleError, "ambiguous PT_LOAD"):
+                        annotate_module.Module(image).imports()
+
+    def test_same_file_load_overlaps_preserve_symbol_tables(self):
+        original = annotate_module.Module(build_module())
+        for address, offset, size in ((DATA_ADDRESS, 0x2000, 0x810), (DATA_ADDRESS + 0x110, 0x2110, 8),
+                                      (DATA_ADDRESS + 0x110, 0x2900, 0), (DATA_ADDRESS + 0x700, 0x2900, 8)):
+            with self.subTest(address=address, offset=offset, size=size):
+                image = bytearray(build_module())
+                struct.pack_into("<H", image, 0x38, 4)
+                struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, offset, address, 0, size, size, 1)
+                module = annotate_module.Module(image)
+                self.assertEqual(module.imports(), original.imports())
+                self.assertEqual(module.exports(), original.exports())
+
+    def test_ambiguous_loads_do_not_emit_offline_symbol_maps(self):
+        image = bytearray(build_module())
+        struct.pack_into("<H", image, 0x38, 4)
+        struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, 0x2900, DATA_ADDRESS + 0x110, 0, 8, 8, 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "module.prx"
+            path.write_bytes(image)
+            for mode in ("--symbols-json", "--symbols-ghidra"):
+                with self.subTest(mode=mode):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output), self.assertRaisesRegex(SystemExit, "ambiguous PT_LOAD"):
+                        annotate_module.main([str(path), "--no-names", mode])
+                    self.assertEqual(output.getvalue(), "")
+
     def test_conflicting_dynamic_metadata_cannot_produce_symbol_maps(self):
         cases = [(10, [(10, 1)]), (5, [(5, DATA_ADDRESS + 0x150)]), (11, [(11, 16)]),
                  (2, [(2, 0)]), (9, [(9, 24), (9, 16)])]
