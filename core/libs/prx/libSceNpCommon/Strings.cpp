@@ -229,7 +229,8 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
     parse(str, &end);
     if (end == str) return NP_ERROR_OUT_OF_RANGE;
     if (*saturated && errno == ERANGE) return NP_ERROR_OUT_OF_RANGE;
-    if (parsedLength != nullptr) *parsedLength = static_cast<std::size_t>(end - str);
+    const std::size_t length = static_cast<std::size_t>(end - str);
+    if (parsedLength != nullptr && !GuestCopyOut_nid_no_patch(parsedLength, &length, sizeof(length))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -437,7 +438,8 @@ int APS5_VABI sceNpStrToInt32(const char* str, std::int32_t* value, int base, st
     }, &saturated);
     if (result < 0) return result;
     if (parsed != static_cast<std::int32_t>(parsed)) return NP_ERROR_OUT_OF_RANGE;
-    *value = static_cast<std::int32_t>(parsed);
+    const auto narrowed = static_cast<std::int32_t>(parsed);
+    if (!GuestCopyOut_nid_no_patch(value, &narrowed, sizeof(narrowed))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -449,7 +451,8 @@ int APS5_VABI sceNpStrToInt64(const char* str, std::int64_t* value, int base, st
         saturated = parsed == LLONG_MIN || parsed == LLONG_MAX;
     }, &saturated);
     if (result < 0) return result;
-    *value = parsed;
+    const std::int64_t wide = parsed;
+    if (!GuestCopyOut_nid_no_patch(value, &wide, sizeof(wide))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -462,7 +465,8 @@ int APS5_VABI sceNpStrToUInt32(const char* str, std::uint32_t* value, int base, 
     }, &saturated);
     if (result < 0) return result;
     if ((parsed >> 32) != 0) return NP_ERROR_OUT_OF_RANGE;
-    *value = static_cast<std::uint32_t>(parsed);
+    const auto narrowed = static_cast<std::uint32_t>(parsed);
+    if (!GuestCopyOut_nid_no_patch(value, &narrowed, sizeof(narrowed))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -474,7 +478,8 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
         saturated = parsed == ULLONG_MAX;
     }, &saturated);
     if (result < 0) return result;
-    *value = parsed;
+    const std::uint64_t wide = parsed;
+    if (!GuestCopyOut_nid_no_patch(value, &wide, sizeof(wide))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
