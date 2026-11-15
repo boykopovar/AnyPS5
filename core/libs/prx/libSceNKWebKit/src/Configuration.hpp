@@ -72,6 +72,7 @@ public:
     bool javaScriptConfigurationFileEnabled = false;
     bool javaScriptGarbageCollectorTimerEnabled = true;
     bool storageAccessAPIEnabled = false;
+    bool canHandleHTTPSServerTrustEvaluation = false;
     std::uint32_t garbageCollectJavaScriptObjectsCount = 0;
     std::vector<std::string> bypassingCSPSchemes;
     std::vector<std::string> cachePartitionedSchemes;

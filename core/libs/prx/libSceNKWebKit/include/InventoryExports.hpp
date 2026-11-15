@@ -275,7 +275,6 @@ int APS5_VABI WKContextMenuItemSeparatorItem();
 int APS5_VABI WKContextPostMessageToInjectedBundle();
 int APS5_VABI WKContextPreconnectToServer();
 int APS5_VABI WKContextResumeDownload();
-int APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation();
 int APS5_VABI WKContextSetClient();
 int APS5_VABI WKContextSetConnectionClient();
 int APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier();
