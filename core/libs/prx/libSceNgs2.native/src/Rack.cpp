@@ -306,7 +306,7 @@ int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t r
 
 int APS5_VABI sceNgs2RackDestroy(uintptr_t rack_handle, Ngs2ContextBufferInfo* buffer_info) {
     const Ngs2Lock lock;
-    if (buffer_info != nullptr) *buffer_info = {};
+    if (buffer_info != nullptr && !WriteGuest(buffer_info, Ngs2ContextBufferInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     auto* rack = Ngs2FindRack(rack_handle);
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
     while (rack != nullptr && Ngs2ExclusiveElsewhere()) {
