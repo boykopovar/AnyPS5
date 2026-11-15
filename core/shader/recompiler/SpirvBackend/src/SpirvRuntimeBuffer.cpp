@@ -1039,15 +1039,30 @@ std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValu
     return EmitValueOrDefaultIfCondition(state, context.Arg(instruction, instruction.ArgumentCount() - 1u), type, zero, [&] {
         const auto resource = descriptor(context, instruction, context.Arg(instruction, instruction.ArgumentCount() - 1u));
         if (memory.formatted) return EmitValueOrDefaultIfCondition(state, resource.valid, type, zero, [&] { return formattedDispatch(context, instruction, resource, components, false, 0u); });
+        const bool spanRead = memory.gpuDescriptor && memory.dataBits == 32u && components > 1u && !BdaByteReadsForced();
+        std::array<RuntimeAddress, 4> spanAddresses{};
+        if (spanRead) {
+            for (std::uint32_t component = 0; component < components; ++component) spanAddresses[component] = address(context, instruction, resource, component * 4u, 4u);
+        }
         const auto readComponents = [&] {
             std::array<std::uint32_t, 4> values{};
             for (std::uint32_t component = 0; component < components; ++component) {
-                const auto access = address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
+                const auto access = spanRead ? spanAddresses[component] : address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
                 values[component] = memory.gpuDescriptor ? EmitValueOrZeroIfCondition(state, access.inBounds, [&] { return readBuffer(context, instruction, access.guest, memory.dataBits); })
                                                          : readBuffer(context, instruction, access.guest, memory.dataBits, access.inBounds);
             }
             return composite(state, components, values);
         };
+        if (spanRead) {
+            auto contiguous = spanAddresses[0].inBounds;
+            for (std::uint32_t component = 1; component < components; ++component) {
+                const auto next = Binary(state, spv::OpIAdd, TypeScalarU64(state), spanAddresses[0].guest, BdaConstant(state, component * 4u));
+                contiguous = both(state, contiguous, both(state, spanAddresses[component].inBounds, equal(state, spanAddresses[component].guest, next)));
+            }
+            return EmitValueIfElse(state, contiguous, type, [&] {
+                return composite(state, components, EmitBdaDwordReads(context, instruction, spanAddresses[0].guest, 0u, components, true));
+            }, readComponents);
+        }
         const auto pair = coherentPair(context, instruction, resource, components);
         if (!pair) return readComponents();
         return EmitValueIfElse(state, pair->usable, type, [&] {
