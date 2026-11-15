@@ -12205,6 +12205,62 @@ bool setProfileEncoder(const char* value) {
 #endif
 }
 
+PFN_vkGetDeviceProcAddr unfailedDeviceProc = nullptr;
+PFN_vkCreateCommandPool realCreateCommandPool = nullptr;
+PFN_vkDestroyCommandPool realDestroyCommandPool = nullptr;
+std::vector<VkCommandPool> createdCommandPools;
+std::vector<VkCommandPool> destroyedCommandPools;
+
+VKAPI_ATTR VkResult VKAPI_CALL trackedCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo* info, const VkAllocationCallbacks* allocator, VkCommandPool* pool) {
+    const auto result = realCreateCommandPool(device, info, allocator, pool);
+    if (result == VK_SUCCESS) createdCommandPools.push_back(*pool);
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL trackedDestroyCommandPool(VkDevice device, VkCommandPool pool, const VkAllocationCallbacks* allocator) {
+    destroyedCommandPools.push_back(pool);
+    realDestroyCommandPool(device, pool, allocator);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL semaphorelessDeviceProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCreateSemaphore") == 0) return nullptr;
+    if (std::strcmp(name, "vkCreateCommandPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(trackedCreateCommandPool);
+    if (std::strcmp(name, "vkDestroyCommandPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(trackedDestroyCommandPool);
+    return unfailedDeviceProc(device, name);
+}
+
+void encoderPoolConstructionFailureTests(const Device& device) {
+    if (!CommandEncoder::Enabled()) return;
+    auto context = device.GetContext();
+    DeviceFunctions table;
+    FillDeviceFunctions(context, table);
+    unfailedDeviceProc = context.deviceProc;
+    realCreateCommandPool = reinterpret_cast<PFN_vkCreateCommandPool>(context.deviceProc(context.device, "vkCreateCommandPool"));
+    realDestroyCommandPool = reinterpret_cast<PFN_vkDestroyCommandPool>(context.deviceProc(context.device, "vkDestroyCommandPool"));
+    createdCommandPools.clear();
+    destroyedCommandPools.clear();
+    context.deviceProc = semaphorelessDeviceProc;
+    std::string failure;
+    try {
+        Recorder recorder(context, true, &table, context.queueFamily);
+    } catch (const std::runtime_error& error) {
+        failure = error.what();
+    }
+    Require(failure.find("vkCreateSemaphore") != std::string::npos, "a recorder was constructed past a missing vkCreateSemaphore ('" + failure + "')");
+    if (createdCommandPools.empty()) {
+        std::cout << "the recorder attached no encoder: encoder pool cleanup after a failed construction not tested\n";
+        return;
+    }
+    Require(createdCommandPools.size() == 1, "a failed recorder construction created " + std::to_string(createdCommandPools.size()) + " encoder pools");
+    Require(destroyedCommandPools == createdCommandPools, "a failed recorder construction destroyed " + std::to_string(destroyedCommandPools.size()) + " command pools, not its one encoder pool");
+    {
+        Recorder recorder(context, false, &table, context.queueFamily);
+        Require(recorder.Encodes(), "the encoder slot of a failed recorder construction was not released");
+    }
+    Require(destroyedCommandPools.size() == 2 && destroyedCommandPools[1] == createdCommandPools[1], "a recorder did not destroy its encoder pool");
+    std::cout << "Recorder encoder pool construction failure tests passed\n";
+}
+
 void encoderPassEndSiteTests(const Device& device) {
     if (!CommandEncoder::Enabled() || !device.Graphics()) return;
     auto context = device.GetContext();
@@ -17509,6 +17565,7 @@ int main(int argc, char** argv) {
         gpu.lock();
         encoderFailureFollowsTheBatchTests(device, recorder, gpu);
         encoderPassEndSiteTests(device);
+        encoderPoolConstructionFailureTests(device);
         encoderSegmentQueryTests(device);
         encoderAdaptiveSegmentWaitTests(device);
         encoderFailedSegmentTests(device);

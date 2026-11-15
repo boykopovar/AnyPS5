@@ -1084,7 +1084,22 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
-    VkCommandPool encoderPool = VK_NULL_HANDLE;
+    class OwnedCommandPool {
+    public:
+        OwnedCommandPool() = default;
+        OwnedCommandPool(const OwnedCommandPool&) = delete;
+        OwnedCommandPool& operator=(const OwnedCommandPool&) = delete;
+        ~OwnedCommandPool() { Reset(); }
+        void Create(const Context& context, std::uint32_t queueFamily);
+        void Reset() noexcept;
+        VkCommandPool Get() const { return pool; }
+
+    private:
+        VkDevice device = VK_NULL_HANDLE;
+        PFN_vkDestroyCommandPool destroy = nullptr;
+        VkCommandPool pool = VK_NULL_HANDLE;
+    };
+    OwnedCommandPool encoderPool;
     std::unique_ptr<CommandEncoder> encoder;
     const DeviceFunctions* encodedQueries = nullptr;
     void quiesce(std::source_location where = std::source_location::current()) {

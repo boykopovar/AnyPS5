@@ -1353,12 +1353,7 @@ struct Recorder::ProgressWatcher {
 Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFunctions* encodedFunctions, std::uint32_t queueFamily) : context(context), id(nextRecorderId.fetch_add(1)) {
     if (encodedFunctions != nullptr && CommandEncoder::Enabled()) encoder = CommandEncoder::Attach(context.device, *encodedFunctions);
     if (encoder != nullptr) encodedQueries = encodedFunctions;
-    if (encoder != nullptr) {
-        VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        poolInfo.queueFamilyIndex = queueFamily;
-        Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &poolInfo, nullptr, &encoderPool), "vkCreateCommandPool recorder encoder");
-    }
+    if (encoder != nullptr) encoderPool.Create(context, queueFamily);
     {
         std::lock_guard lock(liveRecordersMutex);
         liveRecorders.push_back(id);
@@ -1401,6 +1396,25 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFuncti
         std::fprintf(stderr, "[gpu] timeline semaphore creation failed (Vulkan result %d); drains wait under the GPU mutex\n", static_cast<int>(result));
         timeline = VK_NULL_HANDLE;
     }
+}
+
+void Recorder::OwnedCommandPool::Create(const Context& context, std::uint32_t queueFamily) {
+    const auto create = context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool");
+    const auto destroyPool = context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool");
+    VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = queueFamily;
+    VkCommandPool created = VK_NULL_HANDLE;
+    Check(create(context.device, &poolInfo, nullptr, &created), "vkCreateCommandPool recorder encoder");
+    Reset();
+    device = context.device;
+    destroy = destroyPool;
+    pool = created;
+}
+
+void Recorder::OwnedCommandPool::Reset() noexcept {
+    if (pool != VK_NULL_HANDLE) destroy(device, pool, nullptr);
+    pool = VK_NULL_HANDLE;
 }
 
 Recorder::~Recorder() {
@@ -1477,8 +1491,7 @@ Recorder::~Recorder() {
     // Sync() above waited for every batch, so no submission still signals the timeline.
     if (timeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, timeline, nullptr);
     timeline = VK_NULL_HANDLE;
-    if (encoderPool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, encoderPool, nullptr);
-    encoderPool = VK_NULL_HANDLE;
+    encoderPool.Reset();
 }
 
 std::optional<std::chrono::steady_clock::time_point> Recorder::PendingLabelSince() {
@@ -2206,7 +2219,7 @@ void Recorder::ensureOpen() {
         batch->sampleBatch = ++sampleBatches;
         try {
             VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-            allocation.commandPool = encoderPool != VK_NULL_HANDLE ? encoderPool : context.pool;
+            allocation.commandPool = encoderPool.Get() != VK_NULL_HANDLE ? encoderPool.Get() : context.pool;
             allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             allocation.commandBufferCount = 1;
             {
