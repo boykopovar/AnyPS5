@@ -168,6 +168,8 @@ void testRegisters() {
     expectFailure([&] { execute(state, makePacket(0x7a, {0x20000242, 1})); }, "bank selection");
     execute(state, makePacket(0x28, {0x80000000, 0x80000000}));
     execute(state, makePacket(0x28, {0, 0}));
+    execute(state, makePacket(0x28, {0, 0x80018001u}));
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0, 0x80018003u}), 0); }, "shadowing");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000001, 0x80000000}), 0); }, "shadowing");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000, 0x80000002}), 0); }, "shadowing");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000, 0x80000000}), 0x20); }, "compute queue");
@@ -263,6 +265,19 @@ void testContextAndBases() {
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "context pop did not restore saved point size and limits");
     check(state.context.at(0x10) == 17, "pop did not restore context");
     expectFailure([&] { execute(state, makePacket(0x10, {2, 0}, 0x68)); }, "not been pushed");
+    execute(state, makePacket(0x69, {0x10, 23}));
+    execute(state, makePacket(0x12, {1}));
+    check(state.savedContext.has_value() && state.context.at(0x10) == 23, "CLEAR_STATE push changed the context or did not save it");
+    expectFailure([&] { execute(state, makePacket(0x12, {1})); }, "already pushed");
+    execute(state, makePacket(0x69, {0x10, 29}));
+    execute(state, makePacket(0x12, {2}));
+    check(!state.savedContext.has_value() && state.context.at(0x10) == 23, "CLEAR_STATE pop did not restore the pushed context");
+    expectFailure([&] { execute(state, makePacket(0x12, {2})); }, "not been pushed");
+    execute(state, makePacket(0x12, {3}));
+    check(state.savedContext.has_value() && state.context == AgcDriver::ClearStateContextRegisters(), "CLEAR_STATE push-clear did not save and clear the context");
+    execute(state, makePacket(0x12, {2}));
+    check(state.context.at(0x10) == 23, "pop after CLEAR_STATE push-clear did not restore the context");
+    for (const auto command : {4u, 0xfu}) expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x12, {command}), 0); }, "commands above 3");
     alignas(8) std::array<std::uint32_t, 4> arguments{7, 8, 9, 0};
     execute(state, makePacket(0x11, {1, low(arguments.data()), high(arguments.data())}, 2));
     auto packet = makePacket(0x16, {0, 0x8041});

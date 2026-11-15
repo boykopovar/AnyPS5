@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -36,6 +37,9 @@ void testSizes() {
         check(sceAgcDcbContextStateOp_0100(&buffer, operation) == words.data(), "context state op did not start at the cursor");
         const auto written = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * sizeof(std::uint32_t);
         check(written == sizes[operation], "context state size differs from the written packets");
+        if (operation == 1) {
+            continue;
+        }
 
         std::array<std::uint32_t, 64> unversionedWords{};
         CommandBuffer unversionedBuffer{unversionedWords.data(), unversionedWords.data() + unversionedWords.size(),
@@ -46,6 +50,22 @@ void testSizes() {
         check(unversionedWritten == sizes[operation], "context state size differs from the written packets");
         check(words == unversionedWords, "unversioned context state op mismatch with versioned op");
     }
+}
+
+void testConsolePush() {
+    std::array<std::uint32_t, 8> words{};
+    words.fill(0xdeadbeefu);
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    const std::array<std::uint32_t, 5> expected{0xc0012800u, 0, 0x80018001u, 0xc0001200u, 1};
+    check(sceAgcDcbContextStateOp(&buffer, 1) == words.data(), "console context push did not start at the cursor");
+    check(std::equal(expected.begin(), expected.end(), words.begin()), "console context push packet mismatch");
+    check(buffer.cursor_up == words.data() + expected.size() && words[expected.size()] == 0xdeadbeefu, "console context push cursor advance mismatch");
+    check(sceAgcDcbContextStateOpGetSize(1) >= expected.size() * sizeof(std::uint32_t), "console context push is larger than its reported size");
+    std::array<std::uint32_t, 4> small{};
+    CommandBuffer full{small.data(), small.data() + small.size(), small.data(), small.data() + small.size(), nullptr, nullptr, 0};
+    expectFailure([&] { sceAgcDcbContextStateOp(&full, 1); });
+    check(full.cursor_up == small.data(), "a refused console context push advanced the cursor");
+    expectFailure([] { sceAgcDcbContextStateOp(nullptr, 1); });
 }
 
 void testInvalidOperations() {
@@ -63,6 +83,7 @@ int main() {
     try {
         check(sceAgcInit(13) == 0, "context initialization failed");
         testSizes();
+        testConsolePush();
         testInvalidOperations();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC context state size tests passed");

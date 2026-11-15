@@ -30,7 +30,13 @@ bool ReserveContextRestore(CommandBuffer* buffer) {
 extern "C" {
 
 uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, uint32_t operation) {
-    return sceAgcDcbContextStateOp_0100(buf, operation);
+    if (operation != 1) {
+        return sceAgcDcbContextStateOp_0100(buf, operation);
+    }
+    Agc::Command::Reserve(buf, 5, __func__);
+    auto* first = Agc::Command::Emit(buf, 0x28u, {0u, 0x80018001u}, __func__);
+    Agc::Command::Emit(buf, 0x12u, {operation}, __func__);
+    return first;
 }
 
 uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(uint32_t operation) {
