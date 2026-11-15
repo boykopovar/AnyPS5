@@ -105,7 +105,10 @@ int WriteStatus(bool* status, bool value, const char* function) {
 
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
     if (status == nullptr) return nullOutputError;
-    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return nullOutputError;
     return SYSTEM_SERVICE_OK;
 }
 
@@ -371,9 +374,14 @@ int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationModeByAppId(std::int32_t appId)
 }
 
 int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
-    if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
-    if (std::strcmp(path, "exit") == 0) LibcExitWithoutHandlers_nid_no_patch(0);
-    auto launch = PrepareLaunch(path, arguments);
+    if (path == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+    std::string localPath;
+    const int savedErrno = errno;
+    const int copyError = CopyGuestPath_nid_no_patch(path, localPath);
+    errno = savedErrno;
+    if (copyError != 0 || localPath.empty()) return SYSTEM_SERVICE_ERROR_PARAMETER;
+    if (localPath == "exit") LibcExitWithoutHandlers_nid_no_patch(0);
+    auto launch = PrepareLaunch(localPath.c_str(), arguments);
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     LoadConvertedExecutable_nid_no_patch(std::filesystem::path(launch.executable), arguments);
 #endif
@@ -615,9 +623,27 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  constexpr char SystemName[] = "PS5";
- std::memset(buf, 0, bufSize);
- std::memcpy(buf, SystemName, sizeof(SystemName));
- buf[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH - 1] = '\0';
+ const int savedErrno = errno;
+ if (!GuestWritable_nid_no_patch(buf, bufSize)) {
+  errno = savedErrno;
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ constexpr std::size_t ChunkSize = 4096;
+ char zeros[ChunkSize]{};
+ std::size_t offset = 0;
+ while (offset < bufSize) {
+  const std::size_t chunk = std::min(ChunkSize, bufSize - offset);
+  if (!GuestCopyOut_nid_no_patch(buf + offset, zeros, chunk)) {
+   errno = savedErrno;
+   return SYSTEM_SERVICE_ERROR_PARAMETER;
+  }
+  offset += chunk;
+ }
+ const bool copied = GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -665,11 +691,14 @@ int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
 
 int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     if (!uri) return static_cast<int>(0x80a10003);
-    std::size_t length = 0;
-    while (length < 6016 && uri[length] != 0) ++length;
-    if (length > 6015) return static_cast<int>(0x80a10007);
-    if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return OpenWebBrowserUrl(uri);
+    std::string localUri;
+    const int savedErrno = errno;
+    const int copyError = CopyGuestString_nid_no_patch(uri, 6016, localUri);
+    errno = savedErrno;
+    if (copyError == 63) return static_cast<int>(0x80a10007);
+    if (copyError != 0) return static_cast<int>(0x80a10003);
+    if (!localUri.starts_with("http:") && !localUri.starts_with("https:") && !localUri.starts_with("psno:")) return static_cast<int>(0x80a10008);
+    return OpenWebBrowserUrl(localUri.c_str());
 }
 
 extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
@@ -742,8 +771,7 @@ int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
  if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
  static_cast<void>(sceSystemServiceGetAppId(titleId));
- *launched = true;
- return SYSTEM_SERVICE_OK;
+ return WriteStatusOrRefuse(launched, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceLncUtilGetAppIdOfRunningBigApp() {
@@ -789,7 +817,12 @@ int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended
 
 int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
  if (path == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- if (path[0] == '\0') throw std::runtime_error("sceLncUtilLoadExec: empty path");
+ char first = '\0';
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&first, path, sizeof(first));
+ errno = savedErrno;
+ if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ if (first == '\0') throw std::runtime_error("sceLncUtilLoadExec: empty path");
  return sceSystemServiceLoadExec(path, argv);
 }
 
