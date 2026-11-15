@@ -325,6 +325,11 @@ void TestGuestPointers() {
         RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 1, roMap); },
                        "ubidi_reorderVisual ro map");
         ExpectInt(*roMap, 55, "ro map unchanged");
+        RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 4097, map); },
+                       "ubidi_reorderVisual oversize count");
+        RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(badByte, 0x7fffffff, badInt); },
+                       "ubidi_reorderVisual huge bad arrays");
+        Expect(map[0] == 11 && map[1] == 22, "map untouched on oversize reorder");
     }
 
     {

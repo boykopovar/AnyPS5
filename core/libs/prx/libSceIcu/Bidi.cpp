@@ -165,6 +165,8 @@ void APS5_VABI ubidi_reorderVisual_nid_postfix(const std::uint8_t* levels, std::
         ubidi_reorderVisual(levels, length, indexMap);
         return;
     }
+    constexpr std::int32_t MaxReorderCount = 4096;
+    if (length > MaxReorderCount) NotImplemented_nid_no_patch(__func__);
     const auto count = static_cast<std::size_t>(length);
     std::vector<std::uint8_t> hostLevels(count);
     if (!CopyInPreservingErrno(hostLevels.data(), levels, hostLevels.size())) NotImplemented_nid_no_patch(__func__);
