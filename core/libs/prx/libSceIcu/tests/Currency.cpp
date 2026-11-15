@@ -578,6 +578,25 @@ void AllocationRegistry() {
     Require(memory.allocations == memory.frees);
 }
 
+void AllocationName() {
+    Memory memory;
+    std::int32_t status = 0;
+    u_setMemoryFunctions_nid_postfix(&memory, AllocateCurrency, ReallocateCurrency, FreeCurrency, &status);
+    Require(status == 0);
+    std::array<char16_t, 4> result{};
+    Require(ucurr_forLocale_nid_postfix("en_US", result.data(), 4, &status) == 3 && status == 0);
+    memory.failAt = memory.calls + 1;
+    const auto* code = u"USD";
+    std::int32_t length = -99;
+    std::int8_t choice = 73;
+    const auto* text = ucurr_getName_nid_postfix(code, "en", 0, &choice, &length, &status);
+    std::fprintf(stderr, "name allocation fallback: alias=%d length=%d status=%d choice=%d\n", text == code, length, status, choice);
+    Require(text == code && length == 3 && status == -127 && choice == 0);
+    memory.failAt = 0;
+    u_cleanup_nid_postfix();
+    Require(memory.allocations == memory.frees);
+}
+
 void DefaultState() {
     Require(setenv_nid_postfix("LC_ALL", "sv_SE.UTF-8", 1) == 0);
     Require(std::string_view(uloc_getDefault()) == "sv_SE");
@@ -667,6 +686,7 @@ int main(int argc, char** argv) {
         else if (mode == "allocation_iso_first") AllocationISO(1);
         else if (mode == "allocation_iso_second") AllocationISO(2);
         else if (mode == "allocation_registry") AllocationRegistry();
+        else if (mode == "allocation_name") AllocationName();
         else if (mode == "default_state") DefaultState();
         else if (mode == "enumeration_lifetime") EnumerationLifetime();
         else if (mode == "concurrent_registry") ConcurrentRegistry();

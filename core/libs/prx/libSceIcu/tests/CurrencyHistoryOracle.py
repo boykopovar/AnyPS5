@@ -93,7 +93,14 @@ def main():
     run = subprocess.run(args.command, input=''.join(rows), text=True, capture_output=True, timeout=18)
     if run.returncode:
         raise RuntimeError(f'currency probe exit {run.returncode}: {run.stderr[-6000:]}')
-    actual = run.stdout.splitlines()
+    actual = []
+    for line in run.stdout.splitlines():
+        if line.startswith('HISTORY '):
+            actual.append(line)
+        elif line.startswith('[src/HostCpu.cpp:') and ' host CPU ' in line:
+            print(line)
+        else:
+            raise AssertionError('unexpected currency probe output: ' + line)
     if actual != expected:
         for index, (got, want) in enumerate(zip(actual, expected)):
             if got != want:
