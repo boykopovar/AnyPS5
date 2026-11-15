@@ -5,6 +5,8 @@
 #include "prx/libSceXml/src/Document.hpp"
 #include "prx/libSceXml/src/DocumentBuilder.hpp"
 #include "prx/libSceXml/src/Node.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
@@ -108,13 +110,25 @@ void CopyXmlString(XmlString* self, const XmlString* other) {
 
 std::size_t GuestStringLength(const char* buffer) {
     if (buffer == nullptr) return 0;
+    constexpr std::size_t PageSize = 4096;
+    constexpr std::size_t ChunkSize = 256;
+    std::array<char, ChunkSize> chunk{};
     std::size_t length = 0;
-    char byte = 0;
-    while (CopyInGuest(byte, buffer + length)) {
-        if (byte == '\0') return length;
-        ++length;
+    const int savedErrno = errno;
+    while (true) {
+        const auto address = reinterpret_cast<std::uintptr_t>(buffer) + length;
+        const std::size_t pageRemaining = PageSize - (address % PageSize);
+        const std::size_t bytes = std::min(pageRemaining, ChunkSize);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), buffer + length, bytes)) {
+            errno = savedErrno;
+            return 0;
+        }
+        if (const void* terminator = std::memchr(chunk.data(), '\0', bytes)) {
+            errno = savedErrno;
+            return length + static_cast<std::size_t>(static_cast<const char*>(terminator) - chunk.data());
+        }
+        length += bytes;
     }
-    return 0;
 }
 
 void XmlTerminate(XmlHandle* self) {
