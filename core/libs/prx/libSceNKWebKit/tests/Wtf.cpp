@@ -3,9 +3,11 @@
 #include "prx/libSceIcu/Version.hpp"
 
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <chrono>
 #include <filesystem>
 #ifndef _WIN32
@@ -24,6 +26,7 @@
 #include <string>
 #include <utility>
 #include <source_location>
+#include <type_traits>
 
 namespace {
 
@@ -202,6 +205,83 @@ static void TestMemoryAllocations() {
     _ZN8Gigacage4freeENS_4KindEPv(0, cross2);
 }
 
+template <typename Function>
+bool ExpectBmallocOperatorStub(Function function, const char* name) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) == std::string(name) + " not implemented" &&
+            NotImplementedCalls_nid_no_patch() == before + 1) {
+            std::fprintf(stderr, "EXPECTED_BMALLOC_THROW %s\n", name);
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename ScalarNew, typename ScalarDelete, typename ArrayNew>
+bool TestBmallocOperatorClass(ScalarNew scalarNew, ScalarDelete scalarDelete, ArrayNew arrayNew,
+                              const char* scalarNewName, const char* scalarDeleteName,
+                              const char* arrayNewName) {
+    if constexpr (std::is_invocable_r_v<int, ScalarNew> &&
+                  std::is_invocable_r_v<int, ScalarDelete> &&
+                  std::is_invocable_r_v<int, ArrayNew>) {
+        ExpectBmallocOperatorStub(scalarNew, scalarNewName);
+        ExpectBmallocOperatorStub(scalarDelete, scalarDeleteName);
+        ExpectBmallocOperatorStub(arrayNew, arrayNewName);
+        return false;
+    } else {
+        static_assert(std::is_invocable_r_v<void*, ScalarNew, std::size_t>);
+        static_assert(std::is_invocable_r_v<void, ScalarDelete, void*>);
+        static_assert(std::is_invocable_r_v<void*, ArrayNew, std::size_t>);
+
+        void* scalarZero = scalarNew(0);
+        Require(scalarZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(scalarZero) % alignof(std::max_align_t)) == 0);
+        scalarDelete(scalarZero);
+        scalarDelete(nullptr);
+
+        auto* scalar = static_cast<unsigned char*>(scalarNew(128));
+        Require(scalar != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            scalar[i] = static_cast<unsigned char>(i ^ 0xA5);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(scalar[i] == static_cast<unsigned char>(i ^ 0xA5));
+        }
+        scalarDelete(scalar);
+
+        void* arrayZero = arrayNew(0);
+        Require(arrayZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(arrayZero) % alignof(std::max_align_t)) == 0);
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(arrayZero, 0);
+
+        auto* array = static_cast<unsigned char*>(arrayNew(128));
+        Require(array != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            array[i] = static_cast<unsigned char>(i ^ 0x5A);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(array[i] == static_cast<unsigned char>(i ^ 0x5A));
+        }
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(array, 0);
+        return true;
+    }
+}
+
+static bool TestBmallocHeapOperators() {
+    const bool isoTls = TestBmallocOperatorClass(
+        _ZN7bmalloc11IsoTLSEntrynwEm, _ZN7bmalloc11IsoTLSEntrydlEPv,
+        _ZN7bmalloc11IsoTLSEntrynaEm, "_ZN7bmalloc11IsoTLSEntrynwEm",
+        "_ZN7bmalloc11IsoTLSEntrydlEPv", "_ZN7bmalloc11IsoTLSEntrynaEm");
+    const bool isoHeap = TestBmallocOperatorClass(
+        _ZN7bmalloc15IsoHeapImplBasenwEm, _ZN7bmalloc15IsoHeapImplBasedlEPv,
+        _ZN7bmalloc15IsoHeapImplBasenaEm, "_ZN7bmalloc15IsoHeapImplBasenwEm",
+        "_ZN7bmalloc15IsoHeapImplBasedlEPv", "_ZN7bmalloc15IsoHeapImplBasenaEm");
+    return isoTls && isoHeap;
+}
+
 static void TestTime() {
     MonotonicTime mNow = _ZN3WTF13MonotonicTime3nowEv();
     Require(mNow.m_value > 0.0);
@@ -269,15 +349,160 @@ static void TestTime() {
     Require(threadCpu.m_value >= 0.0);
 }
 
-static void TestSystem() {
-    int cores = _ZN3WTF22numberOfProcessorCoresEv();
-    Require(cores >= 1);
+extern "C" void CurrentTimeClockForTest_nid_no_patch(int (*query)(int, KernelTimespec*));
 
-    std::uint64_t ram = _ZN3WTF7ramSizeEv();
+static int g_clockQueries = 0;
+static int g_lastClockId = -1;
+
+static int ClockWithTimes(int clockId, KernelTimespec* time) {
+    ++g_clockQueries;
+    g_lastClockId = clockId;
+    if (clockId == 0) {
+        *time = KernelTimespec{1700000000, 250000000};
+        return 0;
+    }
+    if (clockId == 4) {
+        *time = KernelTimespec{12345, 500000000};
+        return 0;
+    }
+    *time = KernelTimespec{99, 0};
+    return 0;
+}
+
+static int ClockFailing(int, KernelTimespec*) {
+    ++g_clockQueries;
+    return -1;
+}
+
+static double GuestClockSeconds(int clockId) {
+    KernelTimespec time{};
+    Require(clock_gettime_nid_postfix(clockId, &time) == 0);
+    return static_cast<double>(time.tv_sec) + time.tv_nsec / 1'000'000'000.0;
+}
+
+static void TestGuestClocks() {
+    CurrentTimeClockForTest_nid_no_patch(ClockWithTimes);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 1700000000.25);
+    Require(g_lastClockId == 0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 12345.5);
+    Require(g_lastClockId == 4);
+    Require(g_clockQueries == 2);
+
+    TimeWithDynamicClockType dynamicWall = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Wall);
+    Require(dynamicWall.m_type == ClockType::Wall && dynamicWall.m_value == 1700000000.25);
+    TimeWithDynamicClockType dynamicMonotonic = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+    Require(dynamicMonotonic.m_type == ClockType::Monotonic && dynamicMonotonic.m_value == 12345.5);
+
+    MonotonicTime monotonic{12346.5};
+    Require(_ZNK3WTF13MonotonicTime19approximateWallTimeEv(&monotonic).m_value == 1700000001.25);
+    WallTime wall{1700000002.25};
+    Require(_ZNK3WTF8WallTime24approximateMonotonicTimeEv(&wall).m_value == 12347.5);
+
+    CurrentTimeClockForTest_nid_no_patch(ClockFailing);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 0.0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 0.0);
+    Require(g_clockQueries == 2);
+
+    CurrentTimeClockForTest_nid_no_patch(nullptr);
+    const double monotonicBefore = GuestClockSeconds(4);
+    const double monotonicNow = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    Require(monotonicBefore <= monotonicNow && monotonicNow <= GuestClockSeconds(4));
+    const double wallBefore = GuestClockSeconds(0);
+    const double wallNow = _ZN3WTF8WallTime3nowEv().m_value;
+    Require(wallBefore <= wallNow && wallNow <= GuestClockSeconds(0));
+}
+
+extern "C" void NumberOfProcessorCoresSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static int g_sysconfQueries = 0;
+
+static std::int64_t SysconfWithProcessors(int name) {
+    ++g_sysconfQueries;
+    if (name == 58) return 37;
+    if (name == 57) return 41;
+    return -1;
+}
+
+static std::int64_t SysconfFailing(int) {
+    ++g_sysconfQueries;
+    return -1;
+}
+
+static void TestNumberOfProcessorCores() {
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfWithProcessors);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfFailing);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(nullptr);
+    const int cores = _ZN3WTF22numberOfProcessorCoresEv();
+    Require(cores >= 1);
+    Require(cores == sysconf_nid_postfix(58));
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == cores);
+}
+
+extern "C" void RamSizeSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static std::int64_t SysconfWithMemory(int name) {
+    ++g_sysconfQueries;
+    if (name == 121) return 139888;
+    if (name == 47) return 16384;
+    return -1;
+}
+
+static std::int64_t SysconfWithoutPhysPages(int name) {
+    ++g_sysconfQueries;
+    return name == 47 ? 16384 : -1;
+}
+
+static std::int64_t SysconfWithoutPageSize(int name) {
+    ++g_sysconfQueries;
+    return name == 121 ? 139888 : -1;
+}
+
+static void TestRamSize() {
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithMemory);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPhysPages);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPageSize);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfFailing);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(nullptr);
+    const std::uint64_t ram = _ZN3WTF7ramSizeEv();
+    Require(ram == static_cast<std::uint64_t>(sysconf_nid_postfix(121)) * static_cast<std::uint64_t>(sysconf_nid_postfix(47)));
     Require(ram >= 1024ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == ram);
+}
+
+static void TestSystem() {
+    TestNumberOfProcessorCores();
+    TestRamSize();
+    TestGuestClocks();
 
     std::size_t page = _ZN3WTF8pageSizeEv();
-    Require(page == 4096);
+    Require(page == 16384);
+    Require(_ZN3WTF8pageSizeEv() == page);
 
     _ZN3WTF6Config17permanentlyFreezeEv();
 
@@ -604,7 +829,53 @@ static void TestFileHandles() {
     std::filesystem::remove_all(root);
 }
 
+static void TestUniStdExtras() {
+    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
+    const int handle = sceKernelOpen("/nkwebkit-unistd/file.bin", SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0666);
+    Require(handle >= 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) == 0);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) != 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDWR);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    const int duplicate = _ZN3WTF14dupCloseOnExecEi(handle);
+    Require(duplicate >= 0 && duplicate != handle);
+    Require(fcntl_nid_postfix(duplicate, 1) == 1);
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    Require(sceKernelWrite(duplicate, "abc", 3) == 3);
+    Require(sceKernelLseek(handle, 0, 1) == 3);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(sceKernelClose(handle) == 0);
+    *__error_nid_postfix() = 0;
+    Require(!_ZN3WTF11setNonBlockEi(handle));
+    Require(*__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(_ZN3WTF14dupCloseOnExecEi(-1) == -1);
+    Require(*__error_nid_postfix() == 9);
+    RemovePathAlias_nid_no_patch("/nkwebkit-unistd");
+    std::filesystem::remove_all(root);
+}
+
+static void TestSleepSeconds() {
+    double start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.05});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start >= 0.05);
+    start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-5.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+}
+
 int main() {
+    if (!TestBmallocHeapOperators()) {
+        return 1;
+    }
     TestAdditionalWtf();
     TestAccumulatedLogs();
     TestMemoryAllocations();
@@ -616,6 +887,8 @@ int main() {
     TestJscAndPal();
     TestMappedFiles();
     TestFileHandles();
+    TestUniStdExtras();
+    TestSleepSeconds();
     return 0;
 }
 

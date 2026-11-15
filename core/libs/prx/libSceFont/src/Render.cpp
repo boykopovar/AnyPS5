@@ -261,21 +261,25 @@ int APS5_VABI sceFontGetVerticalLayout(FontHandle fontHandle, FontVerticalLayout
     auto* font = GetNativeFont(fontHandle);
     std::uint32_t fontLock = 0;
     if (font && font->magic == HANDLE_MAGIC && AcquireFontLock(font, fontLock)) {
-        if (!layout) {
+        if (!layout || !Font::CopyOutGuest(layout, FontVerticalLayout{})) {
             rc = SCE_FONT_ERROR_INVALID_PARAMETER;
         } else {
             std::uint8_t blocks[VERTICAL_LAYOUT_SIZE] = {};
             rc = ComputeVerticalLayout(fontHandle, &font->style, blocks);
             if (rc == SCE_FONT_OK) {
-                layout->baselineOffsetX = LoadFloat(blocks, VERTICAL_BASELINE_OFFSET_X);
-                layout->columnAdvance = LoadFloat(blocks, VERTICAL_COLUMN_ADVANCE);
-                layout->decorationSpan = LoadFloat(blocks, VERTICAL_DECORATION_SPAN);
+                FontVerticalLayout localLayout{};
+                localLayout.baselineOffsetX = LoadFloat(blocks, VERTICAL_BASELINE_OFFSET_X);
+                localLayout.columnAdvance = LoadFloat(blocks, VERTICAL_COLUMN_ADVANCE);
+                localLayout.decorationSpan = LoadFloat(blocks, VERTICAL_DECORATION_SPAN);
+                if (!Font::CopyOutGuest(layout, localLayout)) {
+                    rc = SCE_FONT_ERROR_INVALID_PARAMETER;
+                }
             }
         }
         ReleaseFontLock(font, fontLock);
         if (rc == SCE_FONT_OK) return rc;
     }
-    if (layout) *layout = {};
+    if (layout) Font::CopyOutGuest(layout, FontVerticalLayout{});
     return rc;
 }
 
@@ -526,16 +530,18 @@ int APS5_VABI sceFontDeleteGlyph(const FontMemory* memory, FontGlyph* pGlyph) {
 
 int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph glyph, std::int32_t attribute, std::int32_t* previousAttribute) {
     if (!glyph || glyph->magic != GLYPH_MAGIC) {
-        if (previousAttribute) *previousAttribute = 0;
+        if (previousAttribute) Font::CopyOutGuest(previousAttribute, 0);
         return SCE_FONT_ERROR_INVALID_GLYPH;
     }
     if (attribute != 0x10 && attribute != 0x11) {
-        if (previousAttribute) *previousAttribute = 0;
+        if (previousAttribute) Font::CopyOutGuest(previousAttribute, 0);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const std::int32_t previous = (glyph->flags & 2) ? 0x11 : 0x10;
+    if (previousAttribute != nullptr && !Font::CopyOutGuest(previousAttribute, previous)) {
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     glyph->flags = static_cast<std::uint16_t>((glyph->flags & ~2u) | ((attribute - 0x10) << 1));
-    if (previousAttribute) *previousAttribute = previous;
     return SCE_FONT_OK;
 }
 
@@ -560,8 +566,8 @@ int APS5_VABI sceFontGlyphGetMetricsForm(FontGlyph glyph) {
 
 int APS5_VABI sceFontGlyphGetScalePixel(FontGlyph glyph, float* w, float* h) {
     if (!glyph || glyph->magic != GLYPH_MAGIC || (!w && !h)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (w) *w = glyph->scale_x;
-    if (h) *h = glyph->base_scale;
+    if (w && !CopyOutGuest(w, glyph->scale_x)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, glyph->base_scale)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 

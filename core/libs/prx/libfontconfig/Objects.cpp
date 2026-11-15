@@ -26,6 +26,7 @@
 #include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libc/include/General.hpp"
 #include "FontconfigData.hpp"
+#include "prx/libfontconfig/include/FormatAccess.hpp"
 
 #include <algorithm>
 #include <array>
@@ -42,6 +43,7 @@
 struct FcLangSet {
     std::array<bool, std::size(fontconfig_data::Languages)> known{};
     std::set<std::string> extra;
+    std::vector<std::string> extraOrder;
 };
 
 namespace {
@@ -263,7 +265,15 @@ FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language) {
         return 1;
     }
     try {
-        set->extra.emplace(name);
+        const auto [entry, inserted] = set->extra.emplace(name);
+        if (inserted) {
+            try {
+                set->extraOrder.emplace_back(name);
+            } catch (...) {
+                set->extra.erase(entry);
+                throw;
+            }
+        }
         return 1;
     } catch (const std::bad_alloc&) {
         return 0;
@@ -513,4 +523,24 @@ FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, cons
     } catch (const std::bad_alloc&) { return 0; }
 }
 
+}
+
+std::vector<std::string> FontconfigLanguages_nid_no_patch(const FcLangSet* set, bool enumerate) {
+    std::vector<std::string> result;
+    const auto* order = enumerate ? fontconfig_data::Languages : fontconfig_data::FormatLanguages;
+    for (std::size_t i = 0; i < std::size(fontconfig_data::Languages); ++i) {
+        const auto language = order[i];
+        const auto found = std::lower_bound(std::begin(fontconfig_data::Languages), std::end(fontconfig_data::Languages), language);
+        if (found != std::end(fontconfig_data::Languages) && *found == language &&
+            set->known[found - std::begin(fontconfig_data::Languages)]) result.emplace_back(language);
+    }
+    for (const auto& extra : set->extraOrder) result.push_back(extra);
+    return result;
+}
+
+std::string FontconfigDowncase_nid_no_patch(std::string_view text) {
+    CaseWalker walker(text);
+    std::string result;
+    while (const auto c = walker.Next()) result.push_back(static_cast<char>(c));
+    return result;
 }

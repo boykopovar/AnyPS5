@@ -98,8 +98,19 @@ void Player::queue(const Event& event) {
     eventCondition.NotifyAll();
 }
 
-void Player::OnWarning(std::int32_t code) {
-    queue({EventWarningId, code, false, false});
+std::uint64_t Player::OnWarning(std::int32_t code) {
+    std::uint64_t ticket = 0;
+    {
+        std::lock_guard lock(eventMutex);
+        ticket = ++queuedWarnings;
+        events.push_back({EventWarningId, code, false, false, ticket});
+    }
+    eventCondition.NotifyAll();
+    return ticket;
+}
+
+bool Player::WarningDelivered(std::uint64_t ticket) {
+    return deliveredWarnings.load(std::memory_order_acquire) >= ticket;
 }
 
 void Player::OnError() {
@@ -142,9 +153,12 @@ void Player::deliver(const Event& event) {
         autoStart();
         return;
     }
-    if (!callback.event_callback) return;
-    std::int32_t warning = event.warning;
-    callback.event_callback(callback.object_ptr, event.id, 0, event.id == EventWarningId ? &warning : nullptr);
+    const auto closed = controllerClosed;
+    if (callback.event_callback) {
+        std::int32_t warning = event.warning;
+        callback.event_callback(callback.object_ptr, event.id, 0, event.id == EventWarningId ? &warning : nullptr);
+    }
+    if (event.ticket != 0 && !*closed) deliveredWarnings.store(event.ticket, std::memory_order_release);
 }
 
 bool Player::readyLocked() const {

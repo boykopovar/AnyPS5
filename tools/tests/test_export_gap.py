@@ -303,6 +303,16 @@ class ExportGapTests(unittest.TestCase):
                   "    EXAMPLE_MACRO(sceExampleOnlyInDefinition)\n")
         self.assertFalse(provides_with(source, nid))
 
+    def test_apostrophe_in_directive_does_not_hide_later_definitions(self):
+        source = ("#if !defined(__x86_64__)\n"
+                  "#error this library doesn't build for the host\n"
+                  "#endif\n"
+                  "int APS5_VABI sceProbeInit(void) { return 0; }\n"
+                  "int APS5_VABI sceProbeRead(int handle) { return handle == '0'; }\n")
+        for name in ("sceProbeInit", "sceProbeRead"):
+            with self.subTest(name=name):
+                self.assertTrue(provides_with(source, nid_of(name)))
+
     def test_explicit_export_binding_counts_as_provided(self):
         nid = nid_names.compute_nid("sceExampleExplicit")
         with tempfile.TemporaryDirectory() as directory:
