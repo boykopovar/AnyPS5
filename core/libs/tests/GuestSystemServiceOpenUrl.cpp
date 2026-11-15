@@ -435,6 +435,10 @@ void CheckLaunchWebBrowser() {
     Require(call(tooLong.c_str()) == unavailable);
     const std::string overLimit = "https://example.com/" + std::string(6000, 'a') + std::string(100, 'a');
     Require(call(overLimit.c_str()) == static_cast<int>(0x80a10007));
+    const std::string longest = "https://example.com/" + std::string(6015 - 20, 'a');
+    Require(longest.size() == 6015 && call(longest.c_str()) == unavailable);
+    const std::string firstRefused = longest + "a";
+    Require(call(firstRefused.c_str()) == static_cast<int>(0x80a10007));
     Require(confirmation.asked.size() == asked && launcher.launched.size() == launched);
 
     SetEnvironment("ANYPS5_OPEN_URLS", "bogus");
