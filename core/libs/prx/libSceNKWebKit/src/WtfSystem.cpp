@@ -20,6 +20,7 @@ namespace NKWebKit {
 void FillRandomBytes(void* buffer, std::size_t bytes);
 std::size_t PageSize();
 int NumberOfProcessorCores();
+std::size_t RamSize();
 }  // namespace NKWebKit
 
 namespace {
@@ -32,18 +33,7 @@ int APS5_VABI _ZN3WTF22numberOfProcessorCoresEv() {
 }
 
 std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv() {
-#ifdef _WIN32
-    MEMORYSTATUSEX status;
-    status.dwLength = sizeof(status);
-    if (GlobalMemoryStatusEx(&status)) {
-        return status.ullTotalPhys;
-    }
-#else
-    const long pages = sysconf(_SC_PHYS_PAGES);
-    const long pageBytes = sysconf(_SC_PAGE_SIZE);
-    if (pages > 0 && pageBytes > 0) return static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageBytes);
-#endif
-    throw std::runtime_error("ramSize: the host reports no physical memory size");
+    return NKWebKit::RamSize();
 }
 
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length) {

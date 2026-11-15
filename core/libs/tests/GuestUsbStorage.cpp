@@ -438,13 +438,30 @@ void TestDeviceInfo(const FakeHost& host) {
     Require(std::filesystem::equivalent(resolved, host.firstMount / "song.txt", error), "the mount point resolves to the host volume");
 }
 
-void TestDeviceMaps() {
+void TestDeviceMaps(const FakeHost& host) {
     char mountPoint[UsbStorage::MountPointSize];
     std::uint64_t mountId = 0x5a5a5a5a5a5a5a5aull;
     Require(sceUsbStorageRequestMap(0, "/", 0, 0, mountPoint, &mountId) == 0, "map the root of the device");
     Require(std::string_view(mountPoint) == "/mnt/usb0" && mountId == 0, "the root is mapped at the mount point");
     Require(sceUsbStorageRequestMap(0, "Music/", 0, 0, mountPoint, nullptr) == 0, "map a directory of the device");
     Require(std::string_view(mountPoint) == "/mnt/usb0/Music", "the directory is mapped below the mount point");
+#ifdef _WIN32
+    Require(ThrowsWith([&] { sceUsbStorageRequestMap(0, "music", 0, 0, mountPoint, nullptr); },
+                       "sceUsbStorageRequestMap: mapping a mapped directory again is not implemented"),
+            "map the same directory with different case did not throw");
+    Require(ThrowsWith([&] { sceUsbStorageRequestMapWSB(0, "MUSIC", 0, 0, mountPoint, nullptr); },
+                       "sceUsbStorageRequestMapWSB: mapping a mapped directory again is not implemented"),
+            "map the same directory with different case through WSB did not throw");
+#endif
+    std::error_code linkError;
+    const auto alias = host.firstMount / "MusicAlias";
+    std::filesystem::create_directory_symlink(host.firstMount / "Music", alias, linkError);
+    if (!linkError) {
+        Require(ThrowsWith([&] { sceUsbStorageRequestMap(0, "MusicAlias", 0, 0, mountPoint, nullptr); },
+                           "sceUsbStorageRequestMap: mapping a mapped directory again is not implemented"),
+                "map a symbolic link to a mapped directory did not throw");
+        std::filesystem::remove(alias);
+    }
     Require(ThrowsWith([&] { sceUsbStorageRequestMap(0, "/Missing", 0, 0, mountPoint, nullptr); },
                        "sceUsbStorageRequestMap: mapping a directory the device does not hold is not implemented"),
             "map a missing directory did not throw");
@@ -641,7 +658,7 @@ void TestDevices(const FakeHost& host) {
     Inject(host, true, false);
     Require(sceUsbStorageInit(nullptr) == 0, "initialize with a device");
     TestDeviceInfo(host);
-    TestDeviceMaps();
+    TestDeviceMaps(host);
     TestDeviceGetdents();
     TestDeviceGetdentsInParts();
     std::int32_t open = -1;
