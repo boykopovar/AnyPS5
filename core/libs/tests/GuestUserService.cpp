@@ -282,6 +282,15 @@ int main() {
     Require(sceUserServiceGetUserGroupName(0, homePath, 128) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     char oversizedGroupName[256]{};
     Require(sceUserServiceGetUserGroupName(0, oversizedGroupName, sizeof(oversizedGroupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    char nameListBuf[0x110]{};
+    std::int32_t nameCount = 0;
+    Require(sceUserServiceGetUserGroupNameList(0, nullptr, sizeof(nameListBuf), &nameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, sizeof(nameListBuf), nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, 0x100, &nameCount) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    errno = 71;
+    Require(sceUserServiceGetUserGroupNameList(0, reinterpret_cast<char*>(0x10), sizeof(nameListBuf), &nameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, sizeof(nameListBuf), reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 
     SetLanguage(nullptr);
     using KeyboardSetting = decltype(&sceUserServiceGetKeyboardType);

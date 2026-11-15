@@ -53,6 +53,9 @@ def modules_of(directory):
 
 
 def prepare(dump, source, log=print):
+    for module in modules_of(dump):
+        if source / module.name == source / "eboot.elf" and not module.samefile(dump / "eboot.bin"):
+            raise unwrap_self.Refused(f"{module}: module name collides with the staged executable eboot.elf")
     stage(dump / "eboot.bin", source / "eboot.elf")
     module_directories = []
     extra = []

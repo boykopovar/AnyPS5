@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -196,6 +197,13 @@ int main() {
         Require(GetPosWS_List_nid_postfix(stream, &position) == 0 && position == 5000);
         Require(SetPosWS_List_nid_postfix(stream, 4097) == 0 && GetPosWS_List_nid_postfix(stream, &position) == 0 && position == 4097);
         Require(SetPosWS_List_nid_postfix(stream, 9000) == 0 && GetPosWS_List_nid_postfix(stream, &position) == 0 && position == 8192);
+        bool threw = false;
+        try {
+            GetPosWS_List_nid_postfix(stream, reinterpret_cast<std::size_t*>(0x10));
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
         FreeList(stream);
         Require(liveBlocks == 0);
     }

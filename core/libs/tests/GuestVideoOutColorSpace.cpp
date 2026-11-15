@@ -3,6 +3,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +33,9 @@ int main() {
     std::memset(&settings, 0x5A, sizeof(settings));
 
     ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(nullptr); });
+    errno = 71;
+    ExpectFailure([] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(reinterpret_cast<VideoOutColorSpaceConversionSettings*>(0x10)); });
+    Require(errno == 71);
     Require(sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(&settings) == 0);
     for (std::size_t index = 0; index < 8; ++index) {
         Require(settings.internalData[index] == 0);
@@ -57,6 +61,16 @@ int main() {
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(-1, 0, 0); });
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(0, 0, 0); });
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(1, 0, 0); });
+
+    VideoOutColorSettings colorSettings{};
+    ExpectFailure([] { sceVideoOutColorSettingsSetGamma(nullptr, 1.0f); });
+    ExpectFailure([&] { sceVideoOutColorSettingsSetGamma(&colorSettings, 0.05f); });
+    ExpectFailure([&] { sceVideoOutColorSettingsSetGamma(&colorSettings, 2.5f); });
+    errno = 71;
+    ExpectFailure([] { sceVideoOutColorSettingsSetGamma(reinterpret_cast<VideoOutColorSettings*>(0x10), 1.0f); });
+    Require(errno == 71);
+    Require(sceVideoOutColorSettingsSetGamma(&colorSettings, 1.2f) == 0);
+    Require(colorSettings.gamma == 1.2f);
 
     int handle = 0;
     try {
