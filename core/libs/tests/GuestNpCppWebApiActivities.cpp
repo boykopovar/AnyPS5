@@ -181,6 +181,56 @@ void TestGetUsersCopiesTheVectorHandle() {
     Require(none.deleter == nullptr);
 }
 
+void TestSharedInstantiations() {
+    constexpr int kTransactionNotStarted = static_cast<int>(0x80553508);
+    alignas(8) unsigned char transaction[0x10];
+    std::memset(transaction, kFill, sizeof(transaction));
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(transaction) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv() == kTransactionNotStarted);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE() == kNotSignedIn);
+
+    IntrusivePtr empty{};
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEptEv(&empty) == nullptr);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities26GetUsersActivitiesResponseEEptEv(&empty) == nullptr);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEptEv(&empty) == nullptr);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities14UserActivitiesEEEEEEdeEv(&empty) == nullptr);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities14UserActivitiesEEEEEEptEv(&empty) == nullptr);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities8ActivityEEEEEEdeEv(&empty) == nullptr);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEE4sizeEv(&empty) == 0);
+
+    alignas(8) unsigned char elements[2 * 0x18] = {};
+    CommonIterator cursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEEppEv(&cursor) == &cursor && cursor.element == elements + 0x18);
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEEdeEv(&cursor) == elements + 0x18);
+    CommonIterator other{0, elements};
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEEneERKSA_(&cursor, &other));
+    CommonIterator activityCursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEEppEv(&activityCursor) == &activityCursor && activityCursor.element == elements + 0x18);
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEEdeEv(&activityCursor) == elements + 0x18);
+    CommonIterator activityOther{0, elements};
+    Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEEneERKSA_(&activityCursor, &activityOther));
+
+    CommonIterator first{0x7f, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEE5beginEv(&first, &empty) == &first && first.referenceCount == 0 && first.element == nullptr);
+    CommonIterator last{0x7f, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEE3endEv(&last, &empty) == &last && last.referenceCount == 0 && last.element == nullptr);
+    CommonIterator activityFirst{0x7f, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEE5beginEv(&activityFirst, &empty) == &activityFirst && activityFirst.element == nullptr);
+    CommonIterator activityLast{0x7f, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEE3endEv(&activityLast, &empty) == &activityLast && activityLast.element == nullptr);
+
+    CommonConstIterator constCursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities14UserActivitiesEEEED2Ev(&constCursor) == 0);
+    CommonConstIterator activityConstCursor{0, elements};
+    Require(_ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_10Activities2V114UserActivities8ActivityEEEED2Ev(&activityConstCursor) == 0);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities14UserActivitiesEEEEEED1Ev(&empty);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_10Activities2V114UserActivities8ActivityEEEEEED1Ev(&empty);
+    Require(empty.object == nullptr && empty.deleter == nullptr);
+}
+
 }
 
 int main() {
@@ -188,5 +238,6 @@ int main() {
     TestRequestIsSignedOut();
     TestActivityModelAccessors();
     TestGetUsersCopiesTheVectorHandle();
+    TestSharedInstantiations();
     return 0;
 }
