@@ -1,23 +1,23 @@
-            # libSceRazorCpu
+# libSceRazorCpu
 
-            ## add Silent stubs
+## add Silent stubs
 
-            - [sceRazorCpuBeginLogicalFileAccess](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuEndLogicalFileAccess](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuInitDataTags](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuIsCapturing](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuJobManagerDispatch](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuJobManagerJob](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuJobManagerSequence](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuNamedSync](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuPlotValue](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuPopMarker](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuPushMarker](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuPushMarkerStatic](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuResizeTaggedBuffer](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuShutdownDataTags](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuSync](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuTagArray](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuTagBuffer](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuUnTagBuffer](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
-- [sceRazorCpuWriteBookmark](../../../Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuBeginLogicalFileAccess](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuEndLogicalFileAccess](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuInitDataTags](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuIsCapturing](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuJobManagerDispatch](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuJobManagerJob](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuJobManagerSequence](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuNamedSync](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuPlotValue](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuPopMarker](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuPushMarker](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuPushMarkerStatic](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuResizeTaggedBuffer](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuShutdownDataTags](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuSync](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuTagArray](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuTagBuffer](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuUnTagBuffer](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
+- [sceRazorCpuWriteBookmark](../../../core/libs/prx/libSceRazorCpu/Export.cpp) (libSceRazorCpu) - silent stub returning a constant; console behaviour unmeasured.
