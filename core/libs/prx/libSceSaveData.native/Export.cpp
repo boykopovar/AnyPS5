@@ -1930,9 +1930,48 @@ int APS5_VABI sceSaveDataDownload(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataGetAllSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+static bool save_tree_bytes(const std::string& path, std::uint64_t& bytes) {
+    bytes = 0;
+    std::error_code error;
+    for (auto it = std::filesystem::recursive_directory_iterator(path, error); !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
+        if (!it->is_regular_file(error)) {
+            continue;
+        }
+        const auto size = it->file_size(error);
+        if (!error) bytes += size;
+    }
+    return !error;
+}
+
+static bool save_root_is_directory(std::error_code& error) {
+    const bool exists = std::filesystem::is_directory(save_root(), error);
+    if (error == std::errc::no_such_file_or_directory) {
+        error.clear();
+    }
+    return exists;
+}
+
+int APS5_VABI sceSaveDataGetAllSize(std::int32_t reserved, std::uint64_t* size) {
+    static_cast<void>(reserved);
+    if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    if (size == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    std::uint64_t bytes = 0;
+    std::error_code error;
+    if (save_root_is_directory(error)) {
+        for (const auto& entry : std::filesystem::directory_iterator(save_root(), error)) {
+            if (error) break;
+            if (!entry.is_directory(error)) continue;
+            std::uint64_t entryBytes = 0;
+            if (!save_tree_bytes(entry.path().string(), entryBytes)) return SAVE_DATA_ERROR_INTERNAL;
+            bytes += entryBytes;
+        }
+    }
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+    const std::uint64_t kib = (bytes + 1023) / 1024;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(size, &kib, sizeof(kib));
+    errno = savedErrno;
+    return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceSaveDataGetAppLaunchedUser(void) {
@@ -2011,9 +2050,23 @@ int APS5_VABI sceSaveDataGetProgress(float* progress) {
     return rc;
 }
 
-int APS5_VABI sceSaveDataGetSaveDataCount() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSaveDataGetSaveDataCount(std::int32_t reserved, std::uint32_t* count) {
+    static_cast<void>(reserved);
+    if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    if (count == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    std::uint32_t total = 0;
+    std::error_code error;
+    if (save_root_is_directory(error)) {
+        for (const auto& entry : std::filesystem::directory_iterator(save_root(), error)) {
+            if (error) break;
+            if (entry.is_directory(error)) ++total;
+        }
+    }
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(count, &total, sizeof(total));
+    errno = savedErrno;
+    return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceSaveDataGetSaveDataRootDir(void) {
