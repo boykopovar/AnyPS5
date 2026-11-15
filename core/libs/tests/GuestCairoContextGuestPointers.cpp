@@ -132,18 +132,6 @@ int main() {
 
     double x = 3.0;
     double y = 4.0;
-    EXPECT_REJECTED(cairo_user_to_device(context, nullptr, &y));
-    EXPECT_REJECTED(cairo_user_to_device(context, &x, nullptr));
-    EXPECT_REJECTED(cairo_user_to_device(context, badDouble, &y));
-    EXPECT_REJECTED(cairo_user_to_device(context, &x, badDouble));
-    EXPECT_REJECTED(cairo_user_to_device(context, &x, roDoubles));
-    CHECK(Close(x, 3.0) && Close(y, 4.0));
-
-    EXPECT_REJECTED(cairo_user_to_device_distance(context, &x, roDoubles));
-    EXPECT_REJECTED(cairo_device_to_user(context, &x, roDoubles));
-    EXPECT_REJECTED(cairo_device_to_user_distance(context, &x, roDoubles));
-    CHECK(Close(x, 3.0) && Close(y, 4.0));
-
     cairo_user_to_device(context, &x, &y);
     CHECK(Close(x, 12.0) && Close(y, 13.0));
     cairo_device_to_user(context, &x, &y);

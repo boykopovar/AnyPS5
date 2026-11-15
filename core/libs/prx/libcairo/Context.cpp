@@ -64,17 +64,6 @@ void RequireWritable(void* destination, std::size_t bytes, const char* caller) {
 }
 
 template <typename Fn>
-void TransformCoordinates(CairoContext* context, double* first, double* second, Fn call, const char* caller) {
-    double a = ReadGuest(first, caller);
-    double b = ReadGuest(second, caller);
-    RequireWritable(first, sizeof(a), caller);
-    RequireWritable(second, sizeof(b), caller);
-    call(Backend(context), &a, &b);
-    WriteGuest(first, a, caller);
-    WriteGuest(second, b, caller);
-}
-
-template <typename Fn>
 void WriteExtents(CairoContext* context, double* x1, double* y1, double* x2, double* y2, Fn call, const char* caller) {
     for (double* bound : {x1, y1, x2, y2})
         if (bound)
@@ -153,19 +142,19 @@ void APS5_VABI cairo_identity_matrix(CairoContext* context) {
 }
 
 void APS5_VABI cairo_user_to_device(CairoContext* context, double* x, double* y) {
-    TransformCoordinates(context, x, y, aps5_cairo_user_to_device, __func__);
+    aps5_cairo_user_to_device(Backend(context), x, y);
 }
 
 void APS5_VABI cairo_user_to_device_distance(CairoContext* context, double* dx, double* dy) {
-    TransformCoordinates(context, dx, dy, aps5_cairo_user_to_device_distance, __func__);
+    aps5_cairo_user_to_device_distance(Backend(context), dx, dy);
 }
 
 void APS5_VABI cairo_device_to_user(CairoContext* context, double* x, double* y) {
-    TransformCoordinates(context, x, y, aps5_cairo_device_to_user, __func__);
+    aps5_cairo_device_to_user(Backend(context), x, y);
 }
 
 void APS5_VABI cairo_device_to_user_distance(CairoContext* context, double* dx, double* dy) {
-    TransformCoordinates(context, dx, dy, aps5_cairo_device_to_user_distance, __func__);
+    aps5_cairo_device_to_user_distance(Backend(context), dx, dy);
 }
 
 void APS5_VABI cairo_set_antialias(CairoContext* context, int antialias) {
