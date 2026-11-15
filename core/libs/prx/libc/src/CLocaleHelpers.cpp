@@ -1,39 +1,11 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
-namespace GuestCLocale {
-
-struct Ctypevec {
-    const short* table;
-    std::int32_t deleteFlag;
-};
-static_assert(sizeof(Ctypevec) == 16);
-static_assert(offsetof(Ctypevec, deleteFlag) == 8);
-
-struct Collvec {
-    std::uint64_t handle;
-    std::uint64_t page;
-};
-static_assert(sizeof(Collvec) == 16);
-
-struct Cvtvec {
-    std::uint32_t page;
-    std::uint32_t maxBytes;
-    std::uint8_t reserved[32];
-};
-static_assert(sizeof(Cvtvec) == 40);
-static_assert(offsetof(Cvtvec, reserved) == 8);
-
-constexpr int DateOrderNone = 2;
-
-}
-
 extern "C" {
-
-const short* APS5_VABI _Getpctype_nid_postfix();
 
 GuestCLocale::Ctypevec APS5_VABI _Getctype_nid_postfix() {
     return {_Getpctype_nid_postfix(), 0};

@@ -121,6 +121,7 @@ static short Classify(int value) {
     short mask = 0;
     if (value < 32 || value == 127) mask |= 0x80;
     if (value == ' ') mask |= 0x04;
+    if (value == '\t') mask |= 0x400;
     if (value >= '\t' && value <= '\r') mask |= 0x40;
     if (value >= 'A' && value <= 'Z') mask |= 0x02;
     if (value >= 'a' && value <= 'z') mask |= 0x10;
@@ -139,7 +140,7 @@ static void CheckCtype() {
     Require(vec.table['A'] == 0x03 && vec.table['a'] == 0x11);
     Require(vec.table['G'] == 0x02 && vec.table['g'] == 0x10);
     Require(vec.table['0'] == 0x21 && vec.table['9'] == 0x21);
-    Require(vec.table[' '] == 0x04 && vec.table['\t'] == 0xc0 && vec.table['\n'] == 0xc0);
+    Require(vec.table[' '] == 0x04 && vec.table['\t'] == 0x4c0 && vec.table['\n'] == 0xc0);
     Require(vec.table['!'] == 0x08 && vec.table['~'] == 0x08);
     Require(vec.table[0] == 0x80 && vec.table[127] == 0x80 && vec.table[128] == 0 && vec.table[255] == 0);
     Require(_Getctype_nid_postfix().table == vec.table);
