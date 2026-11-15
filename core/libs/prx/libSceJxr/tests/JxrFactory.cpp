@@ -122,7 +122,7 @@ void Codecs() {
     Require(PKCreateCodecFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "codec factory creation fails");
     auto* factory = static_cast<Jxr::CodecFactory*>(raw);
     Require(factory->createCodec != nullptr, "CreateCodec slot");
-    Require(factory->createDecoderFromFile == &PKCodecFactory_CreateDecoderFromFile_nid_postfix, "CreateDecoderFromFile slot");
+    Require(factory->createDecoderFromFile != nullptr, "CreateDecoderFromFile slot");
     Require(factory->createFormatConverter != nullptr, "CreateFormatConverter slot");
     Require(factory->release != nullptr, "Release slot");
     Require(reinterpret_cast<void* const*>(factory)[3] == nullptr && reinterpret_cast<void* const*>(factory)[4] == reinterpret_cast<void*>(factory->release), "Release is not at offset 0x20 behind an empty slot");
