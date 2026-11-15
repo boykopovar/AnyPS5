@@ -97,6 +97,46 @@ void rejectFields(const Fields& f, std::string_view reason) {
 
 }
 
+static void RunRememberedRejectionTests() {
+    Fields invalid;
+    invalid.cornerSample = true;
+    const auto invalidWords = pack(invalid);
+    std::string thrown;
+    try {
+        DecodeTextureResource(invalidWords);
+    } catch (const std::runtime_error& error) {
+        thrown = error.what();
+    }
+    Require(!thrown.empty(), "a corner-sampled T# must be rejected");
+
+    const auto before = RememberedTextureRejectionCount();
+    const auto first = TryDecodeTextureResource(invalidWords);
+    Require(first.rejection != nullptr && *first.rejection == thrown, "TryDecodeTextureResource must report the decoder's own rejection message");
+    const auto remembered = RememberedTextureRejectionCount();
+    Require(remembered == before + 1u || remembered == 1u, "a rejected T# must be remembered once");
+    const auto repeat = TryDecodeTextureResource(invalidWords);
+    Require(repeat.rejection == first.rejection, "a repeated rejected T# must return the remembered rejection");
+    Require(RememberedTextureRejectionCount() == remembered, "a repeated rejected T# must not be remembered twice");
+
+    const auto valid = TryDecodeTextureResource(pack(Fields{}));
+    Require(valid.rejection == nullptr && valid.resource.baseAddress == DecodeTextureResource(pack(Fields{})).baseAddress, "a valid T# must decode as DecodeTextureResource does");
+    Require(RememberedTextureRejectionCount() == remembered, "a valid T# must not be remembered");
+
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    const auto gcn = TryDecodeTextureResource(invalidWords);
+    ShaderRecompiler::SetGcnGuestShaders(false);
+    Require(gcn.rejection != nullptr && gcn.rejection != first.rejection, "the remembered rejection of an RDNA T# must not answer for the same words decoded as a PS4 T#");
+
+    for (std::uint64_t base = 1; base <= RememberedTextureRejections + 1u; ++base) {
+        Fields distinct = invalid;
+        distinct.base40 = base;
+        Require(TryDecodeTextureResource(pack(distinct)).rejection != nullptr, "a corner-sampled T# must be rejected at every base address");
+        Require(RememberedTextureRejectionCount() <= RememberedTextureRejections, "remembered T# rejections must stay within their bound");
+    }
+    const auto again = TryDecodeTextureResource(invalidWords);
+    Require(again.rejection != nullptr && *again.rejection == thrown, "a T# rejected again after the remembered rejections were dropped must report the same message");
+}
+
 static void RunR128TextureTests() {
     constexpr std::array<std::uint32_t, 8> streamed{0xa0c18800u, 0xcad00000u, 0x01ffc1ffu, 0x905b2facu, 0u, 0u, 0u, 0u};
     const auto view = DecodeTextureResource(streamed);
@@ -810,4 +850,6 @@ void RunGuestTextureResourceTests() {
     Require(gcnResult.baseAddress == 0x100000u, "a PS4 T# took MTYPE_L2 above its 38-bit base as address bits");
     Require(gcnNull, "a PS4 T# with a zero base and MTYPE_L2 set was not classified as null");
     Require(gcnAllocation && *gcnAllocation == gcnResult.baseAddress, "a PS4 T# with MTYPE_L2 set looked up its allocation at an address other than its 38-bit base");
+
+    RunRememberedRejectionTests();
 }

@@ -6284,13 +6284,10 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
     for (std::uint32_t element = 0; element < binding.count && elementBase + element < capacity; ++element) {
         if (element < binding.imageWritten.size() && binding.imageWritten[element]) continue;
         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-        GuestTextureResource resource{};
-        try {
-            if (IsNullTextureResource(words)) continue;
-            resource = DecodeTextureResource(words);
-        } catch (const std::runtime_error&) {
-            continue;
-        }
+        if (IsNullTextureResource(words)) continue;
+        const auto decoded = TryDecodeTextureResource(words);
+        if (decoded.rejection) continue;
+        const auto& resource = decoded.resource;
         const FamilyKey key{resource.baseAddress, resource.pipeBankXor, resource.format, static_cast<std::uint32_t>(resource.tileMode), static_cast<std::uint32_t>(resource.dimension), resource.mipCount, resource.baseLevel, resource.lastLevel, resource.depthOrLastArray, resource.baseArray};
         families[key].push_back({element, resource});
     }
@@ -6347,13 +6344,10 @@ std::vector<std::uint32_t> arrayPartners(const ShaderRecompiler::DescriptorBindi
     for (std::uint32_t element = 0; element < binding.count && elementBase + element < capacity; ++element) {
         if (element < binding.imageWritten.size() && binding.imageWritten[element]) continue;
         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-        GuestTextureResource resource{};
-        try {
-            if (IsNullSampledTextureResource(words)) continue;
-            resource = DecodeTextureResource(words);
-        } catch (const std::runtime_error&) {
-            continue;
-        }
+        if (IsNullSampledTextureResource(words)) continue;
+        const auto decoded = TryDecodeTextureResource(words);
+        if (decoded.rejection) continue;
+        const auto& resource = decoded.resource;
         std::array<std::uint32_t, 8> key{};
         std::copy(words.begin(), words.end(), key.begin());
         key[3] &= ~(0xfu << 28u);
@@ -6441,7 +6435,12 @@ void ShaderResources::resolveImageTables() {
         };
         const auto decodeEntry = [&](std::uint32_t element, std::span<const std::uint32_t> words) {
             DecodedEntry decoded;
-            decoded.resource = DecodeTextureResource(words);
+            const auto texture = TryDecodeTextureResource(words);
+            if (texture.rejection) {
+                decoded.rejected = *texture.rejection;
+                return decoded;
+            }
+            decoded.resource = texture.resource;
             const auto& resource = decoded.resource;
             const auto shape = binding.imageShapes.at(element);
             const bool depthCompare = element < binding.imageDepthCompare.size() && binding.imageDepthCompare[element];
