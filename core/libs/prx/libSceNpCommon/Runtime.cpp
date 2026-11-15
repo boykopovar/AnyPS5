@@ -1289,7 +1289,12 @@ int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
 int APS5_VABI sceNpUtilGetNpLanguageCode2(int language, char* tag) {
     const NpLanguageCodes* codes = FindLanguageCodes(language);
     if (codes == nullptr || tag == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    CopyText(tag, codes->tag, NP_LANGUAGE_CODE2_SIZE);
+    char localTag[NP_LANGUAGE_CODE2_SIZE]{};
+    CopyText(localTag, codes->tag, NP_LANGUAGE_CODE2_SIZE);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(tag, localTag, NP_LANGUAGE_CODE2_SIZE);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
