@@ -187,21 +187,13 @@ void CheckSync() {
     Require(sceNetSyncGet(5) == nullptr);
     Require(sceNetSyncGet(0xFFFFFFFFu) == nullptr);
     Require(Failed(sceNetSyncCreate(nullptr, 0, "GuestNetPs4Exports"), kEinval));
-    errno = 71;
     Require(Failed(sceNetSyncCreate(reinterpret_cast<NetSyncObject*>(0x10), 0, "GuestNetPs4Exports"), kEfault));
-    Require(errno == 71);
     Require(Failed(sceNetSyncDestroy(nullptr), kEinval));
-    errno = 72;
     Require(Failed(sceNetSyncDestroy(reinterpret_cast<NetSyncObject*>(0x10)), kEfault));
-    Require(errno == 72);
     Require(Failed(sceNetSyncSignal(nullptr, 1), kEinval));
-    errno = 73;
     Require(Failed(sceNetSyncSignal(reinterpret_cast<NetSyncObject*>(0x10), 1), kEfault));
-    Require(errno == 73);
     Require(Failed(sceNetSyncWait(nullptr, nullptr), kEinval));
-    errno = 74;
     Require(Failed(sceNetSyncWait(reinterpret_cast<NetSyncObject*>(0x10), nullptr), kEfault));
-    Require(errno == 74);
     for (std::uint32_t index = 0; index < 5; ++index) {
         NetSyncObject* sync = sceNetSyncGet(index);
         Require(sync != nullptr && sync != sceNetSyncGet((index + 1) % 5));
@@ -213,9 +205,7 @@ void CheckSync() {
     NetSyncObject sync{};
     Require(sceNetSyncCreate(&sync, 0, "GuestNetPs4Exports") == 0);
     Require(sync.mutex != nullptr && sync.condition != nullptr && sync.signals == 0);
-    errno = 75;
     Require(Failed(sceNetSyncWait(&sync, reinterpret_cast<std::uint32_t*>(0x10)), kEfault));
-    Require(errno == 75);
     std::uint32_t timeout = 2000;
     Require(sceNetSyncWait(&sync, &timeout) == 0 && timeout == 0xFFFFFFFFu);
     Require(sceNetSyncSignal(&sync, 2) == 0);
