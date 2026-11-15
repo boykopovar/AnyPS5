@@ -1080,17 +1080,12 @@ void TestPemReadX509FileWrapper() {
             "write a BEGIN line to the borrowed PEM file");
     Require(fflush_nid_postfix(&stream) == 0, "flush the BEGIN line before reading it back");
     Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "rewind the BEGIN line file");
-    bool conversionThrew = false;
-    try {
-        static_cast<void>(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr));
-    } catch (const std::runtime_error&) {
-        conversionThrew = true;
-    }
-    Require(conversionThrew, "a BEGIN line reaches the unsupported conversion and propagates");
+    Require(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr) == nullptr,
+            "a BEGIN line with no END line returns null through the reader");
     Require(allocations == 0 && stream.IsOpen() && output == sentinel,
-            "reader exception frees only the borrowed BIO and preserves stream and output");
-    Require(ERR_get_error_nid_postfix() == 0, "the unsupported conversion queues no OpenSSL errors");
-    Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after the reader exception");
+            "a missing END line frees only the borrowed BIO and preserves stream and output");
+    RequireError(0x09fff066);
+    Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after the missing END line");
 }
 
 std::uint64_t ErrorCode(int library, int reason) {

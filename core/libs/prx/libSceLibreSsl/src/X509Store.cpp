@@ -117,6 +117,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "StoreLoad.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -209,9 +210,8 @@ int APS5_VABI CompareObjects(const void* leftPointer, const void* rightPointer) 
     return CompareNames(Subject(left), Subject(right));
 }
 
-int APS5_VABI LoadFile(LibreSslX509Lookup*, int, const char*, std::int64_t, char**) {
-    NotImplemented_nid_no_patch("X509_LOOKUP_file: loading certificates and CRLs from a file");
-    return 0;
+int APS5_VABI LoadFile(LibreSslX509Lookup* lookup, int command, const char* argument, std::int64_t type, char** result) {
+    return LibreSsl::ByFileCtrl_nid_no_patch(lookup, command, argument, type, result);
 }
 
 LibreSslX509LookupMethod fileLookup{"Load file into cache", nullptr, nullptr, nullptr, nullptr,

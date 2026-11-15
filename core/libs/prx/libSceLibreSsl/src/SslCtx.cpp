@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "StoreLoad.hpp"
+#include "X509NameDup.hpp"
 #include <algorithm>
 #include <climits>
 #include <cstddef>
@@ -220,8 +222,7 @@ void APS5_VABI SSL_CTX_set_cert_store_nid_postfix(LibreSslCtx* ctx, LibreSslX509
 
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path) {
     Context(ctx, __func__);
-    if (file || path) NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return LibreSsl::StoreLoadLocations_nid_no_patch(static_cast<LibreSslX509Store*>(ctx->certStore), file, path);
 }
 
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode) {
@@ -376,9 +377,18 @@ void APS5_VABI SSL_CTX_set_verify_nid_postfix(LibreSslCtx* ctx, int mode, void* 
 }
 
 int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(LibreSslCtx* ctx, void* certificate) {
-    Internal(ctx, __func__);
+    LibreSslCtxInternal& internal = Internal(ctx, __func__);
     if (!certificate) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    if (!internal.clientCa && !(internal.clientCa = LibreSsl::X509NameStackNew_nid_no_patch())) return 0;
+    auto* stack = static_cast<LibreSslStack*>(internal.clientCa);
+    auto* const subject = static_cast<const LibreSslX509Name*>(X509_get_subject_name_nid_postfix(static_cast<const LibreSslX509*>(certificate)));
+    auto* const name = LibreSsl::X509NameDup_nid_no_patch(subject);
+    if (!name) return 0;
+    if (!LibreSsl::X509NameStackPush_nid_no_patch(stack, name)) {
+        LibreSsl::X509NameFree_nid_no_patch(name);
+        return 0;
+    }
+    return 1;
 }
 
 int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const unsigned char* sidCtx, unsigned int length) {

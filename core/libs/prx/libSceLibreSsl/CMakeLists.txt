@@ -760,3 +760,20 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Pubkey.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Aux.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/X509StoreLoad.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509NameDup.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_x509_pem_ctx_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509PemCtx.cpp)
+    target_include_directories(guest_libressl_x509_pem_ctx_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_x509_pem_ctx_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_x509_pem_ctx_tests)
+    add_test(NAME guest_libressl_x509_pem_ctx COMMAND guest_libressl_x509_pem_ctx_tests)
+    add_test(NAME guest_libressl_x509_pem_ctx_allocator COMMAND guest_libressl_x509_pem_ctx_tests allocator)
+    set_tests_properties(guest_libressl_x509_pem_ctx guest_libressl_x509_pem_ctx_allocator PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_libressl_x509_pem_ctx guest_libressl_x509_pem_ctx_allocator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()

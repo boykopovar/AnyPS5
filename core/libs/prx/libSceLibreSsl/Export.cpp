@@ -335,7 +335,7 @@ int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void) {
 
 LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
                                                           LibreSslPemPasswordCallback callback, void* userData) {
-    return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, __func__);
+    return LibreSsl::ReadPemRecord(bio, certificate, callback, userData, __func__, "TRUSTED CERTIFICATE");
 }
 
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
@@ -717,11 +717,6 @@ int APS5_VABI X509_check_issued_nid_postfix(void) {
 }
 
 int APS5_VABI X509_get_ext_d2i_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get_pubkey_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
