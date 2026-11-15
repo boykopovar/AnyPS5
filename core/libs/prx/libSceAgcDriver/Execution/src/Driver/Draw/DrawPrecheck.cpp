@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include <algorithm>
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <cstdlib>
 
@@ -13,10 +14,19 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
+bool indirectRecordsDraw(const Pm4::DrawParameters::IndirectDraw& indirect) {
+    const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+    for (std::uint32_t record = 0; record < count; ++record) {
+        const auto arguments = Pm4::ReadDrawArguments(indirect, record);
+        if (arguments.count != 0 && arguments.instances != 0) return true;
+    }
+    return false;
+}
+
 QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass& copy) {
     const bool multisampled = copy.source.samples != 1u;
-    const auto address = DepthCopyPixelProgramAddress(multisampled);
-    const auto words = Graphics::DepthCopySourceWords(copy.source);
+    const auto address = copy.stencil ? StencilCopyPixelProgramAddress(multisampled) : DepthCopyPixelProgramAddress(multisampled);
+    const auto words = Graphics::DepthCopySourceWords(copy.source, copy.stencil);
     QueueState draw = queue;
     draw.context.insert_or_assign(0x000u, 0u);
     draw.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(address >> 8u));
@@ -29,8 +39,8 @@ QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass&
     draw.context.insert_or_assign(0x1b4u, 0x8002u);
     draw.context.insert_or_assign(0x1b6u, 0u);
     draw.context.insert_or_assign(0x1c4u, 0u);
-    draw.context.insert_or_assign(0x1c5u, 1u);
-    draw.context.insert_or_assign(0x08fu, 1u);
+    draw.context.insert_or_assign(0x1c5u, copy.stencil ? 2u : 1u);
+    draw.context.insert_or_assign(0x08fu, copy.stencil ? 3u : 1u);
     draw.context.insert_or_assign(0x203u, 0u);
     if (const auto alpha = draw.context.find(0x2dcu); alpha != draw.context.end()) draw.context.insert_or_assign(0x2dcu, alpha->second & ~1u);
     return draw;
@@ -45,15 +55,19 @@ bool Driver::drawPrecheck() {
 
 std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
     if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
-    if (const auto pass = Graphics::DecodeColorMetadataPass(queue)) {
-        require(!drawParameters.indirect, "indirect CB metadata passes are unsupported");
-        if (DrawPipeline::Active() && DrawPipeline::MetadataPassesPipelined() && deferredLabels().labels.empty()) {
-            auto writes = Graphics::PipelinedColorMetadataPassWrites(*pass);
+    const auto metadata = Graphics::DecodeColorMetadataPass(queue);
+    std::optional<Graphics::DepthExpandPass> expand;
+    if (!metadata) expand = Graphics::DecodeDepthExpandPass(queue);
+    if (metadata || expand) {
+        require(!metadata || !drawParameters.indirect, "indirect CB metadata passes are unsupported");
+        if (expand && !drawParameters.indirect && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
+        if (metadata && DrawPipeline::Active() && DrawPipeline::MetadataPassesPipelined() && deferredLabels().labels.empty()) {
+            auto writes = Graphics::PipelinedColorMetadataPassWrites(*metadata);
             const auto localDevice = device.Load();
             if (!writes.empty() && localDevice != nullptr) {
                 const auto queueId = submission.queue;
                 const auto opcode = (packet[0] >> 8u) & 0xffu;
-                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::ColorMetadata, [this, localDevice, queueId, opcode, pass = *pass] {
+                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::ColorMetadata, [this, localDevice, queueId, opcode, pass = *metadata] {
                     GuestMemory::SetCurrentPacket(opcode, queueId);
                     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());
@@ -67,12 +81,17 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
             }
         }
         if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
+        if (expand && drawParameters.indirect) {
+            recordQueuedLabelsBeforeRead(submission.queue);
+            if (!indirectRecordsDraw(*drawParameters.indirect)) return DrawVerdict::Nothing;
+        }
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (device == nullptr) device = std::make_shared<VulkanDevice>();
         const std::shared_ptr<VulkanDevice> localDevice = device;
         recordLabelsForPacket(localDevice.get(), submission.queue);
-        localDevice->ColorMetadataPass(*pass);
+        if (metadata) localDevice->ColorMetadataPass(*metadata);
+        else localDevice->DepthExpandPass(*expand);
         return DrawVerdict::Drawn;
     }
     if (const auto copy = Graphics::DecodeDepthCopyPass(queue)) {

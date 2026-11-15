@@ -1,5 +1,4 @@
 #pragma once
-#include "prx/libSceFreeTypeOt/include/MemoryAllocation.hpp"
 
 #include "prx/libSceFreeTypeOt/include/Stream.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
@@ -8,6 +7,8 @@
 #include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/Outline.hpp"
+#include "prx/libSceFreeTypeOt/include/OutlineTransform.hpp"
+#include "prx/libSceFreeTypeOt/include/Polar.hpp"
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
 #include "prx/libSceFreeTypeOt/include/SizeMetrics.hpp"
 #include "prx/libSceFreeTypeOt/include/System.hpp"

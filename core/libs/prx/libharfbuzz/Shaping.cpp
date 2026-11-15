@@ -21,10 +21,14 @@ void APS5_VABI hb_shape_nid_postfix(hb_font_t* font, hb_buffer_t* buffer, const 
     if (!buffer) NotImplemented_nid_no_patch(__func__);
     if (!hb_buffer_get_length(buffer)) return;
     if (!font || (!features && numFeatures)) NotImplemented_nid_no_patch(__func__);
+    std::vector<HarfBuzz::Feature> guestFeatures(numFeatures);
+    if (numFeatures && !GuestCopyIn_nid_no_patch(guestFeatures.data(), features, guestFeatures.size() * sizeof(HarfBuzz::Feature))) {
+        NotImplemented_nid_no_patch(__func__);
+    }
     std::vector<hb_feature_t> nativeFeatures;
     nativeFeatures.reserve(numFeatures);
-    for (unsigned i = 0; i < numFeatures; ++i) {
-        nativeFeatures.push_back({features[i].tag, features[i].value, features[i].start, features[i].end});
+    for (const auto& feature : guestFeatures) {
+        nativeFeatures.push_back({feature.tag, feature.value, feature.start, feature.end});
     }
     hb_shape(font, buffer, nativeFeatures.data(), numFeatures);
 }

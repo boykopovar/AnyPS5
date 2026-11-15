@@ -5,7 +5,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstddef>
-#include <cstring>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -155,13 +155,26 @@ int APS5_VABI sceBgftServiceIntDownloadPauseTask(int32_t taskId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+static bool validGuestString(const char* text, std::size_t limit) {
+    std::string value;
+    const int savedErrno = errno;
+    const int result = CopyGuestString_nid_no_patch(text, limit, value);
+    errno = savedErrno;
+    return result == 0;
+}
+
 int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorageEx(const BgftStorageTaskParam* params, int32_t* taskId) {
     if (!g_initialized) return SCE_BGFT_ERROR_NOT_INITIALIZED;
     if (params == nullptr || taskId == nullptr) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
-    if (params->contentId == nullptr || strnlen(params->contentId, 0x31) > 0x30) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
-    if (params->text16 != nullptr && strnlen(params->text16, 0x800) > 0x7ff) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
-    if (params->text32 != nullptr && strnlen(params->text32, 0x259) > 0x258) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
-    if (params->text40 != nullptr && strnlen(params->text40, 0x800) > 0x7ff) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    BgftStorageTaskParam localParams{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParams, params, sizeof(localParams));
+    errno = savedErrno;
+    if (!copied) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (localParams.contentId == nullptr || !validGuestString(localParams.contentId, 0x31)) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (localParams.text16 != nullptr && !validGuestString(localParams.text16, 0x800)) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (localParams.text32 != nullptr && !validGuestString(localParams.text32, 0x259)) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
+    if (localParams.text40 != nullptr && !validGuestString(localParams.text40, 0x800)) return SCE_BGFT_ERROR_INVALID_ARGUMENT;
     return SCE_BGFT_ERROR_NOT_SUPPORTED;
 }
 int APS5_VABI sceBgftServiceIntDownloadResumeTask(int32_t taskId) {
