@@ -12,7 +12,7 @@
 
 - [SurfacePattern.cpp](../../../core/libs/prx/libcairo/SurfacePattern.cpp) - console behaviour of `cairo_pattern_create_for_surface`, `cairo_set_source` and `cairo_mask` is unmeasured. They forward to the bundled Cairo 1.18.0: a null or failed surface gives a pattern in that error, and a null or failed pattern puts the context in that error and draws nothing; a null context reaches Cairo unchanged. Sony's `CAIRO_STATUS_NULL_SURFACE_IMAGE` patch changes only the span renderer for a solid mask. `cairo_mask` never composites through it here: the mesh and surface patterns these exports create are not solid, and a surface pattern keeps `CAIRO_EXTEND_NONE` while `cairo_pattern_set_extend` is a stub, so Cairo does not turn the mask into a paint.
 
-- [GlyphDrawing.cpp](../../../core/libs/prx/libcairo/GlyphDrawing.cpp) - console behaviour of `cairo_show_glyphs` and `cairo_glyph_path` is unmeasured. They forward to the bundled Cairo 1.18.0, which draws or traces the glyphs with the context's current scaled font. No export here selects a font yet, so that is Cairo's default toy face, and this build has no FreeType font backend: the toy face falls back to Cairo's built-in twin font, where the console's Cairo, which exports the FreeType and fontconfig `cairo_ft_*` functions, would resolve it through FreeType to a system font. Glyph shapes, coverage and paths therefore differ from the console. A glyph index above `ULONG_MAX` throws through `NotImplemented_nid_no_patch` on hosts whose `unsigned long` is 32 bits, because Cairo's `cairo_glyph_t` cannot hold it there.
+- [GlyphDrawing.cpp](../../../core/libs/prx/libcairo/GlyphDrawing.cpp) - console behaviour of `cairo_show_glyphs` and `cairo_glyph_path` is unmeasured. They forward to the bundled Cairo 1.18.0, which draws or traces the glyphs with the context's current scaled font. Without an explicit `cairo_select_font_face` call that is Cairo's default toy face, and this build has no FreeType font backend: the toy face falls back to Cairo's built-in twin font, where the console's Cairo, which exports the FreeType and fontconfig `cairo_ft_*` functions, would resolve it through FreeType to a system font. Glyph shapes, coverage and paths therefore differ from the console. A glyph index above `ULONG_MAX` throws through `NotImplemented_nid_no_patch` on hosts whose `unsigned long` is 32 bits, because Cairo's `cairo_glyph_t` cannot hold it there.
 
 - [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) and [ContextFontOptions.cpp](../../../core/libs/prx/libcairo/ContextFontOptions.cpp) - console behaviour of `cairo_set_font_options` is unmeasured. It copies the four values these exports can set into a bundled Cairo 1.18.0 options object and forwards it; the fields no export sets keep Cairo's defaults. A null options pointer gives `CAIRO_STATUS_NULL_POINTER` and the failed-allocation object gives `CAIRO_STATUS_NO_MEMORY`, as Cairo answers; a null context reaches Cairo unchanged. With the twin font only antialiasing and hint style change the drawn glyphs.
 
@@ -25,6 +25,10 @@
 ### Functional glyphs
 
 - [Glyph.cpp](../../../core/libs/prx/libcairo/Glyph.cpp) implements `cairo_glyph_free` for null, which Cairo ignores. No export here allocates glyph arrays yet, and `cairo_glyph_allocate` is not in the catalogue, so a non-null array comes from outside this library and still throws through `NotImplemented_nid_no_patch` instead of reaching `free`. Freeing must follow the allocator once `cairo_scaled_font_text_to_glyphs` returns arrays. Unverified on a console.
+
+### Functional toy-font text
+
+- [ToyText.cpp](../../../core/libs/prx/libcairo/ToyText.cpp) implements `cairo_select_font_face`, `cairo_set_font_size` and `cairo_show_text` as guest-ABI thunks to the pinned Cairo 1.18.0 image backend. The public C prototypes use an opaque context pointer, optional NUL-terminated family name, 32-bit slant/weight enums, a double font size and UTF-8 text. Non-null guest strings are copied through `CopyGuestString_nid_no_patch`, with a 1 MiB limit; unreadable, oversized or unterminated strings use the existing `NotImplemented_nid_no_patch` guest failure path instead of crashing native Cairo, and the caller's errno is preserved. A null family or text is forwarded unchanged; font-face or text errors on otherwise valid inputs are Cairo's own. Other invalid context pointers still follow native Cairo's undefined behavior. Console behavior is unmeasured. Source-linked tests compare raster pixels and text advances with independent calls to the pinned backend.
 
 ### Callable exports
 
@@ -44,7 +48,6 @@
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
-| `cairo_set_font_size` | `A-0StSi2AwA` |
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
@@ -74,12 +77,10 @@
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_push_group` | `hlh15JjNtWg` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
-| `cairo_select_font_face` | `ldk9m5h+-no` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
-| `cairo_show_text` | `psdqLsaPnkk` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
