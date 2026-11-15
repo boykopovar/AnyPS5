@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/InventoryExports.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -20,7 +21,13 @@ bool IsInitialized() {
 template <typename T>
 T ReadGuest(const void* address, const char* what) {
     T value{};
-    if (address == nullptr || !GuestCopyIn_nid_no_patch(&value, address, sizeof(value))) {
+    if (address == nullptr) {
+        throw std::invalid_argument(what);
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, address, sizeof(value));
+    errno = savedErrno;
+    if (!copied) {
         throw std::invalid_argument(what);
     }
     return value;
@@ -33,7 +40,13 @@ extern "C" {
 int APS5_VABI sceVideoNativeExtEssential_CreateDecInstance(const void* param, void** instance) {
     (void)param;
     const std::uint64_t none = 0;
-    if (instance == nullptr || !GuestCopyOut_nid_no_patch(instance, &none, sizeof(none))) {
+    if (instance == nullptr) {
+        throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(instance, &none, sizeof(none));
+    errno = savedErrno;
+    if (!copied) {
         throw std::invalid_argument("sceVideoNativeExtEssential_CreateDecInstance: unwritable instance");
     }
     if (!IsInitialized()) return ErrorNotInitialized;

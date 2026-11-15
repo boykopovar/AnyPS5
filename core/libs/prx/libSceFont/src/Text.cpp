@@ -395,22 +395,24 @@ FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString fontSt
 }
 
 const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontString fontString, FontTextCharacter* startCharacter, FontTextCharacter* lastCharacter, std::uint32_t* characterCount) {
+    const auto none = [characterCount]() -> const FontTextCharacter* {
+        const std::uint32_t zero = 0;
+        GuestCopyOut_nid_no_patch(characterCount, &zero, sizeof(zero));
+        return nullptr;
+    };
     auto* data = GetStringData(fontString);
     if (!data || !characterCount || data->renderCount == 0) {
-        if (characterCount) *characterCount = 0;
-        return nullptr;
+        return characterCount ? none() : nullptr;
     }
     FontTextCharacter* characters = TextCharacters(data);
     if (!characters) {
-        *characterCount = 0;
-        return nullptr;
+        return none();
     }
     const FontTextCharacter* begin = characters;
     const FontTextCharacter* end = characters + data->renderCount;
     if (!startCharacter) startCharacter = characters;
     if (startCharacter < begin || startCharacter >= end || (lastCharacter && (lastCharacter < begin || lastCharacter >= end))) {
-        *characterCount = 0;
-        return nullptr;
+        return none();
     }
     FontTextCharacter* probe = startCharacter;
     if (startCharacter->clusterKind > 1) {
@@ -435,8 +437,7 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
         probe = probe->next;
         if (!probe) {
             if (lastCharacter) {
-                *characterCount = 0;
-                return nullptr;
+                return none();
             }
             break;
         }
@@ -518,7 +519,7 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
         }
     }
     if (!startCharacter) count = 0;
-    *characterCount = count;
+    if (!GuestCopyOut_nid_no_patch(characterCount, &count, sizeof(count))) return nullptr;
     return startCharacter;
 }
 
