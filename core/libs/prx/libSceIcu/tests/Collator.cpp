@@ -1,12 +1,14 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <type_traits>
 
 namespace UcolClose {
@@ -277,6 +279,30 @@ void Run() {
 
 } // namespace UcolSetAttribute
 
+namespace GuestPointers {
+
+void Run() {
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        IcuRecoveredTest::Require(threw && errno == 71);
+    };
+
+    auto* badStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    rejectsRuntime([&] { ucol_getAttribute_nid_postfix(nullptr, 0, badStatus); });
+    rejectsRuntime([&] { ucol_getReorderCodes_nid_postfix(nullptr, nullptr, 0, badStatus); });
+    rejectsRuntime([&] { ucol_getTailoredSet_nid_postfix(nullptr, badStatus); });
+    rejectsRuntime([&] { ucol_open_nid_postfix("en", badStatus); });
+    rejectsRuntime([&] { ucol_setAttribute_nid_postfix(nullptr, UCOL_STRENGTH, UCOL_PRIMARY, badStatus); });
+}
+
+}
+
 void CheckIcuCollator() {
     UcolClose::Run();
     UcolGetAttribute::Run();
@@ -284,4 +310,5 @@ void CheckIcuCollator() {
     UcolGetTailoredSet::Run();
     UcolOpen::Run();
     UcolSetAttribute::Run();
+    GuestPointers::Run();
 }
