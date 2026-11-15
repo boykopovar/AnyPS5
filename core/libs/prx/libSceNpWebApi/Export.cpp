@@ -60,6 +60,8 @@ struct Request {
     std::uint32_t timeout;
     std::uint64_t endTime;
     std::vector<MultipartPart> multipartParts;
+    std::string multipartTypeName;
+    std::string multipartBoundary;
 };
 
 struct UserContext {
@@ -500,15 +502,18 @@ void APS5_VABI sceNpWebApiCheckTimeout() {
 }
 
 int APS5_VABI sceNpWebApiClearAllUnusedConnection() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(contextsMutex);
+    if (contexts.empty()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep) {
+    (void)keep;
     if (!target) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(contextsMutex);
     const auto lookup = findUserContext(titleUserCtxId);
     if (lookup.error != 0) return lookup.error;
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId) {
@@ -636,10 +641,12 @@ int APS5_VABI sceNpWebApiSetMaxConnection() {
 }
 
 int APS5_VABI sceNpWebApiSetMultipartContentType(std::int64_t requestId, const char* typeName, const char* boundary) {
-    (void)typeName;
-    (void)boundary;
     std::lock_guard lock(contextsMutex);
-    return findRequest(requestId).error;
+    const auto lookup = findRequest(requestId);
+    if (lookup.error != 0) return lookup.error;
+    lookup.request->multipartTypeName = typeName ? typeName : "";
+    lookup.request->multipartBoundary = boundary ? boundary : "";
+    return 0;
 }
 
 int APS5_VABI sceNpWebApiSetRequestTimeout(std::int64_t requestId, std::uint32_t timeout) {

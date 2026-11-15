@@ -803,6 +803,7 @@ void TestMultipartSendOnPlainRequest() {
 }
 
 void TestConnectionChecks() {
+    Require(sceNpWebApiClearAllUnusedConnection() == LibContextNotFound, "clear all unused connections without context");
     const int context = sceNpWebApiInitialize(1, 0x10000);
     const int other = sceNpWebApiInitialize(1, 0x10000);
     Require(context > 0 && other > 0 && sceNpWebApiTerminate(other) == 0, "library contexts for the connection checks");
@@ -810,6 +811,9 @@ void TestConnectionChecks() {
     Require(user > 0, "user context for the connection checks");
     unsigned char stats[64] = {};
 
+    Require(sceNpWebApiClearAllUnusedConnection() == 0, "clear all unused connections with active context");
+    Require(sceNpWebApiClearUnusedConnection(user, "group", false) == 0, "clear unused connection with valid user context");
+    Require(sceNpWebApiClearUnusedConnection(user, "group", true) == 0, "clear unused connection keep true");
     Require(sceNpWebApiClearUnusedConnection(user, nullptr, false) == InvalidArgument, "clear connections without a target");
     Require(sceNpWebApiClearUnusedConnection(-1, nullptr, true) == InvalidArgument, "the clear target is checked before the contexts");
     Require(sceNpWebApiClearUnusedConnection((other << 16) | 1, "group", false) == LibContextNotFound, "clear connections of a terminated library context");
@@ -826,6 +830,7 @@ void TestConnectionChecks() {
     Require(sceNpWebApiDeleteContext(user) == 0, "delete the user context of the connection checks");
     Require(sceNpWebApiClearUnusedConnection(user, "group", false) == UserContextNotFound, "clear connections of a deleted user context");
     Require(sceNpWebApiTerminate(context) == 0, "terminate the connection checks library context");
+    Require(sceNpWebApiClearAllUnusedConnection() == LibContextNotFound, "clear all unused connections after termination");
 }
 
 }
