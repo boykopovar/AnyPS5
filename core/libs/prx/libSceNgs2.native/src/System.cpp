@@ -513,8 +513,7 @@ int APS5_VABI sceNgs2SystemGetUserData(uintptr_t system_handle, uintptr_t* user_
     const Ngs2Lock lock;
     const auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
-    if (user_data == nullptr) APS5_INVALID_ARG_EX;
-    *user_data = system->userData;
+    if (user_data == nullptr || !WriteGuest(user_data, system->userData)) APS5_INVALID_ARG_EX;
     return SCE_NGS2_OK;
 }
 

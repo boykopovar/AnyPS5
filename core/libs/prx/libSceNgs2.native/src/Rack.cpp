@@ -411,8 +411,7 @@ int APS5_VABI sceNgs2RackGetUserData(uintptr_t rack_handle, uintptr_t* user_data
     std::lock_guard lock(Ngs2Mutex());
     const auto* rack = Ngs2FindRack(rack_handle);
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
-    if (user_data == nullptr) APS5_INVALID_ARG_EX;
-    *user_data = rack->userData;
+    if (user_data == nullptr || !WriteGuest(user_data, rack->userData)) APS5_INVALID_ARG_EX;
     return SCE_NGS2_OK;
 }
 
