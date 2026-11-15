@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -179,6 +180,9 @@ void TestLegacyMasteringSetParam() {
     std::fill(params, params + 16, 0xA5A5A5A5u);
     params[0] = 1u;
     Require(sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 0) == 0, "legacy mastering parameters must be accepted");
+    errno = 71;
+    Require(ThrowsException([] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(0x10), 0); }), "unreadable legacy mastering parameters must throw");
+    Require(errno == 71, "legacy mastering parameter copy must preserve errno");
     Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 1); }), "legacy parameters with SwapEqCompressor must throw");
     Require(params[0] == 1u && params[1] == 0xA5A5A5A5u && params[15] == 0xA5A5A5A5u, "legacy mastering parameters are not modified");
     Require(ThrowsException([&] { sceAudioOutMasteringSetParam(reinterpret_cast<const AudioOut2MasteringParamsHeader*>(params), 2); }), "legacy parameters with flags bit 1 must throw");
@@ -203,6 +207,9 @@ void TestLegacyMasteringGetState() {
     Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == static_cast<int>(0x80260203), "legacy states id 1 before an initialization is refused");
     Require(std::all_of(storage + 4, storage + size, [](std::uint8_t byte) { return byte == 0xA5; }), "a refused legacy state leaves the buffer unmodified");
     Require(sceAudioOutMasteringInit(0) == 0, "legacy flags 0 must be accepted");
+    errno = 71;
+    Require(ThrowsException([] { sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(0x10)); }), "unreadable legacy mastering state must throw");
+    Require(errno == 71, "legacy mastering state copy must preserve errno");
     Require(sceAudioOutMasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage)) == 0, "legacy states id 1 must be accepted");
     Require(*header == 1u, "legacy states id 1 is kept");
     const std::pair<std::size_t, std::size_t> meters[] = {{32, 128}, {128, 224}, {240, 272}, {272, 304}, {304, 336}};
