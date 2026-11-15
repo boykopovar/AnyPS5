@@ -144,14 +144,17 @@ def graphics_metrics(summary):
     if track is None:
         return {name: None for name in GRAPHICS_LABELS}
     presents = summary["presents"]
-    return {
-        "render_passes": track.get("Graphics.RenderPass", 0) / presents,
-        "continued_draws": track.get("Graphics.RenderPass.Continued", 0) / presents,
-        "barriers": sum(value for name, value in track.items() if name.startswith("Graphics.Barrier.")) / presents,
-        "merged_barriers": sum(value for name, value in track.items() if name.startswith("Graphics.BarrierMerged.")) / presents,
-        "copies": track.get("Graphics.Copy", 0) / presents,
-        "copy_mib": track.get("Graphics.Copy.bytes", 0) / presents / (1024 * 1024),
-    }
+    try:
+        return {
+            "render_passes": track.get("Graphics.RenderPass", 0) / presents,
+            "continued_draws": track.get("Graphics.RenderPass.Continued", 0) / presents,
+            "barriers": sum(value for name, value in track.items() if name.startswith("Graphics.Barrier.")) / presents,
+            "merged_barriers": sum(value for name, value in track.items() if name.startswith("Graphics.BarrierMerged.")) / presents,
+            "copies": track.get("Graphics.Copy", 0) / presents,
+            "copy_mib": track.get("Graphics.Copy.bytes", 0) / presents / (1024 * 1024),
+        }
+    except OverflowError:
+        raise ValueError("graphics track rate is outside the finite numeric range") from None
 
 
 def compare(baseline, candidate):

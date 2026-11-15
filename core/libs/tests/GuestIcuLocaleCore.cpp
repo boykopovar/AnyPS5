@@ -71,12 +71,15 @@ int main() {
     Check(uloc_getLanguage, true, {
         {"en", "en"}, {"EN-us", "en"}, {"sr_Latn_RS@currency=EUR", "sr"},
         {"root", ""}, {"und", ""}, {"_US", ""}, {"i-klingon", "i-klingon"},
-        {"x-private", "x-private"}, {"zh_Hans_CN", "zh"},
+        {"x-private", "x-private"}, {"zh_Hans_CN", "zh"}, {"eng_USA", "en"},
+        {"DEU", "de"}, {"zho_Hant_TWN", "zh"}, {"tlh", "tlh"}, {"xyz_US", "xyz"},
     });
     Check(uloc_getCountry, true, {
         {"en", ""}, {"en_US", "US"}, {"en-US", "US"}, {"zh_Hant_TW", "TW"},
         {"_US", "US"}, {"en_419", "419"}, {"en_001", "001"},
-        {"en__POSIX", ""}, {"sr_Latn_RS@currency=EUR", "RS"},
+        {"en__POSIX", ""}, {"sr_Latn_RS@currency=EUR", "RS"}, {"eng_USA", "US"},
+        {"de-deu", "DE"}, {"zho_Hant_TWN", "TW"}, {"sr_Latn_SRB", "RS"}, {"en_XYZ", "XYZ"},
+        {"en_XEA", "XEA"},
     });
     Check(uloc_getScript, true, {
         {"en_US", ""}, {"zh_Hant_TW", "Hant"}, {"eN_LatN_us", "Latn"},
@@ -87,6 +90,7 @@ int main() {
         {"zh_Hant_TW", "zh_Hant_TW"}, {"en__POSIX", "en__POSIX"},
         {"fr_FR.utf8", "fr_FR.utf8"}, {"sr_Latn_RS@currency=EUR", "sr_Latn_RS"},
         {"i-klingon", "tlh"}, {"x-private", ""}, {"root", ""}, {"und", ""},
+        {"eng_USA_POSIX", "en_US_POSIX"}, {"fra-can", "fr_CA"},
     });
     Check(uloc_canonicalize, false, {
         {"EN-us", "en_US"}, {"eN_LatN_us", "en_Latn_US"},
@@ -94,6 +98,7 @@ int main() {
         {"x-private", "@x=private"}, {"root", ""},
         {"de_DE@currency=EUR;collation=phonebook", "de_DE@collation=phonebook;currency=EUR"},
         {"fr@collation=phonebook", "fr@collation=phonebook"},
+        {"deu_DEU@currency=EUR", "de_DE@currency=EUR"},
     });
     CheckKeyword("en_US@currency=USD", "currency", "USD");
     CheckKeyword("de_DE@currency=EUR;collation=phonebook", "collation", "phonebook");

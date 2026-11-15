@@ -30,6 +30,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -110,7 +111,7 @@ int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address) {
     if (address != nullptr) {
         const auto host = static_cast<std::uint32_t>(value);
         const std::uint8_t network[4] = {static_cast<std::uint8_t>(host >> 24), static_cast<std::uint8_t>(host >> 16), static_cast<std::uint8_t>(host >> 8), static_cast<std::uint8_t>(host)};
-        std::memcpy(address, network, sizeof(network));
+        if (!GuestCopyOut_nid_no_patch(address, network, sizeof(network))) return 0;
     }
     return 1;
 }

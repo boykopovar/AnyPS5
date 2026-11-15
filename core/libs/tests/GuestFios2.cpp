@@ -698,6 +698,78 @@ static void CheckOpenFlagsAndVectors(const std::string& directory, const std::st
     REQUIRE(sceFiosDeleteSync(nullptr, written.c_str()) == SCE_FIOS_OK);
 }
 
+static void CheckAsyncHandleAnswers(const std::string& directory, const std::string& file) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    SceFiosFH opened = 0;
+    const SceFiosOp open = sceFiosFHOpen(nullptr, &opened, file.c_str(), nullptr);
+    REQUIRE(sceFiosOpWait(open) == SCE_FIOS_OK && sceFiosIsValidHandle(opened));
+    sceFiosOpDelete(open);
+
+    std::uint8_t buffer[6]{};
+    const SceFiosOp firstRead = sceFiosFHRead(nullptr, opened, buffer, 4);
+    REQUIRE(sceFiosOpWait(firstRead) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(firstRead) == 4);
+    REQUIRE(std::memcmp(buffer, "0123", 4) == 0);
+    sceFiosOpDelete(firstRead);
+
+    const SceFiosOp secondRead = sceFiosFHRead(nullptr, opened, buffer, 4);
+    REQUIRE(sceFiosOpWait(secondRead) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(secondRead) == 4);
+    REQUIRE(std::memcmp(buffer, "4567", 4) == 0);
+    sceFiosOpDelete(secondRead);
+
+    const SceFiosOp sync = sceFiosFHSync(nullptr, opened);
+    REQUIRE(sceFiosOpWait(sync) == SCE_FIOS_OK);
+    sceFiosOpDelete(sync);
+
+    SceFiosStat status{};
+    const SceFiosOp stat = sceFiosFHStat(nullptr, opened, &status);
+    REQUIRE(sceFiosOpWait(stat) == SCE_FIOS_OK);
+    REQUIRE(status.fileSize == 10);
+    REQUIRE((status.statFlags & 1u) == 0);
+    sceFiosOpDelete(stat);
+
+    REQUIRE(sceFiosFHCloseSync(nullptr, opened) == SCE_FIOS_OK);
+
+    const std::string scratch = directory + "/asyncfh.bin";
+    SceFiosOpenParams writer{};
+    writer.openFlags = SCE_FIOS_O_WRITE | SCE_FIOS_O_CREAT | SCE_FIOS_O_TRUNC;
+    opened = 0;
+    const SceFiosOp writeOpen = sceFiosFHOpenWithMode(nullptr, &opened, scratch.c_str(), &writer, 0666);
+    REQUIRE(sceFiosOpWait(writeOpen) == SCE_FIOS_OK && sceFiosIsValidHandle(opened));
+    sceFiosOpDelete(writeOpen);
+
+    const SceFiosOp write = sceFiosFHWrite(nullptr, opened, "ABCDE", 5);
+    REQUIRE(sceFiosOpWait(write) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(write) == 5);
+    sceFiosOpDelete(write);
+
+    const SceFiosOp pwrite = sceFiosFHPwrite(nullptr, opened, "xy", 2, 0);
+    REQUIRE(sceFiosOpWait(pwrite) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(pwrite) == 2);
+    sceFiosOpDelete(pwrite);
+    REQUIRE(sceFiosFHCloseSync(nullptr, opened) == SCE_FIOS_OK);
+
+    std::uint8_t contents[5]{};
+    REQUIRE(sceFiosFileReadSync(nullptr, scratch.c_str(), contents, 5, 0) == 5);
+    REQUIRE(std::memcmp(contents, "xyCDE", 5) == 0);
+
+    SceFiosOpenParams plainWriter{};
+    plainWriter.openFlags = SCE_FIOS_O_WRITE;
+    opened = 0;
+    const SceFiosOp reopen = sceFiosFHOpenWithMode(nullptr, &opened, scratch.c_str(), &plainWriter, 0666);
+    REQUIRE(sceFiosOpWait(reopen) == SCE_FIOS_OK && sceFiosIsValidHandle(opened));
+    sceFiosOpDelete(reopen);
+
+    const SceFiosOp truncate = sceFiosFHTruncate(nullptr, opened, 2);
+    REQUIRE(sceFiosOpWait(truncate) == SCE_FIOS_OK);
+    sceFiosOpDelete(truncate);
+    REQUIRE(sceFiosFHCloseSync(nullptr, opened) == SCE_FIOS_OK);
+
+    REQUIRE(sceFiosFileGetSizeSync(nullptr, scratch.c_str()) == 2);
+    REQUIRE(sceFiosDeleteSync(nullptr, scratch.c_str()) == SCE_FIOS_OK);
+}
+
 static std::int32_t AddOverlay(std::uint8_t type, std::uint8_t order, const std::string& destination, const std::string& source) {
     OverlayRecordTest overlay{};
     overlay.type = type;
@@ -922,6 +994,7 @@ int main() {
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
     CheckOpenFlagsAndVectors(directory.generic_string(), file);
+    CheckAsyncHandleAnswers(directory.generic_string(), file);
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
     CheckOverlayResolve(directory.generic_string());

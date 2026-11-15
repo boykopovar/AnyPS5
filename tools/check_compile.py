@@ -370,19 +370,24 @@ def check_source(task):
     return 1, int(failed), "".join(diagnostics)
 
 
+def resolve_source(file, root):
+    try:
+        file.stat()
+    except FileNotFoundError:
+        pass
+    source = real(file)
+    try:
+        name = source.relative_to(real(root)).as_posix()
+    except ValueError:
+        name = source.as_posix()
+    return source, name
+
+
 def check(root, build, files, jobs=1):
     commands = index(build, root)
     tasks = []
     for file in files:
-        try:
-            file.stat()
-        except FileNotFoundError:
-            pass
-        source = real(file)
-        try:
-            name = source.relative_to(real(root)).as_posix()
-        except ValueError:
-            name = source.as_posix()
+        source, name = resolve_source(file, root)
         tasks.append((source, name, build, commands.get(name)))
     checked = failed = 0
     with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as executor:
@@ -429,11 +434,7 @@ def main(argv=None):
             commands = index(args.build, root)
             plan = []
             for file in files:
-                source = file.resolve()
-                try:
-                    name = source.relative_to(root.resolve()).as_posix()
-                except ValueError:
-                    name = source.as_posix()
+                source, name = resolve_source(file, root)
                 configurations = commands.get(name, [])
                 plan.append({"source": str(source), "commands": [
                     {"directory": entry["directory"], "arguments": syntax_arguments(entry["arguments"], Path(entry["directory"]), source)

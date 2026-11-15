@@ -16,6 +16,7 @@ target_sources(libSceIcu PRIVATE Bidi.cpp CharsetDetection.cpp Normalization.cpp
 target_link_libraries(libSceIcu PRIVATE icu_common icu_i18n)
 target_sources(libSceIcu PRIVATE Locale.cpp LocaleMap.cpp)
 target_sources(libSceIcu PRIVATE TerminateBuffer.cpp)
+target_sources(libSceIcu PRIVATE CodePointTrie.cpp)
 target_sources(libSceIcu PRIVATE LanguageTag.cpp)
 target_sources(libSceIcu PRIVATE Script.cpp)
 
@@ -373,6 +374,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_properties PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_icu_properties PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_code_point_trie_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CodePointTrie.cpp)
+    target_include_directories(guest_icu_code_point_trie_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_code_point_trie_tests PRIVATE libSceIcu libc icu_common)
+    configure_windows_unwind(guest_icu_code_point_trie_tests)
+    add_test(NAME guest_icu_code_point_trie COMMAND guest_icu_code_point_trie_tests)
+    set_tests_properties(guest_icu_code_point_trie PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_code_point_trie PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
