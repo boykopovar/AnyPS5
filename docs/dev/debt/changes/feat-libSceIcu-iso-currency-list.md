@@ -1,0 +1,9 @@
+# libSceIcu
+
+## change [Additional callable exports]
+
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 49 remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The six locale functions described above have been removed from this throwing inventory, `u_getIntPropertyMap` is in [Properties.cpp](../../../core/libs/prx/libSceIcu/Properties.cpp), `u_tolower`, `u_toupper`, `u_totitle` and `ublock_getCode` are in [CodePoints.cpp](../../../core/libs/prx/libSceIcu/CodePoints.cpp), `ucurr_openISOCurrencies` is in [CurrencyList.cpp](../../../core/libs/prx/libSceIcu/CurrencyList.cpp) and six `unorm2_*` in [Normalization.cpp](../../../core/libs/prx/libSceIcu/Normalization.cpp).
+
+## add Functional
+
+- [ISO currency list](../../../core/libs/prx/libSceIcu/CurrencyList.cpp) is unverified on a console. `ucurr_openISOCurrencies` rebuilds the enumeration of ICU 78.1 [ucurr.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ucurr.cpp#L1710-L2281), which this build does not compile, over its 308 codes. [ICU 68.2](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/ucurr.cpp#L1689-L2263), whose name the NID carries, has the same code but lists `EQE` and lacks `SLE`, `UYW`, `VED`, `VES`, `XCG` and `ZWG`, so the console may differ by them. The enumeration and its `uenum_unext` buffer use the guest `malloc`, not a `u_setMemoryFunctions` allocator. Its `uNext` callback is a private copy of `uenum_unextDefault`, whose export still throws. A failed allocation with a null status, which ICU writes through, throws. The prototype is ICU's, not a title's. Closes when: compared with the console.

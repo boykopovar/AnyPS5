@@ -4,6 +4,7 @@
 #include "TerminateBuffer.hpp"
 #include "Enumeration.hpp"
 #include "List.hpp"
+#include "CurrencyList.hpp"
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
 #include "CaseProperties.hpp"

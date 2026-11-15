@@ -34,7 +34,6 @@ int APS5_VABI ucnv_setToUCallBack();
 int APS5_VABI ucnv_toUChars();
 int APS5_VABI ucnv_toUnicode();
 int APS5_VABI ucurr_getName();
-int APS5_VABI ucurr_openISOCurrencies();
 int APS5_VABI udata_setCommonData();
 int APS5_VABI udata_setFileAccess();
 int APS5_VABI uloc_addLikelySubtags();
