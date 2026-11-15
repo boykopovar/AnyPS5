@@ -50,6 +50,12 @@ target_link_libraries(agc_driver_graphics_tests PRIVATE
         libkernel
 )
 
+if(BUILD_TESTING AND MINGW)
+    target_sources(libSceAgcDriver PRIVATE tests/AllocationCounter.cpp)
+    target_link_options(libSceAgcDriver PRIVATE LINKER:--wrap=_Znwy LINKER:--exclude-symbols=__wrap__Znwy)
+    target_compile_definitions(agc_driver_graphics_tests PRIVATE APS5_AGC_ALLOCATION_COUNT=1)
+endif()
+
 if(BUILD_TESTING)
     add_test(NAME agc_command_batch_fence_failure COMMAND agc_driver_graphics_tests --command-batch-fence-failure)
     set_tests_properties(agc_command_batch_fence_failure PROPERTIES TIMEOUT 20)
