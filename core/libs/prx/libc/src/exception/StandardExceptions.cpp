@@ -936,11 +936,17 @@ const ExceptionVtable SceV2FilesystemError {0, &SceV2FilesystemErrorType, GuestD
     what += ErrorCodeMessage(code);
     auto* object = static_cast<FilesystemErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(FilesystemErrorObject)));
     *object = {};
-    Construct(&object->base.base, table, what.c_str());
-    object->base.code = code;
-    object->code = code;
-    object->path1 = CopyGuestString(path1);
-    object->path2 = CopyGuestString(path2);
+    try {
+        Construct(&object->base.base, table, what.c_str());
+        object->base.code = code;
+        object->code = code;
+        object->path1 = CopyGuestString(path1);
+        object->path2 = CopyGuestString(path2);
+    } catch (...) {
+        DestroyFilesystemError(&object->base.base);
+        __cxa_free_exception_nid_postfix(object);
+        throw;
+    }
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyThrownFilesystemError_nid_no_patch));
 }
