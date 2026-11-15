@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -85,8 +86,9 @@ class NamesLookupTests(unittest.TestCase):
         def extract_without_filters(archive, path=".", members=None, *, numeric_owner=False):
             return extract(archive, path, members, numeric_owner=numeric_owner)
 
-        with mock.patch.dict(tarfile.__dict__), mock.patch.object(tarfile.TarFile, "extractall", extract_without_filters):
-            tarfile.__dict__.pop("data_filter", None)
+        without_filters = types.SimpleNamespace(open=tarfile.open)
+        with mock.patch.object(pr_overlap, "tarfile", without_filters), \
+                mock.patch.object(tarfile.TarFile, "extractall", extract_without_filters):
             status = pr_overlap.main_status(["done", "pending"], "refs/pr/base")
         library = "core/libs/prx/libSceExample"
         self.assertEqual(status["done"], {library: "implemented"})
