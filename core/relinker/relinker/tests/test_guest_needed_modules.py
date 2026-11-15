@@ -118,6 +118,16 @@ def check_needed_outside(relinker, work):
     assert convert(case, ["--module-dir", "Media/Modules"]) == []
     assert (case / "app0" / "Media" / "Modules" / "needed.sprx.guest.prx").is_file()
 
+    for scanned, options in (("sce_module", []), ("prx", []), ("Plugins", ["--module-dir", "Plugins"])):
+        case = work / f"beneath-scanned-{scanned}"
+        nested = f"{scanned}/nested"
+        (case / nested).mkdir(parents=True)
+        (case / scanned / "needed.prx").write_bytes(self_container)
+        (case / nested / "needed.sprx").write_bytes(sce_module)
+        assert convert(case, options) == [message + f"needed.prx at {nested}/needed.sprx; add --module-dir {nested}"]
+        assert convert(case, [*options, "--module-dir", nested]) == []
+        assert (case / "app0" / nested / "needed.sprx.guest.prx").is_file()
+
     case = work / "outside-two-copies"
     (case / "sce_module").mkdir(parents=True)
     for name in ("first", "second"):

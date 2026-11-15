@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <array>
 #include <barrier>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) {
@@ -46,6 +48,49 @@ static void Exercise(unsigned seed) {
     Require(ERR_get_error_nid_postfix() == 0);
 }
 
+static void TestPkcs12FileErrors() {
+    constexpr const char* path = "guest_libre_ssl_pkcs12_fp.tmp";
+    auto* stream = fopen_nid_postfix(path, "wb");
+    Require(stream != nullptr);
+    Require(fwrite_nid_postfix("", 1, 0, stream) == 0);
+    Require(fclose_nid_postfix(stream) == 0);
+    stream = fopen_nid_postfix(path, "rb");
+    Require(stream != nullptr);
+    void* const sentinel = reinterpret_cast<void*>(std::uintptr_t{0x1234});
+    void* output = sentinel;
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(3, 1, 41);
+    Require(d2i_PKCS12_fp_nid_postfix(stream, &output) == nullptr);
+    Require(output == sentinel && feof_nid_postfix(stream) != 0);
+    Require(ERR_get_error_nid_postfix() == 0x0dfff07b);
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(fclose_nid_postfix(stream) == 0);
+
+    stream = fopen_nid_postfix(path, "wb");
+    Require(stream != nullptr);
+    Require(fwrite_nid_postfix("x", 1, 1, stream) == 1);
+    Require(fclose_nid_postfix(stream) == 0);
+    stream = fopen_nid_postfix(path, "rb");
+    Require(stream != nullptr);
+    bool threw = false;
+    try {
+        d2i_PKCS12_fp_nid_postfix(stream, &output);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && output == sentinel && stream->IsOpen());
+    Require(fclose_nid_postfix(stream) == 0);
+
+    threw = false;
+    try {
+        d2i_PKCS12_fp_nid_postfix(nullptr, &output);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && output == sentinel);
+    Require(remove_nid_postfix(path) == 0);
+}
+
 int main() {
     const std::array<unsigned char, 16> sessionBytes {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
     auto sessionCopy = sessionBytes;
@@ -62,6 +107,7 @@ int main() {
     Require(ERR_peek_error_nid_postfix() == ((3ull << 24) | (1ull << 12) | 41));
     ERR_clear_error_nid_postfix();
 
+    TestPkcs12FileErrors();
     std::barrier boundary(3);
     const auto worker = [&](unsigned marker) {
         ERR_clear_error_nid_postfix();

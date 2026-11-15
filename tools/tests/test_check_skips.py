@@ -34,6 +34,7 @@ LIMITATIONS = [
     "skipped, the host has not enough free disk space for a file of more than 2 GiB",
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
     "skipped, the host has no interface that can join 224.0.0.251",
+    "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
 ]
 
 HOST_LIMITATIONS = [
@@ -50,6 +51,7 @@ OTHER = [
     "skipped, the device imports shared memory",
     "skipped, the device imports shared memory through host pointersX",
     "skipped, the host has no interface",
+    "skipped, the host mounts /dev/shm",
 ]
 
 
@@ -157,6 +159,8 @@ class CheckSkipsTests(unittest.TestCase):
                     result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
+
+class CtestSkipPolicyTests(unittest.TestCase):
     def test_ctest_status_and_prefixed_device_reasons_are_expected(self):
         reports = (
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
@@ -268,6 +272,8 @@ class CheckSkipsTests(unittest.TestCase):
                         self.assertNotIn("Traceback", result.stderr)
                         self.assertNotIn("all expected", result.stdout)
 
+
+class DeviceSkipPolicyTests(unittest.TestCase):
     def test_missing_high_refresh_display_is_expected_in_both_jobs(self):
         reason = "current display does not provide 120 Hz"
         reports = (
@@ -368,6 +374,8 @@ class CheckSkipsTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertFalse(check_skips.DEVICE_LIMITATION.search(message))
 
+
+class SkipCliOutputTests(unittest.TestCase):
     def test_only_unexpected_skip_is_reported(self):
         xml = (
             '<testsuites><testsuite>'

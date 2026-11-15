@@ -236,6 +236,18 @@ void TestQueries() {
     sizes = {1, 1};
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing prefixed path");
     Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing prefixed path");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, reinterpret_cast<std::uint32_t*>(0x10), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed id array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, ids.data(), reinterpret_cast<std::uint64_t*>(0x10), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed size array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed error index");
+    const char* paths[] = {"apr_read_generated.bin", "apr_read_missing.bin"};
+    ids = {0, 0};
+    sizes = {1, 1};
+    failed = 7;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing path");
+    Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing path");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable id array");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, ids.data(), reinterpret_cast<std::uint64_t*>(0x10), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable size array");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids.data(), sizes.data(), reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable error index");
     std::uint64_t size = 0;
     Require(sceKernelAprGetFileSize(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file size");
     Require(sceKernelAprGetFileSize(id, &size) == 0 && size == FileBytes, "APR reported a wrong file size");
@@ -354,6 +366,26 @@ void TestPriorities() {
     Require(LoadValue(&waiterDone) == 1 && LoadValue(&behindDone) == 1, "the released APR buffers did not finish in order");
 }
 
+void TestSubmitOrder() {
+    alignas(8) static std::uint64_t idSlot = 0;
+    alignas(8) static std::uint64_t resultSlot = 0;
+    constexpr std::uint64_t written = 0xA5A5A5A5A5A5A5A5ull;
+    std::vector<std::uint8_t> commands;
+    Append(commands, WriteValue(&idSlot, written));
+    Append(commands, WriteValue(&resultSlot, written));
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, static_cast<std::uint32_t>(commands.size()), 2, static_cast<std::uint32_t>(commands.size()), commands.data()};
+    auto* id = reinterpret_cast<std::uint32_t*>(&idSlot);
+    auto* result = reinterpret_cast<std::uint32_t*>(&resultSlot);
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 3, result, id) == 0, "the APR buffer that writes its own id and result was not submitted");
+    for (int poll = 0; poll < 5000 && (LoadValue(&idSlot) != written || LoadValue(&resultSlot) != written); ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&idSlot) == written, "APR wrote the submission id after the commands that write the same memory ran");
+    Require(LoadValue(&resultSlot) == written, "APR wrote the submission result after the commands that write the same memory ran");
+    idSlot = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&buffer, 3, id) == 0, "the APR buffer that writes its own id was not submitted");
+    for (int poll = 0; poll < 5000 && LoadValue(&idSlot) != written; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&idSlot) == written, "APR wrote the submission id after the commands that write the same memory ran");
+}
+
 #ifdef _WIN32
 std::uintptr_t faultBegin = 0;
 std::size_t faultBytes = 0;
@@ -452,6 +484,8 @@ int main(int argc, char** argv) {
             TestStreams(fixture);
         } else if (mode == "priorities") {
             TestPriorities();
+        } else if (mode == "order") {
+            TestSubmitOrder();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;

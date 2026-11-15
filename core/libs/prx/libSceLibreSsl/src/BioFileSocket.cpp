@@ -1,11 +1,13 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cerrno>
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -56,16 +58,11 @@ int APS5_VABI FilePuts(Bio* bio, const char* data) {
 }
 
 int APS5_VABI FileGets(Bio* bio, char* data, int size) {
-    if (!data || size <= 0) return 0;
-    int count = 0;
-    while (count < size - 1) {
-        char character = 0;
-        if (FileRead(bio, &character, 1) != 1) break;
-        data[count++] = character;
-        if (character == '\n') break;
-    }
-    data[count] = '\0';
-    return count;
+    if (!data || !bio->data) throw std::invalid_argument("BIO_gets: null line buffer or file stream");
+    const GuestArena::HostWrite write(data, size > 1 ? static_cast<std::size_t>(size) : 1);
+    *data = 0;
+    const auto line = fgets_nid_postfix(data, size, static_cast<FileStream*>(bio->data));
+    return line ? static_cast<int>(std::strlen(data)) : 0;
 }
 
 std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument, void* pointer) {

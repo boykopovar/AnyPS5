@@ -136,6 +136,10 @@ def main():
             assert not (case / "app0").exists(), case
             result, _ = convert(case, windows, ["--exclude-sce-module", "missing.prx"])
             assert result.returncode == 2 and "file not found" in result.stderr, result.stderr
+            (case / "prx" / "missing.prx").mkdir()
+            result, _ = convert(case, windows, ["--exclude-sce-module", "omit.prx", "--exclude-sce-module", "missing.prx"])
+            assert result.returncode == 2 and "Excluded guest module file not found: missing.prx" in result.stderr, (
+                result.returncode, result.stderr)
 
             case = work / f"{windows}-invalid"
             case.mkdir()

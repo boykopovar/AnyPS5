@@ -5,7 +5,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer|has no interface that can join)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer|has no interface that can join|mounts /dev/shm noexec)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
 
 HOST_LIMITATION = re.compile(r"^skipping: (not enough free disk space for a file|cannot allocate a buffer) of more than 2 GiB", re.IGNORECASE | re.MULTILINE)
 
