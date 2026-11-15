@@ -143,6 +143,20 @@ int main() {
             threw = true;
         }
         Require(threw);
+        threw = false;
+        try {
+            scePosixForWebKit_gethostbyname_r("127.0.0.1", &entry, large.data(), large.size(), reinterpret_cast<GuestResolver::HostEntry**>(0x10), &hostError);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+        threw = false;
+        try {
+            scePosixForWebKit_gethostbyname_r(std::string(1024, 'a').c_str(), &entry, large.data(), large.size(), &result, reinterpret_cast<int*>(0x10));
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
     }
     std::array<unsigned char, 16> v4{16, 2, 0x6d, 0x06, 127, 0, 0, 1};
     char host[128]{}, service[32]{};

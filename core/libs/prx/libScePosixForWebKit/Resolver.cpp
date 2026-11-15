@@ -283,20 +283,33 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
 int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver::HostEntry* entry, char* buffer,
     std::size_t length, GuestResolver::HostEntry** result, int* hostError) {
     if (!name || !result) APS5_INVALID_ARG_EX;
-    *result = nullptr;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(result, sizeof(*result))) {
+        errno = savedErrno;
+        APS5_INVALID_ARG_EX;
+    }
+    GuestResolver::HostEntry* nullResult = nullptr;
+    GuestCopyOut_nid_no_patch(result, &nullResult, sizeof(nullResult));
+    errno = savedErrno;
     struct LookupTag {};
     const auto* source = ResolveHost<LookupTag>(name);
     if (source && CopyHostEntry(*source, entry, buffer, length)) {
-        *result = entry;
+        GuestCopyOut_nid_no_patch(result, &entry, sizeof(entry));
+        errno = savedErrno;
         return 0;
     }
     if (!hostError) APS5_INVALID_ARG_EX;
+    if (!GuestWritable_nid_no_patch(hostError, sizeof(*hostError))) {
+        errno = savedErrno;
+        APS5_INVALID_ARG_EX;
+    }
     if (source) {
         *sceNetErrnoLoc() = -1;
         errno = ERANGE;
     }
-    *hostError = *sceNetErrnoLoc();
-    return *hostError == -1 && errno != 0 ? errno : -1;
+    const int locErr = *sceNetErrnoLoc();
+    GuestCopyOut_nid_no_patch(hostError, &locErr, sizeof(locErr));
+    return locErr == -1 && errno != 0 ? errno : -1;
 }
 
 GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
