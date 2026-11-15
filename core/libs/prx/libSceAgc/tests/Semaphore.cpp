@@ -208,7 +208,8 @@ bool APS5_VABI growQueue_nid_no_patch(CommandBuffer* buffer, std::uint32_t count
     return state.reported;
 }
 
-void testQueueMemSemaphore(QueueMemSemaphore write, bool asyncCompute) {
+void testQueueMemSemaphore(QueueMemSemaphore write) {
+    const bool asyncCompute = write == sceAgcAcbMemSemaphore;
     constexpr std::uint32_t sentinel = 0xdeadbeefu;
     struct Case {
         std::uintptr_t address;
@@ -281,8 +282,8 @@ int main() {
         testRegistration();
         testLabels();
         testMemSemaphore();
-        testQueueMemSemaphore(sceAgcAcbMemSemaphore, true);
-        testQueueMemSemaphore(sceAgcDcbMemSemaphore, false);
+        testQueueMemSemaphore(sceAgcAcbMemSemaphore);
+        testQueueMemSemaphore(sceAgcDcbMemSemaphore);
         testLabelRejections();
         testRepeatedRegistration();
         storage.reset();
