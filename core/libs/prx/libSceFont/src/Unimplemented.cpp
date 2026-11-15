@@ -73,13 +73,11 @@ int APS5_VABI sceFontCreateGraphicsDevice(const FontMemory* memory, const FontGr
 }
 
 int APS5_VABI sceFontCreateGraphicsService(const FontMemory* memory, const FontGraphicsServiceParam* param, FontGraphicsService** service) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::CreateGraphicsService(memory, param, service);
 }
 
 int APS5_VABI sceFontCreateGraphicsServiceWithEdition(const FontMemory* memory, const FontGraphicsServiceParam* param, std::uint64_t unusedSlot, FontGraphicsService** service) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::CreateGraphicsService(memory, param, service);
 }
 
 int APS5_VABI sceFontCreateWords(const FontMemory* memory, FontTextSource* source, std::uint64_t unusedSlot, FontWords** words) {
@@ -92,8 +90,7 @@ int APS5_VABI sceFontDestroyGraphicsDevice(FontGraphicsDevice** device) {
 }
 
 int APS5_VABI sceFontDestroyGraphicsService(FontGraphicsService** service) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::DestroyGraphicsService(service);
 }
 
 int APS5_VABI sceFontDestroyWords(FontWords** words) {
@@ -181,8 +178,7 @@ int APS5_VABI sceFontGraphicsRegionInitRoundish(FontGraphicsRegion* region, floa
 }
 
 int APS5_VABI sceFontGraphicsRelease(void** object) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsRelease(object);
 }
 
 int APS5_VABI sceFontGraphicsRenderResource(FontGraphicsFrame* frame, FontGraphicsDesignResource* design, float x, float y, FontGraphicsResource** resource) {
@@ -281,8 +277,7 @@ int APS5_VABI sceFontGraphicsStructureDesignResource(FontGraphicsDevice* device,
 }
 
 int APS5_VABI sceFontGraphicsStructureSurfaceTexture(FontGraphicsDevice* device, const FontGraphicsSurface* surface, FontGraphicsSurfaceTexture** texture) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsStructureSurfaceTexture(device, surface, texture);
 }
 
 int APS5_VABI sceFontGraphicsUpdateClipping(FontGraphicsResource* resource, const FontGraphicsRegion* region) {
@@ -381,8 +376,8 @@ int APS5_VABI sceFontGraphicsStructureVertexesGlyph() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontGraphicsTextureRefersSurface() {
-    NotImplemented_nid_no_patch(__func__);
+FontGraphicsSurface* APS5_VABI sceFontGraphicsTextureRefersSurface(const FontGraphicsSurfaceTexture* texture) {
+    return Font::GraphicsTextureRefersSurface(texture);
 }
 
 int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph() {

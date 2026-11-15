@@ -452,6 +452,7 @@ class Main(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
         self.assertFalse((build / "unrelated").exists())
 
+    @unittest.skipUnless(shutil.which("ctest"), "CTest is required to run the selected tests")
     def test_changed_host_fixture_runs_its_cases_and_propagates_failure(self):
         host = self.target("host_tests", source="core/libs/tests/Host.cpp")
         python = Path(sys.executable).as_posix()
