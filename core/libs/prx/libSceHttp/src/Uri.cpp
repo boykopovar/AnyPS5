@@ -378,20 +378,28 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
     char* strings[7];
     for (size_t i = 0; i < 7; ++i) {
         strings[i] = next;
-        if (!fields[i].empty()) std::memcpy(next, fields[i].data(), fields[i].size());
-        next[fields[i].size()] = '\0';
+        std::string segment(fields[i].data(), fields[i].size());
+        segment.push_back('\0');
+        const int savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(next, segment.data(), segment.size());
+        errno = savedErrno;
+        if (!written) return ERROR_INVALID_VALUE;
         next += spaces[i] + 1;
     }
-    *out = {};
-    out->opaque = parts.opaque;
-    out->scheme = strings[0];
-    out->username = strings[1];
-    out->password = strings[2];
-    out->hostname = strings[3];
-    out->path = strings[4];
-    out->query = strings[5];
-    out->fragment = strings[6];
-    out->port = parts.port;
+    SceHttpUriElement element{};
+    element.opaque = parts.opaque;
+    element.scheme = strings[0];
+    element.username = strings[1];
+    element.password = strings[2];
+    element.hostname = strings[3];
+    element.path = strings[4];
+    element.query = strings[5];
+    element.fragment = strings[6];
+    element.port = parts.port;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(out, &element, sizeof(element));
+    errno = savedErrno;
+    if (!written) return ERROR_INVALID_VALUE;
     return 0;
 }
 
