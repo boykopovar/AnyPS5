@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <stdexcept>
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -312,6 +314,72 @@ static void OneShotCleanup() {
     }
 }
 
+static void TestMdCtxCopy() {
+    Require(liveBlocks == 0);
+    std::array<unsigned char, 32> expected{};
+    std::uint32_t expectedSize = 0;
+    Require(EVP_Digest_nid_postfix("abc", 3, expected.data(), &expectedSize, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(expectedSize == 32);
+
+    EvpMdContext selfCtx{};
+    EVP_MD_CTX_init_nid_postfix(&selfCtx);
+    Require(EVP_DigestInit_ex_nid_postfix(&selfCtx, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&selfCtx, "ab", 2) == 1);
+    Require(CopyContext_nid_no_patch(selfCtx, selfCtx, "self") == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&selfCtx, "c", 1) == 1);
+    std::array<unsigned char, 32> digest{};
+    std::uint32_t digestSize = 0;
+    Require(EVP_DigestFinal_ex_nid_postfix(&selfCtx, digest.data(), &digestSize) == 1);
+    Require(digestSize == 32 && digest == expected);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&selfCtx) == 1);
+
+    EvpMdContext reusedTarget{};
+    EvpMdContext reusedSource{};
+    EVP_MD_CTX_init_nid_postfix(&reusedTarget);
+    EVP_MD_CTX_init_nid_postfix(&reusedSource);
+    Require(EVP_DigestInit_ex_nid_postfix(&reusedTarget, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&reusedTarget, "xy", 2) == 1);
+    Require(EVP_DigestInit_ex_nid_postfix(&reusedSource, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&reusedSource, "ab", 2) == 1);
+    Require(CopyContext_nid_no_patch(reusedTarget, reusedSource, "reuse") == 1);
+    Require(EVP_DigestUpdate_nid_postfix(&reusedTarget, "c", 1) == 1);
+    digest.fill(0);
+    digestSize = 0;
+    Require(EVP_DigestFinal_ex_nid_postfix(&reusedTarget, digest.data(), &digestSize) == 1);
+    Require(digestSize == 32 && digest == expected);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&reusedTarget) == 1);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&reusedSource) == 1);
+
+    failureStage = FailureStage::None;
+    EvpMd badMd{};
+    badMd.type = 12346;
+    badMd.mdSize = 4;
+    badMd.init = FailingInit;
+    badMd.update = FailingUpdate;
+    badMd.finalize = FailingFinal;
+    badMd.cleanup = FailingCleanup;
+    badMd.blockSize = 64;
+    badMd.contextSize = 16;
+
+    EvpMdContext badTarget{};
+    EvpMdContext badSource{};
+    EVP_MD_CTX_init_nid_postfix(&badTarget);
+    EVP_MD_CTX_init_nid_postfix(&badSource);
+    Require(EVP_DigestInit_ex_nid_postfix(&badTarget, &badMd, nullptr) == 1);
+    Require(EVP_DigestInit_ex_nid_postfix(&badSource, &badMd, nullptr) == 1);
+    badMd.contextSize = -1;
+    bool caught = false;
+    try {
+        CopyContext_nid_no_patch(badTarget, badSource, "neg");
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    Require(caught);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&badTarget) == 1);
+    Require(EVP_MD_CTX_cleanup_nid_postfix(&badSource) == 1);
+    Require(liveBlocks == 0);
+}
+
 int main() {
     InitializeHeap();
     const std::vector<unsigned char> empty;
@@ -594,5 +662,6 @@ int main() {
         Require(allocationsBeforeFailure == -1 && liveBlocks == 0);
     }
     OneShotCleanup();
+    TestMdCtxCopy();
     return 0;
 }
