@@ -182,6 +182,8 @@ void CheckOpen(Database& db, const std::filesystem::path& directory) {
 void CheckBindAndRead(Database& db) {
     Require(db.Execute("CREATE TABLE items(i INTEGER, big INTEGER, d REAL, t TEXT, b BLOB, n)"));
     Require(db.TableExists("items") && !db.TableExists("item") && !db.TableExists("ITEMS'"));
+    Require(db.Execute("CREATE TABLE \"it'em\"(v)") && !db.TableExists("it'em") && db.Execute("DROP TABLE \"it'em\""));
+    Require(!db.TableExists("x'; DROP TABLE items; --") && db.TableExists("items"));
     Statement insert(db, "INSERT INTO items VALUES(?, ?, ?, ?, ?, ?)");
     Require(insert.Prepare() == SqliteOk);
     Require(_ZNK7WebCore15SQLiteStatement18bindParameterCountEv(insert.get()) == 6);
