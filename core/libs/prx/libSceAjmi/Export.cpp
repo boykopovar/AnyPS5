@@ -1,6 +1,9 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAjmi/include/InventoryExports.hpp"
 #include "prx/libSceAjmi/include/Api.hpp"
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -16,16 +19,48 @@ APS5_DUMMY_FUN
 void* APS5_VABI sceAjmBatchJobInlineBuffer_nid_disambig1(void* position, const void* data_input, size_t data_input_size, const void** batch_address) {
     if (data_input_size > std::numeric_limits<std::uint32_t>::max() - 7) throw std::invalid_argument("AJMI: an inline buffer of more than 4 GiB - 8 bytes does not fit the 32-bit job size");
     const std::size_t size = (data_input_size + 7) & ~std::size_t{7};
-    auto* at = static_cast<std::uint8_t*>(position);
+    const auto start = reinterpret_cast<std::uintptr_t>(position);
+    if (start == 0 || start > std::numeric_limits<std::uintptr_t>::max() - sizeof(std::uint32_t) * 2 ||
+        size > std::numeric_limits<std::uintptr_t>::max() - start - sizeof(std::uint32_t) * 2) {
+        throw std::runtime_error("AJMI: inline batch destination address is invalid");
+    }
+    const auto inputStart = reinterpret_cast<std::uintptr_t>(data_input);
+    if (data_input_size > 0 && (inputStart == 0 || data_input_size > std::numeric_limits<std::uintptr_t>::max() - inputStart)) {
+        throw std::runtime_error("AJMI: inline input address is invalid");
+    }
+    const int savedErrno = errno;
+    const auto read = [&](void* destination, const void* source, std::size_t bytes) {
+        const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+        errno = savedErrno;
+        return copied;
+    };
+    const auto write = [&](void* destination, const void* source, std::size_t bytes) {
+        const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+        errno = savedErrno;
+        return copied;
+    };
     std::uint32_t words[2];
-    std::memcpy(words, at, sizeof(words));
+    if (!read(words, position, sizeof(words))) throw std::runtime_error("AJMI: inline batch header is unreadable");
     words[0] = (words[0] & ~0x1Fu) | 7u;
     words[1] = static_cast<std::uint32_t>(size);
-    std::memcpy(at, words, sizeof(words));
-    at += sizeof(words);
-    if (data_input_size) std::memcpy(at, data_input, data_input_size);
-    if (batch_address) *batch_address = at;
-    return at + size;
+    if (!write(position, words, sizeof(words))) throw std::runtime_error("AJMI: inline batch header is unwritable");
+    const auto payload = start + sizeof(words);
+    std::array<std::uint8_t, 4096> staging{};
+    for (std::size_t offset = 0; offset < data_input_size;) {
+        const std::size_t count = std::min(staging.size(), data_input_size - offset);
+        if (!read(staging.data(), reinterpret_cast<const void*>(inputStart + offset), count)) {
+            throw std::runtime_error("AJMI: inline input is unreadable");
+        }
+        if (!write(reinterpret_cast<void*>(payload + offset), staging.data(), count)) {
+            throw std::runtime_error("AJMI: inline batch payload is unwritable");
+        }
+        offset += count;
+    }
+    const auto* address = reinterpret_cast<const void*>(payload);
+    if (batch_address && !write(batch_address, &address, sizeof(address))) {
+        throw std::runtime_error("AJMI: inline payload pointer output is unwritable");
+    }
+    return reinterpret_cast<void*>(payload + size);
 }
 
 static std::uint8_t* KeepChunk(std::uint8_t* at, std::uint32_t keep, std::uint32_t low, std::uint32_t word) {
