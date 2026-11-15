@@ -1,5 +1,6 @@
 import gzip
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -83,6 +84,97 @@ class TimelineTests(unittest.TestCase):
         missing = subprocess.run([sys.executable, str(tool), str(Path(self.tmp.name) / "none.json.gz")], capture_output=True, text=True)
         self.assertEqual(missing.returncode, 2)
         self.assertIn("FAIL", missing.stderr)
+
+    def test_the_cli_accepts_only_finite_nonnegative_window_bounds(self):
+        path = Path(self.tmp.name) / "a.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        out = Path(self.tmp.name) / "a.html"
+        tool = Path(trace_timeline.__file__)
+        done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), "--from-ms=1", "--to-ms=6.5"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("window 1.000 to 6.500 ms", out.read_text(encoding="utf-8"))
+        for option in ("--from-ms", "--to-ms"):
+            for value in ("-1", "nan", "inf", "-inf", "1e308"):
+                with self.subTest(option=option, value=value):
+                    out.unlink(missing_ok=True)
+                    done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), option + "=" + value],
+                                          capture_output=True, text=True)
+                    self.assertEqual(done.returncode, 2, done.stderr)
+                    self.assertIn(option, done.stderr)
+                    self.assertFalse(out.exists())
+
+    def test_the_cli_rejects_sizes_that_are_not_positive(self):
+        path = Path(self.tmp.name) / "a.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        out = Path(self.tmp.name) / "a.html"
+        tool = Path(trace_timeline.__file__)
+        for option, value in (("--max-slices", "-1"), ("--max-slices", "0"), ("--width", "-500"), ("--width", "0"), ("--width", "x")):
+            with self.subTest(option=option, value=value):
+                out.unlink(missing_ok=True)
+                done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), option + "=" + value],
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertIn(option, done.stderr)
+                self.assertFalse(out.exists())
+
+
+    def check_input_alias(self, path, output=None, cwd=None):
+        before = path.read_bytes()
+        arguments = [sys.executable, str(Path(trace_timeline.__file__)), str(path)]
+        if output is not None:
+            arguments += ["-o", str(output)]
+        done = subprocess.run(arguments, capture_output=True, text=True, cwd=cwd)
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn("output must not overwrite the input trace", done.stderr)
+        self.assertNotIn("wrote ", done.stdout)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_cli_preserves_input_with_explicit_or_default_same_output(self):
+        for suffix in (".json", ".html"):
+            with self.subTest(suffix=suffix):
+                path = Path(self.tmp.name) / ("capture" + suffix)
+                path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+                self.check_input_alias(path, path)
+                self.check_input_alias(path, Path(os.path.relpath(path, path.parent)), cwd=path.parent)
+                if suffix == ".html":
+                    self.check_input_alias(path)
+
+    def test_cli_preserves_compressed_input_with_hardlink_output(self):
+        path = Path(self.tmp.name) / "capture.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        output = Path(self.tmp.name) / "capture.html"
+        try:
+            os.link(path, output)
+        except OSError as error:
+            self.skipTest(f"hard links unavailable: {error}")
+        self.check_input_alias(path, output)
+
+    def test_cli_preserves_input_with_symlink_alias_in_either_direction(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        alias = Path(self.tmp.name) / "capture.html"
+        try:
+            alias.symlink_to(path)
+        except OSError as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        self.check_input_alias(path, alias)
+        self.check_input_alias(alias, path)
+
+    def test_cli_allows_distinct_existing_output_with_identical_contents(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        before = path.read_bytes()
+        output = path.with_suffix(".html")
+        output.write_bytes(before)
+        done = subprocess.run([sys.executable, str(Path(trace_timeline.__file__)), str(path), "-o", str(output)],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertIn("<svg", output.read_text(encoding="utf-8"))
 
 
 def trace_timeline_slices(items):

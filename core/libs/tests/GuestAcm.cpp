@@ -223,6 +223,8 @@ int main() {
     const auto ringIs = [&reverbInput](std::uint32_t current, std::uint32_t available) { return reverbInput.currentBlock == current && reverbInput.availableBlocks == available; };
     const auto reverb = [&](std::uint32_t outputCount, const AcmReverbFilter* const* filters, const AcmReverbOutput* const* outputs) { return sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, &reverbInput, outputCount, filters, reverbGains, outputs); };
 
+    AcmReverbInput unreadableBatchInput = reverbInput;
+    Require(sceAcm_ConvReverb_SharedInput(reinterpret_cast<AcmBatchInfo*>(0x10), 1, &unreadableBatchInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
     Require(sceAcm_ConvReverb_SharedInput(nullptr, 1, &reverbInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
     Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 0, &reverbInput, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
     Require(sceAcm_ConvReverb_SharedInput(&reverbBatch, 1, nullptr, 1, reverbFilters, reverbGains, reverbOutputs) == BadPointer);
@@ -416,6 +418,17 @@ int main() {
     std::memset(commands, 0xCC, sizeof(commands));
     commandBatch = {commands, 0, sizeof(commands)};
     Require(sceAcmBatchJobNotification(nullptr, 1, notification) == BadPointer);
+    errno = 71;
+    Require(sceAcmBatchJobNotification(reinterpret_cast<AcmBatchInfo*>(0x10), 1, notification) == BadPointer);
+    Require(errno == 71 && notification[0] == std::byte{0xAB});
+    commandBatch = {reinterpret_cast<void*>(0x10), 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcmBatchJobNotification(&commandBatch, 1, notification) == BadPointer);
+    Require(errno == 71 && commandBatch.offset == 0 && notification[0] == std::byte{0xAB});
+    commandBatch = {commands, 0, sizeof(commands)};
+    errno = 71;
+    Require(sceAcmBatchJobNotification(&commandBatch, 1, reinterpret_cast<void*>(0x80)) == BadPointer);
+    Require(errno == 71 && commandBatch.offset == 0 && commands[0] == std::byte{0xCC});
     Require(sceAcmBatchJobNotification(&commandBatch, 0, notification) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobNotification(&commandBatch, 1, nullptr) == BadPointer && commandBatch.offset == 0);
     Require(sceAcmBatchJobNotification(&commandBatch, 1, notification + 0x40) == static_cast<int>(0x8194000A) && commandBatch.offset == 0);

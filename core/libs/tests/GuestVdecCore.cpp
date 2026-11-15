@@ -352,6 +352,10 @@ void CheckDecodeArguments() {
     Require(sceVdecCoreFlushDecodeOutput(decoder, nullptr, nullptr) == 0, "flush without a count");
     std::uint32_t held = 7;
     Require(sceVdecCoreTrySyncDecode(decoder, nullptr) == 0 && sceVdecCoreTrySyncDecode(decoder, &held) == 0 && held == 1, "try-sync after a flush counts the held picture");
+    errno = 71;
+    Require(sceVdecCoreFlushDecodeOutput(decoder, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == InvalidArgument && errno == 71, "flush with an unwritable count");
+    held = 7;
+    Require(sceVdecCoreTrySyncDecode(decoder, &held) == 0 && held == 1, "a flush with an unwritable count keeps the held picture");
     Require(sceVdecCoreResetDecoder(decoder, nullptr) == 0, "reset");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the argument decoder");
 }
@@ -359,6 +363,12 @@ void CheckDecodeArguments() {
 void CheckEmptyQueue() {
     void* decoder = CreateAvc(100);
     std::uint32_t count = 7;
+    errno = 71;
+    Require(sceVdecCoreTrySyncDecode(decoder, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument && errno == 71, "try-sync with unwritable count");
+    errno = 71;
+    Require(sceVdecCoreSyncDecode(decoder, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument && errno == 71, "sync with unwritable count");
+    errno = 71;
+    Require(sceVdecCoreSyncDecodeWptr(decoder, reinterpret_cast<std::uint32_t*>(0x10), nullptr, nullptr) == InvalidArgument && errno == 71, "sync wptr with unwritable count");
     Require(sceVdecCoreTrySyncDecode(decoder, &count) == 0 && count == 0, "try-sync on an idle decoder");
     count = 7;
     Require(sceVdecCoreSyncDecode(decoder, &count) == 0 && count == 0, "sync on an idle decoder");
