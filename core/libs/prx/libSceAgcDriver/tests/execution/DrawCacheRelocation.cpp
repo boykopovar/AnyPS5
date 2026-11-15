@@ -294,7 +294,6 @@ void RelocatedDrawsReuseTheirRecipe(bool libraries) {
     const auto recipeHits = AgcDriver::VulkanDevice::DrawRecipeHits() - recipesBefore;
     const auto hits = counters.hits - start.hits;
     Require(hits == moved.size() - 4, mode + ": draws whose data moved again made " + std::to_string(hits) + " draw-cache hits, expected " + std::to_string(moved.size() - 4));
-    // Entry verification (APS5_VERIFY_DRAW_ENTRIES) records every hit afresh to compare it, so no hit is drawn from a recipe.
     if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
         Require(recipeHits == 0, mode + ": " + std::to_string(recipeHits) + " draws served by a relocated entry were recorded from a recipe while entry verification records every hit afresh");
         return;

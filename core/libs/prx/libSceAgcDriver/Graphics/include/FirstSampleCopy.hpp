@@ -16,7 +16,6 @@ public:
     FirstSampleCopy& operator=(const FirstSampleCopy&) = delete;
 
     void Record(Recorder& recorder, Texture& source);
-    // Through a classic descriptor set, for a view without a texture.
     void Record(Recorder& recorder, VkImageView source, VkImageLayout layout);
     VkImage Image() const { return image; }
 
