@@ -776,7 +776,7 @@ void ConcurrentRegistry() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2);
+        Require(argc == 2 || (argc == 3 && std::string_view(argv[1]) == "allocation_keywords"));
         const std::string_view mode = argv[1];
         if (mode.starts_with("api_")) Api(static_cast<unsigned>(std::stoi(std::string(mode.substr(4)))));
         else if (mode == "metadata") Metadata();
