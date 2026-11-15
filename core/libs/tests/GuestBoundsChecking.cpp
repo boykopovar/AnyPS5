@@ -141,6 +141,14 @@ void CheckWcstok() {
     remaining = 4;
     Require(wcstok_s_nid_postfix(nullptr, &remaining, delimiters.c_str(), &context) == nullptr, "wcstok_s accepted a null context string");
     RequireViolation(before, "wcstok_s: bad argument", 22);
+    auto unmappedText = Wide("ab,c");
+    before = constraintCalls;
+    Require(wcstok_s_nid_postfix(unmappedText.data(), reinterpret_cast<std::size_t*>(0x10), delimiters.c_str(), &context) == nullptr, "wcstok_s accepted an unreadable s1max");
+    RequireViolation(before, "wcstok_s: bad argument", 22);
+    before = constraintCalls;
+    remaining = unmappedText.size() + 1;
+    Require(wcstok_s_nid_postfix(unmappedText.data(), &remaining, delimiters.c_str(), reinterpret_cast<std::uint16_t**>(0x10)) == nullptr, "wcstok_s accepted an unreadable context");
+    RequireViolation(before, "wcstok_s: bad argument", 22);
 }
 
 void CheckMemset() {

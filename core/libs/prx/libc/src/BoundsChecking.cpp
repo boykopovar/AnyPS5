@@ -78,17 +78,23 @@ void* APS5_VABI bsearch_s_nid_postfix(const void* key, const void* base, std::si
 }
 
 std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* remaining, const std::uint16_t* delimiters, std::uint16_t** context) {
-    if (!remaining || !context || !delimiters || *remaining > rsizeMax || (!str && !*context)) {
+    const auto bad = [] {
         violation("wcstok_s: bad argument", guestEinval);
-        return nullptr;
-    }
-    if (!str) str = *context;
+        return static_cast<std::uint16_t*>(nullptr);
+    };
+    const auto storeRemaining = [&](std::size_t value) { return GuestCopyOut_nid_no_patch(remaining, &value, sizeof(value)); };
+    const auto storeContext = [&](std::uint16_t* value) { return GuestCopyOut_nid_no_patch(context, &value, sizeof(value)); };
+    if (!remaining || !context || !delimiters) return bad();
+    std::size_t available = 0;
+    std::uint16_t* saved = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&available, remaining, sizeof(available)) || !GuestCopyIn_nid_no_patch(&saved, context, sizeof(saved))) return bad();
+    if (available > rsizeMax || (!str && !saved)) return bad();
+    if (!str) str = saved;
     const auto isDelimiter = [delimiters](std::uint16_t value) {
         for (const auto* delimiter = delimiters; *delimiter != 0; ++delimiter)
             if (*delimiter == value) return true;
         return false;
     };
-    const std::size_t available = *remaining;
     std::size_t skipped = 0;
     if (available == 0) {
         violation("wcstok_s: missing token", guestEinval);
@@ -102,11 +108,8 @@ std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* r
     }
     std::uint16_t* const token = str + skipped;
     const std::size_t left = available - skipped;
-    *remaining = left;
-    if (*token == 0) {
-        *context = token;
-        return nullptr;
-    }
+    if (!storeRemaining(left)) return bad();
+    if (*token == 0) return storeContext(token) ? nullptr : bad();
     std::size_t length = 0;
     while (token[length] != 0 && !isDelimiter(token[length])) {
         if (++length == left) {
@@ -115,12 +118,14 @@ std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* r
         }
     }
     std::uint16_t* next = token + length;
-    *remaining = left - length;
+    std::size_t rest = left - length;
     if (*next != 0) {
-        *next++ = 0;
-        if (left != length) *remaining = left - length - 1;
+        const std::uint16_t terminator = 0;
+        if (!GuestCopyOut_nid_no_patch(next, &terminator, sizeof(terminator))) return bad();
+        ++next;
+        if (left != length) rest = left - length - 1;
     }
-    *context = next;
+    if (!storeRemaining(rest) || !storeContext(next)) return bad();
     return token;
 }
 
