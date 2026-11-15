@@ -164,7 +164,11 @@ struct KernelMutexLock {
     explicit KernelMutexLock(PthreadMutex* value) : mutex(value) {
         if (mutex && scePthreadMutexLock(mutex)) NotImplemented_nid_no_patch(__func__);
     }
-    ~KernelMutexLock() { if (mutex) scePthreadMutexUnlock(mutex); }
+    ~KernelMutexLock() { Unlock(); }
+    void Unlock() {
+        if (mutex) scePthreadMutexUnlock(mutex);
+        mutex = nullptr;
+    }
     KernelMutexLock(const KernelMutexLock&) = delete;
     KernelMutexLock& operator=(const KernelMutexLock&) = delete;
 };
@@ -1494,19 +1498,25 @@ PthreadMutex* CreateKernelMutex() {
     }
 }
 
-void ReleaseInitialization() {
+void ReleaseRecoveryState() {
     auto& state = State();
     if (!ModernValues() && !state.legacyHandlers) Release(nullptr);
     ReleaseLegacyHandlers();
     if (state.fallback) Destroy(*state.fallback);
     Release(state.fallback);
     state.fallback = nullptr;
+}
+
+void ReleaseKernelResources() {
+    auto& state = State();
     if (ModernValues()) {
-        if (state.recoveryMutex) {
-            scePthreadMutexDestroy(state.recoveryMutex);
+        auto* recoveryMutex = state.recoveryMutex;
+        state.recoveryMutex = nullptr;
+        if (recoveryMutex) {
+            scePthreadMutexDestroy(recoveryMutex);
             state.recoveryMutexRetired = true;
         }
-        Release(state.recoveryMutex);
+        Release(recoveryMutex);
     }
     state.recoveryMutex = nullptr;
     state.recoveryMutexRetired = false;
@@ -1528,6 +1538,11 @@ void ReleaseInitialization() {
     state.floatFormatEnabled = false;
     state.paddedStringGrowth = false;
     state.initialized = false;
+}
+
+void ReleaseInitialization() {
+    ReleaseRecoveryState();
+    ReleaseKernelResources();
 }
 
 template<typename T>
@@ -1890,6 +1905,20 @@ int CompareText(const char* left, const char* right) {
         ++right;
     }
     return static_cast<unsigned char>(*left) - static_cast<unsigned char>(*right);
+}
+
+bool GuestTextLength(const char* text, std::size_t& length) {
+    char chunk[4096];
+    for (std::size_t offset = 0;;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, count)) return false;
+        if (const void* end = std::memchr(chunk, 0, count)) {
+            length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
+            return true;
+        }
+        offset += count;
+    }
 }
 
 struct ScopedString {
@@ -2605,6 +2634,7 @@ int APS5_VABI _ZN3sce4Json19InternalInitializer20initialize_staticlibEPKNS0_13In
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     auto& state = State();
     std::lock_guard callbackLock(state.callbackMutex);
+    KernelMutexLock recoveryLock(state.recoveryMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
     if (state.internalMutexRetired || state.recoveryMutexRetired || state.retiredDefaultHeaders) NotImplemented_nid_no_patch(__func__);
@@ -2613,7 +2643,9 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     state.callback = nullptr;
     state.context = nullptr;
     state.handlers = {};
-    ReleaseInitialization();
+    ReleaseRecoveryState();
+    recoveryLock.Unlock();
+    ReleaseKernelResources();
     *static_cast<std::uint8_t*>(self) = 0;
     return 0;
 }
@@ -2953,7 +2985,9 @@ void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Constr
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); AssignReal(*self, value); }
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
     Construct(*self);
-    ScopedString temporary{std::string_view{text ? text : ""}};
+    std::size_t length = 0;
+    if (text && !GuestTextLength(text, length)) text = nullptr;
+    ScopedString temporary{text ? std::string_view{text, length} : std::string_view{""}};
     if (!temporary.string.text) return;
     SetType(*self, TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
@@ -3006,7 +3040,9 @@ void APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetT
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { AssignReal(NodeOf(*self), value); }
 void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
-    ScopedString temporary{std::string_view{text}};
+    std::size_t length = 0;
+    if (!GuestTextLength(text, length)) throw std::invalid_argument("sce::Json::Value::set: unreadable text");
+    ScopedString temporary{std::string_view{text, length}};
     if (!temporary.string.text) return;
     SetType(NodeOf(*self), TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
@@ -3193,6 +3229,7 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
 
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
     *self = {};
+    if (!allocParam) return;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.allocation) return;

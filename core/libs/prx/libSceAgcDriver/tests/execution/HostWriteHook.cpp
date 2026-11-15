@@ -198,8 +198,10 @@ int main() {
     try {
 #ifdef _WIN32
         _putenv_s("APS5_PROFILE_DRAW", "1");
+        _putenv_s("APS5_NO_IDLE_STORE", "1");
 #else
         setenv("APS5_PROFILE_DRAW", "1", 1);
+        setenv("APS5_NO_IDLE_STORE", "1", 1);
 #endif
         {
             const auto device = OpenVulkanTestDevice();

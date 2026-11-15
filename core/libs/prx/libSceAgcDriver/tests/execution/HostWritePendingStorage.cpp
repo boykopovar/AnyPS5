@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -257,6 +258,11 @@ void HostWriteCost(std::size_t rounds) {
 
 int main(int argc, char** argv) {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_NO_IDLE_STORE", "1");
+#else
+        setenv("APS5_NO_IDLE_STORE", "1", 1);
+#endif
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
@@ -248,7 +249,7 @@ Driver::Driver() {
         }
         std::thread host;
         try {
-            host = std::thread(import);
+            host = Libc::StartHostThread(import);
         } catch (const std::system_error& error) {
             std::fprintf(stderr, "[gpu] import of GPU memory at its mapping failed: no host thread to run it on: %s\n", error.what());
             return;
@@ -284,6 +285,66 @@ bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
     rethrowFailure();
     checkStopping();
     return idle;
+}
+
+bool Driver::WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    const auto target = accepted;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto idle = [&] { return failure != nullptr || stopping || completed >= target; };
+    const auto titleWaits = [&] {
+        return std::any_of(awaitedSlots.begin(), awaitedSlots.end(), [&](const AwaitedSlot& slot) {
+            const auto awaited = slot.address.load(std::memory_order_acquire);
+            return awaited != 0 && awaitsTitle(awaited);
+        });
+    };
+    ++idleWaiters;
+    while (!idle() && !titleWaits() && std::chrono::steady_clock::now() < deadline) changed.wait_for(lock, std::chrono::milliseconds(1));
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return idle();
+}
+
+bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto settled = [&] {
+        if (failure != nullptr || stopping) return true;
+        captureHold.store(true, std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        if (completed >= accepted || parkedOnTitle()) return true;
+        captureHold.store(false, std::memory_order_relaxed);
+        return false;
+    };
+    ++idleWaiters;
+    bool done = settled();
+    while (!done && std::chrono::steady_clock::now() < deadline) done = changed.wait_for(lock, std::chrono::milliseconds(1), settled);
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return done;
+}
+
+bool Driver::SettledHeld() {
+    std::lock_guard lock(mutex);
+    return captureHold.load(std::memory_order_relaxed);
+}
+
+bool Driver::Settled() {
+    std::lock_guard lock(mutex);
+    return failure != nullptr || stopping || completed >= accepted || parkedOnTitle();
+}
+
+void Driver::ReleaseSettled() {
+    if (!captureHold.load(std::memory_order_relaxed)) return;
+    {
+        std::lock_guard lock(mutex);
+        captureHold.store(false, std::memory_order_relaxed);
+    }
+    changed.notify_all();
 }
 
 std::vector<AwaitedWait> Driver::AwaitedWaits() {

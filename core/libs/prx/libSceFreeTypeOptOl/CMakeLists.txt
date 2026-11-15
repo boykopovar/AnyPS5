@@ -13,7 +13,8 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_freetype_pfr_null_face_tests)
     add_test(NAME guest_freetype_pfr_null_face COMMAND guest_freetype_pfr_null_face_tests)
     set_tests_properties(guest_freetype_pfr_null_face PROPERTIES TIMEOUT 10)
-    add_test_executable(guest_freetype_pfr_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypePfr.cpp
+    add_test_executable(guest_freetype_pfr_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypePfr.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
     target_include_directories(guest_freetype_pfr_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
     target_link_libraries(guest_freetype_pfr_tests PRIVATE freetype ${CMAKE_DL_LIBS})

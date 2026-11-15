@@ -90,7 +90,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, const bool functionSymbolRoots) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const Codegen::Amd64OnlyTarget target, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, const bool functionSymbolRoots) const {
     std::vector<std::filesystem::path> paths;
     std::map<std::filesystem::path, GuestImage> discovered;
     progress.Report({Domain::ProgressStage::Modules, {}, 0, modules.size()});
@@ -157,7 +157,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (symbol.Section == 0 || symbol.Section == AbsoluteSection || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
             auto& providers = exports[symbol.Name];
             const bool repeated = !providers.empty() && providers.back().Provider == images.size();
-            if (!windows && repeated) fail("Duplicate guest export after stripping #: " + symbol.Name + " in " + Io::Utf8Path(path) + " and " + Io::Utf8Path(images[providers.front().Provider].SourcePath));
             if (!repeated) providers.push_back({images.size(), static_cast<std::uint8_t>(symbol.Info & 15)});
             if (!windows && providers.size() > 1)
                 for (const auto& provider : providers) sharedExports[symbol.Name].insert(provider.Provider);
@@ -215,11 +214,16 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::WriteU32(symbols, index * 24, static_cast<std::uint32_t>(strings.size()));
         Io::AppendString(strings, name + GuestSymbolSuffix);
     };
+    const auto bindingName = [&](const std::string& name, const std::size_t provider) {
+        if (windows || macos || !sharedExports.contains(name)) return name;
+        return name + "#module" + std::to_string(provider);
+    };
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
     std::vector<bool> executableReferences(executableModules.size());
     std::set<std::size_t> executableProviders;
+    bool executableLoadsModules = false;
     for (const auto* table : {&dynamic.RelaData, &dynamic.RelaPltData}) {
         if (table->size() % 24 != 0) throw Domain::RelinkerException("Invalid executable relocation table");
         for (std::size_t offset = 0; offset < table->size(); offset += 24) {
@@ -238,8 +242,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         const auto end = std::find(start, dynamic.DynStrData.end(), 0);
         if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated executable symbol name");
         const std::string name(start, end);
-        if (declaresHost(executableModules[offset / 24])) continue;
         const std::string base = name.substr(0, name.find('#'));
+        if (executableReferences[offset / 24] && base == "wzvqT4UqKX8") executableLoadsModules = true;
+        if (declaresHost(executableModules[offset / 24])) continue;
         const auto shared = sharedExports.find(base);
         std::size_t needed = 0;
         if (shared != sharedExports.end()) {
@@ -251,16 +256,31 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (++needed > 1) break;
             }
         }
-        if (needed != 1) rejectSharedImport(base, Io::Utf8Path(inputPath));
-        const auto found = exports.find(name);
         const auto declared = windows || executableModules[offset / 24].empty() ? guestNames.end() : findGuest(executableModules[offset / 24]);
-        if (!windows && found != exports.end() && (declared == guestNames.end() || std::any_of(found->second.begin(), found->second.end(), [&](const auto& candidate) { return candidate.Provider == declared->second; }))) {
-            rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
-            if (executableReferences[offset / 24] && found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
+        const auto found = exports.find(name);
+        const GuestExport* declaredProvider = nullptr;
+        if (declared != guestNames.end() && found != exports.end()) {
+            const auto candidate = std::find_if(found->second.begin(), found->second.end(), [&](const auto& entry) { return entry.Provider == declared->second; });
+            if (candidate != found->second.end()) declaredProvider = &*candidate;
+        }
+        if (needed != 1 && (macos || declaredProvider == nullptr)) rejectSharedImport(base, Io::Utf8Path(inputPath));
+        if (!windows && found != exports.end() && (declared == guestNames.end() || declaredProvider != nullptr)) {
+            if (!macos && declaredProvider != nullptr) {
+                const auto type = dynamic.DynSymData[offset + 4] & 15;
+                const auto exportType = declaredProvider->Type;
+                if (type != 0 && type != exportType && (exportType != 0 || type == 6)) throw Domain::RelinkerException("Guest import/export type mismatch: " + name);
+                if (declaredProvider->Type == 6 && type == 0 && executableReferences[offset / 24]) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + name);
+            }
+            rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, declaredProvider != nullptr ? bindingName(name, declared->second) : name);
+            if (executableReferences[offset / 24]) {
+                if (!macos && declaredProvider != nullptr) executableProviders.insert(declared->second);
+                else if (found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
+            }
         }
     }
     std::vector<std::set<std::size_t>> dependencies(images.size());
     std::vector<std::set<std::size_t>> systemImports(images.size());
+    std::vector<std::map<std::size_t, std::string>> importBindings(images.size());
     for (auto& image : images) {
         image.UsePlatformTlsResolver = !windows ? !exports.contains("vNe1w4diLCs") : std::none_of(image.Symbols.begin(), image.Symbols.end(), [](const auto& symbol) {
             return symbol.Name == "vNe1w4diLCs" && symbol.Section != 0 && symbol.Section != AbsoluteSection && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
@@ -302,6 +322,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
+                if (!windows && !macos && declared != guestNames.end() && sharedExports.contains(symbol.Name))
+                    importBindings[index].emplace(symbolIndex, bindingName(symbol.Name, provider->Provider));
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
         }
@@ -312,12 +334,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         required[index] = true;
         for (const auto dependency : dependencies[index]) require(dependency);
     };
-    const auto isRuntime = [&](const std::size_t index) {
-        return std::find(runtimeDirectories.begin(), runtimeDirectories.end(), images[index].SourcePath.parent_path().lexically_normal()) != runtimeDirectories.end();
-    };
     const auto standardDirectory = [&](const std::size_t index) {
         const auto directory = images[index].SourcePath.parent_path().lexically_normal();
         return directory == (root / "sce_module").lexically_normal() || directory == (root / "sce_modules").lexically_normal() || directory == (root / "prx").lexically_normal();
+    };
+    const auto isRuntime = [&](const std::size_t index) {
+        return (executableLoadsModules && standardDirectory(index)) ||
+            std::find(runtimeDirectories.begin(), runtimeDirectories.end(), images[index].SourcePath.parent_path().lexically_normal()) != runtimeDirectories.end();
     };
     for (const auto& name : neededNames) {
         const auto found = findGuest(name);
@@ -326,7 +349,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto provider : executableProviders) require(provider);
     for (std::size_t index = 0; index < images.size(); ++index) {
         if (!isRuntime(index)) require(index);
-        if (windows) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
+        if (windows || executableLoadsModules) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
     }
     const auto deferred = [&](const std::size_t index) {
         return !required[index] && isRuntime(index);
@@ -348,7 +371,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
                 const auto& symbol = image.Symbols[index];
                 const bool exported = symbol.Section != 0 && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
-                if (((symbol.Section == 0 && !declaresHost(symbol.Library) && !systemImports[module].contains(index)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
+                if (((symbol.Section == 0 && !declaresHost(symbol.Library) && !systemImports[module].contains(index)) || exported) && exports.contains(symbol.Name)) {
+                    const auto bound = importBindings[module].find(index);
+                    rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, bound == importBindings[module].end() ? symbol.Name : bound->second);
+                }
+                const auto shared = sharedExports.find(symbol.Name);
+                if (!macos && exported && shared != sharedExports.end() && shared->second.contains(module))
+                    image.BindingAliases.emplace_back(index, symbol.Name + "#module" + std::to_string(module) + GuestSymbolSuffix);
             }
             if (!macos) BindNamedImportsByNid(image, executableExports);
         }
@@ -370,7 +399,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
     std::vector<std::filesystem::path> runDirectories;
     bool runDirectoriesExist = !windows && !macos;
-    for (std::size_t begin = 0; runDirectoriesExist && begin <= runPath.size();) {
+    for (std::size_t begin = 0; !windows && !macos && begin <= runPath.size();) {
         const auto end = std::min(runPath.find(':', begin), runPath.size());
         const auto component = std::string_view(runPath).substr(begin, end - begin);
         std::filesystem::path directory;
@@ -378,7 +407,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         else if (component.starts_with("$ORIGIN/")) directory = outputPath.parent_path() / std::string(component.substr(8));
         else if (component.starts_with('/')) directory = std::string(component);
         std::error_code error;
-        runDirectoriesExist = !directory.empty() && std::filesystem::is_directory(directory, error);
+        const bool exists = !directory.empty() && std::filesystem::is_directory(directory, error) && !error;
+        runDirectoriesExist = runDirectoriesExist && exists;
         runDirectories.push_back(std::move(directory));
         begin = end + 1;
     }
@@ -422,6 +452,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             std::find(hosts.begin(), hosts.end(), "libc.prx") == hosts.end()) hosts.push_back("libc.prx");
     }
     if (uniqueHosts.contains("libSceLibcInternal.prx") && uniqueHosts.insert("libc.prx").second) hostLibraries.push_back("libc.prx");
+    if (uniqueHosts.contains("libkernel.prx")) {
+        const std::string provider = "libkernel_sys.prx";
+        const bool available = std::any_of(runDirectories.begin(), runDirectories.end(), [&](const auto& directory) {
+            std::error_code error;
+            return std::filesystem::exists(directory / provider, error) && !error;
+        });
+        if (available && uniqueHosts.insert(provider).second) hostLibraries.push_back(provider);
+    }
     dynamic.NeededLibraries = hostLibraries;
     dynamic.DynamicSegmentData.clear();
     const auto addNeeded = [&](const std::string& name) {
@@ -445,7 +483,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter(toRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter(target, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);
             if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Reports = converted.Reports, .Trampolines = image.Trampolines});
@@ -511,9 +549,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 needed.push_back("$ORIGIN/" + dependencyPath.lexically_relative(image.SourcePath.parent_path()).generic_string());
             }
             needed.insert(needed.end(), moduleHostLibraries[index].begin(), moduleHostLibraries[index].end());
-            const auto directory = image.SourcePath.parent_path();
-            const bool deferLinuxStart = isRuntime(index) && directory != root / "sce_module" &&
-                directory != root / "sce_modules" && directory != root / "prx";
+            const bool deferLinuxStart = isRuntime(index) && (!standardDirectory(index) || (executableLoadsModules && !required[index]));
             output = macos ? Elfpatcher::GuestModuleWriter().WriteMacOs(image, needed, guestRunPath, message) : Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath, deferLinuxStart);
         }
         if (windows) {

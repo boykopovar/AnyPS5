@@ -5,6 +5,7 @@
 #include "prx/libSceRtc/include/Rtc.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <iterator>
 #include <mutex>
 #include <random>
@@ -382,6 +383,7 @@ int SkipAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t* 
     while (true) {
         std::size_t got = 0;
         int result = StreamRead(self, handle, buffer, sizeof(buffer), &got);
+        if (result >= 0 && got > sizeof(buffer)) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, buffer, got);
         if (skipped != nullptr) *skipped += static_cast<std::int64_t>(got);
         if (result < 0) return result;
@@ -396,6 +398,7 @@ int ReadData(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, st
     int result = 0;
     do {
         result = StreamRead(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;
@@ -423,8 +426,10 @@ int WriteFilledData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, char f
     std::memset(buffer, static_cast<std::uint8_t>(fill), sizeof(buffer));
     while (size > 0) {
         std::size_t written = 0;
-        int result = StreamWrite(self, handle, buffer, std::min(static_cast<std::size_t>(size), sizeof(buffer)), &written);
+        const std::size_t chunk = std::min(static_cast<std::size_t>(size), sizeof(buffer));
+        int result = StreamWrite(self, handle, buffer, chunk, &written);
         if (result < 0) return result;
+        if (written > chunk) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         result = StreamNotify(ctx, buffer, written);
         if (result < 0) return result;
         size -= static_cast<std::int64_t>(written);
@@ -439,6 +444,7 @@ int WriteData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* 
     int result = 0;
     while (total < size) {
         result = StreamWrite(self, handle, bytes + total, size - total, &got);
+        if (result >= 0 && got > size - total) result = NP_ERROR_STREAM_BUFFER_TOO_SMALL;
         if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
         if (result < 0) break;
         total += got;
@@ -680,7 +686,11 @@ int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, 
 
 int APS5_VABI sceNpThreadGetId(Pthread* thread) {
     if (thread == nullptr) return NP_ERROR_INVALID_ARGUMENT;
-    *thread = scePthreadSelf();
+    const Pthread self = scePthreadSelf();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(thread, &self, sizeof(self));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -744,12 +754,22 @@ void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator) {
 }
 
 int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat) {
+    NpHeap local {};
+    int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&local, heap, sizeof(local));
+    errno = savedErrno;
+    if (!read) return NP_ERROR_INVALID_ARGUMENT;
     MallocManagedSize stats {};
     stats.size = sizeof(stats);
     stats.version = 1;
-    const int result = sceLibcMspaceMallocStats_nid_postfix(heap->mspace, &stats);
-    if (result == 0) *stat = {stats.maxSystemSize, stats.maxInuseSize, stats.currentInuseSize};
-    return result;
+    const int result = sceLibcMspaceMallocStats_nid_postfix(local.mspace, &stats);
+    if (result != 0) return result;
+    const NpHeapStat value {stats.maxSystemSize, stats.maxInuseSize, stats.currentInuseSize};
+    savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 void APS5_VABI sceNpHeapShowStat(const NpHeap* heap) {
@@ -892,9 +912,14 @@ void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
-    if (tick->tick == 0) return NP_ERROR_INVALID_ARGUMENT;
+    if (tick == nullptr || seconds == nullptr) return NP_ERROR_INVALID_ARGUMENT;
+    RtcTick localTick{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localTick, tick, sizeof(localTick));
+    errno = savedErrno;
+    if (!copied || localTick.tick == 0) return NP_ERROR_INVALID_ARGUMENT;
     RtcDateTime time {};
-    const int result = sceRtcSetTick(&time, tick);
+    const int result = sceRtcSetTick(&time, &localTick);
     if (result < 0) return result;
     return NpResult(sceRtcGetTime_t(&time, seconds));
 }
@@ -1104,6 +1129,8 @@ static std::uint64_t ClockUsec() {
     return static_cast<std::uint64_t>(usec);
 }
 
+static thread_local bool calloutContextEnded = false;
+
 static void* APS5_VABI CalloutThread(void* arg) {
     auto* context = static_cast<NpCalloutContext*>(arg);
     sceNpMutexLock(&context->mutex);
@@ -1116,6 +1143,7 @@ static void* APS5_VABI CalloutThread(void* arg) {
             sceNpMutexUnlock(&context->mutex);
 
             head->handler(head->arg);
+            if (calloutContextEnded) return nullptr;
             sceNpMutexLock(&context->mutex);
 
             continue;
@@ -1155,8 +1183,16 @@ int APS5_VABI sceNpCalloutInitCtx(NpCalloutContext* context, const char* name, s
 
 void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
     if (context->initialized == 0) return;
-    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0)
-        throw std::runtime_error("sceNpCalloutTermCtx: terminating a callout context from one of its own callouts is not implemented");
+    if (scePthreadEqual(scePthreadSelf(), context->thread) != 0) {
+        sceNpMutexLock(&context->mutex);
+        sceNpMutexUnlock(&context->mutex);
+        sceNpCondDestroy(&context->cond);
+        sceNpMutexDestroy(&context->mutex);
+        scePthreadDetach(context->thread);
+        context->initialized = 0;
+        calloutContextEnded = true;
+        return;
+    }
     sceNpMutexLock(&context->mutex);
 
     context->stopping = 1;
@@ -1246,7 +1282,12 @@ bool APS5_VABI sceNpIntIsOnlineIdString(const char* text) {
 int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
     const NpLanguageCodes* codes = FindLanguageCodes(language);
     if (codes == nullptr || code == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    CopyText(code, codes->code, NP_LANGUAGE_CODE_SIZE);
+    char localCode[NP_LANGUAGE_CODE_SIZE]{};
+    CopyText(localCode, codes->code, NP_LANGUAGE_CODE_SIZE);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(code, localCode, NP_LANGUAGE_CODE_SIZE);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
@@ -1276,12 +1317,21 @@ std::uint32_t APS5_VABI sceNpDbgAssignDebugId(void) {
 int APS5_VABI sceNpUtilBuildTitleId(const NpTitleIdParts* parts, char* titleId, std::size_t size) {
     if (parts == nullptr || titleId == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     if (size < NP_TITLE_ID_SIZE) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (parts->index > NP_TITLE_ID_INDEX_MAX) return NP_UTIL_ERROR_OUT_OF_RANGE;
-    std::memcpy(titleId, parts->id, sizeof(parts->id));
-    titleId[9] = '_';
-    titleId[10] = static_cast<char>('0' + parts->index / 10);
-    titleId[11] = static_cast<char>('0' + parts->index % 10);
-    titleId[12] = '\0';
+    NpTitleIdParts localParts{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localParts, parts, sizeof(localParts));
+    errno = savedErrno;
+    if (!read) return NP_ERROR_INVALID_ARGUMENT_UTIL;
+    if (localParts.index > NP_TITLE_ID_INDEX_MAX) return NP_UTIL_ERROR_OUT_OF_RANGE;
+    char localTitleId[NP_TITLE_ID_SIZE] = {};
+    std::memcpy(localTitleId, localParts.id, sizeof(localParts.id));
+    localTitleId[9] = '_';
+    localTitleId[10] = static_cast<char>('0' + localParts.index / 10);
+    localTitleId[11] = static_cast<char>('0' + localParts.index % 10);
+    localTitleId[12] = '\0';
+    const bool written = GuestCopyOut_nid_no_patch(titleId, localTitleId, sizeof(localTitleId));
+    errno = savedErrno;
+    if (!written) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
@@ -1854,9 +1904,13 @@ int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleI
     if (titleId == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     const std::size_t length = std::strlen(titleId);
     if (length < 10 || length >= NP_TITLE_ID_SIZE || titleId[9] != '_') return NP_UTIL_ERROR_OUT_OF_RANGE;
-    *parts = {};
-    std::memcpy(parts->data, titleId, sizeof(parts->data));
-    parts->num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    NpCommunicationId value{};
+    std::memcpy(value.data, titleId, sizeof(value.data));
+    value.num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(parts, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
