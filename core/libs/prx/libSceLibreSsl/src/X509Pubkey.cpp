@@ -2,9 +2,9 @@
  * src/lib/libcrypto/asn1/x_pubkey.c (v 1.26) L177-224 and L414-427; src/lib/libcrypto/rsa/rsa_ameth.c (v 1.18) L89-104;
  * src/lib/libcrypto/rsa/rsa_asn1.c (v 1.13) L167-199 and L285-290; src/lib/libcrypto/asn1/x_bignum.c (v 1.8) L87-165;
  * src/lib/libcrypto/asn1/tasn_dec.c (v 1.34) L295-435, L652-770 and L1073-1140; src/lib/libcrypto/asn1/asn1_lib.c (v 1.38) L95-190;
- * src/lib/libcrypto/evp/p_lib.c (v 1.17) L211-258 and L267-275; src/lib/libcrypto/asn1/ameth_lib.c (v 1.20) L84-112 and L165-214;
+ * src/lib/libcrypto/evp/p_lib.c (v 1.17) L211-258 and L267-275; src/lib/libcrypto/asn1/ameth_lib.c (v 1.16) L84-112 and L165-214;
  * src/lib/libcrypto/ec/ec_ameth.c (v 1.18) L138-213; src/lib/libcrypto/ec/ec_asn1.c (v 1.23) L1539-1565;
- * src/lib/libcrypto/x509/x_algor.c (v 1.14) L96-110 */
+ * src/lib/libcrypto/asn1/x_algor.c (v 1.21) L96-110 */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
  */

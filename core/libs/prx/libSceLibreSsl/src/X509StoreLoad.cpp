@@ -1,7 +1,7 @@
-/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb): src/lib/libcrypto/x509/x509_d2.c (v 1.20) L87-107;
+/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb): src/lib/libcrypto/x509/x509_d2.c (v 1.10) L87-107;
  * src/lib/libcrypto/x509/x509_lu.c (v 1.23) L123-132; src/lib/libcrypto/x509/by_file.c (v 1.21) L92-118 and L237-266;
- * src/lib/libcrypto/pem/pem_info.c (v 1.13) L95-305; src/lib/libcrypto/asn1/x_info.c (v 1.12) L66-107;
- * src/lib/libcrypto/bio/bss_file.c (v 1.28) L113-137 */
+ * src/lib/libcrypto/pem/pem_info.c (v 1.22) L95-305; src/lib/libcrypto/asn1/x_info.c (v 1.17) L66-107;
+ * src/lib/libcrypto/bio/bss_file.c (v 1.32) L113-137 */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
  */

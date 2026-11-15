@@ -1,5 +1,5 @@
-/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb): src/lib/libcrypto/x509/x_name.c (v 1.33) L236-239;
- * src/lib/libcrypto/asn1/a_dup.c (v 1.12) L99-118; src/lib/libcrypto/asn1/x_name.c (v 1.33) L242-265 and L286-360 */
+/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb): src/lib/libcrypto/asn1/x_name.c (v 1.33) L236-239;
+ * src/lib/libcrypto/asn1/a_dup.c (v 1.14) L99-118; src/lib/libcrypto/asn1/x_name.c (v 1.33) L242-265 and L286-360 */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
  */
