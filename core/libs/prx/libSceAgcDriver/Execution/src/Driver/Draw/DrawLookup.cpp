@@ -182,6 +182,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     }
                     if (matched[i] != nullptr) continue;
                     if (!anyLayout) miss = DrawMiss::Layout;
+                    else if (outcome == EntryOutcome::QueuedStores) miss = DrawMiss::QueuedStores;
                     else if (outcome != EntryOutcome::Differing) miss = DrawMiss::Gate;
                     else miss = roles[i] == Role::Fragment ? DrawMiss::FragmentDiffering : i == 0 ? DrawMiss::FrontDiffering : DrawMiss::OtherDiffering;
                 }
@@ -198,6 +199,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 counters.stageDataWords += dataWords;
                 if (registerKey) ++counters.registerKeyHits;
                 ++drawCacheHits;
+                drawCacheUseful().fetch_add(1, std::memory_order_relaxed);
                 bool rotate = false;
                 for (std::size_t i = 0; i < programs.size(); ++i) {
                     if (matched[i] == nullptr) continue;

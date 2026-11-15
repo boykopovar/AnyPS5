@@ -20,7 +20,9 @@ void main() {
     if (push.depthToFloat == 0u) {
         destination[push.destinationBase / 4u + index] = ((word >> 21u) & 0x7ffu) | (((word >> 10u) & 0x7ffu) << 11u) | ((word & 0x3ffu) << 22u);
     } else {
-        const float scaled = float(word & 0xffffffu) * 5.9604644775390625e-8;
-        destination[push.destinationBase / 4u + index] = floatBitsToUint(fma(scaled, 5.9604644775390625e-8, scaled));
+        precise float scaled = float(word & 0xffffffu) * 5.9604644775390625e-8;
+        precise float excess = scaled * 5.9604644775390625e-8;
+        precise float depth = scaled + excess;
+        destination[push.destinationBase / 4u + index] = floatBitsToUint(depth);
     }
 }

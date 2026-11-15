@@ -1,5 +1,8 @@
 #include "prx/libScePlayerInvitationDialog/libScePlayerInvitationDialog.h"
+#include "prx/libSceCommonDialog/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
+#include <cerrno>
 #include <mutex>
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/LogMacros.hpp"
@@ -10,12 +13,13 @@ constexpr std::int32_t COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 constexpr auto COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x80B80003u);
 constexpr auto COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<std::int32_t>(0x80B80004u);
 constexpr auto COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<std::int32_t>(0x80B80005u);
+constexpr auto COMMON_DIALOG_ERROR_BUSY = static_cast<std::int32_t>(0x80B80008u);
 constexpr auto COMMON_DIALOG_ERROR_ARG_NULL = static_cast<std::int32_t>(0x80B8000Du);
 
 std::mutex g_dialog_mutex;
 PlayerInvitationDialogStatus g_dialog_status = PlayerInvitationDialogStatus::None;
 
-std::int32_t status() {
+std::int32_t status_nid_no_patch() {
     return static_cast<std::int32_t>(g_dialog_status);
 }
 
@@ -25,16 +29,24 @@ extern "C" {
 
 std::int32_t APS5_VABI scePlayerInvitationDialogInitialize(void) {
     std::lock_guard lock(g_dialog_mutex);
-    APS5_LOG_OUT("status=%d", status());
+    APS5_LOG_OUT("status=%d", status_nid_no_patch());
     if (g_dialog_status != PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+    if (sceCommonDialogIsUsed()) return COMMON_DIALOG_ERROR_BUSY;
     g_dialog_status = PlayerInvitationDialogStatus::Initialized;
     return 0;
 }
 
 std::int32_t APS5_VABI scePlayerInvitationDialogOpen(const ScePlayerInvitationDialogParam* param) {
     std::lock_guard lock(g_dialog_mutex);
-    APS5_LOG_OUT("param=%p status=%d", static_cast<const void*>(param), status());
+    APS5_LOG_OUT("param=%p status=%d", static_cast<const void*>(param), status_nid_no_patch());
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    const int savedErrno = errno;
+    ScePlayerInvitationDialogParam localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
     if (g_dialog_status == PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     g_dialog_status = PlayerInvitationDialogStatus::Running;
     return 0;
@@ -42,22 +54,22 @@ std::int32_t APS5_VABI scePlayerInvitationDialogOpen(const ScePlayerInvitationDi
 
 std::int32_t APS5_VABI scePlayerInvitationDialogUpdateStatus(void) {
     std::lock_guard lock(g_dialog_mutex);
-    APS5_LOG_OUT("status=%d", status());
+    APS5_LOG_OUT("status=%d", status_nid_no_patch());
     if (g_dialog_status == PlayerInvitationDialogStatus::Running) {
         g_dialog_status = PlayerInvitationDialogStatus::Finished;
     }
-    return status();
+    return status_nid_no_patch();
 }
 
 std::int32_t APS5_VABI scePlayerInvitationDialogGetStatus(void) {
     std::lock_guard lock(g_dialog_mutex);
-    APS5_LOG_OUT("status=%d", status());
-    return status();
+    APS5_LOG_OUT("status=%d", status_nid_no_patch());
+    return status_nid_no_patch();
 }
 
 std::int32_t APS5_VABI scePlayerInvitationDialogClose(void) {
     std::lock_guard lock(g_dialog_mutex);
-    APS5_LOG_OUT("status=%d", status());
+    APS5_LOG_OUT("status=%d", status_nid_no_patch());
     if (g_dialog_status == PlayerInvitationDialogStatus::Running) {
         g_dialog_status = PlayerInvitationDialogStatus::Finished;
     }
@@ -66,7 +78,7 @@ std::int32_t APS5_VABI scePlayerInvitationDialogClose(void) {
 
 std::int32_t APS5_VABI scePlayerInvitationDialogTerminate(void) {
     std::lock_guard lock(g_dialog_mutex);
-    APS5_LOG_OUT("status=%d", status());
+    APS5_LOG_OUT("status=%d", status_nid_no_patch());
     if (g_dialog_status == PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     g_dialog_status = PlayerInvitationDialogStatus::None;
     return 0;
@@ -74,12 +86,18 @@ std::int32_t APS5_VABI scePlayerInvitationDialogTerminate(void) {
 
 std::int32_t APS5_VABI scePlayerInvitationDialogGetResult(ScePlayerInvitationDialogResult* result) {
     std::lock_guard lock(g_dialog_mutex);
-    APS5_LOG_OUT("result=%p status=%d", static_cast<void*>(result), status());
+    APS5_LOG_OUT("result=%p status=%d", static_cast<void*>(result), status_nid_no_patch());
     if (g_dialog_status == PlayerInvitationDialogStatus::None) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (g_dialog_status != PlayerInvitationDialogStatus::Finished) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    *result = ScePlayerInvitationDialogResult{};
-    result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    ScePlayerInvitationDialogResult completed{};
+    completed.result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(result, &completed, sizeof(completed))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    errno = savedErrno;
     return 0;
 }
 

@@ -260,7 +260,8 @@ std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo);
 std::optional<OverlayMemory> ReadCommitCharge();
 std::optional<std::uint64_t> ReadPageFaults();
 std::optional<std::uint64_t> ReadPhysicalMemoryBytes();
-std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content);
+std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content, std::int32_t requested = 0);
+std::int32_t OverlayScaleRequest(const char* value);
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner);
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace);
 

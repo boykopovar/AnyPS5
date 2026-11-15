@@ -395,13 +395,37 @@ bool pull(InputStream& stream, std::size_t size) {
             stream.chunk = static_cast<const std::uint8_t*>(chunk.data);
             stream.chunkSize = chunk.size;
         }
-        const std::size_t count = std::min(size, static_cast<std::size_t>(stream.chunkSize));
-        stream.data.insert(stream.data.end(), stream.chunk, stream.chunk + count);
+        constexpr std::size_t MaxCopyStep = 64 * 1024;
+        const std::size_t count = std::min({size, static_cast<std::size_t>(stream.chunkSize), MaxCopyStep});
+        const std::size_t old = stream.data.size();
+        stream.data.resize(old + count);
+        if (!GuestCopyIn_nid_no_patch(stream.data.data() + old, stream.chunk, count)) {
+            stream.data.resize(old);
+            stream.status = SCE_PNG_DEC_ERROR_INVALID_ADDR;
+            break;
+        }
         stream.chunk += count;
         stream.chunkSize -= static_cast<std::uint32_t>(count);
         size -= count;
     }
     return stream.status == 0;
+}
+
+void pullImage(InputStream& stream) {
+    std::size_t offset = SIGNATURE.size();
+    while (stream.status == 0) {
+        const std::size_t headerEnd = offset + CHUNK_HEADER_SIZE;
+        if (stream.data.size() < headerEnd && !pull(stream, headerEnd - stream.data.size())) return;
+        const std::uint32_t length = readBigEndian32(stream.data.data() + offset);
+        if (length > MAX_CHUNK_LENGTH) return;
+        const bool isEnd = std::memcmp(stream.data.data() + offset + 4, "IEND", 4) == 0;
+        const std::size_t chunkEnd = headerEnd + length + CHUNK_CRC_SIZE;
+        while (stream.data.size() < chunkEnd && stream.status == 0) {
+            pull(stream, std::min(INPUT_BLOCK_SIZE, chunkEnd - stream.data.size()));
+        }
+        if (stream.data.size() < chunkEnd || isEnd) return;
+        offset = chunkEnd;
+    }
 }
 
 bool headerAvailable(const std::vector<std::uint8_t>& data) {
@@ -522,9 +546,9 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
 int32_t APS5_VABI scePngDecDelete(void* handle) {
     Context* context = toContext(handle);
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
-    forgetStream(context);
     Context cleared{};
-    GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared));
+    if (!GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    forgetStream(context);
     return 0;
 }
 
@@ -590,7 +614,7 @@ int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInpu
     const std::shared_ptr<InputStream> stream = findStream(context);
     if (!stream) throw std::runtime_error("scePngDecDecodeWithInputControl: decoding without a parsed header is not implemented");
     const StreamUse use(stream);
-    while ((*use).status == 0) pull(*use, INPUT_BLOCK_SIZE);
+    pullImage(*use);
     if ((*use).status < 0) return (*use).status;
     PngDecDecodeParam decode{};
     decode.png_mem_addr = (*use).data.data();

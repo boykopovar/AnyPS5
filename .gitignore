@@ -105,6 +105,7 @@ downloads/
 !/docs/run-report.schema.json
 !/docs/run-report-fixtures/*.json
 !tools/titles.json
+!tools/input-mapper/package.json
 
 !/assets/*.jpg
 !/assets/*.png

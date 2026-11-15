@@ -155,7 +155,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, const Color& constants = {}, bool constantBlend = false) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -187,9 +187,16 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
+    blend.blendEnable = constantBlend;
+    blend.srcColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_COLOR;
+    blend.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blend.colorBlendOp = VK_BLEND_OP_ADD;
+    blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blend.alphaBlendOp = VK_BLEND_OP_ADD;
     state.blends = {blend};
     state.blend = blend;
-    state.blendConstants = {};
+    state.blendConstants = constants;
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
     const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, exportFormat}};
@@ -284,6 +291,26 @@ void TargetTests(AgcDriver::VulkanDevice& device, Block& block, std::uint32_t at
         before = ReadBack(device, block);
         programCount = 0;
     }
+    struct ConstantCase {
+        Color constants;
+        std::uint16_t texel;
+    };
+    const std::array<ConstantCase, 6> constantCases{{
+        {{1.0f, 0.0f, 0.0f, 1.0f}, 0xf800},
+        {{0.0f, 1.0f, 0.0f, 0.0f}, 0x07e0},
+        {{0.0f, 0.0f, 1.0f, 0.0f}, 0x001f},
+        {{1.0f, 0.0f, 1.0f, 0.5f}, 0xf81f},
+        {{0.0f, 0.0f, 0.0f, 1.0f}, 0x0000},
+        {{1.0f, 0.0f, 0.0f, 1.0f}, 0xf800},
+    }};
+    const auto program = Program({1.0f, 1.0f, 1.0f, 1.0f});
+    const auto what = std::string(kind) + " constant-color blend " + (reversed ? "SWAP_STD_REV" : "SWAP_STD");
+    for (const auto& test : constantCases) {
+        Draw(device, color, Float32Export, program, test.constants, true);
+        ExpectSurface(device, block, layout, before, test.texel, what);
+        before = ReadBack(device, block);
+    }
+    programCount = 0;
 }
 
 }
@@ -298,7 +325,7 @@ int main() {
             TargetTests(*device, tiled, TiledAttrib3, ColorTileMode::RenderTarget, reversed, "tiled");
             TargetTests(*device, linear, LinearAttrib3, ColorTileMode::Linear, reversed, "linear");
         }
-        std::puts("5_6_5 unorm color target tests passed");
+        std::puts("5_6_5 color target: original 44 draws plus 24 constant-blend draws passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
