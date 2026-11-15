@@ -3391,6 +3391,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_mutex_contention_robust_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_clock_timer_nanosleep_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestClockTimerNanosleepBounds.cpp)
+    target_include_directories(guest_clock_timer_nanosleep_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_clock_timer_nanosleep_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_clock_timer_nanosleep_bounds_tests)
+    add_test(NAME guest_clock_timer_nanosleep_bounds COMMAND guest_clock_timer_nanosleep_bounds_tests)
+    set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_clock_timer_nanosleep_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
 endif()
 
 file(GLOB libkernelTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
