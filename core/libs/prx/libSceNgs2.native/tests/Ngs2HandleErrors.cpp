@@ -307,6 +307,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {CreateCase{&valid, nullptr, true, bufferError, "a null buffer info"},
                           CreateCase{&valid, &noHost, true, bufferError, "a null host buffer"},
+                          CreateCase{&valid, reinterpret_cast<const Ngs2ContextBufferInfo*>(0x10), true, bufferError, "an unreadable buffer info"},
                           CreateCase{&badRate, nullptr, false, bufferError, "a null buffer info, handle and bad option"},
                           CreateCase{&badRate, &noHost, false, bufferError, "a null host buffer, handle and bad option"},
                           CreateCase{&badRate, &buffer, false, outputError, "a null handle and bad option"},
@@ -328,6 +329,7 @@ static void CheckCreateArguments() {
     };
     for (const auto& c : {AllocatorCase{&valid, nullptr, true, allocatorError, "a null allocator"},
                           AllocatorCase{&valid, &noAlloc, true, allocatorError, "a null alloc handler"},
+                          AllocatorCase{&valid, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), true, allocatorError, "an unreadable allocator"},
                           AllocatorCase{&badRate, nullptr, false, allocatorError, "a null allocator, handle and bad option"},
                           AllocatorCase{&badRate, &noAlloc, false, allocatorError, "a null alloc handler, handle and bad option"},
                           AllocatorCase{&badRate, &allocator, false, outputError, "a null handle and bad option"},
@@ -480,6 +482,11 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemEnumRackHandles(0x1234, handles, 8) == invalidSystem);
     const int racks = sceNgs2SystemEnumRackHandles(system, handles, 8);
     Require(racks == 1 && handles[0] == rack);
+    errno = 71;
+    Require(sceNgs2SystemEnumHandles(reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Require(sceNgs2SystemEnumRackHandles(system, reinterpret_cast<uintptr_t*>(0x10), 8) == invalidArgument && errno == 71);
+    Status(sceNgs2SystemGetInfo(system, reinterpret_cast<Ngs2SystemInfo*>(0x10), sizeof(Ngs2SystemInfo)), static_cast<int>(0x804A8010u), "an unwritable system info did not return the invalid out address error");
+    Require(errno == 71);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 

@@ -2,15 +2,22 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
 template <typename TValue>
 TValue ReadAt(const void* object, std::size_t offset, const char* function) {
     TValue value{};
-    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(object) + offset, sizeof(value))) NotImplemented_nid_no_patch(function);
+    const int savedErrno = errno;
+    const bool copied = object != nullptr &&
+        reinterpret_cast<std::uintptr_t>(object) <= std::numeric_limits<std::uintptr_t>::max() - offset &&
+        GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(object) + offset, sizeof(value));
+    errno = savedErrno;
+    if (!copied) NotImplemented_nid_no_patch(function);
     return value;
 }
 

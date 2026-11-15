@@ -3,6 +3,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 
 namespace {
 
@@ -25,7 +26,10 @@ int APS5_VABI sceVideoArbitrationEnable() {
 int APS5_VABI sceVideoArbitrationInitialize(const void* param) {
     if (param == nullptr) return SCE_VIDEO_ARBITRATION_ERROR_INVALID_ARGUMENT;
     std::uint64_t size = 0;
-    if (!GuestCopyIn_nid_no_patch(&size, param, sizeof(size))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&size, param, sizeof(size));
+    errno = savedErrno;
+    if (!copied) {
         NotImplemented_nid_no_patch(__func__);
         return 0;
     }

@@ -1,5 +1,7 @@
 #include "prx/libSceUrlConfigResolver/libSceUrlConfigResolver.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -7,6 +9,8 @@
 #include <vector>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 void Require(bool value) {
     if (!value) std::abort();
@@ -28,13 +32,17 @@ void RequireInvalidArgument(TCall call) {
 
 void CheckAppConfigWithoutKey(std::size_t capacity, std::uint32_t size, std::uint32_t* lengthOut) {
     std::vector<unsigned char> buffer(capacity, 0x5A);
+    errno = 71;
     Require(sceUrlConfigResolverGetAppConfig(nullptr, 7, buffer.data(), size, lengthOut) == invalidArgument());
+    Require(errno == 71);
     for (std::size_t i = 0; i < buffer.size(); ++i) Require(buffer[i] == (i < size ? 0 : 0x5A));
 }
 
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     for (int call = 0; call < 2; ++call) {
         Require(sceUrlConfigResolverUpdate(nullptr) == invalidArgument());
         Require(sceUrlConfigResolverGetJscHeapSizeSoftLimit(nullptr) == invalidArgument());
@@ -51,7 +59,9 @@ int main() {
         }
 
         std::uint32_t length = 0xCAFEF00Du;
+        errno = 71;
         Require(sceUrlConfigResolverGetAppConfig(nullptr, 0, nullptr, 48, &length) == invalidArgument());
+        Require(errno == 71);
         Require(length == 0);
         Require(sceUrlConfigResolverGetAppConfig(nullptr, 0, nullptr, 48, nullptr) == invalidArgument());
 
@@ -60,16 +70,22 @@ int main() {
         Require(length == 0);
 
         length = 0xCAFEF00Du;
+        errno = 71;
         RequireInvalidArgument([&] {
             sceUrlConfigResolverGetAppConfig(nullptr, 0, reinterpret_cast<void*>(0x10), 4, &length);
         });
+        Require(errno == 71);
         Require(length == 0xCAFEF00Du);
 
         std::vector<unsigned char> buffer(16, 0x5A);
+        errno = 71;
         RequireInvalidArgument([&] {
             sceUrlConfigResolverGetAppConfig(nullptr, 0, buffer.data(), 4, reinterpret_cast<std::uint32_t*>(0x10));
         });
+        Require(errno == 71);
         for (std::size_t i = 0; i < buffer.size(); ++i) Require(buffer[i] == (i < 4 ? 0 : 0x5A));
     }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }
