@@ -10606,9 +10606,7 @@ int APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme() {
     NotImplemented_nid_no_patch(__func__);

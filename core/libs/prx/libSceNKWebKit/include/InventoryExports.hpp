@@ -279,7 +279,6 @@ int APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation();
 int APS5_VABI WKContextSetClient();
 int APS5_VABI WKContextSetConnectionClient();
 int APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier();
-int APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled();
 int APS5_VABI WKContextSetDomainRelaxationForbiddenForURLScheme();
 int APS5_VABI WKContextSetFontAllowList();
 int APS5_VABI WKContextSetHistoryClient();
