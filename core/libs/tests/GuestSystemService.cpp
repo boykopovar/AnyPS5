@@ -89,6 +89,9 @@ void TestRunningAppUser() {
 void TestShellCoreUtilLeafCalls() {
     sceShellCoreUtilLaunchByUriParamInit(nullptr);
     Require(sceShellCoreUtilDebugGetNumberOfCffItems(nullptr) == static_cast<int>(0x80e30005u));
+    errno = 71;
+    Require(sceShellCoreUtilDebugGetNumberOfCffItems(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x80e30005u));
+    Require(errno == 71);
     for (const unsigned char fill : {static_cast<unsigned char>(0xaa), static_cast<unsigned char>(0x00), static_cast<unsigned char>(0xff)}) {
         unsigned char buffer[24];
         std::memset(buffer, fill, sizeof(buffer));

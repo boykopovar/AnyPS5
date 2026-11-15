@@ -220,6 +220,10 @@ bool APS5_VABI WKPageCanGoForward(const void* page);
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
 const void* APS5_VABI WKPageGetInspector(const void* pageRef);
 std::uint32_t APS5_VABI WKPageGetTypeID();
+bool APS5_VABI WKPageIsPinnedToLeftSide(const void* pageRef);
+bool APS5_VABI WKPageIsPinnedToRightSide(const void* pageRef);
+bool APS5_VABI WKPageIsPinnedToTopSide(const void* pageRef);
+bool APS5_VABI WKPageIsPinnedToBottomSide(const void* pageRef);
 std::uint32_t APS5_VABI WKPageGroupGetTypeID();
 std::uint32_t APS5_VABI WKPageRequestStorageAccessConfirmResultListenerGetTypeID();
 std::uint32_t APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerGetTypeID();
@@ -375,5 +379,10 @@ void APS5_VABI WKContextSetJavaScriptConfigurationFileEnabled(const void* contex
 void APS5_VABI WKContextSetJavaScriptGarbageCollectorTimerEnabled(const void* contextRef, bool enable);
 void APS5_VABI WKContextGarbageCollectJavaScriptObjects(const void* contextRef);
 void APS5_VABI WKContextSetStorageAccessAPIEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCachePartitioned(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef);
 
 }

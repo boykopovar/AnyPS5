@@ -477,6 +477,26 @@ std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cm
     return HwInitPacketWords;
 }
 
+int APS5_VABI sceGnmSetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t primGroupSizeMinusOne, std::uint32_t partialVsWaveMode, std::uint32_t switchOnlyOnEop) {
+    if (!cmdbuf || size != 3u || primGroupSizeMinusOne >= 256u || (partialVsWaveMode | switchOnlyOnEop) >= 2u) return -1;
+    const bool neo = sceKernelIsNeoMode() != 0;
+    std::uint32_t value = primGroupSizeMinusOne | (partialVsWaveMode << 16u);
+    if (neo) value = switchOnlyOnEop != 0u ? value | 0x740000u : primGroupSizeMinusOne | 0x6d0000u;
+    cmdbuf[0] = neo ? 0xc0017900u : 0xc0016900u;
+    cmdbuf[1] = neo ? 0x40000258u : 0x2aau;
+    cmdbuf[2] = value;
+    return 0;
+}
+
+int APS5_VABI sceGnmResetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size) {
+    if (!cmdbuf || size != 3u) return -1;
+    const bool neo = sceKernelIsNeoMode() != 0;
+    cmdbuf[0] = neo ? 0xc0017900u : 0xc0016900u;
+    cmdbuf[1] = neo ? 0x40000258u : 0x2aau;
+    cmdbuf[2] = neo ? 0x6d007fu : 0xffu;
+    return 0;
+}
+
 int APS5_VABI sceGnmInsertPushMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker) {
     if (!cmd || !marker) return -1;
     const auto words = MarkerWords(marker, 0);
@@ -659,8 +679,8 @@ std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
     return 0xff0000000ull;
 }
 
-int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex(std::uint32_t engine, std::uint32_t cuIndex) {
+    if (engine <= 1 && cuIndex < 9) return -1;
     return 0;
 }
 

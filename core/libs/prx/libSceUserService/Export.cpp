@@ -2768,8 +2768,15 @@ int APS5_VABI sceUserServiceGetSecureHomeDirectory(std::uint32_t user_id, char* 
     if (path == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    const int result = std::snprintf(path, size, "/%s/priv/home/%08x", sceKernelGetFsSandboxRandomWord(), user_id);
-    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    char local[512];
+    const int result = std::snprintf(local, sizeof(local), "/%s/priv/home/%08x", sceKernelGetFsSandboxRandomWord(), user_id);
+    if (result < 0 || static_cast<std::size_t>(result) >= size) return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    const std::size_t copyLength = static_cast<std::size_t>(result) + 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(path, local, copyLength);
+    errno = savedErrno;
+    if (!copied) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetHearingAssistAdjustmentLevelRight(void) {
