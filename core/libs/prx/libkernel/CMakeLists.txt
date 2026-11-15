@@ -2655,6 +2655,16 @@ add_test_executable(guest_thermal_sensors_tests ${LIBS_INCLUDE_DIR}/tests/GuestT
         set_tests_properties(guest_socket_listen_backlog_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_socket_accept_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketAcceptBounds.cpp)
+    target_include_directories(guest_socket_accept_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_socket_accept_bounds_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_socket_accept_bounds_tests)
+    add_test(NAME guest_socket_accept_bounds COMMAND guest_socket_accept_bounds_tests)
+    set_tests_properties(guest_socket_accept_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_socket_accept_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_underscore_entry_tests ${LIBS_INCLUDE_DIR}/tests/GuestUnderscoreEntries.cpp)
     target_include_directories(guest_underscore_entry_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_underscore_entry_tests PRIVATE libkernel libc)
