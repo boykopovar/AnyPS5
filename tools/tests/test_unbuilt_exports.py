@@ -33,6 +33,16 @@ class UnbuiltExportTests(unittest.TestCase):
         })
         self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/src/Built.cpp"]), [Path("core/libs/prx/libSceExample/Export.cpp")])
 
+    def test_a_trailing_return_type_still_counts_as_a_definition(self):
+        root = self.tree({
+            "core/libs/prx/libSceExample/Built.cpp": "",
+            "core/libs/prx/libSceExample/Trailing.cpp": "auto APS5_VABI sceExampleTrailing(int value) -> int {\n    return value;\n}\n",
+            "core/libs/prx/libSceExample/Noexcept.cpp": "auto APS5_VABI sceExampleQuiet(int value) noexcept -> const int* try {\n    return nullptr;\n} catch (...) {\n    return nullptr;\n}\n",
+            "core/libs/prx/libSceExample/Declared.cpp": "auto APS5_VABI sceExampleDeclared(int value) -> int;\n",
+        })
+        self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]),
+                         [Path("core/libs/prx/libSceExample/Noexcept.cpp"), Path("core/libs/prx/libSceExample/Trailing.cpp")])
+
     def test_a_sanitizer_build_skips_the_address_sanitizer_library(self):
         for flag in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
             with self.subTest(flag=flag):
@@ -167,6 +177,32 @@ class UnbuiltExportTests(unittest.TestCase):
         })
         self.assertIsNone(self.unbuilt(root, ["core/relinker/Main.cpp"]))
 
+    def test_a_build_configured_without_the_libraries_is_not_checked(self):
+        export = "core/libs/prx/libSceExample/Export.cpp"
+        compiled = ["core/libs/prx/libSceExample/src/Parser.cpp", "core/libs/prx/libSceExample/tests/Input.cpp"]
+        for flag in ("ANYPS5_RELINKER_ONLY", "ANYPS5_BUILD_WASM"):
+            for value, expected, unbuilt in (("ON", 0, None), ("OFF", 1, [export])):
+                root = self.tree({
+                    "build/CMakeCache.txt": f"ANYPS5_ENABLE_ASAN:BOOL=OFF\n{flag}:BOOL={value}\n",
+                    export: "int APS5_VABI sceExampleOpen(void) { return 0; }\n",
+                    compiled[0]: "int parse() { return 0; }\n",
+                    compiled[1]: "int input() { return 0; }\n",
+                })
+                for arguments in ([str(root / "build")], [str(root / "build"), "--json"]):
+                    with self.subTest(flag=flag, value=value, arguments=arguments[1:]), \
+                            patch.object(check_test_registration, "__file__", str(root / "tools/check_test_registration.py")), \
+                            patch.object(check_test_registration, "built", return_value={"example_tests"}), \
+                            patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
+                            patch.object(check_test_registration, "compiled", return_value={(root / name).resolve() for name in compiled}), \
+                            contextlib.redirect_stdout(io.StringIO()) as output:
+                        self.assertEqual(check_test_registration.main(arguments), expected)
+                        if "--json" in arguments:
+                            self.assertEqual(json.loads(output.getvalue())["unbuilt_exports"], unbuilt)
+                        elif unbuilt is None:
+                            self.assertIn("the core/libs/prx libraries are not part of this build; library sources were not checked", output.getvalue())
+                        else:
+                            self.assertIn(f"error: {export} defines APS5_VABI functions but no target compiles it", output.getvalue())
+
     def test_compiled_sources_come_from_the_compile_commands_of_ninja(self):
         root = self.tree({"core/libs/prx/libSceExample/Export.cpp": "", "core/libs/prx/libSceExample/Other.cpp": ""})
         database = [
@@ -193,7 +229,7 @@ class UnbuiltExportTests(unittest.TestCase):
         unbuilt = [Path("core/libs/prx/libSceExample/Export.cpp")]
         for result, expected, line in ((unbuilt, 1, "error: core/libs/prx/libSceExample/Export.cpp defines APS5_VABI functions but no target compiles it"),
                                        ([], 0, "every core/libs/prx source that defines an APS5_VABI function is compiled"),
-                                       (None, 0, "no core/libs/prx source is compiled in this build; library sources were not checked")):
+                                       (None, 0, "the core/libs/prx libraries are not part of this build; library sources were not checked")):
             with self.subTest(result=result), patch.object(check_test_registration, "built", return_value={"example_tests"}), \
                     patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
                     patch.object(check_test_registration, "compiled", return_value=set()), \
