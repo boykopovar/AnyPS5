@@ -500,6 +500,11 @@ static void CheckRackCreateGuestPointers() {
     const int allocationsBefore = allocations;
     Returned(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<const Ngs2BufferAllocator*>(0x10), &created), static_cast<int>(0x804A8023u), "sceNgs2RackCreateWithAllocator", "an unreadable allocator");
     Require(created == sentinel && allocations == allocationsBefore);
+
+    Ngs2ContextBufferInfo query{};
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackQueryBufferSize", "an unwritable buffer info");
+    Returned(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_REVERB, nullptr, &query), SCE_NGS2_OK, "sceNgs2RackQueryBufferSize", "a writable buffer info");
+    Require(query.host_buffer_size != 0 && query.host_buffer == nullptr);
 }
 
 int main(int argc, char** argv) {
