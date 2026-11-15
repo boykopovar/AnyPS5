@@ -1658,13 +1658,22 @@ int RsaPaddingAddPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, unsigned cha
     unsigned char* emStart = encoded;
 
     if (msbBits == 0) {
+        if (emLen <= 0) {
+            QueueError(ReasonDataTooLargeForKeySize);
+            return 0;
+        }
         *emStart++ = 0;
         emLen--;
     }
 
+    if (emLen < digestLength + 2) {
+        QueueError(ReasonDataTooLargeForKeySize);
+        return 0;
+    }
+
     if (saltLength == LibreSsl3RsaPssSaltLengthAuto) {
         saltLength = emLen - digestLength - 2;
-    } else if (emLen < digestLength + saltLength + 2) {
+    } else if (saltLength > emLen - digestLength - 2) {
         QueueError(ReasonDataTooLargeForKeySize);
         return 0;
     }
@@ -1728,6 +1737,11 @@ int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned c
     int emLen = ModulusByteCount(rsa, function);
     const unsigned char* emStart = encoded;
 
+    if (emLen <= 0) {
+        QueueError(ReasonDataTooLarge);
+        return 0;
+    }
+
     if (emStart[0] & (0xFF << msbBits)) {
         QueueError(ReasonFirstOctetInvalid);
         return 0;
@@ -1738,7 +1752,12 @@ int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned c
         emLen--;
     }
 
-    if (emLen < digestLength + saltLength + 2) {
+    if (emLen < digestLength + 2) {
+        QueueError(ReasonDataTooLarge);
+        return 0;
+    }
+
+    if (saltLength >= 0 && saltLength > emLen - digestLength - 2) {
         QueueError(ReasonDataTooLarge);
         return 0;
     }
