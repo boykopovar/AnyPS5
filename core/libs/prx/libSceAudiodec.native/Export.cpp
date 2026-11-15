@@ -1,4 +1,5 @@
 #include "prx/libSceAudiodec.native/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -29,6 +30,14 @@ constexpr int AudiodecErrorAlreadyRegistered = static_cast<int>(0x80930009u);
 constexpr int AudiodecErrorNotRegistered = static_cast<int>(0x8093000Au);
 
 alignas(8) unsigned char g_moduleContext[32]{};
+
+template <typename T>
+bool ReadGuest(T& value, const T* source) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    return copied;
+}
 
 int DecodeInternal(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
     if (context == nullptr) return AudiodecErrorArgument;
@@ -64,16 +73,26 @@ int APS5_VABI sceAudiodecClearContextEx(void* context, std::uint32_t handle) {
 int APS5_VABI sceAudiodecCreateDecoderEx(void* context, AudiodecCtrl* ctrl, std::uint32_t codecType) {
     if (context == nullptr) return AudiodecErrorArgument;
     if (ctrl == nullptr) return AudiodecErrorInvalidCtrlPointer;
-    if (ctrl->pParam == nullptr) return AudiodecErrorInvalidParamPointer;
-    if (ctrl->pBsiInfo == nullptr) return AudiodecErrorInvalidBsiInfoPointer;
+    AudiodecCtrl localCtrl{};
+    if (!ReadGuest(localCtrl, ctrl)) return AudiodecErrorInvalidCtrlPointer;
+    if (localCtrl.pParam == nullptr) return AudiodecErrorInvalidParamPointer;
+    if (localCtrl.pBsiInfo == nullptr) return AudiodecErrorInvalidBsiInfoPointer;
     if (codecType == 0 || codecType == 5 || codecType == 7 || codecType == 8 || codecType == 9 || codecType > 12) {
         return AudiodecErrorInvalidType;
     }
     if (codecType == 1) {
-        if (*static_cast<const std::uint32_t*>(ctrl->pParam) != 0xCu) {
+        std::uint32_t paramSize = 0;
+        if (!ReadGuest(paramSize, static_cast<const std::uint32_t*>(localCtrl.pParam))) {
+            return AudiodecErrorInvalidParamPointer;
+        }
+        if (paramSize != 0xCu) {
             return AudiodecErrorInvalidParamSize;
         }
-        if (*static_cast<const std::uint32_t*>(ctrl->pBsiInfo) != 0x24u) {
+        std::uint32_t bsiInfoSize = 0;
+        if (!ReadGuest(bsiInfoSize, static_cast<const std::uint32_t*>(localCtrl.pBsiInfo))) {
+            return AudiodecErrorInvalidBsiInfoPointer;
+        }
+        if (bsiInfoSize != 0x24u) {
             return AudiodecErrorInvalidBsiInfoSize;
         }
     }
