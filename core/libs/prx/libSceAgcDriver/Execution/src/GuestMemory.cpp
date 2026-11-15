@@ -3445,6 +3445,21 @@ void MaterializeKnownZero(std::uint64_t address, std::size_t bytes) {
 #endif
 }
 
+void MaterializeCommitted_nid_no_patch(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    for (const auto& [begin, end] : CommittedRanges(address, bytes)) {
+        for (auto page = begin; page < end;) {
+            std::byte value{};
+            require(CopyMapped(page, std::span(&value, 1u)) == Compare::Equal, "guest memory became unreadable while materialising committed pages");
+            page += std::min<std::uint64_t>(end - page, WritePageBytes - page % WritePageBytes);
+        }
+    }
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+#endif
+}
+
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes) {
     if (const auto hook = flushHook.load(std::memory_order_acquire)) hook(address, bytes);
 }

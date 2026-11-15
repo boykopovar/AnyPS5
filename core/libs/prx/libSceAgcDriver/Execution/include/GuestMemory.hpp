@@ -126,6 +126,7 @@ std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
 void ForgetKnownZero(std::uint64_t address, std::size_t bytes);
 void MaterializeKnownZero(std::uint64_t address, std::size_t bytes);
+void MaterializeCommitted_nid_no_patch(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
