@@ -11,10 +11,19 @@
 #include <stdexcept>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #if defined(__linux__)
 #include <sys/resource.h>
 #include <sys/wait.h>
-#include <unistd.h>
 #endif
 
 #if defined(__has_feature)
@@ -505,6 +514,95 @@ void TestLargePcmCapacity() {
     Require(sceAudiodecDeleteDecoder(at9Handle) == 0);
 }
 
+class GuardedPage {
+    std::uint8_t* base = nullptr;
+    std::size_t size = 0;
+public:
+    GuardedPage() {
+#if defined(_WIN32)
+        SYSTEM_INFO system{};
+        GetSystemInfo(&system);
+        size = system.dwPageSize;
+        base = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        DWORD previous = 0;
+        Require(base != nullptr && VirtualProtect(base + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED);
+        base = static_cast<std::uint8_t*>(mapping);
+        Require(mprotect(base + size, size, PROT_NONE) == 0);
+#endif
+    }
+    ~GuardedPage() {
+#if defined(_WIN32)
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size * 2);
+#endif
+    }
+    std::size_t Size() const { return size; }
+    const std::uint8_t* Place(const std::uint8_t* data, std::size_t length) {
+        std::uint8_t* start = base + size - length;
+        std::memcpy(start, data, length);
+        return start;
+    }
+};
+
+void TestAuEndsAtUnreadablePage() {
+    GuardedPage page;
+    const std::size_t past = page.Size();
+    Streams streams;
+
+    AudiodecParamMp3 mp3{sizeof(mp3), 1};
+    AudiodecMp3Info mp3Info{};
+    mp3Info.ui_size = sizeof(mp3Info);
+    AudiodecCtrl mp3Ctrl{&mp3, &mp3Info, nullptr, nullptr};
+    const std::int32_t mp3Handle = sceAudiodecCreateDecoder(&mp3Ctrl, 2);
+    Require(mp3Handle > 0);
+    const std::size_t mp3Size = 144 * 32000 / 48000 + (MP3_MONO[2] >> 1 & 1);
+    const std::uint8_t* mp3Frame = page.Place(MP3_MONO, mp3Size);
+    for (const std::size_t declared : {mp3Size + past, std::size_t{INT32_MAX - 1}}) {
+        Require(Decode(mp3Handle, mp3Ctrl, streams, mp3Frame, declared) == 0);
+        Require(streams.au.ui_au_size == mp3Size && streams.pcm.ui_pcm_size == 1152 * 2);
+    }
+    Require(sceAudiodecDeleteDecoder(mp3Handle) == 0);
+
+    AudiodecParamM4aac adts{sizeof(adts), 1, 1, 3, 2, 0};
+    AudiodecM4aacInfo adtsInfo{sizeof(adtsInfo), 0, 0, 0, 0};
+    AudiodecCtrl adtsCtrl{&adts, &adtsInfo, nullptr, nullptr};
+    const std::int32_t adtsHandle = sceAudiodecCreateDecoder(&adtsCtrl, 3);
+    Require(adtsHandle > 0);
+    const std::size_t adtsSize = AdtsLength(AAC_ADTS);
+    Require(Decode(adtsHandle, adtsCtrl, streams, page.Place(AAC_ADTS, adtsSize), adtsSize + past) == 0);
+    Require(streams.au.ui_au_size == adtsSize && streams.pcm.ui_pcm_size == 1024 * 2 * 2);
+    Require(sceAudiodecDeleteDecoder(adtsHandle) == 0);
+
+    AudiodecParamM4aac raw{sizeof(raw), 1, 2, 3, 6, 0};
+    AudiodecM4aacInfo rawInfo{sizeof(rawInfo), 0, 0, 0, 0};
+    AudiodecCtrl rawCtrl{&raw, &rawInfo, nullptr, nullptr};
+    const std::int32_t rawHandle = sceAudiodecCreateDecoder(&rawCtrl, 3);
+    Require(rawHandle > 0);
+    const std::uint8_t* rawUnit = page.Place(AAC_RAW_51, sizeof(AAC_RAW_51));
+    Require(Decode(rawHandle, rawCtrl, streams, rawUnit, sizeof(AAC_RAW_51) + 1) == errorInvalidAuPointer);
+    Require(Decode(rawHandle, rawCtrl, streams, rawUnit, sizeof(AAC_RAW_51)) == 0);
+    Require(streams.au.ui_au_size == sizeof(AAC_RAW_51) && streams.pcm.ui_pcm_size == 1024 * 6 * 2);
+    Require(sceAudiodecDeleteDecoder(rawHandle) == 0);
+
+    AudiodecParamAt9 at9{sizeof(at9), 1, {0xFE, 0x72, 0x1F, 0xF0}};
+    AudiodecAt9Info at9Info{};
+    at9Info.ui_size = sizeof(at9Info);
+    AudiodecCtrl at9Ctrl{&at9, &at9Info, nullptr, nullptr};
+    const std::int32_t at9Handle = sceAudiodecCreateDecoder(&at9Ctrl, 1);
+    Require(at9Handle > 0);
+    const std::vector<std::uint8_t> silence(at9Info.ui_super_frame_size);
+    const std::uint8_t* superframe = page.Place(silence.data(), silence.size());
+    const std::int32_t exact = Decode(at9Handle, at9Ctrl, streams, superframe, silence.size());
+    Require(Decode(at9Handle, at9Ctrl, streams, superframe, silence.size() + past) == exact);
+    Require(Decode(at9Handle, at9Ctrl, streams, superframe, silence.size() + past, 4095) == errorInvalidPcmSize);
+    Require(sceAudiodecDeleteDecoder(at9Handle) == 0);
+}
+
 #if defined(__linux__)
 int TestPcmCapacityAddressLimit() {
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_LEAK__) || defined(AUDIODEC_SKIP_ADDRESS_LIMIT)
@@ -683,5 +781,6 @@ int main(int argc, char** argv) {
         Require(sceAudiodecDeleteDecoder(copyHandle) == 0);
     }
     TestLargePcmCapacity();
+    TestAuEndsAtUnreadablePage();
     for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecTermLibrary(type) == 0);
 }
