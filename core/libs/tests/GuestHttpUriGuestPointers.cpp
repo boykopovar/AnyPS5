@@ -18,5 +18,9 @@ int main() {
     std::size_t required = 0;
     Require(sceHttpUriParse(nullptr, longUrl.c_str(), nullptr, &required, 0) == 0);
     Require(required > 0x5000);
+
+    errno = 71;
+    Require(sceHttpUriParse(nullptr, "http://example.com/", nullptr, reinterpret_cast<std::size_t*>(0x10), 0) == static_cast<int>(0x804311FEu));
+    Require(errno == 71);
     return 0;
 }
