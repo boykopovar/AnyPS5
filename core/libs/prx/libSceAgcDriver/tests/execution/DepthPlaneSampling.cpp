@@ -78,6 +78,7 @@ constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
 constexpr std::size_t ReloadOffset = 0x700000;
 constexpr std::size_t EpochExitOffset = 0x7a0000;
+constexpr std::size_t EpochSurfaceOffset = 0x7c0000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -180,7 +181,7 @@ std::uint32_t Bits(float value) {
 
 // Draws a full-target triangle at depth `z` into the depth surface at `address`, which makes the driver create the
 // surface (the base slice a later plane copy reads from the surface instead of from guest memory).
-void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, bool color = true) {
+void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, bool color = true, bool write = true) {
     static std::deque<std::vector<std::array<float, 4>>> vertexData;
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
     const auto& vertices = vertexData.back();
@@ -227,7 +228,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     state.depth = AgcDriver::Graphics::DepthTarget{address, 0, extent, format, 1.0f, 0};
     state.depth->depthSwizzle = swizzle;
     state.depthTest = true;
-    state.depthWrite = true;
+    state.depthWrite = write;
     state.depthCompare = VK_COMPARE_OP_ALWAYS;
     state.renderExtent = extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -249,7 +250,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     device.WaitIdle();
 }
 
-void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+ShaderRecompiler::RecompileResult LoadProgram(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
     const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
     std::vector<std::uint32_t> userData(16, 0u);
     const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
@@ -267,8 +268,13 @@ void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& sh
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+    const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
+    const auto result = LoadProgram(device, texels, shape, slice, output, shaderImage2D, row);
     std::fill(output.begin(), output.end(), 0xdeadbeefu);
-    const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
@@ -411,6 +417,43 @@ void EpochExitPlaneCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
     std::printf("depth plane epoch exit: a draw over the buffer %s its plane stale; the next proof %s the exit and %s, leaving the plane %s\n", stale ? "left" : "did not leave", exited ? "took" : "did not take", proved ? "proved current" : "refused", left ? "unstored" : "stored");
     Require(!proved || !left, "depth plane epoch exit: a reused buffer build read guest memory a depth surface had not stored to");
     resources.reset();
+}
+
+void EpochExitSurfaceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    using AgcDriver::Graphics::ShaderResources;
+    auto* base = block.At(EpochSurfaceOffset);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
+    FillSlice(base, SliceBytes, Bits(0.75f), 4u);
+    const auto program = LoadProgram(device, base, shape, 0, output);
+    const AgcDriver::Graphics::CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::MarkProofThread();
+    Require(ShaderResources::EpochProofs(), "depth surface epoch exit: epoch proofs are off");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    Require(resources->Reusable(), "depth surface epoch exit: the plane sampling build is not reusable");
+    Require(resources->Revalidate(shader), "depth surface epoch exit: the sampling build did not prove current");
+    const auto reusesBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    Require(resources->Revalidate(shader) && AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != reusesBefore, "depth surface epoch exit: an unchanged sampling build did not take the epoch exit");
+    const auto surfacesBefore = AgcDriver::Graphics::DepthSurfacesSerial();
+    const auto proofBefore = AgcDriver::GuestMemory::ProofSerial();
+    DrawDepth(device, address, {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX), false, false);
+    const bool created = AgcDriver::Graphics::DepthSurfacesSerial() != surfacesBefore;
+    const bool broke = AgcDriver::GuestMemory::ProofSerial() != proofBefore;
+    const bool stale = AgcDriver::Graphics::DepthPlanesStale();
+    const auto exitBefore = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum();
+    const bool proved = resources->Revalidate(shader);
+    const bool exited = AgcDriver::Graphics::EpochProofCounts().resourceReuses.Sum() != exitBefore;
+    AgcDriver::GuestMemory::BreakProofs();
+    const bool fullProved = resources->Revalidate(shader);
+    std::printf("depth surface epoch exit: a depth-tested draw without depth writes %s a surface over the sampled plane (proof serial %s, planes %s); the next proof %s the exit and %s, the full proof %s\n", created ? "created" : "did not create", broke ? "moved" : "kept", stale ? "stale" : "stored", exited ? "took" : "did not take", proved ? "proved current" : "refused", fullProved ? "proved current" : "refused");
+    Require(created, "depth surface epoch exit: the draw did not create a depth surface over the sampled plane");
+    Require(!proved || fullProved, "depth surface epoch exit: the exit reused a sampling build the full proof refuses after a depth surface was created over its plane");
+    resources.reset();
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.75f), "depth surface epoch exit: the plane under a surface no draw wrote");
 }
 
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
@@ -578,6 +621,7 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         if (argc > 1 && std::string(argv[1]) == "--epoch-exit") {
             EpochExitPlaneCase(*device, block);
+            EpochExitSurfaceCase(*device, block, std::span<std::uint32_t>(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads));
             std::puts("depth plane epoch exit tests passed");
             return 0;
         }
