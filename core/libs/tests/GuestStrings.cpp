@@ -441,6 +441,8 @@ int main() {
     Require(basename_r_nid_postfix(("/a/" + longest).c_str(), baseBuffer) == baseBuffer && std::strlen(baseBuffer) == 1023);
     *__error_nid_postfix() = 0;
     Require(basename_r_nid_postfix(longName.c_str(), baseBuffer) == nullptr && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(basename_r_nid_postfix("/one/plain", reinterpret_cast<char*>(0x10)) == nullptr && *__error_nid_postfix() == 14);
     const unsigned char loopbackBytes[4] = {127, 0, 0, 1};
     unsigned int loopback;
     std::memcpy(&loopback, loopbackBytes, sizeof(loopback));
