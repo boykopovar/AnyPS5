@@ -263,6 +263,8 @@ function(agc_embedded_shader SOURCE STEM SYMBOL OUT_LIST)
 endfunction()
 set(agcDepthTransferShaderHeaders)
 agc_embedded_shader(DepthToStorage.comp DepthToStorage DEPTH_TO_STORAGE_SPV agcDepthTransferShaderHeaders)
+set(agcStagingCopyBackBoundShaderHeaders)
+agc_embedded_shader(StagingCopyBackBound.comp StagingCopyBackBound STAGING_COPY_BACK_BOUND_SPV agcStagingCopyBackBoundShaderHeaders)
 foreach(agcPresentationStage IN ITEMS Vert Frag)
     string(TOLOWER "${agcPresentationStage}" agcPresentationExtension)
     string(TOUPPER "${agcPresentationStage}" agcPresentationSymbol)
@@ -501,6 +503,7 @@ set(agcDriverSources
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
         ${agcDepthTransferShaderHeaders}
+        ${agcStagingCopyBackBoundShaderHeaders}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp
@@ -727,6 +730,20 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     list(APPEND agcExecutionTests ${agcExecutionTest})
 endforeach()
 
+add_test_executable(agc_read_lane_elimination_tests EXCLUDE_FROM_ALL tests/ReadLaneElimination.cpp)
+target_include_directories(agc_read_lane_elimination_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/shader/recompiler)
+target_link_libraries(agc_read_lane_elimination_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_read_lane_elimination_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_read_lane_elimination_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_read_lane_elimination_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_read_lane_elimination COMMAND agc_read_lane_elimination_tests)
+    if(WIN32)
+        set_tests_properties(agc_read_lane_elimination PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 function(agc_add_default_test agcTest)
     string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
     set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
@@ -873,6 +890,12 @@ if(BUILD_TESTING)
         set_target_properties(agc_guest_memory_lifetime_fixture PROPERTIES
                 OUTPUT_NAME GuestMemoryFixture SUFFIX ".prx" CXX_EXTENSIONS OFF
                 BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
+    endif()
+    add_test(NAME agc_driver_depth_expand_out_of_place_inline COMMAND agc_driver_depth_expand_out_of_place_tests)
+    set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
     foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy)
