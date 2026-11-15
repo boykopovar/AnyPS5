@@ -220,6 +220,10 @@ void CheckGuestPointerFaults() {
     const auto unmapped16 = reinterpret_cast<std::uint16_t*>(0x10);
     const auto unmappedVersion = reinterpret_cast<const std::uint16_t*>(0x10);
     errno = 71;
+    Require(sceHidControlPswUpdateSendData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateSendData unreadable chunk header");
+    Require(sceHidControlPswUpdateSendAppendixData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateSendAppendixData unreadable chunk header");
     Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &version, unmapped16, &second) == ErrorInvalidArgument && errno == 71,
             "PswUpdateIsUpdateNeededForMultiDevice unmapped first result");
     Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &version, &first, unmapped16) == ErrorInvalidArgument && errno == 71,
