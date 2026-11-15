@@ -2486,6 +2486,14 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
     snapshot.samplers.assign(info.samplers.size(), {{}, 4u});
     snapshot.userData.assign(RuntimeAbi::UserDataCapacity, 0u);
     snapshot.flattenedSrt.assign(1u, 0u);
+    std::uint32_t tables = 0;
+    for (const auto& image : info.images) {
+        if (image.table != NoTable) tables = std::max(tables, image.table + 1u);
+    }
+    for (const auto& sampler : info.samplers) {
+        if (sampler.table != NoTable) tables = std::max(tables, sampler.table + 1u);
+    }
+    snapshot.tables.tables.resize(tables);
     return std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, snapshot, true));
 }
 

@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "tests/TemporaryFile.hpp"
 #include "Recompiler.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -1804,6 +1805,13 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
         PixelPushLayout(vertexPush, target)
     };
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    if (target.registrationModules && !sharedSampler) {
+        const auto handle = ShaderRecompiler::PrepareShader(fragment);
+        const auto registration = ShaderRecompiler::RegistrationResult(fragment, *handle);
+        Require(registration != nullptr, "a shader with an image table has no registration result");
+        const std::array<AgcDriver::Graphics::CompiledShader, 1> prebuilt{{{ShaderStage::Fragment, registration.get(), PixelPushOffset(vertexPush, target)}}};
+        Require(device.PrebuildGraphicsLibraries({AgcDriver::Graphics::ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt}, prebuilt), "a shader with an image table did not prebuild its fragment library");
+    }
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
