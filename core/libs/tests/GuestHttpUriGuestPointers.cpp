@@ -51,5 +51,17 @@ int main() {
     source.hostname = reinterpret_cast<char*>(0x10);
     Require(sceHttpUriCopy(&element, &source, pool, sizeof(pool), nullptr) == invalidUrl);
 
+    source.hostname = const_cast<char*>("example.com");
+    errno = 71;
+    Require(sceHttpUriCopy(reinterpret_cast<SceHttpUriElement*>(0x10), &source, pool, sizeof(pool), nullptr) == invalidValue);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceHttpUriCopy(&element, &source, reinterpret_cast<void*>(0x10), sizeof(pool), nullptr) == invalidValue);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceHttpUriCopy(nullptr, &source, nullptr, 0, reinterpret_cast<std::size_t*>(0x10)) == invalidValue);
+    Require(errno == 71);
+    std::size_t copiedRequired = 0;
+    Require(sceHttpUriCopy(nullptr, &source, nullptr, 0, &copiedRequired) == 0 && copiedRequired == 16);
     return 0;
 }
