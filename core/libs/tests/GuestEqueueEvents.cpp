@@ -216,6 +216,36 @@ static void VerifyEdgeUserEventReportedOnce() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+template <typename TTrigger>
+static void RequireBothWaitersWake(KernelEqueue eq, uintptr_t ident, TTrigger trigger) {
+    std::chrono::steady_clock::duration waited[2]{};
+    auto wait = [eq, ident, &waited](int index) {
+        const KernelUseconds limit = 5000000;
+        KernelEvent event{};
+        int count = 0;
+        const auto start = std::chrono::steady_clock::now();
+        Require(sceKernelWaitEqueue(eq, &event, 1, &count, &limit) == SCE_OK && count == 1 && sceKernelGetEventId(&event) == ident);
+        waited[index] = std::chrono::steady_clock::now() - start;
+    };
+    std::thread first(wait, 0);
+    std::thread second(wait, 1);
+    SleepAtLeast(std::chrono::milliseconds(50));
+    trigger();
+    first.join();
+    second.join();
+    Require(waited[0] < std::chrono::seconds(2) && waited[1] < std::chrono::seconds(2));
+}
+
+static void VerifyEventWakesEveryWaiter() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "waiters") == SCE_OK);
+    Require(sceKernelAddUserEvent(eq, 4) == SCE_OK);
+    RequireBothWaitersWake(eq, 4, [eq] { Require(sceKernelTriggerUserEvent(eq, 4, nullptr) == SCE_OK); });
+    Require(sceKernelDeleteUserEvent(eq, 4) == SCE_OK);
+    RequireBothWaitersWake(eq, 9, [eq] { Require(sceKernelAddTimerEvent(eq, 9, 50000, nullptr) == SCE_OK); });
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 static void VerifyRepeatedAmprCompletionsAreNotLost() {
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "ampr") == SCE_OK);
@@ -263,6 +293,9 @@ static void VerifyUndrainedTriggersStayBounded() {
     for (int i = 1; i <= kFlood; ++i) {
         Require(EqueueTriggerEvent_nid_postfix(eq, 9, EVFILT_AMPR, data(static_cast<std::uintptr_t>(i))) == SCE_OK);
     }
+    const std::uint64_t expectedDropped = static_cast<std::uint64_t>(kFlood) - (1 + KernelEqueuePrivate::kMaxPendingEvents);
+    KernelEqueueRef bounded = EqueuePin_nid_postfix(eq);
+    Require(bounded && bounded->DroppedPendingEvents() == expectedDropped);
     const int kBound = static_cast<int>(1 + KernelEqueuePrivate::kMaxPendingEvents);
     int total = 0;
     intptr_t last = 0;
@@ -430,6 +463,7 @@ int main() {
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
     VerifyEdgeUserEventReportedOnce();
+    VerifyEventWakesEveryWaiter();
     VerifyRepeatedAmprCompletionsAreNotLost();
     VerifyUndrainedTriggersStayBounded();
     VerifyAddEventTruncatesPending();

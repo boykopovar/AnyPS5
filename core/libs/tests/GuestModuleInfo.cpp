@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -133,10 +134,18 @@ int main(int argc, char** argv) {
     Require(textSize == program.segments[0].size);
     Require(ThrowsInvalidArgument([&] { sceKernelGetLibkernelTextLocation_nid_postfix(nullptr, &textSize); }));
     Require(ThrowsInvalidArgument([&] { sceKernelGetLibkernelTextLocation_nid_postfix(&textAddress, nullptr); }));
+    errno = 71;
+    Require(ThrowsInvalidArgument([&] { sceKernelGetLibkernelTextLocation_nid_postfix(reinterpret_cast<void**>(0x10), &textSize); }));
+    Require(errno == 71);
+    Require(ThrowsInvalidArgument([&] { sceKernelGetLibkernelTextLocation_nid_postfix(&textAddress, reinterpret_cast<std::size_t*>(0x10)); }));
+    Require(errno == 71);
     InternalSegmentInfo segment{};
     Require(sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(&segment) == 0);
     Require(segment.address == program.segments[0].address && segment.size == program.segments[0].size);
     Require(ThrowsInvalidArgument([] { sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(nullptr); }));
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(reinterpret_cast<InternalSegmentInfo*>(0x10)); }));
+    Require(errno == 71);
     for (const std::uint64_t size : {0x158, 0x1a8, 0x1b0, 0x200, 0}) {
         ModuleInfo sized{};
         sized.st_size = size;

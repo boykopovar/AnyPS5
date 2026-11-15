@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -46,6 +47,16 @@ void CheckDeviceIdConversion() {
         Require(sceMbusConvertToMbusDeviceId(1, other, &id) == unconvertibleClass && id == 0, "other classes are refused and clear the output");
     }
     Require(sceMbusConvertToMbusDeviceId(1, 0, nullptr) == unconvertibleClass, "refusal without an output");
+    constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
+    errno = 71;
+    Require(sceMbusConvertToLocalDeviceId(0x0020123456789ABCull, reinterpret_cast<std::uint32_t*>(0x10), &deviceClass) == invalidArgument, "unwritable local id accepted");
+    Require(errno == 71, "errno modified by unwritable local id check");
+    Require(sceMbusConvertToLocalDeviceId(0x0020123456789ABCull, &local, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument, "unwritable device class accepted");
+    Require(errno == 71, "errno modified by unwritable device class check");
+    Require(sceMbusConvertToLocalDeviceId2(0x0010123456789ABCull, 0x10, reinterpret_cast<std::uint64_t*>(0x10)) == invalidArgument, "unwritable local id 2 accepted");
+    Require(errno == 71, "errno modified by unwritable local id 2 check");
+    Require(sceMbusConvertToMbusDeviceId(0x123456789ABCull, 0x20, reinterpret_cast<std::uint64_t*>(0x10)) == invalidArgument, "unwritable mbus device id accepted");
+    Require(errno == 71, "errno modified by unwritable mbus device id check");
 }
 
 void CheckInit() {
@@ -61,6 +72,9 @@ void CheckInit() {
 int main() {
     static_assert(sizeof(MbusEventCallbacks) == 16);
     sceMbusEventCallbackFuncsInit_(nullptr, sizeof(MbusEventCallbacks));
+    errno = 71;
+    sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(0x10), sizeof(MbusEventCallbacks));
+    Require(errno == 71, "unwritable callback initialization altered errno");
     alignas(MbusEventCallbacks) std::array<std::uint8_t, 24> callbackBytes{};
     callbackBytes.fill(0xa5);
     sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), 8);
@@ -74,6 +88,10 @@ int main() {
     callbackBytes.fill(0x5a);
     sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), 0);
     for (const auto byte : callbackBytes) Require(byte == 0x5a, "zero-size callback initialization changed memory");
+    std::array<std::uint8_t, 532> longCallbacks{};
+    longCallbacks.fill(0xa5);
+    sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(longCallbacks.data()), 516);
+    for (std::size_t i = 0; i < longCallbacks.size(); ++i) Require(longCallbacks[i] == (i < 516 ? 0 : 0xa5), "large callback initialization wrote outside the requested range");
 
     CheckDeviceIdConversion();
     CheckInit();
@@ -103,6 +121,9 @@ int main() {
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, 0, 0, info.data(), 1, &count, &reserved, info.size()) == 0 && count == 0, "a device was listed");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), 1, reinterpret_cast<std::int32_t*>(0x10), nullptr, info.size()) == invalidArgument, "unwritable count accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), 1, nullptr, &reserved, info.size()) == 0, "optional count output rejected");
+    errno = 71;
+    Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), 1, reinterpret_cast<std::int32_t*>(0x10), &reserved, info.size()) == invalidArgument, "unwritable count pointer accepted");
+    Require(errno == 71, "errno modified by unwritable pointer check");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, nullptr, 0, nullptr, nullptr, info.size()) == 0, "empty query rejected");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, nullptr, 1, &count, nullptr, info.size()) == invalidArgument, "null record buffer accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), -1, &count, nullptr, info.size()) == invalidArgument, "negative capacity accepted");
