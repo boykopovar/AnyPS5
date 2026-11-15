@@ -1,4 +1,5 @@
 import argparse
+import os
 import json
 import re
 import sys
@@ -137,7 +138,7 @@ def main(argv=None):
     try:
         if args.summary:
             for source in (args.junit, args.known):
-                if source is not None and (source.resolve() == args.summary.resolve() or
+                if source is not None and (os.path.realpath(source) == os.path.realpath(args.summary) or
                                            (source.exists() and args.summary.exists() and source.samefile(args.summary))):
                     raise ValueError(f"summary output must differ from input: {source}")
         known = load_known(args.known, args.sanitizer) if args.known else {}
