@@ -11,6 +11,12 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <utility>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value, const char* message) {
     if (value) return;
@@ -139,6 +145,10 @@ void TestMasteringSetParam() {
 void TestMasteringGetState() {
     alignas(16) std::uint8_t storage[512];
     Require(sceAudioOut2MasteringGetState(nullptr, 0, 0) == errorInvalidPointer, "a null state returns the invalid pointer error");
+    auto* const unmapped = reinterpret_cast<AudioOut2MasteringStatesHeader*>(std::uintptr_t{0x10});
+    errno = 71;
+    Require(sceAudioOut2MasteringGetState(unmapped, 0, 0) == errorInvalidPointer, "unmapped state returns the invalid pointer error");
+    Require(errno == 71, "unmapped state preserves errno");
     auto* header = reinterpret_cast<AudioOut2MasteringStatesHeader*>(storage);
     auto* words = reinterpret_cast<std::uint32_t*>(storage);
     header->states_id = 1u;
@@ -158,6 +168,27 @@ void TestMasteringGetState() {
     Require(sceAudioOut2MasteringGetState(header, 0, 0) == errorMasteringInvalidStatesId, "an unknown states id is refused");
     header->states_id = 0u;
     Require(sceAudioOut2MasteringGetState(header, 0, 0) == errorMasteringInvalidStatesId, "states id 0 is refused");
+#if defined(_WIN32)
+    auto* const page = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(page != nullptr, "page allocation failed");
+    reinterpret_cast<AudioOut2MasteringStatesHeader*>(page)->states_id = 1u;
+    DWORD previous = 0;
+    Require(VirtualProtect(page, 4096, PAGE_READONLY, &previous) != 0, "VirtualProtect failed");
+    errno = 71;
+    Require(sceAudioOut2MasteringGetState(reinterpret_cast<AudioOut2MasteringStatesHeader*>(page), 0, 0) == errorInvalidPointer, "read-only state returns invalid pointer");
+    Require(errno == 71, "read-only state preserves errno");
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0, "VirtualFree failed");
+#else
+    const long pageSize = sysconf(_SC_PAGESIZE);
+    void* const page = mmap(nullptr, static_cast<std::size_t>(pageSize), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "mmap failed");
+    static_cast<AudioOut2MasteringStatesHeader*>(page)->states_id = 1u;
+    Require(mprotect(page, static_cast<std::size_t>(pageSize), PROT_READ) == 0, "mprotect failed");
+    errno = 71;
+    Require(sceAudioOut2MasteringGetState(static_cast<AudioOut2MasteringStatesHeader*>(page), 0, 0) == errorInvalidPointer, "read-only state returns invalid pointer");
+    Require(errno == 71, "read-only state preserves errno");
+    Require(munmap(page, static_cast<std::size_t>(pageSize)) == 0, "munmap failed");
+#endif
 }
 
 void TestLegacyMasteringInit() {
