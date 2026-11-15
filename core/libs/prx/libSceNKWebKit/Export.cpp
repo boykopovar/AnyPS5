@@ -10928,9 +10928,7 @@ int APS5_VABI WKPageCopyActiveURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageCopyApplicationNameForUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageCopyCommittedURL() {
     NotImplemented_nid_no_patch(__func__);
@@ -11350,9 +11348,7 @@ int APS5_VABI WKPageSetAllowsRemoteInspection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetApplicationNameForUserAgent() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetBackgroundExtendsBeyondPage() {
     NotImplemented_nid_no_patch(__func__);
