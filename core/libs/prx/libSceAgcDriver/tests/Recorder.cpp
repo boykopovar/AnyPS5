@@ -10507,11 +10507,11 @@ void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool f
     std::cout << "Storage upload lifetime" << (failView ? " after view failure" : " after caller release") << ": passed\n";
 }
 
-void refreshProofTests(const Device& device, Recorder& recorder) {
+bool refreshProofTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: refresh proofs not tested\n";
-        return;
+        return false;
     }
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
@@ -10520,7 +10520,7 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     void* block = AllocateWatched(bytes, 65536);
     if (block == nullptr) {
         std::cout << "no write watching: refresh proofs not tested\n";
-        return;
+        return false;
     }
     auto* texels = static_cast<std::uint8_t*>(block);
     auto* keys = texels + surfaceBytes;
@@ -10545,7 +10545,7 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     } unregister{base, block, address};
     if (HostImportFor(base, address, bytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, bytes)) {
         std::cout << "no watched host import: refresh proofs not tested\n";
-        return;
+        return false;
     }
     TextureDetiler detiler(base);
     auto context = base;
@@ -10668,6 +10668,7 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
         recorder.Sync();
         ClearCachedTextures(context.device);
     }
+    return true;
 }
 
 bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
@@ -16943,7 +16944,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--refresh-proofs-only") {
-            refreshProofTests(device, recorder);
+            if (!refreshProofTests(device, recorder)) return 77;
             std::cout << "refresh proof tests passed\n";
             return 0;
         }
