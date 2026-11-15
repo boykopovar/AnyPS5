@@ -193,8 +193,8 @@ int APS5_VABI __sys_set_uevt_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_socketclose_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI __sys_socketclose_nid_postfix(int descriptor) {
+    return close_nid_postfix(descriptor);
 }
 
 int APS5_VABI __sys_suspend_process_nid_postfix() {

@@ -47,7 +47,7 @@ int APS5_VABI __sys_regmgr_call_nid_postfix();
 int APS5_VABI __sys_resume_internal_hdd_nid_postfix();
 int APS5_VABI __sys_resume_process_nid_postfix();
 int APS5_VABI __sys_set_uevt_nid_postfix();
-int APS5_VABI __sys_socketclose_nid_postfix();
+int APS5_VABI __sys_socketclose_nid_postfix(int descriptor);
 int APS5_VABI __sys_suspend_process_nid_postfix();
 int APS5_VABI __sys_test_debug_rwmem_nid_postfix();
 int APS5_VABI __sys_workaround8849_nid_postfix();
