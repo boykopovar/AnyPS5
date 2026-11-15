@@ -408,15 +408,17 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (data == nullptr || num < 1 || num > 64) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (RemoteHandle(handle)) {
-  data[0] = PadData{};
-  return 1;
- }
- if (SpecialHandle(handle)) {
-  data[0] = SpecialData();
-  return 1;
- }
- return Pad::Read(data, num, PortOf(handle));
+ std::array<PadData, 64> localData{};
+ int count = 1;
+ if (RemoteHandle(handle)) localData[0] = PadData{};
+ else if (SpecialHandle(handle)) localData[0] = SpecialData();
+ else count = Pad::Read(localData.data(), num, PortOf(handle));
+ if (count <= 0) return count;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(data, localData.data(), static_cast<std::size_t>(count) * sizeof(PadData));
+ errno = savedErrno;
+ if (!copied) return PAD_ERROR_INVALID_ARG;
+ return count;
 }
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
@@ -1126,9 +1128,13 @@ int APS5_VABI scePadGetTelemetryInfo(std::int32_t handle, PadTelemetryInfo* info
 int APS5_VABI scePadGetActiveTime(std::int32_t handle, std::int32_t type, std::uint64_t* activeTime) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (activeTime == nullptr) return PAD_ERROR_INVALID_ARG;
-    static_cast<void>(handle);
+    const std::uint64_t value = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(activeTime, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return PAD_ERROR_INVALID_ARG;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     static_cast<void>(type);
-    *activeTime = 0;
     NotImplemented_nid_no_patch(__func__);
 }
 

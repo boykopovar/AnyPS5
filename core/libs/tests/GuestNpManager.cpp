@@ -501,6 +501,8 @@ void CheckPushLifecycle() {
     std::int32_t connectionState = 0x5a5a5a5a;
     Require(sceNpPushIntGetConnectionState(&connectionState) == 0 && connectionState == 0, "sceNpPushIntGetConnectionState must report the offline state");
     Require(sceNpPushIntGetConnectionState(nullptr) == PushInvalidArgument, "sceNpPushIntGetConnectionState must refuse a null output");
+    errno = 71;
+    Require(sceNpPushIntGetConnectionState(reinterpret_cast<void*>(0x10)) == PushInvalidArgument && errno == 71, "sceNpPushIntGetConnectionState must refuse an unwritable output and keep errno");
     Require(sceNpPushCheckCallback() == 0, "sceNpPushCheckCallback must answer an initialized library");
     Require(sceNpPushTerm() == 0, "sceNpPushTerm must terminate the library");
     Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse a second termination");
