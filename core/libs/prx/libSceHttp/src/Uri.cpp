@@ -366,7 +366,12 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
         parts.fragment.size()};
     const size_t size = poolSize(parts);
     if (write && prepare < size) return ERROR_OUT_OF_MEMORY;
-    if (require) *require = size;
+    if (require) {
+        const int savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(require, &size, sizeof(size));
+        errno = savedErrno;
+        if (!written) return ERROR_INVALID_VALUE;
+    }
     if (!write) return 0;
 
     char* next = static_cast<char*>(pool);
