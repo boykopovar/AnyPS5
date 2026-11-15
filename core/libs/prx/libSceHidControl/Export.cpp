@@ -643,14 +643,17 @@ int APS5_VABI sceHidControlPswUpdateIsUpdateNeededForMultiDevice(std::uint32_t d
 int APS5_VABI libSceHidControlUnknown_00qes5NswlQ_nid_no_patch(std::uint32_t device, const void* data, std::uint8_t* result) {
     if (!Initialized()) return ErrorNotInitialized;
     if (result == nullptr || data == nullptr) return ErrorInvalidArgument;
-    *result = 0;
+    if (!StoreGuest(result, std::uint8_t{0})) return ErrorInvalidArgument;
     constexpr std::size_t copied = 0x10;
     std::array<std::uint8_t, 0x18> buffer{};
-    std::memcpy(buffer.data(), data, copied);
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(buffer.data(), data, copied);
+    errno = savedErrno;
+    if (!read) return ErrorInvalidArgument;
     std::uint8_t reply = 0;
     DataResult request{device, 0, buffer.data(), &reply};
     const int status = Control<0x8018487f>(request);
-    if (status == 0) *result = reply != 0 ? 1 : 0;
+    if (status == 0 && !StoreGuest(result, static_cast<std::uint8_t>(reply != 0 ? 1 : 0))) return ErrorInvalidArgument;
     return status;
 }
 APS5_EXPORT("00qes5NswlQ", libSceHidControlUnknown_00qes5NswlQ_nid_no_patch);
