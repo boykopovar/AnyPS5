@@ -254,6 +254,19 @@ int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* d
     return SYSTEM_SERVICE_OK;
 }
 
+int AnswerRunningAppCategoryType(const char* caller, std::int32_t appId, std::uint32_t* categoryType, int nullOutputResult) {
+    if (categoryType == nullptr) return nullOutputResult;
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(std::string(caller) + ": application other than the running title");
+    std::uint32_t value = 0;
+    if (!GetAppCategoryType_nid_no_patch(&value)) {
+        NotImplemented_nid_no_patch((std::string(caller) + ": a title whose param.json has no applicationCategoryType").c_str());
+    }
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(categoryType, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : nullOutputResult;
+}
+
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
@@ -715,6 +728,14 @@ int APS5_VABI sceLncUtilGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t
 
 int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
  return sceLncUtilGetAppIdListOfBigApp(appIds, capacity, count);
+}
+
+int APS5_VABI sceLncUtilGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ return AnswerRunningAppCategoryType("sceLncUtilGetAppCategoryType", appId, categoryType, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceGetAppCategoryType(std::int32_t appId, std::uint32_t* categoryType) {
+ return AnswerRunningAppCategoryType("sceSystemServiceGetAppCategoryType", appId, categoryType, SYSTEM_SERVICE_ERROR_PARAMETER);
 }
 
 int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
