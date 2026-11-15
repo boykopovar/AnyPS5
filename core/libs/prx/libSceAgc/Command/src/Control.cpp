@@ -1,4 +1,6 @@
 #include "prx/libSceAgc/Command/include/Control.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 
 namespace Agc::Command {
 
@@ -26,13 +28,26 @@ std::uint32_t* WritePredication(CommandBuffer* buffer, std::uint8_t condition, s
     return Emit(buffer, 0x20u, {(static_cast<std::uint32_t>(condition) << 8u) | (static_cast<std::uint32_t>(waitOperation) << 12u) | (static_cast<std::uint32_t>(operation) << 16u), static_cast<std::uint32_t>(guestAddress) & ~0xfu, static_cast<std::uint32_t>(guestAddress >> 32u)}, function);
 }
 
-std::uint32_t* WriteMemSemaphore(CommandBuffer* buffer, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation, const char* function) {
-    CheckBits(waitForMailbox, 1, function);
-    CheckBits(signalType, 1, function);
-    Require(operation == 6 || operation == 7, function, "invalid memory semaphore operation");
+std::uint32_t* WriteMemSemaphore(CommandBuffer* buffer, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation, bool asyncCompute, const char* function) {
+    const auto prefix = sceAgcDriverUserDataGetPacketSize(4);
+    const auto suffix = sceAgcDriverUserDataGetPacketSize(0);
+    if (!TryReserve(buffer, prefix + suffix + 4, function)) return nullptr;
+    auto* result = buffer->cursor_up;
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
-    CheckAddress(guestAddress, 8, function);
-    return Emit(buffer, 0x39u, {static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u), (static_cast<std::uint32_t>(operation) << 29u) | (static_cast<std::uint32_t>(signalType) << 20u) | (static_cast<std::uint32_t>(waitForMailbox) << 16u)}, function);
+    const auto low = static_cast<std::uint32_t>(guestAddress);
+    const auto high = static_cast<std::uint32_t>(guestAddress >> 32u);
+    const auto marker = (operation == 6 ? 0xc9010000u : 0xc9020000u) | (high & 0xffffu);
+    sceAgcDriverUserDataWritePacket(Allocate(buffer, prefix, function), 1, marker, &low, 4);
+    if (operation == 6) {
+        auto* nop = Allocate(buffer, suffix, function);
+        nop[0] = Header(0x10u, suffix);
+    }
+    Emit(buffer, 0x39u, {low & ~7u, high, (static_cast<std::uint32_t>(operation & 7u) << 29u) |
+        (static_cast<std::uint32_t>(signalType & 1u) << 20u) | (static_cast<std::uint32_t>(waitForMailbox & 1u) << 16u)}, function);
+    if (operation == 7) {
+        sceAgcDriverUserDataWritePacket(Allocate(buffer, suffix, function), asyncCompute ? 1u : 0u, 0xc9000000u, nullptr, 0);
+    }
+    return result;
 }
 
 }

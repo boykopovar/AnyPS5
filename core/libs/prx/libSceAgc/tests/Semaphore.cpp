@@ -187,36 +187,87 @@ void testMemSemaphore() {
 
 using QueueMemSemaphore = std::uint32_t* APS5_VABI (*)(CommandBuffer*, const volatile void*, std::uint8_t, std::uint8_t, std::uint8_t);
 
-void testQueueMemSemaphore(QueueMemSemaphore write) {
-    const auto* semaphore = reinterpret_cast<const volatile void*>(0x102f221d98ull);
+struct QueueAllocation {
+    std::array<std::uint32_t, 24> words;
+    std::uint32_t requested = 0;
+    unsigned calls = 0;
+    bool expand = false;
+    bool reported = false;
+};
 
-    {
-        std::array<std::uint32_t, 16> words{};
-        words.fill(0xdeadbeefu);
-        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
-        const auto* packet = write(&buffer, semaphore, 0, 1, 6);
-        check(packet == words.data(), "packet address mismatch");
-        check(packet[0] == 0xc0023900u, "MEM_SEMAPHORE header opcode mismatch");
-        check(packet[1] == 0x2f221d98u, "MEM_SEMAPHORE address low mismatch");
-        check(packet[2] == 0x10u, "MEM_SEMAPHORE address high mismatch");
-        check(packet[3] == 0xc0100000u, "MEM_SEMAPHORE signal control word mismatch");
-        check(buffer.cursor_up == words.data() + 4, "cursor did not advance by 4 words");
-        check(words[4] == 0xdeadbeefu, "words past packet modified");
+bool APS5_VABI growQueue_nid_no_patch(CommandBuffer* buffer, std::uint32_t count, void* userData) {
+    auto& state = *static_cast<QueueAllocation*>(userData);
+    ++state.calls;
+    state.requested = count;
+    if (state.expand) {
+        buffer->bottom = state.words.data();
+        buffer->top = state.words.data() + state.words.size();
+        buffer->cursor_up = buffer->bottom;
+        buffer->cursor_down = buffer->top;
     }
+    return state.reported;
+}
 
-    {
-        std::array<std::uint32_t, 16> words{};
-        words.fill(0xdeadbeefu);
+void testQueueMemSemaphore(QueueMemSemaphore write, bool asyncCompute) {
+    constexpr std::uint32_t sentinel = 0xdeadbeefu;
+    struct Case {
+        std::uintptr_t address;
+        std::uint8_t mailbox;
+        std::uint8_t signal;
+        std::uint8_t operation;
+        std::vector<std::uint32_t> expected;
+    };
+    const std::array<Case, 7> cases{{
+        {0x11111111u, 0x22, 0x33, 0x44, {0xc0027900u, 0x342u, 0xc9020000u, 0x11111111u,
+            0xc0023900u, 0x11111110u, 0, 0x80100000u}},
+        {1, 2, 3, 4, {0xc0027900u, 0x342u, 0xc9020000u, 1,
+            0xc0023900u, 0, 0, 0x80100000u}},
+        {0x1111111122222222ull, 0x44, 0, 0, {0xc0027900u, 0x342u, 0xc9021111u, 0x22222222u,
+            0xc0023900u, 0x22222220u, 0x11111111u, 0}},
+        {0x102f221d98ull, 0, 1, 6, {0xc0027900u, 0x342u, 0xc9010010u, 0x2f221d98u,
+            0xc0011000u, sentinel, sentinel, 0xc0023900u, 0x2f221d98u, 0x10u, 0xc0100000u}},
+        {0x102f221d98ull, 1, 0, 7, {0xc0027900u, 0x342u, 0xc9020010u, 0x2f221d98u,
+            0xc0023900u, 0x2f221d98u, 0x10u, 0xe0010000u,
+            asyncCompute ? 0xc0017900u : 0xc0017904u, 0x342u, 0xc9000000u}},
+        {0, 0xff, 0xfe, 0xfe, {0xc0027900u, 0x342u, 0xc9020000u, 0,
+            0xc0023900u, 0, 0, 0xc0010000u}},
+        {7, 0, 1, 0xff, {0xc0027900u, 0x342u, 0xc9020000u, 7,
+            0xc0023900u, 0, 0, 0xe0100000u}},
+    }};
+    for (const auto& value : cases) {
+        std::array<std::uint32_t, 24> words;
+        words.fill(sentinel);
         CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
-        const auto* packet = write(&buffer, semaphore, 1, 0, 7);
-        check(packet[3] == 0xe0010000u, "MEM_SEMAPHORE wait control word mismatch");
+        const auto* packet = write(&buffer, reinterpret_cast<const volatile void*>(value.address), value.mailbox, value.signal, value.operation);
+        check(packet == words.data() && std::equal(value.expected.begin(), value.expected.end(), words.begin()), "queue semaphore packet envelope differs");
+        check(buffer.cursor_up == words.data() + value.expected.size(), "queue semaphore cursor differs");
+        check(std::all_of(words.begin() + value.expected.size(), words.end(), [=](auto word) { return word == sentinel; }), "queue semaphore changed words after its envelope");
     }
-
-    std::array<std::uint32_t, 16> words{};
-    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
-    expectFailure([&] { write(&buffer, reinterpret_cast<const volatile void*>(1ull), 0, 1, 6); });
-    expectFailure([&] { write(&buffer, semaphore, 0, 1, 5); });
-    expectFailure([&] { write(&buffer, semaphore, 2, 0, 7); });
+    for (const bool expand : {false, true}) {
+        std::array<std::uint32_t, 10> original;
+        original.fill(sentinel);
+        QueueAllocation state;
+        state.words.fill(sentinel);
+        state.expand = expand;
+        state.reported = !expand;
+        CommandBuffer buffer{original.data(), original.data() + original.size(), original.data(), original.data() + original.size(), growQueue_nid_no_patch, &state, 3};
+        const auto* packet = write(&buffer, reinterpret_cast<const volatile void*>(1), 2, 3, 4);
+        check(state.calls == 1 && state.requested == 14, "queue semaphore did not reserve its complete envelope and reserved words");
+        check(std::all_of(original.begin(), original.end(), [=](auto word) { return word == sentinel; }), "queue semaphore wrote before the allocation callback completed");
+        if (expand) {
+            check(packet == state.words.data() && buffer.cursor_up == state.words.data() + 8, "queue semaphore used the callback result instead of its returned capacity");
+            check(std::equal(cases[1].expected.begin(), cases[1].expected.end(), state.words.begin()), "queue semaphore changed its packet after allocation");
+        } else {
+            check(packet == nullptr && buffer.cursor_up == original.data(), "an insufficient allocation callback did not return null without advancing");
+        }
+    }
+    std::array<std::uint32_t, 10> words;
+    words.fill(sentinel);
+    QueueAllocation state;
+    CommandBuffer overflow{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), growQueue_nid_no_patch, &state, std::numeric_limits<std::uint32_t>::max() - 2};
+    check(write(&overflow, nullptr, 0, 0, 0) == nullptr && state.calls == 0 && overflow.cursor_up == words.data(), "an overflowing queue semaphore allocation reached its callback");
+    check(std::all_of(words.begin(), words.end(), [=](auto word) { return word == sentinel; }), "an overflowing queue semaphore allocation wrote a packet");
+    expectFailure([&] { write(nullptr, nullptr, 0, 0, 0); });
 }
 
 }
@@ -230,8 +281,8 @@ int main() {
         testRegistration();
         testLabels();
         testMemSemaphore();
-        testQueueMemSemaphore(sceAgcAcbMemSemaphore);
-        testQueueMemSemaphore(sceAgcDcbMemSemaphore);
+        testQueueMemSemaphore(sceAgcAcbMemSemaphore, true);
+        testQueueMemSemaphore(sceAgcDcbMemSemaphore, false);
         testLabelRejections();
         testRepeatedRegistration();
         storage.reset();

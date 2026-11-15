@@ -45,7 +45,7 @@ std::uint32_t APS5_VABI sceAgcAcbQueueEndOfShaderActionGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation) {
-    return Agc::Command::WriteMemSemaphore(buf, address, waitForMailbox, signalType, operation, __func__);
+    return Agc::Command::WriteMemSemaphore(buf, address, waitForMailbox, signalType, operation, true, __func__);
 }
 
 }
