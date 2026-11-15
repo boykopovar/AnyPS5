@@ -195,6 +195,45 @@ void CpuStore(Fixture& fixture, bool fresh) {
     fixture.CheckDepth(1u);
 }
 
+void CheckHandoffBytes(Fixture& fixture, std::uint8_t value, bool published) {
+    const auto ranges = AgcDriver::Graphics::FlushDepthPlanes(fixture.Stencil(), Block);
+    fixture.device.WaitIdle();
+    std::array<std::byte, Block> bytes{};
+    AgcDriver::GuestMemory::ReadCommitted(fixture.Stencil(), bytes);
+    Require(std::ranges::all_of(bytes, [&](std::byte byte) { return byte == static_cast<std::byte>(value); }), "read-only stencil handoff did not preserve CPU/GPU write order");
+    Require(ranges.size() == (published ? 1u : 0u), "read-only stencil handoff published an unexpected number of replicas");
+    Require(AgcDriver::Graphics::FlushDepthPlanes(fixture.Stencil(), Block).empty(), "a discarded or clean stencil plane was published again");
+}
+
+void UnwatchedHandoff(Fixture& fixture, std::string_view mode) {
+    Require(!AgcDriver::GuestMemory::Watched(fixture.Stencil(), Block), "the unwatched handoff fixture must not use write watch");
+    const bool reused = mode == "unwatched_cpu_reused";
+    const bool after = mode == "unwatched_cpu_after";
+    const bool gpuAfter = mode == "unwatched_gpu_after";
+    fixture.Write(0u, 37u);
+    if (reused) {
+        fixture.CheckStencil(37u);
+        std::memset(reinterpret_cast<void*>(fixture.Stencil()), 5, Block);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+    }
+    fixture.Write(1u, 203u);
+    if (!reused && !after) {
+        std::memset(reinterpret_cast<void*>(fixture.Stencil()), 5, Block);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+    }
+    const auto destination = fixture.Surface(reused ? 0u : 2u);
+    Require(fixture.Draw(destination, Fixture::Options(203u, false)) == Texels, "a read-only handoff lost the latest GPU stencil");
+    if (after) {
+        std::memset(reinterpret_cast<void*>(fixture.Stencil()), 5, Block);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+    }
+    if (gpuAfter) fixture.Write(2u, 91u);
+    CheckHandoffBytes(fixture, reused ? 203u : gpuAfter ? 91u : 5u, reused || gpuAfter);
+    fixture.CheckDepth(0u);
+    fixture.CheckDepth(1u);
+    if (gpuAfter) fixture.CheckDepth(2u);
+}
+
 void PendingClear(Fixture& fixture) {
     auto surface = fixture.Surface(0u);
     surface.htile = fixture.Stencil(3u);
@@ -239,6 +278,8 @@ int main(int argc, char** argv) {
                 return VulkanTestSkipped;
             }
             CpuStore(fixture, mode == "cpu_fresh");
+        } else if (mode == "unwatched_cpu_fresh" || mode == "unwatched_cpu_reused" || mode == "unwatched_cpu_after" || mode == "unwatched_gpu_after") {
+            UnwatchedHandoff(fixture, mode);
         } else if (mode == "clear") PendingClear(fixture);
         else if (mode == "independent") Independent(fixture);
         else if (mode == "copy_failure") CopyFailure(fixture);
