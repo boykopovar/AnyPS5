@@ -11054,11 +11054,6 @@ int APS5_VABI WKPageGetImageForFindMatch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGetIsControlledByAutomation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI WKPageGetMediaCaptureEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11359,10 +11354,6 @@ int APS5_VABI WKPageSetBackgroundExtendsBeyondPage() {
 }
 
 int APS5_VABI WKPageSetCaretVisible() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetControlledByAutomation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
