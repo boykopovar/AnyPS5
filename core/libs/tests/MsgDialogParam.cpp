@@ -1,8 +1,19 @@
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -26,11 +37,35 @@ struct Param {
     void setUserMessage(const UserMessage* user) { std::memcpy(bytes + 0x40, &user, 8); }
 };
 
+char* GuardedPageEnd() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr, "the guarded memory was not allocated");
+    DWORD previous = 0;
+    Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "the guard page was not protected");
+#else
+    const long nativePageSize = sysconf(_SC_PAGESIZE);
+    Require(nativePageSize > 0, "the page size is unknown");
+    const std::size_t pageSize = static_cast<std::size_t>(nativePageSize);
+    void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(allocation != MAP_FAILED, "the guarded memory was not allocated");
+    auto* memory = static_cast<char*>(allocation);
+    Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0, "the guard page was not protected");
+#endif
+    return memory + pageSize;
+}
+
 }
 
 int main() {
     Require(!MsgDialog::ParseParam(nullptr).hasUserMessage, "a null parameter has a user message");
     Require(MsgDialog::ParseParam(nullptr).mode == MsgDialog::ModeUserMsg, "a null parameter is not a user message");
+    errno = 71;
+    Require(!MsgDialog::ParseParam(reinterpret_cast<const void*>(0x10)).hasUserMessage, "an unreadable parameter was read");
+    Require(errno == 71, "reading an unreadable parameter changed errno");
 
     Param empty;
     auto parsed = MsgDialog::ParseParam(&empty);
@@ -60,6 +95,24 @@ int main() {
     Require(parsed.hasUserMessage && parsed.hasText, "user message not read");
     Require(parsed.buttonType == MsgDialog::ButtonTypeYesNoFocusNo, "button type");
     Require(parsed.text == "Overwrite the save?\nThis cannot be undone.", "message text");
+    const auto* unreadableUser = reinterpret_cast<const UserMessage*>(0x10);
+    param.setUserMessage(unreadableUser);
+    errno = 71;
+    parsed = MsgDialog::ParseParam(&param);
+    Require(!parsed.hasUserMessage && !parsed.hasText, "an unreadable user message was read");
+    Require(errno == 71, "reading an unreadable user message changed errno");
+    UserMessage unreadableText{MsgDialog::ButtonTypeYesNo, 0, reinterpret_cast<const char*>(0x10)};
+    param.setUserMessage(&unreadableText);
+    errno = 71;
+    parsed = MsgDialog::ParseParam(&param);
+    Require(parsed.hasUserMessage && !parsed.hasText, "an unreadable text pointer was read");
+    Require(errno == 71, "reading unreadable text changed errno");
+    char* guard = GuardedPageEnd();
+    std::memcpy(guard - 4, "ABCD", 4);
+    UserMessage boundaryText{MsgDialog::ButtonTypeOk, 0, guard - 4};
+    param.setUserMessage(&boundaryText);
+    parsed = MsgDialog::ParseParam(&param);
+    Require(parsed.hasText && parsed.text == "ABCD", "text crossing into a guard page was not bounded");
 
     UserMessage noText{MsgDialog::ButtonTypeOkCancel, 0, nullptr};
     param.setUserMessage(&noText);
