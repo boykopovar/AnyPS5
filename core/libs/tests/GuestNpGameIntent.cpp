@@ -1,4 +1,5 @@
 #include "prx/libSceNpGameIntent/include/Api.hpp"
+#include "prx/libSceNpGameIntent/include/InventoryExports.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -81,6 +82,16 @@ int main() {
             "uninitialized launch app 2 must report not-initialized");
     Require(sceNpGameIntentNotifyAppLaunched() == kNotInitialized,
             "uninitialized notify app launched must report not-initialized");
+    Require(sceNpGameIntentGetPermittedIntentTypes() == kNotInitialized,
+            "uninitialized get permitted intent types must report not-initialized");
+    Require(sceNpGameIntentLaunchAppForPinvoke() == kNotInitialized,
+            "uninitialized launch app for pinvoke must report not-initialized");
+    Require(sceNpGameIntentLaunchAppRequestToGkp() == kNotInitialized,
+            "uninitialized launch app request to gkp must report not-initialized");
+    Require(sceNpGameIntentRemoveLaunchCallback() == kNotInitialized,
+            "uninitialized remove launch callback must report not-initialized");
+    Require(sceNpGameIntentRequest() == kNotInitialized,
+            "uninitialized request must report not-initialized");
 
     Require(sceNpGameIntentInitialize(&initParam) == 0, "initialization failed");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kInvalidArgument, "null receive intent did not fail");
@@ -132,6 +143,17 @@ int main() {
             "bufSize 1 did not succeed");
     Require(canaryBuf[0] == '\0', "bufSize 1 did not write terminator");
 
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentGetPermittedIntentTypes(); }),
+            "get permitted intent types did not throw after init");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentLaunchAppForPinvoke(); }),
+            "launch app for pinvoke did not throw after init");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentLaunchAppRequestToGkp(); }),
+            "launch app request to gkp did not throw after init");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentRemoveLaunchCallback(); }),
+            "remove launch callback did not throw after init");
+    Require(Throws<std::runtime_error>([] { sceNpGameIntentRequest(); }),
+            "request did not throw after init");
+
     Require(sceNpGameIntentVshInitialize() == 0, "vsh init failed");
     Require(sceNpGameIntentVshTerminate() == 0, "vsh terminate failed");
     Require(sceNpGameIntentTerminate() == 0, "terminate failed");
@@ -152,6 +174,16 @@ int main() {
             "post-terminate launch app 2 must report not-initialized");
     Require(sceNpGameIntentNotifyAppLaunched() == kNotInitialized,
             "post-terminate notify app launched must report not-initialized");
+    Require(sceNpGameIntentGetPermittedIntentTypes() == kNotInitialized,
+            "post-terminate get permitted intent types must report not-initialized");
+    Require(sceNpGameIntentLaunchAppForPinvoke() == kNotInitialized,
+            "post-terminate launch app for pinvoke must report not-initialized");
+    Require(sceNpGameIntentLaunchAppRequestToGkp() == kNotInitialized,
+            "post-terminate launch app request to gkp must report not-initialized");
+    Require(sceNpGameIntentRemoveLaunchCallback() == kNotInitialized,
+            "post-terminate remove launch callback must report not-initialized");
+    Require(sceNpGameIntentRequest() == kNotInitialized,
+            "post-terminate request must report not-initialized");
 
     unsigned char appLauncherParam[0x28]{};
     *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x28;

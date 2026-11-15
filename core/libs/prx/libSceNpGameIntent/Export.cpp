@@ -42,23 +42,43 @@ bool ReadGuestBytePreservingErrno_nid_no_patch(const char* source, char& value) 
 extern "C" {
 
 int APS5_VABI sceNpGameIntentGetPermittedIntentTypes() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchAppForPinvoke() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchAppRequestToGkp() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpGameIntentRemoveLaunchCallback() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpGameIntentRequest() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 
