@@ -8,6 +8,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -37,6 +38,58 @@ template<typename Function> void ForBothWidths(const char* text, Function functi
     std::u16string wide;
     for (const char* cursor = text; *cursor; ++cursor) wide.push_back(static_cast<unsigned char>(*cursor));
     function(StringView{wide.data(), static_cast<unsigned>(wide.size()), false});
+}
+
+void TestXFrameOptions() {
+    using Disposition = WebCore::XFrameOptionsDisposition;
+    using NKWebKit::WtfAbi::String;
+    using NKWebKit::WtfAbi::StringImpl;
+
+    static_assert(static_cast<unsigned>(Disposition::None) == 0);
+    static_assert(static_cast<unsigned>(Disposition::Deny) == 1);
+    static_assert(static_cast<unsigned>(Disposition::SameOrigin) == 2);
+    static_assert(static_cast<unsigned>(Disposition::AllowAll) == 3);
+    static_assert(static_cast<unsigned>(Disposition::Invalid) == 4);
+    static_assert(static_cast<unsigned>(Disposition::Conflict) == 5);
+
+    constexpr struct {
+        const char* text;
+        Disposition expected;
+    } cases[] = {
+        {"", Disposition::None},
+        {",,,", Disposition::None},
+        {"dEnY", Disposition::Deny},
+        {"\vSaMeOrIgIn\r\t", Disposition::SameOrigin},
+        {" ALLOWALL ", Disposition::AllowAll},
+        {",DENY,,deny,", Disposition::Deny},
+        {"deny,sameorigin", Disposition::Conflict},
+        {"deny,invalid", Disposition::Conflict},
+        {"invalid,deny", Disposition::Conflict},
+        {"x,y", Disposition::Invalid},
+        {" ", Disposition::Invalid},
+        {"deny, ,deny", Disposition::Conflict},
+        {"DENY\xa0", Disposition::Invalid},
+        {"deny xyz", Disposition::Invalid},
+    };
+    for (const auto& test : cases) {
+        ForBothWidths(test.text, [&](StringView view) {
+            StringImpl storage{1, view.length, view.data, view.is8Bit ? 4u : 0u};
+            Check(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&storage)) == test.expected);
+        });
+    }
+    Check(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String()) == Disposition::None);
+
+    auto checkWide = [](std::u16string_view text, Disposition expected) {
+        StringImpl storage{1, static_cast<unsigned>(text.size()), text.data(), 0};
+        Check(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&storage)) == expected);
+    };
+    checkWide(u"\u1680DENY\u2028,\u2007deny\u3000", Disposition::Deny);
+    checkWide(u"SAMEORIGIN\u2029", Disposition::Invalid);
+    checkWide(u"D\u0145NY", Disposition::Invalid);
+    checkWide(std::u16string_view(u"DENY\0", 5), Disposition::Invalid);
+
+    StringImpl invalid{1, 1, nullptr, 4};
+    Throws([&] { _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&invalid)); });
 }
 
 struct IntegerCase {
@@ -273,6 +326,7 @@ void TestLineEndingStorage() {
 int main() {
     TestParseHTMLInteger();
     TestCrossOriginResourcePolicy();
+    TestXFrameOptions();
     TestLineEndings();
     TestLineEndingStorage();
     return 0;

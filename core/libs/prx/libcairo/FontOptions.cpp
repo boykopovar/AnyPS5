@@ -1,3 +1,4 @@
+#include "prx/libcairo/include/ContextFontOptions.hpp"
 #include "prx/libcairo/include/InventoryExports.hpp"
 #include <cstdlib>
 
@@ -66,6 +67,19 @@ void APS5_VABI cairo_font_options_set_hint_metrics(cairo_font_options_t* options
 
 void APS5_VABI cairo_font_options_set_subpixel_order(cairo_font_options_t* options, cairo_subpixel_order_t subpixel_order) {
     if (!Invalid(options)) Storage(options)->subpixel_order = subpixel_order;
+}
+
+void APS5_VABI cairo_set_font_options(CairoContext* context, const cairo_font_options_t* options) {
+    if (options == nullptr) {
+        CairoContextSetFontOptions(context, nullptr);
+    } else if (Invalid(options)) {
+        CairoContextSetFontOptionsError(context);
+    } else {
+        const auto* storage = Storage(options);
+        const CairoContextFontOptions values{
+            storage->antialias, storage->subpixel_order, storage->hint_style, storage->hint_metrics};
+        CairoContextSetFontOptions(context, &values);
+    }
 }
 
 }

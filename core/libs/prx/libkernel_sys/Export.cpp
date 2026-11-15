@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdarg>
 #include <cstdint>
@@ -31,6 +32,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -71,11 +73,13 @@ constexpr int GuestEperm = 1;
 constexpr int GuestEsrch = 3;
 constexpr int GuestEio = 5;
 constexpr int GuestEbadf = 9;
+constexpr int GuestEnomem = 12;
 constexpr int GuestEfault = 14;
 constexpr int GuestEnotblk = 15;
 constexpr int GuestEnotdir = 20;
 constexpr int GuestEisdir = 21;
 constexpr int GuestEinval = 22;
+constexpr int GuestErange = 34;
 constexpr int GuestEexist = 17;
 constexpr int GuestExdev = 18;
 constexpr int GuestEdeadlk = 11;
@@ -278,6 +282,7 @@ int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast)
 }
 
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
+    if (const int error = SymbolicLinkLimitError(native, false)) return Fail(error);
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
@@ -803,8 +808,17 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
 }
 
 int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
-    if (buffer == nullptr) return static_cast<int>(Fail(GuestEfault));
-    return getcwd_nid_postfix(buffer, size) == nullptr ? -1 : 0;
+    const std::size_t limit = std::min<std::size_t>(static_cast<std::uint32_t>(size), GuestPathMax);
+    if (limit < 2) return static_cast<int>(Fail(GuestEinval));
+    std::array<char, GuestPathMax> path{};
+    if (getcwd_nid_postfix(path.data(), path.size()) == nullptr) {
+        const int error = *__error_nid_postfix();
+        return static_cast<int>(Fail(error == GuestErange ? GuestEnomem : error));
+    }
+    const std::size_t required = std::strlen(path.data()) + 1;
+    if (required > limit) return static_cast<int>(Fail(GuestEnomem));
+    if (!GuestCopyOut_nid_no_patch(buffer, path.data(), required)) return static_cast<int>(Fail(GuestEfault));
+    return 0;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
@@ -1103,6 +1117,7 @@ int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
     struct stat status{};
     if (::fstat(fd, &status) != 0) return static_cast<int>(Fail(GuestEbadf));
 #endif
+    if (IsKqueueDescriptor_nid_no_patch(fd)) return static_cast<int>(Fail(GuestEinval));
     RequireGuestOwner("fchown", uid, gid);
     return 0;
 }
@@ -1356,7 +1371,8 @@ int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* wo
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {
-    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    if (pid == 0 || pid == 1) return static_cast<int>(0x80020002);
+    if (pid != getpid_nid_postfix() && pid != -1) return static_cast<int>(0x80020003);
     return 0;
 }
 

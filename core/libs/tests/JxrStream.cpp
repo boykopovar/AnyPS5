@@ -37,6 +37,11 @@ struct Mutation {
     Jxr::Stream* afterSeekStream = nullptr;
     std::uint8_t* afterRead = nullptr;
     std::uint8_t* afterWrite = nullptr;
+    Jxr::Stream* afterWriteStream = nullptr;
+    std::uint8_t* afterWriteCurrent = nullptr;
+    std::uint32_t* afterWriteBitsUsed = nullptr;
+    std::int64_t* nextWriteResult = nullptr;
+    bool throwWrite = false;
 } mutation;
 
 void Require(bool result, const char* message) {
@@ -66,14 +71,21 @@ std::int64_t APS5_VABI Read(Jxr::Stream* stream, void* buffer, std::size_t size)
     return readResult;
 }
 
-std::int64_t APS5_VABI Write(Jxr::Stream*, const void* buffer, std::size_t size) {
+std::int64_t APS5_VABI Write(Jxr::Stream* stream, const void* buffer, std::size_t size) {
     calls.push_back('w');
+    lastStream = stream;
     lastBuffer = const_cast<void*>(buffer);
     lastSize = size;
-    Require(size == output.size(), "write length differs from one packet");
+    if (mutation.throwWrite) throw std::runtime_error("packet write");
+    Require(size <= output.size(), "write length exceeds the test buffer");
     std::memcpy(output.data(), buffer, size);
     if (mutation.afterWrite) mutation.io->start = mutation.afterWrite;
-    return writeResult;
+    if (mutation.afterWriteStream) mutation.io->stream = mutation.afterWriteStream;
+    if (mutation.afterWriteCurrent) mutation.io->current = mutation.afterWriteCurrent;
+    if (mutation.afterWriteBitsUsed) mutation.io->bitsUsed = *mutation.afterWriteBitsUsed;
+    const auto result = writeResult;
+    if (mutation.nextWriteResult) writeResult = *mutation.nextWriteResult;
+    return result;
 }
 
 std::int64_t APS5_VABI SetPosition(Jxr::Stream*, std::size_t position) {
@@ -176,6 +188,120 @@ void CallbackMutation(Jxr::Stream& stream) {
         Require(io.referenceOffset == 789 && io.shadow == 7, "mutating write changed unrelated state");
     }
     mutation = {};
+}
+
+std::int64_t APS5_VABI RejectWrappedWrite(Jxr::Stream* stream, const void* buffer, std::size_t size) {
+    calls.push_back('n');
+    lastStream = stream;
+    lastBuffer = const_cast<void*>(buffer);
+    lastSize = size;
+    return -INT64_C(0x123456789ab);
+}
+
+void DetachWrites(Jxr::Stream& stream) {
+    Jxr::Stream replacement = stream;
+    std::fill(ring.begin(), ring.end(), 0x3c);
+    output.fill(0xa5);
+    calls.clear();
+    mutation = {};
+    writeResult = 0x123456789ll;
+    Jxr::BitIo io{7, 19, 8, ~8192, ring.data() + 100, ring.data() + 200, &stream, 321};
+    const auto firstStart = io.start;
+    Require(detachISWrite_nid_postfix(nullptr, &io) == writeResult, "detach partial write result was truncated");
+    Require(calls == std::vector<char>({'w'}) && lastStream == &stream && lastBuffer == firstStart && lastSize == 101,
+            "detach partial write callback arguments differ");
+    Require(std::equal(output.begin(), output.begin() + 101, firstStart) && output[101] == 0xa5,
+            "detach partial write bytes or output guard differ");
+    Require(io.stream == nullptr && io.start == firstStart && io.current == ring.data() + 200 && io.bitsUsed == 8,
+            "detach partial write state differs");
+
+    calls.clear();
+    writeResult = -73;
+    io = {7, 19, 8, ~8192, ring.data(), ring.data() + PacketSize, &stream, 321};
+    const auto failedStart = io.start;
+    Require(detachISWrite_nid_postfix(nullptr, &io) == -73, "detach propagated packet write error");
+    Require(calls == std::vector<char>({'w'}) && lastStream == &stream && lastBuffer == failedStart &&
+                lastSize == PacketSize && io.stream == &stream && io.start == failedStart,
+            "failed packet write reached final output or detached the stream");
+
+    calls.clear();
+    writeResult = -91;
+    io = {7, 19, 8, ~8192, ring.data() + 100, ring.data() + 200, &stream, 321};
+    Require(detachISWrite_nid_postfix(nullptr, &io) == -91 && calls == std::vector<char>({'w'}) && io.stream == &stream,
+            "detach propagated final write error without detaching");
+
+    calls.clear();
+    writeResult = 0x100000001ll;
+    std::int64_t finalWriteResult = 0x23456789abll;
+    std::uint32_t finalBitsUsed = 16;
+    io = {7, 19, 8, ~8192, ring.data(), ring.data() + PacketSize, &stream, 654};
+    mutation = {&io, nullptr, nullptr, nullptr, ring.data() + PacketSize, &replacement, ring.data() + PacketSize - 2,
+                &finalBitsUsed, &finalWriteResult, false};
+    Require(detachISWrite_nid_postfix(nullptr, &io) == finalWriteResult, "detach returned final wide write result");
+    Require(calls == std::vector<char>({'w', 'w'}) && lastStream == &replacement && lastBuffer == ring.data() &&
+                lastSize == PacketSize,
+            "detach used fields updated by the packet write callback");
+    Require(std::equal(output.begin(), output.end(), ring.begin()) && io.stream == nullptr &&
+                io.start == ring.data() + PacketSize && io.current == ring.data() + PacketSize - 2 && io.bitsUsed == 16,
+            "detach final output or callback-updated state differs");
+
+    calls.clear();
+    mutation = {};
+    mutation.throwWrite = true;
+    io = {7, 19, 8, ~8192, ring.data() + 100, ring.data() + 200, &stream, 321};
+    bool propagated = false;
+    try {
+        detachISWrite_nid_postfix(nullptr, &io);
+    } catch (const std::runtime_error&) {
+        propagated = true;
+    }
+    Require(propagated && calls == std::vector<char>({'w'}) && io.stream == &stream,
+            "detach propagated callback exception without clearing stream");
+
+    calls.clear();
+    mutation = {};
+    Jxr::Stream rejecting = stream;
+    rejecting.write = &RejectWrappedWrite;
+    io = {7, 19, 8, ~8192, ring.data() + 200, ring.data() + 100, &rejecting, 321};
+    Require(detachISWrite_nid_postfix(nullptr, &io) == -INT64_C(0x123456789ab),
+            "detach forwards the negative-length callback error without truncation");
+    Require(calls == std::vector<char>({'n'}) && lastStream == &rejecting && lastBuffer == ring.data() + 200 &&
+                lastSize == std::numeric_limits<std::size_t>::max() - 98 && io.stream == &rejecting,
+            "detach converts negative pointer difference to size_t for the callback");
+
+    for (std::int64_t result : {std::int64_t{0}, INT64_C(0x123456789), -INT64_C(0x123456789)}) {
+        calls.clear();
+        mutation = {};
+        output.fill(0xa5);
+        writeResult = result;
+        io = {7, 19, 0, ~8192, ring.data() + 100, ring.data() + 100, &stream, 321};
+        Require(detachISWrite_nid_postfix(nullptr, &io) == result, "detach returns an empty final callback result unchanged");
+        Require(calls == std::vector<char>({'w'}) && lastStream == &stream && lastBuffer == ring.data() + 100 && lastSize == 0,
+                "detach invokes the final callback with an empty output");
+        Require(output[0] == 0xa5 && io.stream == (result < 0 ? &stream : nullptr),
+                "empty final callback preserves output guard and detaches only on success");
+    }
+
+    calls.clear();
+    mutation = {};
+    output.fill(0xa5);
+    writeResult = 0;
+    std::int64_t finalEmptyResult = -INT64_C(0x123456789);
+    io = {7, 19, 0, ~8192, ring.data(), ring.data() + PacketSize, &stream, 654};
+    mutation = {&io, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &finalEmptyResult, false};
+    Require(detachISWrite_nid_postfix(nullptr, &io) == finalEmptyResult, "detach returns a negative empty-final result unchanged after packet flush");
+    Require(calls == std::vector<char>({'w', 'w'}) && lastStream == &stream && lastBuffer == ring.data() + PacketSize && lastSize == 0,
+            "successful full packet flush is followed by an empty final callback");
+    Require(std::equal(output.begin(), output.end(), ring.begin()) && io.stream == &stream && io.start == ring.data() + PacketSize,
+            "negative empty-final result preserves attachment after a successful packet flush");
+    mutation = {};
+
+    calls.clear();
+    mutation = {};
+    io.stream = &stream;
+    io.bitsUsed = 7;
+    RequireInvalidArgument([&] { detachISWrite_nid_postfix(nullptr, &io); }, "detach rejected an unaligned bit position");
+    Require(calls.empty() && io.stream == &stream, "unaligned detach performed I/O or cleared stream");
 }
 
 std::int64_t APS5_VABI ObserveRead(Jxr::Stream*, void* buffer, std::size_t size) {
@@ -439,6 +565,7 @@ int main() {
     Writes(stream);
     Buffered();
     CallbackMutation(stream);
+    DetachWrites(stream);
     NullState(stream);
     GuestMapping(stream);
     Allocation();
