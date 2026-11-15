@@ -43,6 +43,20 @@ bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
     return ok;
 }
 
+struct Language {
+    char text[4]{};
+};
+
+bool CopyLanguage(const char*& language, Language& local) {
+    if (language == nullptr) return true;
+    for (std::size_t index = 0; index < 3; ++index) {
+        if (!CopyGuestIn(&local.text[index], language + index, sizeof(char))) return false;
+        if (local.text[index] == '\0') break;
+    }
+    language = local.text;
+    return true;
+}
+
 }
 
 extern "C" {
@@ -196,7 +210,8 @@ Bool APS5_VABI sceAvPlayerGetVideoDataEx(AvPlayerInternal* h, AvPlayerFrameInfoE
 AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData* init) {
     if (!init) return nullptr;
     AvPlayerInitData localInit{};
-    if (!CopyGuestIn(&localInit, init, sizeof(localInit))) return nullptr;
+    Language language;
+    if (!CopyGuestIn(&localInit, init, sizeof(localInit)) || !CopyLanguage(localInit.default_language, language)) return nullptr;
     return new Player(localInit, VideoBufferCount(localInit.num_output_video_framebuffers));
 }
 
@@ -219,6 +234,8 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
         init.auto_start = localEx.auto_start;
     }
     init.default_language = localEx.default_language;
+    Language language;
+    if (!CopyLanguage(init.default_language, language)) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     auto* player = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(handle, &player, sizeof(player));

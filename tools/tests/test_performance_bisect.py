@@ -178,7 +178,7 @@ class CommandTests(unittest.TestCase):
                   "result_dir": Path("/tmp/results"), "commit": "abc123"}
         command = ["cmake", "--build", "{build_dir}", "literal;argument", "{commit}"]
         self.assertEqual(performance_bisect.format_command(command, values),
-                         ["cmake", "--build", "/tmp/source/build", "literal;argument", "abc123"])
+                         ["cmake", "--build", str(Path("/tmp/source/build")), "literal;argument", "abc123"])
 
     def test_build_commands_expand_paths_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -369,6 +369,19 @@ class CliExecutionTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("first measured regression: bad (54.00 FPS)", stdout.getvalue())
         bisect.assert_called_once()
+
+    def test_main_reports_a_non_ascii_output_path_as_utf8(self):
+        from io import BytesIO, TextIOWrapper
+        report = {"first_bad": {"commit": "bad", "median_fps": 54.0},
+                  "previous_good": {"commit": "good", "median_fps": 60.0}}
+        output = Path(tempfile.gettempdir()) / "界" / "report.json"
+        stdout = TextIOWrapper(BytesIO(), encoding="cp1252")
+        with patch.object(performance_bisect, "load_recipe", return_value={}), \
+                patch.object(performance_bisect, "bisect", return_value=report), patch("sys.stdout", stdout):
+            result = performance_bisect.main(["--good", "good", "--bad", "bad", "--recipe", "recipe.json", "--output", str(output)])
+            stdout.flush()
+        self.assertEqual(result, 0)
+        self.assertIn(f"report written to {output}", stdout.buffer.getvalue().decode("utf-8"))
 
     def test_main_rejects_a_missing_temporary_directory(self):
         from contextlib import redirect_stderr
@@ -573,6 +586,14 @@ class FocusedInputEdgeTests(unittest.TestCase):
     def test_recipe_rejects_absolute_build_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self.recipe_path(Path(directory), build_dir="/tmp/unsafe-build")
+            with self.assertRaisesRegex(ValueError, "relative path"):
+                performance_bisect.load_recipe(path)
+
+
+    @unittest.skipUnless(sys.platform == "win32", "drive-relative paths exist only on Windows")
+    def test_recipe_rejects_drive_relative_build_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), build_dir="D:unsafe-build")
             with self.assertRaisesRegex(ValueError, "relative path"):
                 performance_bisect.load_recipe(path)
 
