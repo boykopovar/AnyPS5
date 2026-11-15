@@ -500,6 +500,10 @@ int main(int argc, char** argv) {
 
     Require(Throws([&] { sceUsbdClose(&foreign); }), "closing a handle that was never opened did not throw");
     Require(sceUsbdRefDevice(nullptr) == nullptr, "null device was referenced");
+    errno = 71;
+    Require(sceUsbdGetActiveConfigDescriptor(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable active config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptor(&foreign, 0, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor output accepted");
+    Require(sceUsbdGetConfigDescriptorByValue(&foreign, 1, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor by value output accepted");
     sceUsbdUnrefDevice(nullptr);
 
     Require(Throws([&] { sceUsbdRefDevice(&foreign); }), "referencing a device that was never listed did not throw");

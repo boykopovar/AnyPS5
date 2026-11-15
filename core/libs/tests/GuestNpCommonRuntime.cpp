@@ -1521,6 +1521,8 @@ void TestJid() {
     const NpJid shapes[] = {{"u", "a1.-2.np.playstation.net", nullptr, 0}, {"u", "a1.b2.np.playstation.network", nullptr, 0}};
     for (const NpJid& bad : shapes) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "the domain code is alphanumeric and the suffix exact");
     Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid &&sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
+    errno = 71;
+    Require(sceNpUtilJidToNpId(reinterpret_cast<NpIdFull*>(0x10), &psn) == NpUtilInvalid && errno == 71, "an unwritable npid is refused and errno is kept");
 }
 
 void TestLanguagesAndDebugIds() {
