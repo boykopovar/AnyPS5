@@ -33,6 +33,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Side = 128;
 constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type2DArray = 13;
@@ -104,11 +105,11 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, std::uint32_t type) {
+std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, std::uint32_t type, std::uint32_t format) {
     const auto address = AddressOf(texels);
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((Side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
         0xfacu | (TileR64KBX << 20u) | (type << 28u),
         0u,
@@ -140,7 +141,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
 
 void Store(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::uint32_t value) {
     std::vector<std::uint32_t> userData(16, 0u);
-    const auto texture = TextureDescriptor(texels, Type2D);
+    const auto texture = TextureDescriptor(texels, Type2D, Format32UInt);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     userData[12] = value;
     Dispatch(device, StoreCode, userData);
@@ -150,7 +151,7 @@ void LoadArray(AgcDriver::VulkanDevice& device, const std::uint8_t* texels) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
-    const auto texture = TextureDescriptor(texels, Type2DArray);
+    const auto texture = TextureDescriptor(texels, Type2DArray, Format32Float);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     Dispatch(device, LoadArrayCode, userData);
