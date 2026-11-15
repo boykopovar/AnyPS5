@@ -257,7 +257,8 @@ public:
 
     [[nodiscard]] ConvertResult Convert(
         std::vector<std::uint8_t> fileBytes,
-        const std::vector<Domain::ProgramHeader>& segments
+        const std::vector<Domain::ProgramHeader>& segments,
+        const std::vector<CodeSegmentExtent>& extents
     ) const override;
 
 private:
@@ -274,6 +275,8 @@ private:
         std::vector<std::uint8_t>& fileBytes,
         const Domain::ProgramHeader& ph,
         const std::vector<Domain::ProgramHeader>& segments,
+        std::size_t codeSize,
+        const std::vector<Domain::CodeRange>& unwindRanges,
         ConvertResult& result,
         std::uint64_t completed,
         std::uint64_t total
@@ -348,6 +351,8 @@ void Amd64OnlyConverter::_convertSegment(
     std::vector<std::uint8_t>& fileBytes,
     const Domain::ProgramHeader& ph,
     const std::vector<Domain::ProgramHeader>& segments,
+    const std::size_t codeSize,
+    const std::vector<Domain::CodeRange>& unwindRanges,
     ConvertResult& result,
     std::uint64_t completed,
     std::uint64_t total
@@ -362,21 +367,21 @@ void Amd64OnlyConverter::_convertSegment(
         fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize)
     );
 
-    const auto scanner = MakeInstructionScanner([&](auto offset, auto) { if (progress) progress(completed + offset, total); });
-    const auto matches = _atFileOffset(ph.Offset, [&] { return scanner->ScanCodeSection(seg, 0, seg.size()); });
+    const auto scanner = MakeInstructionScanner([&](auto offset, auto) { if (progress) progress(completed + offset, total); }, unwindRanges);
+    const auto matches = _atFileOffset(ph.Offset, [&] { return scanner->ScanCodeSection(seg, 0, codeSize); });
 
-    if (progress) progress(completed + segSize, total);
+    if (progress) progress(completed + codeSize, total);
     std::vector<Pending> pending;
     for (std::size_t index = 0; index < matches.size(); ++index) {
-        if (progress && index != 0 && index % 4096 == 0) progress(completed + segSize + matches[index].Offset, total);
+        if (progress && index != 0 && index % 4096 == 0) progress(completed + codeSize + matches[index].Offset, total);
         const auto& match = matches[index];
         auto substitution = _atFileOffset(ph.Offset + match.Offset, [&] { return _matcher->Match(seg.data() + match.Offset, match.Length); });
         if (substitution.has_value())
             pending.push_back({index, match, std::move(*substitution)});
     }
-    if (progress) progress(completed + std::uint64_t{2} * segSize, total);
+    if (progress) progress(completed + std::uint64_t{2} * codeSize, total);
     if (pending.empty()) {
-        if (progress) progress(completed + std::uint64_t{3} * segSize, total);
+        if (progress) progress(completed + std::uint64_t{3} * codeSize, total);
         return;
     }
 
@@ -393,7 +398,7 @@ void Amd64OnlyConverter::_convertSegment(
 
     std::size_t processed = 0;
     for (const auto& item : pending) {
-        if (progress && processed != 0 && processed % 256 == 0) progress(completed + std::uint64_t{2} * segSize + item.Instruction.Offset, total);
+        if (progress && processed != 0 && processed % 256 == 0) progress(completed + std::uint64_t{2} * codeSize + item.Instruction.Offset, total);
         ++processed;
         if (consumed.contains(item.Index))
             continue;
@@ -497,26 +502,32 @@ void Amd64OnlyConverter::_convertSegment(
     if (seg.size() != segSize)
         throw CodegenException("Code segment size changed during Intel conversion", ph.Offset);
     std::copy(seg.begin(), seg.end(), fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset));
-    if (progress) progress(completed + std::uint64_t{3} * segSize, total);
+    if (progress) progress(completed + std::uint64_t{3} * codeSize, total);
 }
 
 ConvertResult Amd64OnlyConverter::Convert(
     std::vector<std::uint8_t> fileBytes,
-    const std::vector<Domain::ProgramHeader>& segments
+    const std::vector<Domain::ProgramHeader>& segments,
+    const std::vector<CodeSegmentExtent>& extents
 ) const {
     ConvertResult result{};
     std::uint64_t total = 0;
     for (const auto& ph : segments) {
         if (ph.Type != kLoadSegment || (ph.Flags & kExecutableSegment) == 0) continue;
-        if (ph.FileSize > (std::numeric_limits<std::uint64_t>::max() - total) / 3) throw CodegenException("Instruction conversion progress size overflow");
-        total += 3 * ph.FileSize;
+        const auto it = std::find_if(extents.begin(), extents.end(), [&](const CodeSegmentExtent& ext) { return ext.MappedAddress == ph.MappedAddress; });
+        const auto codeSize = it != extents.end() && it->CodeSize > 0 && it->CodeSize <= ph.FileSize ? it->CodeSize : static_cast<std::size_t>(ph.FileSize);
+        if (codeSize > (std::numeric_limits<std::uint64_t>::max() - total) / 3) throw CodegenException("Instruction conversion progress size overflow");
+        total += 3 * codeSize;
     }
     if (progress) progress(0, total);
     std::uint64_t completed = 0;
     for (const auto& ph : segments) {
         if (ph.Type != kLoadSegment || (ph.Flags & kExecutableSegment) == 0) continue;
-        _convertSegment(fileBytes, ph, segments, result, completed, total);
-        completed += 3 * ph.FileSize;
+        const auto it = std::find_if(extents.begin(), extents.end(), [&](const CodeSegmentExtent& ext) { return ext.MappedAddress == ph.MappedAddress; });
+        const auto codeSize = it != extents.end() && it->CodeSize > 0 && it->CodeSize <= ph.FileSize ? it->CodeSize : static_cast<std::size_t>(ph.FileSize);
+        const auto unwindRanges = it != extents.end() ? it->UnwindRanges : std::vector<Domain::CodeRange>{};
+        _convertSegment(fileBytes, ph, segments, codeSize, unwindRanges, result, completed, total);
+        completed += 3 * codeSize;
     }
     if (progress) progress(total, total);
     result.Bytes = std::move(fileBytes);

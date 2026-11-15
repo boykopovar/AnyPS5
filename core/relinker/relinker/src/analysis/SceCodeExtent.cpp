@@ -55,4 +55,27 @@ std::vector<CodeRange> SceUnwindRanges(std::span<const std::uint8_t> segment, Vi
     return ranges;
 }
 
+std::vector<Codegen::CodeSegmentExtent> FindCodeSegmentExtents(std::span<const std::uint8_t> bytes, const std::vector<Domain::ProgramHeader>& headers, const std::vector<UnusedNidFilter::StrictCodeRegion>& functions, VirtualAddress pltGot, ByteCount pltRelocationsSize) {
+    const bool sceImage = std::any_of(headers.begin(), headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x61000000; });
+    const bool hasEhFrame = sceImage || std::any_of(headers.begin(), headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x6474e550; });
+    std::vector<Codegen::CodeSegmentExtent> extents;
+    for (const auto& header : headers) {
+        if (header.Type != 1 || (header.Flags & 1) == 0 || header.Offset > bytes.size() || header.FileSize > bytes.size() - header.Offset)
+            continue;
+        std::size_t codeSize = static_cast<std::size_t>(header.FileSize);
+        if (sceImage) {
+            const std::span<const std::uint8_t> seg(bytes.data() + header.Offset, header.FileSize);
+            if (const auto end = FindSceCodeEnd(seg, header.MappedAddress, functions, pltGot, pltRelocationsSize))
+                codeSize = static_cast<std::size_t>(*end - header.MappedAddress);
+        }
+        std::vector<Domain::CodeRange> unwindRanges;
+        if (hasEhFrame) {
+            const std::span<const std::uint8_t> seg(bytes.data() + header.Offset, codeSize);
+            unwindRanges = SceUnwindRanges(seg, header.MappedAddress, functions);
+        }
+        extents.push_back({header.MappedAddress, codeSize, std::move(unwindRanges)});
+    }
+    return extents;
+}
+
 }

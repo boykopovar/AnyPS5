@@ -2580,6 +2580,19 @@ void scannerUnwindRanges() {
     require(Codegen::MakeInstructionScanner()->ScanCodeSection(crossing, 0, crossing.size()).front().Length == 5, "Without unwind ranges the crossing instruction must decode whole");
 }
 
+void converterCodeSegmentExtents() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    auto file = segmentFixture();
+    for (std::size_t i = 0x214; i < 0x240; ++i) {
+        file[i] = 0xF0;
+    }
+    const auto header = segmentHeader(0x40);
+    requireFailure([&] { (void)converter->Convert(file, {header}); }, "Undecodable trailing data without extents must fail");
+    const Codegen::CodeSegmentExtent extent{0x1000, 20, {}};
+    const auto result = converter->Convert(file, {header}, {extent});
+    require(result.ReplacedCount == 1 && result.Reports.size() == 2 && result.Trampolines.size() == 1, "Converter did not convert instructions within extent");
+}
+
 int main() {
     try {
         decoderLengths();
@@ -2644,6 +2657,7 @@ int main() {
         linuxStackSynthesis();
         scannerZeroTail();
         scannerUnwindRanges();
+        converterCodeSegmentExtents();
         std::cout << "AMD64-only converter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

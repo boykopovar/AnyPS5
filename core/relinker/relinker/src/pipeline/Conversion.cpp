@@ -19,6 +19,7 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <codegen/x86/RedZoneFramer.hpp>
+#include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <map>
 #include <codegen/CodegenException.hpp>
@@ -70,8 +71,26 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     }
     std::vector<Codegen::TrampolineSite> trampolines;
     if (options.ToIntel) {
-        const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
-        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
+        Relinker::ElfReader reader(std::move(sourceBytes));
+        const auto segments = reader.ReadProgramHeaders();
+        const bool sceImage = std::any_of(segments.begin(), segments.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x61000000; });
+        const bool hasEhFrame = sceImage || std::any_of(segments.begin(), segments.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x6474e550; });
+        std::vector<Relinker::UnusedNidFilter::StrictCodeRegion> functions;
+        Domain::VirtualAddress pltGot = 0;
+        Domain::ByteCount pltRelocationsSize = 0;
+        if (hasEhFrame) {
+            for (const auto& header : segments) {
+                if (header.Type == 2) {
+                    for (const auto& tag : reader.ReadDynamicTags(header)) {
+                        if (tag.Tag == 0x61000027 || tag.Tag == 3) pltGot = tag.Value;
+                        if (tag.Tag == 0x6100002d || tag.Tag == 2) pltRelocationsSize = tag.Value;
+                    }
+                }
+            }
+            functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(reader.GetRawBytes(), segments, {}, {});
+        }
+        const auto extents = Relinker::FindCodeSegmentExtents(reader.GetRawBytes(), segments, functions, pltGot, pltRelocationsSize);
+        auto converted = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTargetFor(options.ToRosetta, options.ToAvx), [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(reader.TakeBytes(), segments, extents);
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
