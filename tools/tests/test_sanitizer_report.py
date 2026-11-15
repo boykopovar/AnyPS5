@@ -172,6 +172,11 @@ class SanitizerReportTests(unittest.TestCase):
                          {"fiber": "stack switch", "both": "shared   reason"})
         self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {"racy": "interceptor gap"})
 
+    def test_a_test_known_under_two_selected_sanitizers_keeps_both_reasons(self):
+        known = self.write_known("fiber address stack switch", "fiber undefined misaligned load", "fiber thread interceptor gap")
+        self.assertEqual(sanitizer_report.load_known(known, ["address", "undefined"]), {"fiber": "stack switch; misaligned load"})
+        self.assertEqual(sanitizer_report.load_known(known, ["undefined"]), {"fiber": "misaligned load"})
+
     def test_utf8_bom_does_not_change_the_first_known_test_name(self):
         known = self.write("\ufefffiber address stack switch\n", "known.txt")
         self.assertEqual(sanitizer_report.load_known(known, ["address"]), {"fiber": "stack switch"})
