@@ -92,9 +92,14 @@ void CheckWordFilter() {
     Require(sceNpWordFilterCensorComment(sync, "word", &sanitized) == InvalidArgument, "sceNpWordFilterCensorComment", "an option was taken");
     longComment[0x400] = 'a';
     Require(sceNpWordFilterCensorComment(sync, longComment, nullptr) == InvalidArgument, "sceNpWordFilterCensorComment", "a 0x401-byte comment was taken");
+    errno = 71;
+    Require(sceNpWordFilterCensorComment(sync, reinterpret_cast<const char*>(0x10), nullptr) == InvalidArgument && errno == 71,
+            "sceNpWordFilterCensorComment", "an unreadable comment was taken or modified errno");
     Require(sceNpWordFilterCensorComment(sync + 100, "word", nullptr) == InvalidId, "sceNpWordFilterCensorComment", "an unknown request was taken");
     longComment[0x400] = 0;
-    Require(sceNpWordFilterCensorComment(sync, longComment, nullptr) == SignedOut, "sceNpWordFilterCensorComment", "a 0x400-byte comment did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpWordFilterCensorComment(sync, longComment, nullptr) == SignedOut && errno == 71,
+            "sceNpWordFilterCensorComment", "a 0x400-byte comment did not return SIGNED_OUT or modified errno");
     Require(sceNpWordFilterCensorComment(sync, "word", nullptr) == InvalidType, "sceNpWordFilterCensorComment", "a used request did not return INVALID_TYPE");
     int result = 7;
     Require(sceNpWordFilterPollAsync(sync, &result) == InvalidId && result == 7, "sceNpWordFilterPollAsync", "a synchronous request was polled");
@@ -109,6 +114,9 @@ void CheckWordFilter() {
     Require(sceNpWordFilterSanitizeComment(async, "word", nullptr, nullptr) == InsufficientArgument, "sceNpWordFilterSanitizeComment", "a null output was taken");
     Require(sceNpWordFilterSanitizeComment(async, nullptr, sanitized, &result) == InsufficientArgument, "sceNpWordFilterSanitizeComment", "a null comment was not refused before the option");
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, &result) == InvalidArgument, "sceNpWordFilterSanitizeComment", "an option was taken");
+    errno = 71;
+    Require(sceNpWordFilterSanitizeComment(async, reinterpret_cast<const char*>(0x10), sanitized, nullptr) == InvalidArgument && errno == 71,
+            "sceNpWordFilterSanitizeComment", "an unreadable comment was taken or modified errno");
     Require(sceNpWordFilterSanitizeComment(async, "word", sanitized, nullptr) == 0, "sceNpWordFilterSanitizeComment", "the asynchronous request did not start");
     Require(sceNpWordFilterPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpWordFilterPollAsync", "the request did not finish with SIGNED_OUT");
     errno = 71;
@@ -403,9 +411,14 @@ void CheckLookupNet() {
     Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", selfNpId) == InvalidArgument, "sceNpLookupNetCensorComment", "an option was taken");
     const std::string longComment(0x401, 'a');
     Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, longComment.c_str(), nullptr) == InvalidArgument, "sceNpLookupNetCensorComment", "a 0x401-byte comment was taken");
+    errno = 71;
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, reinterpret_cast<const char*>(0x10), nullptr) == InvalidArgument && errno == 71,
+            "sceNpLookupNetCensorComment", "an unreadable comment was taken or modified errno");
     Require(sceNpLookupNetCensorComment(censorRequest, nullptr, "word", nullptr) == InsufficientArgumentNet, "sceNpLookupNetCensorComment", "a null NpId was taken");
     Require(sceNpLookupNetCensorComment(censorRequest + 100, selfNpId, "word", nullptr) == InvalidIdNet, "sceNpLookupNetCensorComment", "an unknown request was taken");
-    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == SignedOut, "sceNpLookupNetCensorComment", "the censor did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == SignedOut && errno == 71,
+            "sceNpLookupNetCensorComment", "the censor did not return SIGNED_OUT or modified errno");
     Require(sceNpLookupNetCensorComment(censorRequest, selfNpId, "word", nullptr) == InvalidTypeNet, "sceNpLookupNetCensorComment", "a used request did not return INVALID_TYPE");
     const int sanitizeRequest = sceNpLookupNetCreateRequest(secondContext);
     Require(sanitizeRequest == 4, "sceNpLookupNetCreateRequest", "the sanitize request is not id 4");
@@ -414,9 +427,14 @@ void CheckLookupNet() {
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, nullptr, sanitized, nullptr) == InsufficientArgumentNet, "sceNpLookupNetSanitizeComment", "a null comment was taken");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, selfNpId) == InvalidArgument, "sceNpLookupNetSanitizeComment", "an option was taken");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, longComment.c_str(), sanitized, nullptr) == InvalidArgument, "sceNpLookupNetSanitizeComment", "a 0x401-byte comment was taken");
+    errno = 71;
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, reinterpret_cast<const char*>(0x10), sanitized, nullptr) == InvalidArgument && errno == 71,
+            "sceNpLookupNetSanitizeComment", "an unreadable comment was taken or modified errno");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, nullptr, "word", sanitized, nullptr) == InsufficientArgumentNet, "sceNpLookupNetSanitizeComment", "a null NpId was taken");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest + 100, selfNpId, "word", sanitized, nullptr) == InvalidIdNet, "sceNpLookupNetSanitizeComment", "an unknown request was taken");
-    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == SignedOut, "sceNpLookupNetSanitizeComment", "the sanitize did not return SIGNED_OUT");
+    errno = 71;
+    Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == SignedOut && errno == 71,
+            "sceNpLookupNetSanitizeComment", "the sanitize did not return SIGNED_OUT or modified errno");
     Require(sceNpLookupNetSanitizeComment(sanitizeRequest, selfNpId, "word", sanitized, nullptr) == InvalidTypeNet, "sceNpLookupNetSanitizeComment", "a used request did not return INVALID_TYPE");
     Require(sceNpLookupNetDeleteTitleCtx(secondContext) == 0, "sceNpLookupNetDeleteTitleCtx", "deleting the second context failed");
     Require(sceNpLookupNetTerm() == 0, "sceNpLookupNetTerm", "the second termination failed");
