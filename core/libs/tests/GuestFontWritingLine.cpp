@@ -1,5 +1,6 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -291,6 +292,8 @@ int main() {
     Require(sceFontDestroyWritingLine(&line) == SCE_FONT_OK && line == nullptr);
     Require(sceFontDestroyWritingLine(&line) == SCE_FONT_ERROR_INVALID_PARAMETER && line == nullptr);
     Require(sceFontDestroyWritingLine(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontDestroyWritingLine(reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontWritingLineClear(destroyed) == SCE_FONT_ERROR_INVALID_WRITING);
     Require(sceFontWritingLineWritesOrder(destroyed, Attribute(0), &runA, &a) == SCE_FONT_ERROR_INVALID_WRITING);
     Require(sceFontDestroyWritingLine(&ltr) == SCE_FONT_OK && ltr == nullptr);

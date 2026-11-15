@@ -367,16 +367,18 @@ int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* 
 
 int APS5_VABI sceFontDestroyString(FontString* pFontString) {
     if (!pFontString) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    auto* data = GetStringData(*pFontString);
+    FontString string = nullptr;
+    if (!Font::CopyInGuest(string, pFontString)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* data = GetStringData(string);
     if (!data) {
-        *pFontString = nullptr;
+        Font::CopyOutGuest(pFontString, FontString{});
         return SCE_FONT_ERROR_INVALID_STRING;
     }
+    if (!Font::CopyOutGuest(pFontString, FontString{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const FontMemory* memory = data->memory;
     data->magic = 0;
     if (data->characters) memory->iface->dealloc(memory->mspace_handle, data->characters);
     memory->iface->dealloc(memory->mspace_handle, data);
-    *pFontString = nullptr;
     return SCE_FONT_OK;
 }
 
