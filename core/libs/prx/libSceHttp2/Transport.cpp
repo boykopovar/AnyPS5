@@ -463,9 +463,11 @@ struct Request::State {
         return decision == 0 ? 0 : -1;
     }
 
-    void Check(Limit deadline) const {
+    void Check(Limit deadline) {
+        const bool wasCancelled = cancelled.load();
+        if (const auto hook = CheckHookSlot().load(std::memory_order_acquire)) hook(stopped, cancelled);
         Require(!stopped.load(), "sceHttp2: request deleted during an operation; console error mapping is unknown");
-        if (cancelled.load()) Raise(Aborted, "sceHttp2: request cancelled; console error mapping is unknown");
+        if (wasCancelled) Raise(Aborted, "sceHttp2: request cancelled; console error mapping is unknown");
         if (Clock::now() >= deadline.at) Raise(deadline.code, "sceHttp2: request timed out; console error mapping is unknown");
     }
 
