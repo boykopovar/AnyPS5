@@ -521,6 +521,14 @@ int main(int argc, char** argv) {
     Require(sceUsbdControlTransfer(nullptr, 0x80, 6, 0x100, 0, descriptor, 18, 1000) == invalidArgument, "null handle control transfer accepted");
     Require(sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, nullptr, 18, 1000) == invalidArgument, "control transfer without data accepted");
     Require(Throws([&] { sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, descriptor, 18, 1000); }), "control transfer on a handle that was never opened did not throw");
+    std::int32_t transferred = 0x5A5A;
+    Require(sceUsbdBulkTransfer(nullptr, 0x81, descriptor, 18, &transferred, 1000) == invalidArgument && transferred == 0x5A5A, "null handle bulk transfer accepted");
+    Require(Throws([&] { sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, &transferred, 1000); }) && transferred == 0, "bulk transfer on a handle that was never opened did not throw after clearing the count");
+    transferred = 0x5A5A;
+    Require(Throws([&] { sceUsbdInterruptTransfer(&foreign, 0x81, descriptor, 18, &transferred, 1000); }) && transferred == 0, "interrupt transfer on a handle that was never opened did not throw after clearing the count");
+    errno = 71;
+    Require(sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable bulk transfer count accepted");
+    Require(sceUsbdInterruptTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable interrupt transfer count accepted");
     Require(sceUsbdGetStringDescriptor(nullptr, 1, 0x409, descriptor, 18) == invalidArgument, "null handle string descriptor accepted");
     Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, descriptor, 0) == invalidArgument, "empty string descriptor buffer accepted");
     descriptor[0] = 0x55;
