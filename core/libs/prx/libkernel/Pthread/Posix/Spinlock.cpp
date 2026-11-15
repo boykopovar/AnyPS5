@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "Common.hpp"
 #include <atomic>
+#include <cerrno>
 #include <new>
 #include <stdexcept>
 #include <thread>
@@ -14,6 +15,27 @@ constexpr int GUEST_EBUSY = 16;
 constexpr int PROCESS_PRIVATE = 0;
 constexpr int SPIN_COUNT = 100000;
 
+bool CopyInSpinlock(PthreadSpinlockPrivate* const* lock, PthreadSpinlockPrivate*& spinlock) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&spinlock, lock, sizeof(spinlock));
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutSpinlock(PthreadSpinlockPrivate** lock, PthreadSpinlockPrivate* spinlock) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(lock, &spinlock, sizeof(spinlock));
+    errno = savedErrno;
+    return copied;
+}
+
+int LoadSpinlock(PthreadSpinlockPrivate* const* lock, PthreadSpinlockPrivate*& spinlock) {
+    if (!lock) return PosixThread::GUEST_EINVAL;
+    if (!CopyInSpinlock(lock, spinlock)) return PosixThread::GUEST_EFAULT;
+    if (!spinlock) return PosixThread::GUEST_EINVAL;
+    return 0;
+}
+
 bool tryAcquire(PthreadSpinlockPrivate* spinlock) {
     std::thread::id unowned{};
     return spinlock->owner.compare_exchange_strong(unowned, std::this_thread::get_id(), std::memory_order_acquire, std::memory_order_relaxed);
@@ -24,29 +46,33 @@ bool tryAcquire(PthreadSpinlockPrivate* spinlock) {
 extern "C" {
 
 int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int pshared) {
-    if (!lock) return PosixThread::GUEST_EINVAL;
-    if (pshared != PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
+    if (!lock || pshared != PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
     auto* spinlock = new (std::nothrow) PthreadSpinlockPrivate;
     if (!spinlock) return GUEST_ENOMEM;
-    *lock = spinlock;
+    if (!CopyOutSpinlock(lock, spinlock)) {
+        delete spinlock;
+        return PosixThread::GUEST_EFAULT;
+    }
     return 0;
 }
 
 int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
-    delete *lock;
-    *lock = nullptr;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (const int error = LoadSpinlock(lock, spinlock)) return error;
+    if (!CopyOutSpinlock(lock, nullptr)) return PosixThread::GUEST_EFAULT;
+    delete spinlock;
     return 0;
 }
 
 int APS5_VABI pthread_spin_trylock_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
-    return tryAcquire(*lock) ? 0 : GUEST_EBUSY;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (const int error = LoadSpinlock(lock, spinlock)) return error;
+    return tryAcquire(spinlock) ? 0 : GUEST_EBUSY;
 }
 
 int APS5_VABI pthread_spin_lock_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
-    auto* spinlock = *lock;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (const int error = LoadSpinlock(lock, spinlock)) return error;
     if (spinlock->owner.load(std::memory_order_relaxed) == std::this_thread::get_id())
         throw std::runtime_error("pthread_spin_lock: the calling thread already holds the lock and would spin forever");
     int count = SPIN_COUNT;
@@ -62,9 +88,10 @@ int APS5_VABI pthread_spin_lock_nid_postfix(PthreadSpinlockPrivate** lock) {
 }
 
 int APS5_VABI pthread_spin_unlock_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (const int error = LoadSpinlock(lock, spinlock)) return error;
     auto owner = std::this_thread::get_id();
-    if (!(*lock)->owner.compare_exchange_strong(owner, std::thread::id{}, std::memory_order_release, std::memory_order_relaxed))
+    if (!spinlock->owner.compare_exchange_strong(owner, std::thread::id{}, std::memory_order_release, std::memory_order_relaxed))
         return GUEST_EPERM;
     return 0;
 }
