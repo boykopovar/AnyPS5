@@ -390,6 +390,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_audio_out_ports PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
+
     add_test_executable(guest_audio_out_ex_monitor_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutExMonitorBounds.cpp)
     target_include_directories(guest_audio_out_ex_monitor_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_audio_out_ex_monitor_bounds_tests PRIVATE libSceAudioOut libc)
@@ -407,6 +408,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_audio_out2_latency_attributes_bounds COMMAND guest_audio_out2_latency_attributes_bounds_tests)
     if(WIN32)
         set_tests_properties(guest_audio_out2_latency_attributes_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(guest_audio_out_mastering_state_init_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutMasteringStateInitBounds.cpp)
+    target_include_directories(guest_audio_out_mastering_state_init_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_mastering_state_init_bounds_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out_mastering_state_init_bounds_tests)
+    add_test(NAME guest_audio_out_mastering_state_init_bounds COMMAND guest_audio_out_mastering_state_init_bounds_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_mastering_state_init_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
