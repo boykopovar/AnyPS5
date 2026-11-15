@@ -1348,13 +1348,17 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
         }
         case SCE_NGS2_RACK_ID_CUSTOM_SAMPLER: {
             if (state_size != sizeof(Ngs2CustomSamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            auto& sampler = *reinterpret_cast<Ngs2CustomSamplerVoiceState*>(state);
-            if (voice.pendingPlay) { sampler = {}; sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE; return SCE_NGS2_OK; }
-            sampler = {};
-            sampler.voice_state.state_flags = voice.stateFlags;
-            if ((voice.rack->system == nullptr || voice.rack->system->renderDepth == 0) && voice.state == Ngs2PlayState::Empty) return SCE_NGS2_OK;
-            sampler.num_decoded_samples = voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0
-                ? voice.publishedSampler.num_decoded_samples : voice.decodedSamples;
+            Ngs2CustomSamplerVoiceState sampler{};
+            if (voice.pendingPlay) {
+                sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE;
+            } else {
+                sampler.voice_state.state_flags = voice.stateFlags;
+                if (!((voice.rack->system == nullptr || voice.rack->system->renderDepth == 0) && voice.state == Ngs2PlayState::Empty)) {
+                    sampler.num_decoded_samples = voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0
+                        ? voice.publishedSampler.num_decoded_samples : voice.decodedSamples;
+                }
+            }
+            if (!WriteGuestBytes(state, &sampler, sizeof(sampler))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING: {
