@@ -397,6 +397,21 @@ void PrebuildPolicyReadback(AgcDriver::VulkanDevice& device, bool disabled) {
     device.Draw(state, {0u, 3u, 0u, 1u, 0u, false}, shaders);
     device.WaitIdle();
     Require(std::ranges::all_of(pixels, [](const auto value) { return value == 0xffffffffu; }), "prebuild policy changed native prepared-shader readback");
+    if (!disabled && device.GraphicsPipelineLibraries()) {
+        ShaderRecompiler::RecompileResult pushless;
+        pushless.spirv = {0x07230203u, 0x00010000u, 0u, 6u, 0u, 0x00020011u, 1u, 0x0003000eu, 0u, 1u, 0x0005000fu, 4u, 4u, 0x6e69616du, 0u, 0x00030010u, 4u, 7u, 0x00020013u, 2u, 0x00030021u, 3u, 2u, 0x00050036u, 2u, 4u, 0u, 3u, 0x000200f8u, 5u, 0x000100fdu, 0x00010038u};
+        pushless.variantId = 0x70757368u;
+        pushless.runtimeAbiVersion = ShaderRecompiler::RuntimeAbi::Version;
+        const std::array<AgcDriver::Graphics::CompiledShader, 1> pixelOnly{{{ShaderStage::Fragment, &pushless, AgcDriver::Graphics::PipelinePushSlotBytes}}};
+        const auto prebuilt = AgcDriver::Graphics::PipelineLibraryCountersOf(device.Device()).built[2];
+        Require(device.PrebuildGraphicsLibraries(decoded.state.stages, pixelOnly), "prebuild policy: a pixel stage's libraries were not prebuilt");
+        const auto built = AgcDriver::Graphics::PipelineLibraryCountersOf(device.Device()).built[2];
+        Require(built == prebuilt + 1u, "prebuild policy: a pixel stage without push constants did not build its fragment library");
+        shaders.back() = {ShaderStage::Fragment, &pushless, 0u};
+        device.Draw(state, {0u, 3u, 0u, 1u, 0u, false}, shaders);
+        device.WaitIdle();
+        Require(AgcDriver::Graphics::PipelineLibraryCountersOf(device.Device()).built[2] == built, "prebuild policy: a draw built the fragment library its pixel stage had prebuilt");
+    }
 }
 
 void RetainedPixelMatchesNullProgram(AgcDriver::VulkanDevice& device) {

@@ -134,8 +134,17 @@ Outcome ProofsFollowTheRuns() {
     const auto tail = guest.Data() + guest.Bytes();
     GuestAllocations::Mutation().Add(tail, OtherBytes, true, true, true);
     const bool held = Graphics::HostImportsReconciledUnchanged(probe, proof);
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Graphics::GuestBufferMemory promoting(device->graphicsContext());
+        promoting.AcquireRegistered();
+        promoting.Upload(true);
+        promoting.WriteBack();
+    }
+    const bool replaced = !Graphics::HostImportsReconciledUnchanged(probe, proof) && Graphics::HostImportCovers(probe, guest.Address(), ImportWindowBytes);
     GuestAllocations::Mutation().Remove(tail);
-    Require(!held, "host import proofs: a registration completed the import window of " + Hex(guest.Address()) + ", but the proof over its import held");
+    Require(held, "host import proofs: a registration completed the import window of " + Hex(guest.Address()) + ", and the proof over its unchanged import broke");
+    Require(replaced, "host import proofs: the next build did not import the window of " + Hex(guest.Address()) + " whole, replacing the import under the proof");
     return Outcome::Passed;
 }
 

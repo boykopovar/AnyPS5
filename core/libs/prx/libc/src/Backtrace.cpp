@@ -1,7 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -114,6 +113,11 @@ std::size_t RecordSize(const Frame& frame) {
     return (NameOffset + frame.module.size() + 1 + 7) & ~std::size_t{7};
 }
 
+void WriteBacktraceOutput(void* destination, const void* source, std::size_t bytes, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(std::string(function) + ": unwritable output");
+}
+
 }  // namespace
 
 extern "C" {
@@ -123,31 +127,35 @@ int APS5_VABI sceLibcBacktraceGetBufferSize_nid_postfix(int limit, int* count, s
     const auto frames = CaptureFrames(limit, __builtin_return_address(0));
     std::size_t total = 0;
     for (const auto& frame : frames) total += RecordSize(frame);
-    *count = static_cast<int>(frames.size());
-    *size = total;
+    const int frameCount = static_cast<int>(frames.size());
+    WriteBacktraceOutput(count, &frameCount, sizeof(frameCount), __func__);
+    WriteBacktraceOutput(size, &total, sizeof(total), __func__);
     return 0;
 }
 
 int APS5_VABI sceLibcBacktraceSelf_nid_postfix(int limit, void* buffer, std::size_t size, int* count) {
     if (buffer == nullptr || count == nullptr) throw std::invalid_argument("sceLibcBacktraceSelf: null argument");
     const auto frames = CaptureFrames(limit, __builtin_return_address(0));
-    auto* cursor = static_cast<std::byte*>(buffer);
+    const auto base = reinterpret_cast<std::uintptr_t>(buffer);
+    std::size_t used = 0;
     FrameRecord* previous = nullptr;
     int written = 0;
     for (const auto& frame : frames) {
         const auto bytes = RecordSize(frame);
-        if (static_cast<std::size_t>(cursor - static_cast<std::byte*>(buffer)) + bytes > size) break;
-        auto* record = reinterpret_cast<FrameRecord*>(cursor);
-        record->next = nullptr;
-        record->offset = frame.offset;
-        record->reserved = 0;
-        std::memcpy(cursor + NameOffset, frame.module.c_str(), frame.module.size() + 1);
-        if (previous != nullptr) previous->next = record;
+        if (bytes > size - used) break;
+        if (used > UINTPTR_MAX - base || bytes > UINTPTR_MAX - base - used)
+            throw std::invalid_argument("sceLibcBacktraceSelf: output range wraps");
+        auto* record = reinterpret_cast<FrameRecord*>(base + used);
+        const FrameRecord value{nullptr, frame.offset, 0};
+        WriteBacktraceOutput(record, &value, sizeof(value), __func__);
+        WriteBacktraceOutput(reinterpret_cast<void*>(base + used + NameOffset), frame.module.c_str(),
+                             frame.module.size() + 1, __func__);
+        if (previous != nullptr) WriteBacktraceOutput(previous, &record, sizeof(record), __func__);
         previous = record;
-        cursor += bytes;
+        used += bytes;
         ++written;
     }
-    *count = written;
+    WriteBacktraceOutput(count, &written, sizeof(written), __func__);
     return 0;
 }
 

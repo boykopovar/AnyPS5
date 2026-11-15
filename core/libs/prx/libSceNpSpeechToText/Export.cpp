@@ -4,6 +4,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int SCE_NP_STT_ERROR_NOT_INITIALIZED = static_cast<int>(0x8193F000);
+
+}
+
 extern "C" {
 
 APS5_DUMMY_FUN
@@ -13,15 +19,15 @@ APS5_DUMMY_FUN
 extern "C" {
 
 int APS5_VABI sceNpSpeechToTextCreateContext() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_STT_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceNpSpeechToTextDestroyContext() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_STT_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceNpSpeechToTextGetEvent() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_STT_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceNpSpeechToTextInitialize() {
@@ -29,15 +35,15 @@ int APS5_VABI sceNpSpeechToTextInitialize() {
 }
 
 int APS5_VABI sceNpSpeechToTextStart() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_STT_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceNpSpeechToTextStop() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_STT_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceNpSpeechToTextTerminate() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_STT_ERROR_NOT_INITIALIZED;
 }
 
 }

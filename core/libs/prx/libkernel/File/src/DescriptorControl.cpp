@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
@@ -580,6 +581,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         SetCloseOnExec(fd, command == CloseOnExecRequest);
         return 0;
     }
+    if (IsKqueueDescriptor_nid_no_patch(fd)) return Fail(GuestEnotty);
     if (command == NonblockingRequest) {
         int enable = 0;
         if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
@@ -607,8 +609,8 @@ void RememberDescriptor(int fd, int openFlags, bool fixedSizeWrites) {
 #endif
 }
 
-void RememberPipe(int fd) {
-    RememberDescriptor(fd, 0);
+void RememberPipe(int fd, int openFlags) {
+    RememberDescriptor(fd, openFlags);
     std::lock_guard lock(g_mutex);
     g_entries[fd].pipe = true;
 }

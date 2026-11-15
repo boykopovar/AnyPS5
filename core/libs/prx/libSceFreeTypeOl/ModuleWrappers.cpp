@@ -47,6 +47,7 @@ FREETYPEOL_STUB("4to3tThESn0", sceFreeTypeOlFtaSupportFormatBdf)
 FREETYPEOL_STUB("2D3H+1nhwqQ", sceFreeTypeOlFtaSupportFormatPcf)
 FREETYPEOL_STUB("upeKra1FaQk", sceFreeTypeOlFtaSupportFormatPfr)
 FREETYPEOL_STUB("Yu7mmGCjSYM", sceFreeTypeOlFtaSupportFormatWinFonts)
+FREETYPEOL_STUB("oM0zMNCfXKM", sceFreeTypeOlFtaSupportModules)
 FREETYPEOL_STUB("SDPzjFN7y4E", sceFreeTypeOlFtaSupportHinterAutoFitter)
 FREETYPEOL_STUB("3dTNNBoujn0", sceFreeTypeOlFtaSupportRendererRaster1)
 FREETYPEOL_STUB("b7S96aD8dkE", sceFreeTypeOlFtaSupportRendererSmooth)
@@ -375,6 +376,14 @@ int APS5_VABI sceFreeTypeOlFtaSupportRendererSmooth_nid_postfix(void* library) {
     return SupportModule(library, ModuleClass(ft_smooth_renderer_class));
 }
 APS5_EXPORT("b7S96aD8dkE", sceFreeTypeOlFtaSupportRendererSmooth_nid_postfix);
+
+int APS5_VABI sceFreeTypeOlFtaSupportModules_nid_postfix(void* library) {
+    const auto host = library ? static_cast<GuestLibrary*>(library)->host : nullptr;
+    if (!host) return 0x21;
+    FT_Add_Default_Modules(host);
+    return 0;
+}
+APS5_EXPORT("oM0zMNCfXKM", sceFreeTypeOlFtaSupportModules_nid_postfix);
 
 
 void APS5_VABI sceFreeTypeOlDoneGlyphSlot_nid_postfix(GuestGlyphSlotRec* slot) {

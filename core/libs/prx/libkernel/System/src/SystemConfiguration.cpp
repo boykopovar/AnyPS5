@@ -6,6 +6,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
@@ -203,11 +204,19 @@ struct GuestKinfoProc {
     std::int32_t parentPid;
     unsigned char reserved1[288];
     std::int64_t flag;
-    unsigned char reserved2[71];
+    unsigned char reserved2[18];
+    char threadName[17];
+    unsigned char reserved3[36];
     char command[20];
-    unsigned char reserved3[621];
+    unsigned char reserved4[35];
+    char moreThreadName[4];
+    unsigned char reserved5[90];
+    std::int32_t threadCount;
+    std::int32_t threadId;
+    unsigned char reserved6[484];
 };
 static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1088);
+static_assert(offsetof(GuestKinfoProc, threadName) == 394 && offsetof(GuestKinfoProc, moreThreadName) == 502 && offsetof(GuestKinfoProc, threadCount) == 596 && offsetof(GuestKinfoProc, threadId) == 600);
 
 GuestKinfoProc GuestProcessRecord() {
     GuestKinfoProc process{};
@@ -216,6 +225,22 @@ GuestKinfoProc GuestProcessRecord() {
     process.parentPid = getppid_nid_postfix();
     std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
     return process;
+}
+
+std::vector<GuestKinfoProc> GuestThreadRecords() {
+    const auto threads = LiveGuestThreadNames();
+    std::vector<GuestKinfoProc> records;
+    for (const auto& thread : threads) {
+        GuestKinfoProc record = GuestProcessRecord();
+        record.threadCount = static_cast<std::int32_t>(threads.size());
+        record.threadId = static_cast<std::int32_t>(thread.tid);
+        const std::size_t head = std::min(thread.name.size(), sizeof(record.threadName) - 1);
+        std::memcpy(record.threadName, thread.name.data(), head);
+        const std::size_t tail = std::min(thread.name.size() - head, sizeof(record.moreThreadName) - 1);
+        std::memcpy(record.moreThreadName, thread.name.data() + head, tail);
+        records.push_back(record);
+    }
+    return records;
 }
 
 std::vector<GuestVmEntry> GuestVmEntries() {
@@ -494,6 +519,22 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         }
         const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
+    }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 17) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength != 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        if (name[3] != getpid_nid_postfix()) {
+            *__error_nid_postfix() = 3;
+            return -1;
+        }
+        const auto records = GuestThreadRecords();
+        return CopyOut(records.data(), records.size() * sizeof(GuestKinfoProc), oldValue, oldLength);
     }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 35) {
         if (newValue != nullptr) {
