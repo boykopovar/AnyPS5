@@ -11012,10 +11012,6 @@ int APS5_VABI WKPageForceRepaint() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageGetAddsVisitedLinks() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageGetAllowsRemoteInspection() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11339,10 +11335,6 @@ int APS5_VABI WKPageSelectContextMenuItem() {
 }
 
 int APS5_VABI WKPageSelectFindMatch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetAddsVisitedLinks() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -30099,34 +30091,6 @@ int APS5_VABI _ZNK7WebCore16TrackPrivateBase5labelEv() {
 }
 
 int APS5_VABI _ZNK7WebCore16TrackPrivateBase8languageEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16URLDecomposition4hashEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16URLDecomposition4hostEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16URLDecomposition4portEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16URLDecomposition6searchEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16URLDecomposition8hostnameEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16URLDecomposition8pathnameEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore16URLDecomposition8protocolEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

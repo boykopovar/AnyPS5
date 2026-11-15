@@ -1,5 +1,9 @@
 # libSceAudioOut technical debt
 
+### Mastering guest access
+
+- [sceAudioOutMasteringGetState and sceAudioOutMasteringSetParam](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) - the legacy mastering state ID and parameter ID use checked guest reads, and state retrieval clears exactly the five original meter ranges through checked guest writes. Unmapped guest input or output throws through `APS5_INVALID_ARG_EX`, matching the established null-pointer error path while retaining the original initialized/ID validation precedence. Each meter is written separately, so a later inaccessible meter can leave earlier meter ranges cleared. Console behavior on unmapped guest addresses is unmeasured.
+
 ### Additional callable exports
 
 - [Additional callable exports](../../../core/libs/prx/libSceAudioOut/src/InventoryExports.cpp) - 33 import-resolution declarations throw through `NotImplemented_nid_no_patch`; prototypes and behavior are unverified. Both version-labelled images contain these NIDs in module `libSceAudioOut`: six under logical library `libSceAudioOut` and 27 under `libSceAudioOut2`. The labels do not independently authenticate firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Identified names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
