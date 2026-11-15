@@ -49,12 +49,9 @@ int APS5_VABI cairo_ft_font_face_create_for_pattern() {
 
 
 
-
-
 int APS5_VABI cairo_font_face_destroy() {
     NotImplemented_nid_no_patch(__func__);
 }
-
 
 
 int APS5_VABI cairo_pattern_create_linear() {
@@ -78,7 +75,6 @@ int APS5_VABI cairo_arc() {
 int APS5_VABI cairo_ft_scaled_font_unlock_face() {
     NotImplemented_nid_no_patch(__func__);
 }
-
 
 
 
@@ -116,7 +112,6 @@ int APS5_VABI cairo_pattern_set_filter() {
 int APS5_VABI cairo_ft_font_options_substitute() {
     NotImplemented_nid_no_patch(__func__);
 }
-
 
 
 
