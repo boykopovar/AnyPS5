@@ -163,9 +163,12 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -177,6 +180,57 @@ constexpr int ExpectingAnEcKey = 142;
 
 static_assert(sizeof(PkeyBitsFunction) == 8);
 static_assert(offsetof(LibreSsl3EvpPkey, method) == 8);
+
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <std::size_t N>
+void CopyRsaOutputs(const LibreSsl3Rsa* rsa, const char* function, const char* nullMessage,
+    const std::pair<const void**, const void* LibreSsl3Rsa::*> (&fields)[N]) {
+    bool anyOutput = false;
+    for (const auto& entry : fields) {
+        if (entry.first != nullptr) {
+            anyOutput = true;
+            break;
+        }
+    }
+    if (!rsa && anyOutput)
+        throw std::invalid_argument(nullMessage);
+    if (!anyOutput)
+        return;
+    LibreSsl3Rsa guestRsa{};
+    if (!CopyGuestInPreservingErrno(guestRsa, rsa))
+        NotImplemented_nid_no_patch(function);
+    const void* previous[N]{};
+    bool written[N]{};
+    for (std::size_t i = 0; i < N; ++i) {
+        const void** const out = fields[i].first;
+        if (!out)
+            continue;
+        const bool hadPrior = CopyGuestInPreservingErrno(previous[i], out);
+        if (!CopyGuestOutPreservingErrno(out, guestRsa.*(fields[i].second))) {
+            for (std::size_t j = i; j > 0; --j) {
+                if (written[j - 1])
+                    CopyGuestOutPreservingErrno(fields[j - 1].first, previous[j - 1]);
+            }
+            NotImplemented_nid_no_patch(function);
+        }
+        written[i] = hadPrior;
+    }
+}
 
 } // namespace
 
@@ -231,23 +285,13 @@ int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl::Bio* bio) {
 }
 
 void APS5_VABI RSA_get0_factors_nid_postfix(const LibreSsl3Rsa* rsa, const void** p, const void** q) {
-    if (!rsa && (p || q))
-        throw std::invalid_argument("RSA_get0_factors requires a key when outputs are requested");
-    if (p)
-        *p = rsa->p;
-    if (q)
-        *q = rsa->q;
+    CopyRsaOutputs(rsa, __func__, "RSA_get0_factors requires a key when outputs are requested",
+        {{p, &LibreSsl3Rsa::p}, {q, &LibreSsl3Rsa::q}});
 }
 
 void APS5_VABI RSA_get0_crt_params_nid_postfix(const LibreSsl3Rsa* rsa, const void** dmp1, const void** dmq1, const void** iqmp) {
-    if (!rsa && (dmp1 || dmq1 || iqmp))
-        throw std::invalid_argument("RSA_get0_crt_params requires a key when outputs are requested");
-    if (dmp1)
-        *dmp1 = rsa->dmp1;
-    if (dmq1)
-        *dmq1 = rsa->dmq1;
-    if (iqmp)
-        *iqmp = rsa->iqmp;
+    CopyRsaOutputs(rsa, __func__, "RSA_get0_crt_params requires a key when outputs are requested",
+        {{dmp1, &LibreSsl3Rsa::dmp1}, {dmq1, &LibreSsl3Rsa::dmq1}, {iqmp, &LibreSsl3Rsa::iqmp}});
 }
 
 }
