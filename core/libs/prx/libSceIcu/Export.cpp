@@ -171,13 +171,7 @@ int APS5_VABI ucnv_toUnicode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucurr_getName() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI ucurr_openISOCurrencies() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI uloc_addLikelySubtags() {
     NotImplemented_nid_no_patch(__func__);

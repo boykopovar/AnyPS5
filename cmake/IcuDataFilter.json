@@ -10,12 +10,20 @@
         "ulayout": "include",
         "uemoji": "include",
         "normalization": "include",
-        "misc": "include"
+        "misc": "include",
+        "curr_tree": "include",
+        "curr_supplemental": "include"
     },
     "resourceFilters": [
         {
-            "categories": ["locales_tree"],
-            "rules": ["-/*", "+/%%Parent", "+/%%ALIAS"]
+            "categories": [
+                "locales_tree"
+            ],
+            "rules": [
+                "-/*",
+                "+/%%Parent",
+                "+/%%ALIAS"
+            ]
         }
     ]
 }
