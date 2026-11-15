@@ -246,6 +246,7 @@ static void SyncGuestToHost(JpegBinding* b) {
         b->host_src.next_input_byte = g->src->next_input_byte;
         b->host_src.bytes_in_buffer = static_cast<size_t>(g->src->bytes_in_buffer);
     }
+    h->jpeg_color_space = static_cast<J_COLOR_SPACE>(g->jpeg_color_space);
     h->out_color_space = static_cast<J_COLOR_SPACE>(g->out_color_space);
     h->scale_num = g->scale_num;
     h->scale_denom = g->scale_denom;

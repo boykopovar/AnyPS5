@@ -404,14 +404,13 @@ int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* 
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
- presets->difficulty = 0;
- presets->priority = 0;
- presets->invert_vertical_view_for_1st_person_view = 0;
- presets->invert_horizontal_view_for_1st_person_view = 0;
- presets->invert_vertical_view_for_3rd_person_view = 0;
- presets->invert_horizontal_view_for_3rd_person_view = 0;
- presets->display_sub_titles = 0;
- presets->audio_language = 0;
+ UserServiceGamePresets localPresets{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(presets, &localPresets, sizeof(localPresets));
+ errno = savedErrno;
+ if (!copied) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -1333,8 +1332,19 @@ int APS5_VABI sceUserServiceGetHomeDirectory(std::uint32_t user_id, char* path, 
     if (path == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    const int result = std::snprintf(path, size, "/user/home/%08x", user_id);
-    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    char local[64];
+    const int result = std::snprintf(local, sizeof(local), "/user/home/%08x", user_id);
+    if (result < 0 || static_cast<std::size_t>(result) >= size) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    const std::size_t copyLength = static_cast<std::size_t>(result) + 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(path, local, copyLength);
+    errno = savedErrno;
+    if (!copied) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceSetPbtcSundayDuration(void) {
@@ -2769,8 +2779,15 @@ int APS5_VABI sceUserServiceGetSecureHomeDirectory(std::uint32_t user_id, char* 
     if (path == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    const int result = std::snprintf(path, size, "/%s/priv/home/%08x", sceKernelGetFsSandboxRandomWord(), user_id);
-    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    char local[512];
+    const int result = std::snprintf(local, sizeof(local), "/%s/priv/home/%08x", sceKernelGetFsSandboxRandomWord(), user_id);
+    if (result < 0 || static_cast<std::size_t>(result) >= size) return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    const std::size_t copyLength = static_cast<std::size_t>(result) + 1;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(path, local, copyLength);
+    errno = savedErrno;
+    if (!copied) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetHearingAssistAdjustmentLevelRight(void) {

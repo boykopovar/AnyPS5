@@ -1,7 +1,9 @@
 #include "prx/libSceAudiodecCpu/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -153,12 +155,25 @@ int DecodeLpcmBd(const AudiodecCtrl* ctrl, const AudiodecCpuMemory* memory) {
 
 int QueryMemSize(const char* function, const AudiodecCtrl* ctrl, AudiodecCpuMemory* memory, std::uint32_t type) {
     if (!ctrl) return ErrorCtrl;
-    if (!ctrl->pParam) return ErrorParam;
+    const int savedErrno = errno;
+    const void* param = nullptr;
+    const bool readableCtrl = GuestCopyIn_nid_no_patch(&param, ctrl, sizeof(param));
+    errno = savedErrno;
+    if (!readableCtrl) throw std::runtime_error("sceAudiodecCpuQueryMemSize: unreadable control pointer");
+    if (!param) return ErrorParam;
     if (!memory) return ErrorMemory;
-    if (memory->ui_size != StructSize) return ErrorMemorySize;
+    std::uint32_t memorySize = 0;
+    const bool readableSize = GuestCopyIn_nid_no_patch(&memorySize, memory, sizeof(memorySize));
+    errno = savedErrno;
+    if (!readableSize) throw std::runtime_error("sceAudiodecCpuQueryMemSize: unreadable memory descriptor");
+    if (memorySize != StructSize) return ErrorMemorySize;
     if (!KnownType(type)) return ErrorType;
     if (!Lpcm(type)) UnknownCodec(function, type);
-    memory->ui_memory_size = LpcmMemorySize;
+    const std::uint32_t outputSize = LpcmMemorySize;
+    auto* destination = reinterpret_cast<std::uint8_t*>(memory) + offsetof(AudiodecCpuMemory, ui_memory_size);
+    const bool writableSize = GuestCopyOut_nid_no_patch(destination, &outputSize, sizeof(outputSize));
+    errno = savedErrno;
+    if (!writableSize) throw std::runtime_error("sceAudiodecCpuQueryMemSize: unwritable memory-size output");
     return 0;
 }
 
