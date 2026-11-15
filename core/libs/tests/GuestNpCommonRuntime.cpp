@@ -1133,6 +1133,11 @@ void TestJsonText() {
     Require(sceNpUtilJsonUnescape(text, 3, "abc", 3, &length) == NpUtilBufferTooSmall, "unescaping needs room for the terminator");
     length = 0;
     Require(sceNpUtilJsonUnescape(nullptr, 0, "abc", 3, &length) == 0 && length == 4, "a size query with no buffer and no size reports the size");
+    errno = 71;
+    Require(sceNpUtilJsonUnescape(reinterpret_cast<char*>(0x10), sizeof(text), "a\\nb", 4, &length) == NpUtilInvalid && errno == 71,
+        "unescaping into an unwritable buffer is refused and keeps errno");
+    Require(sceNpUtilJsonUnescape(nullptr, sizeof(text), "abc", 3, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable unescaped length is refused and keeps errno");
 
     char one[4] = {};
     std::size_t consumed = 0;
