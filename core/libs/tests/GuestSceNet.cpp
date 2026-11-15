@@ -1842,6 +1842,9 @@ static void CheckSystemTime() {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     sceNetGetSystemTime(&output[1]);
     Require(output[1] > previous);
+    errno = 71;
+    sceNetGetSystemTime(reinterpret_cast<std::uint64_t*>(0x10));
+    Require(*sceNetErrnoLoc() == 22 && errno == 71);
 }
 
 static void CheckUsleep() {

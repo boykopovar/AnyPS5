@@ -10,7 +10,8 @@ extern "C" {
 
 int APS5_VABI sceAgcGetIsTrinityMode(bool* isTrinityMode) {
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(isTrinityMode), alignof(bool), __func__);
-    *isTrinityMode = false;
+    const bool trinity = false;
+    Agc::Command::Require(GuestCopyOut_nid_no_patch(isTrinityMode, &trinity, sizeof(trinity)), __func__, "destination pointer is not writable");
     return 0;
 }
 
