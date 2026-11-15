@@ -76,4 +76,19 @@ inline constexpr std::array<std::string_view, static_cast<std::size_t>(HeapCache
     return (HeapCacheBypassMask() >> static_cast<std::uint32_t>(cache) & 1u) != 0u;
 }
 
+[[nodiscard]] inline bool HeapVerifyEnabled() {
+    static const bool enabled = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+    return enabled;
+}
+
+[[nodiscard]] inline std::uint64_t HeapVerifyEvery() {
+    static const std::uint64_t every = [] {
+        const char* text = std::getenv("APS5_VERIFY_GPU_HEAP");
+        if (text == nullptr) return std::uint64_t{0};
+        const auto value = std::strtoull(text, nullptr, 10);
+        return value == 0 ? std::uint64_t{1} : static_cast<std::uint64_t>(value);
+    }();
+    return every;
+}
+
 }

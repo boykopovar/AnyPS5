@@ -109,6 +109,33 @@ inline const std::vector<ShaderRecompiler::VertexAttribute>& DrawVertexAttribute
     return shader.heap != nullptr && !shader.heap->vertexAttributes.empty() ? shader.heap->vertexAttributes : shader.program->vertexAttributes;
 }
 
+enum class HeapBindingClass { SharedImage, StorageImage, ShaderData, PerDraw, Unsupported };
+
+inline HeapBindingClass ClassifyHeapBinding(const ShaderRecompiler::DescriptorBinding& binding) {
+    using Role = ShaderRecompiler::DescriptorRole;
+    switch (binding.role) {
+        case Role::GuestImages:
+            if (binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) return HeapBindingClass::SharedImage;
+            return binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet ? HeapBindingClass::StorageImage : HeapBindingClass::PerDraw;
+        case Role::GuestSamplers:
+            return HeapBindingClass::SharedImage;
+        case Role::BdaPagetable:
+        case Role::FaultBuffer:
+        case Role::Gds:
+        case Role::GuestBuffers:
+            return HeapBindingClass::PerDraw;
+        case Role::ShaderData:
+        case Role::FlattenedSrt:
+            return HeapBindingClass::ShaderData;
+        default:
+            return HeapBindingClass::Unsupported;
+    }
+}
+
+inline bool BindsRole(std::span<const CompiledShader> shaders, ShaderRecompiler::DescriptorRole role) {
+    return std::ranges::any_of(shaders, [&](const CompiledShader& shader) { return shader.program != nullptr && std::ranges::any_of(shader.program->bindings, [&](const auto& binding) { return binding.role == role; }); });
+}
+
 inline std::uint32_t KeyedPushOffset(const CompiledShader& shader) {
     return shader.program->pushConstants.empty() ? 0u : shader.pushConstantOffset;
 }

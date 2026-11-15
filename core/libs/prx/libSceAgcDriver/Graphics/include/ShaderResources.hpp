@@ -308,7 +308,6 @@ public:
     void WriteBackBuffers();
     // Whether WriteBackBuffers has anything the CPU must see (copied written buffers, BDA faults).
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
-    bool HoldsCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HasGpuCopies() const { return guestMemory.HasGpuCopies(); }
@@ -376,8 +375,9 @@ public:
     // ranges are fixed by the build), so a Revalidate's collects on the same worker are memo hits.
     void PrecollectSurfaces() const;
     bool Reusable() const { return reusable; }
-    std::uint8_t UnreusableReason() const { return unreusableReason; }
-    static const char* UnreusableReasonName(std::uint8_t reason);
+    enum class Unreusable : std::uint8_t { Unchecked, HtileClear, CopiedWrites, Lease, Bda, MultisampleSource, LoopGuard, TextureRefreshedPerUse, TemplateDataRefresh, NoDirectRegions, RegionNotServed, Count };
+    Unreusable UnreusableReason() const { return unreusableReason; }
+    static const char* UnreusableReasonName(Unreusable reason);
     void KeepStorageImageBytes(Recorder& recorder) const;
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
@@ -415,6 +415,8 @@ public:
     void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
     void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
     void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const DrawBindings* overrides, VkDeviceAddress empty) const;
+    bool pushImageMatches(std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements) const;
+    void resetPushImage(std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements) const;
     void writeDataRoots(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten, bool cached) const;
     struct PushImage {
         std::array<std::byte, PipelinePushConstantBytes> bytes{};
@@ -429,8 +431,6 @@ public:
         };
         std::array<Stage, 8> stages{};
         bool valid = false;
-        bool tableBound = false;
-        bool faultBound = false;
     };
     mutable PushImage pushImage;
     bool PatchMovedPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const MovedBuffer> moved) const {
@@ -787,9 +787,29 @@ private:
     };
     bool splitSets = false;
     bool heapStage = false;
+    bool dataTableBound = false;
+    bool dataFaultBound = false;
     mutable std::array<std::uint64_t, 3u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader);
     struct HeapStageState {
+        struct SlotSet {
+            std::vector<std::uint32_t> slots;
+            std::vector<std::uint32_t> generations;
+            void CaptureImageGenerations(const BindlessHeap& heap) {
+                generations.clear();
+                for (const auto slot : slots) generations.push_back(heap.SlotGeneration(slot));
+            }
+            void CaptureSamplerGenerations(const BindlessHeap& heap) {
+                generations.clear();
+                for (const auto slot : slots) generations.push_back(heap.SamplerGeneration(slot));
+            }
+            static bool Current(const BindlessHeap& heap, const SlotSet& images, const SlotSet& samplers) {
+                return heap.GenerationsCurrent(images.slots, images.generations, samplers.slots, samplers.generations);
+            }
+            static std::uint32_t Touch(const BindlessHeap& heap, const SlotSet& images, const SlotSet& samplers, std::uint32_t touched) {
+                return heap.TouchSlots(images.slots, samplers.slots, touched);
+            }
+        };
         std::uint64_t slotSerial = 0;
         std::uint64_t dataOrigin = 0;
         std::uint64_t pushedUserWords = 0;
@@ -803,10 +823,8 @@ private:
         std::uint64_t pushVersion = 0;
         bool mapBuilt = false;
         std::uint32_t mapTouched = 0;
-        std::vector<std::uint32_t> mapSlots;
-        std::vector<std::uint32_t> mapGenerations;
-        std::vector<std::uint32_t> mapSamplers;
-        std::vector<std::uint32_t> mapSamplerGenerations;
+        SlotSet mapImages;
+        SlotSet mapSamplers;
         std::vector<std::uint32_t> owned;
         std::vector<std::uintptr_t> key;
         struct KindRange {
@@ -814,11 +832,9 @@ private:
             std::uint32_t first = 0;
             std::uint32_t count = 0;
         };
-        std::vector<std::uint32_t> imageSlots;
+        SlotSet images;
         std::vector<KindRange> kindRanges;
-        std::vector<std::uint32_t> slotGenerations;
-        std::vector<std::uint32_t> samplerSlots;
-        std::vector<std::uint32_t> samplerGenerations;
+        SlotSet samplers;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> dataPatches;
         struct KeptSpan {
             std::vector<std::uint32_t> words;
@@ -839,7 +855,7 @@ private:
         std::vector<PushRun> wholePushRuns;
         std::span<const std::uint32_t> Slots(std::uint32_t kind) const {
             for (const auto& range : kindRanges) {
-                if (range.kind == kind) return std::span<const std::uint32_t>(imageSlots).subspan(range.first, range.count);
+                if (range.kind == kind) return std::span<const std::uint32_t>(images.slots).subspan(range.first, range.count);
             }
             return {};
         }
@@ -855,13 +871,28 @@ private:
     VkImageView heapStorageView(std::size_t index, std::uint32_t binding) const;
     VkImageView heapMultisampleStorageView(std::size_t index) const;
     const HeapSlotOwner* heapMultisampleStorageOwner(std::size_t index) const;
+    static void layOutStagePush(HeapStageState& state, const CompiledShader& shader, const ShaderRecompiler::StagePushPlacement& placement);
+    void collectAddressedElements();
     void layOutHeapStages(std::span<const CompiledShader> shaders);
+    enum class HeapElementClass { Absent, SampledImage, StorageImage, MultisampleStorage, Sampler };
+    static constexpr std::size_t heapElementKeyWords(HeapElementClass kind) { return kind == HeapElementClass::SampledImage || kind == HeapElementClass::StorageImage || kind == HeapElementClass::MultisampleStorage ? 3u : 1u; }
+    struct HeapElement {
+        HeapElementClass kind;
+        std::size_t index;
+        std::size_t element;
+    };
+    HeapElementClass classifyHeapElement(const Binding& binding, std::size_t element) const;
+    template <class Visit> bool forEachHeapElement(const Binding& binding, Visit&& visit) const;
     template <class Emit> void visitHeapSlotKey(std::span<const std::uint32_t> owned, Emit&& emit) const;
     void appendHeapSlotKey(std::span<const std::uint32_t> owned, std::vector<std::uintptr_t>& key) const;
     bool heapSlotKeySame(std::span<const std::uint32_t> owned, std::span<const std::uintptr_t> key) const;
     void takeHeapSlots(BindlessHeap& heap, HeapStageState& state, std::span<const std::uint32_t> owned, std::span<const std::uintptr_t> key);
-    static void noteHeapSlotGenerations(const BindlessHeap& heap, HeapStageState& state);
     void verifyHeapSlots(const BindlessHeap& heap, const HeapStageState& state, VkShaderStageFlags stageBit) const;
+    std::uint64_t commitStageData(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, HeapStageState& stageState, std::span<const std::uint32_t> patched, std::span<const std::uint32_t> words, std::span<const std::uint32_t> userData);
+    std::uint64_t writeSplitUserData(BindlessHeap& heap, const CompiledShader& shader, HeapStageState& stageState, std::span<const std::uint32_t> words, std::span<const std::uint32_t> userData, std::size_t userWords, const std::vector<std::uint32_t>& patched, bool current, std::uint64_t dataAddress);
+    bool refreshHeapStageSlots(BindlessHeap& heap, HeapStageState& stageState, VkShaderStageFlags stageBit);
+    void writeHeapDataBinding(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, const ShaderRecompiler::DescriptorBinding& binding, bool current);
+    void buildPatchedData(std::vector<std::uint32_t>& patched, const CompiledShader& shader, const HeapStageState& stageState, std::span<const std::uint32_t> words, std::span<const std::uint32_t> userData, bool current) const;
     void patchHeapSlotWords(const CompiledShader& shader, const HeapStageState& stageState, std::vector<std::uint32_t>& patched, bool current, bool leading = false) const;
     std::pair<std::uint64_t, std::uint64_t> writeSplitHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, HeapStageState& stageState,
                              std::span<const std::uint32_t> words, std::span<const std::uint32_t> userData, bool sameWalk, bool current);
@@ -896,6 +927,7 @@ private:
     std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, std::size_t stageIndex);
+    void buildHeapTableMap(std::vector<std::uint32_t>& map, BindlessHeap& heap, const CompiledShader& shader, const TableStage& table, HeapStageState& stageState);
     VkDeviceAddressRangeEXT bufferRange(std::uint32_t index, const DrawBindings* overrides) const;
     VkDeviceAddressRangeEXT bufferAddress(const Allocation& allocation) const;
     void resolveBufferAddresses();
@@ -945,7 +977,7 @@ private:
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
-    std::uint8_t unreusableReason = 0;
+    Unreusable unreusableReason = Unreusable::Unchecked;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
     std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;

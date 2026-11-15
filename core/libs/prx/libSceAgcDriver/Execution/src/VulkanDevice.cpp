@@ -6696,7 +6696,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
 namespace {
 
 enum class RecipeRefusal : std::size_t { NotCacheable, Overlay, NoObjects, NoContentKey, NeedsFaultChecks, NeedsCopiedWrites, Unreusable, Count };
-constexpr std::size_t UnreusableReasons = 11;
+constexpr std::size_t UnreusableReasons = static_cast<std::size_t>(Graphics::ShaderResources::Unreusable::Count);
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(RecipeRefusal::Count)> recipeRefusals{};
 std::array<std::atomic<std::uint64_t>, UnreusableReasons> unreusableRefusals{};
 
@@ -6708,10 +6708,10 @@ void noteRecipeRefusal(bool cacheable, bool overlay, bool objects, bool contentK
     if (!contentKey) return note(RecipeRefusal::NoContentKey);
     if (!resources.Reusable()) {
         note(RecipeRefusal::Unreusable);
-        unreusableRefusals[std::min<std::size_t>(resources.UnreusableReason(), UnreusableReasons - 1)].fetch_add(1, std::memory_order_relaxed);
+        unreusableRefusals[std::min(static_cast<std::size_t>(resources.UnreusableReason()), UnreusableReasons - 1)].fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (resources.NeedsCompletion()) note(resources.HoldsCopiedWrites() ? RecipeRefusal::NeedsCopiedWrites : RecipeRefusal::NeedsFaultChecks);
+    if (resources.NeedsCompletion()) note(resources.HasCopiedWrites() ? RecipeRefusal::NeedsCopiedWrites : RecipeRefusal::NeedsFaultChecks);
 }
 
 }
@@ -6728,7 +6728,7 @@ std::string VulkanDevice::DispatchRecipeRefusalText() {
     for (std::size_t index = 0; index < UnreusableReasons; ++index) {
         const auto count = unreusableRefusals[index].load(std::memory_order_relaxed);
         if (count == 0) continue;
-        unreusable += std::string(unreusable.empty() ? "" : ", ") + Graphics::ShaderResources::UnreusableReasonName(static_cast<std::uint8_t>(index)) + " " + std::to_string(count);
+        unreusable += std::string(unreusable.empty() ? "" : ", ") + Graphics::ShaderResources::UnreusableReasonName(static_cast<Graphics::ShaderResources::Unreusable>(index)) + " " + std::to_string(count);
     }
     if (!unreusable.empty()) text += " (unreusable: " + unreusable + ")";
     return text.empty() ? " none" : text;

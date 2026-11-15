@@ -274,12 +274,7 @@ bool HeapClassesExcluded() {
 }
 
 bool SampleHeapStageVerify() {
-    static const std::uint64_t every = [] {
-        const char* text = std::getenv("APS5_VERIFY_GPU_HEAP");
-        if (text == nullptr) return std::uint64_t{0};
-        const auto value = std::strtoull(text, nullptr, 10);
-        return value == 0 ? std::uint64_t{1} : static_cast<std::uint64_t>(value);
-    }();
+    const auto every = ShaderRecompiler::HeapVerifyEvery();
     if (every == 0) return false;
     thread_local std::uint64_t calls = 0;
     return calls++ % every == 0;

@@ -636,7 +636,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding->binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
             const auto capacity = ShaderRecompiler::RuntimeAbi::HeapCapacity(heap);
             const auto count = module.constants.find(type[3]);
-            const bool heapArray = binding->kind != ShaderRecompiler::DescriptorKind::StorageImage || (ShaderRecompiler::RuntimeAbi::GpuHeapStorageKind(static_cast<std::uint32_t>(heap)) && binding->descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet);
+            const bool heapArray = binding->kind != ShaderRecompiler::DescriptorKind::StorageImage || (ShaderRecompiler::RuntimeAbi::GpuHeapStorageKind(static_cast<std::uint32_t>(heap)) && ClassifyHeapBinding(*binding) == HeapBindingClass::StorageImage);
             if (shader.gpuResolvedImages && heapArray) {
                 const auto slots = binding->kind == ShaderRecompiler::DescriptorKind::Sampler ? ShaderRecompiler::RuntimeAbi::GpuSamplerHeapSlots : ShaderRecompiler::RuntimeAbi::GpuImageHeapSlots;
                 const bool length = binding->kind == ShaderRecompiler::DescriptorKind::Sampler ? count != module.constants.end() && count->second == slots : heapImageSlotsLength(module, type[3]);

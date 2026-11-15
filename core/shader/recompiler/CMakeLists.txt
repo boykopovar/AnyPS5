@@ -257,6 +257,8 @@ function(add_shader_recompiler target runtimeTarget)
             HeapCacheBypassed
             HeapCacheBypassMask
             HeapCacheNames
+            HeapVerifyEnabled
+            HeapVerifyEvery
             HeapOnlyCacheCount
             ParseHeapCacheBypass
             BdaAbi::RangesOrdered

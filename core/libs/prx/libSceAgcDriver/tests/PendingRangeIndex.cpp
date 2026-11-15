@@ -31,9 +31,8 @@ void RandomAgainstScan() {
             const auto begin = (random() % 4096) * 64;
             const auto bytes = 1 + random() % (random() % 4 == 0 ? 65536 : 4096);
             ranges.push_back({begin, begin + bytes});
-            index.Add(begin, begin + bytes, item, item);
+            index.Insert(begin, begin + bytes, item, item);
         }
-        index.Seal();
         for (int query = 0; query < 200; ++query) {
             const auto address = (random() % 4200) * 64 + random() % 64;
             const auto bytes = static_cast<std::size_t>(random() % 8 == 0 ? 0 : random() % 20000);
@@ -51,10 +50,11 @@ void RandomAgainstScan() {
             const bool indexed = index.AnyOverlapping(address, bytes, [&](std::size_t item) { return item != except; });
             Require(indexed == scanned, "the index and the scan disagree on whether a range overlaps");
             std::vector<bool> visited(count, false);
-            index.ForEachOverlapping(address, bytes, [&](std::size_t item) {
+            static_cast<void>(index.AnyOverlapping(address, bytes, [&](std::size_t item) {
                 Require(!visited[item], "the index visited an item twice");
                 visited[item] = true;
-            });
+                return false;
+            }));
             Require(visited == scannedSet, "the index visited a different set of overlapping items than the scan");
             const auto* first = index.FirstByPosition(address, bytes, [&](std::size_t item) { return item != except; });
             Require((first == nullptr) == (firstScanned == count), "the index and the scan disagree on the first overlapping item");
@@ -85,7 +85,7 @@ void InsertEraseAgainstScan() {
             Require(index.Erase(list[at].begin, list[at].item), "the index lost an entry it was given");
             list.erase(list.begin() + static_cast<std::ptrdiff_t>(at));
         }
-        Require(index.Size() == list.size(), "the index holds a different number of entries than the list");
+        Require(index.Entries().size() == list.size(), "the index holds a different number of entries than the list");
         Require(!index.Erase(1u << 30, -1), "the index erased an entry it was never given");
         for (int query = 0; query < 8; ++query) {
             const auto address = (random() % 300) * 4096 + random() % 4096;
@@ -98,7 +98,10 @@ void InsertEraseAgainstScan() {
                 if (firstScanned < 0 && live.item % 2 == 0) firstScanned = live.item;
             }
             std::size_t visited = 0;
-            index.ForEachOverlapping(address, bytes, [&](int) { ++visited; });
+            static_cast<void>(index.AnyOverlapping(address, bytes, [&](int) {
+                ++visited;
+                return false;
+            }));
             Require(visited == overlapping, "after inserts and erases the index visited a different number of overlapping entries than the scan");
             const auto* first = index.FirstByPosition(address, bytes, [](int item) { return item % 2 == 0; });
             Require((first == nullptr ? -1 : first->item) == firstScanned, "after inserts and erases the index named a different first match than the list order");
@@ -110,10 +113,9 @@ void InsertEraseAgainstScan() {
 
 void Edges() {
     AgcDriver::Graphics::PendingRangeIndex<int> index;
-    index.Add(100, 200, 1, 0);
-    index.Add(0, 1000, 2, 1);
-    index.Add(300, 301, 3, 2);
-    index.Seal();
+    index.Insert(100, 200, 1, 0);
+    index.Insert(0, 1000, 2, 1);
+    index.Insert(300, 301, 3, 2);
     const auto any = [&](std::uint64_t address, std::size_t bytes, int skip) { return index.AnyOverlapping(address, bytes, [&](int item) { return item != skip; }); };
     Require(any(500, 1, 0), "a long earlier range covering the query was missed");
     Require(!any(500, 1, 2), "an excluded item was reported");

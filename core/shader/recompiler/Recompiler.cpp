@@ -2702,8 +2702,7 @@ void HeapBindingWords(const RecompileRequest& request, const CompiledVariant& va
     const auto tables = tableRoles ? std::optional(ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, variant.artifact.variantId)) : std::nullopt;
     DescriptorBindingBuilder{}.PopulateGuestWords(words.bindings, variant.bindings, *shared.plan.plan, variant.info.userDataBase, snapshot, partialThreads(request), tables ? &*tables : nullptr);
     if (words.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ from its template");
-    static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
-    if (verify) {
+    if (HeapVerifyEnabled()) {
         const auto resolved = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, variant.artifact.variantId);
         BindingAllocationResult bindings;
         DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *shared.plan.plan, variant.info.userDataBase, snapshot, partialThreads(request), &resolved);
