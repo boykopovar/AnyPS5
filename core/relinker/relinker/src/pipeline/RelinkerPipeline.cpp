@@ -462,8 +462,10 @@ RelinkResult RelinkerPipeline::Relink() {
             for (std::size_t index = 0; index < executableSegments.size(); ++index) {
                 auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
                 static_cast<void>(segmentFileOffset);
-                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
+                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize)) {
                     segment.resize(*codeEnd - segmentVAddr);
+                    if (index == 0 && unusedFilterLevel != 0) textSection = segment;
+                }
                 segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
             }
     }

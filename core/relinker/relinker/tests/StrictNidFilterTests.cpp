@@ -1034,6 +1034,18 @@ void sceDynlibDataOffsets() {
     } catch (const std::exception& error) {
         failures += std::string("SCE strict filter: ") + error.what();
     }
+
+    auto sceTrailingData = bytes;
+    write<std::uint64_t>(sceTrailingData, 96, input.Text.size() + 16);
+    write<std::uint64_t>(sceTrailingData, 104, input.Text.size() + 16);
+    sceTrailingData.at(0x200 + input.Text.size()) = 0xCC;
+    try {
+        const std::vector<Relinker::NidReference> references = {{"live", {}, 6, 0x900, 0x2000, 0}};
+        const auto filtered = Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, sceTrailingData, input.Text, input.TextVaddr);
+        if (filtered.size() != 1) failures += "SCE relocation target did not keep its import with trailing data; ";
+    } catch (const std::exception& error) {
+        failures += std::string("SCE strict filter with trailing data: ") + error.what() + "; ";
+    }
     require(failures.empty(), failures.c_str());
 
     auto noSegment = bytes;

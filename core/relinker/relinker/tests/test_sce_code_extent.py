@@ -32,7 +32,7 @@ LATER_FUNCTION = 0x300
 def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False, data_pointer=False, gap_entry=False,
             plt_at=None, early_function=False, function_tls=False, pointer_target=None, gap_bytes=None, functions=None,
             tls=False, gap_embedded_data=False, gap_data_then_syscall=False, gap_callback_syscall_undecodable=False,
-            gap_decoded_padding_syscall=False, gap_stub_then_data=False):
+            gap_decoded_padding_syscall=False, gap_stub_then_data=False, code_flags=7):
     has_gap_embedded = gap_embedded_data or gap_data_then_syscall or gap_callback_syscall_undecodable or gap_decoded_padding_syscall or gap_stub_then_data
     plt = (LATER_FUNCTION + FUNCTION_SIZE + gap if has_gap_embedded else FUNCTION + FUNCTION_SIZE + gap) if plt_at is None else plt_at
     entry = FUNCTION + FUNCTION_SIZE if gap_entry else FUNCTION
@@ -55,7 +55,7 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
         (0x61000027 if sce_block else 3, GOT), (0x61000029 if sce_block else 23, 0x720), (0x6100002B, 7), (0x6100002D if sce_block else 2, 24),
         (0, 0),
     ]
-    struct.pack_into("<IIQQQQQQ", image, 64, PT_LOAD, 7, 0, 0, 0, len(image), len(image), 0x1000)
+    struct.pack_into("<IIQQQQQQ", image, 64, PT_LOAD, code_flags, 0, 0, 0, len(image), len(image), 0x1000)
     struct.pack_into("<IIQQQQQQ", image, 120, PT_DYNAMIC, 6, 0x400, 0x400, 0x400, len(tags) * 16, len(tags) * 16, 8)
     struct.pack_into("<IIQQQQQQ", image, 176,
                      *((PT_SCE_DYNLIBDATA, 0, 0, 0, 0, len(image), len(image), 1) if sce_block
@@ -142,13 +142,18 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
     return image, plt
 
 
-def run(relinker, work, name, built, expected_error=None, target="windows", expected_output=None, absent_bytes=None):
+def run(relinker, work, name, built, expected_error=None, target="windows", expected_output=None, absent_bytes=None, options=()):
     image, plt = built
     source = work / (name + ".elf")
     output = work / (name + ".out")
     source.write_bytes(image)
-    result = subprocess.run([str(relinker), "--skip-sce-module", "--" + target, "--registry", str(source), str(output)],
-                            capture_output=True, text=True, timeout=20)
+    cmd = [str(relinker), "--skip-sce-module"]
+    if target:
+        cmd.append("--" + target)
+    cmd.append("--registry")
+    cmd.extend(options)
+    cmd.extend([str(source), str(output)])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     if expected_error is None:
         assert result.returncode == 0 and output.exists(), (name, result.stdout, result.stderr)
         registry = json.loads((work / (name + ".registry.json")).read_text())
@@ -209,6 +214,10 @@ def main():
             "PLT overlaps an unwind function")
         run(relinker, work, "sysv-data-after-plt", fixture(sce_block=False),
             "Cannot decode instruction")
+        run(relinker, work, "sce-data-after-plt-filter-1", fixture(code_flags=5), target=None, options=["unused-filter=1"])
+        run(relinker, work, "sce-data-after-plt-filter-2", fixture(code_flags=5), target=None, options=["unused-filter=2"])
+        run(relinker, work, "sysv-data-after-plt-filter-2", fixture(sce_block=False, code_flags=5),
+            "Cannot decode instruction", target=None, options=["unused-filter=2"])
         for target in ("windows", "macos"):
             run(relinker, work, "sce-interpreter-pointer-" + target, fixture(gap=0x60, interpreter_pointer=True),
                 target=target)

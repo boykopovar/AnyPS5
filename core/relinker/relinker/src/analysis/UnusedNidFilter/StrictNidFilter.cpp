@@ -59,7 +59,7 @@ public:
         for (const auto& segment : headers) {
             if (segment.Type == 1 && (segment.Flags & 1) != 0) {
                 ++codeSegments;
-                if (segment.MappedAddress != textVaddr || segment.FileSize != text.size() || segment.MemorySize != segment.FileSize || (segment.Flags & 2) != 0)
+                if (segment.MappedAddress != textVaddr || (hasSceDynlibData ? (text.empty() || text.size() > segment.FileSize) : segment.FileSize != text.size()) || segment.MemorySize != segment.FileSize || (segment.Flags & 2) != 0)
                     throw RelinkerException("Strict filter: unsupported executable segment layout", segment.MappedAddress);
             }
         }
@@ -145,8 +145,14 @@ public:
         }
         input.Functions = UnusedNidFilter::ReadExceptionFunctions(bytes, headers, input.Pointers, input.ImportSlots);
         for (const auto& segment : headers) {
-            if (segment.Type != 1 || (segment.Flags & 1) != 0 || (segment.Flags & 6) == 0 || segment.FileSize == 0) continue;
-            input.Data.push_back({segment.MappedAddress, reader.ReadSegment(segment)});
+            if (segment.Type != 1 || segment.FileSize == 0) continue;
+            if ((segment.Flags & 1) == 0) {
+                if ((segment.Flags & 6) == 0) continue;
+                input.Data.push_back({segment.MappedAddress, reader.ReadSegment(segment)});
+            } else if (hasSceDynlibData && segment.FileSize > text.size()) {
+                auto seg = reader.ReadSegment(segment);
+                input.Data.push_back({segment.MappedAddress + text.size(), std::vector<std::uint8_t>(seg.begin() + text.size(), seg.end())});
+            }
         }
         return input;
     }

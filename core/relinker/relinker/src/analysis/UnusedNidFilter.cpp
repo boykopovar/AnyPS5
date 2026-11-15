@@ -5,6 +5,7 @@
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <algorithm>
 
 namespace Relinker {
 
@@ -32,9 +33,17 @@ public:
 
         const ElfReader reader(elfBytes);
         std::vector<UnusedNidFilter::StrictDataRegion> data;
-        for (const auto& segment : reader.ReadProgramHeaders()) {
-            if (segment.Type != 1 || (segment.Flags & 1) != 0 || (segment.Flags & 6) == 0 || segment.FileSize == 0) continue;
-            data.push_back({segment.MappedAddress, reader.ReadSegment(segment)});
+        const auto headers = reader.ReadProgramHeaders();
+        const bool hasSce = std::any_of(headers.begin(), headers.end(), [](const auto& h) { return h.Type == 0x61000000; });
+        for (const auto& segment : headers) {
+            if (segment.Type != 1 || segment.FileSize == 0) continue;
+            if ((segment.Flags & 1) == 0) {
+                if ((segment.Flags & 6) == 0) continue;
+                data.push_back({segment.MappedAddress, reader.ReadSegment(segment)});
+            } else if (hasSce && segment.FileSize > textSection.size()) {
+                auto seg = reader.ReadSegment(segment);
+                data.push_back({segment.MappedAddress + textSection.size(), std::vector<std::uint8_t>(seg.begin() + textSection.size(), seg.end())});
+            }
         }
 
         auto cfg = UnusedNidFilter::BuildAddressTakenControlFlowGraph(textSection, textVAddr, primary, extra, *relativeRelocations, data);
