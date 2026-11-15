@@ -15,6 +15,9 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#ifdef __APPLE__
+#include <netinet/tcp_fsm.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -1511,6 +1514,19 @@ static int disconnect_datagram(const Sock& socket) {
 extern "C" void RefuseClosedLoopbackAtOnce_nid_no_patch(SOCKET socket, const sockaddr* address);
 #endif
 
+#ifdef __APPLE__
+static bool dropped_tcp_connection(int native) {
+    const int saved = errno;
+    tcp_connection_info info{};
+    socklen_t size = sizeof(info);
+    const bool dropped = ::getsockopt(native, IPPROTO_TCP, TCP_CONNECTION_INFO, &info, &size) == 0
+        && size >= offsetof(tcp_connection_info, tcpi_state) + sizeof(info.tcpi_state)
+        && info.tcpi_state == TCPS_CLOSED;
+    errno = saved;
+    return dropped;
+}
+#endif
+
 #ifdef _WIN32
 static bool pending_connect_refused(Sock& socket) {
     if (socket.connectPending) {
@@ -1616,6 +1632,8 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
             return fail(native_error());
         return error == 0 ? 0 : fail(net_error(error));
     }
+#elif defined(__APPLE__)
+    if (socket.type == NET_SOCK_STREAM && errno == EISCONN && dropped_tcp_connection(socket.native->value)) return fail(NET_ECONNREFUSED);
 #endif
     return fail(native_error());
 }
