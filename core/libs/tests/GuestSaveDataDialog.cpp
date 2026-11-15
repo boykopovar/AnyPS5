@@ -1,9 +1,11 @@
 #include "prx/libSceSaveDataDialog/include/Api.hpp"
 #include "prx/libSceSaveDataDialog.native/include/Api.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cerrno>
+#include <cstddef>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -16,6 +18,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -111,15 +115,25 @@ int main() {
         SaveDataDirName selected{};
         SaveDataDialogResult result{};
         result.dir_name = &selected;
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+        errno = 71;
         Require(sceSaveDataDialogGetResult(&result) == 0, "read completed result");
+        Require(errno == 71, "get result preserved errno");
         Require(sceSaveDataDialogGetResult(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with null result pointer");
+        errno = 71;
         Require(sceSaveDataDialogGetResult(reinterpret_cast<SaveDataDialogResult*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with invalid pointer");
+        Require(errno == 71, "get result with invalid pointer preserved errno");
         SaveDataDialogResult invalidDirResult{};
         invalidDirResult.dir_name = reinterpret_cast<void*>(0x10);
+        errno = 71;
         Require(sceSaveDataDialogGetResult(&invalidDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with invalid directory name pointer");
+        Require(errno == 71, "get result with invalid dir pointer preserved errno");
+        GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+        GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
         SaveDataDialogResult nullDirResult{};
         nullDirResult.dir_name = nullptr;
         Require(sceSaveDataDialogGetResult(&nullDirResult) == 0, "get result with null directory name pointer");

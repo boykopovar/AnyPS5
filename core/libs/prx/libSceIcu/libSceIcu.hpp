@@ -21,6 +21,7 @@
 #include "LocaleMap.hpp"
 #include "Unescape.hpp"
 #include "Properties.hpp"
+#include "CodePointTrie.hpp"
 #include "Script.hpp"
 #include "CaseMapping.hpp"
 #include "Bidi.hpp"
@@ -29,6 +30,7 @@
 #include "CodePoints.hpp"
 #include "Identified.hpp"
 
+#include "prx/libSceIcu/Api.hpp"
 #include "prx/libSceIcu/include/Api.hpp"
 #include "Api.hpp"
 #include "Utf32.hpp"
