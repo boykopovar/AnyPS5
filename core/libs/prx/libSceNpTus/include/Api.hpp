@@ -14,7 +14,7 @@ int APS5_VABI sceNpTusGetMultiSlotVariableAAsync(int reqId, std::uint64_t target
 int APS5_VABI sceNpTusSetMultiSlotVariableAAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, const std::int64_t* variableArray, int arrayLen, void* option);
 int APS5_VABI sceNpTusDeleteMultiSlotVariableAAsync(int reqId, std::uint64_t targetAccountId, const std::int32_t* slotIds, int arrayLen, void* option);
 int APS5_VABI sceNpTusAddAndGetVariableAAsync(int reqId, std::uint64_t targetAccountId, std::int32_t slotId, std::int64_t inVariable, const std::uint64_t* isLastChangedAuthor, const void* isLastChangedDate, void* outVariable, std::uint64_t outVariableSize, void* option);
-int APS5_VABI sceNpTusSetThreadParam(void);
+int APS5_VABI sceNpTusSetThreadParam(int threadPriority, std::uint64_t cpuAffinityMask);
 int APS5_VABI sceNpTssCreateNpTitleCtx(std::uint32_t serviceLabel, const NpId* npId);
 int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId);
 int APS5_VABI sceNpTusCreateTitleCtx(const void* titleId, const void* titleSecret, const void* selfNpId);

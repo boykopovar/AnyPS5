@@ -23,6 +23,7 @@ static void RequireFinished(int reqId, int expected) {
 }
 
 static void CheckTssTitleContexts() {
+    Require(sceNpTusSetThreadParam(700, 0x7F) == 0);
     const int shared = sceNpTssCreateNpTitleCtxA(0, 1);
     Require(shared > 0);
     const int request = sceNpTusCreateRequest(shared);

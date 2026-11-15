@@ -252,8 +252,9 @@ int APS5_VABI sceNpTusAddAndGetVariableAAsync(int reqId, std::uint64_t targetAcc
     return StartOffline(reqId);
 }
 
-int APS5_VABI sceNpTusSetThreadParam(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTusSetThreadParam(int threadPriority, std::uint64_t cpuAffinityMask) {
+    (void)threadPriority;
+    (void)cpuAffinityMask;
     return 0;
 }
 
