@@ -3,6 +3,7 @@
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <clocale>
 #include <cstddef>
 #include <cstdint>
@@ -74,6 +75,35 @@ void testObjectSetters() {
     check(sceNpUniversalDataSystemEventPropertyObjectSetBinary(object, "binary", nullptr, 0) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "a null binary of size 0 was accepted");
     check(object->properties.size() == 9, "a rejected call changed the object");
     check(sceNpUniversalDataSystemCreateEventPropertyObject(nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT, "a null object pointer was accepted");
+    call(sceNpUniversalDataSystemDestroyEventPropertyObject(object), "property object was not destroyed");
+}
+
+void testGuestPointerFaults() {
+    auto* object = createObject();
+    NpUniversalDataSystemEventPropertyArray* list = nullptr;
+    call(sceNpUniversalDataSystemEventPropertyObjectSetArray(object, "list", nullptr, &list), "SetArray for the fault test failed");
+    const std::string longKey(5000, 'k');
+    const std::string longValue(10000, 'v');
+    call(sceNpUniversalDataSystemEventPropertyObjectSetString(object, longKey.c_str(), longValue.c_str()), "a long key and value were refused");
+    const auto* stored = std::get_if<std::string>(object->Find(longKey));
+    check(stored != nullptr && *stored == longValue, "a long key and value were not kept");
+    call(sceNpUniversalDataSystemEventPropertyArraySetString(list, longValue.c_str()), "a long array string was refused");
+
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    const auto* unmapped = reinterpret_cast<const void*>(0x10);
+    const std::size_t properties = object->properties.size();
+    const std::size_t values = list->values.size();
+    errno = 71;
+    check(sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, unreadable, 1) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY, "an unreadable key was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetString(object, unreadable, "v") == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY, "an unreadable string key was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetObject(object, unreadable, nullptr, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY, "an unreadable object key was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetArray(object, unreadable, nullptr, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY, "an unreadable array key was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetString(object, "string", unreadable) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "an unreadable string was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetBinary(object, "binary", unmapped, 3) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "unreadable binary bytes were accepted");
+    check(sceNpUniversalDataSystemEventPropertyArraySetString(list, unreadable) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "an unreadable array string was accepted");
+    check(sceNpUniversalDataSystemEventPropertyArraySetBinary(list, unmapped, 3) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "unreadable array bytes were accepted");
+    check(errno == 71, "errno changed");
+    check(object->properties.size() == properties && list->values.size() == values, "a rejected call changed the object");
     call(sceNpUniversalDataSystemDestroyEventPropertyObject(object), "property object was not destroyed");
 }
 
@@ -442,6 +472,7 @@ int main() {
     try {
         testObjectSetters();
         testNestedValues();
+        testGuestPointerFaults();
         testEvents();
         testEventSizeAndString();
         testRecognition();

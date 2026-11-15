@@ -3,14 +3,18 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "SceTypes.hpp"
 #include "prx/libSceNpUniversalDataSystem/include/UdsEvent.hpp"
+#include "prx/libc/include/General.hpp"
 
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_OK = 0;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT = -2141900542;
@@ -26,6 +30,12 @@ static constexpr int NP_UNIVERSAL_DATA_SYSTEM_CONTEXT_DEFAULT = 1;
 static constexpr int NP_UNIVERSAL_DATA_SYSTEM_HANDLE_DEFAULT  = 1;
 
 namespace Uds {
+
+inline bool CopyText(const char* text, std::string& copied) {
+    const int result = CopyGuestString_nid_no_patch(text, std::numeric_limits<std::size_t>::max(), copied);
+    if (result == 12) throw std::bad_alloc();
+    return result == 0;
+}
 
 template <typename TValue>
 class Owned {
