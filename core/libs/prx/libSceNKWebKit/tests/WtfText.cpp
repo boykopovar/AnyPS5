@@ -436,6 +436,166 @@ void TestTextStreamGroups() {
     Check(single.indent == 3 && Release(single) == u"root (a b)");
 }
 
+bool Is8(const String& string) {
+    Check(string.impl != nullptr);
+    return string.impl->hashAndFlags & 4;
+}
+
+void TestLowercaseWithoutLocale() {
+    auto lower = Make8("abc-1");
+    unsigned references = lower.impl->refCount;
+    auto same = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(lower.impl);
+    Check(same.impl == lower.impl && lower.impl->refCount == references + 2);
+    auto ascii = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(Make8("Hello WORLD").impl);
+    Check(Units(ascii) == u"hello world" && Is8(ascii));
+    auto latin = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(Make8("\xC0\xC9\xD7\xDE\xDF\xFF Z").impl);
+    Check(Units(latin) == u"\xE0\xE9\xD7\xFE\xDF\xFF z" && Is8(latin));
+    auto prefix = _ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(Make8("ABCD").impl, 2);
+    Check(Units(prefix) == u"ABcd" && Is8(prefix));
+    auto whole = Make8("Q");
+    auto copy = _ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(whole.impl, 1);
+    Check(copy.impl != whole.impl && Units(copy) == u"Q");
+    Throws([] { _ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(Make8("ab").impl, 3); });
+    Throws([] { _ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(Make16(u"AB").impl, 0); });
+    auto wideLower = Make16(u"abc");
+    auto wideSame = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(wideLower.impl);
+    Check(wideSame.impl == wideLower.impl);
+    auto wideAscii = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(Make16(u"AbC").impl);
+    Check(Units(wideAscii) == u"abc" && !Is8(wideAscii));
+    auto greek = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(Make16(u"\x0391\x0392\x0393x").impl);
+    Check(Units(greek) == u"\x03B1\x03B2\x03B3x" && !Is8(greek));
+    auto dotted = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(Make16(u"A\x0130").impl);
+    Check(Units(dotted) == u"ai\x0307" && dotted.impl->length == 3);
+    auto empty = _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(Make8("").impl);
+    Check(empty.impl->length == 0);
+    Throws([] { _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(nullptr); });
+    String null;
+    Check(!_ZNK3WTF6String31convertToLowercaseWithoutLocaleEv(&null).impl);
+    Check(!_ZNK3WTF6String57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(&null, 9).impl);
+    auto value = Make8("MiXeD");
+    Check(Units(_ZNK3WTF6String31convertToLowercaseWithoutLocaleEv(&value)) == u"mixed");
+    Check(Units(_ZNK3WTF6String57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(&value, 0)) == u"mixed");
+    Throws([] { _ZNK3WTF6String31convertToLowercaseWithoutLocaleEv(nullptr); });
+}
+
+void TestUppercaseWithoutLocale() {
+    auto ascii = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make8("abc-1").impl);
+    Check(Units(ascii) == u"ABC-1" && Is8(ascii));
+    auto upper = Make8("ABC");
+    auto fresh = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(upper.impl);
+    Check(fresh.impl != upper.impl && Units(fresh) == u"ABC");
+    auto latin = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make8("\xE0\xFE\xF7z").impl);
+    Check(Units(latin) == u"\xC0\xDE\xF7Z" && Is8(latin));
+    auto sharp = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make8("stra\xDF" "e").impl);
+    Check(Units(sharp) == u"STRASSE" && Is8(sharp));
+    auto yDiaeresis = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make8("a\xFF").impl);
+    Check(Units(yDiaeresis) == u"A\x0178" && !Is8(yDiaeresis));
+    auto micro = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make8("\xB5").impl);
+    Check(Units(micro) == u"\x039C" && !Is8(micro));
+    auto mixed = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make8("\xFF\xDF").impl);
+    Check(Units(mixed) == u"\x0178SS" && !Is8(mixed));
+    auto wideAscii = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make16(u"aBc").impl);
+    Check(Units(wideAscii) == u"ABC" && !Is8(wideAscii));
+    auto greek = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make16(u"\x03B1\x03B2").impl);
+    Check(Units(greek) == u"\x0391\x0392");
+    auto ligature = _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make16(u"\xFB00x").impl);
+    Check(Units(ligature) == u"FFX" && ligature.impl->length == 3);
+    Check(_ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(Make8("").impl).impl->length == 0);
+    String null;
+    Check(!_ZNK3WTF6String31convertToUppercaseWithoutLocaleEv(&null).impl);
+    auto value = Make8("MiXeD");
+    Check(Units(_ZNK3WTF6String31convertToUppercaseWithoutLocaleEv(&value)) == u"MIXED");
+}
+
+void TestCaseWithLocale() {
+    auto turkish = Make8("tr");
+    auto turkishRegion = Make8("TR-tr");
+    auto azeri = Make16(u"aZ");
+    auto english = Make8("en");
+    auto longer = Make8("trk");
+    String none;
+    auto dottedCapital = _ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(Make8("IXI").impl, &turkish);
+    Check(Units(dottedCapital) == u"\x0131x\x0131" && !Is8(dottedCapital));
+    auto dotted = _ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(Make16(u"\x0130").impl, &turkishRegion);
+    Check(Units(dotted) == u"i");
+    Check(Units(_ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(Make8("I").impl, &azeri)) == u"\x0131");
+    auto plain = _ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(Make8("I").impl, &english);
+    Check(Units(plain) == u"i" && Is8(plain));
+    Check(Units(_ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(Make8("I").impl, &longer)) == u"i");
+    Check(Units(_ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(Make8("I").impl, &none)) == u"i");
+    auto upperDotted = _ZN3WTF10StringImpl28convertToUppercaseWithLocaleERKNS_10AtomStringE(Make8("bir").impl, &turkish);
+    Check(Units(upperDotted) == u"B\x0130R" && !Is8(upperDotted));
+    auto noI = _ZN3WTF10StringImpl28convertToUppercaseWithLocaleERKNS_10AtomStringE(Make8("abc").impl, &turkish);
+    Check(Units(noI) == u"ABC" && Is8(noI));
+    auto englishUpper = _ZN3WTF10StringImpl28convertToUppercaseWithLocaleERKNS_10AtomStringE(Make8("bir").impl, &english);
+    Check(Units(englishUpper) == u"BIR" && Is8(englishUpper));
+    Throws([] { _ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(Make8("a").impl, nullptr); });
+    String null;
+    Check(!_ZNK3WTF6String28convertToLowercaseWithLocaleERKNS_10AtomStringE(&null, &turkish).impl);
+    Check(!_ZNK3WTF6String28convertToUppercaseWithLocaleERKNS_10AtomStringE(&null, &turkish).impl);
+    auto value = Make8("Ii");
+    Check(Units(_ZNK3WTF6String28convertToLowercaseWithLocaleERKNS_10AtomStringE(&value, &turkish)) == u"\x0131i");
+    Check(Units(_ZNK3WTF6String28convertToUppercaseWithLocaleERKNS_10AtomStringE(&value, &turkish)) == u"I\x0130");
+}
+
+void TestFoldCase() {
+    String null;
+    Check(!_ZNK3WTF6String8foldCaseEv(&null).impl);
+    auto folded = Make8("abc");
+    unsigned references = folded.impl->refCount;
+    auto same = _ZNK3WTF6String8foldCaseEv(&folded);
+    Check(same.impl == folded.impl && folded.impl->refCount == references + 2);
+    auto ascii = Make8("abCD");
+    auto lowered = _ZNK3WTF6String8foldCaseEv(&ascii);
+    Check(Units(lowered) == u"abcd" && Is8(lowered));
+    auto latin = Make8("x\xC0\xD7\xDE");
+    auto latinFolded = _ZNK3WTF6String8foldCaseEv(&latin);
+    Check(Units(latinFolded) == u"x\xE0\xD7\xFE" && Is8(latinFolded));
+    auto sharp = Make8("A\xDF");
+    auto sharpFolded = _ZNK3WTF6String8foldCaseEv(&sharp);
+    Check(Units(sharpFolded) == u"ass" && !Is8(sharpFolded));
+    auto micro = Make8("\xB5");
+    Check(Units(_ZNK3WTF6String8foldCaseEv(&micro)) == u"\x03BC");
+    auto wideSame = Make16(u"ab");
+    Check(_ZNK3WTF6String8foldCaseEv(&wideSame).impl == wideSame.impl);
+    auto wideAscii = Make16(u"aB");
+    auto wideLowered = _ZNK3WTF6String8foldCaseEv(&wideAscii);
+    Check(Units(wideLowered) == u"ab" && !Is8(wideLowered));
+    auto sigma = Make16(u"\x03A3\x03C2\x0391");
+    Check(Units(_ZNK3WTF6String8foldCaseEv(&sigma)) == u"\x03C3\x03C3\x03B1");
+    Throws([] { _ZNK3WTF6String8foldCaseEv(nullptr); });
+}
+
+void TestNormalizedNFC() {
+    using NKWebKit::WtfAbi::StringView;
+    auto latin = Make8("e\xE9");
+    StringView latinView{latin.impl->data, latin.impl->length, true};
+    auto latinResult = _ZN3WTF13normalizedNFCENS_10StringViewE(latinView);
+    Check(!latinResult.underlyingString.impl && latinResult.view.data == latin.impl->data && latinResult.view.length == 2 && latinResult.view.is8Bit);
+    auto composed = Make16(u"\x00E9t\x00E9");
+    StringView composedView{composed.impl->data, composed.impl->length, false};
+    auto composedResult = _ZN3WTF13normalizedNFCENS_10StringViewE(composedView);
+    Check(!composedResult.underlyingString.impl && composedResult.view.data == composed.impl->data && !composedResult.view.is8Bit);
+    auto decomposed = Make16(u"e\x0301x\x212B");
+    StringView decomposedView{decomposed.impl->data, decomposed.impl->length, false};
+    auto decomposedResult = _ZN3WTF13normalizedNFCENS_10StringViewE(decomposedView);
+    Check(Units(decomposedResult.underlyingString) == u"\x00E9x\x00C5" && !Is8(decomposedResult.underlyingString));
+    Check(decomposedResult.view.data == decomposedResult.underlyingString.impl->data && decomposedResult.view.length == 3 && !decomposedResult.view.is8Bit);
+    auto emptyResult = _ZN3WTF13normalizedNFCENS_10StringViewE(StringView{nullptr, 0, false});
+    Check(!emptyResult.underlyingString.impl && emptyResult.view.length == 0);
+    Throws([] { _ZN3WTF13normalizedNFCENS_10StringViewE(StringView{nullptr, 1, false}); });
+    String null;
+    Check(!_ZN3WTF13normalizedNFCERKNS_6StringE(&null).impl);
+    unsigned references = composed.impl->refCount;
+    auto same = _ZN3WTF13normalizedNFCERKNS_6StringE(&composed);
+    Check(same.impl == composed.impl && composed.impl->refCount == references + 2);
+    auto latinSame = _ZN3WTF13normalizedNFCERKNS_6StringE(&latin);
+    Check(latinSame.impl == latin.impl);
+    auto hangul = Make16(u"\x1100\x1161");
+    Check(Units(_ZN3WTF13normalizedNFCERKNS_6StringE(&hangul)) == u"\xAC00");
+    Throws([] { _ZN3WTF13normalizedNFCERKNS_6StringE(nullptr); });
+}
+
 }  // namespace
 
 int main() {
@@ -448,5 +608,10 @@ int main() {
     TestTextStreamValues();
     TestTextStreamStrings();
     TestTextStreamGroups();
+    TestLowercaseWithoutLocale();
+    TestUppercaseWithoutLocale();
+    TestCaseWithLocale();
+    TestFoldCase();
+    TestNormalizedNFC();
     return 0;
 }
