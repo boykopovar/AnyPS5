@@ -3,13 +3,21 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <source_location>
+#include <stdexcept>
 #include <string_view>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -81,6 +89,94 @@ void Adjusted(std::int64_t target, int type, std::string_view prefix) {
     Require(liveBlocks == 0 && ERR_get_error_nid_postfix() == 0);
 }
 
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(data != nullptr);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(data != nullptr && data != MAP_FAILED);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    template <typename T>
+    T* Set(const T& value) {
+        Require(sizeof(value) <= bytes);
+        std::memcpy(data, &value, sizeof(value));
+        return static_cast<T*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TException, typename TCall>
+void Rejects(TCall call) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const TException&) {
+        rejected = errno == 71;
+    }
+    Require(rejected);
+}
+
+void TestGuestPointers() {
+    Asn1String epoch {15, 24, reinterpret_cast<unsigned char*>(const_cast<char*>("19700101000000Z")), 0};
+    Asn1String badData {15, 24, reinterpret_cast<unsigned char*>(0x10), 0};
+    const auto* badTime = reinterpret_cast<const Asn1String*>(0x10);
+    auto* badOut = reinterpret_cast<int*>(0x10);
+    ReadOnlyPage readOnlyDaysPage;
+    int* readOnlyDays = readOnlyDaysPage.Set(123);
+    readOnlyDaysPage.Protect();
+    ReadOnlyPage readOnlySecondsPage;
+    int* readOnlySeconds = readOnlySecondsPage.Set(456);
+    readOnlySecondsPage.Protect();
+    int days = 789;
+    int seconds = 987;
+
+    Rejects<std::invalid_argument>([&] { ASN1_TIME_diff_nid_postfix(nullptr, &seconds, &epoch, &epoch); });
+    Rejects<std::invalid_argument>([&] { ASN1_TIME_diff_nid_postfix(&days, nullptr, &epoch, &epoch); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(&days, &seconds, badTime, &epoch); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(&days, &seconds, &epoch, badTime); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(&days, &seconds, &badData, &epoch); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(&days, &seconds, &epoch, &badData); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(badOut, &seconds, &epoch, &epoch); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(&days, badOut, &epoch, &epoch); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(readOnlyDays, &seconds, &epoch, &epoch); });
+    Rejects<std::runtime_error>([&] { ASN1_TIME_diff_nid_postfix(&days, readOnlySeconds, &epoch, &epoch); });
+    Require(days == 789 && seconds == 987);
+    Require(*readOnlyDays == 123 && *readOnlySeconds == 456);
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
 }
 
 int main() {
@@ -136,4 +232,5 @@ int main() {
         Require(kept.length == 3 && kept.type == 4 && !kept.data && kept.flags == 5);
         Require(liveBlocks == 0 && ERR_get_error_nid_postfix() == 0);
     }
+    TestGuestPointers();
 }
