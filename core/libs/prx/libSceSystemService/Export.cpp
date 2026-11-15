@@ -790,7 +790,9 @@ int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void) {
 void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param) {
     if (param == nullptr) return;
     const std::uint32_t fields[2] = {0, 0xffffffff};
-    std::memcpy(param, fields, sizeof(fields));
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(param, fields, sizeof(fields));
+    errno = savedErrno;
 }
 
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void) {
