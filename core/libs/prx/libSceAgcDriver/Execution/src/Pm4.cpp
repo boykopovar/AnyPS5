@@ -303,6 +303,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
 }
 
 constexpr std::uint32_t ConditionCachePolicy = 3u << 25u;
+constexpr std::uint32_t ContextStateShadowControl = 0x80018001u;
 constexpr std::uint32_t ConditionalWordsMask = 0x3fffu;
 constexpr std::uint32_t DmaSourceCachePolicy = 3u << 13u;
 constexpr std::uint32_t DmaDestinationCachePolicy = 3u << 25u;
@@ -365,7 +366,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             size(4);
             require((packet[1] & 0xffff0000u) == 0, "CONTEXT_REG_RMW reserved offset bits are not implemented");
             break;
-        case 0x12: graphics(); size(2); require((packet[1] & ~0xfu) == 0, "unsupported CLEAR_STATE payload bits"); break;
+        case 0x12: graphics(); size(2); require(packet[1] <= 3, "CLEAR_STATE commands above 3 are not implemented"); break;
         case 0x20: {
             graphics();
             size(4);
@@ -445,7 +446,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x28:
             graphics();
             size(3);
-            require((packet[1] & 0x7fffffffu) == 0 && (packet[2] & 0x7fffffffu) == 0, "CONTEXT_CONTROL register loading and shadowing are not implemented");
+            require((packet[1] & 0x7fffffffu) == 0 && ((packet[2] & 0x7fffffffu) == 0 || packet[2] == ContextStateShadowControl), "CONTEXT_CONTROL register loading and shadowing are not implemented");
             break;
         case 0x46: {
             const auto eventType = packet[1] & 0x3fu;
@@ -1105,6 +1106,21 @@ void executeIndexAttributes(const IndexAttributes& attributes, QueueState& queue
     queue.indexType = attributes.words[3];
 }
 
+void ApplyContextState(std::uint32_t operation, QueueState& queue) {
+    switch (operation) {
+        case 0: queue.ClearContext(); break;
+        case 1: case 3:
+            require(!queue.savedContext.has_value(), "context state is already pushed");
+            queue.PushContext();
+            if (operation == 3) queue.ClearContext();
+            break;
+        case 2:
+            require(queue.savedContext.has_value(), "context state has not been pushed");
+            queue.PopContext();
+            break;
+    }
+}
+
 }
 
 void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
@@ -1121,18 +1137,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                 case 0x1a:
                     if (TraceContextState()) std::fprintf(stderr, "[context] op %u: %zu registers, saved %d, cb0 %x info %x mask %x\n", packet[1], queue.context.size(), queue.savedContext.has_value() ? 1 : 0, queue.context.contains(0x318) ? queue.context.at(0x318) : 0u, queue.context.contains(0x31c) ? queue.context.at(0x31c) : 0u, queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u);
                     APS5_LOG_OUT_DEBUG("CONTEXT_STATE operation=%u targetMaskBefore=0x%x shaderMaskBefore=0x%x", packet[1], queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
-                    switch (packet[1]) {
-                        case 0: queue.ClearContext(); break;
-                        case 1: case 3:
-                            require(!queue.savedContext.has_value(), "context state is already pushed");
-                            queue.PushContext();
-                            if (packet[1] == 3) queue.ClearContext();
-                            break;
-                        case 2:
-                            require(queue.savedContext.has_value(), "context state has not been pushed");
-                            queue.PopContext();
-                            break;
-                    }
+                    ApplyContextState(packet[1], queue);
                     APS5_LOG_OUT_DEBUG("CONTEXT_STATE done operation=%u targetMaskAfter=0x%x shaderMaskAfter=0x%x", packet[1], queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
                     return;
                 default: throw std::runtime_error("custom packet requires driver execution");
@@ -1142,7 +1147,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             return;
         case 0x12:
             APS5_LOG_OUT_DEBUG("CLEAR_STATE targetMaskBefore=0x%x shaderMaskBefore=0x%x", queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
-            queue.ClearContext(); return;
+            ApplyContextState(packet[1], queue); return;
         case 0x13: queue.indexBufferSize = packet[1]; return;
         case 0x20: {
             const auto operation = (packet[1] >> 16u) & 7u;
