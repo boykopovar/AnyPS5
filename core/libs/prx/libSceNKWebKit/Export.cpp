@@ -11378,9 +11378,7 @@ int APS5_VABI WKPageSetEnableHorizontalRubberBanding() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetEnableVerticalRubberBanding() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageSetFixedLayoutSize() {
     NotImplemented_nid_no_patch(__func__);
@@ -11562,9 +11560,7 @@ int APS5_VABI WKPageValidateCommand() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageVerticalRubberBandingIsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
+
 
 int APS5_VABI WKPageWillHandleHorizontalScrollEvents() {
     NotImplemented_nid_no_patch(__func__);
