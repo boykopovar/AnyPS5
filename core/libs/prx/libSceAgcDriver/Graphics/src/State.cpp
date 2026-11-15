@@ -1307,7 +1307,18 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
         const auto raster = find(queue.context, 0x205);
         const auto provokingVertex = raster != queue.context.end() && (raster->second & (1u << 19u)) != 0 ? outputSize - 1u : 0u;
-        return ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+        ShaderRecompiler::MeshConfiguration configuration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+        static const bool reuse = [] {
+            const char* value = std::getenv("APS5_MESH_REUSE");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }();
+        const auto reusePrimitives = std::min(primitives, outputLimit);
+        const bool restart = read(queue.userConfig, 0x24b, RegisterBank::UserConfig) != 0;
+        if (reuse && inputPrimitive == 4u && !fastLaunch && !vertexWorkgroup && !restart && vertices <= 256u && reusePrimitives > groupPrimitives) {
+            configuration.reuseVertexLimit = vertices;
+            configuration.reusePrimitiveLimit = reusePrimitives;
+        }
+        return configuration;
     };
     if (path == ShaderPath::Vertex && ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0) {
         validate(value == 0, "GCN vertex routing other than a plain VS is unsupported");

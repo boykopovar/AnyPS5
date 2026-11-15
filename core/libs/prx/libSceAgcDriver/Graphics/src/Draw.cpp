@@ -17,6 +17,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MeshReuseGroups.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -1129,6 +1130,8 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
             add(mesh.ldsSizeDwords);
             add(mesh.provokingVertex);
             add(mesh.outputPrimitiveSize);
+            add(mesh.reuseVertexLimit);
+            add(mesh.reusePrimitiveLimit);
         }
         add(state.stages.tessellation.has_value());
         if (state.stages.tessellation) {
@@ -1620,6 +1623,7 @@ struct DrawInputs {
     std::uint32_t meshGroups = 0;
     std::uint32_t meshLayers = 1;
     std::uint32_t meshLayerStride = 0;
+    std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTable;
     std::vector<std::uint32_t> restartTable;
     std::uint32_t expandedIndexCount = 0;
     const VertexInputLayout& VertexLayout() const { return retainedVertexInput != nullptr ? *retainedVertexInput : vertexInput; }
@@ -1635,6 +1639,54 @@ std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t byt
     return zero;
 }
 
+std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::DrawParameters& draw, const ShaderRecompiler::MeshConfiguration& mesh) {
+    std::vector<std::uint32_t> indices(draw.indexCount);
+    if (draw.indexed) {
+        Require(draw.indexSize == 2u || draw.indexSize == 4u, "mesh reuse grouping reads 16- or 32-bit indices");
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(draw.indexCount) * draw.indexSize);
+        Require(GuestCopyIn_nid_no_patch(bytes.data(), reinterpret_cast<const void*>(draw.indexAddress), bytes.size()), "mesh reuse grouping cannot read the draw's indices");
+        for (std::uint32_t i = 0; i < draw.indexCount; ++i) {
+            if (draw.indexSize == 2u) {
+                std::uint16_t value;
+                std::memcpy(&value, bytes.data() + i * 2u, sizeof(value));
+                indices[i] = value;
+            } else {
+                std::memcpy(&indices[i], bytes.data() + i * 4u, sizeof(std::uint32_t));
+            }
+        }
+    } else {
+        for (std::uint32_t i = 0; i < draw.indexCount; ++i) indices[i] = i;
+    }
+    std::uint64_t contentHash = 0xcbf29ce484222325ull;
+    for (const auto value : indices) contentHash = (contentHash ^ value) * 0x100000001b3ull;
+    struct TableKey {
+        std::uint64_t address, hash;
+        std::uint32_t count, size, vertexLimit, primitiveLimit;
+        bool operator==(const TableKey&) const = default;
+    };
+    struct TableKeyHash {
+        std::size_t operator()(const TableKey& key) const { return static_cast<std::size_t>(key.hash ^ (key.address * 0x9e3779b97f4a7c15ull) ^ (std::uint64_t{key.count} << 32u) ^ key.vertexLimit ^ (key.primitiveLimit << 9u) ^ (key.size << 18u)); }
+    };
+    const TableKey key{draw.indexed ? draw.indexAddress : 0u, contentHash, draw.indexCount, draw.indexed ? draw.indexSize : 0u, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit};
+    static std::mutex cacheMutex;
+    static std::unordered_map<TableKey, std::shared_ptr<const std::vector<std::uint32_t>>, TableKeyHash> cache;
+    {
+        std::lock_guard lock(cacheMutex);
+        if (const auto found = cache.find(key); found != cache.end()) {
+            return found->second;
+        }
+    }
+    const auto grouped = BuildMeshReuseGroups(indices, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit);
+    static_assert(ShaderRecompiler::MeshGroupHeaderDwords == 3u && ShaderRecompiler::MeshGroupDwords == 3u, "PackMeshGroupTable writes 3 header words and 3 words per group");
+    std::shared_ptr<const std::vector<std::uint32_t>> table = std::make_shared<const std::vector<std::uint32_t>>(PackMeshGroupTable(grouped));
+    {
+        std::lock_guard lock(cacheMutex);
+        if (cache.size() >= 8192u) cache.clear();
+        cache.emplace(key, table);
+    }
+    return table;
+}
+
 // Draw's validation, index and vertex phases. With `recipe` the fragment outputs, the pipeline
 // stages and the vertex input layout are the recipe's (derived from the same compiled stages)
 // instead of computed.
@@ -1646,6 +1698,7 @@ struct DrawPlan {
     std::uint32_t meshGroups = 0;
     std::uint32_t meshLayers = 1;
     std::uint32_t meshLayerStride = 0;
+    std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTable;
     VertexInputLayout vertexInput;
     std::shared_ptr<const VertexInputLayout> retainedVertexInput;
     bool candidate = false;
@@ -1707,10 +1760,12 @@ DrawPlan planDraw(const Context& context, const State& state, const Pm4::DrawPar
             plan.nothing = true;
             return plan;
         }
+        Require(mesh.reuseVertexLimit == 0u || args == nullptr, "indirect mesh draws do not support reuse grouping");
         if (args == nullptr) {
             const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
             const auto primitives = (draw.indexCount - inputSize) / step + 1u;
-            const auto groups = (primitives - 1u) / mesh.primitivesPerGroup + 1u;
+            if (mesh.reuseVertexLimit != 0u) plan.meshGroupTable = meshGroupTableFor(draw, mesh);
+            const auto groups = plan.meshGroupTable != nullptr ? (*plan.meshGroupTable)[0] : (primitives - 1u) / mesh.primitivesPerGroup + 1u;
             const auto grid = MeshGridFor(context, groups, draw.instanceCount);
             Require(grid.has_value(), "mesh draw exceeds workgroup count limits");
             APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u as %u x %u", primitives, groups, grid->groups, grid->layers);
@@ -1770,6 +1825,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     inputs.meshGroups = drawPlan.meshGroups;
     inputs.meshLayers = drawPlan.meshLayers;
     inputs.meshLayerStride = drawPlan.meshLayerStride;
+    inputs.meshGroupTable = drawPlan.meshGroupTable;
     inputs.vertexInput = drawPlan.vertexInput;
     inputs.retainedVertexInput = drawPlan.retainedVertexInput;
     const auto* args = draw.indirect ? &*draw.indirect : nullptr;
@@ -2481,6 +2537,15 @@ std::shared_ptr<Buffer> meshArgumentBuffer(const Context& context, std::span<con
     return arguments;
 }
 
+std::shared_ptr<Buffer> groupTableMeshArguments(const Context& context, const Pm4::DrawParameters& draw, const std::vector<std::uint32_t>& table) {
+    static_assert(ShaderRecompiler::MeshGroupTableDword * 4u == ShaderRecompiler::MeshArgumentBytes, "the group table follows the mesh arguments");
+    auto arguments = std::make_shared<Buffer>(context, ShaderRecompiler::MeshArgumentBytes + table.size() * sizeof(std::uint32_t), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    const MeshArguments resolved{0u, 0u, 0u, draw.indexCount, 0u};
+    std::memcpy(arguments->Bytes().data(), &resolved, sizeof(resolved));
+    std::memcpy(arguments->Bytes().data() + ShaderRecompiler::MeshArgumentBytes, table.data(), table.size() * sizeof(std::uint32_t));
+    return arguments;
+}
+
 std::shared_ptr<Buffer> directMeshArguments(const Context& context, const Pm4::DrawParameters& draw, std::span<const std::uint32_t> restartTable) {
     auto arguments = meshArgumentBuffer(context, restartTable);
     const MeshArguments resolved{0u, 0u, 0u, draw.indexCount, 0u};
@@ -2958,7 +3023,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     VkBuffer argumentBuffer = VK_NULL_HANDLE;
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
-    if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
+    if (inputs.meshGroupTable != nullptr) {
+        Require(inputs.restartTable.empty(), "mesh reuse grouping does not support primitive restart");
+        meshArguments = groupTableMeshArguments(context, draw, *inputs.meshGroupTable);
+    } else if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
     if (continued) {
         record.pipeline->Continue(recording, state, record.masked);
     } else {
@@ -3983,6 +4051,9 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     } else if (state.stages.mesh && args != nullptr) {
         meshArguments = recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, inputs.restartTable);
         argumentBuffer = meshArguments->Handle();
+    } else if (inputs.meshGroupTable != nullptr) {
+        Require(inputs.restartTable.empty(), "mesh reuse grouping does not support primitive restart");
+        meshArguments = groupTableMeshArguments(context, draw, *inputs.meshGroupTable);
     } else if (!inputs.restartTable.empty()) {
         meshArguments = directMeshArguments(context, draw, inputs.restartTable);
     } else if (gpuIndirect) {

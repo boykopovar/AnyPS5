@@ -310,14 +310,24 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& local = builtin(StageInputKind::LocalInvocationIndex);
         IrValue& indexWord = draw(3u);
         IrValue& group = entryIr.IAdd(builtin(StageInputKind::WorkgroupId, 0u), entryIr.IMul(builtin(StageInputKind::WorkgroupId, 2u), entryIr.ShiftRightLogical(indexWord, u32(MeshLayerStrideShift))));
-        IrValue& firstPrimitive = entryIr.IMul(group, u32(mesh.primitivesPerGroup));
+        const bool reuse = mesh.reuseVertexLimit != 0u && mesh.inputPrimitive == 4u && !mesh.capturedInput;
+        if (reuse && (mesh.reuseVertexLimit > totalThreads || mesh.reusePrimitiveLimit > totalThreads || mesh.reuseVertexLimit > 256u)) {
+            throw std::runtime_error("mesh reuse grouping limits exceed the workgroup");
+        }
+        const auto groupWord = [&entryIr](IrValue& index, IrValue& active) -> IrValue& {
+            return entryIr.Emit(IrOpcode::MeshGroupWord, IrOpcodeType(IrOpcode::MeshGroupWord), {&index, &active});
+        };
+        IrValue& always = entryIr.ConstantBool(true);
+        IrValue& groupBase = reuse ? entryIr.IAdd(entryIr.IMul(group, u32(MeshGroupDwords)), u32(MeshGroupHeaderDwords)) : u32(0u);
+        IrValue& groupCounts = reuse ? groupWord(entryIr.IAdd(groupBase, u32(2u)), always) : u32(0u);
+        IrValue& firstPrimitive = reuse ? groupWord(groupBase, always) : entryIr.IMul(group, u32(mesh.primitivesPerGroup));
         IrValue& step = u32(stepCount);
         IrValue& firstVertex = entryIr.IMul(firstPrimitive, step);
         IrValue& indirect = entryIr.INotEqual(entryIr.BitwiseOr(draw(MeshArgumentAddressDword), draw(MeshArgumentAddressDword + 1u)), u32(0u));
         IrValue& indexCount = entryIr.Select(indirect, argument(MeshArgumentIndexCountDword), draw(0u));
         IrValue& firstIndex = argument(MeshArgumentFirstIndexDword);
-        IrValue& vertices = minimum(subtractSaturate(indexCount, firstVertex), u32(mesh.verticesPerGroup));
-        IrValue& primitives = entryIr.Select(entryIr.ULessThan(vertices, u32(size)), u32(0u), entryIr.IAdd(entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&subtractSaturate(vertices, u32(size)), &step}), u32(1u)));
+        IrValue& vertices = reuse ? entryIr.ShiftRightLogical(groupCounts, u32(16u)) : minimum(subtractSaturate(indexCount, firstVertex), u32(mesh.verticesPerGroup));
+        IrValue& primitives = reuse ? entryIr.BitwiseAnd(groupCounts, u32(0xffffu)) : entryIr.Select(entryIr.ULessThan(vertices, u32(size)), u32(0u), entryIr.IAdd(entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&subtractSaturate(vertices, u32(size)), &step}), u32(1u)));
         entryIr.SetScalarReg(static_cast<ScalarReg>(2), entryIr.BitwiseOr(entryIr.ShiftLeftLogical(vertices, u32(12u)), entryIr.ShiftLeftLogical(primitives, u32(22u))));
         IrValue& wave = entryIr.ShiftRightLogical(local, u32(options.waveSize == 32u ? 5u : 6u));
         IrValue& waveBase = entryIr.BitwiseAnd(local, u32(~(options.waveSize - 1u)));
@@ -353,8 +363,15 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& first = fan ? (last ? fanCenterSlot : fanSecond) : unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, parity) : vertex, item));
         IrValue& second = fan ? (last ? fanSecond : fanThird) : size >= 2u ? unlessRestarted(entryIr.IMul(last ? entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity) : entryIr.IAdd(entryIr.IAdd(vertex, u32(1u)), parity), item)) : u32(0u);
         IrValue& third = fan ? (last ? fanThird : fanCenterSlot) : size == 3u ? unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, u32(2u)) : entryIr.ISub(entryIr.IAdd(vertex, u32(2u)), parity), item)) : u32(0u);
-        setVector(static_cast<VectorReg>(0), entryIr.BitwiseOr(entryIr.BitwiseAnd(first, u32(0xffffu)), entryIr.ShiftLeftLogical(second, u32(16u))));
-        setVector(static_cast<VectorReg>(1), entryIr.BitwiseAnd(third, u32(0xffffu)));
+        IrValue& slotWord = reuse ? groupWord(entryIr.IAdd(groupWord(u32(2u), always), entryIr.IAdd(firstPrimitive, local)), entryIr.ULessThan(local, primitives)) : u32(0u);
+        const auto slotOffset = [&](std::uint32_t corner) -> IrValue& {
+            return entryIr.IMul(entryIr.BitwiseAnd(entryIr.ShiftRightLogical(slotWord, u32(corner * 8u)), u32(0xffu)), item);
+        };
+        IrValue& firstSlot = reuse ? slotOffset(0u) : first;
+        IrValue& secondSlot = reuse ? slotOffset(1u) : second;
+        IrValue& thirdSlot = reuse ? slotOffset(2u) : third;
+        setVector(static_cast<VectorReg>(0), entryIr.BitwiseOr(entryIr.BitwiseAnd(firstSlot, u32(0xffffu)), entryIr.ShiftLeftLogical(secondSlot, u32(16u))));
+        setVector(static_cast<VectorReg>(1), entryIr.BitwiseAnd(thirdSlot, u32(0xffffu)));
         setVector(static_cast<VectorReg>(2), entryIr.IAdd(firstPrimitive, local));
         setVector(static_cast<VectorReg>(3), u32(0u));
         setVector(static_cast<VectorReg>(4), u32(0u));
@@ -381,7 +398,8 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             setVector(static_cast<VectorReg>(8), builtin(StageInputKind::WorkgroupId, 1u));
             return;
         }
-        IrValue& inputVertex = fan ? entryIr.Select(entryIr.IEqual(local, u32(0u)), entryIr.ISub(fanCenter, firstIndex), entryIr.IAdd(firstVertex, local)) : entryIr.IAdd(firstVertex, local);
+        IrValue& listedVertex = reuse ? groupWord(entryIr.IAdd(groupWord(u32(1u), always), entryIr.IAdd(groupWord(entryIr.IAdd(groupBase, u32(1u)), always), local)), entryIr.ULessThan(local, vertices)) : u32(0u);
+        IrValue& inputVertex = reuse ? listedVertex : fan ? entryIr.Select(entryIr.IEqual(local, u32(0u)), entryIr.ISub(fanCenter, firstIndex), entryIr.IAdd(firstVertex, local)) : entryIr.IAdd(firstVertex, local);
         IrValue& indexBytes = entryIr.BitwiseAnd(indexWord, u32(0xffu));
         IrValue& indexed = entryIr.INotEqual(indexBytes, u32(0u));
         IrValue& byteOffset = entryIr.IMul(entryIr.IAdd(inputVertex, firstIndex), indexBytes);

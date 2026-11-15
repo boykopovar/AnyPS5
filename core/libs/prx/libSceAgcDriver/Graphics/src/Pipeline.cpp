@@ -1212,6 +1212,8 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
         append(key, mesh.ldsSizeDwords);
         append(key, mesh.provokingVertex);
         append(key, mesh.outputPrimitiveSize);
+        append(key, mesh.reuseVertexLimit);
+        append(key, mesh.reusePrimitiveLimit);
     }
     append(key, state.stages.tessellation.has_value());
     if (state.stages.tessellation) {

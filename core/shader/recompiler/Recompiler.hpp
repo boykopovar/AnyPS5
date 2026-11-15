@@ -419,6 +419,8 @@ struct MeshConfiguration {
     std::uint32_t provokingVertex;
     std::uint32_t esgsItemSize = 0;
     std::uint32_t outputPrimitiveSize = 3;
+    std::uint32_t reuseVertexLimit = 0;
+    std::uint32_t reusePrimitiveLimit = 0;
 };
 
 struct TessellationConfiguration {
@@ -450,6 +452,9 @@ inline constexpr std::uint32_t MeshLayerStrideShift = 16;
 inline constexpr std::uint32_t MeshLayerStrideLimit = 0xffff;
 inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
+inline constexpr std::uint32_t MeshGroupTableDword = MeshRestartLengthDword;
+inline constexpr std::uint32_t MeshGroupHeaderDwords = 3;
+inline constexpr std::uint32_t MeshGroupDwords = 3;
 inline constexpr std::uint32_t MeshCapturedCounterDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshCapturedCapacityDword = MeshCapturedCounterDword + 1;
 inline constexpr std::uint32_t MeshCapturedHeaderBytes = 4 * (MeshCapturedCapacityDword + 1);

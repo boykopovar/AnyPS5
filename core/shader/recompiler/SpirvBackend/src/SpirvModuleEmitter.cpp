@@ -2171,6 +2171,17 @@ std::uint32_t EmitMeshRestartStart(SpirvValueEmitContext& ctx, const IrValue& in
     });
 }
 
+std::uint32_t EmitMeshGroupWord(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.Resources().stage != IrShaderStage::Mesh) {
+        ctx.Fail(inst, "mesh group table read outside a mesh shader");
+    }
+    return EmitValueOrZeroIfCondition(state, ctx.Arg(inst, 1), [&]() {
+        const auto address = MeshArgumentAddress(state);
+        return LoadMeshArgumentWord(state, address, Binary(state, spv::OpIAdd, TypeU32(state), ctx.Arg(inst, 0), ConstantU32(state, MeshGroupTableDword)));
+    });
+}
+
 std::uint32_t EmitMeshCapturedWord(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     if (state.program.Resources().stage != IrShaderStage::Mesh) {
