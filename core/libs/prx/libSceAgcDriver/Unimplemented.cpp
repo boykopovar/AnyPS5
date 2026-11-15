@@ -1,5 +1,4 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
-#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -16,12 +15,6 @@ constexpr int DRIVER_NULL_OUTPUT = static_cast<int>(0x8A6D0003);
 constexpr int GPU_RESET_UNAVAILABLE = static_cast<int>(0x8A6C0045);
 constexpr int MODULE_REGISTRATION_FAILED = static_cast<int>(0x8A6D0003);
 constexpr std::size_t TOOL_MEMORY_RANGE_SIZE = 12;
-
-void ClearToolMemoryRange(void* range) {
-    if (range == nullptr) return;
-    constexpr std::array<std::byte, TOOL_MEMORY_RANGE_SIZE> zero{};
-    GuestBytes(range).CopyOut(zero.data(), zero.size());
-}
 
 }
 
@@ -156,12 +149,12 @@ int APS5_VABI sceAgcDriverGetCoredumpMode(uint32_t* mode) {
 }
 
 int APS5_VABI sceAgcDriverAllocateToolMemoryForGpuReset(uint64_t, uint64_t, uint64_t, void* range) {
-    ClearToolMemoryRange(range);
+    if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 
 int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* range) {
-    ClearToolMemoryRange(range);
+    if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 
