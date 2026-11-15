@@ -11398,10 +11398,6 @@ int APS5_VABI WKPageSetMaintainsInactiveSelection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPageSetMayStartMediaWhenInWindow() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageSetMediaCaptureEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }

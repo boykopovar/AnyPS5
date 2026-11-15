@@ -487,7 +487,6 @@ int APS5_VABI WKPageSetFixedLayoutSize();
 int APS5_VABI WKPageSetGapBetweenPages();
 int APS5_VABI WKPageSetIgnoresViewportScaleLimits();
 int APS5_VABI WKPageSetMaintainsInactiveSelection();
-int APS5_VABI WKPageSetMayStartMediaWhenInWindow();
 int APS5_VABI WKPageSetMediaCaptureEnabled();
 int APS5_VABI WKPageSetMediaVolume();
 int APS5_VABI WKPageSetMockCameraOrientation();

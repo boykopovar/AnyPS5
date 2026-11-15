@@ -224,6 +224,7 @@ bool APS5_VABI WKPageIsPinnedToLeftSide(const void* pageRef);
 bool APS5_VABI WKPageIsPinnedToRightSide(const void* pageRef);
 bool APS5_VABI WKPageIsPinnedToTopSide(const void* pageRef);
 bool APS5_VABI WKPageIsPinnedToBottomSide(const void* pageRef);
+void APS5_VABI WKPageSetMayStartMediaWhenInWindow(const void* pageRef, bool mayStartMediaWhenInWindow);
 std::uint32_t APS5_VABI WKPageGroupGetTypeID();
 std::uint32_t APS5_VABI WKPageRequestStorageAccessConfirmResultListenerGetTypeID();
 std::uint32_t APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerGetTypeID();
