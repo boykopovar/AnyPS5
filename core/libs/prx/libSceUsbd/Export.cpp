@@ -20,6 +20,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace {
 
@@ -599,10 +600,14 @@ std::int32_t APS5_VABI sceUsbdGetDeviceDescriptor(void* device, void* descriptor
 
 std::int32_t APS5_VABI sceUsbdGetStringDescriptor(void* deviceHandle, std::uint8_t descriptorIndex, std::uint16_t languageId, std::uint8_t* data, std::int32_t length) {
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
-    auto* handle = KnownHandle(deviceHandle, __func__);
     if (length > 65535) length = 65535;
-    data[0] = 0;
-    return ToGuestError(libusb_get_string_descriptor(handle, descriptorIndex, languageId, data, length));
+    const std::uint8_t empty = 0;
+    if (!GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
+    auto* handle = KnownHandle(deviceHandle, __func__);
+    std::vector<std::uint8_t> local(static_cast<std::size_t>(length));
+    const int result = libusb_get_string_descriptor(handle, descriptorIndex, languageId, local.data(), length);
+    if (result > 0 && !GuestCopyOut_nid_no_patch(data, local.data(), static_cast<std::size_t>(result))) return SCE_USBD_ERROR_INVALID_ARG;
+    return ToGuestError(result);
 }
 
 std::int32_t APS5_VABI sceUsbdKernelDriverActive(void* deviceHandle, std::int32_t interfaceNumber) {
@@ -791,15 +796,17 @@ std::int32_t APS5_VABI sceUsbdGetMaxPacketSize(void* device, std::uint8_t endpoi
 
 std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
-    auto* handle = KnownHandle(deviceHandle, __func__);
     if (length > 65535) length = 65535;
-    data[0] = 0;
+    const std::uint8_t empty = 0;
+    if (!GuestCopyOut_nid_no_patch(data, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
+    auto* handle = KnownHandle(deviceHandle, __func__);
     std::uint8_t descriptor[STRING_DESCRIPTOR_SIZE];
     if (!RequestStringDescriptor(handle, 0, 0, descriptor)) return SCE_USBD_ERROR_OTHER;
     const auto languageId = static_cast<std::uint16_t>(descriptor[2] | descriptor[3] << 8);
     if (!RequestStringDescriptor(handle, descriptorIndex, languageId, descriptor) || descriptor[0] < 2) return SCE_USBD_ERROR_OTHER;
     std::int32_t units = descriptor[0] / 2 - 1;
     if (units > length - 1) units = length - 1;
+    std::uint8_t text[STRING_DESCRIPTOR_SIZE] = {};
     std::uint8_t byteOrder = 3;
     std::int32_t written = 0;
     for (std::int32_t unit = 0; unit < units; ++unit) {
@@ -815,9 +822,10 @@ std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::
             continue;
         }
         if (character < 0x20 || character > 0x7E || character == '<' || character == '>') continue;
-        data[written++] = character;
+        text[written++] = character;
     }
-    data[written] = 0;
+    text[written] = 0;
+    if (!GuestCopyOut_nid_no_patch(data, text, static_cast<std::size_t>(written) + 1)) return SCE_USBD_ERROR_INVALID_ARG;
     return written;
 }
 
