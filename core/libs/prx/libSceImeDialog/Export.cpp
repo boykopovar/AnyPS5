@@ -374,7 +374,8 @@ int APS5_VABI sceImeDialogGetCurrentStarState(int64_t state) {
     std::lock_guard lock(g_mutex);
     if (g_dialog.status == StatusNone) return ErrorNotInUse;
     if (state == 0) return ErrorInvalidAddress;
-    *reinterpret_cast<std::uint32_t*>(state) = 0;
+    const std::uint32_t value = 0;
+    if (!CopyOutPreservingErrno(reinterpret_cast<void*>(static_cast<std::uintptr_t>(state)), &value, sizeof(value))) return ErrorInvalidAddress;
     return 0;
 }
 
