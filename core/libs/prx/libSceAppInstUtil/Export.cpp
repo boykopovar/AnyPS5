@@ -44,7 +44,19 @@ int APS5_VABI sceAppInstUtilAppIsInInstalling(int32_t* installing) {
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppIsInUpdating(const char* titleId, bool* updating) {
-    NotImplemented_nid_no_patch(__func__);
+    const int savedErrno = errno;
+    if (titleId == nullptr || updating == nullptr) return ErrorNullArgument;
+    std::lock_guard lock(g_serviceMutex);
+    if (g_serviceReferences <= 0) return ErrorNotInitialized;
+    std::string requested;
+    const int copyError = CopyGuestString_nid_no_patch(titleId, std::strlen(GetAppTitleId_nid_postfix().value) + 1, requested);
+    errno = savedErrno;
+    if (copyError == GuestEfault) return ErrorNullArgument;
+    if (copyError == GuestEnomem) throw std::bad_alloc();
+    const bool localUpdating = false;
+    const bool copied = GuestCopyOut_nid_no_patch(updating, &localUpdating, sizeof(localUpdating));
+    errno = savedErrno;
+    if (!copied) return ErrorNullArgument;
     return 0;
 }
 int APS5_VABI sceAppInstUtilAppExists(const char* titleId, int32_t* exists) {

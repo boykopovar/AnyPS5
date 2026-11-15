@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -49,6 +50,9 @@ int main() {
     Require(sceZlibInflate(nullptr, compressed.size(), output, 8192, &id) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInflate(compressed.data(), 0, output, 8192, &id) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInflate(compressed.data(), compressed.size(), nullptr, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    errno = 71;
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<std::int32_t>(0x81120016));
+    Require(errno == 71);
     Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibGetResult(0, nullptr, &status) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibGetResult(0, &produced, nullptr) == static_cast<std::int32_t>(0x81120016));
@@ -67,8 +71,14 @@ int main() {
         Require(sceZlibGetResult(id + 1, &produced, &status) == static_cast<std::int32_t>(0x81120002));
         Require(sceZlibGetResult(id, nullptr, &status) == static_cast<std::int32_t>(0x81120016));
         Require(sceZlibGetResult(id, &produced, nullptr) == static_cast<std::int32_t>(0x81120016));
+        produced = 0xFEDCBA98;
+        status = static_cast<std::int32_t>(0x12345678);
         Require(sceZlibGetResult(id, reinterpret_cast<std::uint32_t*>(0x10), &status) == static_cast<std::int32_t>(0x81120016));
+        Require(produced == 0xFEDCBA98 && status == static_cast<std::int32_t>(0x12345678));
+        produced = 0xFEDCBA98;
+        status = static_cast<std::int32_t>(0x12345678);
         Require(sceZlibGetResult(id, &produced, reinterpret_cast<std::int32_t*>(0x10)) == static_cast<std::int32_t>(0x81120016));
+        Require(produced == 0xFEDCBA98 && status == static_cast<std::int32_t>(0x12345678));
         Require(sceZlibGetResult(id, &produced, &status) == 0);
         if (status != expectedStatus) std::fprintf(stderr, "input=%u capacity=%u status=%x expected=%x produced=%u\n", inputLength, capacity, static_cast<unsigned>(status), static_cast<unsigned>(expectedStatus), produced);
         Require(status == expectedStatus && produced <= capacity);

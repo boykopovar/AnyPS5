@@ -185,9 +185,25 @@ int main() {
     std::uint32_t property = 0;
     Require(sceNpSessionSignalingGetCustomProperty(firstId, &property) == ContextNotFound, "custom property stale context");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, nullptr) == 0, "null custom property output");
+    errno = 71;
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable custom property output");
+    Require(errno == 71, "errno preserved on unwritable custom property output");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == 0, "default custom property");
     Require(sceNpSessionSignalingSetCustomProperty(contextId, nullptr, nullptr) == InvalidArgument, "null custom property value");
     Require(sceNpSessionSignalingSetCustomProperty(firstId, &property, nullptr) == ContextNotFound, "set custom property stale context");
+    const std::uint32_t firstProperty = 0x11223344u;
+    previousProperty = 0xffffffffu;
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &firstProperty, &previousProperty) == 0 && previousProperty == 0, "first custom property update");
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == firstProperty, "stored custom property");
+    errno = 71;
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &firstProperty, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument, "unwritable previous custom property output");
+    Require(errno == 71, "errno preserved on unwritable previous custom property output");
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == firstProperty, "rejected update changed the custom property");
+    const std::uint32_t secondProperty = 0x55667788u;
+    previousProperty = 0;
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &secondProperty, &previousProperty) == 0 && previousProperty == firstProperty, "second custom property update reports its predecessor");
+    Require(sceNpSessionSignalingSetCustomProperty(contextId, &secondProperty, nullptr) == 0, "custom property update without a previous output");
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == secondProperty, "updated custom property");
     Require(sceNpSessionSignalingRegisterInternalCallback(firstId, nullptr, nullptr) == ContextNotFound, "register callback stale context");
     Require(sceNpSessionSignalingRegisterInternalCallback(contextId, nullptr, nullptr) == 0, "register callback");
     const char* const activateSessionId = reinterpret_cast<const char*>(sessionId);
@@ -270,6 +286,10 @@ int main() {
     Require(sceNpSessionSignalingInitializeWithPort(nullptr, 0x217b, 0) == InvalidArgument, "null initialize with port parameter");
     Require(sceNpSessionSignalingInitializeWithPort(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam), 0x217b, 0) == 0, "initialize with port failed");
     Require(sceNpSessionSignalingInitializeWithPort(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam), 0x217b, 0) == AlreadyInitialized, "initialize with port after initialize");
+    errno = 71;
+    Require(sceNpSessionSignalingGetMemoryInfo(reinterpret_cast<SessionSignalingMemoryInfo*>(0x10)) == InvalidArgument, "unwritable memory info rejected");
+    Require(sceNpSessionSignalingGetConnectionStatistics(reinterpret_cast<SessionSignalingConnectionStatistics*>(0x10)) == InvalidArgument, "unwritable statistics rejected");
+    Require(errno == 71, "errno preserved");
     Require(sceNpSessionSignalingGetMemoryInfo(&memoryInfo) == 0 && memoryInfo.poolSize == poolSize && memoryInfo.usedSize == 0 && memoryInfo.peakUsedSize == 0, "memory info after initialize with port");
     Require(sceNpSessionSignalingTerminate() == 0, "final terminate after initialize with port");
 }
