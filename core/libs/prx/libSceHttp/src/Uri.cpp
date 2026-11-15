@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -91,6 +92,26 @@ size_t schemeLength(std::string_view uri) {
 bool isOpaque(std::string_view uri) {
     const size_t schemeEnd = schemeLength(uri);
     return !uri.substr(schemeEnd == 0 ? 0 : schemeEnd + 1).starts_with("//");
+}
+
+bool CopyGuestCString(const char* source, std::string& destination) {
+    destination.clear();
+    auto address = reinterpret_cast<std::uintptr_t>(source);
+    for (;;) {
+        char chunk[64];
+        const std::size_t count = std::min<std::size_t>(sizeof(chunk), 0x1000 - address % 0x1000);
+        if (address > UINTPTR_MAX - count) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), count);
+        errno = savedErrno;
+        if (!copied) return false;
+        if (const void* end = std::memchr(chunk, 0, count)) {
+            destination.append(chunk, static_cast<const char*>(end) - chunk);
+            return true;
+        }
+        destination.append(chunk, count);
+        address += count;
+    }
 }
 
 int parseUri(std::string_view uri, UriParts& parts) {
@@ -332,11 +353,13 @@ int APS5_VABI sceHttpUriMerge(char* merged_url, const char* url, const char* rel
 
 int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void* pool, size_t* require, size_t prepare) {
     if (!src_url) return ERROR_INVALID_URL;
+    std::string url;
+    if (!CopyGuestCString(src_url, url)) return ERROR_INVALID_URL;
     const bool write = out && pool;
     if (!write && !require) return ERROR_INVALID_VALUE;
 
     UriParts parts;
-    if (const int result = parseUri(src_url, parts); result != 0) return result;
+    if (const int result = parseUri(url, parts); result != 0) return result;
 
     const std::string_view fields[] = {parts.scheme, parts.username, parts.password, parts.hostname, parts.path, parts.query, parts.fragment};
     const size_t spaces[] = {parts.scheme.size(), parts.username.size(), parts.password.size(), parts.hostname.size(), parts.pathSpace, parts.query.size(),
