@@ -50,6 +50,10 @@ int main() {
         *__error_nid_postfix() = 0;
         Require(sysarch(operation, nullptr) == -1 && *__error_nid_postfix() == 22);
     }
+    for (const int operation : {11, 132}) {
+        *__error_nid_postfix() = 0;
+        Require(sysarch(operation, nullptr) == -1 && *__error_nid_postfix() == 14);
+    }
 #if (defined(__linux__) || defined(_WIN32)) && defined(__x86_64__)
     static std::uint64_t slots[2] = {0x1234567890abcdefull, 0};
     std::uint64_t base = reinterpret_cast<std::uintptr_t>(slots);

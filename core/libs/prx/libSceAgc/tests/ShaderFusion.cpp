@@ -384,6 +384,16 @@ void testHullHalves() {
     check(scratch[2].value == 7u && scratch[3].value == (6u << 1u), "hull resource registers were not merged");
     check(scratch[4].value == static_cast<std::uint32_t>(address >> 8u) && scratch[5].value == (0xab00u | static_cast<std::uint32_t>((address >> 40u) & 0xffu)), "hull local program address does not point at the front half");
     check(backSh[4].value == 0u, "hull fusion wrote the back half's registers");
+    const auto backBefore = backSh;
+    Shader refused{};
+    expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &front, &back, nullptr); });
+    check(std::memcmp(backSh.data(), backBefore.data(), sizeof(backSh)) == 0, "hull fusion without scratch wrote the back half");
+    Shader noFrontSpecials = front;
+    noFrontSpecials.specials = nullptr;
+    expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &noFrontSpecials, &back, scratch.data()); });
+    Shader noBackSpecials = back;
+    noBackSpecials.specials = nullptr;
+    expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &front, &noBackSpecials, scratch.data()); });
 }
 
 void testUnversionedSize() {

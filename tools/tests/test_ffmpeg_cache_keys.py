@@ -25,5 +25,13 @@ class FfmpegCacheKeyTests(unittest.TestCase):
         self.assertNotEqual(self.keys("build.yml")[0], self.keys("windows-msys2.yml")[0])
 
 
+class CcacheKeyTests(unittest.TestCase):
+    def test_the_msys2_ccache_is_outside_the_windows_restore_prefix(self):
+        text = (REPOSITORY / ".github/workflows/windows-msys2.yml").read_text(encoding="utf-8")
+        key = re.search(r"ccache-action@\S+\s+with:\s+key: (\S+)", text)
+        self.assertIsNotNone(key)
+        self.assertFalse(key.group(1).startswith("windows"), key.group(1))
+
+
 if __name__ == "__main__":
     unittest.main()

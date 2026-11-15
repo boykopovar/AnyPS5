@@ -36,8 +36,10 @@ extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maxi
 extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
+extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes);
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes);
+extern "C" bool GuestCopyInUnsynced_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* path, bool module = false);
 extern "C" std::filesystem::path ResolveDiskPath_nid_no_patch(const char* path);
@@ -66,7 +68,7 @@ struct KernelTimespec;
 using ClockGetresFn_nid_no_patch = int (APS5_VABI*)(std::int32_t, KernelTimespec*);
 extern "C" void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn);
 
-using PthreadCreateFn_nid_no_patch = int (APS5_VABI*)(void**, const void*, void* (APS5_VABI*)(void*), void*);
+using PthreadCreateFn_nid_no_patch = int (APS5_VABI*)(void**, const void*, void* (APS5_VABI*)(void*), void*, const char*);
 using PthreadJoinFn_nid_no_patch = int (APS5_VABI*)(void*, void**);
 using PthreadDetachFn_nid_no_patch = int (APS5_VABI*)(void*);
 extern "C" void RegisterPthreadCreate_nid_no_patch(PthreadCreateFn_nid_no_patch fn);
@@ -85,6 +87,7 @@ struct ThreadForwards_nid_no_patch {
     int (APS5_VABI* equal)(void*, void*);
     void* (APS5_VABI* self)();
     void (APS5_VABI* exit)(void*);
+    int (APS5_VABI* attrDetachState)(const void*, int*);
 };
 extern "C" void RegisterThreadForwards_nid_no_patch(const ThreadForwards_nid_no_patch* forwards);
 struct PthreadSyncForwards_nid_no_patch {

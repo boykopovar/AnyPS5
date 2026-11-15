@@ -18,6 +18,8 @@ int main() {
         errno = expectedErrno;
         Require(sceSulphaGetDefaultConfig(nullptr) == static_cast<int>(0x804d0003u) && errno == expectedErrno,
                 "A null configuration must return the native argument error without changing errno");
+        Require(sceSulphaGetDefaultConfig(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x804d0003u) && errno == expectedErrno,
+                "An unwritable configuration must return the native argument error without changing errno");
     }
 
     struct Config {

@@ -43,15 +43,21 @@ int main() {
     auto* stream = fopen_nid_postfix(filePath.c_str(), "w+b");
     Require(stream != nullptr);
 
+    *__error_nid_postfix() = 77;
+    Require(WriteFormatted(stream, "") == 0);
+    Require(*__error_nid_postfix() == 77);
     const int written = WriteFormatted(stream, "value: %d, string: %s", 12345, "testing");
     Require(written == 29);
+    const int extra = WriteFormatted(stream, " %04x %.*s %lld %% %c", 0x2au, 3, "abcdef", -9000000000LL, 'Z');
+    Require(extra == 25);
+    Require(*__error_nid_postfix() == 77);
     Require(fclose_nid_postfix(stream) == 0);
 
     std::ifstream in(filePath, std::ios::binary);
     Require(in.is_open());
     std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
-    Require(contents == "value: 12345, string: testing");
+    Require(contents == "value: 12345, string: testing 002a abc -9000000000 % Z");
     std::filesystem::remove(filePath);
 
     FileStream closedStream(TemporaryFile::Open());

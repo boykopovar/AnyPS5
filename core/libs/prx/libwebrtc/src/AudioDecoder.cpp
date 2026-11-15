@@ -41,12 +41,27 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
-#include "prx/libc/include/General.hpp"
 
 #include <stdexcept>
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+
+namespace {
+
+constexpr std::size_t DeletingDestructorSlot = 1;
+
+void DeleteFrame(void* frame) {
+    const void* const* vtable;
+    std::memcpy(&vtable, frame, sizeof(vtable));
+    if (!vtable || !vtable[DeletingDestructorSlot])
+        throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a frame with a virtual destructor");
+    using Destructor = void(APS5_VABI*)(void*);
+    reinterpret_cast<Destructor>(const_cast<void*>(vtable[DeletingDestructorSlot]))(frame);
+}
+
+}
 
 extern "C" {
 
@@ -80,7 +95,7 @@ void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(WebRtcAudio
     if (!result)
         throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a result");
     if (result->frame)
-        NotImplemented_nid_no_patch("AudioDecoder::ParseResult destructor with a frame: deleting the guest EncodedAudioFrame");
+        DeleteFrame(result->frame);
 }
 
 }
