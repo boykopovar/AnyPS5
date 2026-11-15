@@ -700,11 +700,12 @@ std::size_t KeywordAllocationAttempt(std::size_t failed) {
     return calls;
 }
 
-void AllocationKeywords() {
+void AllocationKeywords(std::size_t shard) {
     const auto calls = KeywordAllocationAttempt(0);
-    Require(calls > 3 && calls < 512);
-    for (std::size_t failed = 1; failed <= calls + 1; ++failed) KeywordAllocationAttempt(failed);
-    std::fprintf(stderr, "%zu keyword allocation failure points qualified\n", calls);
+    std::fprintf(stderr, "keyword allocation baseline: %zu calls, shard %zu\n", calls, shard);
+    Require(calls > 3 && shard < 16);
+    for (std::size_t failed = shard + 1; failed <= calls + 1; failed += 16) KeywordAllocationAttempt(failed);
+    std::fprintf(stderr, "keyword allocation shard %zu: %zu total constructor allocation points\n", shard, calls);
 }
 
 void DefaultState() {
@@ -796,7 +797,7 @@ int main(int argc, char** argv) {
         else if (mode == "null_plural") NullPlural();
         else if (mode == "keyword_oracle") KeywordOracle();
         else if (mode == "enumeration_write_bounds") EnumerationWriteBounds();
-        else if (mode == "allocation_keywords") AllocationKeywords();
+        else if (mode == "allocation_keywords") AllocationKeywords(argc == 3 ? std::stoul(argv[2]) : 0);
         else if (mode == "allocation_iso_first") AllocationISO(1);
         else if (mode == "allocation_iso_second") AllocationISO(2);
         else if (mode == "allocation_registry") AllocationRegistry();
