@@ -479,7 +479,7 @@ void Run() {
 
 } // namespace UdatToPattern
 
-namespace GuestPointers {
+namespace DateFormatGuestPointers {
 
 void Run() {
     auto rejectsRuntime = [](auto&& call) {
@@ -553,5 +553,5 @@ void CheckIcuDateFormat() {
     UdatGetSymbols::Run();
     UdatOpen::Run();
     UdatToPattern::Run();
-    GuestPointers::Run();
+    DateFormatGuestPointers::Run();
 }
