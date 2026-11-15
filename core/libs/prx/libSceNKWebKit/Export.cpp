@@ -11020,11 +11020,6 @@ int APS5_VABI WKPageGetAllowsRemoteInspection() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI WKPageGetBackingScaleFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKPageGetBytecodeProfile() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11363,10 +11358,6 @@ int APS5_VABI WKPageSetCaretVisible() {
 }
 
 int APS5_VABI WKPageSetControlledByAutomation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPageSetCustomBackingScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
