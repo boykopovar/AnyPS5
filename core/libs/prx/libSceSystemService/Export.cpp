@@ -296,6 +296,8 @@ int GetGpuLoadEmulationModeOfApp(const char* caller, std::int32_t appId) {
 
 std::atomic<bool> SuspendConfirmationDialogEnabled{true};
 
+std::atomic<bool> GnmCompositorOnScreenProfilerFlag{false};
+
 }
 
 extern "C" {
@@ -321,6 +323,15 @@ int APS5_VABI sceSystemServiceSetGpuLoadEmulationMode(std::uint32_t mode) {
 
 int APS5_VABI sceSystemServiceGetGpuLoadEmulationMode() {
     return static_cast<int>(GpuLoadEmulationMode.load(std::memory_order_relaxed));
+}
+
+bool APS5_VABI sceShellCoreUtilGetGnmCompositorOnScreenProfilerFlag() {
+    return GnmCompositorOnScreenProfilerFlag.load(std::memory_order_relaxed);
+}
+
+int APS5_VABI sceShellCoreUtilSetGnmCompositorOnScreenProfilerFlag(std::int32_t enabled) {
+    GnmCompositorOnScreenProfilerFlag.store(enabled != 0, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceShellCoreUtilSetGpuLoadEmulationMode(std::uint32_t mode) {

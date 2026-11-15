@@ -847,11 +847,6 @@ int APS5_VABI sceShellCoreUtilGetFsckProgress(const char* titleId, std::uint32_t
     return 0;
 }
 
-bool APS5_VABI sceShellCoreUtilGetGnmCompositorOnScreenProfilerFlag() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilGetHidConfigFileInfoString(char* value, std::size_t capacity, std::int32_t configIndex) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1308,11 +1303,6 @@ int APS5_VABI sceShellCoreUtilSetGameLiveStreamingOnAirFlag(std::int32_t enabled
 }
 
 int APS5_VABI sceShellCoreUtilSetGameLiveStreamingStatus(std::int32_t active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilSetGnmCompositorOnScreenProfilerFlag(std::int32_t enabled) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

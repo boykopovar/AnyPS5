@@ -1,0 +1,5 @@
+# libSceSystemService
+
+## add Silent stubs
+
+- [sceShellCoreUtilGetGnmCompositorOnScreenProfilerFlag, sceShellCoreUtilSetGnmCompositorOnScreenProfilerFlag](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - the flag is stored and read back, but AnyPS5 draws no GNM compositor on-screen profiler, so it changes nothing else. It starts false. The setter takes a 32-bit value and treats zero as false and any other value as true; whether the console accepts values other than 0 and 1 is unmeasured. [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/d4ea43b9ff7369365a2dcf9b15315c65aeb7f6f9/src/core/libraries/system/systemservice.cpp#L989) stubs the getter and stubs [the setter](https://github.com/shadps4-emu/shadPS4/blob/d4ea43b9ff7369365a2dcf9b15315c65aeb7f6f9/src/core/libraries/system/systemservice.cpp#L1524) with no argument, and both export names appear in [ps5-payload-dev's SDK](https://github.com/ps5-payload-dev/sdk/blob/4f5e01f386cafcdb9140deeed885b0a71e728b5e/sce_stubs/libSceSystemService.c#L646-L648).
