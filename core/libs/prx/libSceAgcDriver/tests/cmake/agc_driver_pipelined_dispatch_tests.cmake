@@ -9,8 +9,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_pipelined_dispatch_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_PIPELINE_DISPATCH=1" SKIP_RETURN_CODE 77)
     add_test(NAME agc_driver_pipelined_dispatch_switched COMMAND agc_driver_pipelined_dispatch_tests --flip)
     set_tests_properties(agc_driver_pipelined_dispatch_switched PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77)
+    add_test(NAME agc_driver_pipelined_dispatch_overhead COMMAND agc_driver_pipelined_dispatch_tests --overhead)
+    set_tests_properties(agc_driver_pipelined_dispatch_overhead PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(agc_driver_pipelined_dispatch_inline agc_driver_pipelined_dispatch_switched PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_pipelined_dispatch_inline agc_driver_pipelined_dispatch_switched agc_driver_pipelined_dispatch_overhead PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_pipelined_dispatch_misses COMMAND agc_driver_pipelined_dispatch_tests)

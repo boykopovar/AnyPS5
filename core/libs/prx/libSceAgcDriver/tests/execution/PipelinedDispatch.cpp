@@ -251,6 +251,82 @@ std::string Describe(const Handling& handling) {
     return std::to_string(handling.drains) + " drains (" + std::to_string(handling.packetDrains) + " at the dispatch packet), " + (handling.queued ? "queued" : "not queued");
 }
 
+#if defined(__SANITIZE_THREAD__)
+constexpr bool ThreadSanitized = true;
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+constexpr bool ThreadSanitized = true;
+#else
+constexpr bool ThreadSanitized = false;
+#endif
+#else
+constexpr bool ThreadSanitized = false;
+#endif
+
+std::vector<std::uint32_t> DispatchBatch(std::size_t dispatches) {
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(Code.data());
+    const auto input = BufferDescriptor(Input, BufferBytes);
+    const auto output = BufferDescriptor(Output, BufferBytes);
+    std::vector<std::uint32_t> words{
+        0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u),
+        0xc0037600u, 0x207u, Lanes, 1u, 1u,
+        0xc0017600u, 0x213u, 8u << 1u,
+        0xc0087600u, 0x240u, input[0], input[1], input[2], input[3], output[0], output[1], output[2], output[3],
+    };
+    for (std::size_t index = 0; index < dispatches; ++index) words.insert(words.end(), {0xc0031500u, 1u, 1u, 1u, 0x8041u});
+    return words;
+}
+
+double Median(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    const auto middle = values.size() / 2u;
+    return values.size() % 2u == 1u ? values[middle] : (values[middle - 1u] + values[middle]) / 2.0;
+}
+
+void MeasureDispatchOverhead() {
+    using AgcDriver::Graphics::RuntimeSwitch;
+    namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
+    constexpr std::size_t PerBatch = 250;
+    constexpr std::size_t Batches = 24;
+    constexpr double Bound = 1.2;
+    const bool initial = RuntimeSwitches::Set(RuntimeSwitch::NoPipelineDispatch);
+    constexpr std::uint32_t value = 0x51515151u;
+    for (std::size_t warm = 0; warm < 2; ++warm) Settle(Round(Input, value, Code.data()));
+    const auto batch = DispatchBatch(PerBatch);
+    std::array<std::vector<double>, 2> perDispatchUs;
+    std::array<std::uint64_t, 2> drains{};
+    for (std::size_t round = 0; round <= Batches; ++round) {
+        for (const bool off : {round % 2u == 0u, round % 2u != 0u}) {
+            RuntimeSwitches::Assign(RuntimeSwitch::NoPipelineDispatch, off);
+            auto words = batch;
+            const auto drainsBefore = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode);
+            const auto start = std::chrono::steady_clock::now();
+            Submit(words);
+            AgcDriverWaitIdle_nid_postfix();
+            const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+            const auto batchDrains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore;
+            if (round == 0u) continue;
+            perDispatchUs[off ? 1u : 0u].push_back(elapsed / static_cast<double>(PerBatch));
+            drains[off ? 1u : 0u] += batchDrains;
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::NoPipelineDispatch, initial);
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        check(Output[lane] == value + 1u, "dispatch overhead: lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u));
+    }
+    std::vector<double> ratios;
+    for (std::size_t index = 0; index < Batches; ++index) ratios.push_back(perDispatchUs[0][index] / perDispatchUs[1][index]);
+    const auto pipelined = Median(perDispatchUs[0]);
+    const auto inlined = Median(perDispatchUs[1]);
+    const auto ratio = Median(ratios);
+    std::printf("pipelined dispatch: overhead over %zu batches of %zu cached dispatches per arm: median %.2f us per dispatch pipelined (%llu dispatch drains), %.2f us inline (%llu dispatch drains), median ratio of adjacent batches %.2f\n", Batches, PerBatch, pipelined, static_cast<unsigned long long>(drains[0]), inlined, static_cast<unsigned long long>(drains[1]), ratio);
+    check(drains[0] == 0u, "dispatch overhead: the pipelined arm drained the pipeline " + std::to_string(drains[0]) + " times at a dispatch, so it did not measure pipelined dispatches");
+    check(drains[1] >= Batches * PerBatch, "dispatch overhead: the inline arm drained the pipeline " + std::to_string(drains[1]) + " times for " + std::to_string(Batches * PerBatch) + " dispatches");
+    if (ThreadSanitized) return;
+    check(ratio <= Bound, "dispatch overhead: pipelined batches took a median " + std::to_string(ratio) + "x the time of the inline batches beside them (" + std::to_string(pipelined) + " us against " + std::to_string(inlined) + " us per dispatch), above " + std::to_string(Bound) + "x");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -267,6 +343,7 @@ int main(int argc, char** argv) {
         using AgcDriver::Graphics::RuntimeSwitch;
         namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
         const bool flips = argc > 1 && std::string(argv[1]) == "--flip";
+        const bool overhead = argc > 1 && std::string(argv[1]) == "--overhead";
         const bool pipelinedDispatch = !RuntimeSwitches::Set(RuntimeSwitch::NoPipelineDispatch);
         const bool dispatchMisses = pipelinedDispatch && std::getenv("APS5_PIPELINE_DISPATCH_MISSES") != nullptr;
 
@@ -300,6 +377,12 @@ int main(int argc, char** argv) {
         check((reinterpret_cast<std::uintptr_t>(TargetA) >> 32u) == (reinterpret_cast<std::uintptr_t>(TargetB) >> 32u), "the two targets do not share their high address dword");
         const auto initialDescriptor = BufferDescriptor(TargetA, BufferBytes);
         std::copy(initialDescriptor.begin(), initialDescriptor.end(), Table);
+        if (overhead) {
+            MeasureDispatchOverhead();
+            LibcRunShutdown_nid_postfix();
+            std::puts("pipelined dispatch overhead test passed");
+            return 0;
+        }
         const std::array<std::uint32_t, 5> values{0x0a0b0c0du, 0x11112222u, 0x33334444u, 0x55556666u, 0x77778888u};
         for (std::size_t round = 0; round < values.size(); ++round) {
             const auto value = values[round];
