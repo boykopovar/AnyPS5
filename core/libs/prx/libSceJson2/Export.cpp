@@ -1907,6 +1907,20 @@ int CompareText(const char* left, const char* right) {
     return static_cast<unsigned char>(*left) - static_cast<unsigned char>(*right);
 }
 
+bool GuestTextLength(const char* text, std::size_t& length) {
+    char chunk[4096];
+    for (std::size_t offset = 0;;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(text) + offset;
+        const std::size_t count = sizeof(chunk) - address % sizeof(chunk);
+        if (!GuestCopyIn_nid_no_patch(chunk, text + offset, count)) return false;
+        if (const void* end = std::memchr(chunk, 0, count)) {
+            length = offset + static_cast<std::size_t>(static_cast<const char*>(end) - chunk);
+            return true;
+        }
+        offset += count;
+    }
+}
+
 struct ScopedString {
     String string{};
     explicit ScopedString(std::string_view text) { Construct(string, text); }
@@ -2971,7 +2985,9 @@ void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Constr
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); AssignReal(*self, value); }
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
     Construct(*self);
-    ScopedString temporary{std::string_view{text ? text : ""}};
+    std::size_t length = 0;
+    if (text && !GuestTextLength(text, length)) text = nullptr;
+    ScopedString temporary{text ? std::string_view{text, length} : std::string_view{""}};
     if (!temporary.string.text) return;
     SetType(*self, TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
@@ -3024,7 +3040,9 @@ void APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetT
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { AssignReal(NodeOf(*self), value); }
 void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
-    ScopedString temporary{std::string_view{text}};
+    std::size_t length = 0;
+    if (!GuestTextLength(text, length)) throw std::invalid_argument("sce::Json::Value::set: unreadable text");
+    ScopedString temporary{std::string_view{text, length}};
     if (!temporary.string.text) return;
     SetType(NodeOf(*self), TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
