@@ -7,6 +7,7 @@
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include <cerrno>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -246,7 +247,10 @@ int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
     const std::size_t length = std::strlen(value);
     if (length >= size)
         throw std::runtime_error("getenv_np: the console's handling of a value longer than the buffer is unknown");
-    std::memcpy(buffer, value, length + 1);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(buffer, value, length + 1);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("getenv_np requires a writable buffer");
     return 0;
 }
 

@@ -6,6 +6,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -72,6 +73,9 @@ void TestGetenvNp() {
     Require(Throws<std::runtime_error>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", buffer, 5); }));
     Require(Throws<std::invalid_argument>([&] { getenv_np(nullptr, buffer, sizeof(buffer)); }));
     Require(Throws<std::invalid_argument>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", nullptr, sizeof(buffer)); }));
+    errno = 73;
+    Require(Throws<std::invalid_argument>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", reinterpret_cast<char*>(0x10), sizeof(buffer)); }));
+    Require(errno == 73);
     Require(unsetenv_nid_postfix("ANYPS5_GETENV_NP_TEST") == 0);
 }
 
