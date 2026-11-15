@@ -674,7 +674,7 @@ const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* fon
 }
 
 FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting* fontWriting, const FontWritingLetterStep** pLetterStep) {
-    if (pLetterStep) *pLetterStep = nullptr;
+    if (pLetterStep && !CopyOutGuest(pLetterStep, static_cast<const FontWritingLetterStep*>(nullptr))) return nullptr;
     auto* writing = GetWritingData(fontWriting);
     if (!writing || !writing->hasCurrentStep || !writing->hasCurrentCharacter) return nullptr;
     auto* data = GetStringData(writing->string);
@@ -691,7 +691,7 @@ FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting
     letterStep.Components.glyphsCount = 1;
     letterStep.Components.glyphsIndex = static_cast<std::uint32_t>(writing->currentIndex);
     letterStep.Components.characterTextCount = static_cast<std::uint8_t>(std::max<std::uint32_t>(writing->step.Profile.characterCount, 1));
-    if (pLetterStep) *pLetterStep = &letterStep;
+    if (pLetterStep && !CopyOutGuest(pLetterStep, static_cast<const FontWritingLetterStep*>(&letterStep))) return nullptr;
     return &data->characters[writing->currentIndex];
 }
 

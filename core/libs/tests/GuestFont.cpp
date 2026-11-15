@@ -1104,6 +1104,9 @@ int main() {
     Require(sceFontWritingRefersRenderStepCharacter(&writing, nullptr) == nullptr);
     step = sceFontWritingRefersRenderStep(&writing);
     Require(step != nullptr);
+    errno = 71;
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, reinterpret_cast<const FontWritingLetterStep**>(0x10)) == nullptr);
+    Require(errno == 71);
     Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == characters + 1 && out.guard == guard);
     Require(out.letter->x == step->x && out.letter->Components.textsIndex == 1 && out.letter->Components.glyphsIndex == 1);
     Require(out.letter == retainedLetter);
