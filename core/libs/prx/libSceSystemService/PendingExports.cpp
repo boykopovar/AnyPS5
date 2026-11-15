@@ -543,14 +543,26 @@ int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t handle) {
 
 int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32_t* status, std::int32_t* result) {
     if (status == nullptr || result == nullptr) return ShellCoreInvalidArgument;
-    *status = ActivationStatus;
-    *result = 0;
+    const std::int32_t localStatus = ActivationStatus;
+    const std::int32_t localResult = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &localStatus, sizeof(localStatus)) && GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* handle) {
     if (handle == nullptr) return ShellCoreInvalidArgument;
-    *handle = nextActivationHandle.fetch_add(ActivationHandleStep);
+    const std::intptr_t cleared = 0;
+    const int savedErrno = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(handle, &cleared, sizeof(cleared));
+    errno = savedErrno;
+    if (!writable) return ShellCoreInvalidArgument;
+    const std::intptr_t localHandle = nextActivationHandle.fetch_add(ActivationHandleStep);
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &localHandle, sizeof(localHandle));
+    errno = savedErrno;
+    if (!copied) return ShellCoreInvalidArgument;
     return 0;
 }
 
