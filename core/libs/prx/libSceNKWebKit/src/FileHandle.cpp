@@ -217,9 +217,12 @@ bool APS5_VABI _ZN7WebCore10FileHandle6printfEPKcz(FileHandle* self, const char*
     std::va_list preflight;
     va_copy(preflight, args);
 #endif
-    const std::size_t length = static_cast<std::size_t>(vsnprintf_nid_postfix(nullptr, 0, format, reinterpret_cast<VaList*>(preflight)));
-    std::vector<char> buffer(length + 1);
-    vsnprintf_nid_postfix(buffer.data(), length + 1, format, reinterpret_cast<VaList*>(args));
+    const int length = vsnprintf_nid_postfix(nullptr, 0, format, reinterpret_cast<VaList*>(preflight));
+    std::vector<char> buffer;
+    if (length >= 0) {
+        buffer.resize(static_cast<std::size_t>(length) + 1);
+        vsnprintf_nid_postfix(buffer.data(), buffer.size(), format, reinterpret_cast<VaList*>(args));
+    }
 #ifdef _WIN32
     __builtin_sysv_va_end(preflight);
     __builtin_sysv_va_end(args);
@@ -227,7 +230,8 @@ bool APS5_VABI _ZN7WebCore10FileHandle6printfEPKcz(FileHandle* self, const char*
     va_end(preflight);
     va_end(args);
 #endif
-    return Write(handle, buffer.data(), static_cast<int>(length)) >= 0;
+    if (length < 0) return false;
+    return Write(handle, buffer.data(), length) >= 0;
 }
 
 void APS5_VABI _ZN7WebCore10FileHandle5closeEv(FileHandle* self) {
