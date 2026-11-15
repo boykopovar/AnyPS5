@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -71,6 +72,9 @@ int main() {
     Require(unregisterCodec(context, 0) == InvalidType, "codec type 0 was not rejected");
     Require(unregisterCodec(context, 5) == InvalidType, "codec type 5 was not rejected");
     Require(unregisterCodec(context, 13) == InvalidType, "codec type 13 was not rejected");
+    for (const auto invalid : {7u, 8u, 9u, 14u, 100u, 0xFFFFFFFFu}) {
+        Require(unregisterCodec(context, invalid) == InvalidType, "invalid codec type was not rejected");
+    }
     Require(std::memcmp(before, context, sizeof(context)) == 0, "the rejected-type calls wrote the context");
 
     alignas(8) unsigned char idle[sizeof(context)];
@@ -80,6 +84,7 @@ int main() {
     Require(unregisterCodec(idle, 11) == NotRegistered, "codec type 11 with a clear flag was not rejected");
     Require(unregisterCodec(idle, 12) == NotRegistered, "codec type 12 with a clear flag was not rejected");
     Require(std::memcmp(idleBefore, idle, sizeof(idle)) == 0, "the clear-flag calls wrote the context");
+
 
     std::puts("Audiodec GetAjmContext tests passed");
     return 0;

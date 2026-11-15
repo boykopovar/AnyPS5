@@ -15,11 +15,13 @@ static constexpr int EXPLICIT_SCHED = 0;
 static constexpr int RTP_LOOKUP = 0;
 static constexpr int RTP_SET = 1;
 static constexpr std::uint16_t RTP_PRIO_REALTIME = 2;
+static constexpr std::uint16_t RTP_PRIO_NORMAL = 3;
 static constexpr std::uint16_t RTP_PRIO_FIFO = 10;
 static constexpr std::uint16_t RTP_PRIO_IDLE = 4;
 static constexpr std::uint16_t RTP_PRIO_IDLE_FIFO = 12;
 static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ESRCH = 3;
+static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EFAULT = 14;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -92,6 +94,12 @@ int main() {
     CheckThread(GUEST_SCHED_RR, 600, RTP_PRIO_REALTIME);
     CheckThread(GUEST_SCHED_FIFO, 256, RTP_PRIO_FIFO);
     Require(LookupError(2, 0, &self) == GUEST_ESRCH);
+    Require(LookupError(5, 0, &self) == GUEST_EINVAL);
+    for (const std::uint16_t prio : {0, 31}) {
+        GuestRtPrio normal{RTP_PRIO_NORMAL, prio};
+        Require(LookupError(RTP_SET, 0, &normal) == GUEST_EINVAL);
+        Require(normal.type == RTP_PRIO_NORMAL && normal.prio == prio);
+    }
     Require(LookupError(RTP_LOOKUP, 0, nullptr) == GUEST_EFAULT);
     auto* unmapped = reinterpret_cast<GuestRtPrio*>(std::uintptr_t{0x10});
     Require(LookupError(RTP_LOOKUP, 0, unmapped) == GUEST_EFAULT);

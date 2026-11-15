@@ -241,7 +241,7 @@ static void CheckLocinfo() {
     _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(&locinfo);
     Require(locinfo.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word at offset 0");
 
-    const char* const rejected[] {nullptr, "POSIX", "c", "C.UTF-8", "CX", "en_US.UTF-8"};
+    const char* const rejected[] {nullptr, "POSIX", "c", "C.UTF-8", "CX", "en_US.UTF-8", reinterpret_cast<const char*>(0x10)};
     for (const char* name : rejected) {
         GuestLocale::SceV2Locinfo invalid {};
         invalid.reserved = 0x5a5a5a5a5a5a5a5aull;

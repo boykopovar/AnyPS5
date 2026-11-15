@@ -122,6 +122,24 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "1 to 4096 events after repetition"):
             pad_timeline.compile_timeline(self.document, 42, 2049, 0)
 
+    def test_command_file_fits_the_runtime_read_limit(self):
+        document = {"version": 1, "events": [
+            {"at_ms": 0, "hold_ms": 1, "buttons": ["cross"], "left_stick": [255, 255], "right_stick": [255, 255]}]}
+        self.assertEqual(len(pad_timeline.compile_timeline(document, 10**6, 2297, 0).encode("ascii")), 64 * 1024)
+        with self.assertRaisesRegex(ValueError, "65537 bytes; the runtime reads at most 65536"):
+            pad_timeline.compile_timeline(document, 10**7, 2297, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            original = b"777 0 100\n"
+            output.write_bytes(original)
+            timeline.write_text(json.dumps(document), encoding="utf-8")
+            result = self.run_cli(timeline, output, "--repeat", "4096", "--gap-ms", "0")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("the runtime reads at most 65536", result.stderr)
+            self.assertNotIn("Queued", result.stdout)
+            self.assertEqual(output.read_bytes(), original)
+
     def test_repeated_duration_includes_inter_iteration_gaps_only(self):
         document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 5000, "buttons": ["cross"]}]}
         self.assertEqual(
@@ -164,9 +182,10 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"new\n")
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
-    def run_cli(self, timeline, output):
-        return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
-                              capture_output=True, text=True, timeout=5)
+    def run_cli(self, timeline, output, *arguments):
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        return subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output), *arguments],
+                              capture_output=True, encoding="utf-8", timeout=5, env=env)
 
     def test_cli_roundtrip_and_invalid_input_preservation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -178,6 +197,22 @@ class TimelineTests(unittest.TestCase):
             timeline.write_text('{"version":2}', encoding="utf-8")
             self.assertEqual(self.run_cli(timeline, output).returncode, 2)
             self.assertEqual(output.read_bytes(), original)
+
+    def test_duplicate_timeline_fields_do_not_replace_a_queued_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            original = b"777 0 100\n"
+            output.write_bytes(original)
+            for text, field in (
+                    ('{"version":1,"events":[],"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"]}]}', "events"),
+                    ('{"version":1,"events":[{"at_ms":0,"hold_ms":100,"buttons":["cross"],"buttons":["circle"]}]}', "buttons")):
+                with self.subTest(field=field):
+                    timeline.write_text(text, encoding="utf-8")
+                    result = self.run_cli(timeline, output)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(f"duplicate timeline field '{field}'", result.stderr)
+                    self.assertEqual(output.read_bytes(), original)
 
     def test_input_alias_protection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -239,10 +274,10 @@ class TimelineTests(unittest.TestCase):
 
     def test_excessively_nested_timelines_are_usage_errors(self):
         depth = sys.getrecursionlimit() + 64
+        probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
         for _ in range(8):
-            try:
-                json.loads("[" * depth + "]" * depth)
-            except RecursionError:
+            if subprocess.run([sys.executable, "-c", probe], input="[" * depth + "]" * depth, text=True,
+                              encoding="utf-8", capture_output=True).returncode == 3:
                 break
             depth *= 2
         else:
@@ -272,6 +307,18 @@ class TimelineTests(unittest.TestCase):
             result = self.run_cli(timeline, nonexistent_parent)
             self.assertEqual(result.returncode, 2)
             self.assertIn(f"directory does not exist: {nonexistent_parent.parent}", result.stderr)
+
+    def test_cli_diagnostics_keep_unicode_paths_with_inherited_encodings(self):
+        with tempfile.TemporaryDirectory(prefix="timeline-é-") as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "output_dir"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            output.mkdir()
+            for encoding in ("utf-8", "cp1252"):
+                with self.subTest(encoding=encoding), mock.patch.dict(os.environ, PYTHONIOENCODING=encoding):
+                    result = self.run_cli(timeline, output)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(f"{output} is a directory", result.stderr)
 
     def test_sequence_advances_past_existing_command_after_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:

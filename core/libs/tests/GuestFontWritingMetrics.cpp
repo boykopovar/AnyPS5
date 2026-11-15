@@ -94,6 +94,9 @@ int main() {
     FontWritingMetrics metrics{1.0f, 1.0f, {1.0f, 1.0f, 1.0f, 1.0f}};
     Require(sceFontWritingGetRenderMetrics(&writing, &metrics) == SCE_FONT_OK && SameMetrics(metrics, {}));
     Require(sceFontWritingGetRenderMetrics(&writing, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontWritingGetRenderMetrics(&writing, reinterpret_cast<FontWritingMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     metrics = {1.0f, 1.0f, {1.0f, 1.0f, 1.0f, 1.0f}};
     Require(sceFontWritingGetRenderMetrics(nullptr, &metrics) == SCE_FONT_ERROR_INVALID_PARAMETER && SameMetrics(metrics, {}));
     FontWriting notWriting{};

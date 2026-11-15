@@ -1,10 +1,14 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAvSetting/include/InventoryExports.hpp"
 #include "prx/libSceAvSetting/include/Api.hpp"
+#include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <limits>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -14,11 +18,21 @@ template <typename TValue>
 bool ReadAvSettingField(const void* object, std::size_t offset, TValue& value) noexcept {
     const auto address = reinterpret_cast<std::uintptr_t>(object);
     if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    const int savedErrno = errno;
     try {
-        return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
+        const bool copied = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
+        errno = savedErrno;
+        return copied;
     } catch (...) {
+        errno = savedErrno;
         return false;
     }
+}
+
+void CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
 }
 
 }
@@ -372,8 +386,11 @@ namespace {
 
 void InitializeCallbackFuncs_nid_no_patch(void* callbacks, std::uint32_t size) {
     if (callbacks == nullptr) return;
-    auto* bytes = static_cast<std::uint8_t*>(callbacks);
-    for (std::uint32_t i = 0; i < size; ++i) bytes[i] = i < sizeof(size) ? static_cast<std::uint8_t>(size >> (8 * i)) : 0;
+    std::vector<std::uint8_t> buffer(size, 0);
+    for (std::uint32_t i = 0; i < sizeof(size) && i < size; ++i) {
+        buffer[i] = static_cast<std::uint8_t>(size >> (8 * i));
+    }
+    CopyOutPreservingErrno(callbacks, buffer.data(), size);
 }
 
 }
@@ -612,15 +629,19 @@ int APS5_VABI sceAvSettingSet2dVrMode() {
 void APS5_VABI sceAvSettingSetAudioOutModeAny_(void* out, std::int32_t value) {
     if (out == nullptr) return;
     if (value < 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(out, 0xff, static_cast<std::size_t>(value));
-    *static_cast<std::int32_t*>(out) = value;
+    const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
+    std::vector<std::uint8_t> buffer(totalBytes, 0xff);
+    std::memcpy(buffer.data(), &value, sizeof(value));
+    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
 }
 
 void APS5_VABI sceAvSettingSetAudioOutModeInvalid_(void* out, std::int32_t value) {
     if (out == nullptr) return;
     if (value < 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(out, 0, static_cast<std::size_t>(value));
-    *static_cast<std::int32_t*>(out) = value;
+    const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
+    std::vector<std::uint8_t> buffer(totalBytes, 0x00);
+    std::memcpy(buffer.data(), &value, sizeof(value));
+    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
 }
 
 int APS5_VABI sceAvSettingSetAvOutputMode() {
@@ -655,19 +676,25 @@ int APS5_VABI sceAvSettingSetHdmiGamutMetadata_() {
 void APS5_VABI sceAvSettingSetVideoOutModeAny_(void* out, std::int32_t value) {
     if (out == nullptr) return;
     if (value < 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(out, 0xff, static_cast<std::size_t>(value));
-    *static_cast<std::int32_t*>(out) = value;
+    const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
+    std::vector<std::uint8_t> buffer(totalBytes, 0xff);
+    std::memcpy(buffer.data(), &value, sizeof(value));
+    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
 }
 
 void APS5_VABI sceAvSettingSetVideoOutModeInvalid_(void* out, std::int32_t value) {
     if (out == nullptr) return;
     if (value < 0) NotImplemented_nid_no_patch(__func__);
-    std::memset(out, 0, static_cast<std::size_t>(value));
-    *static_cast<std::int32_t*>(out) = value;
+    const std::size_t totalBytes = std::max<std::size_t>(sizeof(value), static_cast<std::size_t>(value));
+    std::vector<std::uint8_t> buffer(totalBytes, 0x00);
+    std::memcpy(buffer.data(), &value, sizeof(value));
+    CopyOutPreservingErrno(out, buffer.data(), totalBytes);
 }
 
 void APS5_VABI sceAvSettingSetVideoOutSource(std::int32_t* out, std::int32_t source) {
-    if (out != nullptr) *out = source;
+    if (out != nullptr) {
+        CopyOutPreservingErrno(out, &source, sizeof(source));
+    }
 }
 
 int APS5_VABI sceAvSettingSetVideoOutputColorEffect() {
