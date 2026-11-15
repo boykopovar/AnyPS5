@@ -100,6 +100,13 @@ bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colo
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target);
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
+struct MultisampleColorSnapshot {
+    std::vector<std::byte> original;
+    std::vector<std::byte> current;
+};
+
+std::vector<std::byte> ReadMultisampleTargetSamples_nid_no_patch(const Context& context, const ColorTarget& target);
+MultisampleColorSnapshot ReadMultisampleTargetColorSnapshot_nid_no_patch(const Context& context, const ColorTarget& target);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image = nullptr);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image = nullptr);
 void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target);
@@ -118,11 +125,14 @@ std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTa
 void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
+bool MultisampleColorTargetOverlaps(std::uint64_t address, std::uint64_t bytes);
+void ClaimMultisampleTargetStore(std::uint64_t address, std::uint64_t bytes);
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
 bool HoldsMultisampleTargetsLock();
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active);
+void RetireMultisampleColorTargetsOnFmaskWrite(std::uint64_t address, std::size_t bytes);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
 
 }

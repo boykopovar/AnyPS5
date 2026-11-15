@@ -197,7 +197,10 @@ int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
     std::lock_guard lock(semaphore->lock);
     if (semaphore->named) return Fail(GUEST_EAGAIN);
     if (!name) return Fail(PosixThread::GUEST_EINVAL);
-    if (strnlen(name, 32) > 31) return Fail(63);
+    std::string copied;
+    const int copyError = CopyGuestString_nid_no_patch(name, 32, copied);
+    if (copyError == 63) return Fail(63);
+    if (copyError != 0) return Fail(PosixThread::GUEST_EINVAL);
     semaphore->named = true;
     return 0;
 }

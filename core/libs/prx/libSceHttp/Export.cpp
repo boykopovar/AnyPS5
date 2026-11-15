@@ -8,6 +8,7 @@
 #endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttp/src/Cookies.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include <atomic>
@@ -320,9 +321,7 @@ int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, 
 }
 
 int APS5_VABI sceHttpSetCookieEnabled(int id, int enable) {
-    if (static_cast<uint32_t>(enable) > 1) return ERROR_INVALID_VALUE;
-    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
-    return SetHttpOption(id, &HttpOptions::cookieEnabled, enable != 0) ? 0 : ERROR_INVALID_ID;
+    return SetHttpCookieEnabled(id, enable) ? 0 : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttpSetAutoRedirect(int id, int enable) {
@@ -743,27 +742,26 @@ int APS5_VABI sceHttpGetEpollId(std::int32_t id, std::int32_t* epollId, void** u
 }
 
 int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable) {
-    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
-    if (!enable) return ERROR_INVALID_VALUE;
+    if (!enable) return HttpInitialised() ? ERROR_INVALID_VALUE : ERROR_BEFORE_INIT;
     const auto options = FindHttpOptions(id);
     if (!options) return ERROR_INVALID_ID;
-    *enable = options->cookieEnabled ? 1 : 0;
+    *enable = options->cookieEnabled;
     return 0;
 }
 
 int APS5_VABI sceHttpSetCookieSendCallback(std::int32_t id, HttpCookieSendCallback callback, void* userArg) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)id;
+    (void)callback;
+    (void)userArg;
     return 0;
 }
 
 int APS5_VABI sceHttpCookieExport(int contextId, void* buffer, std::size_t size, std::size_t* requiredSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ExportHttpCookies(contextId, buffer, size, requiredSize);
 }
 
 int APS5_VABI sceHttpCookieImport(int contextId, const void* buffer, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return ImportHttpCookies(contextId, buffer, size);
 }
 
 int APS5_VABI sceHttpSetPriorityOption(int id, int priority) {

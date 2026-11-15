@@ -86,11 +86,13 @@ void TestWriters() {
 void TestWorkloads() {
     std::uint32_t stream = 0xdeadbeefu;
     check(sceGnmCreateWorkloadStream_nid_disambig1(1, nullptr) == 3, "a null workload stream output was accepted");
+    check(sceGnmCreateWorkloadStream_nid_disambig1(1, reinterpret_cast<std::uint32_t*>(1)) == 3, "an invalid workload stream output was accepted");
     check(sceGnmCreateWorkloadStream_nid_disambig1(0, &stream) == 3 && stream == 0xdeadbeefu, "a zero workload stream name changed the output");
     check(sceGnmCreateWorkloadStream_nid_disambig1(1, &stream) == 0 && stream == 1, "a workload stream was not created");
 
     std::uint64_t workload = 0xdeadbeefdeadbeefull;
     check(sceGnmBeginWorkload_nid_disambig1(stream, nullptr) == 3, "a null workload output was accepted");
+    check(sceGnmBeginWorkload_nid_disambig1(stream, reinterpret_cast<std::uint64_t*>(1)) == 3, "an invalid workload output was accepted");
     check(sceGnmBeginWorkload_nid_disambig1(stream, &workload) == 0 && workload == 1, "the created stream did not begin a workload");
     check(sceGnmEndWorkload_nid_disambig1(workload) == 0, "the created workload did not end");
     check(sceGnmBeginWorkload_nid_disambig1(0xf, &workload) == 0 && workload == 1, "the highest valid stream was rejected");
@@ -160,6 +162,11 @@ void TestQueries() {
     check(sceGnmLogicalCuMaskToPhysicalCuMask(1, 0xabcdu) == 0xabcdu, "the CU mask with a first argument of 1 was changed");
     check(sceGnmLogicalCuMaskToPhysicalCuMask(0xffffffffu, 0xffffffffu) == 0xffffffffu, "the CU mask with a first argument of 0xffffffff was changed");
     check(sceGnmLogicalCuMaskToPhysicalCuMask(7, 0) == 0, "an empty CU mask was changed");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 0) == -1, "the CU index with engine 0 and cuIndex 0 was not -1");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(1, 8) == -1, "the CU index with engine 1 and cuIndex 8 was not -1");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(2, 0) == 0, "the CU index with engine 2 was not 0");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 9) == 0, "the CU index with cuIndex 9 was not 0");
+    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0xffffffffu, 0xffffffffu) == 0, "the CU index with engine and cuIndex 0xffffffff was not 0");
 }
 
 void TestEmbeddedShaders() {
