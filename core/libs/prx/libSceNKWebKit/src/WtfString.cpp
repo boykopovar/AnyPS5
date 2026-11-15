@@ -627,6 +627,10 @@ StringImpl* EmptyStringImpl() {
     return EmptyImpl();
 }
 
+StringImpl* CreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
+    return NewImpl(length, is8Bit, characters);
+}
+
 String FromUTF8ReplacingInvalidSequences_nid_no_patch(const unsigned char* input, std::size_t length) {
     return FromUTF8(input, length, true);
 }
@@ -1557,3 +1561,15 @@ String APS5_VABI _ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringV
 }
 
 }
+
+namespace NKWebKit::WtfAbi {
+
+StringView ViewOf(const StringImpl* impl) {
+    return View(impl);
+}
+
+char16_t CodeUnitAt(const StringView& view, unsigned index) {
+    return Unit(view, index);
+}
+
+}  // namespace NKWebKit::WtfAbi

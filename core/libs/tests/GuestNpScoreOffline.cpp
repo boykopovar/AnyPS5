@@ -1,11 +1,14 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <thread>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -358,6 +361,27 @@ void CheckContextsAndWaiting() {
     sceNpScoreDeleteRequest(aborted);
 }
 
+void CheckBlockingWait() {
+    const auto waitAsync = Resolve<WaitAsyncFn>("sceNpScoreWaitAsync");
+    for (const bool abort : {false, true}) {
+        const int req = NewRequest();
+        std::atomic<bool> returned = false;
+        int status = 1;
+        int result = 0;
+        std::thread waiter([&] {
+            status = waitAsync(req, &result);
+            returned = true;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        Require(!returned, "sceNpScoreWaitAsync", "a request with no operation started did not block");
+        if (abort) Require(sceNpScoreAbortRequest(req) == 0, "sceNpScoreAbortRequest", "aborting a waited request failed");
+        else Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
+        waiter.join();
+        Require(status == 0 && result == (abort ? Aborted : SignedOut), "sceNpScoreWaitAsync", "a blocked wait did not report the request's result");
+        sceNpScoreDeleteRequest(req);
+    }
+}
+
 void CheckCrossSave() {
     const auto byRange = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSave");
     const auto byRangeAsync = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSaveAsync");
@@ -492,6 +516,7 @@ int main() {
     CheckNpIdPcId();
     CheckGameDataAndBoard();
     CheckContextsAndWaiting();
+    CheckBlockingWait();
     CheckCrossSave();
     CheckSettings();
     CheckCommentsAndGameData();

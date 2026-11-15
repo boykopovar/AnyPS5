@@ -98,14 +98,19 @@ void appendBigEndian32(std::vector<std::uint8_t>& output, std::uint32_t value) {
     for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(value >> shift));
 }
 
+std::uint32_t chunkCrc(std::span<const std::uint8_t> typeAndData) {
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (const auto byte : typeAndData) crc = (crc >> 8) ^ CRC_TABLE[(crc ^ byte) & 0xFF];
+    return ~crc;
+}
+
 void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data) {
     appendBigEndian32(output, static_cast<std::uint32_t>(data.size()));
     const std::size_t checkedFrom = output.size();
     output.insert(output.end(), type, type + 4);
     output.insert(output.end(), data.begin(), data.end());
-    std::uint32_t crc = 0xFFFFFFFFu;
-    for (std::size_t i = checkedFrom; i < output.size(); ++i) crc = (crc >> 8) ^ CRC_TABLE[(crc ^ output[i]) & 0xFF];
-    appendBigEndian32(output, ~crc);
+    const auto crc = chunkCrc(std::span(output).subspan(checkedFrom));
+    appendBigEndian32(output, crc);
 }
 
 int paethPredictor(int left, int up, int upLeft) {
@@ -192,6 +197,23 @@ std::optional<Image> Decode(std::span<const std::uint8_t> png) {
     const std::optional<Header> header = ParseHeader(png);
     if (header.has_value()) repairGrayscaleTransparency(*header, png, image);
     return image;
+}
+
+std::vector<std::uint16_t> DecodeRgba16(std::span<const std::uint8_t> png) {
+    if (png.empty() || png.size() > INT_MAX) return {};
+    const auto header = ParseHeader(png);
+    if (!header || header->bitDepth != 16) return {};
+    int width = 0;
+    int height = 0;
+    const std::unique_ptr<stbi_us, decltype(&stbi_image_free)> decoded(
+        stbi_load_16_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, nullptr, 4),
+        stbi_image_free);
+    if (!decoded || width != static_cast<int>(header->width) || height != static_cast<int>(header->height)) return {};
+    return {decoded.get(), decoded.get() + static_cast<std::size_t>(width) * height * 4};
+}
+
+bool CheckChunkCrc(std::span<const std::uint8_t> typeAndData, std::uint32_t expected) {
+    return chunkCrc(typeAndData) == expected;
 }
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,

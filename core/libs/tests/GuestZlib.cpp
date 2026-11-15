@@ -71,8 +71,14 @@ int main() {
         Require(sceZlibGetResult(id + 1, &produced, &status) == static_cast<std::int32_t>(0x81120002));
         Require(sceZlibGetResult(id, nullptr, &status) == static_cast<std::int32_t>(0x81120016));
         Require(sceZlibGetResult(id, &produced, nullptr) == static_cast<std::int32_t>(0x81120016));
+        produced = 0xFEDCBA98;
+        status = static_cast<std::int32_t>(0x12345678);
         Require(sceZlibGetResult(id, reinterpret_cast<std::uint32_t*>(0x10), &status) == static_cast<std::int32_t>(0x81120016));
+        Require(produced == 0xFEDCBA98 && status == static_cast<std::int32_t>(0x12345678));
+        produced = 0xFEDCBA98;
+        status = static_cast<std::int32_t>(0x12345678);
         Require(sceZlibGetResult(id, &produced, reinterpret_cast<std::int32_t*>(0x10)) == static_cast<std::int32_t>(0x81120016));
+        Require(produced == 0xFEDCBA98 && status == static_cast<std::int32_t>(0x12345678));
         Require(sceZlibGetResult(id, &produced, &status) == 0);
         if (status != expectedStatus) std::fprintf(stderr, "input=%u capacity=%u status=%x expected=%x produced=%u\n", inputLength, capacity, static_cast<unsigned>(status), static_cast<unsigned>(expectedStatus), produced);
         Require(status == expectedStatus && produced <= capacity);
