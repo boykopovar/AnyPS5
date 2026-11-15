@@ -188,7 +188,7 @@ std::size_t APS5_VABI strlcat_nid_postfix(char* destination, const char* source,
 
 char* APS5_VABI stpcpy_nid_postfix(char* destination, const char* source) {
     const auto length = std::strlen(source);
-    std::memcpy(destination, source, length + 1);
+    if (!GuestCopyOut_nid_no_patch(destination, source, length + 1)) { errno = 14; return nullptr; }
     return destination + length;
 }
 
