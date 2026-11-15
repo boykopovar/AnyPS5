@@ -1,6 +1,5 @@
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
-#include <mutex>
 
 namespace {
 
