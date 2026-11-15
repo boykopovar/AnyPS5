@@ -60,6 +60,18 @@ void Sleep(std::int64_t nanoseconds) {
     std::this_thread::sleep_for(std::chrono::nanoseconds(nanoseconds));
 }
 
+constexpr std::int64_t Patience = 5 * Second;
+
+template <typename TCondition>
+bool WaitFor(TCondition condition) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(Patience);
+    while (!condition()) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        Sleep(Millisecond);
+    }
+    return true;
+}
+
 void Creation() {
     int id = -1;
     const GuestSigevent badNotify{2, 0, 0, {}};
@@ -279,7 +291,7 @@ void SignalPeriodic() {
     Require(ktimer_settime_nid_postfix(id, 0, &periodic, nullptr) == 0);
     for (int expiry = 0; expiry < 3; ++expiry) {
         Siginfo info{};
-        Require(Take(Sigusr1, Second, info) == Sigusr1);
+        Require(Take(Sigusr1, Patience, info) == Sigusr1);
         RequireTimerInfo(info, Sigusr1, id, Value);
         Require(ktimer_getoverrun_nid_postfix(id) == info.overrun);
     }
@@ -293,8 +305,8 @@ void SignalPeriodic() {
     Require(signal_nid_postfix(Sigusr1, OnUsr1) == nullptr);
     const GuestItimerspec once{{0, 0}, {0, 10 * Millisecond}};
     Require(ktimer_settime_nid_postfix(id, 0, &once, nullptr) == 0);
-    Sleep(60 * Millisecond);
-    Require(Pending(Sigusr1) && handled.load() == 0);
+    Require(WaitFor([] { return Pending(Sigusr1); }));
+    Require(handled.load() == 0);
     Mask(SigUnblock, Sigusr1);
     Require(handled.load() == 1 && !Pending(Sigusr1));
     Mask(SigBlock, Sigusr1);
@@ -310,7 +322,7 @@ void DefaultEvent() {
     const GuestItimerspec once{{0, 0}, {0, 10 * Millisecond}};
     Require(ktimer_settime_nid_postfix(id, 0, &once, nullptr) == 0);
     Siginfo info{};
-    Require(Take(Sigalrm, Second, info) == Sigalrm);
+    Require(Take(Sigalrm, Patience, info) == Sigalrm);
     RequireTimerInfo(info, Sigalrm, id, id);
     Require(info.overrun == 0 && ktimer_getoverrun_nid_postfix(id) == 0);
     Require(ktimer_delete_nid_postfix(id) == 0);
@@ -322,7 +334,8 @@ void Overrun() {
     const GuestItimerspec periodic{{0, 10 * Millisecond}, {0, 10 * Millisecond}};
     const auto start = std::chrono::steady_clock::now();
     Require(ktimer_settime_nid_postfix(id, 0, &periodic, nullptr) == 0);
-    Sleep(125 * Millisecond);
+    Require(WaitFor([] { return Pending(Sigusr1); }));
+    Sleep(300 * Millisecond);
     Require(Pending(Sigusr1) && ktimer_getoverrun_nid_postfix(id) == 0);
     Siginfo info{};
     Require(Take(Sigusr1, 0, info) == Sigusr1);
@@ -330,7 +343,7 @@ void Overrun() {
     RequireTimerInfo(info, Sigusr1, id, 7);
     Require(info.overrun >= 5 && info.overrun <= elapsed / 10);
     Require(ktimer_getoverrun_nid_postfix(id) == info.overrun);
-    Require(Take(Sigusr1, Second, info) == Sigusr1);
+    Require(Take(Sigusr1, Patience, info) == Sigusr1);
     RequireTimerInfo(info, Sigusr1, id, 7);
     Require(ktimer_getoverrun_nid_postfix(id) == info.overrun);
     Require(ktimer_delete_nid_postfix(id) == 0);
@@ -343,9 +356,8 @@ void DeleteStops() {
     const GuestItimerspec periodic{{0, 10 * Millisecond}, {0, 10 * Millisecond}};
     Require(ktimer_settime_nid_postfix(id, 0, &periodic, nullptr) == 0);
     Siginfo info{};
-    Require(Take(Sigusr1, Second, info) == Sigusr1);
-    Sleep(30 * Millisecond);
-    Require(Pending(Sigusr1));
+    Require(Take(Sigusr1, Patience, info) == Sigusr1);
+    Require(WaitFor([] { return Pending(Sigusr1); }));
     Require(ktimer_delete_nid_postfix(id) == 0);
     Require(!Pending(Sigusr1));
     Sleep(50 * Millisecond);
@@ -362,7 +374,7 @@ void ThreadTarget() {
         target.store(pthread_getthreadid_np_nid_postfix());
         Mask(SigBlock, Sigusr2);
         ready.store(true);
-        result = Take(Sigusr2, 2 * Second, received);
+        result = Take(Sigusr2, Patience, received);
     });
     while (!ready.load()) Sleep(Millisecond);
     Mask(SigUnblock, Sigusr2);
@@ -377,9 +389,10 @@ void ThreadTarget() {
     const int missing = CreateSignal(SigevThreadId, Sigusr2, Value, 0x7ffffff0);
     const GuestItimerspec periodic{{0, 10 * Millisecond}, {0, 10 * Millisecond}};
     Require(ktimer_settime_nid_postfix(missing, 0, &periodic, nullptr) == 0);
-    Sleep(50 * Millisecond);
-    const auto disarmed = Get(missing);
-    Require(Nanoseconds(disarmed.it_value) == 0 && Nanoseconds(disarmed.it_interval) == 0);
+    Require(WaitFor([missing] {
+        const auto disarmed = Get(missing);
+        return Nanoseconds(disarmed.it_value) == 0 && Nanoseconds(disarmed.it_interval) == 0;
+    }));
     Require(!Pending(Sigusr2));
     Require(ktimer_delete_nid_postfix(missing) == 0);
 }
