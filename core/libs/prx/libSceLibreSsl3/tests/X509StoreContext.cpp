@@ -504,7 +504,8 @@ void TestTimeNewBorrowedData() {
     const int oldType = value.type;
     value.flags |= 0x10;
     Require(X509_gmtime_adj_nid_postfix(&value, 0) == nullptr);
-    Require(ERR_get_error_nid_postfix() == MallocFailure);
+    constexpr std::uint64_t Asn1MallocFailure = 0x0dfff041;
+    Require(ERR_get_error_nid_postfix() == Asn1MallocFailure && ERR_get_error_nid_postfix() == 0);
     Require(value.data == oldData && value.length == oldLength && value.type == oldType);
     Require((value.flags & 0x10) == 0x10);
     allocationsUntilFailure = -1;
