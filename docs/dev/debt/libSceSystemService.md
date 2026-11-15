@@ -170,6 +170,8 @@
 
 ### Functional
 
+- [sceSystemServiceInitializePlayerDialogParam](../../../core/libs/prx/libSceSystemService/Export.cpp) - the 0x40-byte initialized descriptor is written through `GuestCopyOut_nid_no_patch` rather than direct guest dereferences. On an unmapped non-null output the host throws the same `std::invalid_argument` path used for null and preserves host `errno`. The native console behavior for an unmapped non-null pointer is not measured; the observed null-pointer console fault remains documented above.
+
 - [sceSystemServiceGetDisplaySafeAreaInfo guest output](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - returning SYSTEM_SERVICE_ERROR_PARAMETER for an unwritable output pointer is a host-safety fallback; whether the console faults or returns an argument error on unmapped memory is unmeasured.
 - [sceLncUtilGetAppIdListOfBigApp and sceSystemServiceGetAppIdListOfBigApp](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - returning `0x80940005` (`LNC_UTIL_ERROR_INVALID_ARGUMENT`) when the `appIds` or `count` pointers are unwritable via `GuestCopyOut_nid_no_patch` is a host-safety fallback preserving host errno; console behavior on unmapped pointers is not measured.
 
