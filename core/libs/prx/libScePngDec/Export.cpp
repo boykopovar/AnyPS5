@@ -446,21 +446,33 @@ void pullImage(InputStream& stream) {
 }
 
 bool headerAvailable(const std::vector<std::uint8_t>& data) {
-    constexpr std::size_t firstChunk = SIGNATURE.size();
-    constexpr std::size_t chunkOverhead = 12;
-    constexpr std::size_t ihdrSize = 13;
-    if (data.size() < firstChunk) return false;
+    if (data.size() < SIGNATURE.size()) return false;
     if (!std::equal(SIGNATURE.begin(), SIGNATURE.end(), data.begin())) return true;
-    if (data.size() < firstChunk + chunkOverhead + ihdrSize) return false;
-    if (readBigEndian32(&data[firstChunk]) != ihdrSize || std::memcmp(&data[firstChunk + 4], "IHDR", 4) != 0) return true;
-    std::size_t offset = firstChunk + chunkOverhead + ihdrSize;
-    while (data.size() - offset >= chunkOverhead) {
-        const std::uint32_t length = readBigEndian32(&data[offset]);
-        const std::uint8_t* type = &data[offset + 4];
-        if (std::memcmp(type, "IDAT", 4) == 0 || std::memcmp(type, "IEND", 4) == 0) return true;
-        if (length > data.size() - offset - chunkOverhead) return false;
-        if (std::memcmp(type, "tRNS", 4) == 0) return true;
-        offset += chunkOverhead + length;
+    bool sawHeader = false;
+    std::size_t offset = SIGNATURE.size();
+    while (data.size() - offset >= CHUNK_HEADER_SIZE) {
+        const std::optional<Chunk> chunk = readChunk(data, offset);
+        if (!chunk) return true;
+        if (!sawHeader) {
+            if (chunk->is("IDAT") || chunk->is("PLTE") || chunk->is("tRNS") || chunk->is("IEND")) return true;
+            if (chunk->critical() && !chunk->is("IHDR")) return true;
+        }
+        if (chunk->is("IHDR")) {
+            if (sawHeader || chunk->length != IHDR_SIZE) return true;
+            if (!chunk->complete) return false;
+            if (!chunk->crcValid) return true;
+            std::vector<std::uint8_t> ihdr(SIGNATURE.begin(), SIGNATURE.end());
+            appendChunk(ihdr, "IHDR", chunk->data, chunk->crc);
+            if (!Decoder::Png::ParseHeader(ihdr)) return true;
+            sawHeader = true;
+            offset += CHUNK_HEADER_SIZE + chunk->length + CHUNK_CRC_SIZE;
+            continue;
+        }
+        if (chunk->is("IDAT")) return true;
+        if (chunk->is("IEND") || (chunk->critical() && !chunk->is("PLTE"))) return true;
+        if (!chunk->complete) return false;
+        if (chunk->critical() && !chunk->crcValid) return true;
+        offset += CHUNK_HEADER_SIZE + chunk->length + CHUNK_CRC_SIZE;
     }
     return false;
 }
@@ -539,6 +551,7 @@ int32_t APS5_VABI scePngDecCreate(const PngDecCreateParam* param, void* memoryAd
         return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     }
     auto* context = reinterpret_cast<Context*>(aligned);
+    forgetStream(context);
     if (!CopyOutPreservingErrno(handle, &context, sizeof(context))) {
         Context cleared{};
         CopyOutPreservingErrno(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
@@ -621,7 +634,9 @@ int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInpu
         const StreamUse use(stream);
         while (!headerAvailable((*use).data) && (*use).status == 0) pull(*use, PARSE_BLOCK_SIZE);
         if ((*use).status < 0) return (*use).status;
-        const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader((*use).data);
+        const ChunkScan scan = scanChunks((*use).data);
+        if (scan.headerResult != 0) return SCE_PNG_DEC_ERROR_INVALID_DATA;
+        const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(scan.png);
         if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
         PngDecImageInfo localInfo{};
         fillImageInfo(*header, &localInfo);
