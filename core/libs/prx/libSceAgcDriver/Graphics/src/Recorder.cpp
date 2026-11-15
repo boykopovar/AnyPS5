@@ -574,6 +574,7 @@ bool ProcTable() {
 // under this mutex takes the GPU mutex (no lock-order cycle).
 AgcDriver::Mutex labelTableMutex;
 std::atomic<unsigned> injectedSubmitFailures{0};
+std::atomic<unsigned> injectedDiscardRegistrationFailures{0};
 Recorder* labelTableOwner = nullptr;
 // The ranges of the calling worker's queued labels (NoteQueuedLabel, cleared by
 // ForgetQueuedLabels): the flush hook, on the same thread, has them recorded before an access that
@@ -3860,6 +3861,18 @@ void Recorder::OnDiscard(std::function<void()> action) {
     open->discards.push_back(std::move(action));
 }
 
+void Recorder::ChangeUndoneOnDiscard(const std::function<void()>& change, std::function<void()> undo) {
+    ensureOpen();
+    if (injectedDiscardRegistrationFailures.load(std::memory_order_relaxed) != 0 && injectedDiscardRegistrationFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::bad_alloc();
+    open->discards.reserve(open->discards.size() + 1u);
+    change();
+    open->discards.push_back(std::move(undo));
+}
+
+void Recorder::FailNextDiscardRegistrationsForTest(unsigned count) {
+    injectedDiscardRegistrationFailures.store(count, std::memory_order_relaxed);
+}
+
 bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value, std::int64_t word) {
     CaptureTrace::Log("buffer-write batch=%llu address=%llx bytes=%zu label=%d", static_cast<unsigned long long>(submissions + 1), static_cast<unsigned long long>(address), bytes, ownLabel);
     if (bytes == 0) return false;
@@ -5236,6 +5249,8 @@ void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
             action();
         } catch (const std::exception& error) {
             std::fprintf(stderr, "[recorder] a discarded batch's discard action failed: %s\n", error.what());
+        } catch (...) {
+            std::fprintf(stderr, "[recorder] a discarded batch's discard action failed with a non-standard exception\n");
         }
     }
     batch->discards.clear();

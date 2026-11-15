@@ -93,6 +93,7 @@
 #include <future>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <optional>
 #include <random>
 #include <mutex>
@@ -12210,6 +12211,20 @@ void discardActionTests(const Device& device) {
     recorder.OnDiscard([&] { ++discarded; });
     recorder.OnDiscard([] { throw std::runtime_error("injected discard action failure"); });
     recorder.OnDiscard([&] { ++discarded; });
+    recorder.OnDiscard([] { throw 7; });
+    recorder.OnDiscard([&] { ++discarded; });
+    bool changed = false;
+    Recorder::FailNextDiscardRegistrationsForTest(1);
+    bool refused = false;
+    try {
+        recorder.ChangeUndoneOnDiscard([&] { changed = true; }, [&] { ++discarded; });
+    } catch (const std::bad_alloc&) {
+        refused = true;
+    }
+    Recorder::FailNextDiscardRegistrationsForTest(0);
+    Require(refused && !changed, "a change was made although registering its discard action failed");
+    recorder.ChangeUndoneOnDiscard([&] { changed = true; }, [&] { ++discarded; });
+    Require(changed, "a change with a registered discard action was not made");
     Recorder::FailNextSubmitsForTest(1);
     bool failed = false;
     try {
@@ -12220,14 +12235,14 @@ void discardActionTests(const Device& device) {
     Recorder::FailNextSubmitsForTest(0);
     Require(failed, "a batch with discard actions was submitted past an injected failure");
     recorder.Sync();
-    Require(discarded == 2 && completed == 0, "a discarded batch ran " + std::to_string(discarded) + " of its 2 discard actions around a failing one and " + std::to_string(completed) + " completion actions");
+    Require(discarded == 4 && completed == 0, "a discarded batch ran " + std::to_string(discarded) + " of its 4 discard actions around two failing ones and " + std::to_string(completed) + " completion actions");
     CoverPass next(context);
     next.Draw(recorder);
     recorder.OnComplete([&] { ++completed; });
     recorder.OnDiscard([&] { ++discarded; });
     recorder.Submit();
     recorder.Sync();
-    Require(completed == 1 && discarded == 2, "a completed batch ran " + std::to_string(completed) + " completion actions and " + std::to_string(discarded - 2) + " discard actions");
+    Require(completed == 1 && discarded == 4, "a completed batch ran " + std::to_string(completed) + " completion actions and " + std::to_string(discarded - 4) + " discard actions");
     std::cout << "Recorder discard action tests passed\n";
 }
 
