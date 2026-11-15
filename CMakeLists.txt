@@ -333,6 +333,8 @@ if(BUILD_TESTING)
         add_test(NAME tools_progress_diff_json COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff_json.py)
         set_tests_properties(tools_progress_diff_json PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_progress_diff COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff.py)
         add_test(NAME progress_wrappers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
@@ -502,8 +504,18 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
         set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
-        set_tests_properties(check_skips PROPERTIES TIMEOUT 20)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py
+            SkipJsonTests RequiredTestsTests SkipReportTests NotRunTests)
+        add_test(NAME check_skips_privilege COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CheckSkipsTests)
+        add_test(NAME check_skips_ctest_policy COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py CtestSkipPolicyTests)
+        add_test(NAME check_skips_device_policy COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py DeviceSkipPolicyTests)
+        add_test(NAME check_skips_cli_output COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py SkipCliOutputTests)
+        set_tests_properties(check_skips check_skips_privilege check_skips_ctest_policy
+            check_skips_device_policy check_skips_cli_output PROPERTIES TIMEOUT 20)
         add_test(NAME relinker_seed_manifest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_seed_manifest.py)
         set_tests_properties(relinker_seed_manifest PROPERTIES TIMEOUT 20)

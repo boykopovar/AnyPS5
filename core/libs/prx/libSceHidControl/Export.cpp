@@ -538,7 +538,10 @@ int APS5_VABI sceHidControlGetAuthInformation(std::uint16_t first, std::uint16_t
     if (kind < 1 || kind > 8 || first == 0 || output == nullptr) return ErrorInvalidArgument;
     constexpr std::size_t replyOffset = 0x610;
     constexpr std::size_t resultSize = 0x24;
-    std::memset(output, 0, resultSize);
+    std::array<std::uint8_t, resultSize> resultBytes{};
+    if (!StoreGuest(static_cast<std::array<std::uint8_t, resultSize>*>(output), resultBytes)) {
+        return ErrorInvalidArgument;
+    }
     std::array<std::uint8_t, 0x6b4> reply{};
     AuthRequest request{};
     request.first = first;
@@ -547,7 +550,12 @@ int APS5_VABI sceHidControlGetAuthInformation(std::uint16_t first, std::uint16_t
     request.reply = reply.data();
     request.mode = 1;
     const int result = Control<0x8020483f>(request);
-    if (result == 0) std::memcpy(output, reply.data() + replyOffset, resultSize);
+    if (result == 0) {
+        std::memcpy(resultBytes.data(), reply.data() + replyOffset, resultSize);
+        if (!StoreGuest(static_cast<std::array<std::uint8_t, resultSize>*>(output), resultBytes)) {
+            return ErrorInvalidArgument;
+        }
+    }
     return result;
 }
 

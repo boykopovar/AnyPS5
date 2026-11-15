@@ -226,6 +226,8 @@ void CheckGuestPointerFaults() {
     const auto unmapped16 = reinterpret_cast<std::uint16_t*>(0x10);
     const auto unmappedVersion = reinterpret_cast<const std::uint16_t*>(0x10);
     errno = 71;
+    Require(sceHidControlGetAuthInformation(1, 0, 1, reinterpret_cast<void*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "GetAuthInformation unmapped output");
     Require(sceHidControlPswUpdateSendData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,
             "PswUpdateSendData unreadable chunk header");
     Require(sceHidControlPswUpdateSendAppendixData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,
