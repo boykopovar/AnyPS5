@@ -1208,7 +1208,9 @@ const LibreSsl3PkeyAsn1Method RsaPssAsn1Method {
 };
 
 int APS5_VABI HmacCompare_nid_no_patch(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second) {
-    return ASN1_OCTET_STRING_cmp_nid_postfix(static_cast<const Asn1String*>(first->key), static_cast<const Asn1String*>(second->key)) == 0;
+    const auto* firstOctets = static_cast<const Asn1String*>(first->key);
+    const auto* secondOctets = static_cast<const Asn1String*>(second->key);
+    return ASN1_OCTET_STRING_cmp_nid_postfix(firstOctets, secondOctets) == 0;
 }
 
 int APS5_VABI HmacSize_nid_no_patch(const LibreSsl3EvpPkey*) {

@@ -35,6 +35,11 @@ static_assert(offsetof(Octets, type) == 4);
 static_assert(offsetof(Octets, data) == 8);
 static_assert(offsetof(Octets, flags) == 16);
 
+constexpr int HmacType = 855;
+constexpr int RsaType = 6;
+constexpr int OctetStringType = 4;
+constexpr int MaxDigestSize = 64;
+
 int outstanding = 0;
 int allocations = 0;
 int failOn = 0;
@@ -99,40 +104,53 @@ int main(int argc, char** argv) {
                          reinterpret_cast<void*>(Reallocate), reinterpret_cast<void*>(Align), reinterpret_cast<void*>(Realign),
                          reinterpret_cast<void*>(PosixAlign)};
     registerHeap(heap);
+
     auto release = Resolve<void (*)(Pkey*)>(module, "S7L4OYSnC0Q");
     auto newMacKey = Resolve<Pkey* (*)(int, void*, const unsigned char*, int)>(module, "m0bTFPN3yzk");
     auto keySize = Resolve<int (*)(Pkey*)>(module, "uoC6WmyO4Dg");
     auto compareKeys = Resolve<int (*)(Pkey*, Pkey*)>(module, "vLuIwBfrxrk");
+
     const unsigned char secret[4] = {1, 2, 3, 4};
-    Pkey* key = newMacKey(855, nullptr, secret, 4);
+    Pkey* key = newMacKey(HmacType, nullptr, secret, sizeof(secret));
     Require(key != nullptr);
-    Require(key->type == 855);
+    Require(key->type == HmacType);
     Require(key->references == 1);
     Require(key->method != nullptr);
     Require(key->key != nullptr);
     Require(outstanding == 3);
     auto* octets = static_cast<Octets*>(key->key);
-    Require(octets->length == 4);
-    Require(octets->type == 4);
-    Require(std::memcmp(octets->data, secret, 4) == 0);
-    Require(octets->data[4] == 0);
-    Require(keySize(key) == 64);
-    auto same = newMacKey(855, nullptr, secret, 4);
+    Require(octets->length == static_cast<int>(sizeof(secret)));
+    Require(octets->type == OctetStringType);
+    Require(std::memcmp(octets->data, secret, sizeof(secret)) == 0);
+    Require(octets->data[sizeof(secret)] == 0);
+    Require(keySize(key) == MaxDigestSize);
+
+    Pkey* same = newMacKey(HmacType, nullptr, secret, sizeof(secret));
     Require(same != nullptr);
     Require(compareKeys(key, same) == 1);
     const unsigned char other[4] = {5, 6, 7, 8};
-    auto different = newMacKey(855, nullptr, other, 4);
+    Pkey* different = newMacKey(HmacType, nullptr, other, sizeof(other));
     Require(different != nullptr);
     Require(compareKeys(key, different) == 0);
+
     release(key);
     release(same);
     release(different);
     Require(outstanding == 0);
-    Require(newMacKey(6, nullptr, secret, 4) == nullptr);
-    Require(newMacKey(12345, nullptr, secret, 4) == nullptr);
-    Require(newMacKey(855, nullptr, nullptr, 5) == nullptr);
-    Require(newMacKey(855, nullptr, secret, -2) == nullptr);
-    Require(newMacKey(855, nullptr, nullptr, -1) == nullptr);
+
+    Require(newMacKey(RsaType, nullptr, secret, sizeof(secret)) == nullptr);
+    Require(newMacKey(12345, nullptr, secret, sizeof(secret)) == nullptr);
+    Require(newMacKey(HmacType, nullptr, nullptr, 5) == nullptr);
+    Require(newMacKey(HmacType, nullptr, secret, -2) == nullptr);
+    Require(newMacKey(HmacType, nullptr, nullptr, -1) == nullptr);
     Require(outstanding == 0);
+
+    for (int failure = 1; failure <= 3; ++failure) {
+        allocations = 0;
+        failOn = failure;
+        Require(newMacKey(HmacType, nullptr, secret, sizeof(secret)) == nullptr);
+        Require(outstanding == 0);
+    }
+    failOn = 0;
     return 0;
 }

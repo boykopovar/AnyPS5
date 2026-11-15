@@ -244,7 +244,7 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPke
 
 LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(int type, void*, const unsigned char* key, int keyLength) {
     if (type != LibreSsl3PkeyHmac) return nullptr;
-    if ((!key && keyLength > 0) || (keyLength < -1)) return nullptr;
+    if ((!key && keyLength > 0) || keyLength < -1) return nullptr;
     auto* octets = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
     if (!octets) return nullptr;
     octets->type = Asn1OctetString;
