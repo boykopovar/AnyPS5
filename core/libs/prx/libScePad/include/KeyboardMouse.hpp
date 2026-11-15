@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include "SDL_events.h"
 
@@ -21,6 +22,7 @@ inline constexpr double MouseSmoothingLimitMs = 30.0;
 inline constexpr std::chrono::milliseconds ShakeHalfPeriod{50};
 inline constexpr float ShakeAcceleration = 2.0f * 9.80665f;
 inline constexpr float ShakeAngularVelocity = 6.0f;
+inline constexpr double MouseGyroRadiansPerCount = 0.001;
 
 class MouseStick {
 public:
@@ -74,6 +76,9 @@ public:
     InputRequests PadChordRequests(std::uint32_t buttons);
     bool Advance(Clock::time_point now);
     void SetMouseMode(bool enabled);
+    void SetMouseTouchpad(bool enabled);
+    void SetMouseGyro(bool enabled);
+    void SetViewport(int width, int height);
     void SetTitleReadsMouse(bool reads);
     void Release();
     bool MouseMode() const;
@@ -102,6 +107,15 @@ private:
     bool axesAdvanced = false;
     bool mouseMode = false;
     bool titleReadsMouse = false;
+    bool mouseTouchpad = false;
+    bool mouseGyro = false;
+    double gyroCountsX = 0.0;
+    double gyroCountsY = 0.0;
+    std::array<double, 2> gyroRate{};
+    int viewportWidth = 0;
+    int viewportHeight = 0;
+    std::optional<PadTouchPoint> mouseTouch;
+    std::optional<PadTouchPoint> touchAt(int x, int y) const;
     std::uint32_t padButtons = 0;
 };
 

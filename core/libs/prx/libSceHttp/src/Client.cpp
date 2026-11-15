@@ -448,6 +448,7 @@ struct HttpClientState : Aps5HttpClient {
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
                     if (name == "last-modified" || name == "date") value = CanonicalDate(std::move(value), responseTime);
                     const auto [found, inserted] = headers.emplace(name, value);
+                    if (!inserted && name == "transfer-encoding") throw HttpFailure("repeated HTTP transfer coding fields");
                     if (!inserted && found->second != value &&
                         (name != "content-length" || ContentLength(found->second) != ContentLength(value))) throw HttpFailure("conflicting HTTP headers");
                 }
@@ -615,7 +616,10 @@ std::int32_t APS5_VABI Aps5HttpClient_Read_nid_postfix(Aps5HttpClient* client, s
     const auto offset = static_cast<std::size_t>(state.position - state.cacheStart);
     const auto count = std::min<std::size_t>(static_cast<std::size_t>(capacity), state.cache.size() - offset);
     if (count == 0) throw HttpFailure("HTTP client read made no progress");
-    std::memcpy(destination, state.cache.data() + offset, count);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, state.cache.data() + offset, count);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("HTTP client read destination is not writable");
     state.position += count;
     return static_cast<std::int32_t>(count);
 }

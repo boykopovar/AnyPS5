@@ -45,7 +45,10 @@ int APS5_VABI sceEditMp4GetStatus(const void* handle, void* status) {
 int APS5_VABI sceEditMp4Initialize(const void* param, void* handle) {
     if (param == nullptr || handle == nullptr) return ErrorNullArgument;
     std::uint64_t first = 0;
-    if (!GuestCopyIn_nid_no_patch(&first, param, sizeof(first))) throw std::invalid_argument("libSceEditMp4: unreadable param");
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&first, param, sizeof(first));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("libSceEditMp4: unreadable param");
     if (first == 0) return ErrorInvalidParam;
     NotImplemented_nid_no_patch(__func__);
 }
