@@ -486,11 +486,31 @@ static void Resume(Fiber* target, void** save, std::uint64_t argOnRun) {
     Aps5FiberSwitchStack_nid_no_patch(save, target->context ? &target->savedStack : &ThreadState().threadStack, target->context ? nullptr : target);
 }
 
+static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
+}
+
+static bool CopyFiberName(char (&out)[FIBER_MAX_NAME_LENGTH + 1], const char* name) {
+    std::memset(out, 0, sizeof(out));
+    for (std::size_t i = 0; i < FIBER_MAX_NAME_LENGTH; ++i) {
+        char ch = 0;
+        if (!CopyGuestIn(&ch, name + i, 1)) return false;
+        out[i] = ch;
+        if (ch == '\0') break;
+    }
+    return true;
+}
+
 static int32_t InitializeFiber(FiberObject* object, const char* name, GuestFiberEntry entry, uint64_t arg_on_initialize, void* addr_context, uint64_t size_context, uint32_t flags) {
     if (!object || !name || !entry) return SCE_FIBER_ERROR_NULL;
     if ((reinterpret_cast<std::uintptr_t>(object) & 7) != 0) return SCE_FIBER_ERROR_ALIGNMENT;
     if (const auto valid = ValidateContext(addr_context, size_context); valid != SCE_OK) return valid;
     if ((flags & ~(FIBER_FLAG_NO_ULOBJMGR | FIBER_FLAG_CONTEXT_SIZE_CHECK | FIBER_FLAG_SET_FPU_REGISTERS)) != 0) throw std::runtime_error("_sceFiberInitializeWithInternalOptionImpl: unsupported flags " + std::to_string(flags));
+    char localName[FIBER_MAX_NAME_LENGTH + 1];
+    if (!CopyFiberName(localName, name)) return SCE_FIBER_ERROR_INVALID;
     auto* fiber = reinterpret_cast<Fiber*>(object);
     if (fiber->magic == FIBER_MAGIC) {
         const auto state = fiber->state.load(std::memory_order_acquire);
@@ -502,12 +522,19 @@ static int32_t InitializeFiber(FiberObject* object, const char* name, GuestFiber
     fiber->state.store(FiberState::Idle, std::memory_order_relaxed);
     fiber->entry = entry;
     fiber->argOnInitialize = arg_on_initialize;
-    std::strncpy(fiber->name, name, FIBER_MAX_NAME_LENGTH);
+    std::memcpy(fiber->name, localName, sizeof(fiber->name));
     fiber->contextSizeCheck = g_contextSizeCheck.load(std::memory_order_relaxed) || (flags & FIBER_FLAG_CONTEXT_SIZE_CHECK) != 0;
     fiber->setFpuRegisters = (flags & FIBER_FLAG_SET_FPU_REGISTERS) != 0;
     if (addr_context) AttachStack(fiber, addr_context, size_context);
     if (TraceFibers()) std::fprintf(stderr, "[fiber] init %s object=%p context=%p+0x%llx entry=%p flags=0x%x\n", fiber->name, static_cast<void*>(object), addr_context, static_cast<unsigned long long>(size_context), reinterpret_cast<void*>(entry), flags);
     return SCE_OK;
+}
+
+static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
+    const auto preserved = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
+    errno = preserved;
+    return ok;
 }
 
 static int32_t RunFiber(FiberObject* object, void* addr_context, uint64_t size_context, uint64_t arg_on_run, uint64_t* arg_on_return, std::uint64_t threadFramePointer) {
@@ -520,7 +547,10 @@ static int32_t RunFiber(FiberObject* object, void* addr_context, uint64_t size_c
     Resume(fiber, &ThreadState().threadStack, arg_on_run);
     CompletePendingSuspend();
     SetBounds(ThreadState().threadBounds);
-    if (arg_on_return) *arg_on_return = ThreadState().transfer;
+    if (arg_on_return) {
+        const auto val = ThreadState().transfer;
+        if (!CopyGuestOut(arg_on_return, &val, sizeof(val))) return SCE_FIBER_ERROR_INVALID;
+    }
     return SCE_OK;
 }
 
@@ -545,7 +575,10 @@ static int32_t SwitchFiber(FiberObject* object, void* addr_context, uint64_t siz
     ThreadState().pendingSuspend = self;
     Resume(target, &self->savedStack, arg_on_run);
     CompletePendingSuspend();
-    if (arg_on_run_out) *arg_on_run_out = ThreadState().transfer;
+    if (arg_on_run_out) {
+        const auto val = ThreadState().transfer;
+        if (!CopyGuestOut(arg_on_run_out, &val, sizeof(val))) return SCE_FIBER_ERROR_INVALID;
+    }
     return SCE_OK;
 }
 
@@ -590,7 +623,10 @@ int32_t APS5_VABI sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_o
     SetBounds(ThreadState().threadBounds);
     Aps5FiberSwitchStack_nid_no_patch(&self->savedStack, &ThreadState().threadStack, nullptr);
     CompletePendingSuspend();
-    if (arg_on_run) *arg_on_run = ThreadState().transfer;
+    if (arg_on_run) {
+        const auto val = ThreadState().transfer;
+        if (!CopyGuestOut(arg_on_run, &val, sizeof(val))) return SCE_FIBER_ERROR_INVALID;
+    }
     return SCE_OK;
 }
 
@@ -598,25 +634,8 @@ int32_t APS5_VABI sceFiberGetSelf(FiberObject** fiber) {
     if (!fiber) return SCE_FIBER_ERROR_NULL;
     if (!ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
     auto* current = reinterpret_cast<FiberObject*>(ThreadState().current);
-    const int savedErrno = errno;
-    const bool copied = GuestCopyOut_nid_no_patch(fiber, &current, sizeof(current));
-    errno = savedErrno;
-    if (!copied) return SCE_FIBER_ERROR_NULL;
+    if (!CopyGuestOut(fiber, &current, sizeof(current))) return SCE_FIBER_ERROR_NULL;
     return SCE_OK;
-}
-
-static bool CopyGuestIn(void* dst, const void* src, std::size_t size) {
-    const auto preserved = errno;
-    const bool ok = GuestCopyIn_nid_no_patch(dst, src, size);
-    errno = preserved;
-    return ok;
-}
-
-static bool CopyGuestOut(void* dst, const void* src, std::size_t size) {
-    const auto preserved = errno;
-    const bool ok = GuestCopyOut_nid_no_patch(dst, src, size);
-    errno = preserved;
-    return ok;
 }
 
 int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
@@ -644,13 +663,8 @@ int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
 int32_t APS5_VABI sceFiberRename(FiberObject* object, const char* name) {
     auto* fiber = AsFiber(object);
     if (!fiber || !name) return object && name ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
-    char localName[sizeof(fiber->name)] = {};
-    for (std::size_t i = 0; i < FIBER_MAX_NAME_LENGTH; ++i) {
-        char ch = 0;
-        if (!CopyGuestIn(&ch, name + i, 1)) return SCE_FIBER_ERROR_INVALID;
-        localName[i] = ch;
-        if (ch == '\0') break;
-    }
+    char localName[sizeof(fiber->name)];
+    if (!CopyFiberName(localName, name)) return SCE_FIBER_ERROR_INVALID;
     std::memcpy(fiber->name, localName, sizeof(fiber->name));
     return SCE_OK;
 }

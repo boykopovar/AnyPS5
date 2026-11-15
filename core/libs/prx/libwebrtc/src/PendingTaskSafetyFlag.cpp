@@ -41,10 +41,19 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/Api.hpp"
 
+#include <new>
 #include <stdexcept>
 
 extern "C" {
+
+WebRtcPendingTaskSafetyFlag** APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(WebRtcPendingTaskSafetyFlag** result) {
+    if (!result)
+        throw std::invalid_argument("PendingTaskSafetyFlag::Create requires a result");
+    *result = new (_Znwm_nid_postfix(sizeof(WebRtcPendingTaskSafetyFlag))) WebRtcPendingTaskSafetyFlag{1, true};
+    return result;
+}
 
 void APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag11SetNotAliveEv_nid_postfix(WebRtcPendingTaskSafetyFlag* flag) {
     if (!flag)

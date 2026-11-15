@@ -107,14 +107,6 @@ int APS5_VABI __sys_kqueueex_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_namedobj_create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __sys_namedobj_delete_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __sys_nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
     int oldCancelState = 0;
     scePthreadSetcancelstate(1, &oldCancelState);
@@ -1635,10 +1627,6 @@ int APS5_VABI sceKernelAddFGCInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI sceKernelCreateUuidV7() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceKernelDeleteDynlibEvent() {
     NotImplemented_nid_no_patch(__func__);

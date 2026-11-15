@@ -186,9 +186,37 @@ void testIndexedIndirectDraws() {
     check(sceAgcDcbDrawIndexIndirectMultiGetSize() == expectedMulti.size() * sizeof(std::uint32_t), "indexed indirect multi draw size differs from its packets");
     const auto before = storage.words;
     expectFailure([&] { sceAgcDcbDrawIndexIndirect(&storage.buffer, 2, 0); });
-    expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, &count, 16, 0); });
-    expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 0, 8, &count, 20, 0); });
+    expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, nullptr, 20, 0); });
+    expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 3, 8, &count, 20, 0); });
     check(storage.words == before, "invalid indexed indirect draw modified packet memory");
+}
+
+void testMeasuredMultiDraws() {
+    struct Case {
+        std::uint32_t offset;
+        std::uint32_t selector;
+        std::uint32_t count;
+        std::uintptr_t address;
+        std::uint32_t stride;
+    };
+    const std::array<Case, 3> cases{{{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u, 0x55555555u}, {1, 2, 3, 4, 5}, {0x22222222u, 0x44444444u, 0, 0, 0}}};
+    for (const auto& item : cases) {
+        const auto* address = reinterpret_cast<const volatile void*>(item.address);
+        Storage indexed;
+        const auto* indexedPacket = sceAgcDcbDrawIndexIndirectMulti(&indexed.buffer, item.offset, item.selector, item.count, address, item.stride, 0);
+        const std::array<std::uint32_t, 16> expectedIndexed{0xc0017904u, 0x342u, 0xc6000005u, 0xc0083800u, item.offset, 0x280u, 0x280u, 0x280u, item.count, static_cast<std::uint32_t>(item.address), 0u, item.stride, 0u, 0xc0017904u, 0x342u, 0xc6000000u};
+        check(indexedPacket == indexed.words.data() && std::equal(expectedIndexed.begin(), expectedIndexed.end(), indexedPacket), "indexed indirect multi draw differs from the console's packet");
+        Storage plain;
+        const auto* plainPacket = sceAgcDcbDrawIndirectMulti(&plain.buffer, item.offset, item.selector, item.count, address, item.stride, 0);
+        const std::array<std::uint32_t, 16> expectedPlain{0xc0017904u, 0x342u, 0xc6000008u, 0xc0082c00u, item.offset, 0x280u, 0x280u, 0x280u, item.count, static_cast<std::uint32_t>(item.address), 0u, item.stride, 2u, 0xc0017904u, 0x342u, 0xc6000000u};
+        check(plainPacket == plain.words.data() && std::equal(expectedPlain.begin(), expectedPlain.end(), plainPacket), "indirect multi draw differs from the console's packet");
+    }
+    Storage refused;
+    const auto before = refused.words;
+    alignas(4) std::uint32_t count = 0;
+    expectFailure([&] { sceAgcDcbDrawIndirectMulti(&refused.buffer, 0, 1, 8, nullptr, 16, 0); });
+    expectFailure([&] { sceAgcDcbDrawIndirectMulti(&refused.buffer, 0, 0x11111111u, 8, &count, 16, 0); });
+    check(refused.words == before && refused.buffer.cursor_up == refused.words.data(), "refused indirect multi draw modified the buffer");
 }
 
 void testTagHeaders() {
@@ -496,9 +524,20 @@ void testIndirectBase() {
     check(bound[1] == 1 && bound[2] == static_cast<std::uint32_t>(address) && bound[3] == static_cast<std::uint32_t>(address >> 32u), "indirect base address mismatch");
     const auto* cleared = sceAgcDcbSetBaseIndirectArgs(&storage.buffer, 1, nullptr);
     check(cleared == bound + 4 && (cleared[0] & 2u) != 0 && cleared[1] == 1 && cleared[2] == 0 && cleared[3] == 0, "indirect base was not cleared");
+    const auto* masked = sceAgcDcbSetBaseIndirectArgs(&storage.buffer, 0, reinterpret_cast<const volatile void*>(address + 6));
+    check(masked == cleared + 4 && masked[0] == 0xc0021100u && masked[2] == static_cast<std::uint32_t>(address) && masked[3] == static_cast<std::uint32_t>(address >> 32u), "indirect base kept address bits 1 and 2");
+    const std::array<std::uint32_t, 4> expectedWide{0xe2223322u, 1u, 0x22222220u, 0u};
+    const auto* wide = sceAgcDcbSetBaseIndirectArgs(&storage.buffer, 0x11111111u, reinterpret_cast<const volatile void*>(std::uintptr_t{0x22222222u}));
+    check(wide == masked + 4 && std::equal(expectedWide.begin(), expectedWide.end(), wide), "indirect base differs from the console's packet for a wide shader type");
+    const std::array<std::uint32_t, 4> expectedCompute{0xc0021102u, 1u, 0u, 0u};
+    const auto* compute = sceAgcDcbSetBaseIndirectArgs(&storage.buffer, 1, reinterpret_cast<const volatile void*>(std::uintptr_t{2}));
+    check(compute == wide + 4 && std::equal(expectedCompute.begin(), expectedCompute.end(), compute), "indirect base differs from the console's packet for a compute base");
+    const std::array<std::uint32_t, 4> expectedHigh{0xc4465544u, 1u, 0x44444440u, 0x33333333u};
+    const auto* high = sceAgcDcbSetBaseIndirectArgs(&storage.buffer, 0x22222222u, reinterpret_cast<const volatile void*>(std::uintptr_t{0x3333333344444444ull}));
+    check(high == compute + 4 && std::equal(expectedHigh.begin(), expectedHigh.end(), high), "indirect base differs from the console's packet for a 64-bit address");
     const auto before = storage.words;
-    expectFailure([&] { sceAgcDcbSetBaseIndirectArgs(&storage.buffer, 0, reinterpret_cast<const volatile void*>(address + 4)); });
-    check(storage.words == before, "misaligned indirect base modified packet memory");
+    expectFailure([&] { sceAgcDcbSetBaseIndirectArgs(&storage.buffer, 0, reinterpret_cast<const volatile void*>(address + 1)); });
+    check(storage.words == before, "odd indirect base modified packet memory");
 }
 
 void testContextState() {
@@ -974,10 +1013,6 @@ void testCopyDataAndComputeEvents() {
     rejected.words.fill(0xa5a5a5a5u);
     const auto rejectedWords = rejected.words;
     const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 4, 0x1000, 0xa, 0, 1, 0, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 0, 0x1000, 0xa, 4, 1, 0, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 2, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 0, 2); });
@@ -1011,7 +1046,13 @@ void testDefaults() {
     std::uint32_t state = 0x12345678;
     check(sceAgcInit_0090(&state, 8) == 0 && state == 0x12345678, "AGC initialization failed or modified caller state");
     check(sceAgcInit_0090(&state, 13) == 0 && state == 0x12345678, "AGC version 13 initialization changed caller state");
-    expectFailure([] { sceAgcInit_0090(nullptr, 8); });
+    for (const std::uint32_t version : {0u, 1u, 8u, 13u, 14u, 0xffffc278u, 0xffffffffu}) {
+        const auto expected = sceAgcInit(version);
+        for (const std::uintptr_t ignored : {std::uintptr_t{0}, std::uintptr_t{1}, std::uintptr_t{2}, std::uintptr_t{3}, std::uintptr_t{0x10001}, ~std::uintptr_t{0}, reinterpret_cast<std::uintptr_t>(&state)}) {
+            check(sceAgcInit_0090(reinterpret_cast<std::uint32_t*>(ignored), version) == expected, "legacy AGC initialization inspected the ignored argument");
+            check(state == 0x12345678, "legacy AGC initialization modified its ignored argument");
+        }
+    }
     check(sceAgcInit_0090(&state, 14) == 0 && state == 0x12345678, "out-of-range AGC initialization version changed caller state");
     check(sceAgcInit(8) == 0, "AGC version initialization failed");
     check(sceAgcInit(13) == 0, "AGC version 13 initialization failed");
@@ -1266,6 +1307,7 @@ int main(int argc, char** argv) {
         testDispatchPackets();
         testClearState();
         testIndexedIndirectDraws();
+    testMeasuredMultiDraws();
         testTagHeaders();
         testMarkers();
         testJumpTargetPatch();

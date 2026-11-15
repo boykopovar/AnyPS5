@@ -56,6 +56,10 @@ void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap) {
 
 extern "C" {
 
+void FreeTypeSyncBitmap_nid_no_patch(GuestBitmap& guest, const FT_Bitmap& bitmap) {
+    SyncBitmap(guest, bitmap);
+}
+
 void APS5_VABI FT_Bitmap_New_nid_postfix(GuestBitmap* bitmap) {
     if (bitmap) SyncBitmap(*bitmap, {});
 }

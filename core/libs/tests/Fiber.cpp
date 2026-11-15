@@ -300,6 +300,9 @@ void RunAttachedContext() {
     Require(sceFiberRename(g_attached, longName.c_str()) == 0, "rename to a long name");
     Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strlen(info.name) == FIBER_MAX_NAME_LENGTH && longName.compare(0, FIBER_MAX_NAME_LENGTH, info.name) == 0, "a long name is cut at the limit");
     Require(sceFiberRename(g_attached, "attached") == 0, "restore the fiber's name");
+    errno = 71;
+    Require(_sceFiberInitializeImpl_nid_postfix(g_attached, reinterpret_cast<const char*>(0x10), AttachedEntry, 34, nullptr, 0, nullptr, 0) == FiberErrorInvalid && errno == 71, "initialize with an unreadable name");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "attached") == 0 && info.arg_on_initialize == 33, "an unreadable name leaves the fiber unchanged");
     Require(_sceFiberAttachContextAndRun(nullptr, g_attachedContext.data(), g_attachedContext.size(), 0, nullptr) == FiberErrorNull, "attach and run a null fiber");
     Require(_sceFiberAttachContextAndRun(g_attached, nullptr, g_attachedContext.size(), 0, nullptr) == FiberErrorInvalid, "attach a null context with a size");
     Require(_sceFiberAttachContextAndRun(g_attached, g_attachedContext.data(), 0, 0, nullptr) == FiberErrorRange, "attach a context without a size");
@@ -320,6 +323,8 @@ void RunAttachedContext() {
 void RunInternalOptions() {
     auto* fiber = reinterpret_cast<FiberObject*>(&g_checkedStorage);
     Require(_sceFiberInitializeWithInternalOptionImpl(nullptr, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorNull, "internal option null fiber");
+    errno = 71;
+    Require(_sceFiberInitializeWithInternalOptionImpl(fiber, reinterpret_cast<const char*>(0x10), CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0, 0) == FiberErrorInvalid && errno == 71, "internal option unreadable name");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), 256, nullptr, 0, 0) == FiberErrorRange, "internal option small context");
     Require(_sceFiberInitializeWithInternalOptionImpl(fiber, "options", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0x1, 0) == 0, "internal option without object registration");
     FiberInfo info{};
@@ -567,6 +572,43 @@ void CheckContextLeavesWriteWatch() {
 }
 #endif
 
+FiberStorage g_unwritableAStorage;
+FiberStorage g_unwritableBStorage;
+alignas(16) std::array<unsigned char, 16 * 1024> g_unwritableAContext;
+alignas(16) std::array<unsigned char, 16 * 1024> g_unwritableBContext;
+
+void APS5_VABI UnwritableEntryA(std::uint64_t, std::uint64_t) {
+    auto* b = reinterpret_cast<FiberObject*>(&g_unwritableBStorage);
+    errno = 71;
+    Require(sceFiberSwitch(b, 0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable switch output pointer");
+    Require(errno == 71, "errno preserved");
+    errno = 71;
+    Require(sceFiberReturnToThread(0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable return output pointer");
+    Require(errno == 71, "errno preserved");
+    std::uint64_t received = 0;
+    sceFiberReturnToThread(42, &received);
+}
+
+void APS5_VABI UnwritableEntryB(std::uint64_t, std::uint64_t) {
+    auto* a = reinterpret_cast<FiberObject*>(&g_unwritableAStorage);
+    std::uint64_t received = 0;
+    Require(sceFiberSwitch(a, 0, &received) == 0, "switch back to fiber A");
+}
+
+void RunUnwritablePointerCheck() {
+    auto* a = reinterpret_cast<FiberObject*>(&g_unwritableAStorage);
+    auto* b = reinterpret_cast<FiberObject*>(&g_unwritableBStorage);
+    Require(_sceFiberInitializeImpl_nid_postfix(a, "unwritableA", UnwritableEntryA, 0, g_unwritableAContext.data(), g_unwritableAContext.size(), nullptr, 0) == 0, "init A");
+    Require(_sceFiberInitializeImpl_nid_postfix(b, "unwritableB", UnwritableEntryB, 0, g_unwritableBContext.data(), g_unwritableBContext.size(), nullptr, 0) == 0, "init B");
+    std::uint64_t returned = 0;
+    errno = 71;
+    Require(sceFiberRun_nid_postfix(a, 0, reinterpret_cast<std::uint64_t*>(0x10)) == FiberErrorInvalid, "unwritable run output pointer");
+    Require(errno == 71, "errno preserved");
+    Require(sceFiberRun_nid_postfix(a, 0, &returned) == 0 && returned == 42, "run A successfully");
+    Require(sceFiberFinalize(a) == 0, "finalize A");
+    Require(sceFiberFinalize(b) == 0, "finalize B");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -638,4 +680,5 @@ int main(int argc, char** argv) {
     RunOnLargeContext();
     RunAttachedContext();
     RunInternalOptions();
+    RunUnwritablePointerCheck();
 }

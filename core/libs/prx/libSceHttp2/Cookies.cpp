@@ -10,6 +10,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include "GuestAccess.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
 #include "Cookies.hpp"
@@ -83,6 +84,13 @@ std::string_view Trim(std::string_view text) {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
     while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
     return text;
+}
+
+bool CopyUrl(const char* url, std::string& text) {
+    const int savedErrno = errno;
+    const bool copied = CopyGuestString_nid_no_patch(url, 65536, text) == 0;
+    errno = savedErrno;
+    return copied;
 }
 
 int ParseUrl(std::string_view text, Url& url) {
@@ -387,9 +395,13 @@ int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* co
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     if (!url || !cookie || cookieLength == 0) return ERROR_INVALID_VALUE;
+    std::string urlText;
+    if (!CopyUrl(url, urlText)) return ERROR_INVALID_VALUE;
     Url parsed{};
-    if (const int result = ParseUrl(url, parsed); result != 0) return result;
-    return StoreCookie(*box, parsed, std::string_view(cookie, cookieLength), Now());
+    if (const int result = ParseUrl(urlText, parsed); result != 0) return result;
+    std::string cookieText(cookieLength, '\0');
+    if (!Http2Guest::CopyIn(cookieText.data(), cookie, cookieLength)) return ERROR_INVALID_VALUE;
+    return StoreCookie(*box, parsed, cookieText, Now());
 }
 
 int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, std::size_t* required, std::size_t prepared) {
@@ -397,8 +409,10 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     if (!url) return ERROR_INVALID_VALUE;
+    std::string urlText;
+    if (!CopyUrl(url, urlText)) return ERROR_INVALID_VALUE;
     Url parsed{};
-    if (const int result = ParseUrl(url, parsed); result == ERROR_REJECTED) return ERROR_NOT_FOUND;
+    if (const int result = ParseUrl(urlText, parsed); result == ERROR_REJECTED) return ERROR_NOT_FOUND;
     else if (result != 0) return result;
     const auto matches = Matches(*box, parsed);
     if (matches.empty()) return ERROR_NOT_FOUND;
@@ -406,31 +420,38 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
     std::string header;
     for (const Cookie* match : matches) AppendCookie(header, *match);
     const std::size_t size = header.size() + HEADER_SLACK;
-    if (!cookie) {
-        *required = size;
-        return 0;
-    }
+    if (!cookie) return Http2Guest::Store(required, size) ? 0 : ERROR_INVALID_VALUE;
     if (prepared < size) {
-        if (prepared != 0) cookie[0] = '\0';
+        if (prepared != 0 && !Http2Guest::Store(cookie, '\0')) return ERROR_INVALID_VALUE;
         return ERROR_OUT_OF_SIZE;
     }
+    std::size_t previousRequired = 0;
+    if (required) {
+        if (!Http2Guest::CopyIn(&previousRequired, required, sizeof(previousRequired)) ||
+            !Http2Guest::Store(required, previousRequired)) {
+            return ERROR_INVALID_VALUE;
+        }
+    }
     header.append({'\0', ' ', '\0'});
-    std::memcpy(cookie, header.data(), size);
-    if (required) *required = size;
+    if (!Http2Guest::CopyOut(cookie, header.data(), size)) return ERROR_INVALID_VALUE;
+    if (required && !Http2Guest::Store(required, size)) return ERROR_INVALID_VALUE;
     return 0;
 }
 
 int APS5_VABI sceHttp2GetCookieStats(int cookieBoxId, Http2CookieStats* stats) {
     std::lock_guard lock(g_cookiesMutex);
     if (!stats) return ERROR_INVALID_VALUE;
+    Http2CookieStats out{};
+    if (!Http2Guest::CopyIn(&out, stats, sizeof(out))) return ERROR_INVALID_VALUE;
     CookieBox* box = FindBox(cookieBoxId);
     if (!box) return ERROR_INVALID_ID;
     RemoveExpired(*box, Now());
-    stats->currentInuseSize = InuseSize(*box);
-    stats->currentInuseNum = static_cast<std::uint32_t>(box->cookies.size());
-    stats->maxInuseSize = box->maxInuseSize;
-    stats->maxInuseNum = box->maxInuseNum;
-    stats->removedNum = box->removedNum;
+    out.currentInuseSize = InuseSize(*box);
+    out.currentInuseNum = static_cast<std::uint32_t>(box->cookies.size());
+    out.maxInuseSize = box->maxInuseSize;
+    out.maxInuseNum = box->maxInuseNum;
+    out.removedNum = box->removedNum;
+    if (!Http2Guest::CopyOut(stats, &out, sizeof(out))) return ERROR_INVALID_VALUE;
     return 0;
 }
 
