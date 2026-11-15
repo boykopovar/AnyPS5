@@ -17,6 +17,22 @@ if(BUILD_TESTING)
         set_tests_properties(guest_resolver_access PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
+
+    add_test_executable(guest_resolver_services_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ResolverServices.cpp)
+    target_include_directories(guest_resolver_services_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_resolver_services_tests PRIVATE libScePosixForWebKit libc)
+    configure_windows_unwind(guest_resolver_services_tests)
+    foreach(mode IN ITEMS numeric errors named)
+        add_test(NAME guest_resolver_services_${mode} COMMAND guest_resolver_services_tests ${mode})
+        set_tests_properties(guest_resolver_services_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_resolver_services_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
+        endif()
+    endforeach()
+    if(WIN32)
+        target_link_libraries(guest_resolver_services_tests PRIVATE ws2_32)
+    endif()
 endif()
 
 if(BUILD_TESTING)
