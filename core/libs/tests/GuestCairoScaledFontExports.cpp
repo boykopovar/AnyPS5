@@ -7,6 +7,7 @@
 
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_reference), CairoScaledFont* (APS5_VABI*)(CairoScaledFont*)>);
 static_assert(std::is_same_v<decltype(&cairo_scaled_font_destroy), void (APS5_VABI*)(CairoScaledFont*)>);
+static_assert(std::is_same_v<decltype(&cairo_scaled_font_status), int (APS5_VABI*)(CairoScaledFont*)>);
 
 int main() {
     errno = EDOM;
@@ -17,6 +18,10 @@ int main() {
     cairo_scaled_font_destroy(nullptr);
     if (errno != EDOM) {
         std::fputs("scaled font PRX null-destroy ABI failed\n", stderr);
+        return EXIT_FAILURE;
+    }
+    if (cairo_scaled_font_status(nullptr) != 7 || errno != EDOM) {
+        std::fputs("scaled font PRX null-status ABI failed\n", stderr);
         return EXIT_FAILURE;
     }
     std::puts("scaled font exported PRX null-lifecycle ABI PASS");

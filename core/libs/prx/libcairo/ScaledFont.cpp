@@ -17,6 +17,7 @@ static_assert(offsetof(CairoFontExtents, max_y_advance) == offsetof(cairo_font_e
 static_assert(sizeof(CairoTextExtents) == sizeof(cairo_text_extents_t));
 static_assert(offsetof(CairoTextExtents, x_advance) == offsetof(cairo_text_extents_t, x_advance));
 static_assert(offsetof(CairoTextExtents, y_advance) == offsetof(cairo_text_extents_t, y_advance));
+static_assert(CAIRO_STATUS_NULL_POINTER == 7);
 
 namespace {
 
@@ -58,6 +59,7 @@ void APS5_VABI cairo_scaled_font_destroy(CairoScaledFont* font) {
 }
 
 int APS5_VABI cairo_scaled_font_status(CairoScaledFont* font) {
+    if (font == nullptr) return CAIRO_STATUS_NULL_POINTER;
     return aps5_cairo_scaled_font_status(Backend(font));
 }
 

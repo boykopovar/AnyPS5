@@ -186,7 +186,8 @@ void CompareNativeExample(const Example& example) {
 
     cairo_scaled_font_destroy(nullptr);
     Check(cairo_scaled_font_reference(nullptr) == nullptr, "null native-reference is a no-op");
-    Rejects([&] { cairo_scaled_font_status(nullptr); });
+    Check(cairo_scaled_font_status(nullptr) == CAIRO_STATUS_NULL_POINTER,
+          "null scaled font returns the null-pointer status");
     Rejects([&] { cairo_scaled_font_get_ctm(nullptr, &guestCtm); });
 
     aps5_cairo_destroy(context);
