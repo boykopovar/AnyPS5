@@ -104,9 +104,7 @@ int WriteStatus(bool* status, bool value, const char* function) {
 }
 
 int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
-    if (status == nullptr) return nullOutputError;
-    if (!GuestCopyOut_nid_no_patch(status, &value, sizeof(value))) return nullOutputError;
-    return SYSTEM_SERVICE_OK;
+    return WriteSystemServiceBoolStatus(status, value, nullOutputError);
 }
 
 constexpr char MainExecutable[] = "/app0/eboot.bin";
@@ -742,10 +740,16 @@ int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
 }
 
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
- if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- static_cast<void>(sceSystemServiceGetAppId(titleId));
- *launched = true;
- return SYSTEM_SERVICE_OK;
+ if (launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ const int savedErrno = errno;
+ std::string copiedTitleId;
+ const int copyResult = CopyGuestString_nid_no_patch(titleId, SYSTEM_SERVICE_TITLE_ID_LENGTH + 1, copiedTitleId);
+ errno = savedErrno;
+ if (copyResult != 0 || copiedTitleId.size() != SYSTEM_SERVICE_TITLE_ID_LENGTH) {
+  return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ }
+ static_cast<void>(sceSystemServiceGetAppId(copiedTitleId.c_str()));
+ return WriteSystemServiceBoolStatus(launched, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceLncUtilGetAppIdOfRunningBigApp() {

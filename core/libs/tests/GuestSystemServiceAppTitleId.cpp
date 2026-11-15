@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -8,6 +9,12 @@
 #include <exception>
 #include <limits>
 #include <string_view>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -60,6 +67,24 @@ void CheckRunningTitleLookups(const char* titleId, int runningAppId) {
     bool launched = false;
     Require(sceLncUtilIsAppLaunched(titleId, &launched) == 0 && launched);
     Require(sceLncUtilIsAppLaunched(titleId, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceLncUtilIsAppLaunched(titleId, reinterpret_cast<bool*>(static_cast<std::uintptr_t>(0x10))) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+#ifdef _WIN32
+    void* readOnlyPage = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READONLY);
+    Require(readOnlyPage != nullptr);
+    errno = 71;
+    Require(sceLncUtilIsAppLaunched(titleId, static_cast<bool*>(readOnlyPage)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(VirtualFree(readOnlyPage, 0, MEM_RELEASE) != 0);
+#else
+    void* readOnlyPage = mmap(nullptr, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readOnlyPage != MAP_FAILED);
+    errno = 71;
+    Require(sceLncUtilIsAppLaunched(titleId, static_cast<bool*>(readOnlyPage)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(munmap(readOnlyPage, 4096) == 0);
+#endif
 }
 
 bool GetAppTitleIdThrows(int appId, GuardedBuffer& buffer) {
@@ -88,6 +113,9 @@ void CheckNullBuffers(int runningAppId) {
     Require(Throws([&] { static_cast<void>(sceSystemServiceGetAppTitleId(runningAppId + 1, nullptr)); }));
     Require(GetAppIdRejects(nullptr));
     Require(IsAppLaunchedRejects(nullptr));
+    errno = 71;
+    Require(IsAppLaunchedRejects(reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10))));
+    Require(errno == 71);
 }
 
 void CheckKnownTitle(int runningAppId) {

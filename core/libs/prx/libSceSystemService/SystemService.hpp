@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_SYSTEMSERVICE_HPP
 #define CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_SYSTEMSERVICE_HPP
 
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <string_view>
 #include <system_error>
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceSystemService/LanguageLocale.hpp"
 
 constexpr int SYSTEM_SERVICE_OK = 0;
@@ -63,6 +65,14 @@ inline int SystemServiceConsoleLanguage(std::string_view caller) {
             " or auto, not \"" + std::string(text) + "\"");
     }
     return language;
+}
+
+inline int WriteSystemServiceBoolStatus(bool* status, bool value, int error) {
+    if (status == nullptr) return error;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? SYSTEM_SERVICE_OK : error;
 }
 
 #endif

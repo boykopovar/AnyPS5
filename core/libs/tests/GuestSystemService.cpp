@@ -13,6 +13,12 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -116,6 +122,25 @@ void TestRunningAppState() {
     TestRunningAppAnswer<bool>(sceLncUtilIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceSystemServiceIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceLncUtilIsSpeculativeLaunch, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    const std::int32_t runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    errno = 71;
+    Require(sceLncUtilIsSpeculativeLaunch(runningAppId, reinterpret_cast<bool*>(static_cast<std::uintptr_t>(0x10))) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+#ifdef _WIN32
+    void* readOnlyPage = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READONLY);
+    Require(readOnlyPage != nullptr);
+    errno = 71;
+    Require(sceLncUtilIsSpeculativeLaunch(runningAppId, static_cast<bool*>(readOnlyPage)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(VirtualFree(readOnlyPage, 0, MEM_RELEASE) != 0);
+#else
+    void* readOnlyPage = mmap(nullptr, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(readOnlyPage != MAP_FAILED);
+    errno = 71;
+    Require(sceLncUtilIsSpeculativeLaunch(runningAppId, static_cast<bool*>(readOnlyPage)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    Require(munmap(readOnlyPage, 4096) == 0);
+#endif
 }
 
 void TestRunningBigApp() {
