@@ -10583,16 +10583,26 @@ void verifyUnnormalizedSamplers() {
         std::vector<std::uint32_t> exact;
         std::vector<std::uint32_t> sums;
         std::vector<std::uint32_t> coordinates;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> copies;
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             require(count != 0 && count <= words.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
             const auto op = words[cursor] & 0xffffu;
             if (op == spv::OpDecorate && count == 3u && words[cursor + 2] == spv::DecorationNoContraction) exact.push_back(words[cursor + 1]);
+            if (op == spv::OpCopyObject && count == 4u) copies.emplace_back(words[cursor + 2], words[cursor + 3]);
             if (op == spv::OpFAdd) sums.push_back(words[cursor + 2]);
             if (op == spv::OpImageSampleExplicitLod) coordinates.push_back(words[cursor + 4]);
             cursor += count;
         }
-        return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) { return std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0; });
+        return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) {
+            for (std::size_t step = 0; step <= copies.size(); ++step) {
+                if (std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0) return true;
+                const auto copy = std::ranges::find(copies, id, &std::pair<std::uint32_t, std::uint32_t>::first);
+                if (copy == copies.end()) return false;
+                id = copy->second;
+            }
+            return false;
+        });
     };
     const auto sampleMasks = [](std::span<const std::uint32_t> words) {
         std::vector<std::uint32_t> masks;
@@ -10608,11 +10618,6 @@ void verifyUnnormalizedSamplers() {
         const auto oneD = recompile(offsetProgram(0xf0dc0f00u, source, 0x3du), imageData(unnormalized, Type1D, Format8888UNorm, 0u));
         require(proven(oneD, true), "unnormalized texel offsets: a 1D image_sample_lz_o through an unnormalized S# was not flagged");
         auditSpirv(oneD.spirv.Words());
-        if (!foldedSamples(oneD.spirv.Words())) {
-            std::cerr << "UNNORMALIZED_OFFSET_SPIRV";
-            for (const auto word : oneD.spirv.Words()) std::cerr << ' ' << word;
-            std::cerr << '\n';
-        }
         require(foldedSamples(oneD.spirv.Words()), "unnormalized texel offsets: a 1D offset was not added to the coordinate");
     }
     const auto constantLz = offsetProgram(0xf0dc0f08u, 0xffu, 0x3du | (2u << 8u));
