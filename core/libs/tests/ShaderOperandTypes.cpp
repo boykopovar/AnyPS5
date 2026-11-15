@@ -44,6 +44,12 @@ static void CheckSelectTypes() {
     Require(f32Sel.Type() == IrType::F32, "Select f32 type mismatch");
     Require(f32Sel.Opcode() == IrOpcode::SelectF32, "Select f32 opcode mismatch");
 
+    IrValue& u8True = ir.Emit(IrOpcode::ConvertU8U32, IrType::U8, {&u32True});
+    IrValue& u8False = ir.Emit(IrOpcode::ConvertU8U32, IrType::U8, {&u32False});
+    IrValue& u8Sel = ir.Select(cond, u8True, u8False);
+    Require(u8Sel.Type() == IrType::U8, "Select u8 type mismatch");
+    Require(u8Sel.Opcode() == IrOpcode::ConvertU8U32, "Select u8 opcode mismatch");
+
     IrValue& u16True = ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&u32True});
     IrValue& u16False = ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&u32False});
     IrValue& u16Sel = ir.Select(cond, u16True, u16False);
