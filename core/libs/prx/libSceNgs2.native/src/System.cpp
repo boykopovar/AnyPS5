@@ -357,7 +357,9 @@ extern "C" {
 
 int APS5_VABI sceNgs2JobSchedulerResetOption(Ngs2JobSchedulerOption* option) {
     if (option == nullptr) return static_cast<int>(0x804A8012u);
-    Ngs2ResetJobSchedulerOption(*option);
+    Ngs2JobSchedulerOption reset{};
+    Ngs2ResetJobSchedulerOption(reset);
+    if (!WriteGuest(option, reset)) return static_cast<int>(0x804A8012u);
     return SCE_NGS2_OK;
 }
 

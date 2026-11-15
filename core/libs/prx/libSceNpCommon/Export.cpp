@@ -109,10 +109,21 @@ int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* on
 
 int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, std::int32_t* order) {
     if (!npId1 || !npId2 || !order) return NP_ERROR_INVALID_ARGUMENT;
-    int compare = std::strncmp(npId1->handle.data, npId2->handle.data, ONLINE_ID_MAX_LENGTH);
-    if (compare == 0) compare = compareBytes(npId1->opt, npId2->opt, sizeof(npId1->opt));
-    if (compare == 0) compare = compareBytes(npId1->reserved, npId2->reserved, sizeof(npId1->reserved));
-    *order = compare < 0 ? -1 : compare > 0 ? 1 : 0;
+    NpIdFull localId1{};
+    NpIdFull localId2{};
+    const int savedErrno = errno;
+    const bool copied1 = GuestCopyIn_nid_no_patch(&localId1, npId1, sizeof(localId1));
+    const bool copied2 = GuestCopyIn_nid_no_patch(&localId2, npId2, sizeof(localId2));
+    errno = savedErrno;
+    if (!copied1 || !copied2) return NP_ERROR_INVALID_ARGUMENT;
+    int compare = std::strncmp(localId1.handle.data, localId2.handle.data, ONLINE_ID_MAX_LENGTH);
+    if (compare == 0) compare = compareBytes(localId1.opt, localId2.opt, sizeof(localId1.opt));
+    if (compare == 0) compare = compareBytes(localId1.reserved, localId2.reserved, sizeof(localId1.reserved));
+    const std::int32_t localOrder = compare < 0 ? -1 : compare > 0 ? 1 : 0;
+    const int savedOutErrno = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(order, &localOrder, sizeof(localOrder));
+    errno = savedOutErrno;
+    if (!copiedOut) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
