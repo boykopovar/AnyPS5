@@ -1359,8 +1359,9 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
         }
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING: {
             if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            *state = {};
-            state->state_flags = voice.stateFlags;
+            Ngs2VoiceState mastering{};
+            mastering.state_flags = voice.stateFlags;
+            if (!WriteGuest(state, mastering)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
             return SCE_NGS2_OK;
         }
         default: throw std::runtime_error("NGS2: voice state of rack " + Ngs2Hex(voice.rack->rackId) + " is not implemented");
