@@ -117,6 +117,7 @@ struct ResponseSpec {
     int status = 0;
     std::vector<std::pair<std::string, std::string>> headers;
     std::vector<std::pair<std::string, std::string>> informationalHeaders;
+    std::array<std::string, 3> chunkWhitespace{};
 };
 
 class Server {
@@ -513,7 +514,9 @@ private:
         if (mode == Mode::Http11StallBody) { write(response); Stage(2); Stall(); return; }
         if (mode == Mode::Http11TruncatedSplit) { write(response + "sh"); Stall(); write("ort"); return; }
         if (headers.find(":method")->second != "HEAD") {
-            if (mode == Mode::Http11Chunked) response += "8;test=yes\r\nresponse\r\n5\r\n body\r\n0\r\nX-Trailer: done\r\n\r\n";
+            if (mode == Mode::Http11Chunked) response += "8" + configured.chunkWhitespace[0] + ";test=yes\r\nresponse\r\n5" +
+                configured.chunkWhitespace[1] + (configured.chunkWhitespace[1].empty() ? "" : ";part=two") + "\r\n body\r\n0" +
+                configured.chunkWhitespace[2] + (configured.chunkWhitespace[2].empty() ? "" : ";last=yes") + "\r\nX-Trailer: done\r\n\r\n";
             else if (mode == Mode::Http11BadChunk) response += "z\r\n";
             else if (mode == Mode::Http11Gzip) response += StoredGzip("response body");
             else response += mode == Mode::Http11Truncated ? "short" : "response body";
@@ -963,6 +966,31 @@ void SslCallbacks(int trusted) {
     Require(sceSslTerm_nid_postfix(untrusted) == 0, "untrusted SSL context cleanup");
 }
 
+void Http1ChunkWhitespace(int ssl) {
+    constexpr std::array<std::string_view, 3> whitespace{" ", "\t", " \t "};
+    unsigned accepted = 0;
+    for (std::size_t padding = 0; padding < whitespace.size(); ++padding) {
+        for (std::size_t chunk = 0; chunk < 3; ++chunk) {
+            try {
+                Server server(Mode::Http11Chunked);
+                ResponseSpec response;
+                response.chunkWhitespace[chunk] = whitespace[padding];
+                server.SetResponse(std::move(response));
+                Client client(ssl, 4, 0, 2);
+                client.Create(server.Url("127.0.0.1"));
+                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 whitespace chunk send");
+                Response(client, 200);
+                server.Join();
+                ++accepted;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "HTTP1 chunk whitespace refused: padding %zu chunk %zu: %s\n", padding, chunk, error.what());
+            }
+        }
+    }
+    std::printf("HTTP1 chunk extension whitespace accepted: %u/9\n", accepted);
+    Require(accepted == 9, "HTTP1 valid chunk extension whitespace rejected");
+}
+
 void Http1Transport(int ssl) {
     const std::pair<Mode, int> cases[] = {{Mode::Http10, 1}, {Mode::Http11, 2}, {Mode::Http11Chunked, 2}, {Mode::Http11Close, 2}, {Mode::Http1Plain, 2}, {Mode::Http1Plain, 3}};
     for (const auto& [mode, version] : cases) {
@@ -989,6 +1017,12 @@ void Http1Transport(int ssl) {
         Require(std::string_view(raw, size).starts_with(version == 1 ? "HTTP/1.0 200" : "HTTP/1.1 200"), "HTTP1 status line retained");
         Response(client, 200);
         server.Join();
+        if (mode == Mode::Http11Chunked) {
+            char* trailers = nullptr;
+            std::size_t trailerSize = 0;
+            Require(sceHttp2GetAllTrailingHeaders(client.request, &trailers, &trailerSize) == 0 && trailers &&
+                std::string_view(trailers, trailerSize) == "X-Trailer: done\r\n\r\n", "HTTP1 trailing header block retained");
+        }
         Require(server.Upload() == upload, "HTTP1 complete upload");
         Require(server.Headers().find(":method")->second == "POST" && server.Headers().find(":path")->second == "/path?query=yes", "HTTP1 method and target");
         Require(server.Headers().find(":version")->second == (version == 1 ? "HTTP/1.0" : "HTTP/1.1"), "HTTP1 requested version");
@@ -996,6 +1030,50 @@ void Http1Transport(int ssl) {
         Require(server.Headers().count("host") == 1 && server.Headers().find("host")->second == "request.example", "HTTP1 exactly one overridden host header");
         Require(observed.calls == (mode == Mode::Http1Plain ? 0 : 1), "HTTP1 TLS callback only for secure connections");
     }
+}
+
+void Http1ContentLengthLists(int ssl) {
+    constexpr std::array<std::string_view, 8> valid{
+        "13,13", "13, 13", "13,\t13", " 13\t, \t13 ", "013,00013", "13, 13, 13", "00013, 13", "13,013,00013"
+    };
+    constexpr std::array<std::string_view, 13> invalid{
+        "13,14", "14,13", "13,14,13", "13,", ",13", "13,,13", "13, +13", "13, -13", "13, 13x",
+        "13,18446744073709551616", "0xD,13", "13.0,13", "13, \t"
+    };
+    unsigned accepted = 0;
+    unsigned refused = 0;
+    for (const int version : {1, 2}) {
+        for (const auto value : valid) {
+            try {
+                Server server(version == 1 ? Mode::Http10 : Mode::Http11);
+                server.SetResponse({0, {{"Content-Length", std::string(value)}}});
+                Client client(ssl, 4, 0, version);
+                client.Create(server.Url("127.0.0.1"));
+                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 equivalent length send");
+                int kind = -1;
+                std::uint64_t length = 0;
+                Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == 13,
+                    "HTTP1 equivalent length reported");
+                Response(client, 200);
+                server.Join();
+                ++accepted;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "HTTP1 equivalent length refused: version %d value %.*s: %s\n", version,
+                    static_cast<int>(value.size()), value.data(), error.what());
+            }
+        }
+        for (const auto value : invalid) {
+            Server server(version == 1 ? Mode::Http10 : Mode::Http11);
+            server.SetResponse({0, {{"Content-Length", std::string(value)}}});
+            Client client(ssl, 4, 0, version);
+            client.Create(server.Url("127.0.0.1"));
+            if (Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); })) ++refused;
+            else std::fprintf(stderr, "HTTP1 malformed length accepted: version %d value %.*s\n", version,
+                static_cast<int>(value.size()), value.data());
+        }
+    }
+    std::fprintf(stderr, "HTTP1 equivalent length lists accepted %u/16; malformed lists refused %u/26\n", accepted, refused);
+    Require(accepted == 16 && refused == 26, "HTTP1 Content-Length list normalization failed");
 }
 
 void Http1Policies(int ssl) {
@@ -1547,6 +1625,14 @@ void FirstNetworkRequest(int ssl) {
 }
 #endif
 
+void HostNotFound(int ssl) {
+    Client client(ssl);
+    client.Create("https://nonexistent.invalid/");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101E6),
+            "lookup failure maps to console DNS error");
+    AfterFailedSend(client, static_cast<int>(0x804101E6));
+}
+
 void Refused(int ssl) {
     mbedtls_net_context listener;
     mbedtls_net_init(&listener);
@@ -1597,7 +1683,7 @@ void Retries(int ssl) {
         client.Create("https://127.0.0.1:1/");
         lookups = 0;
         failedLookups = 100;
-        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "every lookup failing fails the request");
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x804101e6), "every lookup failing returns the DNS error");
         Require(lookups == retry + 1, "a request makes its retry count plus one lookups before failing");
     }
     Http2SetLookupHook_nid_no_patch(nullptr);
@@ -1916,7 +2002,9 @@ int main(int argc, char** argv) {
     } else if (argc == 2 && std::string_view(argv[1]) == "--http1") {
         Http1GzipPolicy(ssl);
         Http1Transport(ssl);
+        Http1ChunkWhitespace(ssl);
         Http1Policies(ssl);
+        Http1ContentLengthLists(ssl);
         Http1Cancellation(ssl);
         Http1BufferedDeadline(ssl);
         Http1Cleartext(ssl);
@@ -1960,6 +2048,7 @@ int main(int argc, char** argv) {
             Deadline(ssl, mode, true);
             for (int teardown = 0; teardown < 4; ++teardown) Cancellation(ssl, mode, teardown);
         }
+        HostNotFound(ssl);
         Refused(ssl);
         Capacity(ssl);
         Retries(ssl);

@@ -8,6 +8,10 @@
 
 namespace FreeType {
 
+inline constexpr std::int32_t NormalizeAngle_nid_no_patch(std::int64_t angle) {
+    return static_cast<std::int32_t>(angle % (360ll << 16));
+}
+
 struct GuestLibrary;
 struct GuestMemoryRec;
 

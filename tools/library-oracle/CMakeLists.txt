@@ -1,3 +1,10 @@
+if(NOT WIN32)
+    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
+        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+    endforeach()
+    string(STRIP "${CMAKE_EXE_LINKER_FLAGS}" CMAKE_EXE_LINKER_FLAGS)
+endif()
+
 add_executable(library_oracle_replay EXCLUDE_FROM_ALL replay.cpp)
 target_include_directories(library_oracle_replay PRIVATE ${CMAKE_SOURCE_DIR}/core/libs)
 target_link_libraries(library_oracle_replay PRIVATE ${CMAKE_DL_LIBS})

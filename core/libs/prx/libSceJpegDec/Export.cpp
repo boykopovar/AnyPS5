@@ -281,6 +281,8 @@ void forgetStream(const Context* context) {
     streams.erase(context);
 }
 
+bool endFound(InputStream& stream);
+
 void pull(InputStream& stream, std::uint32_t size) {
     while (size > 0 && stream.status == 0) {
         if (stream.chunkSize == 0) {
@@ -304,6 +306,7 @@ void pull(InputStream& stream, std::uint32_t size) {
         stream.chunk += count;
         stream.chunkSize -= count;
         size -= count;
+        if (endFound(stream) && stream.end) return;
     }
 }
 
@@ -463,9 +466,9 @@ int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param
 int32_t APS5_VABI sceJpegDecDelete(void* handle) {
     Context* context = toContext(handle);
     if (!context) return SCE_JPEG_DEC_ERROR_INVALID_HANDLE;
-    forgetStream(context);
     Context cleared{};
-    GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared));
+    if (!GuestCopyOut_nid_no_patch(context, &cleared, sizeof(cleared))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    forgetStream(context);
     return 0;
 }
 
