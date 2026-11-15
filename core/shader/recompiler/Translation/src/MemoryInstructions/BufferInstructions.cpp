@@ -76,7 +76,8 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
         IrValue& ldsAddress = ir.IAdd(base, ir.ShiftLeftLogical(lane, ir.Constant(2u)));
         IrValue& end = ir.IAdd(ldsAddress, ir.Constant(inst.memoryOffset + 3u));
         IrValue& active = ir.LogicalAnd(exec, ir.ULessThan(end, ir.Constant(bufferLdsBytes)));
-        IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+        IrValue* previous = bufferPreviousValue(inst, memory);
+        IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), previous, &active}, addMemoryInfo(memory, inst.programCounter));
         MemoryInfo shared;
         shared.kind = ResourceKind::Lds;
         shared.offset = inst.memoryOffset;
@@ -86,7 +87,8 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
         (void)ir.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&ldsAddress, &loaded, &active}, addMemoryInfo(shared, inst.programCounter));
         return true;
     }
-    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
+    IrValue* previous = bufferPreviousValue(inst, memory);
+    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), previous, &exec}, addMemoryInfo(memory, inst.programCounter));
     if (memory.dataBits != 32u) {
         writeOperand(inst.destination, &widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value());
     } else if (memory.dataDwords == 1u) {
@@ -112,7 +114,8 @@ bool TranslationContext::bufferLoadFormatD16(const RdnaInstruction& inst) {
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
-    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
+    IrValue* previous = bufferPreviousValue(inst, memory);
+    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), previous, &exec}, addMemoryInfo(memory, inst.programCounter));
     if (count == 1u) {
         writeRawU32(inst.destination, IrU32(loaded));
         return true;
@@ -131,6 +134,22 @@ bool TranslationContext::bufferLoadFormatD16(const RdnaInstruction& inst) {
         }
     }
     return true;
+}
+
+IrValue* TranslationContext::bufferPreviousValue(const RdnaInstruction& inst, const MemoryInfo& memory) {
+    if (memory.dataDwords <= 1u) return readOperand(inst.destination, IrType::U32);
+    std::array<IrValue*, 4> previous{};
+    for (std::uint32_t component = 0u; component < memory.dataDwords; ++component) {
+        previous[component] = readOperand(offsetOperand(inst.destination, component), IrType::U32);
+    }
+    switch (memory.dataDwords) {
+    case 2u:
+        return &ir.Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {previous[0], previous[1]});
+    case 3u:
+        return &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {previous[0], previous[1], previous[2]});
+    default:
+        return &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {previous[0], previous[1], previous[2], previous[3]});
+    }
 }
 
 bool TranslationContext::bufferStoreFormatD16(const RdnaInstruction& inst) {

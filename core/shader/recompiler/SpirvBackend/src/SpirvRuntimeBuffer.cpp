@@ -1036,9 +1036,15 @@ std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValu
     const auto& memory = context.Memory(instruction);
     const auto type = components == 1u ? TypeU32(state) : TypeU32Composite(state, components);
     const auto zero = components == 1u ? ConstantU32(state, 0u) : ConstantU32CompositeZero(state, components);
+    const std::uint32_t previous = instruction.ArgumentCount() > 4u ? context.Arg(instruction, 4u) : 0u;
+    const auto preserve = [&](const RuntimeDescriptor& resource, std::uint32_t value) {
+                if (previous == 0u || GcnGuestShaders()) return value;
+        const auto discarded = Binary(state, spv::OpINotEqual, TypeBool(state), field(state, resource.word3, 30u, 2u), ConstantU32(state, 0u));
+        return Select(state, type, discarded, previous, value);
+    };
     return EmitValueOrDefaultIfCondition(state, context.Arg(instruction, instruction.ArgumentCount() - 1u), type, zero, [&] {
         const auto resource = descriptor(context, instruction, context.Arg(instruction, instruction.ArgumentCount() - 1u));
-        if (memory.formatted) return EmitValueOrDefaultIfCondition(state, resource.valid, type, zero, [&] { return formattedDispatch(context, instruction, resource, components, false, 0u); });
+        if (memory.formatted) return preserve(resource, EmitValueOrDefaultIfCondition(state, resource.valid, type, zero, [&] { return formattedDispatch(context, instruction, resource, components, false, 0u); }));
         const bool spanRead = memory.gpuDescriptor && memory.dataBits == 32u && components > 1u && !BdaByteReadsForced();
         std::array<RuntimeAddress, 4> spanAddresses{};
         if (spanRead) {
@@ -1059,19 +1065,19 @@ std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValu
                 const auto next = Binary(state, spv::OpIAdd, TypeScalarU64(state), spanAddresses[0].guest, BdaConstant(state, component * 4u));
                 contiguous = both(state, contiguous, both(state, spanAddresses[component].inBounds, equal(state, spanAddresses[component].guest, next)));
             }
-            return EmitValueIfElse(state, contiguous, type, [&] {
+            return preserve(resource, EmitValueIfElse(state, contiguous, type, [&] {
                 return composite(state, components, EmitBdaDwordReads(context, instruction, spanAddresses[0].guest, 0u, components, true));
-            }, readComponents);
+            }, readComponents));
         }
         const auto pair = coherentPair(context, instruction, resource, components);
-        if (!pair) return readComponents();
-        return EmitValueIfElse(state, pair->usable, type, [&] {
+        if (!pair) return preserve(resource, readComponents());
+        return preserve(resource, EmitValueIfElse(state, pair->usable, type, [&] {
             const auto pointer = EmitStorageBufferElementPointer(state, pair->wide, pair->index, TypeStorageBufferU64ElementPointer(state));
             const auto value = state.module.AllocateId();
             state.module.AddFunction(spv::OpAtomicLoad, TypeScalarU64(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
             const auto high = Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), value, BdaConstant(state, 32u));
             return composite(state, 2u, {Unary(state, spv::OpUConvert, TypeU32(state), value), Unary(state, spv::OpUConvert, TypeU32(state), high), 0u, 0u});
-        }, readComponents);
+        }, readComponents));
     });
 }
 
