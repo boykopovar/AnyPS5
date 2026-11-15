@@ -1198,21 +1198,34 @@ int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_
     return rc;
 }
 
-static int getSaveDataMemory2(SaveDataMemoryGet2* get_param) {
+static int getSaveDataMemory2(SaveDataMemoryGet2* get_param, int* traceUser = nullptr, unsigned* traceSlot = nullptr) {
     if (get_param == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
+    SaveDataMemoryGet2 localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, get_param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (traceUser != nullptr) {
+        *traceUser = localParam.user_id;
+    }
+    if (traceSlot != nullptr) {
+        *traceSlot = localParam.slot_id;
+    }
     std::lock_guard<std::mutex> lk(g_mem_mutex);
-    replay_memory_journal(get_param->user_id, get_param->slot_id);
-    const std::string path = mem_path(get_param->user_id, get_param->slot_id, "bin");
+    replay_memory_journal(localParam.user_id, localParam.slot_id);
+    const std::string path = mem_path(localParam.user_id, localParam.slot_id, "bin");
     std::size_t size = 0;
     if (!file_size_of(path, &size)) {
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
-    const SaveDataMemoryData* d = get_param->data;
+    const SaveDataMemoryData* d = localParam.data;
     if (d != nullptr && d->buf_size != 0) {
         if (d->buf == nullptr || d->offset > size || d->buf_size > size - d->offset) {
             return SAVE_DATA_ERROR_PARAMETER;
@@ -1231,19 +1244,21 @@ static int getSaveDataMemory2(SaveDataMemoryGet2* get_param) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
     }
-    if (get_param->param != nullptr) {
-        std::memset(get_param->param, 0, sizeof(SaveDataParam));
-        read_param_file(mem_path(get_param->user_id, get_param->slot_id, "param"), get_param->param);
+    if (localParam.param != nullptr) {
+        std::memset(localParam.param, 0, sizeof(SaveDataParam));
+        read_param_file(mem_path(localParam.user_id, localParam.slot_id, "param"), localParam.param);
     }
-    if (get_param->icon != nullptr) {
-        get_param->icon->data_size = 0;
+    if (localParam.icon != nullptr) {
+        localParam.icon->data_size = 0;
     }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
-    const int rc = getSaveDataMemory2(get_param);
-    SAVEDATA_TRACE("getMemory2 user=%d slot=%u -> 0x%08x", get_param != nullptr ? get_param->user_id : -1, get_param != nullptr ? get_param->slot_id : 0u, static_cast<unsigned>(rc));
+    int traceUser = -1;
+    unsigned traceSlot = 0;
+    const int rc = getSaveDataMemory2(get_param, &traceUser, &traceSlot);
+    SAVEDATA_TRACE("getMemory2 user=%d slot=%u -> 0x%08x", traceUser, traceSlot, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1723,18 +1738,35 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
     return rc;
 }
 
-static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
+static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, int* traceUser) {
     if (cond == nullptr || result == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    result->hit_num = 0;
-    result->set_num = 0;
+    SaveDataDirNameSearchCond localCond{};
+    SaveDataDirNameSearchResult localResult{};
+    const int savedErrno = errno;
+    const bool copiedCond = GuestCopyIn_nid_no_patch(&localCond, cond, sizeof(localCond));
+    const bool copiedResultIn = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    errno = savedErrno;
+    if (!copiedCond || !copiedResultIn) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (traceUser != nullptr) *traceUser = localCond.user_id;
+    localResult.hit_num = 0;
+    localResult.set_num = 0;
+    const int savedCopyErrno = errno;
+    const bool copiedResultOut = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedCopyErrno;
+    if (!copiedResultOut) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
-    const int rc = dirNameSearchPs4(cond, result);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<unsigned>(rc));
+    int user = -1;
+    const int rc = dirNameSearchPs4(cond, result, &user);
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", user, static_cast<unsigned>(rc));
     return rc;
 }
 

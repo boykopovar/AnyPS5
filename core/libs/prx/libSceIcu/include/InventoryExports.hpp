@@ -28,14 +28,19 @@ std::int32_t APS5_VABI uloc_getBaseName(const char* locale, char* result, std::i
 int APS5_VABI uloc_getCharacterOrientation();
 std::int32_t APS5_VABI uloc_getCountry(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 const char* APS5_VABI uloc_getDefault();
+const char* APS5_VABI uloc_getISO3Country(const char* locale);
+const char* APS5_VABI uloc_getISO3Language(const char* locale);
+const char* const* APS5_VABI uloc_getISOCountries();
+const char* const* APS5_VABI uloc_getISOLanguages();
 std::int32_t APS5_VABI uloc_getKeywordValue(const char* locale, const char* keyword, char* result,
                                           std::int32_t capacity, std::int32_t* status);
 std::int32_t APS5_VABI uloc_getLanguage(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
+std::int32_t APS5_VABI uloc_getParent(const char* locale, char* result, std::int32_t capacity,
+                                                  std::int32_t* status);
 std::int32_t APS5_VABI uloc_getScript(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale);
 int APS5_VABI uloc_minimizeSubtags();
 void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::int32_t* status);
-int APS5_VABI uloc_setKeywordValue();
 int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();
 int APS5_VABI unorm2_getNFKCInstance();

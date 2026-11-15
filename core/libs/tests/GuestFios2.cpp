@@ -782,6 +782,18 @@ static void CheckAsyncHandleAnswers(const std::string& directory, const std::str
     REQUIRE(sceFiosDeleteSync(nullptr, scratch.c_str()) == SCE_FIOS_OK);
 }
 
+static void CheckCacheContainsFileProbe(const std::string& directory, const std::string& file) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    std::uint64_t cached = 0x7B7B7B7B7B7B7B7BULL;
+    REQUIRE(sceFiosCacheContainsFileSync(file.c_str(), &cached) == SCE_FIOS_OK);
+    REQUIRE(cached == 0);
+    const std::string missing = directory + "/absent.bin";
+    REQUIRE(sceFiosCacheContainsFileSync(missing.c_str(), &cached) == SCE_FIOS_ERROR_BAD_PATH);
+    REQUIRE(sceFiosCacheContainsFileSync(nullptr, &cached) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosCacheContainsFileSync(file.c_str(), nullptr) == SCE_FIOS_OK);
+    REQUIRE(sceFiosCacheContainsFileSync(file.c_str(), reinterpret_cast<std::uint64_t*>(0x10)) == SCE_FIOS_ERROR_BAD_PTR);
+}
+
 static void CheckAsyncPositionedVectors(const std::string& directory, const std::string& file) {
     REQUIRE(sceFiosIsInitialized(nullptr));
     SceFiosFH opened = 0;
@@ -1081,6 +1093,7 @@ int main() {
     CheckMutations(directory.generic_string());
     CheckOpenFlagsAndVectors(directory.generic_string(), file);
     CheckAsyncHandleAnswers(directory.generic_string(), file);
+    CheckCacheContainsFileProbe(directory.generic_string(), file);
     CheckAsyncPositionedVectors(directory.generic_string(), file);
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
