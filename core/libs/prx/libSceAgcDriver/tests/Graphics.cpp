@@ -3438,6 +3438,16 @@ void DepthBoundsBiasTests() {
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depthBias && state.depthBiasSlope == 2.0f && state.depthBiasConstant == 4.0f && state.depthBiasClamp == 0.5f, "depth bias decode changed");
     Require(!state.depthBiasPerFace, "equal front and back depth bias must draw both faces in one pass");
+    auto d16Bias = queue;
+    d16Bias.context[0x010] = (d16Bias.context.at(0x010) & ~3u) | 1u;
+    d16Bias.context[0x011] = 0;
+    d16Bias.context[0x2de] = 0x1e9u;
+    auto scaledBias = AgcDriver::Graphics::DecodeState(d16Bias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 1024.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with a non-D16 bias format did not scale the constant bias");
+    auto downBias = queue;
+    downBias.context[0x2de] = 0xf0u;
+    scaledBias = AgcDriver::Graphics::DecodeState(downBias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasConstant == 4.0f / 256.0f, "a non-D16 target with a D16 bias format did not scale the constant bias");
     queue.context[0x2e2] = bits(-64.0f);
     queue.context[0x2e3] = bits(8.0f);
     state = AgcDriver::Graphics::DecodeState(queue);
