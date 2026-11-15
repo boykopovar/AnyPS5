@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -841,6 +842,31 @@ void AppendFailureKeepsTheWindow() {
     Compare({{commands, {"draw 1 1 0 0", "draw 2 1 0 0"}}}, "a window after a record failed to allocate");
 }
 
+void FailedWorkerStartFreesItsPoolAndSlot() {
+    Reset();
+    auto table = FakeTable();
+    const auto device = Handle<VkDevice>(0x48);
+    const auto live = CommandEncoder::LiveChunks();
+    for (std::size_t attempt = 0; attempt <= CommandEncoder::Slots; ++attempt) {
+        CommandEncoder::FailNextWorkerStartsForTest(1);
+        bool refused = false;
+        try {
+            static_cast<void>(CommandEncoder::Attach(device, table));
+        } catch (const std::system_error&) {
+            refused = true;
+        }
+        CommandEncoder::FailNextWorkerStartsForTest(0);
+        Require(refused, "an encoder started past an injected worker start failure");
+        Require(CommandEncoder::LiveChunks() == live, "a failed encoder start kept " + std::to_string(CommandEncoder::LiveChunks() - live) + " pooled chunks");
+    }
+    Require(table.cmdDraw == &FakeDraw, "a failed encoder start left its entries in the device table");
+    {
+        const auto attached = Attached(device, table);
+        Require(CommandEncoder::LiveChunks() > live, "an encoder started after failed starts pooled no chunks");
+    }
+    Require(CommandEncoder::LiveChunks() == live, "a destroyed encoder kept " + std::to_string(CommandEncoder::LiveChunks() - live) + " chunks");
+}
+
 void DevicesPastTheSlotsRecordInline() {
     Reset();
     std::vector<DeviceFunctions> tables(CommandEncoder::Slots + 1, FakeTable());
@@ -1260,6 +1286,7 @@ int main(int argc, char** argv) {
         DirectCallsSkipAFailedRecording();
         AppendFailureKeepsTheWindow();
         DevicesPastTheSlotsRecordInline();
+        FailedWorkerStartFreesItsPoolAndSlot();
         PostingNeverAllocates();
         ProducerAheadOfTheChunkPoolWaits();
         EncoderParksBetweenSpacedPosts();

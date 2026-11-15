@@ -194,6 +194,8 @@ public:
     std::vector<SiteWaits> WaitsBySite() const;
     bool ProfilesSites() const { return profiled; }
     static void SetDelayForTesting(std::function<void()> delay);
+    static void FailNextWorkerStartsForTest(unsigned count);
+    static std::size_t LiveChunks();
     class UnwindQuiesce {
     public:
         explicit UnwindQuiesce(CommandEncoder* encoder, std::source_location where = std::source_location::current()) : encoder(encoder), exceptions(std::uncaught_exceptions()), where(where) {}
@@ -211,6 +213,10 @@ public:
 
 private:
     struct Chunk {
+        Chunk();
+        ~Chunk();
+        Chunk(const Chunk&) = delete;
+        Chunk& operator=(const Chunk&) = delete;
         std::vector<std::byte> bytes;
         std::size_t used = 0;
         std::size_t records = 0;
@@ -218,6 +224,7 @@ private:
         Recording* recording = nullptr;
         Chunk* next = nullptr;
     };
+    static void freeChunks(Chunk*& list) noexcept;
     struct Window {
         VkCommandBuffer commands;
         Recording* recording;

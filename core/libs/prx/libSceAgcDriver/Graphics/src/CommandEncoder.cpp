@@ -10,6 +10,7 @@
 #include <new>
 #include <stdexcept>
 #include <string_view>
+#include <system_error>
 #include <tuple>
 #include <utility>
 
@@ -72,6 +73,9 @@ struct TestDelay {
     std::function<void()> delay;
     std::atomic<bool> set{false};
 };
+
+std::atomic<std::size_t> liveChunks{0};
+std::atomic<unsigned> injectedWorkerStartFailures{0};
 
 TestDelay& testDelay() {
     static TestDelay value;
@@ -451,18 +455,22 @@ std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFu
 CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot), profiled(SiteProfileRequested()), printedAt(std::chrono::steady_clock::now()) {
     static_cast<void>(HandoffSpinWindow());
     static_cast<void>(EncoderIdleSpin());
-    try {
-        for (; chunkCount < PooledChunks; ++chunkCount) {
-            auto chunk = std::make_unique<Chunk>();
-            chunk->bytes.resize(ChunkBytes);
-            chunk->next = spare;
-            spare = chunk.release();
+    struct PoolOwner {
+        Chunk*& spare;
+        bool kept = false;
+        ~PoolOwner() {
+            if (!kept) freeChunks(spare);
         }
-    } catch (...) {
-        for (auto* chunk = spare; chunk != nullptr;) delete std::exchange(chunk, chunk->next);
-        throw;
+    } pool{spare};
+    for (; chunkCount < PooledChunks; ++chunkCount) {
+        auto chunk = std::make_unique<Chunk>();
+        chunk->bytes.resize(ChunkBytes);
+        chunk->next = spare;
+        spare = chunk.release();
     }
+    if (injectedWorkerStartFailures.load(std::memory_order_relaxed) != 0 && injectedWorkerStartFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again), "AGC graphics: injected encoder worker start failure");
     worker = std::thread([this] { run(); });
+    pool.kept = true;
     std::lock_guard lock(slotMutex());
     slots()[slot].real = real;
     slots()[slot].device = device;
@@ -478,7 +486,7 @@ CommandEncoder::~CommandEncoder() {
     worker.join();
     if (profiled) printSites(true);
     delete filling;
-    for (auto* chunk = spare; chunk != nullptr;) delete std::exchange(chunk, chunk->next);
+    freeChunks(spare);
     std::lock_guard lock(slotMutex());
     table = real;
     slots()[slot].encoder.store(nullptr, std::memory_order_release);
@@ -829,6 +837,26 @@ std::string CommandEncoder::Describe(const WaitSite& site) {
     text += site.line != 0 ? shortFunction(site.detail) : std::string_view(site.detail);
     if (site.line != 0) text += ':' + std::to_string(site.line);
     return text;
+}
+
+CommandEncoder::Chunk::Chunk() {
+    liveChunks.fetch_add(1, std::memory_order_relaxed);
+}
+
+CommandEncoder::Chunk::~Chunk() {
+    liveChunks.fetch_sub(1, std::memory_order_relaxed);
+}
+
+void CommandEncoder::freeChunks(Chunk*& list) noexcept {
+    while (list != nullptr) delete std::exchange(list, list->next);
+}
+
+void CommandEncoder::FailNextWorkerStartsForTest(unsigned count) {
+    injectedWorkerStartFailures.store(count, std::memory_order_relaxed);
+}
+
+std::size_t CommandEncoder::LiveChunks() {
+    return liveChunks.load(std::memory_order_relaxed);
 }
 
 void CommandEncoder::SetDelayForTesting(std::function<void()> delay) {
