@@ -15,6 +15,8 @@
 
 ### Functional
 
+- [FcMatrixMultiply and FcCharSetMerge](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig) - returning or failing safely without modifying memory when given unmapped or unwritable pointer arguments is a host-safety fallback; console hardware behavior on unmapped memory is unmeasured.
+
 - [Language sets and pattern core](../../../core/libs/prx/libfontconfig/Objects.cpp) follow Fontconfig 2.15.0 except for the integer getter below, not a measured console module. The console Fontconfig version, opaque object layouts, allocation-failure behavior and compatibility with externally created objects are unverified. The guest uses the public LP64 `FcMatrix` and `FcValue` layouts; pattern and language-set handles belong to this adapter. Language names, built-in property types and Unicode 15.1 case-fold data are generated from the pinned Fontconfig submodule. Font discovery, configuration and formatting still throw.
 - [Pattern collection values and filtering](../../../core/libs/prx/libfontconfig/Objects.cpp) follow the public [Fontconfig 2.15.0 value and filter contract](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fcpat.c), including [character-set retention](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fccharset.c) and [language-set copies](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fclang.c). Filter input uses the adapter object-set layout. The five export signatures, borrowed set pointers, allocation-failure paths and faulting arguments have not been verified on a console. Foreign and stale handles remain unsupported.
 - [Integer getter](../../../core/libs/prx/libfontconfig/Objects.cpp) was not measured on a console; the complete binary and console double insertion were not independently checked. It follows the firmware 13.42 `libfontconfig.sprx` disassembly reported in [review #5746793316](https://github.com/boykopovar/AnyPS5/pull/14435#pullrequestreview-5746793316), SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`: the type check at `0x234c` accepts only integers, unlike upstream's double conversion.
@@ -26,16 +28,13 @@
 
 - [FcPatternGetFTFace](../../../core/libs/prx/libfontconfig/Objects.cpp) (libfontconfig, NID `HjlABSyLzNg`) - prototype and behaviour are unverified on a console. It follows Fontconfig 2.15.0 and the other typed getters here, with the face as an opaque pointer. No export here stores a FreeType face in a pattern, so it returns `FcPatternGet`'s result or `FcResultTypeMismatch`; the matching path is untested, and a null output on that path throws as in the other getters
 
-- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 9 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [FcFontList, FcFontSetMatch, FcFontMatch, FcFontSort and FcConfigSubstitute](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig) - not measured or disassembled on a console. They follow the public prototypes and Fontconfig 2.15.0's entry sequence run against this module's `FcInitBringUptoDate` and `FcConfigReference`: null font list, `FcResultNoMatch` with a null match or sort (the coverage output untouched), false substitution. Whether the console's copies call the same `FcConfigReference` is unverified. A non-null reference throws, as does a null argument that 2.15.0 asserts against (the set array, pattern or result)
+
+- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 4 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
-| `FcFontList` | `7+Gq-0xFybo` |
-| `FcFontSetMatch` | `8DLBHeMsS1k` |
-| `FcConfigSubstitute` | `8v4Xk2b+C1k` |
 | `FcInit` | `AwGzFwnaitQ` |
 | `FcFontRenderPrepare` | `CvqQqWqcO-0` |
-| `FcFontMatch` | `FqneT2syjGE` |
-| `FcFontSort` | `MApHziT-St4` |
 | `FcDefaultSubstitute` | `sqEJZ2yMVNw` |
 | `FcPatternFormat` | `zqe0Dw9BCpc` |

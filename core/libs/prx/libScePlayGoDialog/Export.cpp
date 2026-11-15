@@ -2,6 +2,7 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <atomic>
 #include <algorithm>
+#include <cerrno>
 #include <iterator>
 #include <cstdint>
 #include <cstddef>
@@ -14,6 +15,20 @@ static_assert(offsetof(PlayGoDialogResult, result) == 4);
 static_assert(offsetof(PlayGoDialogResult, reserved) == 8);
 
 namespace {
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
 
 constexpr std::int32_t STATUS_NONE = 0;
 constexpr std::int32_t STATUS_INITIALIZED = 1;
@@ -79,7 +94,7 @@ int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result) {
     if (result == nullptr) return ERROR_ARG_NULL;
 
     PlayGoDialogResult guestResult{};
-    if (!GuestCopyIn_nid_no_patch(
+    if (!CopyInPreservingErrno(
             &guestResult, result, sizeof(guestResult))) {
         return ERROR_ARG_NULL;
     }
@@ -100,7 +115,7 @@ int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result) {
     PlayGoDialogResult completed{};
     completed.result = RESULT_OK;
 
-    if (!GuestCopyOut_nid_no_patch(
+    if (!CopyOutPreservingErrno(
             result, &completed, sizeof(completed))) {
         return ERROR_ARG_NULL;
     }

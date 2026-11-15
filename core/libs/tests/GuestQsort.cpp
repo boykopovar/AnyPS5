@@ -708,6 +708,42 @@ bool CheckMergesortCleanup() {
     }
     return true;
 }
+
+bool CheckHeapsortCleanup() {
+    InitializeHeap();
+    std::array<Element, 17> original{};
+    for (std::size_t index = 0; index < original.size(); ++index) original[index] = {static_cast<int>((index * 7) % 5), static_cast<int>(index)};
+    auto elements = original;
+    mergeComparisons = 0;
+    mergeFailureAt = 0;
+    if (heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0) return false;
+    const auto total = mergeComparisons;
+    for (std::size_t failure = 1; failure <= total; ++failure) {
+        elements = original;
+        mergeComparisons = 0;
+        mergeFailureAt = failure;
+        const auto allocated = allocations;
+        const auto released = releases;
+        bool caught = false;
+        try {
+            heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare);
+        } catch (const ComparisonFailure&) {
+            caught = true;
+        }
+        if (!caught || mergeComparisons != failure || allocations != allocated + 1 || releases != released + 1) {
+            std::fprintf(stderr, "heapsort cleanup failed at comparison %zu: caught=%d allocations=%zu releases=%zu\n",
+                failure, caught, allocations - allocated, releases - released);
+            mergeFailureAt = 0;
+            return false;
+        }
+    }
+    mergeFailureAt = 0;
+    elements = original;
+    if (heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), ThrowingCompare) != 0 || allocations != releases) return false;
+    for (std::size_t index = 1; index < elements.size(); ++index)
+        if (elements[index - 1].key > elements[index].key) return false;
+    return true;
+}
 }
 
 int main() {
@@ -745,5 +781,6 @@ int main() {
     correct &= CheckMergesortCleanup();
     correct &= CheckHeapsort();
     correct &= CheckHeapsortComparisons();
+    correct &= CheckHeapsortCleanup();
     return correct ? 0 : 1;
 }
