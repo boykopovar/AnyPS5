@@ -2734,6 +2734,54 @@ static void CheckExp2fConsoleBits() {
     }
 }
 
+static void CheckCoshProductConsole() {
+    const RestoreFloatingPointState saved;
+    Require(std::fesetenv(FE_DFL_ENV) == 0);
+    const struct {
+        double x;
+        std::uint64_t results[4];
+        int flags[4];
+        int errors[4];
+    } cases[] = {
+        {0.0, {0x3ff0000000000000, 0x4000000000000000, 0x3fe0000000000000, 0}, {}, {}},
+        {1.0, {0x3ff8b07551d9f550, 0x4008b07551d9f550, 0x3fe8b07551d9f550, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {-1.0, {0x3ff8b07551d9f550, 0x4008b07551d9f550, 0x3fe8b07551d9f550, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {10.0, {0x40c5829dd053712d, 0x40d5829dd053712d, 0x40b5829dd053712d, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {88.0, {0x47cf1056dc7bf22d, 0x47df1056dc7bf22d, 0x47bf1056dc7bf22d, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {89.0, {0x47e51c2cc3433802, 0x47f51c2cc3433802, 0x47d51c2cc3433802, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {700.0, {0x7efd945df4f8ec8f, 0x7f0d945df4f8ec8f, 0x7eed945df4f8ec8f, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {710.0, {0x7fe3e21a464507f9, 0x7ff0000000000000, 0x7fd3e21a464507f9, 0},
+            {FE_INEXACT, FE_OVERFLOW | FE_INEXACT, FE_INEXACT, 0}, {0, ERANGE, 0, 0}},
+        {std::numeric_limits<double>::infinity(), {0x7ff0000000000000, 0x7ff0000000000000, 0x7ff0000000000000, 0x7ff8000000000000},
+            {0, 0, 0, FE_INVALID}, {0, 0, 0, EDOM}},
+        {std::numeric_limits<double>::quiet_NaN(), {0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000}, {}, {}},
+    };
+    constexpr double factors[]{1.0, 2.0, 0.5, 0.0};
+    constexpr int reportedFlags = FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO | FE_INEXACT;
+    for (const auto& item : cases) {
+        for (std::size_t index = 0; index < std::size(factors); ++index) {
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            errno = 0;
+            const auto result = std::bit_cast<std::uint64_t>(_Cosh_nid_postfix(item.x, factors[index]));
+            const int error = errno;
+            const int flags = std::fetestexcept(reportedFlags);
+            const bool matches = result == item.results[index] && error == item.errors[index] && flags == item.flags[index];
+            if (!matches) {
+                std::fprintf(stderr, "_Cosh(%a, %a): result %016llx expected %016llx, errno %d expected %d, flags %x expected %x\n",
+                    item.x, factors[index], static_cast<unsigned long long>(result), static_cast<unsigned long long>(item.results[index]),
+                    error, item.errors[index], flags, item.flags[index]);
+            }
+            Require(matches);
+        }
+    }
+}
+
 static void CheckHyperbolic() {
     const double infinity = std::numeric_limits<double>::infinity();
     Require(_Cosh_nid_postfix(0.0, 2.0) == 2.0);
@@ -4764,6 +4812,7 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckCoshProductConsole();
     CheckAcoshfDomainEnvironment();
     CheckAcoshfMsunBoundaries();
     CheckCoshfMsunBoundaries();
