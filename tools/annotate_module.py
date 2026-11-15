@@ -40,12 +40,18 @@ DT_GNU_HASH = 0x6ffffef5
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
 R_X86_64_NONE = 0
+DYNAMIC_VALUE_TAGS = {
+    DT_HASH: "DT_HASH", DT_STRTAB: "DT_STRTAB", DT_SYMTAB: "DT_SYMTAB",
+    DT_RELA: "DT_RELA", DT_RELASZ: "DT_RELASZ", DT_RELAENT: "DT_RELAENT",
+    DT_STRSZ: "DT_STRSZ", DT_SYMENT: "DT_SYMENT", DT_JMPREL: "DT_JMPREL",
+    DT_PLTRELSZ: "DT_PLTRELSZ", DT_PLTREL: "DT_PLTREL", DT_GNU_HASH: "DT_GNU_HASH",
+}
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
-LEA = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*lea[wlq]?\s")
+LEA = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*lea[wlq]?\s+[^#]*,\s*%(\w+)")
 
 
 class ModuleError(Exception):
@@ -112,6 +118,8 @@ class Module:
             tag, value = self.unpack("<qQ", position)
             if tag == DT_NULL:
                 return tags
+            if tag in DYNAMIC_VALUE_TAGS and tag in tags and tags[tag] != value:
+                raise ModuleError("conflicting duplicate %s at %#x" % (DYNAMIC_VALUE_TAGS[tag], position))
             tags.setdefault(tag, value)
         raise ModuleError("PT_DYNAMIC has no complete DT_NULL terminator")
 
@@ -131,6 +139,10 @@ class Module:
                     if next_offset - next_start == position - vaddr and next_start <= covered:
                         covered = max(covered, next_start + next_size)
                 if covered >= vaddr + length:
+                    if length and any(next_size and next_start < vaddr + length and vaddr < next_start + next_size
+                                      and next_offset - next_start != position - vaddr
+                                      for next_start, next_offset, next_size, _ in self.loads):
+                        raise ModuleError("range %#x+%#x has ambiguous PT_LOAD file mappings" % (vaddr, length))
                     return position
         raise ModuleError("range %#x+%#x is outside file-backed PT_LOAD data" % (vaddr, length))
 
@@ -300,12 +312,19 @@ def disassemble(code, vaddr):
 
 
 def referenced_address(line):
-    if ("%fs:" in line or "%gs:" in line) and not LEA.match(line):
+    lea = LEA.match(line)
+    if ("%fs:" in line or "%gs:" in line) and not lea:
         return None
     reference = REFERENCE.search(line)
     if reference is None:
         return None
     address = int(reference.group(1), 16)
+    if lea:
+        destination = lea.group(1)
+        if destination.startswith("e") or destination.endswith("d"):
+            return address & 0xFFFFFFFF
+        if not destination.startswith("r") or destination.endswith("w"):
+            return None
     return address & 0xFFFFFFFF if "(%eip)" in line else address
 
 

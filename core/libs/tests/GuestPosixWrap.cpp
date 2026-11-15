@@ -3,6 +3,7 @@
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -22,6 +24,7 @@ constexpr int Enoent = 2;
 constexpr int Ebadf = 9;
 constexpr int Eexist = 17;
 constexpr int Einval = 22;
+constexpr int ClockMonotonicFast = 12;
 constexpr std::uint32_t Unchanged = 0xffffffffu;
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -35,9 +38,48 @@ bool Fails(std::int64_t result, int error) {
     return result == -1 && *__error_nid_postfix() == error;
 }
 
+template<typename TException, typename TAction> bool Throws(TAction action) {
+    try {
+        action();
+    } catch (const TException&) {
+        return true;
+    }
+    return false;
+}
+
+void TestClockGettimeNp() {
+    KernelTimespec first{};
+    KernelTimespec second{};
+    Require(clock_gettime_np(ClockMonotonicFast, &first) == 0 && clock_gettime_np(ClockMonotonicFast, &second) == 0);
+    Require(first.tv_nsec >= 0 && first.tv_nsec < 1000000000 && second.tv_nsec >= 0 && second.tv_nsec < 1000000000);
+    Require(second.tv_sec > first.tv_sec || (second.tv_sec == first.tv_sec && second.tv_nsec >= first.tv_nsec));
+    KernelTimespec plain{};
+    Require(clock_gettime_nid_postfix(ClockMonotonicFast, &plain) == 0 && plain.tv_sec >= second.tv_sec);
+    Require(Fails(clock_gettime_np(3, &first), Einval));
+}
+
+void TestGetenvNp() {
+    Require(setenv_nid_postfix("ANYPS5_GETENV_NP_TEST", "ja-JP", 1) == 0);
+    char buffer[16];
+    std::memset(buffer, 'x', sizeof(buffer));
+    Require(getenv_np("ANYPS5_GETENV_NP_TEST", buffer, sizeof(buffer)) == 0 && std::strcmp(buffer, "ja-JP") == 0);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Require(getenv_np("ANYPS5_GETENV_NP_TEST", buffer, 6) == 0 && std::strcmp(buffer, "ja-JP") == 0);
+    std::memset(buffer, 'x', sizeof(buffer));
+    Require(unsetenv_nid_postfix("ANYPS5_GETENV_NP_TEST") == 0);
+    Require(getenv_np("ANYPS5_GETENV_NP_TEST", buffer, sizeof(buffer)) != 0 && buffer[0] == 'x');
+    Require(setenv_nid_postfix("ANYPS5_GETENV_NP_TEST", "ja-JP", 1) == 0);
+    Require(Throws<std::runtime_error>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", buffer, 5); }));
+    Require(Throws<std::invalid_argument>([&] { getenv_np(nullptr, buffer, sizeof(buffer)); }));
+    Require(Throws<std::invalid_argument>([&] { getenv_np("ANYPS5_GETENV_NP_TEST", nullptr, sizeof(buffer)); }));
+    Require(unsetenv_nid_postfix("ANYPS5_GETENV_NP_TEST") == 0);
+}
+
 }
 
 int main() {
+    TestClockGettimeNp();
+    TestGetenvNp();
     const auto root = std::filesystem::path("anyps5-posix-wrap-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));

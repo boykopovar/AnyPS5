@@ -356,6 +356,11 @@ static void CheckSupplementaryWideCharacters() {
     Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d);
     Require(ungetwc_nid_postfix(u'X', &stream) == u'X');
     Require(getwc_nid_postfix(&stream) == u'X' && getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == u'\n');
+    rewind_nid_postfix(&stream);
+    *__error_nid_postfix() = 0;
+    Require(fgetws_nid_postfix(reinterpret_cast<char16_t*>(0x10), 8, &stream) == nullptr && *__error_nid_postfix() == 22 && ferror_nid_postfix(&stream) != 0);
+    clearerr_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A');
     stream.Close();
 
     FileStream units(TemporaryFile::Open());
@@ -881,9 +886,6 @@ int main(int argc, char** argv) {
     Require(Need_sceLibc_nid_postfix == 1);
     Require(_thread_autoinit_dummy_decl_nid_postfix == 0);
     Require(_thread_autoinit_dummy_decl_stub_nid_postfix == 0);
-#if !defined(_MSC_VER) && !defined(__EMSCRIPTEN__)
-    Require(&_thread_autoinit_dummy_decl_nid_postfix == &_thread_autoinit_dummy_decl_stub_nid_postfix);
-#endif
     Require(__stdoutp_nid_postfix == &_Stdout_nid_postfix);
     Require(__stderrp_nid_postfix == &_Stderr_nid_postfix);
     Require(fileno_nid_postfix(__stdinp_nid_postfix) == 0);

@@ -37,11 +37,11 @@ void _append(std::vector<std::uint8_t>& bytes, const std::vector<std::uint8_t>& 
     bytes.insert(bytes.end(), more.begin(), more.end());
 }
 
-void _loadSource(StubBodyBuilder& body, const BitfieldOperands& operands, const std::uint8_t result, const char* name) {
+void _loadSource(StubBodyBuilder& body, const BitfieldOperands& operands, const std::uint8_t result, const char* name, const std::int32_t frame) {
     if (operands.Memory)
-        Memory(body, 0x8B, operands.Wide, *operands.Memory, result, name, kFrame);
+        Memory(body, 0x8B, operands.Wide, *operands.Memory, result, name, frame);
     else if (operands.Source == Stack)
-        StackSlot(body, 0x8D, true, result, kFrame);
+        StackSlot(body, 0x8D, true, result, frame);
     else
         Register(body, 0x8B, operands.Wide, result, operands.Source);
 }
@@ -125,13 +125,14 @@ void EmitBitfield(StubBodyBuilder& body, const BitfieldOperands& operands) {
                                 : UsedRegisters({operands.Destination, operands.Source, operands.Control, kControlRegister}, std::nullopt);
     const auto result = Scratch(used, name);
     const auto mask = Scratch(used, name);
-    StackSlot(body, 0x8D, true, Stack, -kFrame);
+    const auto frame = SelectFrame(operands.Memory, operands.Wide, kFrame, 32);
+    StackSlot(body, 0x8D, true, Stack, -frame);
     StackSlot(body, 0x89, true, result, kResultSlot);
     StackSlot(body, 0x89, true, kControlRegister, kControlSlot);
     StackSlot(body, 0x89, true, mask, kMaskSlot);
-    _loadSource(body, operands, result, name);
+    _loadSource(body, operands, result, name, frame);
     if (operands.Control == Stack)
-        StackSlot(body, 0x8D, true, kControlRegister, kFrame);
+        StackSlot(body, 0x8D, true, kControlRegister, frame);
     else if (operands.Control != kControlRegister)
         Register(body, 0x8B, true, kControlRegister, operands.Control);
     auto allOnes = RegisterBytes(0xC7, operands.Wide, 0, mask);
@@ -153,7 +154,7 @@ void EmitBitfield(StubBodyBuilder& body, const BitfieldOperands& operands) {
     if (operands.Destination == Stack)
         StackSlot(body, 0x8B, operands.Wide, Stack, kStackResultSlot);
     else
-        StackSlot(body, 0x8D, true, Stack, kFrame);
+        StackSlot(body, 0x8D, true, Stack, frame);
 }
 
 }

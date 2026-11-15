@@ -82,6 +82,12 @@ void CheckInstanceSize() {
     Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, &reserved) == 0, "instance size");
     Require(instance == 0x40000 && compute == 0x10000 && reserved == 0, "instance, compute and reserved sizes");
     Require(sceVdecCoreQueryInstanceSize(&config, nullptr, nullptr, nullptr) == 0, "instance size with no outputs");
+    errno = 71;
+    Require(sceVdecCoreQueryInstanceSize(reinterpret_cast<const VdecCoreConfigInfo*>(0x10), &instance, &compute, &reserved) == InvalidArgument, "unmapped config");
+    Require(sceVdecCoreQueryInstanceSize(&config, reinterpret_cast<std::uint64_t*>(0x10), &compute, &reserved) == InvalidArgument, "unmapped instance");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, reinterpret_cast<std::uint64_t*>(0x10), &reserved) == InvalidArgument, "unmapped compute");
+    Require(sceVdecCoreQueryInstanceSize(&config, &instance, &compute, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument, "unmapped reserved");
+    Require(errno == 71, "errno modified by unmapped instance size query");
 }
 
 void RequireFrameBuffer(const VdecCoreConfigInfo& config, std::uint32_t size, std::uint32_t minCount, std::uint32_t align, std::uint32_t width, std::uint32_t height, const char* message) {
@@ -346,6 +352,10 @@ void CheckDecodeArguments() {
     Require(sceVdecCoreFlushDecodeOutput(decoder, nullptr, nullptr) == 0, "flush without a count");
     std::uint32_t held = 7;
     Require(sceVdecCoreTrySyncDecode(decoder, nullptr) == 0 && sceVdecCoreTrySyncDecode(decoder, &held) == 0 && held == 1, "try-sync after a flush counts the held picture");
+    errno = 71;
+    Require(sceVdecCoreFlushDecodeOutput(decoder, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == InvalidArgument && errno == 71, "flush with an unwritable count");
+    held = 7;
+    Require(sceVdecCoreTrySyncDecode(decoder, &held) == 0 && held == 1, "a flush with an unwritable count keeps the held picture");
     Require(sceVdecCoreResetDecoder(decoder, nullptr) == 0, "reset");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the argument decoder");
 }
@@ -353,6 +363,12 @@ void CheckDecodeArguments() {
 void CheckEmptyQueue() {
     void* decoder = CreateAvc(100);
     std::uint32_t count = 7;
+    errno = 71;
+    Require(sceVdecCoreTrySyncDecode(decoder, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument && errno == 71, "try-sync with unwritable count");
+    errno = 71;
+    Require(sceVdecCoreSyncDecode(decoder, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidArgument && errno == 71, "sync with unwritable count");
+    errno = 71;
+    Require(sceVdecCoreSyncDecodeWptr(decoder, reinterpret_cast<std::uint32_t*>(0x10), nullptr, nullptr) == InvalidArgument && errno == 71, "sync wptr with unwritable count");
     Require(sceVdecCoreTrySyncDecode(decoder, &count) == 0 && count == 0, "try-sync on an idle decoder");
     count = 7;
     Require(sceVdecCoreSyncDecode(decoder, &count) == 0 && count == 0, "sync on an idle decoder");
@@ -554,5 +570,53 @@ int main() {
     CheckOutputStaysInItsDestination();
     CheckFlushResetAndSync();
     CheckDeleteWithQueuedInput();
+    {
+        VdecCoreConfigInfo config = Config(DecoderVdec2, CodecAvc, 64, 64);
+        VdecCoreMemoryInfo memory{};
+        void* decoder = nullptr;
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(reinterpret_cast<const VdecCoreConfigInfo*>(static_cast<std::uintptr_t>(0x10)),
+                                         &memory, nullptr, &decoder) == InvalidArgument &&
+                    decoder == nullptr && errno == 71,
+                "unreadable config must fail without changing errno");
+        errno = 71;
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr,
+                                         reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable decoder output must fail without changing errno");
+        Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == 0 && decoder != nullptr, "create decoder");
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder,
+                                          reinterpret_cast<const VdecCoreMemoryBlock*>(static_cast<std::uintptr_t>(0x10)),
+                                          1) == InvalidArgument &&
+                    errno == 71,
+                "unreadable memory block must fail without changing errno");
+        VdecCoreMemoryBlock dummyBlock{};
+        errno = 71;
+        Require(sceVdecCoreMapMemoryBlock(decoder, &dummyBlock, 0xFFFFFFFFu) == InvalidArgument && errno == 71,
+                "oversized memory block count must fail without allocating");
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder,
+                                          reinterpret_cast<const VdecCoreInputData*>(static_cast<std::uintptr_t>(0x10)),
+                                          nullptr, nullptr) == InvalidArgument &&
+                    errno == 71,
+                "unreadable input must fail without changing errno");
+        VdecCoreInputData badAu{};
+        badAu.auData = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10));
+        badAu.auSize = 16;
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &badAu, nullptr, nullptr) == InvalidArgument && errno == 71,
+                "unreadable AU data must fail without changing errno");
+        std::array<std::uint8_t, 16> au{};
+        VdecCoreInputData goodAu{};
+        goodAu.auData = au.data();
+        goodAu.auSize = static_cast<std::uint32_t>(au.size());
+        errno = 71;
+        Require(sceVdecCoreSetDecodeInput(decoder, &goodAu, nullptr,
+                                          reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument &&
+                    errno == 71,
+                "unwritable status must fail without changing errno");
+        Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete decoder");
+    }
     return 0;
 }

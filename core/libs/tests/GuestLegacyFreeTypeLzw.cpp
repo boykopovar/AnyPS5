@@ -47,6 +47,28 @@ int main() {
     std::array<unsigned char, 3> decoded{};
     Require(output.read(&output, 0, decoded.data(), decoded.size()) == decoded.size());
     Require(std::memcmp(decoded.data(), "ABC", decoded.size()) == 0);
+    std::array<unsigned char, 2> middle{};
+    Require(output.read(&output, 1, middle.data(), middle.size()) == middle.size());
+    Require(std::memcmp(middle.data(), "BC", middle.size()) == 0);
+    std::array<unsigned char, 4> tail{};
+    tail.fill(0x55);
+    Require(output.read(&output, 2, tail.data(), tail.size()) == 1);
+    Require(tail[0] == 'C' && tail[1] == 0x55);
+    Require(output.read(&output, 3, tail.data(), tail.size()) == 0);
     output.close(&output);
     Require(counter.allocations > 0 && counter.allocations == counter.frees);
+
+    LegacyFreeType::GuestStreamRec emptySource{};
+    emptySource.memory = &memory;
+    LegacyFreeType::GuestStreamRec emptyOutput{};
+    Require(FT_Stream_OpenLZW_nid_postfix(&emptyOutput, &emptySource) != 0);
+
+    std::array<unsigned char, 3> corrupt{0x00, 0x00, 0x00};
+    LegacyFreeType::GuestStreamRec corruptSource{};
+    corruptSource.base = corrupt.data();
+    corruptSource.size = corrupt.size();
+    corruptSource.memory = &memory;
+    LegacyFreeType::GuestStreamRec corruptOutput{};
+    Require(FT_Stream_OpenLZW_nid_postfix(&corruptOutput, &corruptSource) != 0);
+    Require(counter.allocations == counter.frees);
 }

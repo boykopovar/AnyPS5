@@ -347,7 +347,7 @@ void ShaderMemory::preparePage(Page& page, std::uint64_t base) {
     // A page is either mapped whole or read word by word where the guest mapped less than a page,
     // or where recorded GPU work writes into it (a whole-page read would wait for that work).
     if (GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) {
-        if (WordwisePages() && pendingWrite != nullptr && pendingWrite(base, PageBytes, {}) != PendingWrite::None) {
+        if (WordwisePages() && pendingSpan != nullptr && pendingSpan(base, PageBytes, {}) != PendingWrite::None) {
             page.wordwise = true;
             ++CaptureTotals().pagesWordwise;
             return;
@@ -395,9 +395,9 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     };
     const auto checkSpanBytes = std::max<std::size_t>(self.descriptorSpanBytes, sizeof(*value));
     if (page.wordwise && page.valid.Test(index) &&
-        (self.forceSync != 0u ? self.pendingWrite(address, checkSpanBytes, {}) != PendingWrite::None
-                              : (spanInvalidatesCache(self.pendingWrite(address, checkSpanBytes, {})) ||
-                                 (checkSpanBytes > sizeof(*value) && spanInvalidatesCache(self.pendingWrite(address, sizeof(*value), {})))))) {
+        (self.forceSync != 0u ? self.pendingSpan(address, checkSpanBytes, {}) != PendingWrite::None
+                              : (spanInvalidatesCache(self.pendingSpan(address, checkSpanBytes, {})) ||
+                                 (checkSpanBytes > sizeof(*value) && spanInvalidatesCache(self.pendingSpan(address, sizeof(*value), {})))))) {
         page.valid.Clear(index);
         page.raw.Clear(index);
     }
@@ -407,10 +407,10 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
         bool forcedRaw = false;
         if (page.wordwise) {
             if (self.descriptorSpanBytes > sizeof(word) &&
-                (self.forceSync != 0u ? self.pendingWrite(address, self.descriptorSpanBytes, {}) != PendingWrite::None
-                                      : spanNeedsSync(self.pendingWrite(address, self.descriptorSpanBytes, {})))) {
+                (self.forceSync != 0u ? self.pendingSpan(address, self.descriptorSpanBytes, {}) != PendingWrite::None
+                                      : spanNeedsSync(self.pendingSpan(address, self.descriptorSpanBytes, {})))) {
                 policy = PendingWrite::Sync;
-                forcedRaw = self.forceSync != 0u && !spanNeedsSync(self.pendingWrite(address, self.descriptorSpanBytes, {}));
+                forcedRaw = self.forceSync != 0u && !spanNeedsSync(self.pendingSpan(address, self.descriptorSpanBytes, {}));
             } else {
                 policy = self.pendingWrite(address, sizeof(word), std::as_writable_bytes(std::span(&word, 1)));
                 if (self.forceSync != 0u && policy != PendingWrite::None) {
@@ -480,7 +480,10 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
             }
             if (observed) report(waitsBefore, before == word);
         }
-        if ((waited || (page.wordwise && policy == PendingWrite::Sync && !forcedRaw)) && self.invalidateRawPages()) ++self.rawInvalidations;
+        if (waited || (page.wordwise && policy == PendingWrite::Sync && !forcedRaw)) {
+            const bool invalidated = self.forceSync != 0u && !waited ? self.invalidateChangedRawPages() : self.invalidateRawPages();
+            if (invalidated) ++self.rawInvalidations;
+        }
         if (CaptureProfiled()) CaptureTotals().wordReadNanoseconds += NanosecondsSince(fetchStarted);
         page.words[index] = word;
         page.valid.Set(index);
@@ -518,6 +521,27 @@ bool ShaderMemory::invalidateRawPages() {
     bool invalidated = false;
     for (auto& [pageBase, existing] : pages) {
         if (!existing->wordwise || existing->raw.None()) continue;
+        existing->valid.ClearMask(existing->raw);
+        existing->raw.Reset();
+        invalidated = true;
+    }
+    return invalidated;
+}
+
+bool ShaderMemory::invalidateChangedRawPages() {
+    bool invalidated = false;
+    for (auto& [pageBase, existing] : pages) {
+        if (!existing->wordwise || existing->raw.None()) continue;
+        bool changed = false;
+        for (std::size_t index = 0; index < PageWords && !changed; ++index) {
+            if (!existing->raw.Test(index)) continue;
+            const auto address = pageBase + index * sizeof(std::uint32_t);
+            std::uint32_t word = 0;
+            GuestMemory::GuardRead(address, sizeof(word));
+            std::memcpy(&word, reinterpret_cast<const void*>(address), sizeof(word));
+            changed = word != existing->words[index];
+        }
+        if (!changed) continue;
         existing->valid.ClearMask(existing->raw);
         existing->raw.Reset();
         invalidated = true;
@@ -653,8 +677,8 @@ bool ShaderMemory::accessible(void* context, std::uint64_t address, std::uint64_
 
 bool ShaderMemory::pending(void* context, std::uint64_t address, std::uint64_t bytes) {
     const auto& self = *static_cast<const ShaderMemory*>(context);
-    if (self.pendingWrite == nullptr || bytes == 0) return false;
-    const auto policy = self.pendingWrite(address, static_cast<std::size_t>(bytes), {});
+    if (self.pendingSpan == nullptr || bytes == 0) return false;
+    const auto policy = self.pendingSpan(address, static_cast<std::size_t>(bytes), {});
     return policy == PendingWrite::Sync || policy == PendingWrite::VerifyRaw || policy == PendingWrite::VerifyKnownValue;
 }
 
