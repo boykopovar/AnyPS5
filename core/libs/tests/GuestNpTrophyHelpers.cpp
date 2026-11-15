@@ -83,6 +83,7 @@ int main() {
 
     std::uint8_t config[0x100] = {};
     Require(configHasGroupFeature(nullptr) == 0, "a null config did not answer 0");
+    Require(configHasGroupFeature(reinterpret_cast<const std::uint8_t*>(0x10)) == 0, "an unreadable config did not answer 0");
     config[0x90] = 0x03;
     Require(configHasGroupFeature(config) == 1, "bit 0 of the feature byte was not reported");
     config[0x90] = 0x02;

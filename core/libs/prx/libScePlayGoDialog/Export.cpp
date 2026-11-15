@@ -1,4 +1,5 @@
 #include "prx/libScePlayGoDialog/include/Api.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <atomic>
 #include <algorithm>
 #include <iterator>
@@ -27,7 +28,6 @@ constexpr std::int32_t ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x80B80
 constexpr std::int32_t ERROR_ALREADY_INITIALIZED = static_cast<std::int32_t>(0x80B80004);
 constexpr std::int32_t ERROR_PARAM_INVALID = static_cast<std::int32_t>(0x80B8000A);
 constexpr std::int32_t ERROR_INVALID_STATE = static_cast<std::int32_t>(0x80B80007);
-constexpr std::int32_t COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<std::int32_t>(0x80B80005u);
 
 std::atomic<int> g_status{STATUS_NONE};
 

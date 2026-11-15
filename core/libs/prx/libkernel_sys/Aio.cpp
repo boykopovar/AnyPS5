@@ -92,10 +92,20 @@ int Fail(int error) {
 }
 
 template <typename Field>
-bool Store(GuestAiocb* user, Field GuestAiocb::*member, Field value) {
+std::uintptr_t Address(const GuestAiocb* user, Field GuestAiocb::*member) {
     static const GuestAiocb layout{};
     const auto offset = reinterpret_cast<std::uintptr_t>(&(layout.*member)) - reinterpret_cast<std::uintptr_t>(&layout);
-    return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(user) + offset), &value, sizeof(value));
+    return reinterpret_cast<std::uintptr_t>(user) + offset;
+}
+
+template <typename Field>
+bool Store(GuestAiocb* user, Field GuestAiocb::*member, Field value) {
+    return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(Address(user, member)), &value, sizeof(value));
+}
+
+std::int64_t Fetch(const GuestAiocb* user, std::int64_t GuestAiocb::*member) {
+    std::int64_t value = 0;
+    return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(Address(user, member)), sizeof(value)) ? value : -1;
 }
 
 void Run(Job& job) {
@@ -228,11 +238,11 @@ int APS5_VABI aio_fsync_nid_postfix(int operation, GuestAiocb* aiocb) {
 int APS5_VABI aio_error_nid_postfix(const GuestAiocb* aiocb) {
     auto& aio = Instance();
     std::lock_guard lock(aio.lock);
-    if (!aio.used || aiocb == nullptr) return GuestEinval;
+    if (!aio.used) return GuestEinval;
     for (const auto& job : aio.all) {
         if (job->user == aiocb) return ReadyError(job).value_or(GuestEinprogress);
     }
-    if (aiocb->status == -1) return static_cast<int>(aiocb->error);
+    if (Fetch(aiocb, &GuestAiocb::status) == -1) return static_cast<int>(Fetch(aiocb, &GuestAiocb::error));
     return GuestEinval;
 }
 
