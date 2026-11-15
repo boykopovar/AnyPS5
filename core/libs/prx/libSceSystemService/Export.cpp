@@ -310,6 +310,7 @@ int GetGpuLoadEmulationModeOfApp(const char* caller, std::int32_t appId) {
 std::atomic<bool> SuspendConfirmationDialogEnabled{true};
 
 std::atomic<bool> AccessibilityZoomLocked{false};
+std::atomic<bool> NoticeScreenSkipFlag{false};
 
 }
 
@@ -430,7 +431,7 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- const bool localValue = false;
+ const bool localValue = NoticeScreenSkipFlag.load(std::memory_order_relaxed);
  const int savedErrno = errno;
  const bool copied = GuestCopyOut_nid_no_patch(value, &localValue, sizeof(localValue));
  errno = savedErrno;
@@ -636,6 +637,7 @@ int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
 }
 
 int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
+ NoticeScreenSkipFlag.store(true, std::memory_order_relaxed);
  return SYSTEM_SERVICE_OK;
 }
 

@@ -425,8 +425,7 @@ int APS5_VABI sceFontStyleFrameGetResolutionDpi(const FontStyleFrame* styleFrame
 int APS5_VABI sceFontStyleFrameGetEffectSlant(const FontStyleFrame* styleFrame, float* slantRatio) {
     if (!ValidStyleFrame(styleFrame)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if ((styleFrame->flags1 & STYLE_FRAME_FLAG_SLANT) == 0) return SCE_FONT_ERROR_UNSET_PARAMETER;
-    if (!slantRatio) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *slantRatio = styleFrame->slantRatio;
+    if (!slantRatio || !CopyOutGuest(slantRatio, styleFrame->slantRatio)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 

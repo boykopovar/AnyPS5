@@ -770,6 +770,79 @@ static void CheckAsyncHandleAnswers(const std::string& directory, const std::str
     REQUIRE(sceFiosDeleteSync(nullptr, scratch.c_str()) == SCE_FIOS_OK);
 }
 
+static void CheckAsyncPositionedVectors(const std::string& directory, const std::string& file) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    SceFiosFH opened = 0;
+    const SceFiosOp open = sceFiosFHOpen(nullptr, &opened, file.c_str(), nullptr);
+    REQUIRE(sceFiosOpWait(open) == SCE_FIOS_OK && sceFiosIsValidHandle(opened));
+    sceFiosOpDelete(open);
+
+    std::vector<std::uint8_t> head(4, 'Z');
+    std::vector<std::uint8_t> middle(4, 'Z');
+    std::vector<std::uint8_t> tail(4, 'Z');
+    const SceFiosBuffer readVecs[3] = {
+        { head.data(), 4 },
+        { middle.data(), 4 },
+        { tail.data(), 4 },
+    };
+    const SceFiosOp preadv = sceFiosFHPreadv(nullptr, opened, readVecs, 3, 2);
+    REQUIRE(sceFiosOpWait(preadv) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(preadv) == 8);
+    REQUIRE(std::memcmp(head.data(), "2345", 4) == 0);
+    REQUIRE(std::memcmp(middle.data(), "6789", 4) == 0);
+    REQUIRE(tail[0] == 'Z' && tail[1] == 'Z' && tail[2] == 'Z' && tail[3] == 'Z');
+    sceFiosOpDelete(preadv);
+
+    std::uint8_t positionProbe[2]{};
+    const SceFiosOp plainRead = sceFiosFHRead(nullptr, opened, positionProbe, 2);
+    REQUIRE(sceFiosOpWait(plainRead) == SCE_FIOS_OK);
+    REQUIRE(std::memcmp(positionProbe, "01", 2) == 0);
+    sceFiosOpDelete(plainRead);
+
+    const SceFiosOp badCount = sceFiosFHPreadv(nullptr, opened, readVecs, 0, 2);
+    REQUIRE(sceFiosOpWait(badCount) == SCE_FIOS_ERROR_BAD_IOVCNT);
+    sceFiosOpDelete(badCount);
+
+    const SceFiosOp badOffset = sceFiosFHPreadv(nullptr, opened, readVecs, 3, -1);
+    REQUIRE(sceFiosOpWait(badOffset) == SCE_FIOS_ERROR_BAD_OFFSET);
+    sceFiosOpDelete(badOffset);
+
+    REQUIRE(sceFiosFHCloseSync(nullptr, opened) == SCE_FIOS_OK);
+
+    const std::string scratch = directory + "/pv.bin";
+    SceFiosOpenParams writer{};
+    writer.openFlags = SCE_FIOS_O_WRITE | SCE_FIOS_O_CREAT | SCE_FIOS_O_TRUNC;
+    opened = 0;
+    const SceFiosOp writeOpen = sceFiosFHOpenWithMode(nullptr, &opened, scratch.c_str(), &writer, 0666);
+    REQUIRE(sceFiosOpWait(writeOpen) == SCE_FIOS_OK && sceFiosIsValidHandle(opened));
+    sceFiosOpDelete(writeOpen);
+
+    const SceFiosOp seed = sceFiosFHWrite(nullptr, opened, "XXXXX", 5);
+    REQUIRE(sceFiosOpWait(seed) == SCE_FIOS_OK);
+    sceFiosOpDelete(seed);
+
+    std::vector<std::uint8_t> first(2, 'a');
+    std::vector<std::uint8_t> second(2, 'b');
+    const SceFiosBuffer writeVecs[2] = {
+        { first.data(), 2 },
+        { second.data(), 2 },
+    };
+    const SceFiosOp pwritev = sceFiosFHPwritev(nullptr, opened, writeVecs, 2, 1);
+    REQUIRE(sceFiosOpWait(pwritev) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(pwritev) == 4);
+    sceFiosOpDelete(pwritev);
+
+    const SceFiosOp badWriteOffset = sceFiosFHPwritev(nullptr, opened, writeVecs, 2, -1);
+    REQUIRE(sceFiosOpWait(badWriteOffset) == SCE_FIOS_ERROR_BAD_OFFSET);
+    sceFiosOpDelete(badWriteOffset);
+
+    REQUIRE(sceFiosFHCloseSync(nullptr, opened) == SCE_FIOS_OK);
+    std::uint8_t contents[5]{};
+    REQUIRE(sceFiosFileReadSync(nullptr, scratch.c_str(), contents, 5, 0) == 5);
+    REQUIRE(std::memcmp(contents, "Xaabb", 5) == 0);
+    REQUIRE(sceFiosDeleteSync(nullptr, scratch.c_str()) == SCE_FIOS_OK);
+}
+
 static std::int32_t AddOverlay(std::uint8_t type, std::uint8_t order, const std::string& destination, const std::string& source) {
     OverlayRecordTest overlay{};
     overlay.type = type;
@@ -995,6 +1068,7 @@ int main() {
     CheckMutations(directory.generic_string());
     CheckOpenFlagsAndVectors(directory.generic_string(), file);
     CheckAsyncHandleAnswers(directory.generic_string(), file);
+    CheckAsyncPositionedVectors(directory.generic_string(), file);
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
     CheckOverlayResolve(directory.generic_string());
