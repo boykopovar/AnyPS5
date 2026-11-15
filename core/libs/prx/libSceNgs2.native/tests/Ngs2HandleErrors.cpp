@@ -203,6 +203,7 @@ static int APS5_VABI DestroyScheduler(std::uintptr_t handle) {
 
 static void CheckResetScheduler() {
     Require(sceNgs2JobSchedulerResetOption(nullptr) == static_cast<int>(0x804A8012u));
+    Require(sceNgs2JobSchedulerResetOption(reinterpret_cast<Ngs2JobSchedulerOption*>(0x10)) == static_cast<int>(0x804A8012u));
     Ngs2JobSchedulerOption option{};
     Require(sceNgs2JobSchedulerResetOption(&option) == SCE_NGS2_OK);
     Require(option.size == 112 && option.user_data == 0 && option.num_workers == 4 && option.max_jobs == 1024);
