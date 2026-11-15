@@ -11,9 +11,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -94,6 +96,16 @@ inline std::int64_t SonyHostDaylightAmount_nid_no_patch(std::int64_t utcTime) {
 
 template<typename TInteger>
 inline TInteger ParseInteger(const char* text, char** end, int base, TInteger (*parse)(const char*, char**, int)) {
+#ifdef _WIN32
+    if constexpr (std::is_unsigned_v<TInteger>) {
+        const int saved = errno;
+        errno = 0;
+        const TInteger value = parse(text, end, base);
+        if (errno == ERANGE) return std::numeric_limits<TInteger>::max();
+        if (errno == 0) errno = saved;
+        return value;
+    }
+#endif
 #ifdef __APPLE__
     const int saved = errno;
     char* parsedEnd = nullptr;
