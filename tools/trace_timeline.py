@@ -1,5 +1,6 @@
 import argparse
 import html
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -27,22 +28,22 @@ def window_slices(trace, start_us, end_us, threads=None):
             begin = max(ts, start_us)
             end = min(ts + dur, end_us)
             if end > begin:
-                rows.append({"thread": name, "ts": begin, "dur": end - begin, "name": slice_name})
+                rows.append({"thread": name, "tid": tid, "ts": begin, "dur": end - begin, "name": slice_name})
     return rows
 
 
 def layout(slices, start_us, end_us, width_px, max_slices=5000):
     span = max(end_us - start_us, 1e-9)
-    threads = sorted({slice_["thread"] for slice_ in slices})
-    row_of = {name: row for row, name in enumerate(threads)}
+    rows = sorted({(slice_["thread"], slice_["tid"]) for slice_ in slices})
+    row_of = {thread: row for row, thread in enumerate(rows)}
     kept = sorted(slices, key=lambda slice_: -slice_["dur"])[:max_slices]
     bars = []
     for slice_ in kept:
         x = LABEL_WIDTH + (slice_["ts"] - start_us) / span * width_px
         w = max(slice_["dur"] / span * width_px, 1.0)
         bars.append({"thread": slice_["thread"], "name": slice_["name"], "ms": slice_["dur"] / 1000.0,
-                     "x": x, "w": w, "y": row_of[slice_["thread"]] * ROW_HEIGHT})
-    return {"threads": threads, "bars": bars, "left_out": len(slices) - len(kept), "width": width_px + LABEL_WIDTH}
+                     "x": x, "w": w, "y": row_of[(slice_["thread"], slice_["tid"])] * ROW_HEIGHT})
+    return {"threads": [name for name, _ in rows], "bars": bars, "left_out": len(slices) - len(kept), "width": width_px + LABEL_WIDTH}
 
 
 def svg(laid):
@@ -68,9 +69,9 @@ def nonnegative_number(value):
     try:
         number = float(value)
     except ValueError:
-        raise argparse.ArgumentTypeError("must be a number")
-    if number < 0:
-        raise argparse.ArgumentTypeError("must be a number")
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
+    if not math.isfinite(number) or not 0 <= number < 1e300:
+        raise argparse.ArgumentTypeError("must be a non-negative number below 1e300")
     return number
 
 
@@ -106,6 +107,8 @@ def main(arguments=None):
     if laid["left_out"]:
         notes.append(f"{laid['left_out']} shorter slices left out by --max-slices")
     output = options.output or options.trace.with_suffix(".html")
+    if output.absolute() == options.trace.absolute() or (output.exists() and output.samefile(options.trace)):
+        raise ValueError("output must not overwrite the input trace")
     output.write_text(page(svg(laid), options.trace.name, notes), encoding="utf-8")
     print(f"wrote {output}")
     return 0
