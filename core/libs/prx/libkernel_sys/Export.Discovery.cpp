@@ -14,7 +14,10 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <cstddef>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -27,6 +30,28 @@ constexpr std::uint32_t PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE = 0x00800000;
 
 int SceResult(int error) {
     return error == 0 ? 0 : SceKernelError(error);
+}
+
+bool LoadAttr(const PthreadAttr* attr, PthreadAttr& value) {
+    if (!attr) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, attr, sizeof(value));
+    errno = savedErrno;
+    return copied && value;
+}
+
+bool CopyInBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyOutBytes(void* destination, const void* source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return copied;
 }
 
 template<class TCommand>
@@ -184,21 +209,27 @@ int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(const PthreadAttr* attr, s
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
     constexpr int GuestEfault = 14;
-    if (!attr || !*attr) return GuestEinval;
+    PthreadAttr localAttr{};
+    if (!LoadAttr(attr, localAttr)) return GuestEinval;
     if (cpusetSize < sizeof(KernelCpumask)) return GuestErange;
     if (!cpuset) return GuestEfault;
-    const KernelCpumask mask = (*attr)->_affinity;
-    std::memcpy(cpuset, &mask, sizeof(mask));
-    if (cpusetSize > sizeof(mask)) {
-        std::memset(static_cast<char*>(cpuset) + sizeof(mask), 0, cpusetSize - sizeof(mask));
+    const KernelCpumask mask = localAttr->_affinity;
+    if (!CopyOutBytes(cpuset, &mask, sizeof(mask))) return GuestEfault;
+    const unsigned char zeros[64] = {};
+    for (std::size_t offset = sizeof(mask); offset < cpusetSize;) {
+        const std::size_t count = std::min(sizeof(zeros), cpusetSize - offset);
+        if (!CopyOutBytes(static_cast<unsigned char*>(cpuset) + offset, zeros, count)) return GuestEfault;
+        offset += count;
     }
     return 0;
 }
 
 int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(const PthreadAttr* attr, int* solosched) {
     constexpr int GuestEinval = 22;
-    if (!attr || !*attr || !solosched) return GuestEinval;
-    *solosched = (*attr)->_solosched & 0x10;
+    PthreadAttr localAttr{};
+    if (!LoadAttr(attr, localAttr) || !solosched) return GuestEinval;
+    const int value = localAttr->_solosched & 0x10;
+    if (!CopyOutBytes(solosched, &value, sizeof(value))) return GuestEinval;
     return 0;
 }
 
@@ -206,18 +237,24 @@ int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(PthreadAttr* attr, std::si
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
     constexpr int GuestEfault = 14;
-    if (!attr || !*attr) return GuestEinval;
+    PthreadAttr localAttr{};
+    if (!LoadAttr(attr, localAttr)) return GuestEinval;
     if (cpusetSize == 0) return 0;
     if (cpusetSize < sizeof(KernelCpumask)) return GuestErange;
     if (!cpuset) return GuestEfault;
-    const auto* bytes = static_cast<const unsigned char*>(cpuset);
-    for (std::size_t i = sizeof(KernelCpumask); i < cpusetSize; ++i) {
-        if (bytes[i] != 0) return GuestEinval;
+    unsigned char chunk[64];
+    for (std::size_t offset = sizeof(KernelCpumask); offset < cpusetSize;) {
+        const std::size_t count = std::min(sizeof(chunk), cpusetSize - offset);
+        if (!CopyInBytes(chunk, static_cast<const unsigned char*>(cpuset) + offset, count)) return GuestEfault;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (chunk[i] != 0) return GuestEinval;
+        }
+        offset += count;
     }
     KernelCpumask mask = 0;
-    std::memcpy(&mask, bytes, sizeof(mask));
-    (*attr)->_affinity = mask;
-    (*attr)->_affinityExplicit = true;
+    if (!CopyInBytes(&mask, cpuset, sizeof(mask))) return GuestEfault;
+    localAttr->_affinity = mask;
+    localAttr->_affinityExplicit = true;
     return 0;
 }
 
@@ -883,8 +920,11 @@ int APS5_VABI sceKernelGetKnobs(void) {
 
 int APS5_VABI sceKernelGetKqueueFromEqueue(KernelEqueue eq, int* kq) {
     if (!kq) return SCE_KERNEL_ERROR_EINVAL;
-    *kq = static_cast<int>(static_cast<std::uint32_t>(eq));
-    return 0;
+    const int descriptor = static_cast<int>(static_cast<std::uint32_t>(eq));
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(kq, &descriptor, sizeof(descriptor));
+    errno = savedErrno;
+    return written ? 0 : SCE_KERNEL_ERROR_EINVAL;
 }
 
 int APS5_VABI sceKernelGetMemoryPstate(void) {
