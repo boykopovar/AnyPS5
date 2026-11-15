@@ -77,8 +77,10 @@ PosixSpawnAttributes& Attributes(PosixSpawnAttributes* const* attributes, const 
 }
 
 PosixSpawnFileActions& FileActions(PosixSpawnFileActions* const* actions, const char* function) {
-    if (actions == nullptr || *actions == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized file actions");
-    return **actions;
+    if (actions == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized file actions");
+    auto* object = LoadSpawnValue(actions, function, "file actions");
+    if (object == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized file actions");
+    return *object;
 }
 
 int Append(PosixSpawnFileActions& actions, PosixSpawnFileAction action) {
@@ -516,7 +518,10 @@ int APS5_VABI posix_spawn_file_actions_init_nid_postfix(PosixSpawnFileActions** 
     if (actions == nullptr) throw std::invalid_argument("posix_spawn_file_actions_init: null file actions");
     auto* created = new (std::nothrow) PosixSpawnFileActions{};
     if (created == nullptr) return -1;
-    *actions = created;
+    if (!GuestCopyOut_nid_no_patch(actions, &created, sizeof(created))) {
+        delete created;
+        throw std::invalid_argument("posix_spawn_file_actions_init: unwritable file actions");
+    }
     return 0;
 }
 
