@@ -53,6 +53,7 @@
 #include <unordered_set>
 #include <utility>
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver::Graphics {
 namespace {
@@ -5654,7 +5655,7 @@ std::uint64_t ShaderResources::BytesUpToTarget(std::uint64_t address, std::uint6
 std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent) {
     Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
-    Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
+    Require(descriptor.Type() == 0u || (!ShaderRecompiler::GcnGuestShaders() && (descriptor.Type() == 2u || descriptor.Type() == 3u) && read && !written && !atomic), "buffer descriptor uses an unsupported type");
     const auto address = descriptor.Base48();
     const auto byteSize = guestBufferBytes(words);
     if (byteSize == 0 || address == 0) {

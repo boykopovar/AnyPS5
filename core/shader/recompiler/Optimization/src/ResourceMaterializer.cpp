@@ -1909,7 +1909,7 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
             snapshot.buffers.at(i).dwords[3] = 0u;
         }
         const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
-        if (decoded.Type() != 0u) {
+        if (decoded.Type() != 0u && (decoded.Type() == 1u || GcnGuestShaders() || buffer.written || buffer.atomic || !buffer.read)) {
             const auto& words = snapshot.buffers.at(i).dwords;
             char detail[96];
             std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x) first used at pc 0x%x", i, words[0], words[1], words[2], words[3], buffer.firstUsePc);
