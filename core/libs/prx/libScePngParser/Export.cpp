@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libScePngParser/include/InventoryExports.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -36,8 +37,13 @@ int APS5_VABI libScePngParserUnknown_suBT1aYALqA_nid_no_patch() {
 APS5_EXPORT("suBT1aYALqA", libScePngParserUnknown_suBT1aYALqA_nid_no_patch);
 
 int APS5_VABI libScePngParserUnknown_vJpgNFIBlCk_nid_no_patch(const void* config) {
+    if (config == nullptr)
+        throw std::invalid_argument("vJpgNFIBlCk: unreadable configuration");
     std::array<std::byte, kConfigSize> copy{};
-    if (config == nullptr || !GuestCopyIn_nid_no_patch(copy.data(), config, copy.size()))
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(copy.data(), config, copy.size());
+    errno = savedErrno;
+    if (!copied)
         throw std::invalid_argument("vJpgNFIBlCk: unreadable configuration");
     const std::lock_guard<std::mutex> lock(g_configMutex);
     g_config = copy;

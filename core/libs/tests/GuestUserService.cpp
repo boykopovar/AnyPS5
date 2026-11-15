@@ -242,8 +242,15 @@ int main() {
     char homePath[64]{};
     Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
-    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 19) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 20) == USER_SERVICE_OK);
     Require(std::strcmp(homePath, "/user/home/10000000") == 0);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1024) == USER_SERVICE_OK);
+    Require(std::strcmp(homePath, "/user/home/10000000") == 0);
+    errno = 71;
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);

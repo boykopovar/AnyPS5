@@ -88,6 +88,9 @@ void TestRunningAppUser() {
 
 void TestShellCoreUtilLeafCalls() {
     sceShellCoreUtilLaunchByUriParamInit(nullptr);
+    errno = 71;
+    sceShellCoreUtilLaunchByUriParamInit(reinterpret_cast<void*>(0x10));
+    Require(errno == 71);
     Require(sceShellCoreUtilDebugGetNumberOfCffItems(nullptr) == static_cast<int>(0x80e30005u));
     errno = 71;
     Require(sceShellCoreUtilDebugGetNumberOfCffItems(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x80e30005u));
@@ -145,6 +148,14 @@ void TestPlayerDialogParam() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    threw = false;
+    try {
+        sceSystemServiceInitializePlayerDialogParam(reinterpret_cast<SystemServicePlayerDialogParam*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && errno == 71);
     Require(sceSystemServiceLaunchPlayerDialog(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(sceSystemServiceLaunchPlayerDialog(buffer) == SYSTEM_SERVICE_OK);
 }
