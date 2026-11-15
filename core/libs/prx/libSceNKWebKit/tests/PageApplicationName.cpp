@@ -32,7 +32,9 @@ void RequireInvalidArgument(Function function) {
 int main() {
     auto page = NKWebKit::Make<NKWebKit::Page>();
     const void* pageRef = NKWebKit::ToRef(page);
-    Require(WKPageCopyApplicationNameForUserAgent(pageRef) == nullptr);
+    auto* unset = WKPageCopyApplicationNameForUserAgent(pageRef);
+    Require(unset != nullptr && WKStringGetLength(unset) == 0);
+    WKRelease(unset);
 
     auto testStr = NKWebKit::String::FromUtf8("TestApp/2.0");
     const void* testStrRef = NKWebKit::ToRef(testStr);
@@ -44,7 +46,9 @@ int main() {
     WKRelease(copied);
 
     WKPageSetApplicationNameForUserAgent(pageRef, nullptr);
-    Require(WKPageCopyApplicationNameForUserAgent(pageRef) == nullptr);
+    auto* cleared = WKPageCopyApplicationNameForUserAgent(pageRef);
+    Require(cleared != nullptr && WKStringGetLength(cleared) == 0);
+    WKRelease(cleared);
 
     RequireInvalidArgument([] { WKPageCopyApplicationNameForUserAgent(nullptr); });
     RequireInvalidArgument([] { WKPageSetApplicationNameForUserAgent(nullptr, nullptr); });
