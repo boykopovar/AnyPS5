@@ -578,9 +578,10 @@ static void CheckWcsftime() {
     error = 5;
     const std::size_t oversized = SIZE_MAX / static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
     for (const std::size_t capacity : {oversized, oversized + 1, SIZE_MAX}) {
+        for (auto& unit : buffer) unit = u'x';
         error = 5;
-        Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), capacity, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 22 && buffer[0] == u'x',
-            "wcsftime oversized buffer");
+        Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), capacity, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 4 && error == 5 && buffer == std::u16string(u"2024"),
+            "wcsftime oversized buffer formats as usual");
     }
     error = 5;
     Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), oversized - 1, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 4 && error == 5

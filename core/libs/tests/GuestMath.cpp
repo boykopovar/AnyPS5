@@ -14,6 +14,7 @@
 #include <limits>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <xmmintrin.h>
 
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32);
@@ -252,6 +253,22 @@ static void CheckFegetenv() {
     bool threw = false;
     try { fegetenv_nid_postfix(nullptr); } catch (...) { threw = true; }
     Require(threw);
+
+    auto* const unmapped = reinterpret_cast<GuestFloatingPointEnvironment*>(0x10);
+    const unsigned csrBefore = _mm_getcsr();
+    const std::uint16_t controlBefore = X87ControlWord();
+    threw = false;
+    try { fegetenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { feholdexcept_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
+    threw = false;
+    try { fesetenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
+    threw = false;
+    try { feupdateenv_nid_postfix(unmapped); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && _mm_getcsr() == csrBefore && X87ControlWord() == controlBefore);
 }
 
 template<typename Bits>
@@ -2727,6 +2744,13 @@ static void CheckHyperbolic() {
     Require(Near(_Cosh_nid_postfix(711.0, 1e-300), 0x1.2190c08e2f1a4p+28, 1e-15));
     Require(_Cosh_nid_postfix(720.0, 0.0) == 0.0 && !std::signbit(_Cosh_nid_postfix(720.0, 0.0)));
     Require(_Cosh_nid_postfix(720.0, -0.0) == 0.0 && std::signbit(_Cosh_nid_postfix(720.0, -0.0)));
+    errno = 0;
+    Require(std::isinf(_Cosh_nid_postfix(710.0, 2.0)) && errno == ERANGE);
+    errno = 0;
+    Require(std::isnan(_Cosh_nid_postfix(infinity, 0.0)) && errno == EDOM);
+    errno = 0;
+    Require(std::isinf(_Cosh_nid_postfix(infinity, 1.0)) && std::isnan(_Cosh_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && errno == 0);
+    Require(Near(_Cosh_nid_postfix(710.0, 1.0), std::bit_cast<double>(0x7fe3e21a464507f9ull), 1e-15) && errno == 0);
     Require(sinh_nid_postfix(0.) == 0. && std::signbit(sinh_nid_postfix(-0.)));
     Require(cosh_nid_postfix(0.) == 1. && coshf_nid_postfix(0.f) == 1.f);
     Require(asinh_nid_postfix(0.) == 0. && std::signbit(asinh_nid_postfix(-0.)) && std::signbit(asinhf_nid_postfix(-0.f)));

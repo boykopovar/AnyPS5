@@ -841,6 +841,7 @@ bool isVop1FloatSourceOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VExpF32:
         case RdnaOpcode::VLogF32:
         case RdnaOpcode::VRsqF32:
+        case RdnaOpcode::VRsqClampF32:
         case RdnaOpcode::VSqrtF32:
         case RdnaOpcode::VRcpF16:
         case RdnaOpcode::VSqrtF16:
@@ -897,6 +898,7 @@ bool isVop1FloatResultOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VExpF32:
         case RdnaOpcode::VLogF32:
         case RdnaOpcode::VRsqF32:
+        case RdnaOpcode::VRsqClampF32:
         case RdnaOpcode::VSqrtF32:
         case RdnaOpcode::VRcpF16:
         case RdnaOpcode::VSqrtF16:
