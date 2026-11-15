@@ -132,6 +132,9 @@ int main(int argc, char** argv) {
             }
         }
         Require(sceNgs2RackDestroy(other, nullptr) == SCE_NGS2_OK);
+        errno = 71;
+        Status(sceNgs2RackGetVoiceHandle(rack, 0, reinterpret_cast<uintptr_t*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "RackGetVoiceHandle accepted an unwritable output");
+        Require(errno == 71);
         std::uint32_t flags = 0;
         Status(sceNgs2VoiceGetStateFlags(voice, &flags), SCE_NGS2_OK, "valid state-flags lookup failed");
         Ngs2SamplerVoiceState state{};
