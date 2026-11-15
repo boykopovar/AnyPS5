@@ -513,6 +513,8 @@ static void CheckDestroyGuestPointers() {
     const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
     Returned(sceNgs2RackDestroy(rack, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackDestroy", "an unwritable buffer info");
     Returned(sceNgs2RackDestroy(rack, nullptr), SCE_NGS2_OK, "sceNgs2RackDestroy", "a null buffer info after a refused destroy");
+    Returned(sceNgs2SystemDestroy(system, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2SystemDestroy", "an unwritable buffer info");
+    Returned(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "sceNgs2SystemDestroy", "a null buffer info after a refused destroy");
 }
 
 int main(int argc, char** argv) {
