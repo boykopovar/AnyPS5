@@ -32,20 +32,24 @@ std::uint32_t* WriteMemSemaphore(CommandBuffer* buffer, const volatile void* add
     const auto prefix = sceAgcDriverUserDataGetPacketSize(4);
     const auto suffix = sceAgcDriverUserDataGetPacketSize(0);
     if (!TryReserve(buffer, prefix + suffix + 4, function)) return nullptr;
-    auto* result = buffer->cursor_up;
+    auto* result = Allocate(buffer, prefix + 4 + ((operation == 6 || operation == 7) ? suffix : 0), function);
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
     const auto low = static_cast<std::uint32_t>(guestAddress);
     const auto high = static_cast<std::uint32_t>(guestAddress >> 32u);
     const auto marker = (operation == 6 ? 0xc9010000u : 0xc9020000u) | (high & 0xffffu);
-    sceAgcDriverUserDataWritePacket(Allocate(buffer, prefix, function), 1, marker, &low, 4);
+    sceAgcDriverUserDataWritePacket(result, 1, marker, &low, 4);
+    auto* semaphore = result + prefix;
     if (operation == 6) {
-        auto* nop = Allocate(buffer, suffix, function);
-        nop[0] = Header(0x10u, suffix);
+        semaphore[0] = Header(0x10u, suffix);
+        semaphore += suffix;
     }
-    Emit(buffer, 0x39u, {low & ~7u, high, (static_cast<std::uint32_t>(operation & 7u) << 29u) |
-        (static_cast<std::uint32_t>(signalType & 1u) << 20u) | (static_cast<std::uint32_t>(waitForMailbox & 1u) << 16u)}, function);
+    semaphore[0] = Header(0x39u, 4);
+    semaphore[1] = low & ~7u;
+    semaphore[2] = high;
+    semaphore[3] = (static_cast<std::uint32_t>(operation & 7u) << 29u) |
+        (static_cast<std::uint32_t>(signalType & 1u) << 20u) | (static_cast<std::uint32_t>(waitForMailbox & 1u) << 16u);
     if (operation == 7) {
-        sceAgcDriverUserDataWritePacket(Allocate(buffer, suffix, function), asyncCompute ? 1u : 0u, 0xc9000000u, nullptr, 0);
+        sceAgcDriverUserDataWritePacket(semaphore + 4, asyncCompute ? 1u : 0u, 0xc9000000u, nullptr, 0);
     }
     return result;
 }
