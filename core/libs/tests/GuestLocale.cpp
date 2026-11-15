@@ -194,6 +194,9 @@ static void CheckLocinfoAlignment() {
 
     RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "unknown-locale"); });
     RequireException([] { _ZNSt8_LocinfoC1EPKc_nid_postfix(nullptr, "C"); });
+    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, reinterpret_cast<const char*>(0x10)); });
+    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, ""); });
+    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "CX"); });
 }
 
 static void CheckCharacterTables() {
