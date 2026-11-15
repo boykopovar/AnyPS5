@@ -29,6 +29,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
 #include "src/EncoderMetadata.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -141,13 +142,13 @@ std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream) {
     return stream->state[MemorySize] <= stream->state[MemoryPosition];
 }
 
-int APS5_VABI FreeDescMetadata_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::size_t* position) {
     if (!stream || !position) APS5_INVALID_ARG_EX;
-    *position = stream->state[MemoryPosition];
+    const std::size_t local = stream->state[MemoryPosition];
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(position, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) APS5_INVALID_ARG_EX;
     return WmpErrSuccess;
 }
 

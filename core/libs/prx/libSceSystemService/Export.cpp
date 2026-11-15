@@ -611,9 +611,13 @@ int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
 
 void APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param) {
  if (param == nullptr) APS5_INVALID_ARG_EX;
- *param = SystemServicePlayerDialogParam{};
- param->size = sizeof(SystemServicePlayerDialogParam);
- param->user_id = -1;
+ SystemServicePlayerDialogParam local{};
+ local.size = sizeof(local);
+ local.user_id = -1;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(param, &local, sizeof(local));
+ errno = savedErrno;
+ if (!copied) APS5_INVALID_ARG_EX;
 }
 
 int APS5_VABI sceSystemServiceDisableMediaPlay() {
@@ -786,7 +790,9 @@ int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void) {
 void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param) {
     if (param == nullptr) return;
     const std::uint32_t fields[2] = {0, 0xffffffff};
-    std::memcpy(param, fields, sizeof(fields));
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(param, fields, sizeof(fields));
+    errno = savedErrno;
 }
 
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void) {
