@@ -216,6 +216,11 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     char* stop = nullptr;
     TFloat value = parse(text, &stop);
     if (end != nullptr) *end = stop;
+    if (stop == text) {
+        const char* subject = text;
+        const bool negative = (_Stopfx_nid_postfix(&subject, nullptr) & 8) != 0;
+        value = std::copysign(TFloat{0}, negative ? TFloat{-1} : TFloat{1});
+    }
     if (pten == 0 && Hexadecimal(text)) {
         guestErrno = saved;
         return value;
