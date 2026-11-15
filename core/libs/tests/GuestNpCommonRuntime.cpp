@@ -1614,6 +1614,10 @@ void TestNumbers() {
     Require(sceNpStrToInt64("99999999999999999999", &value64, 10, nullptr) == NpOutOfRange, "64-bit overflow is an error");
     std::uint32_t unsigned32 = 0;
     Require(sceNpStrToUInt32("4294967295", &unsigned32, 10, nullptr) == 0 && unsigned32 == UINT32_MAX, "the 32-bit maximum parses");
+    Require(sceNpStrToUInt32("4294967295", nullptr, 10, nullptr) == NpInvalidArgument, "null value pointer is refused");
+    errno = 71;
+    Require(sceNpStrToUInt32("4294967295", reinterpret_cast<std::uint32_t*>(0x10), 10, nullptr) == NpInvalidArgument && errno == 71,
+        "unwritable value pointer is refused and errno is kept");
     Require(sceNpStrToUInt32("4294967296", &unsigned32, 10, nullptr) == NpOutOfRange, "32-bit unsigned overflow is an error");
     std::uint64_t unsigned64 = 0;
     Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == 0 && unsigned64 == UINT64_MAX, "the 64-bit maximum parses");
