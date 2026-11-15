@@ -595,11 +595,20 @@ int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
 }
 
 int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
+    std::array<std::uint8_t, 64> localInput{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(localInput.data(), setInfo, localInput.size());
+    errno = savedErrno;
+    if (!read) NotImplemented_nid_no_patch(__func__);
+    std::array<std::uint8_t, 16> localFlags{};
     int count = 0;
     for (std::size_t index = 0; index < 16; ++index) {
-        flagArray[index] = setInfo[index] | setInfo[16 + index] | setInfo[32 + index] | setInfo[48 + index];
-        count += std::popcount(flagArray[index]);
+        localFlags[index] = localInput[index] | localInput[16 + index] | localInput[32 + index] | localInput[48 + index];
+        count += std::popcount(localFlags[index]);
     }
+    const bool written = GuestCopyOut_nid_no_patch(flagArray, localFlags.data(), localFlags.size());
+    errno = savedErrno;
+    if (!written) NotImplemented_nid_no_patch(__func__);
     return count;
 }
 
