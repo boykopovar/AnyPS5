@@ -1170,6 +1170,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
+        prepareSrgbView(descriptor, viewInfo);
         sourceDescriptor = descriptor;
         countedBytes = allocationBytes;
         SampledMemoryCounter().fetch_add(countedBytes, std::memory_order_relaxed);
@@ -1478,16 +1479,23 @@ void Texture::prepareSrgbView(const GuestTextureResource& descriptor, VkImageVie
     if (format == VK_FORMAT_UNDEFINED) return;
     viewInfo.pNext = nullptr;
     viewInfo.format = format;
-    srgbInfo = viewInfo;
+    if (IsSrgbTextureFormat(descriptor.format)) unormInfo = viewInfo;
+    else srgbInfo = viewInfo;
     srgbMinLod = context.imageViewMinLod ? EffectiveMinLod(descriptor) : 0.0f;
 }
 
 VkImageView Texture::SrgbView(bool firstLayer, bool baseLevel) const {
-    Require(srgbInfo.has_value(), "AGC graphics: a texture of view format " + std::to_string(viewFormat) + " has no sRGB view for a sampler that forces sRGB decoding");
+    Require(HasSrgbView(), "a texture has no sRGB view for a sampler that forces sRGB decoding");
+    return SampledGammaView(firstLayer, baseLevel, true);
+}
+
+VkImageView Texture::SampledGammaView(bool firstLayer, bool baseLevel, bool srgb) const {
+    const auto& prepared = srgb ? srgbInfo : unormInfo;
+    Require(prepared.has_value(), "a texture of view format " + std::to_string(viewFormat) + " has no " + (srgb ? "sRGB" : "UNORM") + " view for the sampler decode mode");
     std::lock_guard lock(srgbMutex);
-    auto& slot = srgbViews[baseLevel ? 2u : firstLayer ? 1u : 0u];
+    auto& slot = (srgb ? srgbViews : unormViews)[baseLevel ? 2u : firstLayer ? 1u : 0u];
     if (slot != VK_NULL_HANDLE) return slot;
-    VkImageViewCreateInfo info = *srgbInfo;
+    VkImageViewCreateInfo info = *prepared;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
     info.pNext = &usage;
@@ -1553,9 +1561,11 @@ void Texture::release() noexcept {
     baseLevelView = VK_NULL_HANDLE;
     if (arrayView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, arrayView, nullptr);
     arrayView = VK_NULL_HANDLE;
-    for (auto& srgbView : srgbViews) {
-        if (srgbView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, srgbView, nullptr);
-        srgbView = VK_NULL_HANDLE;
+    for (auto* views : {&srgbViews, &unormViews}) {
+        for (auto& gammaView : *views) {
+            if (gammaView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, gammaView, nullptr);
+            gammaView = VK_NULL_HANDLE;
+        }
     }
     // The image and its memory go with the last holder: this texture, or the batch still uploading it.
     owned.reset();
@@ -1718,6 +1728,16 @@ bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, Dc
 VkFormat SrgbTwinFormat(const Context& context, VkFormat format) {
     const auto decoded = [&](ShaderRecompiler::IrBufferFormat srgb) { return (context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(srgb)) != 0u; };
     switch (format) {
+        case VK_FORMAT_R8_SRGB: return VK_FORMAT_R8_UNORM;
+        case VK_FORMAT_R8G8_SRGB: return VK_FORMAT_R8G8_UNORM;
+        case VK_FORMAT_R8G8B8A8_SRGB: return VK_FORMAT_R8G8B8A8_UNORM;
+        case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32: return VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+        case VK_FORMAT_BC1_RGB_SRGB_BLOCK: return VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK: return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+        case VK_FORMAT_BC2_SRGB_BLOCK: return VK_FORMAT_BC2_UNORM_BLOCK;
+        case VK_FORMAT_BC3_SRGB_BLOCK: return VK_FORMAT_BC3_UNORM_BLOCK;
+        case VK_FORMAT_BC7_SRGB_BLOCK: return VK_FORMAT_BC7_UNORM_BLOCK;
         case VK_FORMAT_R8_UNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8_SRGB;
         case VK_FORMAT_R8G8_UNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8_8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8G8_SRGB;
         case VK_FORMAT_R8_SNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8_SRGB;

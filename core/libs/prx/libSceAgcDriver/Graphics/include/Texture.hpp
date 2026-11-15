@@ -110,6 +110,7 @@ public:
     bool HasArrayView() const { return arrayInfo.has_value(); }
     VkImageView ArrayView() const;
     VkImageView SrgbView(bool firstLayer, bool baseLevel) const;
+    VkImageView SampledGammaView(bool firstLayer, bool baseLevel, bool srgb) const;
     struct ViewRange {
         VkImageViewType type;
         std::uint32_t levels;
@@ -166,9 +167,11 @@ private:
     mutable std::mutex baseLevelMutex;
     mutable VkImageView baseLevelView = VK_NULL_HANDLE;
     std::optional<VkImageViewCreateInfo> srgbInfo;
+    std::optional<VkImageViewCreateInfo> unormInfo;
     float srgbMinLod = 0.0f;
     mutable std::mutex srgbMutex;
     mutable std::array<VkImageView, 3> srgbViews{};
+    mutable std::array<VkImageView, 3> unormViews{};
     std::optional<VkImageViewCreateInfo> arrayInfo;
     float arrayMinLod = 0.0f;
     mutable std::mutex arrayMutex;

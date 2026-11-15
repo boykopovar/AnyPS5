@@ -155,11 +155,27 @@ void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, std::string_v
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         FillTexels();
+        if (argc == 2 && (std::string_view(argv[1]) == "--skip-point" || std::string_view(argv[1]) == "--skip-linear")) {
+            constexpr std::uint32_t SkipDegamma = 1u << 31u;
+            const bool linear = std::string_view(argv[1]) == "--skip-linear";
+            const auto filter = linear ? FilterBilinear : FilterPoint;
+            FillInput(!linear);
+            const auto srgb = Sample(*device, Format8888Srgb, filter, 0u);
+            if (!linear) RequireDecoded(srgb, "ordinary sRGB control");
+            const auto unorm = Sample(*device, Format8888UNorm, filter, 0u);
+            Require(srgb != unorm, "sRGB control must differ from encoded UNORM values");
+            RequireSame(Sample(*device, Format8888Srgb, filter, SkipDegamma), unorm, "SKIP_DEGAMMA", "through the sRGB descriptor with SKIP_DEGAMMA", "through the UNORM descriptor");
+            RequireSame(Sample(*device, Format8888Srgb, filter, 0u), srgb, "sRGB after SKIP_DEGAMMA", "after changing sampler mode", "before changing sampler mode");
+            RequireSame(Sample(*device, Format8888UNorm, filter, SkipDegamma), unorm, "SKIP_DEGAMMA on UNORM", "with SKIP_DEGAMMA", "without SKIP_DEGAMMA");
+            RequireSame(Sample(*device, Format8888Srgb, filter, SkipDegamma | ForceDegamma), srgb, "FORCE_DEGAMMA precedence", "with both sampler bits", "with neither sampler bit");
+            std::puts("image sample skip degamma tests passed");
+            return 0;
+        }
         FillInput(true);
         const auto forcedPoint = Sample(*device, Format8888Srgb, FilterPoint, ForceDegamma);
         RequireDecoded(forcedPoint, "8_8_8_8_SRGB");

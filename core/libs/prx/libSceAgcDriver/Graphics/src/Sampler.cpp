@@ -28,7 +28,7 @@ namespace AgcDriver::Graphics {
     Sampler::Sampler(const Context& context, const GuestSamplerResource& descriptor) : context(context) {
         Validate(context, descriptor);
         forcesDegamma = descriptor.forceDegamma;
-        disablesDegamma = descriptor.disableDegamma;
+        disablesDegamma = descriptor.disableDegamma && !descriptor.forceDegamma;
 
         VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         VkSamplerReductionModeCreateInfoEXT reduction{VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT, nullptr, descriptor.reductionMode};
@@ -143,6 +143,21 @@ namespace AgcDriver::Graphics {
             if (element < samplers.size() && samplers[element]->ForcesDegamma()) return true;
         }
         return false;
+    }
+
+    bool DisablesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
+        bool disabled = false;
+        bool enabled = false;
+        for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
+            const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
+            Require(element < samplers.size(), "a sampled texture is paired with an unbound sampler element " + std::to_string(element));
+            const auto& sampler = samplers[element];
+            disabled = disabled || sampler->DisablesDegamma();
+            enabled = enabled || !sampler->DisablesDegamma();
+        }
+        if (!IsSrgbTextureFormat(guestFormat)) return false;
+        Require(!disabled || !enabled, "an sRGB texture is paired with both ordinary and SKIP_DEGAMMA samplers, which needs distinct sampled views and is not implemented");
+        return disabled;
     }
 
     void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {

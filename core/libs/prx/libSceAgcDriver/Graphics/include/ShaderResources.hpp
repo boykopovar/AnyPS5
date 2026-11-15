@@ -766,7 +766,7 @@ private:
     std::vector<bool> textureFirstLayer;
     std::unordered_set<std::size_t> arrayViewTextures;
     std::vector<bool> textureBaseLevel;
-    std::vector<bool> textureSrgb;
+    std::vector<std::uint8_t> textureGamma;
     std::vector<std::shared_ptr<StorageTexture>> storageTextures;
     std::vector<VkImageView> multisampleStorageViews;
     std::vector<std::uint32_t> storageMips;
