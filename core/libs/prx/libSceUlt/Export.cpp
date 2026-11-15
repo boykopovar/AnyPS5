@@ -645,8 +645,10 @@ int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name,
         return ULT_ERROR_NULL;
     }
     UltResourcePoolState state{numThreads, numSyncObjects, workArea};
-    if (!CopyUltName(state._name, name) || !ClearUltObject(pool, 256)) return ULT_ERROR_NULL;
+    if (!CopyUltName(state._name, name)) return ULT_ERROR_NULL;
     std::lock_guard<std::mutex> lock(gMutex);
+    if (gResourcePools.contains(pool)) return ULT_ERROR_STATE;
+    if (!ClearUltObject(pool, 256)) return ULT_ERROR_NULL;
     gResourcePools[pool] = state;
     return ULT_OK;
 }
@@ -960,8 +962,10 @@ int APS5_VABI sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::
         if (header[0] != 0x6C696275 || header[1] != 0x6C746D61 || header[2] != 0x67696300) return ULT_ERROR_INVALID;
     }
     UltRuntimeState state{maxNumUlthread, numWorkerThread, workArea};
-    if (!CopyUltName(state._name, name) || !ClearUltObject(runtime, 4096)) return ULT_ERROR_NULL;
+    if (!CopyUltName(state._name, name)) return ULT_ERROR_NULL;
     std::lock_guard<std::mutex> lock(gMutex);
+    if (gRuntimes.contains(runtime)) return ULT_ERROR_STATE;
+    if (!ClearUltObject(runtime, 4096)) return ULT_ERROR_NULL;
     gRuntimes[runtime] = state;
     return ULT_OK;
 }
