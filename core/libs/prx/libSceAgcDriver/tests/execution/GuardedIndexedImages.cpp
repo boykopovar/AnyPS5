@@ -232,7 +232,19 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, bool fragment, std:
             char address[112];
             const auto badAddress = boundary == Boundary::Above ? 0x20ull : boundary == Boundary::Below ? 0xfffffffff000ull : guest.Address(2u * BlockBytes);
             std::snprintf(address, sizeof(address), "address=0x%llx instruction=0x58 bytes=4", static_cast<unsigned long long>(badAddress));
-            Require(log.find("BDA access failed") != std::string::npos && log.find(address) != std::string::npos, "indexed images: an executed bad descriptor did not fault at its address and PC: " + log);
+            const std::string expectedFault = "BDA access failed: " + std::string(address) + " stage=4 reason=1";
+            Require(failure.empty() || failure == expectedFault || failure == "AGC graphics: " + expectedFault,
+                    "indexed images: an unexpected dispatch exception was caught: " + failure);
+            std::string_view remaining(log);
+            while (!remaining.empty()) {
+                const auto end = remaining.find('\n');
+                const auto line = remaining.substr(0u, end);
+                if (line.find("BDA access failed") != std::string_view::npos || line.find("write-back failed") != std::string_view::npos)
+                    Require(line.find(expectedFault) != std::string_view::npos, "indexed images: an unexpected descriptor or write-back fault was reported: " + log);
+                if (end == std::string_view::npos) break;
+                remaining.remove_prefix(end + 1u);
+            }
+            Require(log.find(expectedFault) != std::string::npos, "indexed images: an executed bad descriptor did not fault at its address and PC: " + log);
         } else {
             Require(failure.empty() && log.find("BDA access failed") == std::string::npos, "indexed images: a valid or skipped texture path faulted: " + log);
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
