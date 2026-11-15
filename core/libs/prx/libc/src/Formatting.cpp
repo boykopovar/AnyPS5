@@ -123,10 +123,11 @@ bool HasNarrowCharacterScan(const char* format) {
 #endif
 
 bool ScansInProcess(const char* format) {
+    if (HasGuestWideScan(format)) return true;
 #ifdef _WIN32
-    return HasGuestWideScan(format) || HasNarrowScan(format, "cxXip");
+    return HasNarrowScan(format, "cxXip");
 #else
-    return HasGuestWideScan(format) || HasNarrowCharacterScan(format);
+    return HasNarrowCharacterScan(format);
 #endif
 }
 
