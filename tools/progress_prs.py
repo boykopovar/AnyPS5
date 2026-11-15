@@ -58,6 +58,13 @@ def closed_dependency_status(repo, number):
     return data["merge_commit_sha"]
 
 
+def is_ancestor(root, ancestor, descendant):
+    result = git(root, "merge-base", "--is-ancestor", ancestor, descendant, check=False)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(result.stderr.strip() or f"git merge-base --is-ancestor failed with {result.returncode}")
+    return result.returncode == 0
+
+
 def dependency_order(pull_requests, root, base_sha, repo):
     dependencies = {number: set(pr["depends"]) for number, pr in pull_requests.items()}
     excluded = {}
@@ -65,12 +72,12 @@ def dependency_order(pull_requests, root, base_sha, repo):
         missing = required - pull_requests.keys()
         for dependency in sorted(missing):
             merge_sha = closed_dependency_status(repo, dependency)
-            if not merge_sha or git(root, "merge-base", "--is-ancestor", merge_sha, base_sha, check=False).returncode:
+            if not merge_sha or not is_ancestor(root, merge_sha, base_sha):
                 excluded[number] = "unresolved_dependency"
                 break
             dependencies[number].discard(dependency)
     for number, pr in pull_requests.items():
-        if git(root, "merge-base", "--is-ancestor", pr["sha"], base_sha, check=False).returncode == 0:
+        if is_ancestor(root, pr["sha"], base_sha):
             excluded.pop(number, None)
             dependencies[number] = set()
     pending = set(pull_requests) - excluded.keys()

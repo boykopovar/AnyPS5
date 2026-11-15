@@ -337,6 +337,26 @@ class PreparationTests(unittest.TestCase):
         self.assertIsNotNone(again)
         again.close()
 
+    def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
+        import contextlib
+        import io
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        unknown = self.root / "unknown.json"
+        unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
+        invalid = self.root / "invalid.json"
+        invalid.write_text("not json", encoding="utf-8")
+        for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
+                                      ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
+            with self.subTest(option=option, path=path.name):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(self.root / "out"), option, str(path)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(f"error: {option}: ", errors.getvalue())
+                self.assertIn(message, errors.getvalue())
+                self.assertFalse((self.root / "out").exists())
+
     def test_smoke_runs_the_marked_titles(self):
         for title_id in ("PPSA00001", "PPSA00002", "PPSA00003"):
             package(self.root / "games" / title_id, title_id)
@@ -859,6 +879,28 @@ class RunReportTests(unittest.TestCase):
         document = self.report()
         document["run"]["averageFps"] = None
         self.assertIsNone(self.read(document)["averageFps"])
+
+    def test_frame_percentiles_reach_both_comparison_outputs(self):
+        def summary(run):
+            report = self.read(self.report(run=run))
+            return {"titles": {"PPSA00001": {"name": "Game", "runs": [{"outcome": "rendering", "report": report}]}}}
+
+        before = summary({"frameMs": {"p50": 12.0, "p90": 16.5, "p99": 41.7}})
+        now = summary({"frameMs": {"p50": 11.0, "p90": 16.0, "p99": 29.5}})
+        lines = title_run.render_compare(title_run.compare_runs(now, before))
+        expected = {"p50": {"before": 12.0, "now": 11.0}, "p90": {"before": 16.5, "now": 16.0},
+                    "p99": {"before": 41.7, "now": 29.5}}
+        self.assertEqual(json.loads(title_run.compare_json(now, before))["titles"]["PPSA00001"]["frameMs"], expected)
+        for percentile, values in expected.items():
+            self.assertIn(f"| Game | PPSA00001 | Frame time {percentile} (ms) | {values['before']} | {values['now']} |",
+                          lines)
+        for run in ({}, {"frameMs": None}):
+            with self.subTest(run=run):
+                unrecorded = summary(run)
+                missing = json.loads(title_run.compare_json(now, unrecorded))["titles"]["PPSA00001"]["frameMs"]
+                self.assertEqual(missing["p99"], {"before": None, "now": 29.5})
+                self.assertIn("| Game | PPSA00001 | Frame time p99 (ms) | not recorded | 29.5 |",
+                              title_run.render_compare(title_run.compare_runs(now, unrecorded)))
 
     def test_unreadable_reports_are_not_recorded(self):
         self.assertIsNone(feature("read_report")(self.root / "missing.json"))

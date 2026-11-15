@@ -115,6 +115,9 @@ void TestTimes() {
     std::int64_t nanoseconds = 0x2222;
     Require(_ZNSt8__sce_v210filesystem16_Last_write_timeEPKcPlS3__nid_postfix("missing", &seconds, &nanoseconds) == NoSuchFile && seconds == 0x1111 && nanoseconds == 0x2222, "a missing file leaves the time outputs alone");
     Require(_ZNSt8__sce_v210filesystem16_Last_write_timeEPKc_nid_postfix("missing") == -1, "a missing file has no write time");
+    Require(_ZNSt8__sce_v210filesystem16_Last_write_timeEPKcPlS3__nid_postfix("f", reinterpret_cast<std::int64_t*>(0x10), &nanoseconds) == 14, "an unwritable seconds output is a bad address");
+    Require(_ZNSt8__sce_v210filesystem16_Last_write_timeEPKcPlS3__nid_postfix("f", &seconds, reinterpret_cast<std::int64_t*>(0x10)) == 14, "an unwritable nanoseconds output is a bad address");
+    Require(_ZNSt8__sce_v210filesystem10_File_sizeEPKcPi_nid_postfix("missing", reinterpret_cast<int*>(0x10)) == UINT64_MAX, "the size of a missing file with an unwritable error output");
 }
 
 void TestDirectories() {

@@ -199,16 +199,25 @@ class Minimizer:
 
     def materialize(self, calls, chunks, output):
         output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(prefix="aps5-frame-plan-", suffix=".txt", dir=output.parent, delete=False) as file:
-            plan = Path(file.name)
-        try:
+        with tempfile.TemporaryDirectory(prefix="aps5-frame-output-", dir=output.parent) as temporary:
+            root = Path(temporary)
+            plan = root / "candidate.plan"
+            candidate = root / "capture"
             self.write_plan(plan, calls, chunks)
-            result = subprocess.run([*self.command(self.filter), "apply", str(self.capture), str(plan), str(output)], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        finally:
-            plan.unlink(missing_ok=True)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "final capture filtering failed")
-        self.output_created = True
+            result = subprocess.run([*self.command(self.filter), "apply", str(self.capture), str(plan), str(candidate)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.strip() or "final capture filtering failed")
+            if candidate.is_symlink() or not candidate.is_dir():
+                raise RuntimeError("final capture filter did not create a capture directory")
+            output.mkdir()
+            self.output_created = True
+            try:
+                for entry in candidate.iterdir():
+                    entry.replace(output / entry.name)
+            except BaseException:
+                shutil.rmtree(output)
+                self.output_created = False
+                raise
 
 
 def parse_args(argv=None):

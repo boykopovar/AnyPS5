@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,10 +17,15 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceVideoOut/include/Buffer.hpp"
 #include "prx/libSceGnmDriver/include/CommandStream.hpp"
+#include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
@@ -32,6 +38,10 @@ constexpr std::uint32_t OpContextControl = 0x28;
 constexpr std::uint32_t OpNumInstances = 0x2f;
 constexpr std::uint32_t OpWriteData = 0x37;
 constexpr std::uint32_t OpWaitRegMem = 0x3c;
+constexpr std::uint32_t OpIndirectBuffer = 0x3f;
+constexpr std::uint32_t IndirectBufferWords = 0xfffffu;
+constexpr std::uint32_t IndirectBufferChain = 1u << 20;
+constexpr std::uint32_t CalledBufferLevels = 2;
 constexpr std::uint32_t OpAcquireMem = 0x58;
 constexpr std::uint32_t OpSetContextReg = 0x69;
 constexpr std::uint32_t OpSetShReg = 0x76;
@@ -44,6 +54,7 @@ constexpr std::uint32_t CpDmaReadTagsBytes = 0xc08bu * 4;
 constexpr std::uint32_t OpEventWriteEop = 0x47;
 constexpr std::uint32_t OpEventWriteEos = 0x48;
 constexpr std::uint32_t OpReleaseMem = 0x49;
+constexpr std::uint32_t OpRewind = 0x59;
 constexpr std::uint32_t OpLoadConstRam = 0x80;
 constexpr std::uint32_t OpWriteConstRam = 0x81;
 constexpr std::uint32_t OpDumpConstRam = 0x83;
@@ -54,6 +65,8 @@ constexpr std::uint32_t OpWaitOnDeCounterDiff = 0x88;
 constexpr std::uint32_t EventControlMask = 0xf3fu;
 constexpr std::uint32_t EosStoreData = 2;
 constexpr std::uint32_t ReleaseMemData32 = 1u << 29;
+constexpr std::uint32_t ReleaseMemControlMask = 0xe7000000u;
+constexpr std::uint32_t ReleaseMemDestinationMask = 3u << 16;
 constexpr std::uint32_t GfxEndOfPipeEvent = 0x40;
 
 constexpr std::uint32_t HwInitPacketWords = 0x100;
@@ -120,6 +133,38 @@ std::uint32_t* DefaultState(std::uint32_t* at, std::uint32_t scModeCntl1) {
     at = Emit(at, OpSetContextReg, {0x295, 0x100, 0x100, 4});
     return Emit(at, OpSetUconfigReg, {0x200, 0xe0000000u});
 }
+
+constexpr std::array<std::uint32_t, 124> BaseHardwareState350 = [] {
+    constexpr auto& neo = GnmNeo::HardwareState350;
+    static_assert(neo[7] == 0x219 && neo[10] == 0x21a);
+    static_assert(neo[119] == 0xc0026900u && neo[120] == 0xebu);
+    static_assert(neo[131] == 0xc0017900u && neo[132] == 0x40000258u);
+    std::array<std::uint32_t, 124> base{};
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < 7; ++i) base[out++] = neo[i];
+    for (std::size_t i = 13; i < 119; ++i) base[out++] = neo[i];
+    for (std::size_t i = 123; i < 131; ++i) base[out++] = neo[i];
+    base[out++] = Header(OpSetContextReg, 2);
+    base[out++] = 0x2aa;
+    base[out++] = 0xff;
+    return base;
+}();
+
+constexpr std::array<std::uint32_t, 98> BaseContextState400 = [] {
+    constexpr auto& neo = GnmNeo::ContextState400;
+    static_assert(neo[88] == 0xc0026900u && neo[89] == 0xebu);
+    static_assert(neo[97] == 0xc0017900u && neo[98] == 0x40000258u);
+    std::array<std::uint32_t, 98> base{};
+    std::size_t out = 0;
+    for (std::size_t i = 0; i < 88; ++i) base[out++] = neo[i];
+    for (std::size_t i = 92; i < 97; ++i) base[out++] = neo[i];
+    base[out++] = Header(OpSetContextReg, 2);
+    base[out++] = 0x2aa;
+    base[out++] = 0xff;
+    base[out++] = 0xc09e1000u;
+    base[out++] = neo[101];
+    return base;
+}();
 
 struct FrameStart {
     std::uint32_t words[HwInitPacketWords]{};
@@ -201,6 +246,11 @@ void Lower(std::vector<std::uint32_t>& out, std::span<const std::uint32_t> packe
             if ((packet[3] >> 29) != EosStoreData) NotImplemented_nid_no_patch("EVENT_WRITE_EOS GDS store");
             Append(out, {Header(OpReleaseMem, 7), packet[1] & EventControlMask, ReleaseMemData32, packet[2], packet[3] & 0xffffu, packet[4], 0, 0});
             return;
+        case OpReleaseMem:
+            if (packet.size() != 7) throw std::runtime_error("GnmDriver: invalid RELEASE_MEM size");
+            if ((packet[2] & ReleaseMemDestinationMask) != 0) NotImplemented_nid_no_patch("RELEASE_MEM to a destination other than memory");
+            Append(out, {Header(OpReleaseMem, 7), packet[1] & EventControlMask, packet[2] & ReleaseMemControlMask, packet[3], packet[4] & 0xffffu, packet[5], packet[6], 0});
+            return;
         case OpSurfaceSync:
             if (packet.size() != 5) throw std::runtime_error("GnmDriver: invalid SURFACE_SYNC size");
             Append(out, {Header(OpAcquireMem, 6), packet[1], packet[2], 0, packet[3], 0, packet[4]});
@@ -220,6 +270,26 @@ void Lower(std::vector<std::uint32_t>& out, std::span<const std::uint32_t> packe
             return;
         default:
             out.insert(out.end(), packet.begin(), packet.end());
+    }
+}
+
+void LowerCompute(std::vector<std::uint32_t>& out, std::span<const std::uint32_t> packet, std::uint32_t level) {
+    if (Opcode(packet[0]) != OpIndirectBuffer || packet.size() != 4 || (packet[0] & 1u) != 0 || (packet[3] & IndirectBufferChain) != 0) {
+        Lower(out, packet);
+        return;
+    }
+    if (level == CalledBufferLevels) NotImplemented_nid_no_patch("a compute command buffer called more than two levels below the ring");
+    const std::size_t count = packet[3] & IndirectBufferWords;
+    if (count == 0) return;
+    const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(packet[1] & ~3u) | (static_cast<std::uintptr_t>(packet[2] & 0xffffu) << 32));
+    AgcDriverCheckGuestMemory_nid_postfix(target, count * sizeof(std::uint32_t), alignof(std::uint32_t));
+    const std::vector<std::uint32_t> words(target, target + count);
+    for (std::size_t at = 0; at < words.size();) {
+        const auto called = GnmDriver::PacketAt(words, at, "called compute command buffer");
+        at += called.size();
+        if (IsFiller(called[0])) continue;
+        if (Opcode(called[0]) == OpRewind) NotImplemented_nid_no_patch("a REWIND packet in a command buffer a compute ring calls");
+        LowerCompute(out, called, level + 1);
     }
 }
 
@@ -279,6 +349,32 @@ std::vector<std::uint32_t> MergeEngines(std::span<const std::uint32_t> dcb, std:
 
 namespace {
 
+constexpr std::uint32_t FirstComputeQueue = 0x20;
+constexpr std::uint32_t ComputePipes = 7;
+constexpr std::uint32_t QueuesPerPipe = 8;
+static_assert(ComputePipes * QueuesPerPipe <= AgcDriver::DriverDetail::SubmissionQueueEnd - FirstComputeQueue);
+
+struct ComputeRing {
+    const std::uint32_t* words = nullptr;
+    std::uint32_t size = 0;
+    volatile std::uint32_t* readOffset = nullptr;
+    std::uint32_t writeOffset = 0;
+    bool mapped = false;
+};
+
+std::mutex g_ringMutex;
+std::array<ComputeRing, ComputePipes * QueuesPerPipe> g_rings;
+
+void UseGcnShaders() {
+    static const bool gcn = (AgcDriverUseGcnShaders_nid_postfix(), true);
+    static_cast<void>(gcn);
+}
+
+ComputeRing& MappedRing(std::uint32_t id, const char* unmapped) {
+    if (id == 0 || id > g_rings.size() || !g_rings[id - 1].mapped) NotImplemented_nid_no_patch(unmapped);
+    return g_rings[id - 1];
+}
+
 void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes) {
     static FrameStart frameStart;
     static const bool waitIdle = std::getenv("APS5_GNM_SUBMIT_WAIT_IDLE") != nullptr;
@@ -289,8 +385,7 @@ void SubmitLocked(std::uint32_t count, std::uint32_t* const* dcbs, const std::ui
         merged.push_back(GnmDriver::MergeEngines({dcbs[i], dcbBytes[i] / 4}, {constantWords != 0 ? ccbs[i] : nullptr, constantWords}));
     }
     if (!g_frameStarted) {
-        static const bool gcn = (AgcDriverUseGcnShaders_nid_postfix(), true);
-        static_cast<void>(gcn);
+        UseGcnShaders();
         AgcDriverSubmitGraphics_nid_postfix(frameStart.words, frameStart.size);
         g_frameStarted = true;
     }
@@ -438,6 +533,24 @@ std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState200_nid_disambig1(std:
     return HwInitPacketWords;
 }
 
+std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState350_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd) return static_cast<std::uint32_t>(-1);
+    if (size < HwInitPacketWords) return 0;
+    auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), cmd);
+    if (sceKernelIsNeoMode()) at = std::copy(GnmNeo::HardwareState350.begin(), GnmNeo::HardwareState350.end(), at);
+    else at = std::copy(BaseHardwareState350.begin(), BaseHardwareState350.end(), at);
+    Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
+    return HwInitPacketWords;
+}
+
+std::uint32_t APS5_VABI sceGnmDrawInitToDefaultContextState400_nid_disambig1(std::uint32_t* cmd, std::uint32_t size) {
+    if (!cmd) return static_cast<std::uint32_t>(-1);
+    if (size != HwInitPacketWords) return 0;
+    if (sceKernelIsNeoMode()) std::copy(GnmNeo::ContextState400.begin(), GnmNeo::ContextState400.end(), cmd);
+    else std::copy(BaseContextState400.begin(), BaseContextState400.end(), cmd);
+    return HwInitPacketWords;
+}
+
 std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size) {
     if (size < HwInitPacketWords) return 0;
     auto* at = Emit(cmd, OpSetShReg, {0x216, 0xffffffffu}, true);
@@ -446,6 +559,24 @@ std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cm
     at = Emit(at, OpAcquireMem, {0x28000000u, 0, 0, 0, 0, 10});
     Nop(at, static_cast<std::uint32_t>(cmd + HwInitPacketWords - at) - 1);
     return HwInitPacketWords;
+}
+
+int APS5_VABI sceGnmSetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t primGroupSizeMinusOne, std::uint32_t partialVsWaveMode, std::uint32_t switchOnlyOnEop) {
+    if (!cmdbuf || size != 3u || primGroupSizeMinusOne >= 256u || (partialVsWaveMode | switchOnlyOnEop) >= 2u) return -1;
+    const bool neo = sceKernelIsNeoMode() != 0;
+    std::uint32_t value = primGroupSizeMinusOne | (partialVsWaveMode << 16u);
+    if (neo) value = switchOnlyOnEop != 0u ? value | 0x740000u : primGroupSizeMinusOne | 0x6d0000u;
+    const std::array<std::uint32_t, 3> packet{neo ? 0xc0017900u : 0xc0016900u, neo ? 0x40000258u : 0x2aau, value};
+    if (!GuestCopyOut_nid_no_patch(cmdbuf, packet.data(), sizeof(packet))) return -1;
+    return 0;
+}
+
+int APS5_VABI sceGnmResetVgtControl_nid_disambig1(std::uint32_t* cmdbuf, std::uint32_t size) {
+    if (!cmdbuf || size != 3u) return -1;
+    const bool neo = sceKernelIsNeoMode() != 0;
+    const std::array<std::uint32_t, 3> packet{neo ? 0xc0017900u : 0xc0016900u, neo ? 0x40000258u : 0x2aau, neo ? 0x6d007fu : 0xffu};
+    if (!GuestCopyOut_nid_no_patch(cmdbuf, packet.data(), sizeof(packet))) return -1;
+    return 0;
 }
 
 int APS5_VABI sceGnmInsertPushMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker) {
@@ -592,8 +723,27 @@ int APS5_VABI sceGnmDebugHardwareStatus() {
     return 0;
 }
 
-int APS5_VABI sceGnmDingDong() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmDingDong(std::uint32_t id, std::uint32_t nextOffsetInDwords) {
+    std::lock_guard lock(g_ringMutex);
+    auto& ring = MappedRing(id, "sceGnmDingDong for a queue id that is not mapped");
+    if (nextOffsetInDwords >= ring.size) NotImplemented_nid_no_patch("sceGnmDingDong with an offset past the end of the ring");
+    std::vector<std::uint32_t> words;
+    for (auto at = ring.writeOffset; at != nextOffsetInDwords; at = (at + 1) & (ring.size - 1)) words.push_back(ring.words[at]);
+    std::vector<std::uint32_t> lowered;
+    for (std::size_t at = 0; at < words.size();) {
+        if (!IsFiller(words[at]) && (words[at] >> 30) == 3 && ((words[at] >> 16) & 0x3fffu) + 2 > words.size() - at)
+            NotImplemented_nid_no_patch("sceGnmDingDong with an offset inside a packet");
+        const auto packet = GnmDriver::PacketAt(words, at, "compute ring");
+        if (!IsFiller(packet[0]) && Opcode(packet[0]) == OpRewind) NotImplemented_nid_no_patch("sceGnmDingDong with a REWIND packet in the ring");
+        at += packet.size();
+        if (!IsFiller(packet[0])) LowerCompute(lowered, packet, 0);
+    }
+    if (!lowered.empty()) {
+        const Packet packet{lowered.data(), static_cast<std::uint32_t>(lowered.size()), 0, {}};
+        sceAgcDriverSubmitAcb(FirstComputeQueue + id - 1, &packet);
+    }
+    ring.writeOffset = nextOffsetInDwords;
+    *ring.readOffset = nextOffsetInDwords;
     return 0;
 }
 
@@ -611,8 +761,8 @@ std::uint64_t APS5_VABI sceGnmGetTheTessellationFactorRingBufferBaseAddress() {
     return 0xff0000000ull;
 }
 
-int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmLogicalCuIndexToPhysicalCuIndex(std::uint32_t engine, std::uint32_t cuIndex) {
+    if (engine <= 1 && cuIndex < 9) return -1;
     return 0;
 }
 
@@ -620,9 +770,16 @@ std::uint32_t APS5_VABI sceGnmLogicalCuMaskToPhysicalCuMask(std::uint32_t, std::
     return mask;
 }
 
-int APS5_VABI sceGnmMapComputeQueue() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmMapComputeQueue(std::uint32_t pipe, std::uint32_t queue, void* ring, std::uint32_t ringSizeInDwords, void* readOffset) {
+    if (pipe >= ComputePipes || queue >= QueuesPerPipe || !ring || reinterpret_cast<std::uintptr_t>(ring) % 256 != 0 || !std::has_single_bit(ringSizeInDwords)
+        || !readOffset || reinterpret_cast<std::uintptr_t>(readOffset) % 4 != 0)
+        NotImplemented_nid_no_patch("sceGnmMapComputeQueue for a pipe above 6, a queue above 7, a ring that is missing, not 256-byte aligned or not a power of two in dwords, or a read offset that is missing or not 4-byte aligned");
+    std::lock_guard lock(g_ringMutex);
+    const auto slot = pipe * QueuesPerPipe + queue;
+    if (g_rings[slot].mapped) NotImplemented_nid_no_patch("sceGnmMapComputeQueue for a pipe and queue that are already mapped");
+    UseGcnShaders();
+    g_rings[slot] = {static_cast<const std::uint32_t*>(ring), ringSizeInDwords, static_cast<volatile std::uint32_t*>(readOffset), 0, true};
+    return static_cast<int>(slot) + 1;
 }
 
 int APS5_VABI sceGnmRequestFlipAndSubmitDone() {
@@ -645,8 +802,10 @@ int APS5_VABI sceGnmSetupMipStatsReport() {
     return 0;
 }
 
-int APS5_VABI sceGnmUnmapComputeQueue() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmUnmapComputeQueue(std::uint32_t id) {
+    std::lock_guard lock(g_ringMutex);
+    auto& ring = MappedRing(id, "sceGnmUnmapComputeQueue for a queue id that is not mapped");
+    ring = {};
     return 0;
 }
 
