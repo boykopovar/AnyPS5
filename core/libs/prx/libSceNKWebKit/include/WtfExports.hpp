@@ -69,6 +69,11 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPh
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl20create8BitIfPossibleEPKDsj(const char16_t* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIILowercaseEv(const NKWebKit::WtfAbi::StringImpl* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseEv(const NKWebKit::WtfAbi::StringImpl* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE(const NKWebKit::WtfAbi::StringImpl* self, const NKWebKit::WtfAbi::String* localeIdentifier);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl28convertToUppercaseWithLocaleERKNS_10AtomStringE(const NKWebKit::WtfAbi::StringImpl* self, const NKWebKit::WtfAbi::String* localeIdentifier);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl31convertToLowercaseWithoutLocaleEv(const NKWebKit::WtfAbi::StringImpl* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv(const NKWebKit::WtfAbi::StringImpl* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(const NKWebKit::WtfAbi::StringImpl* self, unsigned failingIndex);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKhj(const unsigned char* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const NKWebKit::WtfAbi::StringImpl* self, unsigned start, unsigned length);
@@ -109,6 +114,8 @@ void APS5_VABI _ZN3WTF13StringBuilder16appendCharactersEPKhj(NKWebKit::WtfAbi::S
 void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(NKWebKit::WtfAbi::StringBuilder* self, const NKWebKit::WtfAbi::String& string);
 NKWebKit::WtfAbi::ProcessPrivileges APS5_VABI _ZN3WTF13allPrivilegesEv();
 bool APS5_VABI _ZN3WTF13isMainRunLoopEv();
+NKWebKit::WtfAbi::StringViewWithUnderlyingString APS5_VABI _ZN3WTF13normalizedNFCENS_10StringViewE(NKWebKit::WtfAbi::StringView string);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF13normalizedNFCERKNS_6StringE(const NKWebKit::WtfAbi::String* string);
 void* APS5_VABI _ZN3WTF13jsValueMallocEm(std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocReturnValue* result, std::size_t count, std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastMallocEm(WTF::TryMallocReturnValue* result, std::size_t size);
@@ -319,6 +326,12 @@ NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String20substringSharingImplEjj(cons
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE(const NKWebKit::WtfAbi::String* self, bool (APS5_VABI *predicate)(char16_t));
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String23convertToASCIILowercaseEv(const NKWebKit::WtfAbi::String* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String23convertToASCIIUppercaseEv(const NKWebKit::WtfAbi::String* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String28convertToLowercaseWithLocaleERKNS_10AtomStringE(const NKWebKit::WtfAbi::String* self, const NKWebKit::WtfAbi::String* localeIdentifier);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String28convertToUppercaseWithLocaleERKNS_10AtomStringE(const NKWebKit::WtfAbi::String* self, const NKWebKit::WtfAbi::String* localeIdentifier);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String31convertToLowercaseWithoutLocaleEv(const NKWebKit::WtfAbi::String* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String31convertToUppercaseWithoutLocaleEv(const NKWebKit::WtfAbi::String* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj(const NKWebKit::WtfAbi::String* self, unsigned failingIndex);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF6String8foldCaseEv(const NKWebKit::WtfAbi::String* self);
 bool APS5_VABI _ZNK3WTF6String27isSafeToSendToAnotherThreadEv(const NKWebKit::WtfAbi::String* self);
 NKWebKit::WtfAbi::CString APS5_VABI _ZNK3WTF6String4utf8ENS_14ConversionModeE(const NKWebKit::WtfAbi::String* self, unsigned mode);
 NKWebKit::WtfAbi::CString APS5_VABI _ZNK3WTF6String5asciiEv(const NKWebKit::WtfAbi::String* self);

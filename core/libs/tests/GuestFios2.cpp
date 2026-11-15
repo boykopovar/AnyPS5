@@ -629,6 +629,75 @@ static void CheckFileHandles(const std::string& directory) {
     REQUIRE(sceFiosDeleteSync(nullptr, path.c_str()) == SCE_FIOS_OK);
 }
 
+static void CheckOpenFlagsAndVectors(const std::string& directory, const std::string& file) {
+    REQUIRE(sceFiosIsInitialized(nullptr));
+    SceFiosFH opened = 0x1234;
+    const SceFiosOp dirOpen = sceFiosFHOpen(nullptr, &opened, directory.c_str(), nullptr);
+    REQUIRE(sceFiosOpWait(dirOpen) == SCE_FIOS_ERROR_NOT_A_FILE);
+    REQUIRE(opened == 0x1234);
+    sceFiosOpDelete(dirOpen);
+
+    const SceFiosOp dirOpenMode = sceFiosFHOpenWithMode(nullptr, &opened, directory.c_str(), nullptr, 0);
+    REQUIRE(sceFiosOpWait(dirOpenMode) == SCE_FIOS_ERROR_NOT_A_FILE);
+    REQUIRE(opened == 0x1234);
+    sceFiosOpDelete(dirOpenMode);
+
+    opened = 0;
+    const SceFiosOp fileOpen = sceFiosFHOpen(nullptr, &opened, file.c_str(), nullptr);
+    REQUIRE(sceFiosOpWait(fileOpen) == SCE_FIOS_OK && sceFiosIsValidHandle(opened));
+    sceFiosOpDelete(fileOpen);
+
+    const SceFiosOp badCount = sceFiosFHReadv(nullptr, opened, nullptr, 0);
+    REQUIRE(sceFiosOpWait(badCount) == SCE_FIOS_ERROR_BAD_IOVCNT);
+    sceFiosOpDelete(badCount);
+
+    std::vector<std::uint8_t> first(8, 'Z');
+    std::vector<std::uint8_t> second(4, 'Z');
+    std::vector<std::uint8_t> third(4, 'Z');
+    const SceFiosBuffer readVecs[3] = {
+        { first.data(), 8 },
+        { second.data(), 4 },
+        { third.data(), 4 },
+    };
+    const SceFiosOp readv = sceFiosFHReadv(nullptr, opened, readVecs, 3);
+    REQUIRE(sceFiosOpWait(readv) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(readv) == 10);
+    REQUIRE(std::memcmp(first.data(), "01234567", 8) == 0);
+    REQUIRE(second[0] == '8' && second[1] == '9' && second[2] == 'Z' && second[3] == 'Z');
+    REQUIRE(third[0] == 'Z' && third[1] == 'Z' && third[2] == 'Z' && third[3] == 'Z');
+    sceFiosOpDelete(readv);
+
+    const SceFiosOp badCountWrite = sceFiosFHWritev(nullptr, opened, readVecs, 0);
+    REQUIRE(sceFiosOpWait(badCountWrite) == SCE_FIOS_ERROR_BAD_IOVCNT);
+    sceFiosOpDelete(badCountWrite);
+    REQUIRE(sceFiosFHCloseSync(nullptr, opened) == SCE_FIOS_OK);
+
+    const std::string written = directory + "/vectored.bin";
+    SceFiosOpenParams writer{};
+    writer.openFlags = SCE_FIOS_O_WRITE | SCE_FIOS_O_CREAT | SCE_FIOS_O_TRUNC;
+    opened = 0;
+    const SceFiosOp writeOpen = sceFiosFHOpenWithMode(nullptr, &opened, written.c_str(), &writer, 0666);
+    REQUIRE(sceFiosOpWait(writeOpen) == SCE_FIOS_OK && sceFiosIsValidHandle(opened));
+    sceFiosOpDelete(writeOpen);
+
+    std::vector<std::uint8_t> head(4, 'a');
+    std::vector<std::uint8_t> tail(4, 'e');
+    const SceFiosBuffer writeVecs[2] = {
+        { head.data(), 4 },
+        { tail.data(), 4 },
+    };
+    const SceFiosOp writev = sceFiosFHWritev(nullptr, opened, writeVecs, 2);
+    REQUIRE(sceFiosOpWait(writev) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOpGetActualCount(writev) == 8);
+    sceFiosOpDelete(writev);
+    REQUIRE(sceFiosFHCloseSync(nullptr, opened) == SCE_FIOS_OK);
+
+    std::uint8_t contents[8]{};
+    REQUIRE(sceFiosFileReadSync(nullptr, written.c_str(), contents, 8, 0) == 8);
+    REQUIRE(std::memcmp(contents, "aaaaeeee", 8) == 0);
+    REQUIRE(sceFiosDeleteSync(nullptr, written.c_str()) == SCE_FIOS_OK);
+}
+
 static std::int32_t AddOverlay(std::uint8_t type, std::uint8_t order, const std::string& destination, const std::string& source) {
     OverlayRecordTest overlay{};
     overlay.type = type;
@@ -852,6 +921,7 @@ int main() {
     CheckCallbacks(file);
     CheckSuspension(file);
     CheckMutations(directory.generic_string());
+    CheckOpenFlagsAndVectors(directory.generic_string(), file);
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
     CheckOverlayResolve(directory.generic_string());
