@@ -95,4 +95,15 @@ if(BUILD_TESTING)
         set_tests_properties(gnm_default_state_200 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
     endif()
+
+    add_test_executable(gnm_tool_answers_tests tests/ToolAnswers.cpp)
+    target_include_directories(gnm_tool_answers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(gnm_tool_answers_tests PRIVATE libSceGnmDriver libc)
+    configure_windows_unwind(gnm_tool_answers_tests)
+    add_test(NAME gnm_tool_answers COMMAND gnm_tool_answers_tests)
+    set_tests_properties(gnm_tool_answers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(gnm_tool_answers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
+    endif()
 endif()
