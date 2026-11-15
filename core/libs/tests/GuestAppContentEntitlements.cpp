@@ -103,6 +103,9 @@ int main() {
     Require(sceAppContentGetAddcontInfo(0, &label0, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "ADDON00000000001") == 0);
     Require(info.status == 4);
+    errno = EBUSY;
+    Require(sceAppContentGetAddcontInfo(0, &label0, reinterpret_cast<AppContentAddcontInfo*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
 
     NpUnifiedEntitlementLabel label1{};
     std::memcpy(label1.data, "ADDON00000000002", 16);
@@ -125,6 +128,11 @@ int main() {
 
     AppContentMountPoint mountPointNoDir{};
     Require(sceAppContentAddcontMount(0, &labelNoDir, &mountPointNoDir) == ErrorNotFound);
+
+    errno = EBUSY;
+    Require(sceAppContentAddcontMount(0, &label0, reinterpret_cast<AppContentMountPoint*>(std::uintptr_t{0x10})) == ErrorParameter);
+    Require(errno == EBUSY);
+    Require(access_nid_postfix("/addcont0/sample.txt", 0) == -1);
 
     AppContentMountPoint mountPoint0{};
     Require(sceAppContentAddcontMount(0, &label0, &mountPoint0) == 0);
