@@ -88,6 +88,24 @@ def main():
         convert("empty", empty, "Unterminated dynamic segment")
 
         strict_modes = (["unused-filter=2"], ["--windows", "unused-filter=2"], ["--macos", "unused-filter=2"])
+        for name, offset, file_size, address, memory_size in (
+            ("zero", 0, 0, 0, 0),
+            ("past-eof", 0x100000, 0x4000, 0, 0x4000),
+            ("all-max", 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff),
+            ("memory-overflow", 0, 0, 0xffffffffffffffff, 1),
+        ):
+            strict = strict_fixture()
+            struct.pack_into("<H", strict, 0x38, 3)
+            struct.pack_into("<IIQQQQQQ", strict, 176, 0, 0xffffffff, offset, address,
+                             0xffffffffffffffff, file_size, memory_size, 0xffffffffffffffff)
+            convert("strict-null-" + name, strict, modes=strict_modes)
+
+        strict = strict_fixture()
+        struct.pack_into("<H", strict, 0x38, 3)
+        struct.pack_into("<IIQQQQQQ", strict, 176, 1, 4, 0x100000, 0x8000,
+                         0x8000, 0x4000, 0x4000, 1)
+        convert("strict-load-past-eof", strict, "Segment offset out of bounds", strict_modes)
+
         strict_size = struct.unpack_from("<Q", strict_fixture(), 120 + 32)[0]
         strict = strict_fixture()
         struct.pack_into("<QQ", strict, 120 + 32, strict_size + 0x18, strict_size + 0x18)

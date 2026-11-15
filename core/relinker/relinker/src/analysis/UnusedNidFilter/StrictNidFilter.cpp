@@ -23,6 +23,7 @@ public:
         requireRange(header.ProgramHeaderOffset, static_cast<std::uint64_t>(header.ProgramHeaderCount) * 56);
         headers = reader.ReadProgramHeaders();
         for (const auto& segment : headers) {
+            if (segment.Type == 0) continue;
             requireRange(segment.Offset, segment.FileSize);
             if (segment.MemorySize > std::numeric_limits<VirtualAddress>::max() - segment.MappedAddress)
                 throw RelinkerException("Strict filter: segment address overflow", segment.MappedAddress);
