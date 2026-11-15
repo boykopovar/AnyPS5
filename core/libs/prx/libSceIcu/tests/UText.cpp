@@ -21,7 +21,7 @@ void Run() {
     Require(text == nullptr);
 
     alignas(8) std::uint8_t dummy[16]{};
-    RequireThrows([&] { utext_close(reinterpret_cast<UText*>(dummy)); });
+    Require(utext_close(reinterpret_cast<UText*>(dummy)) == reinterpret_cast<UText*>(dummy));
     for (const auto byte : dummy) Require(byte == 0);
 }
 

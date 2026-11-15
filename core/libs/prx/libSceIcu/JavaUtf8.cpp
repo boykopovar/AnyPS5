@@ -1,7 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
-#include "prx/libSceIcu/Status.hpp"
+#include "prx/libSceIcu/GuestAccess.hpp"
 #include <cstdint>
-#include <cstring>
 
 namespace {
 
@@ -22,16 +21,16 @@ bool FourByteSecond(std::uint8_t lead, std::uint8_t byte) {
 }
 
 std::int64_t Skipped(const std::uint8_t* source, std::int64_t lead, std::int64_t length) {
-    const auto first = source[lead];
-    const auto at = [&](std::int64_t offset) { return lead + offset < length ? source[lead + offset] : 0; };
+    const auto first = Icu::ReadGuest(source, lead);
+    const auto at = [&](std::int64_t offset) { return lead + offset < length ? Icu::ReadGuest(source, lead + offset) : 0; };
     if (first >= 0xf0 && first <= 0xf4) {
-        if (lead + 1 >= length || !FourByteSecond(first, source[lead + 1])) return 1;
+        if (lead + 1 >= length || !FourByteSecond(first, Icu::ReadGuest(source, lead + 1))) return 1;
         if (!Continuation(at(2))) return 2;
         if (!Continuation(at(3))) return 3;
         return 4;
     }
     if (first >= 0xe0 && first <= 0xef) {
-        if (lead + 1 >= length || !ThreeByteSecond(first, source[lead + 1])) return 1;
+        if (lead + 1 >= length || !ThreeByteSecond(first, Icu::ReadGuest(source, lead + 1))) return 1;
         return 2;
     }
     return 1;
@@ -48,41 +47,41 @@ extern "C" {
 char16_t* APS5_VABI u_strFromJavaModifiedUTF8WithSub_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
                                                                  const char* text, std::int32_t sourceLength, std::int32_t substitution,
                                                                  std::int32_t* substitutions, std::int32_t* status) {
-    if (Icu::Failure(status)) return nullptr;
+    if (Icu::ReadGuest(status) > 0) return nullptr;
     if ((!text && sourceLength != 0) || sourceLength < -1 || (!destination && capacity != 0) || capacity < 0 ||
         substitution > 0x10ffff || Icu::Surrogate(substitution)) {
-        *status = Icu::IllegalArgument;
+        Icu::WriteGuest(status, Icu::IllegalArgument);
         return nullptr;
     }
-    if (substitutions) *substitutions = 0;
+    if (substitutions) Icu::WriteGuest(substitutions, std::int32_t{0});
     const auto* source = reinterpret_cast<const std::uint8_t*>(text);
-    const std::int64_t length = sourceLength < 0 ? static_cast<std::int64_t>(std::strlen(text)) : sourceLength;
+    const std::int64_t length = sourceLength < 0 ? Icu::GuestStringLength(text) : sourceLength;
     std::int64_t written = 0;
     std::int64_t extra = 0;
     std::int32_t replaced = 0;
     for (std::int64_t index = 0; index < length;) {
-        const auto lead = source[index];
+        const auto lead = Icu::ReadGuest(source, index);
         const bool writing = written < capacity;
         char16_t unit = lead;
         std::int64_t used = 1;
         bool valid = true;
-        if (lead >= 0xc0 && lead <= 0xdf && index + 1 < length && Continuation(source[index + 1])) {
-            unit = static_cast<char16_t>(((lead & 0x1f) << 6) | (source[index + 1] & 0x3f));
+        if (lead >= 0xc0 && lead <= 0xdf && index + 1 < length && Continuation(Icu::ReadGuest(source, index + 1))) {
+            unit = static_cast<char16_t>(((lead & 0x1f) << 6) | (Icu::ReadGuest(source, index + 1) & 0x3f));
             used = 2;
-        } else if (lead >= 0xe0 && lead <= 0xef && index + 2 < length && Continuation(source[index + 1]) && Continuation(source[index + 2])) {
-            unit = static_cast<char16_t>(((lead & 0x0f) << 12) | ((source[index + 1] & 0x3f) << 6) | (source[index + 2] & 0x3f));
+        } else if (lead >= 0xe0 && lead <= 0xef && index + 2 < length && Continuation(Icu::ReadGuest(source, index + 1)) && Continuation(Icu::ReadGuest(source, index + 2))) {
+            unit = static_cast<char16_t>(((lead & 0x0f) << 12) | ((Icu::ReadGuest(source, index + 1) & 0x3f) << 6) | (Icu::ReadGuest(source, index + 2) & 0x3f));
             used = 3;
         } else if (lead >= 0x80) {
             valid = false;
         }
         if (valid) {
             index += used;
-            if (writing) destination[written++] = unit;
+            if (writing) Icu::WriteGuest(destination, unit, written++);
             else ++extra;
             continue;
         }
         if (substitution < 0) {
-            *status = Icu::InvalidCharacter;
+            Icu::WriteGuest(status, Icu::InvalidCharacter);
             return nullptr;
         }
         index += Skipped(source, index, length);
@@ -90,46 +89,46 @@ char16_t* APS5_VABI u_strFromJavaModifiedUTF8WithSub_nid_postfix(char16_t* desti
         if (!writing) {
             ++extra;
         } else if (substitution <= 0xffff) {
-            destination[written++] = static_cast<char16_t>(substitution);
+            Icu::WriteGuest(destination, static_cast<char16_t>(substitution), written++);
         } else {
-            destination[written++] = static_cast<char16_t>(0xd7c0 + (substitution >> 10));
-            if (written < capacity) destination[written++] = static_cast<char16_t>(0xdc00 + (substitution & 0x3ff));
+            Icu::WriteGuest(destination, static_cast<char16_t>(0xd7c0 + (substitution >> 10)), written++);
+            if (written < capacity) Icu::WriteGuest(destination, static_cast<char16_t>(0xdc00 + (substitution & 0x3ff)), written++);
             else ++extra;
         }
     }
     const auto required = Icu::Checked(written + extra);
-    if (substitutions) *substitutions = replaced;
-    if (destinationLength) *destinationLength = required;
-    Icu::Terminate(destination, capacity, required, status);
+    if (substitutions) Icu::WriteGuest(substitutions, replaced);
+    if (destinationLength) Icu::WriteGuest(destinationLength, required);
+    Icu::TerminateGuest(destination, capacity, required, status);
     return destination;
 }
 
 
 char* APS5_VABI u_strToJavaModifiedUTF8_nid_postfix(char* destination, std::int32_t capacity, std::int32_t* destinationLength,
                                                     const char16_t* source, std::int32_t sourceLength, std::int32_t* status) {
-    if (Icu::Failure(status)) return nullptr;
+    if (Icu::ReadGuest(status) > 0) return nullptr;
     if ((!source && sourceLength != 0) || sourceLength < -1 || (!destination && capacity != 0) || capacity < 0) {
-        *status = Icu::IllegalArgument;
+        Icu::WriteGuest(status, Icu::IllegalArgument);
         return nullptr;
     }
     std::int64_t length = sourceLength;
-    if (length < 0) for (length = 0; source[length] != 0; ++length) {}
+    if (length < 0) length = Icu::GuestStringLength(source);
     std::int64_t written = 0;
     std::int64_t extra = 0;
     bool full = false;
     for (std::int64_t index = 0; index < length; ++index) {
-        const auto unit = source[index];
+        const auto unit = Icu::ReadGuest(source, index);
         const auto size = Encoded(unit);
         if (!full && capacity - written >= size) {
             if (size == 1) {
-                destination[written++] = static_cast<char>(unit);
+                Icu::WriteGuest(destination, static_cast<char>(unit), written++);
             } else if (size == 2) {
-                destination[written++] = static_cast<char>(0xc0 | (unit >> 6));
-                destination[written++] = static_cast<char>(0x80 | (unit & 0x3f));
+                Icu::WriteGuest(destination, static_cast<char>(0xc0 | (unit >> 6)), written++);
+                Icu::WriteGuest(destination, static_cast<char>(0x80 | (unit & 0x3f)), written++);
             } else {
-                destination[written++] = static_cast<char>(0xe0 | (unit >> 12));
-                destination[written++] = static_cast<char>(0x80 | ((unit >> 6) & 0x3f));
-                destination[written++] = static_cast<char>(0x80 | (unit & 0x3f));
+                Icu::WriteGuest(destination, static_cast<char>(0xe0 | (unit >> 12)), written++);
+                Icu::WriteGuest(destination, static_cast<char>(0x80 | ((unit >> 6) & 0x3f)), written++);
+                Icu::WriteGuest(destination, static_cast<char>(0x80 | (unit & 0x3f)), written++);
             }
         } else {
             full = true;
@@ -137,8 +136,8 @@ char* APS5_VABI u_strToJavaModifiedUTF8_nid_postfix(char* destination, std::int3
         }
     }
     const auto required = Icu::Checked(written + extra);
-    if (destinationLength) *destinationLength = required;
-    Icu::Terminate(destination, capacity, required, status);
+    if (destinationLength) Icu::WriteGuest(destinationLength, required);
+    Icu::TerminateGuest(destination, capacity, required, status);
     return destination;
 }
 

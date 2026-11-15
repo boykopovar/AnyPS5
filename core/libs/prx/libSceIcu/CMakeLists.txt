@@ -21,6 +21,23 @@ target_sources(libSceIcu PRIVATE LanguageTag.cpp)
 target_sources(libSceIcu PRIVATE Script.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_icu_text_access_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestTextAccess.cpp)
+    target_include_directories(guest_icu_text_access_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_text_access_tests PRIVATE libSceIcu icu_common libc libkernel)
+    configure_windows_unwind(guest_icu_text_access_tests)
+    add_test(NAME guest_icu_conversion_buffers COMMAND guest_icu_text_access_tests conversion)
+    add_test(NAME guest_icu_case_buffers COMMAND guest_icu_text_access_tests case)
+    add_test(NAME guest_icu_text_differential COMMAND guest_icu_text_access_tests differential)
+    add_test(NAME guest_icu_text_write_watch COMMAND guest_icu_text_access_tests watch)
+    add_test(NAME guest_icu_provider_buffers COMMAND guest_icu_text_access_tests provider)
+    set_tests_properties(guest_icu_conversion_buffers guest_icu_case_buffers guest_icu_text_differential guest_icu_text_write_watch guest_icu_provider_buffers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_conversion_buffers guest_icu_case_buffers guest_icu_text_differential guest_icu_text_write_watch guest_icu_provider_buffers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_icu_language_tag_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LanguageTag.cpp)
     target_include_directories(guest_icu_language_tag_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_icu_language_tag_tests PRIVATE libSceIcu)
@@ -566,6 +583,19 @@ set(ICU_RECOVERED_SOURCES
     StringSearch.cpp
     UText.cpp)
 target_sources(libSceIcu PRIVATE ${ICU_RECOVERED_SOURCES})
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_text_provider_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/TextProvider.cpp)
+    target_include_directories(guest_icu_text_provider_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_text_provider_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_text_provider_tests)
+    add_test(NAME guest_icu_text_provider COMMAND guest_icu_text_provider_tests)
+    set_tests_properties(guest_icu_text_provider PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_text_provider PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     set(ICU_RECOVERED_TESTS
