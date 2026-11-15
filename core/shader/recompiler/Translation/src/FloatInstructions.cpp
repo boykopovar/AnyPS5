@@ -298,9 +298,6 @@ bool TranslationContext::float16Binary(const RdnaInstruction& inst, IrOpcode opc
 }
 
 bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix) {
-    if (mix && floatMode.has_value() && (floatMode->floatMode & 0xc0u) != 0xc0u) {
-        throw std::runtime_error("v_fma_mixlo/mixhi_f16 at pc " + std::to_string(inst.programCounter) + " in FLOAT_MODE " + std::to_string(floatMode->floatMode) + " (f16 denormals not kept) is not implemented");
-    }
     if (opcode == IrOpcode::FPFma32 && !mix && nativeFloat16Fma && nativeFloat16Mode()) return float16NativeFma(inst, accumulator);
     const bool measured = opcode == IrOpcode::FPFma32 && !mix && floatMode.has_value() && (floatMode->floatMode & 0x0cu) == 0u;
     std::array<IrValue*, 3> args{};
@@ -321,7 +318,26 @@ bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode op
     }
     if (mix) {
         const std::uint32_t rounding = floatMode.has_value() ? ((floatMode->floatMode >> 2u) & 3u) << InterpolationRound16Shift : 0u;
-        writeF16(inst.destination, IrF32(ir.Emit(IrOpcode::FPInterpolateF16, IrType::F32, {args[0], args[1], args[2], &ir.Constant(rounding)})), {args[0], args[1], args[2]});
+        IrF32 result(ir.Emit(IrOpcode::FPInterpolateF16, IrType::F32, {args[0], args[1], args[2], &ir.Constant(rounding)}));
+        if (floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
+            const auto magnitude = [&](IrValue& value) -> IrValue& { return ir.BitwiseAnd(ir.BitCastU32(value), ir.Constant(0x7fffffffu)); };
+            const auto doubled = [&](IrValue& value) -> IrValue& {
+                IrValue& bits = ir.BitCastU32(value);
+                IrValue& denormal = ir.IEqual(ir.BitwiseAnd(bits, ir.Constant(0x7f800000u)), ir.Constant(0u));
+                IrValue& shifted = ir.BitwiseOr(ir.BitwiseAnd(bits, ir.Constant(0x80000000u)), ir.ShiftLeftLogical(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(1u)));
+                return ir.BitCastF32(ir.Select(denormal, shifted, ir.IAdd(bits, ir.Constant(0x00800000u))));
+            };
+            IrValue& doubleLhs = ir.ULessThan(magnitude(*args[0]), magnitude(*args[1]));
+            IrValue& lhs = ir.Emit(IrOpcode::SelectF32, IrType::F32, {&doubleLhs, &doubled(*args[0]), args[0]});
+            IrValue& rhs = ir.Emit(IrOpcode::SelectF32, IrType::F32, {&doubleLhs, args[1], &doubled(*args[1])});
+            IrValue& twice = ir.Emit(IrOpcode::FPInterpolateF16, IrType::F32, {&lhs, &rhs, &doubled(*args[2]), &ir.Constant(rounding)});
+            IrValue& bits = ir.BitCastU32(result.Value());
+            IrValue& resultMagnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
+            IrValue& boundary = ir.LogicalAnd(ir.IEqual(resultMagnitude, ir.Constant(0x38800000u)), ir.ULessThan(magnitude(twice), ir.Constant(0x39000000u)));
+            IrValue& tiny = ir.LogicalOr(ir.ULessThan(resultMagnitude, ir.Constant(0x38800000u)), boundary);
+            result = IrF32(ir.BitCastF32(ir.Select(tiny, ir.BitwiseAnd(bits, ir.Constant(0x80000000u)), bits)));
+        }
+        writeF16(inst.destination, result, {args[0], args[1], args[2]});
         return true;
     }
     writeF16(inst.destination, IrF32(ir.Emit(opcode, IrType::F32, {args[0], args[1], args[2]})), {args[0], args[1], args[2]});
