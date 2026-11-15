@@ -358,7 +358,8 @@ int APS5_VABI sceVoiceGetPortAttr(std::uint32_t portId, std::int32_t attr, void*
     const auto requiredType = attr == 1003 ? PortOutDevice : PortInDevice;
     if (found->second.type != requiredType) return InvalidArgument;
     if (attr == 1001) {
-        *static_cast<std::uint8_t*>(value) = 0;
+        const std::uint8_t zero = 0;
+        if (!WriteGuest(static_cast<std::uint8_t*>(value), zero)) return InvalidArgument;
         return 0;
     }
     Fail(__func__, "device attribute backend is not implemented");
