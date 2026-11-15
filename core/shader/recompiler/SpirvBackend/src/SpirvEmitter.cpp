@@ -279,6 +279,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float16DenormPreserve = target.float16DenormPreserve;
     state.robustBufferAccess2 = target.robustBufferAccess2;
     state.exactRobustLoads = target.robustBufferAccess2 && target.exactRobustLoads;
+    state.wideBufferStores = target.wideBufferStores;
     state.float32FlushToZero = target.float32FlushToZero;
     state.waveLdsMemoryBarriers = target.waveLdsMemoryBarriers;
     state.float32DenormPreserve = target.float32DenormPreserve;

@@ -52,6 +52,7 @@ bool g_materialize = false;
 bool g_graph = false;
 bool g_maintenance8 = false;
 bool g_robust2 = false;
+bool g_wideBufferStores = false;
 bool g_waveLdsMemoryBarriers = false;
 bool g_deviceScopeLdsMemoryBarriers = false;
 bool g_ldsLockFences = false;
@@ -92,6 +93,7 @@ bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
     if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
     if (g_robust2) request.request.target.robustBufferAccess2 = true;
+    if (g_wideBufferStores) request.request.target.wideBufferStores = true;
     if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
     if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
     if (g_ldsLockFences) request.request.target.ldsLockFences = true;
@@ -240,7 +242,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--f16-widen-nans] [--f16-narrow-nans] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wide-buffer-stores] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--f16-widen-nans] [--f16-narrow-nans] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
@@ -267,6 +269,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--robust2") {
             g_robust2 = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--wide-buffer-stores") {
+            g_wideBufferStores = true;
             continue;
         }
         if (std::string(argv[i]) == "--wave-lds-memory-barriers") {

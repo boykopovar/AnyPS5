@@ -1,0 +1,7 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_buffer_wide_stores_opt_out COMMAND agc_driver_buffer_wide_stores_tests)
+    set_tests_properties(agc_driver_buffer_wide_stores_opt_out PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_WIDE_BUFFER_STORES=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_buffer_wide_stores_opt_out PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
