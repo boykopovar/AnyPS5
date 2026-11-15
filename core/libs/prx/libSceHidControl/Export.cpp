@@ -760,9 +760,11 @@ int APS5_VABI sceHidControlGetControllerSerialNumberInformation(std::uint32_t de
     request.output = reply.data();
     const int result = Control<QueryCommand>(request);
     if (result < 0) return result;
-    auto* bytes = static_cast<std::uint8_t*>(output);
-    std::memset(bytes + copied, 0, outputSize - copied);
-    std::memcpy(bytes, reply.data(), copied);
+    std::memset(reply.data() + copied, 0, outputSize - copied);
+    const int savedErrno = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(output, reply.data(), reply.size());
+    errno = savedErrno;
+    if (!copiedOut) return ErrorInvalidArgument;
     return result;
 }
 
