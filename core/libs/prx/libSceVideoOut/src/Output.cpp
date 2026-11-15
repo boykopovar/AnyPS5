@@ -471,11 +471,17 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
+    VideoOutColorSettings localSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
+    errno = savedErrno;
+    if (!copied) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    // Output gamma is accepted but not yet applied to presentation.
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -499,6 +505,12 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(Video
     if (settings == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(settings, sizeof(VideoOutColorSpaceConversionSettings));
+    errno = savedErrno;
+    if (!writable) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
     (void)lumaScale;
     (void)option;
     return 0;
@@ -506,6 +518,13 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion(Video
 
 int APS5_VABI sceVideoOutAdjustColorSpaceConversion(int handle, const VideoOutColorSpaceConversionSettings* settings) try {
     if (settings == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    VideoOutColorSpaceConversionSettings localSettings{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localSettings, settings, sizeof(localSettings));
+    errno = savedErrno;
+    if (!copied) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
