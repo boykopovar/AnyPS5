@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -755,8 +756,13 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     selected.runtimeState = plan.runtimeState;
     constexpr auto bindingCount = static_cast<std::uint32_t>(RuntimeAbi::Binding::Count);
     std::set<std::uint32_t> droppedKinds;
-    for (const auto& binding : plan.bindings) droppedKinds.insert(binding.descriptor.binding % bindingCount);
-    for (const auto& binding : selected.bindings) droppedKinds.erase(binding.descriptor.binding % bindingCount);
+    const auto bindingKind = [](std::uint32_t binding) { return binding < RuntimeAbi::ImageStorageTableBinding ? std::optional(binding % bindingCount) : std::nullopt; };
+    for (const auto& binding : plan.bindings) {
+        if (const auto kind = bindingKind(binding.descriptor.binding)) droppedKinds.insert(*kind);
+    }
+    for (const auto& binding : selected.bindings) {
+        if (const auto kind = bindingKind(binding.descriptor.binding)) droppedKinds.erase(*kind);
+    }
     selected.heapSlotWords.reserve(plan.heapSlotWords.size());
     for (const auto& word : plan.heapSlotWords) {
         if (!droppedKinds.contains(word.kind)) selected.heapSlotWords.push_back(word);
