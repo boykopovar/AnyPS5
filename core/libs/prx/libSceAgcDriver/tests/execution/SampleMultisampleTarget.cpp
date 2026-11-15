@@ -214,7 +214,7 @@ private:
 };
 
 struct Block {
-    explicit Block(std::size_t bytes, bool watched = false) : bytes(bytes), watched(watched) {
+    explicit Block(std::size_t bytes, bool watched = false, bool initialise = true) : bytes(bytes), watched(watched) {
 #ifdef _WIN32
         if (watched) {
             data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, BlockBytes));
@@ -237,7 +237,7 @@ struct Block {
         }
 #endif
         Require(data != nullptr, "cannot allocate the color target");
-        std::memset(data, 0, bytes);
+        if (initialise) std::memset(data, 0, bytes);
         Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "the color target is not write-watched");
         GuestAllocations::Mutation mutation;
         mutation.Add(data, bytes, true, true, true);
@@ -1913,6 +1913,66 @@ void DispatchNativeFmask(AgcDriver::VulkanDevice& device, const std::array<std::
     device.WaitIdle();
 }
 
+void InitialTextureDcc(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto clear = [&] {
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        ClearCachedTextures(context.device);
+        ClearMultisampleTargets(context.device);
+    };
+    struct Cleanup {
+        decltype(clear)& action;
+        ~Cleanup() { action(); }
+    } cleanup{clear};
+    const auto descriptor = [&](const Block& color, const Block& metadata, bool alphaOnMsb) {
+        auto words = TargetDescriptor(color, static_cast<std::uint32_t>(std::countr_zero(samples)));
+        words[6] = (1u << 19u) | (1u << 21u) | (alphaOnMsb ? 1u << 22u : 0u) | (static_cast<std::uint32_t>(metadata.Address() >> 8u) << 24u);
+        words[7] = static_cast<std::uint32_t>(metadata.Address() >> 16u);
+        return words;
+    };
+    for (const auto key : {0x00u, 0x40u, 0x80u, 0xc0u}) {
+        for (const bool alphaOnMsb : {false, true}) {
+            Block color(8u * BlockBytes, true);
+            const bool untouched = key == 0u && !alphaOnMsb;
+            Block metadata(BlockBytes, true, !untouched);
+            std::memset(color.data, 0xa5, color.bytes);
+            if (!untouched) std::memset(metadata.data, key, metadata.bytes);
+            std::array<float, 4> expected{};
+            for (std::uint32_t channel = 0u; channel < 4u; ++channel) expected[channel] = channel == (alphaOnMsb ? 3u : 0u) ? static_cast<float>(key == 0x40u || key == 0xc0u) : static_cast<float>(key == 0x80u || key == 0xc0u);
+            const auto words = descriptor(color, metadata, alphaOnMsb);
+            CheckUniform(LoadSamples(device, words, samples), expected, "an initial R_X DCC texture before any draw");
+            CheckUniform(LoadSamples(device, words, samples), expected, "a reused initial R_X DCC texture");
+            Require(std::all_of(color.data, color.data + color.bytes, [](auto byte) { return byte == 0xa5u; }), "initial DCC sampling changed guest color bytes");
+            Require(std::all_of(metadata.data, metadata.data + metadata.bytes, [&](auto byte) { return byte == key; }), "initial DCC sampling changed guest metadata");
+            clear();
+        }
+    }
+    for (std::uint32_t mode = 0u; mode < 4u; ++mode) {
+        Block color(8u * BlockBytes, true), metadata(BlockBytes, true);
+        auto words = descriptor(color, metadata, true);
+        std::string expected;
+        if (mode == 0u) {
+            std::memset(metadata.data, 0x20, metadata.bytes);
+            expected = "register clear";
+        } else if (mode == 1u) {
+            metadata.data[0] = 0x40u;
+            expected = "mixed multisampled DCC";
+        } else if (mode == 2u) {
+            words[6] &= ~(1u << 19u);
+            expected = "pipe-aligned";
+        } else {
+            CheckUniform(LoadSamples(device, words, samples), std::array<float, 4>{}, "an initial DCC texture before a metadata store");
+            *static_cast<volatile std::uint8_t*>(metadata.data) = 0u;
+            expected = "writes to a resident multisampled DCC";
+        }
+        RequireRefused(device, words, expected, "an unsupported initial R_X DCC texture");
+        clear();
+    }
+    std::printf("Initial R_X DCC texture: samples=%u, four clear codes, both alpha positions, untouched zero metadata and unsupported-state refusals passed\n", samples);
+}
+
 void NativeFmask(std::unique_ptr<AgcDriver::VulkanDevice>& device, std::uint32_t samples) {
     using namespace AgcDriver::Graphics;
     const auto shift = static_cast<std::uint32_t>(std::countr_zero(samples));
@@ -2075,6 +2135,14 @@ int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 3 && std::string_view(argv[1]) == "--initial-texture-dcc") {
+            const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
+            Require(samples == 2u || samples == 4u || samples == 8u, "unsupported initial texture sample count");
+            const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+            if ((context.limits.framebufferColorSampleCounts & samples) == 0u || (context.limits.sampledImageColorSampleCounts & samples) == 0u) return VulkanTestSkipped;
+            InitialTextureDcc(*device, samples);
+            return 0;
+        }
         if (argc == 3 && std::string_view(argv[1]) == "--native-fmask") {
             const auto samples = static_cast<std::uint32_t>(std::stoul(argv[2]));
             {
