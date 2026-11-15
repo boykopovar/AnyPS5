@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <limits>
 #include <list>
+#include <map>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -276,8 +277,10 @@ int APS5_VABI _Mtx_timedlock_nid_postfix(void** handle, const Xtime* target) {
     auto* mutex = ResolveMutex(handle, "_Mtx_timedlock");
     const auto self = std::this_thread::get_id();
     if (mutex->owner.load(std::memory_order_acquire) == self) {
-        if ((mutex->type & mutexRecursive) == 0)
-            return threadBusy;
+        if ((mutex->type & mutexRecursive) == 0) {
+            std::this_thread::sleep_until(deadline);
+            return threadTimedout;
+        }
         if (mutex->count == std::numeric_limits<int>::max())
             throw std::overflow_error("_Mtx_timedlock: recursive lock count overflow");
         ++mutex->count;
@@ -1051,6 +1054,45 @@ int APS5_VABI _Smtx_unlock_exclusive_nid_postfix(void** smtx) {
 
 int APS5_VABI _Smtx_unlock_shared_nid_postfix(void** smtx) {
     return SharedMutexResult(PthreadSync(__func__).rwlockUnlock(smtx));
+}
+
+namespace {
+
+struct SharedMutexInstance {
+    void* handle;
+    std::uint64_t references;
+};
+
+std::mutex g_sharedMutexInstancesLock;
+std::map<void*, SharedMutexInstance*> g_sharedMutexInstances;
+
+}
+
+void** APS5_VABI __std_acquire_shared_mutex_for_instance_nid_postfix(void* instance) {
+    std::lock_guard<std::mutex> guard(g_sharedMutexInstancesLock);
+    const auto found = g_sharedMutexInstances.find(instance);
+    if (found != g_sharedMutexInstances.end()) {
+        ++found->second->references;
+        return &found->second->handle;
+    }
+    SharedMutexInstance* node = new SharedMutexInstance{nullptr, 1};
+    if (_Smtx_init_with_name_nid_postfix(&node->handle, "") != 0) {
+        delete node;
+        throw std::runtime_error("shared mutex for instance: the instance mutex did not initialise");
+    }
+    g_sharedMutexInstances.emplace(instance, node);
+    return &node->handle;
+}
+
+void APS5_VABI __std_release_shared_mutex_for_instance_nid_postfix(void* instance) {
+    std::lock_guard<std::mutex> guard(g_sharedMutexInstancesLock);
+    const auto found = g_sharedMutexInstances.find(instance);
+    if (found == g_sharedMutexInstances.end()) return;
+    SharedMutexInstance* node = found->second;
+    if (--node->references != 0) return;
+    _Smtx_destroy_nid_postfix(&node->handle);
+    g_sharedMutexInstances.erase(found);
+    delete node;
 }
 
 int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread) {

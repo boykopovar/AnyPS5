@@ -468,15 +468,21 @@ std::uint8_t* APS5_VABI sceUsbdGetIsoPacketBuffer(UsbdTransfer* transfer, std::u
 std::int32_t APS5_VABI sceUsbdBulkTransfer(void* deviceHandle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t* transferred, std::uint32_t timeout) {
     if (deviceHandle == nullptr || (length != 0 && data == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
-    *transferred = 0;
-    return ToGuestError(libusb_bulk_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, transferred, timeout));
+    std::int32_t moved = 0;
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    const std::int32_t result = ToGuestError(libusb_bulk_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    return result;
 }
 
 std::int32_t APS5_VABI sceUsbdInterruptTransfer(void* deviceHandle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t* transferred, std::uint32_t timeout) {
     if (deviceHandle == nullptr || (length != 0 && data == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
-    *transferred = 0;
-    return ToGuestError(libusb_interrupt_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, transferred, timeout));
+    std::int32_t moved = 0;
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    const std::int32_t result = ToGuestError(libusb_interrupt_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
+    if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    return result;
 }
 
 std::int32_t APS5_VABI sceUsbdCancelTransfer(UsbdTransfer* transfer) {
@@ -545,14 +551,19 @@ std::int32_t APS5_VABI sceUsbdControlTransfer(void* deviceHandle, std::uint8_t r
 std::int32_t APS5_VABI sceUsbdGetActiveConfigDescriptor(void* device, void** config) {
     if (device == nullptr) throw std::runtime_error(std::string(__func__) + ": null device");
     if (config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(config, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_config_descriptor* host = nullptr;
     const int result = libusb_get_active_config_descriptor(KnownDevice(device, __func__), &host);
-    *config = nullptr;
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(config, &stored, sizeof(stored))) {
+        libusb_free_config_descriptor(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.configs.insert(host);
-    *config = host;
     return 0;
 }
 
@@ -563,14 +574,19 @@ std::uint8_t APS5_VABI sceUsbdGetBusNumber(void* device) {
 
 std::int32_t APS5_VABI sceUsbdGetConfigDescriptor(void* device, std::uint8_t configIndex, void** config) {
     if (device == nullptr || config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(config, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_config_descriptor* host = nullptr;
     const int result = libusb_get_config_descriptor(KnownDevice(device, __func__), configIndex, &host);
-    *config = nullptr;
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(config, &stored, sizeof(stored))) {
+        libusb_free_config_descriptor(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.configs.insert(host);
-    *config = host;
     return 0;
 }
 
@@ -600,14 +616,19 @@ std::int32_t APS5_VABI sceUsbdKernelDriverActive(void* deviceHandle, std::int32_
 std::int32_t APS5_VABI sceUsbdOpen(void* device, void** deviceHandle) {
     if (device == nullptr) throw std::runtime_error(std::string(__func__) + ": null device");
     if (deviceHandle == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
-    *deviceHandle = nullptr;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(deviceHandle, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_device_handle* host = nullptr;
     const int result = libusb_open(KnownDevice(device, __func__), &host);
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(deviceHandle, &stored, sizeof(stored))) {
+        libusb_close(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.handles.insert(host);
-    *deviceHandle = host;
     return 0;
 }
 
@@ -713,14 +734,19 @@ std::int32_t APS5_VABI sceUsbdEventHandlerActive() {
 
 std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint8_t configurationValue, void** config) {
     if (device == nullptr || config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    void* const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(config, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     libusb_config_descriptor* host = nullptr;
     const int result = libusb_get_config_descriptor_by_value(KnownDevice(device, __func__), configurationValue, &host);
-    *config = nullptr;
     if (result != 0) return ToGuestError(result);
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    void* const stored = host;
+    if (!GuestCopyOut_nid_no_patch(config, &stored, sizeof(stored))) {
+        libusb_free_config_descriptor(host);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     state.configs.insert(host);
-    *config = host;
     return 0;
 }
 
