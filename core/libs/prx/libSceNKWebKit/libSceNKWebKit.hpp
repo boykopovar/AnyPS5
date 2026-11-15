@@ -50,3 +50,4 @@
 #include "prx/libSceNKWebKit/include/CacheControlExports.hpp"
 #include "prx/libSceNKWebKit/include/FloatSizeExports.hpp"
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
+#include "prx/libSceNKWebKit/include/SQLiteExports.hpp"

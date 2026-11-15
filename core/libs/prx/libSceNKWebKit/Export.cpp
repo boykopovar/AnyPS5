@@ -241,10 +241,6 @@ int APS5_VABI _ZN7WebCore11DisplayList8FillRectD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15SQLiteStatement8finalizeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDecidePolicyForResponseERKNS_16ResourceResponseERKNS_15ResourceRequestENS_21PolicyCheckIdentifierERKN3WTF6StringEONS8_8FunctionIFvNS_12PolicyActionES7_EEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -258,10 +254,6 @@ int APS5_VABI _ZN7WebCore30plainTextReplacingNoBreakSpaceERKNS_11SimpleRangeEtb(
 }
 
 int APS5_VABI _ZN7WebCore11DisplayList11DrawingItemD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -581,10 +573,6 @@ int APS5_VABI _ZNK7WebCore10ISOFullBox7versionEv() {
 }
 
 int APS5_VABI _ZN7WebCore8Document20identifierForElementERNS_7ElementE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatementC1ERNS_14SQLiteDatabaseERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -919,10 +907,6 @@ int APS5_VABI _ZN7WebCore25WebSocketChannelInspector36didReceiveWebSocketHandsha
 }
 
 int APS5_VABI _ZN7WebCore8JSPath2DC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_6Path2DENS6_13DumbPtrTraitsIS8_EEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase4openERKN3WTF6StringENS0_8OpenModeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1970,10 +1954,6 @@ int APS5_VABI _ZN7WebCore23AuthenticationChallengeD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15SQLiteStatement12isColumnNullEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore5Range19boundaryPointsValidEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2187,10 +2167,6 @@ int APS5_VABI _ZN7WebCore17FrameLoaderClient23dispatchDidExplicitOpenERKN3WTF3UR
 }
 
 int APS5_VABI _ZNK7WebCore24RotateTransformOperation27isAffectedByTransformOriginEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement15getColumnDoubleEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -2927,10 +2903,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_I9SizkX_plus_i5Y_nid_no_patch() {
 }
 APS5_EXPORT("I9SizkX+i5Y", libSceNKWebKitLegacyUnknown_I9SizkX_plus_i5Y_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsStringEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList13ClipOutToPathC1ERKNS_4PathE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -3087,10 +3059,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_J9u8UeS_plus_3ZU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("J9u8UeS+3ZU", libSceNKWebKitLegacyUnknown_J9u8UeS_plus_3ZU_nid_no_patch);
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement12getColumnIntEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7Nicosia5SceneC2Ev() {
     NotImplemented_nid_no_patch(__func__);
@@ -3848,10 +3816,6 @@ int APS5_VABI _ZNK7WebCore19InspectorController12getHighlightERNS_9HighlightENS_
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14SQLiteDatabase11tableExistsERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList10StrokeRectD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4051,10 +4015,6 @@ int APS5_VABI _ZN7WebCore16FrameLoadRequestC2ERNS_8DocumentERNS_14SecurityOrigin
 }
 
 int APS5_VABI _ZN7WebCore12SharedBufferC2EPKhm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement13getColumnTextEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4645,10 +4605,6 @@ int APS5_VABI _ZN7WebCore16NativeNodeFilterC1EPNS_22ScriptExecutionContextEON3WT
 }
 
 int APS5_VABI _ZN7WebCore21NetworkStorageSession16deleteAllCookiesEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement14getColumnInt64Ei() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6190,10 +6146,6 @@ int APS5_VABI _ZN7WebCore21ContentSecurityPolicyC1EON3WTF3URLEPNS_27ContentSecur
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15SQLiteStatement8bindBlobEiPKvi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore24MatrixTransformOperation10isIdentityEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6277,10 +6229,6 @@ int APS5_VABI _ZN7WebCore12ISOWebVTTCue11boxTypeNameEv() {
 }
 
 int APS5_VABI _ZN7WebCore11DisplayList16DrawLinesForTextD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement8bindTextEiRKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6504,10 +6452,6 @@ int APS5_VABI _ZN7WebCore17PageConfigurationC1EN3PAL9SessionIDEON3WTF9UniqueRefI
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15SQLiteStatementC2ERNS_14SQLiteDatabaseERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceNKWebKitLegacyUnknown_h7GP5Dqx6vU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6519,10 +6463,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_h98n0NfD2sw_nid_no_patch() {
 APS5_EXPORT("h98n0NfD2sw", libSceNKWebKitLegacyUnknown_h98n0NfD2sw_nid_no_patch);
 
 int APS5_VABI _ZN7WebCore16HTMLMediaElement10setPreloadERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement21getColumnBlobAsVectorEiRN3WTF6VectorIhLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7810,10 +7750,6 @@ int APS5_VABI WKBundleOverrideBoolPreferenceForTestRunner() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15SQLiteStatement7prepareEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore11FrameLoader6pageIDEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7883,10 +7819,6 @@ int APS5_VABI _ZN7WebCore15HitTestLocation12rectForPointERKNS_11LayoutPointEjjjj
 }
 
 int APS5_VABI _ZN7WebCore12KeyedEncoder7encoderEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase14executeCommandERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -8601,10 +8533,6 @@ int APS5_VABI _ZNK7WebCore17NowPlayingManager15supportsSeekingEv() {
 }
 
 int APS5_VABI _ZNK7WebCore9DOMWindow18getMatchedCSSRulesEPNS_7ElementERKN3WTF6StringEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement9bindValueEiRKN3WTF7VariantIJDnNS1_6StringEdEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -17987,62 +17915,6 @@ int APS5_VABI _ZN7WebCore14ResourceLoader6cancelEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14SQLiteDatabase12lastErrorMsgEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase14clearAllTablesEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase16runVacuumCommandEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase20setCollationFunctionERKN3WTF6StringEONS1_8FunctionIFiiPKviS7_EEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase27runIncrementalVacuumCommandEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase27turnOnIncrementalAutoVacuumEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase29setIsDatabaseOpeningForbiddenEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase5closeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase9interruptEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabase9lastErrorEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabaseC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabaseC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabaseD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SQLiteDatabaseD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore14ScrollableArea15contentsResizedEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -18639,50 +18511,6 @@ int APS5_VABI _ZN7WebCore15RenderBlockFlow30findClosestTextAtAbsolutePointERKNS_
 }
 
 int APS5_VABI _ZN7WebCore15ResourceRequest41updateFromDelegatePreservingOldPropertiesERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement10bindDoubleEid() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement14executeCommandEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement22isColumnDeclaredAsBlobEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement4stepEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement5resetEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement7bindIntEii() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement8bindBlobEiRKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement8bindNullEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatement9bindInt64Eil() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatementD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15SQLiteStatementD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -20083,34 +19911,6 @@ int APS5_VABI _ZN7WebCore17PageConsoleClientD2Ev() {
 
 
 int APS5_VABI _ZN7WebCore17ResourceErrorBase7setTypeENS0_4TypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17SQLiteTransaction5beginEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17SQLiteTransaction6commitEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17SQLiteTransaction8rollbackEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17SQLiteTransactionC1ERNS_14SQLiteDatabaseEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17SQLiteTransactionC2ERNS_14SQLiteDatabaseEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17SQLiteTransactionD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore17SQLiteTransactionD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -23264,26 +23064,6 @@ int APS5_VABI _ZN7WebCore28throwRequiredMemberTypeErrorERN3JSC14JSGlobalObjectER
 }
 
 int APS5_VABI _ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC2EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeaSEOS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -29729,10 +29509,6 @@ int APS5_VABI _ZNK7WebCore15JSDOMWindowBase22scriptExecutionContextEv() {
 
 
 int APS5_VABI _ZNK7WebCore15ProgressTracker17estimatedProgressEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore15SQLiteStatement18bindParameterCountEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
