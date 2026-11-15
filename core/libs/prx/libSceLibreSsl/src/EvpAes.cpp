@@ -447,6 +447,81 @@ constexpr LibreSslEvpCipher AesGcm(int nid, int keyLength) {
     return cipher;
 }
 
+constexpr std::size_t WrapSemiblockBytes = 8;
+constexpr int WrapRounds = 6;
+constexpr std::uint64_t WrapFlags = CipherModeWrap | CipherFlagCustomIv | CipherFlagAlwaysCallInit | CipherFlagCustomCipher | CipherFlagDefaultAsn1;
+constexpr unsigned char WrapDefaultIv[WrapSemiblockBytes] {0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6, 0xa6};
+
+int APS5_VABI AesWrapInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key, const unsigned char* iv, int) {
+    if (!key && !iv) return 1;
+    auto& schedule = KeyOf(ctx, "aes_wrap_init_key");
+    if (key) {
+        const int status = ctx->encrypt ? AES_set_encrypt_key_nid_postfix(key, ctx->keyLen * 8, &schedule) : AES_set_decrypt_key_nid_postfix(key, ctx->keyLen * 8, &schedule);
+        if (status < 0) return 0;
+        if (!iv) std::memcpy(ctx->iv, WrapDefaultIv, WrapSemiblockBytes);
+    }
+    if (iv) std::memcpy(ctx->iv, iv, WrapSemiblockBytes);
+    return 1;
+}
+
+int APS5_VABI AesWrapCipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const unsigned char* in, std::size_t length) {
+    if (!in) return 0;
+    const auto& schedule = KeyOf(ctx, "aes_wrap_cipher");
+    const bool encrypt = ctx->encrypt != 0;
+    if (length % WrapSemiblockBytes || length > static_cast<std::size_t>(INT32_MAX)) return -1;
+    if (encrypt ? length < WrapSemiblockBytes : length < 2 * WrapSemiblockBytes) return -1;
+    const std::size_t outputLength = encrypt ? length + WrapSemiblockBytes : length - WrapSemiblockBytes;
+    if (!out) return static_cast<int>(outputLength);
+    const std::size_t semiblocks = length / WrapSemiblockBytes - (encrypt ? 0 : 1);
+    unsigned char a[WrapSemiblockBytes];
+    unsigned char block[AesBlockBytes];
+    if (encrypt) {
+        std::memcpy(a, ctx->iv, WrapSemiblockBytes);
+        std::memmove(out + WrapSemiblockBytes, in, length);
+        for (int round = 0; round < WrapRounds; ++round) {
+            for (std::size_t index = 1; index <= semiblocks; ++index) {
+                std::memcpy(block, a, WrapSemiblockBytes);
+                std::memcpy(block + WrapSemiblockBytes, out + index * WrapSemiblockBytes, WrapSemiblockBytes);
+                AES_encrypt_nid_postfix(block, block, &schedule);
+                StoreBig64(a, LoadBig64(block) ^ (static_cast<std::uint64_t>(semiblocks) * round + index));
+                std::memcpy(out + index * WrapSemiblockBytes, block + WrapSemiblockBytes, WrapSemiblockBytes);
+            }
+        }
+        std::memcpy(out, a, WrapSemiblockBytes);
+        return static_cast<int>(outputLength);
+    }
+    std::memcpy(a, in, WrapSemiblockBytes);
+    std::memmove(out, in + WrapSemiblockBytes, outputLength);
+    for (int round = WrapRounds - 1; round >= 0; --round) {
+        for (std::size_t index = semiblocks; index >= 1; --index) {
+            StoreBig64(a, LoadBig64(a) ^ (static_cast<std::uint64_t>(semiblocks) * round + index));
+            std::memcpy(block, a, WrapSemiblockBytes);
+            std::memcpy(block + WrapSemiblockBytes, out + (index - 1) * WrapSemiblockBytes, WrapSemiblockBytes);
+            AES_decrypt_nid_postfix(block, block, &schedule);
+            std::memcpy(a, block, WrapSemiblockBytes);
+            std::memcpy(out + (index - 1) * WrapSemiblockBytes, block + WrapSemiblockBytes, WrapSemiblockBytes);
+        }
+    }
+    if (TimingSafeCompare(a, ctx->iv, WrapSemiblockBytes)) {
+        Wipe(out, outputLength);
+        return -1;
+    }
+    return static_cast<int>(outputLength);
+}
+
+constexpr LibreSslEvpCipher AesWrap(int nid, int keyLength) {
+    LibreSslEvpCipher cipher {};
+    cipher.nid = nid;
+    cipher.blockSize = static_cast<int>(WrapSemiblockBytes);
+    cipher.keyLength = keyLength;
+    cipher.ivLength = static_cast<int>(WrapSemiblockBytes);
+    cipher.flags = WrapFlags;
+    cipher.init = AesWrapInitKey;
+    cipher.doCipher = AesWrapCipher;
+    cipher.contextSize = AesKeyContextBytes;
+    return cipher;
+}
+
 constexpr LibreSslEvpCipher AesCipher(int nid, int keyLength, std::uint64_t mode, int (APS5_VABI* doCipher)(LibreSslEvpCipherCtx*, unsigned char*, const unsigned char*, std::size_t)) {
     LibreSslEvpCipher cipher {};
     cipher.nid = nid;
@@ -469,6 +544,9 @@ constexpr LibreSslEvpCipher Aes256Ctr = AesCipher(906, 32, CipherModeCtr, AesCtr
 constexpr LibreSslEvpCipher Aes128Gcm = AesGcm(895, 16);
 constexpr LibreSslEvpCipher Aes192Gcm = AesGcm(898, 24);
 constexpr LibreSslEvpCipher Aes256Gcm = AesGcm(901, 32);
+constexpr LibreSslEvpCipher Aes128Wrap = AesWrap(788, 16);
+constexpr LibreSslEvpCipher Aes192Wrap = AesWrap(789, 24);
+constexpr LibreSslEvpCipher Aes256Wrap = AesWrap(790, 32);
 
 }
 
@@ -508,6 +586,15 @@ const LibreSslEvpCipher* APS5_VABI EVP_aes_192_gcm_nid_postfix(void) {
 
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_gcm_nid_postfix(void) {
     return &Aes256Gcm;
+}
+const LibreSslEvpCipher* APS5_VABI EVP_aes_128_wrap_nid_postfix(void) {
+    return &Aes128Wrap;
+}
+const LibreSslEvpCipher* APS5_VABI EVP_aes_192_wrap_nid_postfix(void) {
+    return &Aes192Wrap;
+}
+const LibreSslEvpCipher* APS5_VABI EVP_aes_256_wrap_nid_postfix(void) {
+    return &Aes256Wrap;
 }
 
 }

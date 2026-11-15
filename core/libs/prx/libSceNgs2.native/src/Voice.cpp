@@ -1,5 +1,6 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -447,7 +448,11 @@ static void CheckBlocks(const Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWav
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
         const bool compressedStream = atrac9 && accepts && block.num_repeats == 0;
-        if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream)) {
+        const bool loopsPastData = bytes > block.data_size && !compressed && block.num_repeats == UINT32_MAX && block.num_skip_samples == 0 &&
+                                   block.data_size >= frameBytes && block.data_size % frameBytes == 0 &&
+                                   (std::any_of(param.blocks + i + 1, param.blocks + param.num_blocks, [](const Ngs2WaveformBlock& next) { return next.num_samples != 0 || next.data_size != 0; }) ||
+                                    std::any_of(param.blocks, param.blocks + i, [](const Ngs2WaveformBlock& previous) { return previous.num_repeats == UINT32_MAX && (previous.num_samples != 0 || previous.data_size != 0); }));
+        if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream && !loopsPastData)) {
             throw std::invalid_argument("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
         }
         if (vag) Ngs2CheckVag(shape.channels, static_cast<const std::uint8_t*>(param.data) + block.data_offset, block);
@@ -601,6 +606,23 @@ static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterPara
     }
 }
 
+static bool IsMasteringEffect(const Ngs2Voice& voice, std::uint32_t id) {
+    return !PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_MASTERING &&
+        (id == SCE_NGS2_MASTERING_VOICE_PARAM_LFE || id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER || id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER);
+}
+
+static void CheckMasteringEffect(const Ngs2VoiceParamHeader& param) {
+    if (param.size < sizeof(Ngs2MasteringVoiceEffectParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
+    const auto& effect = reinterpret_cast<const Ngs2MasteringVoiceEffectParam&>(param);
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_PEAK_METER) {
+        if (effect.enable_flag > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
+        return;
+    }
+    if (effect.enable_flag == 0) return;
+    if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_LIMITER && std::isnan(std::bit_cast<float>(effect.value))) return;
+    throw std::runtime_error("NGS2: enabled voice param " + Ngs2Hex(param.id) + " is not implemented");
+}
+
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
     if (!PS4_LIBRARY || param.size == sizeof(Ngs2SamplerVoiceFilterParam)) {
         if (param.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
@@ -656,6 +678,10 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
         value.fbw_level = std::clamp(value.fbw_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
         value.lfe_level = std::clamp(value.lfe_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
         return value;
+    }
+    if (IsMasteringEffect(voice, param.id)) {
+        CheckMasteringEffect(param);
+        return CopyParam(param);
     }
     if ((param.id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
         const auto index = param.id & 0x1fu;
@@ -1157,6 +1183,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
                 voice.outputId = ParamAs<Ngs2MasteringVoiceOutputParam>(param).output_id;
                 return;
             }
+            if (IsMasteringEffect(voice, param.id)) {
+                CheckMasteringEffect(param);
+                return;
+            }
             break;
         default: break;
     }
@@ -1274,22 +1304,28 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
     const auto& voice = *found;
     switch (voice.rack->rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: {
-            if (state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            auto& sampler = *reinterpret_cast<Ngs2SamplerVoiceState*>(state);
-            if (voice.pendingPlay) { sampler = {}; sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE; return SCE_NGS2_OK; }
-            if (voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0) {
+            const bool commonOnly = PS4_LIBRARY && state_size == sizeof(Ngs2VoiceState);
+            if (!commonOnly && state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            Ngs2SamplerVoiceState commonResult;
+            auto& sampler = commonOnly ? commonResult : *reinterpret_cast<Ngs2SamplerVoiceState*>(state);
+            if (voice.pendingPlay) {
+                sampler = {};
+                sampler.voice_state.state_flags = SCE_NGS2_VOICE_STATE_FLAG_INUSE;
+            } else if (voice.rack->system != nullptr && voice.rack->system->renderDepth != 0 && voice.rack->system->jobManagers[0].handle != 0) {
                 sampler = voice.publishedSampler;
-                return SCE_NGS2_OK;
+            } else {
+                sampler = {};
+                sampler.voice_state.state_flags = voice.stateFlags;
+                if (voice.state != Ngs2PlayState::Empty) {
+                    sampler.envelope_height = 1.0f;
+                    sampler.peak_height = voice.peakHeight;
+                    sampler.num_decoded_samples = voice.decodedSamples;
+                    sampler.decoded_data_size = voice.decodedBytes;
+                    sampler.user_data = voice.waveformUserData;
+                    sampler.waveform_data = voice.WaveformData();
+                }
             }
-            sampler = {};
-            sampler.voice_state.state_flags = voice.stateFlags;
-            if (voice.state == Ngs2PlayState::Empty) return SCE_NGS2_OK;
-            sampler.envelope_height = 1.0f;
-            sampler.peak_height = voice.peakHeight;
-            sampler.num_decoded_samples = voice.decodedSamples;
-            sampler.decoded_data_size = voice.decodedBytes;
-            sampler.user_data = voice.waveformUserData;
-            sampler.waveform_data = voice.WaveformData();
+            if (commonOnly) *state = sampler.voice_state;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_REVERB: {
@@ -1358,11 +1394,12 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
             input = 0;
         }
     }
-    *info = {};
-    info->matrix_id = matrix;
-    info->volume = volume;
-    info->dest_handle = dest;
-    info->dest_input_id = input;
+    Ngs2VoicePortInfo local{};
+    local.matrix_id = matrix;
+    local.volume = volume;
+    local.dest_handle = dest;
+    local.dest_input_id = input;
+    if (!WriteGuest(info, local)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -1376,7 +1413,7 @@ int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t voice_handle, uint32_t info_id, vo
     switch (info_id) {
         case SCE_NGS2_VOICE_INFO_CHANNELS: {
             if (info_size != sizeof(Ngs2VoiceChannelsInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
-            *static_cast<Ngs2VoiceChannelsInfo*>(info) = {voice.channels, 0};
+            if (!WriteGuest(static_cast<Ngs2VoiceChannelsInfo*>(info), Ngs2VoiceChannelsInfo{voice.channels, 0})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
             return SCE_NGS2_OK;
         }
         default: throw std::runtime_error("NGS2: voice info " + Ngs2Hex(info_id) + " is not implemented");
@@ -1389,11 +1426,12 @@ int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_
     const Ngs2VoiceAccess access(voice_handle);
     const auto* found = access.voice;
     if (found == nullptr && PS4_LIBRARY) {
-        *state_flags = 0;
+        if (!WriteGuest(state_flags, std::uint32_t{0})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
         return SCE_NGS2_ERROR_PS4_INVALID_VOICE_HANDLE;
     }
     if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
-    *state_flags = found->pendingPlay ? SCE_NGS2_VOICE_STATE_FLAG_INUSE : found->stateFlags;
+    const std::uint32_t flags = found->pendingPlay ? SCE_NGS2_VOICE_STATE_FLAG_INUSE : found->stateFlags;
+    if (!WriteGuest(state_flags, flags)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -1403,8 +1441,8 @@ int APS5_VABI sceNgs2VoiceGetOwner(uintptr_t voice_handle, uintptr_t* owner_rack
     const auto* found = access.voice;
     if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
     if (owner_rack == nullptr || voice_index == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    *owner_rack = reinterpret_cast<Ngs2Handle>(found->rack);
-    *voice_index = static_cast<uint32_t>(found - found->rack->voices.data());
+    if (!WriteGuest(owner_rack, reinterpret_cast<Ngs2Handle>(found->rack))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (!WriteGuest(voice_index, static_cast<uint32_t>(found - found->rack->voices.data()))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
@@ -1419,9 +1457,11 @@ int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t voice_handle, uint32_t matrix_
     const auto* levels = &found->matrices[matrix_id];
     for (const auto& control : found->pendingControls)
         if (const auto* value = std::get_if<Ngs2MatrixControl>(&control); value && value->index == matrix_id) levels = &value->levels;
-    if (levels->empty()) *info = {};
-    info->num_levels = static_cast<std::uint32_t>(levels->size());
-    std::copy(levels->begin(), levels->end(), info->levels);
+    if (levels->empty()) {
+        if (!WriteGuest(info, Ngs2VoiceMatrixInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+        return SCE_NGS2_OK;
+    }
+    if (!WriteGuest(&info->num_levels, static_cast<std::uint32_t>(levels->size())) || !WriteGuestBytes(info->levels, levels->data(), levels->size() * sizeof(info->levels[0]))) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
