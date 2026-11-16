@@ -878,6 +878,17 @@ class ModuleListTests(unittest.TestCase):
             (root / 'notes.txt').write_text('x', encoding='utf-8')
             (root / 'folder.prx').mkdir()
             self.assertEqual(sorted(path.name for path in audit_dump.modules_of(root)), ['libA.prx'])
+class StageRefusalTests(unittest.TestCase):
+    def test_stage_refuses_a_non_elf_input_and_writes_nothing(self):
+        import unwrap_self
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'junk.prx'
+            source.write_bytes(b'nope' * 100)
+            destination = root / 'out' / 'junk.prx'
+            with self.assertRaises(unwrap_self.Refused):
+                audit_dump.stage(source, destination)
+            self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":
