@@ -12,6 +12,7 @@ permissions: {}
 
 concurrency:
   group: pr-labels-${{ github.event.pull_request.number || 'all' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   labels:
@@ -23,6 +24,8 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

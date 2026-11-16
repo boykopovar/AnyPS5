@@ -5,6 +5,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <string_view>
 #include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
@@ -126,6 +128,11 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             codeOffset
         };
         result.resourceRegister = rsrc2;
+        if (!nullPixel) {
+            Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, rsrc2);
+            const auto resources = queue.shader.find(rsrc2);
+            require(resources == queue.shader.end() || (resources->second >> 28u) == 0u, "wave-shared VGPRs of a graphics stage (SPI_SHADER_PGM_RSRC2.SHARED_VGPR_CNT) are not modeled");
+        }
         result.nullPixel = nullPixel;
         ReadUserWords(queue, result, staticAbi);
         return result;
@@ -188,11 +195,24 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     auto product = std::make_shared<DrawDecode>();
     product->state = Graphics::DecodeState(queue, VertexWorkgroupRequired(queue, *submission.shaders));
     DecodeGraphicsPrograms(*product, queue, *submission.shaders, false, true);
-    product->state.depthCopySource = std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.codeAddress == DepthCopyPixelProgramAddress(true); });
-    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue));
+    product->state.depthCopySource = std::ranges::any_of(product->programs, [](const DrawProgram& program) { return program.binary.codeAddress == DepthCopyPixelProgramAddress(true) || program.binary.codeAddress == StencilCopyPixelProgramAddress(true); });
+    std::span<const std::byte> fragmentHeader;
+    for (const auto& program : product->programs) {
+        if (program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) {
+            fragmentHeader = program.binary.header;
+            break;
+        }
+    }
+    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue), fragmentHeader);
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
+    Graphics::ApplyViewportIndex(context, product->state);
     Graphics::ApplyDepthRemap(context, product->state);
     Graphics::ApplyDepthBoundsEmulation(context, product->state, product->pixel);
+    static const bool readOnlyDepthBoundsCompare = [] {
+        const auto* value = std::getenv("APS5_READONLY_DEPTH_BOUNDS_COMPARE");
+        return value != nullptr && std::string_view(value) == "1";
+    }();
+    Graphics::ApplyReadOnlyDepthBoundsComparison(product->state, product->pixel, readOnlyDepthBoundsCompare);
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);
     product->pixel.dualSourceBlend = product->state.dualSourceBlend;
     product->pixel.reversedBlend = product->state.reversedBlend;

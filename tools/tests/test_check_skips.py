@@ -33,6 +33,8 @@ LIMITATIONS = [
     "skipped, no display",
     "skipped, the host has not enough free disk space for a file of more than 2 GiB",
     "skipped, the host cannot allocate a buffer of more than 2 GiB",
+    "skipped, the host has no interface that can join 224.0.0.251",
+    "skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable",
 ]
 
 HOST_LIMITATIONS = [
@@ -48,6 +50,8 @@ OTHER = [
     "skipped, the device imports shared memory successfully; skipped because flaky",
     "skipped, the device imports shared memory",
     "skipped, the device imports shared memory through host pointersX",
+    "skipped, the host has no interface",
+    "skipped, the host mounts /dev/shm",
 ]
 
 
@@ -122,6 +126,72 @@ class SkipJsonTests(unittest.TestCase):
 
 
 class CheckSkipsTests(unittest.TestCase):
+    def test_environment_loader_retention_is_only_expected_for_linux_unload(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name, output, job, expected in (
+                ("guest_environment_binding_unload", reason, "linux", 0),
+                ("guest_environment_binding_unload", "host CPU has SSE2\n" + reason + "\nnormal library shutdown", "linux", 0),
+                ("guest_environment_binding", reason, "linux", 1),
+                ("guest_other", reason, "linux", 1),
+                ("guest_environment_binding_unload", reason, "windows", 1),
+                ("guest_environment_binding_unload", "", "linux", 1),
+                ("guest_environment_binding_unload", reason + "\nskipped, flaky", "linux", 1),
+                ("guest_environment_binding_unload", reason + "\nskipping: flaky", "linux", 1),
+            ):
+                with self.subTest(name=name, output=output, job=job):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/><system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+            for report, expected in (
+                (f'<skipped message="SKIP_RETURN_CODE=77"/><system-err>{reason}</system-err>', 0),
+                (f'<skipped message="unexpected reason"/><system-out>{reason}</system-out>', 1),
+                (f'<skipped message="SKIP_RETURN_CODE=77">unexpected reason</skipped><system-out>{reason}</system-out>', 1),
+                (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{reason}</system-out><system-err>skipped, flaky</system-err>', 1),
+            ):
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_environment_binding_unload">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit)], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+    def test_windows_symlink_creation_privilege_skip_is_narrow(self):
+        reason = "SKIP: Windows symbolic-link privileges unavailable"
+        names = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name in names:
+                for channel in ("system-out", "system-err"):
+                    with self.subTest(name=name, channel=channel):
+                        junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/>'
+                                         f'<{channel}>startup log\n{reason}\n</{channel}></testcase></testsuite>', encoding="utf-8")
+                        result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "windows"], capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            invalid = (
+                ("guest_kernel_sys_paths_symlinkat_errors", reason, "windows", ""),
+                ("guest_kernel_sys_paths_symlinkat_refused_unpatched", reason, "windows", ""),
+                ("guest_probe", reason, "windows", ""),
+                (names[0], reason, "linux", ""),
+                (names[0], "", "windows", ""),
+                (names[0], reason + " extra", "windows", ""),
+                (names[0], "SKIP: unrelated failure", "windows", ""),
+                (names[0], reason + "\nSKIP: flaky", "windows", ""),
+                (names[0], reason + "\nskipped, flaky", "windows", ""),
+                (names[0], reason + "\nfixture: skipped, flaky", "windows", ""),
+                (names[0], reason + "\nfixture: SKIP: flaky", "windows", ""),
+                (names[0], reason, "windows", "flaky"),
+            )
+            for name, output, job, skipped_text in invalid:
+                with self.subTest(name=name, output=output, job=job, skipped_text=skipped_text):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77">{skipped_text}</skipped>'
+                                     f'<system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+
+class CtestSkipPolicyTests(unittest.TestCase):
     def test_ctest_status_and_prefixed_device_reasons_are_expected(self):
         reports = (
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
@@ -233,6 +303,8 @@ class CheckSkipsTests(unittest.TestCase):
                         self.assertNotIn("Traceback", result.stderr)
                         self.assertNotIn("all expected", result.stdout)
 
+
+class DeviceSkipPolicyTests(unittest.TestCase):
     def test_missing_high_refresh_display_is_expected_in_both_jobs(self):
         reason = "current display does not provide 120 Hz"
         reports = (
@@ -333,6 +405,8 @@ class CheckSkipsTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertFalse(check_skips.DEVICE_LIMITATION.search(message))
 
+
+class SkipCliOutputTests(unittest.TestCase):
     def test_only_unexpected_skip_is_reported(self):
         xml = (
             '<testsuites><testsuite>'
