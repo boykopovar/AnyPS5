@@ -37,6 +37,7 @@ constexpr int NP_ERROR_IPC_ALREADY_INITIALIZED = static_cast<int>(0x80559D00);
 constexpr int NP_ERROR_IPC_NOT_INITIALIZED = static_cast<int>(0x80559D01);
 constexpr int NP_ERROR_ONLINE_ID_MISMATCH = static_cast<int>(0x80550609);
 constexpr int NP_ERROR_INVALID_NP_ID = static_cast<int>(0x80550605);
+constexpr int RTC_ERROR_INVALID_POINTER = static_cast<int>(0x80B50002);
 constexpr std::size_t NP_ID_OPT_OFFSET = 0x14;
 constexpr std::size_t NP_ID_PLATFORM_OFFSET = 0x18;
 constexpr std::size_t NP_ID_TERMINATOR_FLAG_OFFSET = 0x1C;
@@ -1115,8 +1116,11 @@ int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick*
     if (size < NP_RFC3339_BUFFER_MIN) return NP_ERROR_BUFFER_TOO_SMALL;
     const int result = sceRtcFormatRFC3339(text, utc, timeZoneMinutes);
     if (result < 0) return result;
-    text[size - 1] = 0;
-    return 0;
+    const char terminator = 0;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(text + size - 1, &terminator, sizeof(terminator));
+    errno = savedErrno;
+    return written ? 0 : RTC_ERROR_INVALID_POINTER;
 }
 
 int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* count) {
