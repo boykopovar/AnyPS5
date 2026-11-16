@@ -352,6 +352,42 @@ void TestGuardedPointers() {
         Require(index == 0);
         _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
     }
+    {
+        WebRtcRtcpNack nack = Constructed();
+        std::uint8_t byte = 0;
+        WebRtcRtcpCommonHeader oversized {205, 1, 0, 262144, &byte};
+        Require(ThrowsInvalidArgument([&] { _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(&nack, &oversized); }));
+        WebRtcPackedNack item {1, 0};
+        nack.packed.begin = &item;
+        nack.packed.end = nullptr;
+        nack.packed.capacityEnd = &item + 1;
+        Require(ThrowsInvalidArgument([&] { Parse(nack, ThreeItems); }));
+        nack.packed = {nullptr, &item, nullptr};
+        Require(ThrowsInvalidArgument([&] { Parse(nack, ThreeItems); }));
+        nack.packed = {};
+
+        Require(Parse(nack, {0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,0,10,0,0}));
+        auto* originalPacked = nack.packed.begin;
+        Require(originalPacked[0].firstPid == 10 && originalPacked[0].bitmask == 0);
+        GuardedPage roIdsPage;
+        roIdsPage.SetReadOnly();
+        auto* realIdsBegin = nack.packetIds.begin;
+        auto* realIdsEnd = nack.packetIds.end;
+        auto* realIdsCap = nack.packetIds.capacityEnd;
+        nack.packetIds.begin = roIdsPage.As<std::uint16_t>();
+        nack.packetIds.end = nack.packetIds.begin + 1;
+        nack.packetIds.capacityEnd = nack.packetIds.begin + 16;
+        Require(ThrowsInvalidArgument([&] { Parse(nack, ThreeItems); }));
+        Require(nack.packed.begin == originalPacked);
+        Require(nack.packed.begin[0].firstPid == 10 && nack.packed.begin[0].bitmask == 0);
+        Require(ThrowsInvalidArgument([&] { Parse(nack, {0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,0,99,0,1}); }));
+        Require(nack.packed.begin == originalPacked);
+        Require(nack.packed.begin[0].firstPid == 10 && nack.packed.begin[0].bitmask == 0);
+        nack.packetIds.begin = realIdsBegin;
+        nack.packetIds.end = realIdsEnd;
+        nack.packetIds.capacityEnd = realIdsCap;
+        _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    }
 }
 
 }

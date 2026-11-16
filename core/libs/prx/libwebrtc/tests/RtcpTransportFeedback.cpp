@@ -253,6 +253,39 @@ void TestGuardedPointers() {
         page.SetInaccessible();
         RequireInvalidArgument([&] { _ZNK6webrtc4rtcp17TransportFeedback15GetBaseSequenceEv_nid_postfix(page.As<const WebRtcRtcpTransportFeedback>()); });
     }
+    {
+        WebRtcRtcpTransportFeedback feedback;
+        _ZN6webrtc4rtcp17TransportFeedbackC1Ev_nid_postfix(&feedback);
+        std::uint8_t byte = 0;
+        WebRtcRtcpCommonHeader oversized {205, 15, 0, 262144, &byte};
+        RequireInvalidArgument([&] { _ZN6webrtc4rtcp17TransportFeedback5ParseERKNS0_12CommonHeaderE_nid_postfix(&feedback, &oversized); });
+        feedback.encodedChunks.begin = nullptr;
+        feedback.encodedChunks.end = reinterpret_cast<std::uint16_t*>(sizeof(std::uint16_t));
+        const auto valid = Payload(3, {0x2003, 0x2000}, {0, 1, 2});
+        RequireInvalidArgument([&] { Parse(feedback, valid); });
+        feedback.encodedChunks = {};
+
+        Require(Parse(feedback, Payload(17, {0x000e, 0x2002, 0x2001}, {1, 2, 3})));
+        auto* originalChunks = feedback.encodedChunks.begin;
+        Require(originalChunks[0] == 0x000e && originalChunks[1] == 0x2002);
+        GuardedPage roPacketsPage;
+        roPacketsPage.SetReadOnly();
+        auto realPackets = feedback.receivedPackets;
+        feedback.receivedPackets.begin = roPacketsPage.As<WebRtcFeedbackReceivedPacket>();
+        feedback.receivedPackets.end = feedback.receivedPackets.begin + 1;
+        feedback.receivedPackets.capacity = feedback.receivedPackets.begin + 16;
+        const auto twoChunks = Payload(30, {0x000e, 0x000e, 0x2002}, {1, 2});
+        RequireInvalidArgument([&] { Parse(feedback, twoChunks); });
+        Require(feedback.encodedChunks.begin == originalChunks);
+        Require(feedback.encodedChunks.begin[0] == 0x000e && feedback.encodedChunks.begin[1] == 0x2002);
+        const auto inPlaceChunks = Payload(17, {0x000d, 0x2003, 0x2001}, {1, 2, 3});
+        RequireInvalidArgument([&] { Parse(feedback, inPlaceChunks); });
+        Require(feedback.encodedChunks.begin == originalChunks);
+        Require(feedback.encodedChunks.begin[0] == 0x000e && feedback.encodedChunks.begin[1] == 0x2002);
+        feedback.receivedPackets = realPackets;
+        reinterpret_cast<void(APS5_VABI*)(WebRtcRtcpTransportFeedback*)>(feedback.vtable[0])(&feedback);
+        Require(allocations.empty());
+    }
 }
 
 }

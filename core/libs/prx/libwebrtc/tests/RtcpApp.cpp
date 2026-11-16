@@ -341,6 +341,18 @@ void TestGuardedPointers() {
         Require(index == 0);
         _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(&app);
     }
+    {
+        WebRtcRtcpApp app = Default();
+        std::uint8_t byte = 0;
+        WebRtcRtcpCommonHeader oversized {204, 1, 0, 262144, &byte};
+        RequireInvalidArgument([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, &oversized); });
+        app.data.size = std::size_t{1} << 40;
+        app.data.data = &byte;
+        app.data.capacity = 1;
+        std::size_t index = 0;
+        std::uint8_t out[64]{};
+        RequireInvalidArgument([&] { Slot<Create>(app, 3)(&app, out, &index, sizeof(out), nullptr, nullptr); });
+    }
 }
 
 }

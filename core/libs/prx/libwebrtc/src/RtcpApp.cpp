@@ -66,6 +66,7 @@ constexpr std::uint32_t AppBaseLength = 8;
 constexpr std::size_t HeaderLength = 4;
 constexpr std::uint8_t PacketType = 204;
 constexpr int BlockLengthSlot = 2;
+constexpr std::size_t MaxRtcpPayloadBytes = 65535u * 4u;
 
 using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
 
@@ -95,7 +96,7 @@ void SetData(WebRtcBuffer& buffer, const std::uint8_t* data, std::size_t size) {
     if (size > buffer.capacity) {
         const std::size_t capacity = std::max<std::size_t>(size, buffer.capacity + buffer.capacity / 2);
         auto* grown = static_cast<std::uint8_t*>(_Znam_nid_postfix(capacity));
-        if (!GuestBytes(grown).CopyOut(data, size)) {
+        if (!GuestWritable_nid_no_patch(grown, size) || !GuestBytes(grown).CopyOut(data, size)) {
             _ZdaPv_nid_postfix(grown);
             throw std::invalid_argument("App::Parse failed to copy payload data");
         }
@@ -104,7 +105,7 @@ void SetData(WebRtcBuffer& buffer, const std::uint8_t* data, std::size_t size) {
         buffer.data = grown;
         buffer.capacity = capacity;
     } else {
-        if (!GuestBytes(buffer.data).CopyOut(data, size))
+        if (!GuestWritable_nid_no_patch(buffer.data, size) || !GuestBytes(buffer.data).CopyOut(data, size))
             throw std::invalid_argument("App::Parse requires a writable destination buffer");
     }
     buffer.size = size;
@@ -141,7 +142,14 @@ bool APS5_VABI AppCreate_nid_no_patch(const WebRtcRtcpApp* app, std::uint8_t* pa
     std::size_t hostIndex = ReadGuest(index, "App::Create requires a readable index");
     if (!GuestWritable_nid_no_patch(index, sizeof(*index)))
         throw std::invalid_argument("App::Create requires a writable index");
-    while (hostIndex + BlockLength(app) > maxLength) {
+    if (hostIndex > maxLength)
+        throw std::invalid_argument("App::Create index exceeds maxLength");
+    const std::size_t totalLength = BlockLength(app);
+    if (totalLength < HeaderLength + AppBaseLength || totalLength != HeaderLength + AppBaseLength + hostApp.data.size)
+        throw std::invalid_argument("App::Create reported an inconsistent block length");
+    if (hostApp.data.size > MaxRtcpPayloadBytes - AppBaseLength)
+        throw std::invalid_argument("App::Create payload exceeds maximum RTCP length");
+    while (totalLength > maxLength - hostIndex) {
         if (hostIndex == 0)
             return false;
         if (!call)
@@ -150,9 +158,8 @@ bool APS5_VABI AppCreate_nid_no_patch(const WebRtcRtcpApp* app, std::uint8_t* pa
         hostIndex = 0;
         WriteGuest(index, hostIndex, "App::Create requires a writable index");
     }
-    const std::size_t totalLength = BlockLength(app);
-    if (totalLength < HeaderLength + AppBaseLength || totalLength != HeaderLength + AppBaseLength + hostApp.data.size)
-        throw std::invalid_argument("App::Create reported an inconsistent block length");
+    if (!GuestWritable_nid_no_patch(packet + hostIndex, totalLength))
+        throw std::invalid_argument("App::Create requires a writable destination buffer");
     std::vector<std::uint8_t> encoded(totalLength);
     const std::size_t words = (totalLength - HeaderLength) / 4;
     encoded[0] = static_cast<std::uint8_t>((2 << 6) | hostApp.subType);
@@ -204,6 +211,8 @@ bool APS5_VABI _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRt
     const auto hostPacket = ReadGuest(packet, "App::Parse requires a readable common header");
     if (hostPacket.payloadSize < AppBaseLength || hostPacket.payloadSize % 4 != 0)
         return false;
+    if (hostPacket.payloadSize > MaxRtcpPayloadBytes)
+        throw std::invalid_argument("App::Parse payload exceeds maximum RTCP length");
     if (!hostPacket.payload)
         throw std::invalid_argument("App::Parse requires a payload");
     std::vector<std::uint8_t> payload(hostPacket.payloadSize);

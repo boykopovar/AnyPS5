@@ -53,6 +53,8 @@
 
 namespace {
 
+constexpr std::size_t MaxRtcpPayloadBytes = 65535u * 4u;
+
 template <typename T>
 T ReadGuest(const T* address, const char* message) {
     T value{};
@@ -79,27 +81,78 @@ void ValidateVector(const WebRtcFeedbackVector<T>& values) {
 }
 
 template <typename T>
-void WriteVector(WebRtcFeedbackVector<T>& values, const T* data, std::size_t size) {
+struct VectorPlan {
+    bool grown = false;
+    bool committedInPlace = false;
+    T* newBegin = nullptr;
+    T* newEnd = nullptr;
+    T* newCapacity = nullptr;
+    T* oldToFree = nullptr;
+    std::size_t size = 0;
+    std::vector<T> previousData;
+
+    ~VectorPlan() {
+        if (grown && newBegin)
+            _ZdlPv_nid_postfix(newBegin);
+        else if (committedInPlace && newBegin && !previousData.empty())
+            GuestBytes(newBegin).CopyOut(previousData.data(), previousData.size() * sizeof(T));
+    }
+};
+
+template <typename T>
+VectorPlan<T> PrepareVectorWrite(const WebRtcFeedbackVector<T>& values, const T* data, std::size_t size) {
     ValidateVector(values);
+    VectorPlan<T> plan;
+    plan.size = size;
     if (size == 0) {
-        values.end = values.begin;
-        return;
+        plan.newBegin = values.begin;
+        plan.newEnd = values.begin;
+        plan.newCapacity = values.capacity;
+        return plan;
     }
     const std::size_t currentCapacity = values.begin ? static_cast<std::size_t>(values.capacity - values.begin) : 0;
     if (size > currentCapacity) {
-        const std::size_t capacity = std::max(size, currentCapacity * 2);
-        auto* storage = static_cast<T*>(_Znwm_nid_postfix(capacity * sizeof(T)));
-        if (!GuestBytes(storage).CopyOut(data, size * sizeof(T))) {
-            _ZdlPv_nid_postfix(storage);
+        auto* storage = static_cast<T*>(_Znwm_nid_postfix(size * sizeof(T)));
+        plan.grown = true;
+        plan.newBegin = storage;
+        plan.newEnd = storage + size;
+        plan.newCapacity = storage + size;
+        plan.oldToFree = values.begin;
+        if (!GuestWritable_nid_no_patch(storage, size * sizeof(T)) ||
+            !GuestBytes(storage).CopyOut(data, size * sizeof(T)))
             throw std::invalid_argument("TransportFeedback vector destination is not writable");
-        }
-        if (values.begin) _ZdlPv_nid_postfix(values.begin);
-        values = {storage, storage + size, storage + capacity};
-        return;
+        return plan;
     }
-    if (!GuestBytes(values.begin).CopyOut(data, size * sizeof(T)))
+    if (!GuestWritable_nid_no_patch(values.begin, size * sizeof(T)))
         throw std::invalid_argument("TransportFeedback vector destination is not writable");
-    values.end = values.begin + size;
+    plan.previousData.resize(size);
+    if (!GuestBytes(values.begin).CopyIn(plan.previousData.data(), size * sizeof(T)))
+        throw std::invalid_argument("TransportFeedback vector destination is not writable");
+    plan.newBegin = values.begin;
+    plan.newEnd = values.begin + size;
+    plan.newCapacity = values.capacity;
+    return plan;
+}
+
+template <typename T>
+void CommitVectorWrite(WebRtcFeedbackVector<T>& values, VectorPlan<T>& plan, const T* data) {
+    if (!plan.grown && plan.size != 0) {
+        if (!GuestBytes(plan.newBegin).CopyOut(data, plan.size * sizeof(T)))
+            throw std::invalid_argument("TransportFeedback vector destination is not writable");
+        plan.committedInPlace = true;
+    }
+    values = {plan.newBegin, plan.newEnd, plan.newCapacity};
+}
+
+template <typename T>
+void FinalizeVectorWrite(VectorPlan<T>& plan) {
+    plan.grown = false;
+    plan.committedInPlace = false;
+    plan.previousData.clear();
+    if (plan.oldToFree) {
+        _ZdlPv_nid_postfix(plan.oldToFree);
+        plan.oldToFree = nullptr;
+    }
 }
 
 void Clear(WebRtcRtcpTransportFeedback& feedback) {
@@ -176,6 +229,8 @@ bool APS5_VABI _ZN6webrtc4rtcp17TransportFeedback5ParseERKNS0_12CommonHeaderE_ni
     auto hostFeedback = ReadGuest(feedback, "TransportFeedback::Parse requires an object and header");
     const auto hostPacket = ReadGuest(packet, "TransportFeedback::Parse requires an object and header");
     if (hostPacket.payloadSize < 18) return false;
+    if (hostPacket.payloadSize > MaxRtcpPayloadBytes)
+        throw std::invalid_argument("TransportFeedback::Parse payload exceeds maximum RTCP length");
     if (!hostPacket.payload) throw std::invalid_argument("TransportFeedback::Parse requires a payload");
     ValidateVector(hostFeedback.receivedPackets);
     ValidateVector(hostFeedback.allPackets);
@@ -242,10 +297,14 @@ bool APS5_VABI _ZN6webrtc4rtcp17TransportFeedback5ParseERKNS0_12CommonHeaderE_ni
         }
         ++sequence;
     }
-    WriteVector(hostFeedback.encodedChunks, encodedChunks.data(), encodedChunks.size());
-    WriteVector(hostFeedback.receivedPackets, receivedPackets.data(), receivedPackets.size());
+    auto chunksPlan = PrepareVectorWrite(hostFeedback.encodedChunks, encodedChunks.data(), encodedChunks.size());
+    auto packetsPlan = PrepareVectorWrite(hostFeedback.receivedPackets, receivedPackets.data(), receivedPackets.size());
+    CommitVectorWrite(hostFeedback.encodedChunks, chunksPlan, encodedChunks.data());
+    CommitVectorWrite(hostFeedback.receivedPackets, packetsPlan, receivedPackets.data());
     hostFeedback.sizeBytes = 4 + index;
     WriteGuest(feedback, hostFeedback, "TransportFeedback::Parse requires a writable object");
+    FinalizeVectorWrite(chunksPlan);
+    FinalizeVectorWrite(packetsPlan);
     return true;
 }
 
