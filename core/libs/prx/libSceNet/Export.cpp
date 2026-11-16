@@ -3603,12 +3603,24 @@ int APS5_VABI sceNetSocketInternal(const char* name, int domain, int type, int p
 
 int APS5_VABI sceNetSyncCreate(NetSyncObject* sync, std::uint32_t signals, const char* name) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
+    if (!sync) return fail(NET_EINVAL);
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
+        return fail(NET_EFAULT);
+    }
+    errno = savedErrno;
     const int result = create_sync(sync, signals, name);
     return result < 0 ? fail_with_status(result) : result;
 }
 
 int APS5_VABI sceNetSyncDestroy(NetSyncObject* sync) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
+    if (!sync) return fail(NET_EINVAL);
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
+        return fail(NET_EFAULT);
+    }
+    errno = savedErrno;
     destroy_sync(sync);
     return 0;
 }
@@ -3619,6 +3631,12 @@ NetSyncObject* APS5_VABI sceNetSyncGet(std::uint32_t index) {
 
 int APS5_VABI sceNetSyncSignal(NetSyncObject* sync, std::uint32_t signals) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
+    if (!sync) return fail(NET_EINVAL);
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
+        return fail(NET_EFAULT);
+    }
+    errno = savedErrno;
     int result = scePthreadMutexLock(&sync->mutex);
     if (result >= 0) {
         sync->signals |= signals;
@@ -3629,12 +3647,30 @@ int APS5_VABI sceNetSyncSignal(NetSyncObject* sync, std::uint32_t signals) {
 }
 
 int APS5_VABI sceNetSyncWait(NetSyncObject* sync, std::uint32_t* timeout) {
+    if (!sync) return fail(NET_EINVAL);
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
+        return fail(NET_EFAULT);
+    }
+    std::uint32_t localTimeout = 0;
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localTimeout, timeout, sizeof(localTimeout)) ||
+            !GuestWritable_nid_no_patch(timeout, sizeof(*timeout))) {
+            return fail(NET_EFAULT);
+        }
+    }
+    errno = savedErrno;
     if (scePthreadMutexLock(&sync->mutex) < 0) return 0;
     while (sync->signals == 0) {
         const int waited = timeout == nullptr ? scePthreadCondWait(&sync->condition, &sync->mutex)
-                                              : scePthreadCondTimedwait(&sync->condition, &sync->mutex, *timeout);
+                                              : scePthreadCondTimedwait(&sync->condition, &sync->mutex, localTimeout);
         if (waited == 0) continue;
-        if (waited == NET_KERNEL_ERROR_TIMEDOUT) *timeout = 0xFFFFFFFFu;
+        if (waited == NET_KERNEL_ERROR_TIMEDOUT) {
+            const std::uint32_t expired = 0xFFFFFFFFu;
+            const int savedExpiredErrno = errno;
+            GuestCopyOut_nid_no_patch(timeout, &expired, sizeof(expired));
+            errno = savedExpiredErrno;
+        }
         scePthreadMutexUnlock(&sync->mutex);
         return 0;
     }
