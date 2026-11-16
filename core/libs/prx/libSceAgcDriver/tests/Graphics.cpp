@@ -1104,12 +1104,14 @@ void MsaaEnableSingleSampleTests() {
     queue.context[0x313] = 0x6001;
     refused(queue, "MSAA_ENABLE on a single-sample target with conservative rasterization");
     queue = enabled();
-    queue.userConfig[0x242] = 1;
-    Require(DrawRejection(queue, false).find("primitives other than triangles, lines and rectangles") != std::string::npos, "the precheck accepted MSAA_ENABLE on a single-sample target for points");
-    for (const auto primitive : {2u, 3u, 5u, 6u, 7u, 17u, 21u}) {
+    queue.userConfig[0x242] = 19;
+    Require(DrawRejection(queue, false).find("primitives other than triangles, lines, points and rectangles") != std::string::npos, "the precheck accepted MSAA_ENABLE on a single-sample target for a quad list");
+    for (const auto primitive : {1u, 2u, 3u, 5u, 6u, 7u, 17u, 21u}) {
         queue = enabled();
         queue.userConfig[0x242] = primitive;
-        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a triangle, line or rectangle primitive");
+        queue.context[0x280] = 0x80008;
+        queue.context[0x281] = 0x80008;
+        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a triangle, line, point or rectangle primitive");
     }
     queue = enabled();
     queue.context[0x292] = 7;
