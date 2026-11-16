@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libkernel_web/include/Forwards.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -45,6 +46,10 @@ int APS5_VABI _dup2_nid_disambig1_nid_postfix(int from, int to);
 int APS5_VABI _execve_nid_disambig1_nid_postfix(const char* path, char* const* argv, char* const* envp);
 int APS5_VABI _execvpe_nid_disambig1_nid_postfix(const char* name, char* const* argv, char* const* envp);
 int APS5_VABI _wait4_nid_disambig1_nid_postfix();
+extern const char* __progname_nid_disambig1_nid_postfix;
+extern char** environ_nid_disambig1_nid_postfix;
+extern GuestSignalSet _sigintr_nid_disambig1_nid_postfix;
+extern std::uintptr_t __stack_chk_guard_nid_disambig1_nid_postfix;
 int APS5_VABI sceKernelGetPrefixVersion();
 int APS5_VABI sceKernelIccGetThermalAlert();
 
