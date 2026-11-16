@@ -3144,8 +3144,6 @@ int APS5_VABI _ZN7WebCore22JSDeprecatedCSSOMValue9toWrappedERN3JSC2VMENS1_7JSVal
 int APS5_VABI _ZN7WebCore22MutableStyleProperties25ensureCSSStyleDeclarationEv();
 int APS5_VABI _ZN7WebCore22MutableStylePropertiesD1Ev();
 int APS5_VABI _ZN7WebCore22MutableStylePropertiesD2Ev();
-int APS5_VABI _ZN7WebCore22ResourceLoadStatistics5mergeERKS0_();
-int APS5_VABI _ZN7WebCore22ResourceLoadStatistics6decodeERNS_12KeyedDecoderEj();
 int APS5_VABI _ZN7WebCore22counterValueForElementEPNS_7ElementE();
 int APS5_VABI _ZN7WebCore22createFragmentFromTextERKNS_11SimpleRangeERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore22externalRepresentationEPNS_7ElementEN3WTF9OptionSetINS_16RenderAsTextFlagEEE();
@@ -5415,8 +5413,6 @@ int APS5_VABI _ZNK7WebCore22HTMLFormControlElement10formMethodEv();
 int APS5_VABI _ZNK7WebCore22HTMLFormControlElement11formEnctypeEv();
 int APS5_VABI _ZNK7WebCore22HTMLFormControlElement12autocompleteEv();
 int APS5_VABI _ZNK7WebCore22HTMLFormControlElement12autofillDataEv();
-int APS5_VABI _ZNK7WebCore22ResourceLoadStatistics6encodeERNS_12KeyedEncoderE();
-int APS5_VABI _ZNK7WebCore22ResourceLoadStatistics8toStringEv();
 int APS5_VABI _ZNK7WebCore22ScriptExecutionContext23domainForCachePartitionEv();
 int APS5_VABI _ZNK7WebCore23FrameLoaderStateMachine15firstLayoutDoneEv();
 int APS5_VABI _ZNK7WebCore23FrameLoaderStateMachine23committingFirstRealLoadEv();
