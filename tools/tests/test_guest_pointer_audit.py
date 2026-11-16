@@ -217,5 +217,14 @@ class PointerParameterTests(unittest.TestCase):
                          ["fallback"])
 
 
+
+class SpliceTests(unittest.TestCase):
+    def test_splice_lines_joins_continued_lines_and_keeps_line_count(self):
+        self.assertEqual(guest_pointer_audit.splice_lines("a \\\nb\nc"), "a b\n\nc")
+
+    def test_splice_lines_normalises_crlf(self):
+        self.assertEqual(guest_pointer_audit.splice_lines("one\r\ntwo"), "one\ntwo")
+
+
 if __name__ == "__main__":
     unittest.main()
