@@ -661,6 +661,16 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py SetupTests)
         add_test(NAME vulkan_validation_gate_commands COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py CommandTests)
+        add_test(NAME vulkan_validation_outcomes_expectations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_outcomes.py ExpectationTests)
+        add_test(NAME vulkan_validation_outcomes_observations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_outcomes.py ObservationTests)
+        add_test(NAME vulkan_validation_outcomes_summaries COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_outcomes.py SummaryTests)
+        add_test(NAME vulkan_validation_outcomes_wiring COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_outcomes.py GateWiringTests)
+        set_tests_properties(vulkan_validation_outcomes_expectations vulkan_validation_outcomes_observations
+            vulkan_validation_outcomes_summaries vulkan_validation_outcomes_wiring PROPERTIES TIMEOUT 30)
         if(WIN32)
             add_test(NAME vulkan_validation_gate_containment COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ContainmentTests)

@@ -266,6 +266,30 @@ The gate compares VUID, synchronization-hazard and bracketed `UNASSIGNED-` valid
 
 `report.json` records the comparison and execution order. Exit 0 means the comparison completed with no detected regression, 1 means a test/coverage/layer or new diagnostic failure, 2 means setup, attribution or incomplete evidence, and 130 means interrupted. `--test-timeout` supplies CTest's default timeout; explicit test timeout properties still apply. `--timeout` bounds each configure/build/CTest command. The active POSIX process group or Windows job object is killed on completion, timeout or interruption. Repetitions report observed outcomes; they do not prove absence of intermittent faults or statistical significance.
 
+The additive `outcome_evidence` and each iteration's `outcomes` have `version: 1`. Iteration outcomes retain the JUnit path and SHA-256, the verbose log path, and each case's raw JUnit status and failure, error or skip details. Observed states are `passed`, `failed`, `error`, `skipped`, `disabled`, `notrun` or `unknown`. CTest's `failure` with status `fail` and message `Timeout` is an `error`; message `Failed` is a `failed` observation. Unsupported statuses, contradictory elements and unrecognized CTest failure terminations are `unknown`. A JUnit pass describes the test result independently of validation-layer insertion and diagnostics.
+
+`outcome_evidence` pairs the same selected case and iteration across builds, retains missing observations, and reports state and detail variation within each build. `observations_complete` requires all paired observations to be known. `execution_coverage_complete` additionally requires every selected observation to be `passed` or `failed`; errors, timeouts and skips leave execution coverage incomplete. This covers selected cases, not all title behaviour or code paths. Unchanged states or details do not prove absence of flakiness. These fields do not change the strict gate: incomplete or unknown outcome evidence can accompany exit 0 under the existing policy, and an observed improvement does not waive baseline failures or missing validation evidence.
+
+Optionally pass `--expect-outcomes /path/to/claims.json` to annotate declared outcomes. The file requires only `version: 1` and a `tests` mapping. Each named test requires `baseline` and `candidate`, each with a supported `state` other than `unknown` and an optional nonempty literal `marker`; `failed` and `error` claims require a marker. Names outside the selected test set are rejected before CTest execution. The report retains the parsed claims, file path and SHA-256. This example uses placeholder case names and assertion text; replace them with the selected cases and their actual output:
+
+```json
+{
+  "version": 1,
+  "tests": {
+    "regression_case": {
+      "baseline": {"state": "failed", "marker": "FAIL: stale completion"},
+      "candidate": {"state": "passed"}
+    },
+    "optional_case": {
+      "baseline": {"state": "skipped", "marker": "SKIP_RETURN_CODE=77"},
+      "candidate": {"state": "skipped", "marker": "SKIP_RETURN_CODE=77"}
+    }
+  }
+}
+```
+
+Claims are checked separately for each case, build and iteration. A marker must occur in that case's output or failure/error/skip details; another case or repetition cannot satisfy it. Results are `matched`, `mismatched` or `unavailable`; unknown or missing observations cannot match. A case's combined result is `mismatched` if any known observation contradicts its claim, even when another observation is unavailable. Otherwise it is `unavailable` if an observation is unavailable, and `matched` only when every observation matches. Matching claims do not prove that the test implementation was unchanged or that the change caused the transition. An expectation annotation never changes the strict verdict or exit code; expected failures and skips still fail the gate.
+
 ## Write watch tests
 
 The macOS write watch can be built and tested separately, without submodules or the prx libraries:

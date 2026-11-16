@@ -14,6 +14,8 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
+import vulkan_validation_outcomes as outcome_reports
+
 
 FORCED = {"ANYPS5_REQUIRE_VULKAN": "1", "ANYPS5_NO_SHADER_CACHE": "1",
           "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation", "VK_LOADER_DEBUG": "layer"}
@@ -357,6 +359,7 @@ def main(argv=None):
     parser.add_argument("--runtime", action="append", default=[], help="build-relative runtime file/directory to hash before and after tests")
     parser.add_argument("--cmake", default="cmake")
     parser.add_argument("--ctest", default="ctest")
+    parser.add_argument("--expect-outcomes", type=Path, help="versioned per-test outcome claims; annotations never change the strict verdict")
     if os.name not in ("posix", "nt") or sys.platform in ("cygwin", "msys"):
         parser.error("use native Windows Python or a POSIX host; Cygwin and MSYS Python cannot contain native Windows processes")
     args = parser.parse_args(argv)
@@ -370,6 +373,9 @@ def main(argv=None):
               "limits": "GPU selection is requested, not independently verified. Only selected command files and explicit --runtime paths are hashed; other dynamic dependencies are not inventoried."}
     created = False
     try:
+        expectations = outcome_reports.load_expectations(args.expect_outcomes) if args.expect_outcomes else None
+        declarations = expectations["tests"] if expectations else {}
+        report["outcome_expectations"] = expectations
         output = args.output.resolve()
         sources = {side: (Path(values[0]).resolve(), values[1])
                    for side, values in (("baseline", args.baseline), ("candidate", args.candidate))}
@@ -435,6 +441,8 @@ def main(argv=None):
         names = {test["name"] for test in listings["baseline"]}
         if names != {test["name"] for test in listings["candidate"]}:
             raise GateError("selected test-name sets differ between builds")
+        if set(declarations) - names:
+            raise GateError("outcome expectations name unselected tests: " + repr(sorted(set(declarations) - names)))
         for iteration in range(1, args.repeat + 1):
             for side in (("baseline", "candidate") if iteration % 2 else ("candidate", "baseline")):
                 directory = output / side
@@ -444,17 +452,23 @@ def main(argv=None):
                            "--timeout", str(args.test_timeout), "--output-junit", str(junit)]
                 code = run(command, directory / f"iteration-{iteration}.log", environment, args.timeout)
                 tests, problems = parse_report(junit, names)
+                outcomes = outcome_reports.read_outcomes(junit, {name: claim[side] for name, claim in declarations.items()})
+                outcomes["junit"] = str(junit.relative_to(output))
+                outcomes["log"] = str((directory / f"iteration-{iteration}.log").relative_to(output))
                 report["iterations"].append({"side": side, "iteration": iteration, "command": command,
-                                              "returncode": code, "tests": tests, "problems": problems})
+                                              "returncode": code, "tests": tests, "problems": problems,
+                                              "outcomes": outcomes})
                 save(output, report)
         for side, (source, expected) in sources.items():
             identity(source, expected)
             if artifact_hashes(output / side / "build", listings[side], args.runtime) != hashes[side]:
                 raise GateError(f"{side}: selected command/runtime artifacts changed during testing")
         report.update(compare(report["iterations"]))
+        report["outcome_evidence"] = outcome_reports.summarize_outcomes(report["iterations"], names, args.repeat, declarations)
         report["status"] = "complete"
         save(output, report)
         print(f"{len(names)} tests, {args.repeat} iterations per build; report: {output / 'report.json'}")
+        print(outcome_reports.format_outcomes(report["outcome_evidence"], report["exit_code"]))
         return report["exit_code"]
     except (GateError, OSError, RuntimeError, ValueError, KeyError, ET.ParseError, subprocess.SubprocessError) as error:
         report["error"] = str(error)
