@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceLibcInternal/include/PendingExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -22,6 +23,19 @@
 
 extern "C" const char* __progname_nid_postfix;
 
+namespace {
+
+template<typename Slot>
+Slot MessagesSlot(const void* self, Slot GuestLocale::MessagesVtable::*member, const char* function) {
+    const auto* facet = static_cast<const GuestLocale::Facet*>(self);
+    if (facet == nullptr || facet->vtable == nullptr) throw std::invalid_argument(std::string(function) + ": null facet");
+    const Slot slot = reinterpret_cast<const GuestLocale::MessagesVtable*>(facet->vtable)->*member;
+    if (slot == nullptr) throw std::invalid_argument(std::string(function) + ": empty vtable slot");
+    return slot;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix() {
@@ -29,25 +43,25 @@ int APS5_VABI _ZNKSt8ios_base7failure8_DoraiseEv_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
+    return MessagesSlot(self, &GuestLocale::MessagesVtable::get, "messages<char>::get")(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::Facet*>(self), catalog, set, message, static_cast<const GuestLocale::String*>(fallback));
 }
 
-int APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix(const void* self, const void* name, const void* locale) {
+    return MessagesSlot(self, &GuestLocale::MessagesVtable::open, "messages<char>::open")(static_cast<const GuestLocale::Facet*>(self), static_cast<const GuestLocale::String*>(name), locale);
 }
 
-int APS5_VABI sceLibcInternalPending4_005_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalPending4_005_nid_no_patch(const void* self, int catalog) {
+    MessagesSlot(self, &GuestLocale::MessagesVtable::close, "messages<char>::close")(static_cast<const GuestLocale::Facet*>(self), catalog);
 }
 APS5_EXPORT("EeBQ7253LkE", sceLibcInternalPending4_005_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_006_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI sceLibcInternalPending4_006_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
+    (void)self;
+    (void)catalog;
+    (void)set;
+    (void)message;
+    return LibcCopyString_nid_no_patch(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::String*>(fallback));
 }
 APS5_EXPORT("vbgCuYKySLI", sceLibcInternalPending4_006_nid_no_patch);
 
@@ -65,27 +79,27 @@ void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int ca
 }
 APS5_EXPORT("rRmMX83UL1E", sceLibcInternalPending4_008_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_009_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI sceLibcInternalPending4_009_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
+    return MessagesSlot(self, &GuestLocale::MessagesVtable::get, "messages<wchar_t>::get")(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::Facet*>(self), catalog, set, message, static_cast<const GuestLocale::String*>(fallback));
 }
 APS5_EXPORT("Ea+awuQ5Bm8", sceLibcInternalPending4_009_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_010_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceLibcInternalPending4_010_nid_no_patch(const void* self, const void* name, const void* locale) {
+    return MessagesSlot(self, &GuestLocale::MessagesVtable::open, "messages<wchar_t>::open")(static_cast<const GuestLocale::Facet*>(self), static_cast<const GuestLocale::String*>(name), locale);
 }
 APS5_EXPORT("TPq0HfoACeI", sceLibcInternalPending4_010_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_011_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceLibcInternalPending4_011_nid_no_patch(const void* self, int catalog) {
+    MessagesSlot(self, &GuestLocale::MessagesVtable::close, "messages<wchar_t>::close")(static_cast<const GuestLocale::Facet*>(self), catalog);
 }
 APS5_EXPORT("GGoH7e6SZSY", sceLibcInternalPending4_011_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_012_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI sceLibcInternalPending4_012_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback) {
+    (void)self;
+    (void)catalog;
+    (void)set;
+    (void)message;
+    return LibcCopyWideString_nid_no_patch(static_cast<GuestLocale::String*>(result), static_cast<const GuestLocale::String*>(fallback));
 }
 APS5_EXPORT("UM6rGQxnEMg", sceLibcInternalPending4_012_nid_no_patch);
 

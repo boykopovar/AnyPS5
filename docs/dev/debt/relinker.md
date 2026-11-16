@@ -90,3 +90,5 @@
 - [ELF section header validation](../../../core/relinker/relinker/src/parsing/ElfReader.cpp) - console loader diagnostics for out-of-range associated table links and symbol or relocation section entry size mismatches are unmeasured. The reader validates links on symbol, relocation and dynamic sections and entry sizes on symbol and relocation sections.
 
 - [Module-qualified guest imports](../../../core/relinker/relinker/src/guest/GuestModuleBuilder.cpp) with duplicate guest exports still use flat symbol lookup on macOS; the requested provider is not retained. A macOS executable import with multiple needed providers still fails conversion. Linux provider aliases are tested with synthetic modules, without console module-binding measurements or a title run.
+
+- [Needed library names](../../../core/relinker/domain/include/domain/ImportModule.hpp) - whether a console's `libSceGnmDriver_padebug` module exports or does anything that `libSceGnmDriver` doesn't is not known: a `libSceGnmDriver_padebug` dependency, with any module suffix, is loaded as `libSceGnmDriver.prx`, and imports from module `libSceGnmDriver` match it.
