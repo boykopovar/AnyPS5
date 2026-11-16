@@ -1143,6 +1143,10 @@ class ArgumentAndPathTests(unittest.TestCase):
         self.assertFalse(args.no_names)
         self.assertFalse(args.symbols_json)
 
+    def test_parse_arguments_refuses_an_offline_mode_with_out(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            annotate_module.parse_arguments(["lib.prx", "--symbols-json", "--out", "x"])
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))
