@@ -1870,6 +1870,13 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         process.assert_not_called()
 
 
+class EntropyTests(unittest.TestCase):
+    def test_entropy_matches_known_byte_distributions(self):
+        self.assertEqual(unwrap_self.entropy(b''), 0.0)
+        self.assertEqual(unwrap_self.entropy(b'ab'), 1.0)
+        self.assertEqual(unwrap_self.entropy(b'aaaa'), 0.0)
+
+
 if __name__ == "__main__":
     selected_test = os.environ.get("UNWRAP_SELF_TEST")
     unittest.main(argv=[sys.argv[0], selected_test] if selected_test else None)
