@@ -411,3 +411,7 @@ ctest --test-dir build/register-context --output-on-failure
 
 On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build also registers these tests. Apple silicon runs the x86-64 tests through Rosetta. They cover the unwinder's register transfer, not the complete macOS runtime or guest exception handling.
  
+
+## Test selection tools
+
+- `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
