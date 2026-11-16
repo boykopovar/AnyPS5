@@ -13,3 +13,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>")
     endif()
 endif()
+
+target_sources(libSceFsInternalForVsh PRIVATE src/AdditionalCallableExports.cpp)
