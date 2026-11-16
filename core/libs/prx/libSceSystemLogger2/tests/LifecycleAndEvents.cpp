@@ -154,7 +154,12 @@ int main() {
     Require(sceSystemLogger2SetEventAsyncEx(unreadable) == kInvalidArgument);
     Require(sceSystemLogger2SetEventAsyncEx2(unreadable) == kInvalidArgument);
     Require(sceSystemLogger2SetRnpsEventAsync(unreadable) == kInvalidArgument);
+    Require(sceSystemLogger2GetEventStatus(static_cast<const char*>(unreadable), &eventState) == kInvalidArgument);
+    Require(sceSystemLogger2GetEventStatus("name", reinterpret_cast<std::uint64_t*>(0x10)) == kInvalidArgument);
+    Require(sceSystemLogger2SetEventAsyncInternal(record, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
     Require(errno == 71);
+    eventStatus = 0xDEADBEEF;
+    Require(sceSystemLogger2SetEventAsyncInternal(record, &eventStatus) == kNotAvailable && eventStatus == 0);
 
     StoreU32(record, kCountOffset, 1);
     StorePointer(record, kEntryOffset, unreadable);
