@@ -815,5 +815,38 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("FAIL:", error)
 
 
+    def test_strip_token_keeps_first_word_without_comments(self):
+        self.assertEqual(export_gap.strip_token("\ufeffABC  # note"), "ABC")
+        self.assertEqual(export_gap.strip_token("  XYZ extra words"), "XYZ")
+        self.assertEqual(export_gap.strip_token("# whole line comment"), "")
+        self.assertEqual(export_gap.strip_token("   "), "")
+
+
+    def test_mangled_and_identifier_reasons(self):
+        self.assertTrue(export_gap.is_mangled("_Z3foo"))
+        self.assertFalse(export_gap.is_mangled("_Zx"))
+        self.assertFalse(export_gap.is_mangled("foo"))
+        self.assertEqual(export_gap.helper_reason("_Z3foo"), "is a C++ mangled name")
+        self.assertEqual(export_gap.helper_reason("1abc"), "is not a valid C identifier")
+        self.assertIsNone(export_gap.helper_reason("abc"))
+
+
+    def test_is_safe_module_rejects_path_like_names(self):
+        for name in ("", ".", "..", "../x", "a/b", "a\\b"):
+            self.assertFalse(export_gap.is_safe_module(name), name)
+        self.assertTrue(export_gap.is_safe_module("libSceFoo"))
+
+
+    def test_parse_nids_file_dedupes_and_rejects_bad_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "nids.txt"
+            good.write_text("\ufeffAAAAAAAAAAA # first\n# skipped\nBBBBBBBBBBB\nAAAAAAAAAAA\n", encoding="utf-8")
+            self.assertEqual(export_gap.parse_nids_file(good), ["AAAAAAAAAAA", "BBBBBBBBBBB"])
+            bad = Path(directory) / "bad.txt"
+            bad.write_text("not-a-nid-too-long\n", encoding="utf-8")
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_nids_file(bad)
+
+
 if __name__ == "__main__":
     unittest.main()
