@@ -628,5 +628,11 @@ class PatchAdvisorTests(unittest.TestCase):
                 suggest_patches.relative_path(name)
 
 
+    def test_unique_json_keys_rejects_duplicate_keys(self):
+        self.assertEqual(suggest_patches.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaises(ValueError):
+            suggest_patches.unique_json_keys([("a", 1), ("a", 2)])
+
+
 if __name__ == "__main__":
     unittest.main()
