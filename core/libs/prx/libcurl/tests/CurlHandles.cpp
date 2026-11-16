@@ -1,6 +1,7 @@
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include <cerrno>
 #include <cstdlib>
 
 static void Require(bool condition) {
@@ -62,6 +63,8 @@ int main() {
     int64_t timeout = 99;
     Require(curl_multi_timeout_nid_postfix(multi, &timeout) == CURLM_OK && timeout == -1);
     Require(curl_multi_timeout_nid_postfix(multi, nullptr) == CURLM_BAD_FUNCTION_ARGUMENT);
+    errno = 71;
+    Require(curl_multi_timeout_nid_postfix(multi, reinterpret_cast<int64_t*>(0x10)) == CURLM_BAD_FUNCTION_ARGUMENT && errno == 71);
     Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_OK);
     Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_ADDED_ALREADY);
     Require(curl_multi_perform_nid_postfix(multi, &running) == CURLM_OK && running == 0);
