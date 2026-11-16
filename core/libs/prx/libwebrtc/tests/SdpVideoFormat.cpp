@@ -397,6 +397,10 @@ void TestNegativeAndGuardedPointers() {
     RequireInvalidArgument([&]() {
         _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(&valid, {guard.As<const WebRtcSdpVideoFormat>(), 1});
     });
+    RequireInvalidArgument([&]() {
+        const auto* nearEnd = reinterpret_cast<const WebRtcSdpVideoFormat*>(std::numeric_limits<std::uintptr_t>::max() - 16);
+        _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Lln4711EEE_nid_postfix(&valid, {nearEnd, 2});
+    });
 
     WebRtcSdpVideoFormat badString{};
     InitFormat(badString, "VP8", {}, {});

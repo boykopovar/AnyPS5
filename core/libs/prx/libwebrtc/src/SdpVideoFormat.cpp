@@ -873,9 +873,14 @@ bool APS5_VABI _ZNK6webrtc14SdpVideoFormat13IsCodecInListEN3rtc9ArrayViewIKS0_Ll
         return false;
     if (!formats.data || formats.size > std::numeric_limits<std::size_t>::max() / sizeof(WebRtcSdpVideoFormat))
         throw std::invalid_argument(message);
+    const auto baseAddress = reinterpret_cast<std::uintptr_t>(formats.data);
+    const std::size_t totalBytes = formats.size * sizeof(WebRtcSdpVideoFormat);
+    if (totalBytes > std::numeric_limits<std::uintptr_t>::max() - baseAddress)
+        throw std::invalid_argument(message);
 
     for (std::size_t i = 0; i < formats.size; ++i) {
-        const auto* candidatePtr = formats.data + i;
+        const auto* candidatePtr = reinterpret_cast<const WebRtcSdpVideoFormat*>(
+            baseAddress + i * sizeof(WebRtcSdpVideoFormat));
         WebRtcSdpVideoFormat candidate{};
         CopyInChecked(&candidate, candidatePtr, sizeof(candidate), message);
         const std::string candidateName = ReadGuestString(candidate.name, message);
