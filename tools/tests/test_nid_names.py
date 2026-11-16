@@ -940,6 +940,19 @@ class PureHelperTests(unittest.TestCase):
         self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_disambig3"), "sceFoo")
         self.assertEqual(nid_names.strip_nid_postfix("plain"), "plain")
 
+    def test_option_name_matches_exact_and_unique_abbreviated_options(self):
+        options = ("--nid", "--name", "-h")
+        self.assertEqual(nid_names.option_name("-h", options), "-h")
+        self.assertEqual(nid_names.option_name("--nid=abc", options), "--nid")
+        self.assertEqual(nid_names.option_name("--na", options), "--name")
+
+    def test_option_name_ignores_values_and_ambiguous_prefixes(self):
+        options = ("--nid", "--name", "-h")
+        self.assertIsNone(nid_names.option_name("abc", options))
+        self.assertIsNone(nid_names.option_name("-", options))
+        self.assertIsNone(nid_names.option_name("--unknown", options))
+        self.assertEqual(nid_names.option_name("--n", options), "--n")
+
 
 if __name__ == "__main__":
     unittest.main()
