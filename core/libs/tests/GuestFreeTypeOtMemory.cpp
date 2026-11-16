@@ -1,8 +1,16 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -19,6 +27,7 @@ struct Recorder {
     void* lastBlock = nullptr;
     GuestMemoryRec* lastMemory = nullptr;
     bool fail = false;
+    void* forced = nullptr;
 };
 
 Recorder* Owner(GuestMemoryRec* memory) {
@@ -30,6 +39,7 @@ void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
     ++recorder->allocs;
     recorder->lastMemory = memory;
     recorder->lastSize = size;
+    if (recorder->forced) return recorder->forced;
     if (recorder->fail) return nullptr;
     void* block = std::malloc(static_cast<std::size_t>(size));
     std::memset(block, 0xAA, static_cast<std::size_t>(size));
@@ -244,6 +254,146 @@ void BoundedCopy() {
     Require(ft_mem_strcpyn_nid_postfix(buffer, "", 5) == 0 && buffer[0] == 0 && buffer[1] == 'x', "strcpyn of an empty string returns 0");
 }
 
+template<class F>
+bool RejectsKeepingErrno(F call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::exception&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+std::size_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::size_t>(size) : 4096;
+#endif
+}
+
+char* MapPages(std::size_t bytes) {
+#ifdef _WIN32
+    void* pages = VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(pages != nullptr, "pages are mapped");
+#else
+    void* pages = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(pages != MAP_FAILED, "pages are mapped");
+#endif
+    return static_cast<char*>(pages);
+}
+
+void Protect(char* page, std::size_t bytes, bool readable) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, bytes, readable ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0, "a page is protected");
+#else
+    Require(mprotect(page, bytes, readable ? PROT_READ : PROT_NONE) == 0, "a page is protected");
+#endif
+}
+
+void UnmapPages(char* pages, std::size_t bytes) {
+#ifdef _WIN32
+    (void)bytes;
+    VirtualFree(pages, 0, MEM_RELEASE);
+#else
+    munmap(pages, bytes);
+#endif
+}
+
+void LargeBlocks() {
+    Recorder recorder;
+    Reset(recorder);
+    constexpr std::size_t size = 10000;
+    std::int32_t error = -1;
+    void* block = ft_mem_alloc_nid_postfix(&recorder.memory, size, &error);
+    Require(block && error == 0 && Filled(block, size, 0), "alloc clears a block of several pages");
+    error = -1;
+    block = ft_mem_realloc_nid_postfix(&recorder.memory, 1, size, 3 * size, block, &error);
+    Require(block && error == 0 && Filled(block, 3 * size, 0), "realloc clears a grown tail of several pages");
+    auto* source = static_cast<unsigned char*>(std::malloc(size));
+    for (std::size_t i = 0; i < size; ++i) source[i] = static_cast<unsigned char>(i * 7);
+    error = -1;
+    void* copy = ft_mem_dup_nid_postfix(&recorder.memory, source, size, &error);
+    Require(copy && error == 0 && std::memcmp(copy, source, size) == 0, "dup copies a block of several pages");
+    ft_mem_free_nid_postfix(&recorder.memory, copy);
+    ft_mem_free_nid_postfix(&recorder.memory, block);
+    std::free(source);
+}
+
+void GuestPointers() {
+    const std::size_t pageSize = PageSize();
+    char* pages = MapPages(3 * pageSize);
+    char* readOnly = pages + pageSize;
+    char* guard = pages + 2 * pageSize;
+    std::memset(readOnly, 0x5A, pageSize);
+    char* tail = guard - 4;
+    std::memcpy(tail, "end", 4);
+    Protect(readOnly, pageSize, true);
+    Protect(guard, pageSize, false);
+    auto* readOnlyError = reinterpret_cast<std::int32_t*>(readOnly);
+    auto* unmappedError = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    auto* unmappedMemory = reinterpret_cast<GuestMemoryRec*>(std::uintptr_t{0x10});
+    const auto* unmappedText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+
+    Recorder recorder;
+    Reset(recorder);
+    std::int32_t error = -1;
+    Require(RejectsKeepingErrno([&] { ft_mem_qalloc_nid_postfix(&recorder.memory, 8, unmappedError); }), "qalloc refuses an unmapped error");
+    Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(&recorder.memory, 8, readOnlyError); }), "alloc refuses a read-only error");
+    Require(RejectsKeepingErrno([&] { ft_mem_qrealloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, unmappedError); }), "qrealloc refuses an unmapped error");
+    Require(RejectsKeepingErrno([&] { ft_mem_realloc_nid_postfix(&recorder.memory, 4, 0, 2, nullptr, readOnlyError); }), "realloc refuses a read-only error");
+    Require(RejectsKeepingErrno([&] { ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, unmappedError); }), "dup refuses an unmapped error");
+    Require(RejectsKeepingErrno([&] { ft_mem_strdup_nid_postfix(&recorder.memory, "ab", readOnlyError); }), "strdup refuses a read-only error");
+    Require(recorder.allocs == 0 && recorder.reallocs == 0 && *readOnlyError == 0x5A5A5A5A, "an unwritable error is refused before any allocation");
+
+    Require(RejectsKeepingErrno([&] { ft_mem_qalloc_nid_postfix(unmappedMemory, 8, &error); }), "qalloc refuses an unmapped memory record");
+    Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(unmappedMemory, 8, &error); }), "alloc refuses an unmapped memory record");
+    Require(RejectsKeepingErrno([&] { ft_mem_free_nid_postfix(unmappedMemory, tail); }), "free refuses an unmapped memory record");
+    Require(RejectsKeepingErrno([&] { ft_mem_qrealloc_nid_postfix(unmappedMemory, 4, 1, 2, tail, &error); }), "qrealloc refuses an unmapped memory record");
+    Require(error == -1, "an unmapped memory record leaves the error untouched");
+    Require(!ft_mem_qalloc_nid_postfix(unmappedMemory, 0, &error) && error == 0, "qalloc of size 0 does not read the memory record");
+
+    error = -1;
+    Require(RejectsKeepingErrno([&] { ft_mem_strdup_nid_postfix(&recorder.memory, unmappedText, &error); }), "strdup refuses an unmapped string");
+    Require(recorder.allocs == 0 && error == -1, "an unmapped string allocates nothing");
+    char* text = static_cast<char*>(ft_mem_strdup_nid_postfix(&recorder.memory, tail, &error));
+    Require(text && error == 0 && recorder.lastSize == 4 && std::strcmp(text, "end") == 0, "strdup copies a string that ends at a page end");
+    ft_mem_free_nid_postfix(&recorder.memory, text);
+    char* uncopied = nullptr;
+    error = -1;
+    Require(RejectsKeepingErrno([&] { uncopied = static_cast<char*>(ft_mem_dup_nid_postfix(&recorder.memory, unmappedText, 4, &error)); }),
+            "dup refuses an unmapped source");
+    Require(uncopied == nullptr && error == -1, "an unmapped source leaves the error untouched");
+
+    recorder.forced = readOnly;
+    Require(RejectsKeepingErrno([&] { ft_mem_alloc_nid_postfix(&recorder.memory, 8, &error); }), "alloc refuses to clear a read-only block");
+    Require(RejectsKeepingErrno([&] { ft_mem_dup_nid_postfix(&recorder.memory, "ab", 3, &error); }), "dup refuses to fill a read-only block");
+    Require(readOnly[0] == 0x5A && error == -1, "a read-only block is untouched");
+    recorder.forced = nullptr;
+
+    char buffer[8];
+    std::memset(buffer, 'x', sizeof(buffer));
+    Require(RejectsKeepingErrno([&] { ft_mem_strcpyn_nid_postfix(buffer, unmappedText, sizeof(buffer)); }) && buffer[0] == 'x',
+            "strcpyn refuses an unmapped source and writes nothing");
+    Require(RejectsKeepingErrno([&] { ft_mem_strcpyn_nid_postfix(readOnly, "abc", 4); }) && readOnly[0] == 0x5A, "strcpyn refuses a read-only destination");
+    Require(RejectsKeepingErrno([&] { ft_mem_strcpyn_nid_postfix(reinterpret_cast<char*>(std::uintptr_t{0x10}), "abc", 4); }),
+            "strcpyn refuses an unmapped destination");
+    Require(ft_mem_strcpyn_nid_postfix(buffer, tail, 1u << 20) == 0 && std::strcmp(buffer, "end") == 0 && buffer[4] == 'x',
+            "strcpyn reads a source that ends at a page end, whatever the size");
+    Protect(readOnly, pageSize, false);
+    char* writable = readOnly - 4;
+    std::memcpy(writable, "ab", 3);
+    char* last = writable + 1;
+    Require(ft_mem_strcpyn_nid_postfix(last, "zzz", 3) == 1 && std::memcmp(writable, "azz", 3) == 0 && *(last + 2) == 0,
+            "strcpyn writes a destination that ends at a page end");
+    UnmapPages(pages, 3 * pageSize);
+}
+
 }
 
 int main() {
@@ -253,6 +403,8 @@ int main() {
     ClearedReallocation();
     Duplication();
     BoundedCopy();
+    LargeBlocks();
+    GuestPointers();
     std::puts("Guest FreeType Ot memory tests passed");
     return 0;
 }
