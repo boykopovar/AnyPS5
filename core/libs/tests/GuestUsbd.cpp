@@ -533,6 +533,10 @@ int main(int argc, char** argv) {
     Require(sceUsbdGetActiveConfigDescriptor(&foreign, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable active config descriptor output accepted");
     Require(sceUsbdGetConfigDescriptor(&foreign, 0, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor output accepted");
     Require(sceUsbdGetConfigDescriptorByValue(&foreign, 1, reinterpret_cast<void**>(0x10)) == invalidArgument && errno == 71, "unwritable config descriptor by value output accepted");
+    static const std::uint8_t readOnly[8] = {};
+    auto* unwritable = const_cast<std::uint8_t*>(readOnly);
+    Require(sceUsbdControlTransfer(&foreign, 0x00, 0x09, 1, 0, reinterpret_cast<std::uint8_t*>(0x10), 8, 0) == invalidArgument && errno == 71, "unreadable host-to-device control data accepted");
+    Require(sceUsbdControlTransfer(&foreign, 0x80, 0x06, 0x0100, 0, unwritable, 8, 0) == invalidArgument && errno == 71, "unwritable device-to-host control data accepted");
     sceUsbdUnrefDevice(nullptr);
 
     Require(Throws([&] { sceUsbdRefDevice(&foreign); }), "referencing a device that was never listed did not throw");
