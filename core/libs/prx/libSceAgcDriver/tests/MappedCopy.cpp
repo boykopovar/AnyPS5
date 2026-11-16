@@ -111,10 +111,14 @@ void CheckCommitted() {
         rejected = true;
     }
     Require(rejected, "an overflowing checked committed read did not throw");
+#if defined(__linux__) || defined(__APPLE__)
+    GuestArena::GuestArenaSetProtection_nid_postfix(range.Address() + Unit, Unit, 0x04);
+#else
     GuestArena::GuestArenaCommit_nid_postfix(range.Data() + Unit, Unit, 0x04, Unit);
+#endif
     std::memset(range.Data() + Unit, 0x6c, Unit);
     ReadCommittedCheckedUnsynced(range.Address() + Unit + 13u, hole);
-    Require(std::all_of(hole.begin(), hole.end(), [](std::byte byte) { return byte == std::byte{0x6c}; }), "a checked committed read retained a reset page after recommit");
+    Require(std::all_of(hole.begin(), hole.end(), [](std::byte byte) { return byte == std::byte{0x6c}; }), "a checked committed read retained a reset page after restoring access");
     SetReadGuard([](std::uint64_t, std::size_t) { throw std::runtime_error("committed read guard"); });
     rejected = false;
     try {
