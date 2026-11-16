@@ -1,0 +1,16 @@
+add_library(libSceSystemLogger2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSystemLogger2 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSystemLogger2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_system_logger2_tests tests/LifecycleAndEvents.cpp)
+    target_include_directories(guest_system_logger2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_logger2_tests PRIVATE libSceSystemLogger2 libc)
+    configure_windows_unwind(guest_system_logger2_tests)
+    add_test(NAME guest_system_logger2 COMMAND guest_system_logger2_tests)
+    set_tests_properties(guest_system_logger2 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_logger2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger2>")
+    endif()
+endif()
