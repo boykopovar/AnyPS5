@@ -688,6 +688,10 @@ class TruncationTests(unittest.TestCase):
         text = pr_overlap.truncated(lines)
         self.assertTrue(text.startswith("x" * 30000 + "\n_Report truncated: 2 more lines omitted._"))
 
+    def test_truncated_output_stays_within_the_report_limit(self):
+        lines = ["x" * 30000, "y" * 30000, "z" * 30000]
+        self.assertLessEqual(len(pr_overlap.truncated(lines)), pr_overlap.MAX_REPORT_CHARS)
+
 
 if __name__ == "__main__":
     unittest.main()
