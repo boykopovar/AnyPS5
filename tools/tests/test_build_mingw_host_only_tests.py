@@ -12,6 +12,13 @@ class BuildMingwHostOnlyTestsTests(unittest.TestCase):
         self.assertEqual(build_mingw_host_only_tests.link_command(target), "a.o -lm")
         self.assertEqual(build_mingw_host_only_tests.link_command({}), "")
 
+    def test_is_libc_link_by_name_or_link_line(self):
+        self.assertTrue(build_mingw_host_only_tests.is_libc_link("libc", {}))
+        with_libc = {"link": {"commandFragments": [{"fragment": "/out/libc.prx"}]}}
+        self.assertTrue(build_mingw_host_only_tests.is_libc_link("test", with_libc))
+        without = {"link": {"commandFragments": [{"fragment": "/out/libfoo.a"}]}}
+        self.assertFalse(build_mingw_host_only_tests.is_libc_link("test", without))
+
 
 if __name__ == "__main__":
     unittest.main()
