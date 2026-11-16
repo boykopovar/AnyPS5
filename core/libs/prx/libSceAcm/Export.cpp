@@ -252,8 +252,7 @@ int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_com
 
 int APS5_VABI sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_count, const AcmBatchInfo* const batch_info[], AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_info_count;
-    (void)batch_info;
-    if (!batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
+    if (!batch_info || !batch || batch_error) return SCE_ACM_ERROR_BAD_POINTER;
     if (context == 0) return SCE_ACM_ERROR_BAD_CONTEXT;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_contexts.contains(context)) return SCE_ACM_ERROR_BAD_CONTEXT;
