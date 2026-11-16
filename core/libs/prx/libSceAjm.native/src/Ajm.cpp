@@ -1769,6 +1769,24 @@ bool CopyGuestOut(void* destination, const void* source, std::size_t bytes) {
     return copied;
 }
 
+bool CopyGuestInChunked(std::vector<std::uint8_t>& destination, const void* source, std::size_t bytes) {
+    destination.clear();
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes - 1 > std::numeric_limits<std::uintptr_t>::max() - start) return false;
+    std::array<std::uint8_t, 4096> chunk{};
+    for (std::size_t copied = 0; copied < bytes;) {
+        const std::size_t step = std::min(chunk.size(), bytes - copied);
+        if (!CopyGuestIn(chunk.data(), reinterpret_cast<const void*>(start + copied), step)) {
+            destination.clear();
+            return false;
+        }
+        destination.insert(destination.end(), chunk.data(), chunk.data() + step);
+        copied += step;
+    }
+    return true;
+}
+
 int RegisterBatch(std::uint32_t context, AjmBatchError* error, std::uint32_t* batch) {
     if (!batch) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (error) {
@@ -2393,17 +2411,11 @@ int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uin
         }
         const auto kind = ConsoleChunkKind(words[0]);
         if (kind == ConsoleChunk::Job) {
-            if (words[1] > 0) {
-                if (bodyOffset > std::numeric_limits<std::uintptr_t>::max() - batchAddress ||
-                    words[1] - 1 > std::numeric_limits<std::uintptr_t>::max() - (batchAddress + bodyOffset)) {
-                    return SCE_AJM_ERROR_INVALID_PARAMETER;
-                }
-                jobStorage.resize(words[1]);
-                if (!CopyGuestIn(jobStorage.data(), batch + bodyOffset, words[1])) return SCE_AJM_ERROR_INVALID_PARAMETER;
-            } else {
-                jobStorage.clear();
+            if (bodyOffset > std::numeric_limits<std::uintptr_t>::max() - batchAddress ||
+                !CopyGuestInChunked(jobStorage, batch + bodyOffset, words[1])) {
+                return SCE_AJM_ERROR_INVALID_PARAMETER;
             }
-            accepted = ReadConsoleJob(ConsoleChunkPayload(words[0]), guestJob, jobStorage.data(), jobStorage.data() + words[1], jobs.emplace_back(), refusal);
+            accepted = ReadConsoleJob(ConsoleChunkPayload(words[0]), guestJob, jobStorage.data(), jobStorage.data() + jobStorage.size(), jobs.emplace_back(), refusal);
         } else if (kind != ConsoleChunk::InlineBuffer) {
             NotImplemented_nid_no_patch(("sceAjmBatchStartBuffer (batch chunk kind " + std::to_string(static_cast<unsigned>(kind)) + ")").c_str());
         }

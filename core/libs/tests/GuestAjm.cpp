@@ -1125,6 +1125,13 @@ void TestBatchGuestPointers(std::uint32_t context) {
     Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(straddlingBatch), 24, 0, &error, &consoleId) == invalidParameter);
     Require(errno == 71 && consoleId == 0xdeadbeefu);
 
+    std::uint32_t* oversizedJob = reinterpret_cast<std::uint32_t*>(pages + pageSize - 64);
+    oversizedJob[0] = 0;
+    oversizedJob[1] = 0x7ffffff0u;
+    errno = 71;
+    Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(oversizedJob), 0x7ffffff8u, 0, &error, &consoleId) == invalidParameter);
+    Require(errno == 71 && consoleId == 0xdeadbeefu);
+
     const std::uint64_t validEmpty[2] = {0, 0};
     errno = 71;
     Require(sceAjmBatchStartBuffer(context, reinterpret_cast<const std::uint8_t*>(validEmpty), 4, 0, reinterpret_cast<AjmBatchError*>(0x10), &consoleId) == invalidParameter);
