@@ -755,6 +755,8 @@ bool usesIntegerSaturateClamp(RdnaOpcode opcode) {
         case RdnaOpcode::VSubrevNcU32:
         case RdnaOpcode::VAddNcI32:
         case RdnaOpcode::VSubNcI32:
+        case RdnaOpcode::VMulI32I24:
+        case RdnaOpcode::VMulU32U24:
         case RdnaOpcode::VMadU32U24:
         case RdnaOpcode::VMadI32I24:
         case RdnaOpcode::VMadU16:
