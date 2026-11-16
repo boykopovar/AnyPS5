@@ -163,6 +163,7 @@ struct QueuedSignal {
     std::int64_t value = 0;
     std::int32_t overrun = 0;
     std::int32_t error = 0;
+    std::uint64_t ticket = 0;
 };
 
 struct TimerOverrun {
@@ -771,48 +772,63 @@ int TimerSignalOverrun(int timer) {
 
 namespace {
 
-bool QueueValueSignal(int guest, std::int32_t code, std::int64_t value) {
+std::uint64_t QueueValueSignal(int guest, std::int32_t code, std::int64_t value) {
+    static std::uint64_t nextTicket = 0;
     auto& pending = Pending();
+    std::uint64_t ticket = 0;
     {
         std::lock_guard lock(pending.lock);
         auto& queued = pending.queued[guest];
         const bool merged = code == GuestSiKernel && std::any_of(queued.begin(), queued.end(), [](const QueuedSignal& entry) { return entry.code == GuestSiKernel; });
-        if (merged) return false;
-        queued.push_back({code, -1, value});
+        if (merged) return 0;
+        ticket = ++nextTicket;
+        queued.push_back({code, -1, value, 0, 0, ticket});
         pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
     }
     pending.changed.NotifyAll();
-    return true;
+    return ticket;
 }
 
-bool RemoveValueSignalLocked(int guest, std::int32_t code, std::int64_t value) {
+bool RemoveValueSignalLocked(int guest, std::uint64_t ticket) {
     auto& pending = Pending();
     auto& queued = pending.queued[guest];
-    const auto found = std::find_if(queued.rbegin(), queued.rend(), [&](const QueuedSignal& entry) { return entry.code == code && entry.timer == -1 && entry.value == value; });
-    if (found == queued.rend()) return false;
-    queued.erase(std::next(found).base());
+    const auto found = std::find_if(queued.begin(), queued.end(), [ticket](const QueuedSignal& entry) { return entry.ticket == ticket; });
+    if (found == queued.end()) return false;
+    queued.erase(found);
     if (queued.empty()) pending.words[SignalWord(guest)].fetch_and(~SignalBit(guest), std::memory_order_relaxed);
     return true;
 }
 
 }
 
-extern "C" int SendValueSignal_nid_no_patch(int guest, std::int32_t code, std::int64_t value, std::int64_t thread, bool directed) {
+extern "C" int SendValueSignal_nid_no_patch(int guest, std::int32_t code, std::int64_t value, std::int64_t thread, bool directed, std::uint64_t* ticket) {
+    *ticket = 0;
     if (directed && !LiveGuestThreadExists(thread)) return SignalSendNoThread;
     GuestSigaction action = Disposition(guest);
     KqueueSignalSent(guest);
     if (IgnoredOnSend(guest, action)) return SignalSendDone;
     ThreadSignals* target = SignalThread(thread);
     if (target == nullptr || !SignalBlocked(*target, guest)) return SignalSendUnblocked;
-    const bool queued = QueueValueSignal(guest, code, value);
+    const std::uint64_t queued = QueueValueSignal(guest, code, value);
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    if (!queued || SignalBlocked(*target, guest)) return SignalSendDone;
+    if (queued == 0) return SignalSendDone;
+    if (SignalBlocked(*target, guest)) {
+        *ticket = queued;
+        return SignalSendDone;
+    }
     auto& pending = Pending();
     {
         std::lock_guard lock(pending.lock);
-        if (!RemoveValueSignalLocked(guest, code, value)) return SignalSendDone;
+        if (!RemoveValueSignalLocked(guest, queued)) return SignalSendDone;
     }
     return IgnoredOnSend(guest, Disposition(guest)) ? SignalSendDone : SignalSendUnblocked;
+}
+
+extern "C" void TakeValueSignal_nid_no_patch(int guest, std::uint64_t ticket) {
+    if (ticket == 0) return;
+    auto& pending = Pending();
+    std::lock_guard lock(pending.lock);
+    RemoveValueSignalLocked(guest, ticket);
 }
 
 static_assert(sizeof(GuestStack) == 24 && offsetof(GuestStack, flags) == 16);

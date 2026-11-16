@@ -40,6 +40,8 @@ namespace {
 extern "C" {
 
 void AioHoldWorkerForTest_nid_no_patch(bool hold);
+void AioHoldSocketForTest_nid_no_patch(bool hold);
+std::size_t AioSocketsHeldForTest_nid_no_patch();
 }
 
 namespace {
@@ -525,6 +527,15 @@ void KeventCompletion(int file) {
     Require(aio_cancel_nid_postfix(file, &cancelled) == AioCanceled);
     Require(KeventWait(queue, events, 2, 0) == 1 && events[0].ident == reinterpret_cast<std::uintptr_t>(&cancelled) && events[0].data == Ecanceled);
     Require(aio_return_nid_postfix(&cancelled) == -1 && Error() == Ecanceled);
+    auto clearedCancel = KeventRequest(file, buffer, sizeof(buffer), queue, 13, EvClear);
+    Require(aio_read_nid_postfix(&clearedCancel) == 0);
+    Require(aio_cancel_nid_postfix(file, &clearedCancel) == AioCanceled);
+    Require(KeventWait(queue, events, 2, 0) == 1 && events[0].data == Ecanceled);
+    Require(KeventWait(queue, events, 2, 0) == 0);
+    KernelEvent retouched{reinterpret_cast<std::uintptr_t>(&clearedCancel), EvfiltAio, EvAdd, 0, 0, reinterpret_cast<void*>(std::uintptr_t{14})};
+    Require(kevent_nid_postfix(queue, &retouched, 1, nullptr, 0, nullptr) == 0);
+    Require(KeventWait(queue, events, 2, 0) == 1 && reinterpret_cast<std::uintptr_t>(events[0].udata) == 14 && events[0].data == Ecanceled);
+    Require(aio_return_nid_postfix(&clearedCancel) == -1 && Error() == Ecanceled);
     KernelEvent remove{reinterpret_cast<std::uintptr_t>(&deleted), EvfiltAio, EvDelete, 0, 0, nullptr};
     Require(kevent_nid_postfix(queue, &remove, 1, nullptr, 0, nullptr) == 0);
     AioHoldWorkerForTest_nid_no_patch(false);
@@ -562,6 +573,12 @@ struct Received {
     int pid;
     std::int64_t value;
 };
+
+bool SignalPending(int guest) {
+    GuestSignalSet pending{};
+    Require(sigpending_nid_postfix(&pending) == 0);
+    return (pending.bits[(guest - 1) / 32] & SignalSet(guest).bits[(guest - 1) / 32]) != 0;
+}
 
 bool TakeSignal(int guest, std::int64_t nanoseconds, Received& received) {
     const auto set = SignalSet(guest);
@@ -630,6 +647,37 @@ void SignalCompletion(int file) {
     Require(TakeSignal(Sigusr1, 0, received) && received.value == 0x99);
     Require(aio_return_nid_postfix(&cancelled) == -1 && Error() == Ecanceled);
 
+    auto returned = Request(file, buffer, sizeof(buffer));
+    returned.sigevent = {SigevSignal, Sigusr1, 0xaa, {}};
+    Require(aio_read_nid_postfix(&returned) == 0);
+    Wait(returned);
+    Require(SignalPending(Sigusr1));
+    Require(aio_return_nid_postfix(&returned) == static_cast<std::int64_t>(sizeof(buffer)));
+    Require(!SignalPending(Sigusr1));
+    Require(!TakeSignal(Sigusr1, 0, received) && Error() == Eagain);
+
+    auto waited = Request(file, buffer, sizeof(buffer));
+    waited.sigevent = {SigevSignal, Sigusr1, 0xab, {}};
+    Require(aio_read_nid_postfix(&waited) == 0);
+    Wait(waited);
+    Require(SignalPending(Sigusr1));
+    GuestAiocb* completed = nullptr;
+    Require(aio_waitcomplete_nid_postfix(&completed, nullptr) == static_cast<std::int64_t>(sizeof(buffer)) && completed == &waited);
+    Require(!SignalPending(Sigusr1));
+
+    auto sharedFirst = Request(file, buffer, sizeof(buffer));
+    sharedFirst.sigevent = {SigevSignal, Sigusr1, 0xbb, {}};
+    auto sharedSecond = Request(file, buffer, sizeof(buffer));
+    sharedSecond.sigevent = {SigevSignal, Sigusr1, 0xbb, {}};
+    Require(aio_read_nid_postfix(&sharedFirst) == 0 && aio_read_nid_postfix(&sharedSecond) == 0);
+    Wait(sharedFirst);
+    Wait(sharedSecond);
+    Require(TakeSignal(Sigusr1, 0, received) && received.value == 0xbb);
+    Require(aio_return_nid_postfix(&sharedFirst) == static_cast<std::int64_t>(sizeof(buffer)));
+    Require(TakeSignal(Sigusr1, 0, received) && received.value == 0xbb);
+    Require(aio_return_nid_postfix(&sharedSecond) == static_cast<std::int64_t>(sizeof(buffer)));
+    Require(!SignalPending(Sigusr1));
+
     Require(pthread_sigmask_nid_postfix(SigUnblock, &blocked, nullptr) == 0);
     Require(pthread_sigmask_nid_postfix(SigUnblock, &blocked2, nullptr) == 0);
 }
@@ -695,6 +743,63 @@ void SocketRequests() {
     Require(close_nid_postfix(pair[0]) == 0);
 }
 
+void SocketCancelDuringAttempt() {
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(AfUnix, SockStream, 0, pair) == 0);
+    char buffer[4] = {};
+    AioHoldSocketForTest_nid_no_patch(true);
+    auto raced = Request(pair[0], buffer, sizeof(buffer));
+    Require(aio_read_nid_postfix(&raced) == 0);
+    Require(_write_nid_postfix(pair[1], "abcd", 4) == 4);
+    const auto patience = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (AioSocketsHeldForTest_nid_no_patch() == 0) {
+        Require(std::chrono::steady_clock::now() < patience);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Require(aio_cancel_nid_postfix(pair[0], &raced) == AioNotCanceled);
+    Require(aio_cancel_nid_postfix(pair[0], &raced) == AioNotCanceled);
+    char drained[4] = {};
+    Require(recv_nid_postfix(pair[0], drained, sizeof(drained), MsgDontWait) == 4);
+    AioHoldSocketForTest_nid_no_patch(false);
+    const GuestAiocb* list[] = {&raced};
+    const KernelTimespec timeout{5, 0};
+    Require(aio_suspend_nid_postfix(list, 1, &timeout) == 0);
+    Require(aio_return_nid_postfix(&raced) == -1 && Error() == Ecanceled);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+
+void SigpipeToSubmitter() {
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(AfUnix, SockStream, 0, pair) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+    const auto pipeSet = SignalSet(Sigpipe);
+    const auto usr2Set = SignalSet(Sigusr2);
+    Require(pthread_sigmask_nid_postfix(SigBlock, &pipeSet, nullptr) == 0);
+    Require(pthread_sigmask_nid_postfix(SigBlock, &usr2Set, nullptr) == 0);
+    std::atomic<int> target{0};
+    std::atomic<bool> finished{false};
+    std::thread other([&] {
+        Require(pthread_sigmask_nid_postfix(SigBlock, &usr2Set, nullptr) == 0);
+        Require(pthread_sigmask_nid_postfix(SigUnblock, &pipeSet, nullptr) == 0);
+        target.store(pthread_getthreadid_np_nid_postfix());
+        while (!finished.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    });
+    while (target.load() == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    char buffer[8] = {};
+    auto broken = Request(pair[0], buffer, sizeof(buffer));
+    broken.sigevent = {SigevThreadId, Sigusr2, 0x31, {target.load()}};
+    Require(aio_write_nid_postfix(&broken) == 0);
+    Wait(broken);
+    Require(aio_return_nid_postfix(&broken) == -1 && Error() == Epipe);
+    Received received{};
+    Require(TakeSignal(Sigpipe, 0, received) && received.signo == Sigpipe);
+    finished.store(true);
+    other.join();
+    Require(pthread_sigmask_nid_postfix(SigUnblock, &usr2Set, nullptr) == 0);
+    Require(pthread_sigmask_nid_postfix(SigUnblock, &pipeSet, nullptr) == 0);
+    Require(close_nid_postfix(pair[0]) == 0);
+}
+
 void SocketPartialWrites() {
     constexpr std::size_t Large = 1 << 20;
     std::vector<char> data(Large, 'z');
@@ -743,6 +848,8 @@ int main() {
     KeventCompletion(file);
     SignalCompletion(file);
     SocketRequests();
+    SocketCancelDuringAttempt();
+    SigpipeToSubmitter();
     SocketPartialWrites();
     Require(close_nid_postfix(readOnly) == 0 && close_nid_postfix(file) == 0);
     Require(std::filesystem::remove(path));

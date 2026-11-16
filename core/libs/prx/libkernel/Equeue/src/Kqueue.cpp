@@ -504,6 +504,19 @@ int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     return error;
 }
 
+struct AioNote {
+    std::uint64_t token = 0;
+    std::int64_t error = 0;
+};
+
+void RetriggerAioKnote(KernelEqueueEvent& event) {
+    if (!event.enabled || (event.event.flags & EV_EOF) == 0) {
+        return;
+    }
+    event.event.data = static_cast<std::intptr_t>(static_cast<const AioNote*>(event.filter.data)->error);
+    event.triggered = true;
+}
+
 int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0 || change.fflags != 0)) {
         NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
@@ -542,7 +555,7 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
         if (change.filter == EVFILT_USER) {
             TouchUserKnote(event, change);
         } else if (change.filter == EVFILT_AIO) {
-            event.triggered = event.triggered || (event.enabled && (event.event.flags & EV_EOF) != 0);
+            RetriggerAioKnote(event);
         } else if (change.filter == EVFILT_VNODE) {
             SetVnodeNotes(event, change.fflags);
         }
@@ -709,8 +722,8 @@ static std::vector<KernelEqueueRef> AllKqueues() {
     return queues;
 }
 
-static void* AioToken(std::uint64_t token) {
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(token));
+static bool AioKnoteOf(const KernelEqueueEvent& event, std::uint64_t token) {
+    return static_cast<const AioNote*>(event.filter.data)->token == token;
 }
 
 int KqueueAddAio_nid_no_patch(int descriptor, std::uintptr_t ident, std::uint16_t flags, void* udata, std::uint64_t token) {
@@ -722,7 +735,7 @@ int KqueueAddAio_nid_no_patch(int descriptor, std::uintptr_t ident, std::uint16_
         return GuestErrno(queue->EditEvent(ident, EVFILT_AIO, [udata](KernelEqueueEvent& event) {
             event.event.udata = udata;
             event.enabled = true;
-            event.triggered = event.triggered || (event.event.flags & EV_EOF) != 0;
+            RetriggerAioKnote(event);
         }));
     }
     KernelEqueueEvent event{};
@@ -730,16 +743,20 @@ int KqueueAddAio_nid_no_patch(int descriptor, std::uintptr_t ident, std::uint16_
     event.event.filter = EVFILT_AIO;
     event.event.flags = flags;
     event.event.udata = udata;
-    event.filter.data = AioToken(token);
+    auto note = std::make_shared<AioNote>();
+    note->token = token;
+    event.filter.data = note.get();
+    event.filter.owner = std::move(note);
     return GuestErrno(queue->AddEvent(event));
 }
 
 void KqueueAioDone_nid_no_patch(std::uintptr_t ident, std::uint64_t token, std::int64_t error) {
     for (const auto& queue : AllKqueues()) {
         queue->EditEvent(ident, EVFILT_AIO, [token, error](KernelEqueueEvent& event) {
-            if (event.filter.data != AioToken(token)) {
+            if (!AioKnoteOf(event, token)) {
                 return;
             }
+            static_cast<AioNote*>(event.filter.data)->error = error;
             event.event.data = static_cast<std::intptr_t>(error);
             event.event.flags = static_cast<std::uint16_t>(event.event.flags | EV_EOF);
             event.triggered = true;
@@ -750,7 +767,7 @@ void KqueueAioDone_nid_no_patch(std::uintptr_t ident, std::uint64_t token, std::
 void KqueueAioFree_nid_no_patch(std::uintptr_t ident, std::uint64_t token) {
     for (const auto& queue : AllKqueues()) {
         bool bound = false;
-        queue->EditEvent(ident, EVFILT_AIO, [token, &bound](KernelEqueueEvent& event) { bound = event.filter.data == AioToken(token); });
+        queue->EditEvent(ident, EVFILT_AIO, [token, &bound](KernelEqueueEvent& event) { bound = AioKnoteOf(event, token); });
         if (bound) {
             queue->DeleteEvent(ident, EVFILT_AIO);
         }
