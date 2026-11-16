@@ -27,6 +27,38 @@ def fake_unwrap(source, destination, verbose=False):
 
 
 class AuditDumpTests(unittest.TestCase):
+    def test_root_module_cannot_replace_the_staged_executable(self):
+        names = ("eboot.elf", "EBOOT.ELF") if os.name == "nt" else ("eboot.elf",)
+        for name in names:
+            for contents in (ELF + b"different executable", SELF + b"different container"):
+                with self.subTest(name=name, contents=contents[:4]):
+                    self.module(name, contents)
+                    source = self.root / "collision-source"
+                    with self.assertRaisesRegex(unwrap_self.Refused, "staged executable"):
+                        audit_dump.prepare(self.dump, source, log=lambda text: None)
+                    self.assertFalse(source.exists())
+                    self.assertEqual((self.dump / name).read_bytes(), contents)
+                    (self.dump / name).unlink()
+
+    def test_colliding_module_stops_before_conversion_or_audit(self):
+        self.module("eboot.elf", ELF + b"different executable")
+        with mock.patch.object(audit_dump, "convert") as convert, mock.patch.object(audit_dump.import_audit, "main") as audit:
+            code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs")
+        self.assertEqual(code, 2)
+        self.assertIn("eboot.elf", errors)
+        self.assertIn("staged executable", errors)
+        convert.assert_not_called()
+        audit.assert_not_called()
+
+    def test_same_name_in_a_module_directory_does_not_replace_the_executable(self):
+        self.module("sce_module/eboot.elf", ELF + b"module")
+        source = self.root / "source"
+        directories, extra = audit_dump.prepare(self.dump, source, log=lambda text: None)
+        self.assertEqual((source / "eboot.elf").read_bytes(), ELF + b"eboot.bin")
+        self.assertEqual((source / "sce_module/eboot.elf").read_bytes(), ELF + b"module")
+        self.assertEqual(directories, [source / "sce_module"])
+        self.assertEqual(extra, [])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
