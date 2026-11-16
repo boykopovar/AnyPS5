@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2016 Apple Inc. All rights reserved.
  * Copyright (C) 2018 Yusuke Suzuki <utatane.tea@gmail.com>
  *
