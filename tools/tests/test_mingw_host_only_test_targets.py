@@ -595,6 +595,11 @@ class LinkTextHelperTests(unittest.TestCase):
         self.assertTrue(build_mingw_host_only_tests.is_libc_link("x", linked))
         self.assertFalse(build_mingw_host_only_tests.is_libc_link("x", {"link": {"commandFragments": [{"fragment": "-lfoo"}]}}))
 
+    def test_object_document_accepts_an_object_and_refuses_other_json(self):
+        self.assertEqual(build_mingw_host_only_tests.object_document({"a": 1}, "p.json", "target"), {"a": 1})
+        with self.assertRaisesRegex(ValueError, "invalid target"):
+            build_mingw_host_only_tests.object_document([1], "p.json", "target")
+
 
 if __name__ == "__main__":
     unittest.main()
