@@ -12,8 +12,11 @@
 #include "prx/libSceLibcInternal/include/ErrExports.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/ExceptionVirtuals.hpp"
+#include "prx/libSceLibcInternal/include/IosBase.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
+
+#include "prx/libSceLibcInternal/include/FloatWords.hpp"
 #include "prx/libSceLibcInternal/include/CodecvtUtfMetadata.hpp"

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -42,6 +43,9 @@ static void CheckThreadIdNumeric() {
     unsigned char zero[sizeof(id)]{};
     Require(std::memcmp(&id, zero, sizeof(id)) == 0);
     RequireThrows([] { CRYPTO_THREADID_set_numeric_nid_postfix(nullptr, 1); });
+    errno = 71;
+    CRYPTO_THREADID_set_numeric_nid_postfix(reinterpret_cast<CryptoThreadId*>(0x10), 0x1234567890abcdefull);
+    Require(errno == 71);
 }
 
 int main() {

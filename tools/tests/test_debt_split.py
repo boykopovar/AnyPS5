@@ -531,6 +531,18 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(text.count(A_STUB), 1)
         self.assertLess(text.index("A hand-written note"), text.index("### Silent stubs"))
 
+    def test_split_keeps_the_paragraphs_and_tables_of_an_existing_debt_file_apart(self):
+        existing = ("# libSceA technical debt\n\nA note above the sections\nthat spans two lines.\n\n### Silent stubs\n\n"
+                    "- [libSceA](../../../core/libs/prx/libSceA/Export.cpp) - `sceAOne` returns 0\n\n"
+                    "A paragraph after the entry.\n\n| Name | NID |\n| --- | --- |\n| `sceAOne` | `abc` |\n\n"
+                    "- [libSceA](../../../core/libs/prx/libSceA/Two.cpp) - `sceATwo` ignores its flags\n")
+        self.write("docs/dev/debt/libSceA.md", existing)
+        extra = "- [libSceA](../../core/libs/prx/libSceA/Export.cpp) - `sceAExtra` returns 1"
+        self.write(INDEX, "# Project technical debt\n\n### Silent stubs\n\n" + extra + "\n")
+        self.split()
+        self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
+                         existing + "- [libSceA](../../../core/libs/prx/libSceA/Export.cpp) - `sceAExtra` returns 1\n")
+
     def test_a_debt_file_with_only_a_note_is_written_and_not_deleted(self):
         debt_split.write_debt(self.root, "libSceA", {}, [], ["A note that belongs to no section."])
         self.assertIn("A note that belongs to no section.", self.read("docs/dev/debt/libSceA.md"))

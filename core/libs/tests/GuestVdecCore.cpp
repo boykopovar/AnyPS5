@@ -352,6 +352,10 @@ void CheckDecodeArguments() {
     Require(sceVdecCoreFlushDecodeOutput(decoder, nullptr, nullptr) == 0, "flush without a count");
     std::uint32_t held = 7;
     Require(sceVdecCoreTrySyncDecode(decoder, nullptr) == 0 && sceVdecCoreTrySyncDecode(decoder, &held) == 0 && held == 1, "try-sync after a flush counts the held picture");
+    errno = 71;
+    Require(sceVdecCoreFlushDecodeOutput(decoder, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == InvalidArgument && errno == 71, "flush with an unwritable count");
+    held = 7;
+    Require(sceVdecCoreTrySyncDecode(decoder, &held) == 0 && held == 1, "a flush with an unwritable count keeps the held picture");
     Require(sceVdecCoreResetDecoder(decoder, nullptr) == 0, "reset");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the argument decoder");
 }
