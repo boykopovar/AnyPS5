@@ -52,11 +52,13 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -71,19 +73,40 @@ std::uint32_t ReadBigEndian(const std::uint8_t* bytes) {
     return (static_cast<std::uint32_t>(bytes[0]) << 24) | (static_cast<std::uint32_t>(bytes[1]) << 16) | (static_cast<std::uint32_t>(bytes[2]) << 8) | bytes[3];
 }
 
+template<typename T>
+T ReadGuest(const T* address, const char* message) {
+    T value{};
+    if (!GuestPtr<const T>(address).CopyIn(value))
+        throw std::invalid_argument(message);
+    return value;
+}
+
+template<typename T>
+void WriteGuest(T* address, const T& value, const char* message) {
+    if (!GuestPtr<T>(address).CopyOut(value))
+        throw std::invalid_argument(message);
+}
+
 void SetData(WebRtcBuffer& buffer, const std::uint8_t* data, std::size_t size) {
-    buffer.size = 0;
-    if (size == 0)
+    if (size == 0) {
+        buffer.size = 0;
         return;
+    }
     if (size > buffer.capacity) {
         const std::size_t capacity = std::max<std::size_t>(size, buffer.capacity + buffer.capacity / 2);
         auto* grown = static_cast<std::uint8_t*>(_Znam_nid_postfix(capacity));
+        if (!GuestBytes(grown).CopyOut(data, size)) {
+            _ZdaPv_nid_postfix(grown);
+            throw std::invalid_argument("App::Parse failed to copy payload data");
+        }
         if (buffer.data)
             _ZdaPv_nid_postfix(buffer.data);
         buffer.data = grown;
         buffer.capacity = capacity;
+    } else {
+        if (!GuestBytes(buffer.data).CopyOut(data, size))
+            throw std::invalid_argument("App::Parse requires a writable destination buffer");
     }
-    std::memcpy(buffer.data, data, size);
     buffer.size = size;
 }
 
@@ -95,34 +118,55 @@ void WriteBigEndian(std::uint8_t* bytes, std::uint32_t value) {
 }
 
 std::size_t APS5_VABI AppBlockLength_nid_no_patch(const WebRtcRtcpApp* app) {
-    return HeaderLength + AppBaseLength + app->data.size;
+    const auto hostApp = ReadGuest(app, "App::BlockLength requires a packet object");
+    return HeaderLength + AppBaseLength + hostApp.data.size;
 }
 
 std::size_t BlockLength(const WebRtcRtcpApp* app) {
+    const auto hostApp = ReadGuest(app, "App::BlockLength requires a packet object");
+    if (!hostApp.vtable)
+        throw std::invalid_argument("App::BlockLength requires a vtable");
+    const auto* vtable = static_cast<void* const*>(const_cast<void*>(hostApp.vtable));
+    const auto slot = ReadGuest(vtable + BlockLengthSlot, "App::BlockLength requires a virtual function");
+    if (!slot)
+        throw std::invalid_argument("App::BlockLength requires a virtual function");
     using Function = std::size_t (APS5_VABI*)(const WebRtcRtcpApp*);
-    return reinterpret_cast<Function>(static_cast<void* const*>(const_cast<void*>(app->vtable))[BlockLengthSlot])(app);
+    return reinterpret_cast<Function>(slot)(app);
 }
 
 bool APS5_VABI AppCreate_nid_no_patch(const WebRtcRtcpApp* app, std::uint8_t* packet, std::size_t* index, std::size_t maxLength, void* function, PacketReady call) {
-    while (*index + BlockLength(app) > maxLength) {
-        if (*index == 0)
+    if (!app || !packet || !index)
+        throw std::invalid_argument("App::Create requires a packet object, buffer, and index");
+    const auto hostApp = ReadGuest(app, "App::Create requires a readable packet object");
+    std::size_t hostIndex = ReadGuest(index, "App::Create requires a readable index");
+    if (!GuestWritable_nid_no_patch(index, sizeof(*index)))
+        throw std::invalid_argument("App::Create requires a writable index");
+    while (hostIndex + BlockLength(app) > maxLength) {
+        if (hostIndex == 0)
             return false;
         if (!call)
             throw std::invalid_argument("App::Create needs a callback to send a full buffer");
-        call(function, packet, *index);
-        *index = 0;
+        call(function, packet, hostIndex);
+        hostIndex = 0;
+        WriteGuest(index, hostIndex, "App::Create requires a writable index");
     }
-    const std::size_t words = (BlockLength(app) - HeaderLength) / 4;
-    packet[*index] = static_cast<std::uint8_t>((2 << 6) | app->subType);
-    packet[*index + 1] = PacketType;
-    packet[*index + 2] = static_cast<std::uint8_t>((words >> 8) & 0xff);
-    packet[*index + 3] = static_cast<std::uint8_t>(words & 0xff);
-    *index += HeaderLength;
-    WriteBigEndian(packet + *index, app->senderSsrc);
-    WriteBigEndian(packet + *index + 4, app->name);
-    if (app->data.size != 0)
-        std::memcpy(packet + *index + AppBaseLength, app->data.data, app->data.size);
-    *index += AppBaseLength + app->data.size;
+    const std::size_t totalLength = BlockLength(app);
+    if (totalLength < HeaderLength + AppBaseLength || totalLength != HeaderLength + AppBaseLength + hostApp.data.size)
+        throw std::invalid_argument("App::Create reported an inconsistent block length");
+    std::vector<std::uint8_t> encoded(totalLength);
+    const std::size_t words = (totalLength - HeaderLength) / 4;
+    encoded[0] = static_cast<std::uint8_t>((2 << 6) | hostApp.subType);
+    encoded[1] = PacketType;
+    encoded[2] = static_cast<std::uint8_t>((words >> 8) & 0xff);
+    encoded[3] = static_cast<std::uint8_t>(words & 0xff);
+    WriteBigEndian(encoded.data() + HeaderLength, hostApp.senderSsrc);
+    WriteBigEndian(encoded.data() + HeaderLength + 4, hostApp.name);
+    if (hostApp.data.size != 0 && !GuestBytes(hostApp.data.data).CopyIn(encoded.data() + HeaderLength + AppBaseLength, hostApp.data.size))
+        throw std::invalid_argument("App::Create requires readable payload data");
+    if (!GuestBytes(packet + hostIndex).CopyOut(encoded.data(), encoded.size()))
+        throw std::invalid_argument("App::Create requires a writable destination buffer");
+    hostIndex += encoded.size();
+    WriteGuest(index, hostIndex, "App::Create requires a writable index");
     return true;
 }
 
@@ -144,36 +188,39 @@ void* const Vtable[] = {
 extern "C" {
 
 void APS5_VABI _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(WebRtcRtcpApp* app) {
-    if (!app)
-        throw std::invalid_argument("App constructor requires a packet object");
-    app->vtable = Vtable + 2;
-    app->senderSsrc = 0;
-    app->subType = 0;
-    app->name = 0;
-    app->data = WebRtcBuffer {};
+    if (!app || !GuestWritable_nid_no_patch(app, sizeof(*app)))
+        throw std::invalid_argument("App constructor requires a writable packet object");
+    WebRtcRtcpApp host{};
+    host.vtable = Vtable + 2;
+    WriteGuest(app, host, "App constructor requires a writable packet object");
 }
 
 bool APS5_VABI _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpApp* app, const WebRtcRtcpCommonHeader* packet) {
-    if (!app)
-        throw std::invalid_argument("App::Parse requires a packet object");
+    if (!app || !GuestWritable_nid_no_patch(app, sizeof(*app)))
+        throw std::invalid_argument("App::Parse requires a writable packet object");
     if (!packet)
         throw std::invalid_argument("App::Parse requires a common header");
-    if (packet->payloadSize < AppBaseLength || packet->payloadSize % 4 != 0)
+    auto hostApp = ReadGuest(app, "App::Parse requires a packet object");
+    const auto hostPacket = ReadGuest(packet, "App::Parse requires a readable common header");
+    if (hostPacket.payloadSize < AppBaseLength || hostPacket.payloadSize % 4 != 0)
         return false;
-    if (!packet->payload)
+    if (!hostPacket.payload)
         throw std::invalid_argument("App::Parse requires a payload");
-    app->subType = packet->countOrFormat;
-    app->senderSsrc = ReadBigEndian(packet->payload);
-    app->name = ReadBigEndian(packet->payload + 4);
-    SetData(app->data, packet->payload + AppBaseLength, packet->payloadSize - AppBaseLength);
+    std::vector<std::uint8_t> payload(hostPacket.payloadSize);
+    if (!GuestBytes(hostPacket.payload).CopyIn(payload.data(), payload.size()))
+        throw std::invalid_argument("App::Parse requires a readable payload");
+    hostApp.subType = hostPacket.countOrFormat;
+    hostApp.senderSsrc = ReadBigEndian(payload.data());
+    hostApp.name = ReadBigEndian(payload.data() + 4);
+    SetData(hostApp.data, payload.data() + AppBaseLength, payload.size() - AppBaseLength);
+    WriteGuest(app, hostApp, "App::Parse requires a writable packet object");
     return true;
 }
 
 void APS5_VABI _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(WebRtcRtcpApp* app) {
-    if (!app)
-        throw std::invalid_argument("App destructor requires a packet object");
-    if (app->data.data)
-        _ZdaPv_nid_postfix(app->data.data);
+    const auto hostApp = ReadGuest(app, "App destructor requires a packet object");
+    if (hostApp.data.data)
+        _ZdaPv_nid_postfix(hostApp.data.data);
 }
 
 }

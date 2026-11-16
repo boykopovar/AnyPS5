@@ -2,6 +2,13 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -253,6 +260,100 @@ void TestLifecycleNulls() {
     _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
 }
 
+struct GuardedPage {
+    void* base = nullptr;
+    std::size_t size = 0;
+
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        base = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (base == MAP_FAILED)
+            base = nullptr;
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPage() {
+        if (!base)
+            return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    template<typename T>
+    T* As() const {
+        return static_cast<T*>(base);
+    }
+
+    void SetReadOnly() const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(base, size, PROT_READ) == 0);
+#endif
+    }
+
+    void SetInaccessible() const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(base, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        Require(mprotect(base, size, PROT_NONE) == 0);
+#endif
+    }
+};
+
+void TestGuardedPointers() {
+    {
+        GuardedPage page;
+        page.SetReadOnly();
+        Require(ThrowsInvalidArgument([&] { _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(page.As<WebRtcRtcpNack>()); }));
+    }
+    {
+        GuardedPage page;
+        *page.As<WebRtcRtcpNack>() = Constructed();
+        page.SetReadOnly();
+        Require(ThrowsInvalidArgument([&] { Parse(*page.As<WebRtcRtcpNack>(), ThreeItems); }));
+    }
+    {
+        GuardedPage payloadPage;
+        payloadPage.SetInaccessible();
+        WebRtcRtcpNack nack = Constructed();
+        WebRtcRtcpCommonHeader header {205, 1, 0, 12, payloadPage.As<const std::uint8_t>()};
+        Require(ThrowsInvalidArgument([&] { _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(&nack, &header); }));
+    }
+    {
+        GuardedPage indexPage;
+        *indexPage.As<std::size_t>() = 0;
+        indexPage.SetReadOnly();
+        WebRtcRtcpNack nack = Constructed();
+        Require(Parse(nack, ThreeItems));
+        std::uint8_t buffer[32];
+        Require(ThrowsInvalidArgument([&] { Slot<Create>(nack, 3)(&nack, buffer, indexPage.As<std::size_t>(), sizeof(buffer), nullptr, nullptr); }));
+        _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    }
+    {
+        GuardedPage bufferPage;
+        bufferPage.SetReadOnly();
+        WebRtcRtcpNack nack = Constructed();
+        Require(Parse(nack, ThreeItems));
+        std::size_t index = 0;
+        Require(ThrowsInvalidArgument([&] { Slot<Create>(nack, 3)(&nack, bufferPage.As<std::uint8_t>(), &index, 32, nullptr, nullptr); }));
+        Require(index == 0);
+        _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(&nack);
+    }
+}
+
 }
 
 int main(int argc, char**) {
@@ -271,6 +372,7 @@ int main(int argc, char**) {
             TestCreateWithoutRoom();
             TestDeletingDestructor();
             TestLifecycleNulls();
+            TestGuardedPointers();
         }
         Require(allocations.empty());
     } catch (const std::exception& error) {
