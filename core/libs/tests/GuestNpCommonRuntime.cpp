@@ -692,6 +692,78 @@ void TestRingBuf() {
     sceNpMemoryHeapDestroy(&memoryHeap);
 }
 
+template <typename Call>
+bool RefusesGuestMemory(Call call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void TestRingBufGuestPointers() {
+    auto* const ring = reinterpret_cast<NpRingBuf*>(0x10);
+    auto* const memory = reinterpret_cast<NpRingBufMemory*>(0x10);
+    auto* const bytes = reinterpret_cast<std::uint8_t*>(0x10);
+    auto* const size = reinterpret_cast<std::size_t*>(0x10);
+    std::size_t blockSize = 0;
+    char out[8] = {};
+    errno = 71;
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBufC1Ev(ring); }) && RefusesGuestMemory([&] { _ZN3sce2np7RingBufD1Ev(ring); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf4ctorEv(ring); }) && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf7DestroyEv(ring); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf5ClearEv(ring); }) && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf4InitEPvm(ring, out, sizeof(out)); }),
+        "an unmapped ring buffer is refused by its lifecycle members");
+    Require(RefusesGuestMemory([&] { _ZNK3sce2np7RingBuf7IsEmptyEv(ring); }) && RefusesGuestMemory([&] { _ZNK3sce2np7RingBuf11GetDataSizeEv(ring); })
+            && RefusesGuestMemory([&] { _ZNK3sce2np7RingBuf11GetFreeSizeEv(ring); }),
+        "an unmapped ring buffer is refused by its queries");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBuf16CheckoutForWriteEPm(ring, &blockSize); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf15CheckinForWriteEm(ring, 1); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf15CheckoutForReadEPm(ring, &blockSize); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf14CheckinForReadEm(ring, 1); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf5WriteEPKvm(ring, "a", 1); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf4ReadEPvm(ring, out, 1); })
+            && RefusesGuestMemory([&] { _ZN3sce2np7RingBuf4PeekEmPvm(ring, 0, out, 1); }),
+        "an unmapped ring buffer is refused by its data members");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(memory, nullptr); })
+            && RefusesGuestMemory([&] { _ZN3sce2np13RingBufMemoryD1Ev(memory); })
+            && RefusesGuestMemory([&] { _ZN3sce2np13RingBufMemory4dtorEv(memory); })
+            && RefusesGuestMemory([&] { _ZN3sce2np13RingBufMemory4InitEm(memory, 4); })
+            && RefusesGuestMemory([&] { _ZN3sce2np13RingBufMemory7DestroyEv(memory); })
+            && RefusesGuestMemory([&] { _ZN3sce2np13RingBufMemory6ExpandEm(memory, 4); }),
+        "an unmapped memory ring buffer is refused");
+    Require(errno == 71, "refusing unmapped ring buffers keeps errno");
+
+    std::uint8_t storage[8] = {};
+    NpRingBuf local {};
+    _ZN3sce2np7RingBufC1Ev(&local);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&local, storage, sizeof(storage)) == 0, "a ring buffer takes host storage");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBuf5WriteEPKvm(&local, bytes, 3); }) && _ZNK3sce2np7RingBuf7IsEmptyEv(&local),
+        "an unmapped source is refused before anything is queued");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBuf16CheckoutForWriteEPm(&local, size); }),
+        "an unmapped write block size is refused");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&local, "abc", 3) == 0, "a ring buffer queues three bytes");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBuf4ReadEPvm(&local, bytes, 2); }) && _ZNK3sce2np7RingBuf11GetDataSizeEv(&local) == 3,
+        "an unmapped destination is refused before anything is consumed");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBuf4PeekEmPvm(&local, 0, bytes, 2); }), "an unmapped peek destination is refused");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBuf15CheckoutForReadEPm(&local, size); }),
+        "an unmapped read block size is refused");
+    Require(_ZN3sce2np7RingBuf4ReadEPvm(&local, out, 3) == 0 && std::memcmp(out, "abc", 3) == 0, "the refused calls left the data in place");
+
+    NpRingBuf unmappedStorage {};
+    _ZN3sce2np7RingBufC1Ev(&unmappedStorage);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&unmappedStorage, bytes, 8) == 0, "a ring buffer records storage without touching it");
+    Require(RefusesGuestMemory([&] { _ZN3sce2np7RingBuf5WriteEPKvm(&unmappedStorage, "abc", 3); })
+            && _ZNK3sce2np7RingBuf7IsEmptyEv(&unmappedStorage),
+        "unmapped storage is refused before anything is queued");
+
+    NpRingBufMemory unmappedAllocator {};
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(&unmappedAllocator, reinterpret_cast<NpAllocatorEx*>(0x10));
+    Require(RefusesGuestMemory([&] { _ZN3sce2np13RingBufMemory4InitEm(&unmappedAllocator, 4); }) && unmappedAllocator.ringBuf.buf == nullptr,
+        "an unmapped allocator is refused");
+    Require(errno == 71, "refusing unmapped guest memory keeps errno");
+}
+
 void TestRingBufBounds() {
     constexpr int NoSpace = static_cast<int>(0x80559E0A);
     std::uint8_t storage[8];
@@ -2179,6 +2251,7 @@ int main() {
     TestAllocatorExRecorded();
     TestRingBuf();
     TestRingBufBounds();
+    TestRingBufGuestPointers();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestTitleSecretObjects();
