@@ -31,6 +31,7 @@
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
 #include "prx/libwebrtc/include/RnnVad.hpp"
+#include "prx/libwebrtc/include/RnnVadFeaturesExtractor.hpp"
 #include "prx/libwebrtc/include/RtcError.hpp"
 #include "prx/libwebrtc/include/AudioOptions.hpp"
 #include "prx/libwebrtc/include/RtpExtension.hpp"
@@ -408,10 +409,10 @@ void APS5_VABI _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(WebRtcAudioBuffer* b
 void APS5_VABI _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(WebRtcAudioBuffer* buffer, const std::int16_t* interleaved, const WebRtcStreamConfig* config);
 void APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(WebRtcAudioBuffer* buffer, const WebRtcStreamConfig* config, std::int16_t* interleaved);
 WebRtcAvailableCpuFeatures APS5_VABI _ZN6webrtc23GetAvailableCpuFeaturesEv_nid_postfix();
-int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void);
+void APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(WebRtcRnnVadFeaturesExtractor* extractor, const WebRtcAvailableCpuFeatures* cpuFeatures);
 void APS5_VABI _ZN6webrtc7rnn_vad6RnnVadC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(WebRtcRnnVad* vad, const WebRtcAvailableCpuFeatures* cpuFeatures);
 void APS5_VABI _ZN6webrtc7rnn_vad6RnnVadD1Ev_nid_postfix(WebRtcRnnVad* vad);
-int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorD1Ev_nid_postfix(WebRtcRnnVadFeaturesExtractor* extractor);
 int APS5_VABI libwebrtcUnknown43(void);
 float APS5_VABI _ZN6webrtc7rnn_vad6RnnVad21ComputeVadProbabilityEN3rtc9ArrayViewIKfLl42EEEb_nid_postfix(WebRtcRnnVad* vad, const float* featureVector, bool isSilence);
 void APS5_VABI _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(WebRtcAudioFrame* frame);

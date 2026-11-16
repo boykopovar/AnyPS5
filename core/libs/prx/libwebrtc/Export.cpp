@@ -858,16 +858,6 @@ int APS5_VABI libwebrtcUnknown42(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("lQyI5UWffS8", libwebrtcUnknown43);
 int APS5_VABI libwebrtcUnknown43(void) {
     NotImplemented_nid_no_patch("lQyI5UWffS8");
