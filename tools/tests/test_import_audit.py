@@ -3713,6 +3713,10 @@ class PureHelperTests(unittest.TestCase):
         name = "sceMsgDialogProgressBarSetValue"
         self.assertEqual(import_audit.nids_of(name, {}), {nid_names.compute_nid(name)})
 
+    def test_top_level_statements_splits_on_semicolons_at_top_level(self):
+        statements = [text for _, text in import_audit.top_level_statements("{a; b(1; 2);}")]
+        self.assertEqual(statements[:2], ["a;", " b(1; 2);"])
+
 
 if __name__ == "__main__":
     unittest.main()
