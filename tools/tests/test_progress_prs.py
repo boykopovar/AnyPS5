@@ -175,5 +175,32 @@ class DependencyBlockTests(unittest.TestCase):
         self.assertFalse(progress_prs.dependencies_blocked({"depends": set()}, {3: "dependency_excluded"}))
 
 
+
+class ClosedDependencyStatusTests(unittest.TestCase):
+    def answer(self, returncode=0, stdout=""):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="boom")
+
+    def test_unmerged_dependency_has_no_merge_commit(self):
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(stdout='{"merged_at": null}')):
+            self.assertIsNone(progress_prs.closed_dependency_status("owner/repo", 7))
+
+    def test_merged_dependency_returns_its_merge_commit(self):
+        merged = '{"merged_at": "2026-01-01T00:00:00Z", "merge_commit_sha": "abc123"}'
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(stdout=merged)):
+            self.assertEqual(progress_prs.closed_dependency_status("owner/repo", 7), "abc123")
+
+    def test_failed_or_invalid_answers_are_errors(self):
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(returncode=1)):
+            with self.assertRaisesRegex(RuntimeError, "could not inspect"):
+                progress_prs.closed_dependency_status("owner/repo", 7)
+        with patch.object(progress_prs.subprocess, "run", return_value=self.answer(stdout="not json")):
+            with self.assertRaisesRegex(RuntimeError, "invalid data"):
+                progress_prs.closed_dependency_status("owner/repo", 7)
+        with patch.object(progress_prs.subprocess, "run",
+                          return_value=self.answer(stdout='{"merged_at": "2026-01-01T00:00:00Z"}')):
+            with self.assertRaisesRegex(RuntimeError, "omitted the merge commit"):
+                progress_prs.closed_dependency_status("owner/repo", 7)
+
+
 if __name__ == "__main__":
     unittest.main()
