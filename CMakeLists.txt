@@ -469,6 +469,7 @@ if(BUILD_TESTING)
         set_tests_properties(forced_include_paths PROPERTIES TIMEOUT 30)
         add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
+        set_tests_properties(ffmpeg_cache_keys PROPERTIES TIMEOUT 30)
         add_test(NAME winlibs_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_winlibs_digest.py)
         add_test(NAME progress_comment_concurrency COMMAND ${Python3_EXECUTABLE}
