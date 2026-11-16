@@ -583,7 +583,11 @@ struct Replay {
             const SettledHold hold{true};
             if (!settled) return;
             AgcDriverPrepareCommandWrite_nid_no_patch(word.address, word.value.size());
-            std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(word.address)), word.value.data(), word.value.size());
+            for (std::size_t at = 0; at + 4 <= word.value.size(); at += 4) {
+                std::uint32_t value = 0;
+                std::memcpy(&value, word.value.data() + at, sizeof(value));
+                std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(word.address + at))).store(value, std::memory_order_release);
+            }
             std::atomic_thread_fence(std::memory_order_seq_cst);
         }
     }
@@ -596,9 +600,14 @@ struct Replay {
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
         std::vector<std::uint64_t> parked;
+        std::vector<std::uint64_t> polled;
         for (std::size_t slot = 0; slot < count; ++slot) {
             if (rewindWait(awaited[slot])) parked.push_back(awaited[slot].address);
+            else if (awaited[slot].address % 4 == 0) {
+                for (std::uint64_t word = 0; word < awaited[slot].bytes; word += 4) polled.push_back(awaited[slot].address + word);
+            }
         }
+        std::ranges::sort(polled);
         std::vector<std::pair<std::uint32_t*, std::uint32_t>> controls;
         for (const auto* chunk : found->second) {
             if (skipped.Overlaps(*chunk)) continue;
@@ -617,21 +626,24 @@ struct Replay {
             for (const auto address : parked) {
                 if (address % 4 == 0 && address >= chunk->address && address + 4 <= chunk->address + bytes.size()) kept.push_back(static_cast<std::size_t>(address - chunk->address));
             }
+            for (const auto address : polled) {
+                if (address >= chunk->address && address + 4 <= chunk->address + bytes.size()) kept.push_back(static_cast<std::size_t>(address - chunk->address));
+            }
             std::ranges::sort(kept);
             kept.erase(std::ranges::unique(kept).begin(), kept.end());
-            for (const auto at : kept) {
-                std::uint32_t value = 0;
-                std::memcpy(&value, bytes.data() + at, sizeof(value));
-                if (!again || (value & AgcDriver::Pm4::RewindValid) == 0) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
-            }
             for (const auto& wait : held) {
                 if (wait.address < chunk->address || wait.address + wait.bytes > chunk->address + bytes.size()) continue;
                 const auto offset = static_cast<std::size_t>(wait.address - chunk->address);
                 staged.push_back({wait.address, {bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.begin() + static_cast<std::ptrdiff_t>(offset + wait.bytes)}});
-                std::memcpy(bytes.data() + offset, target + offset, wait.bytes);
             }
             std::size_t from = 0;
             for (const auto at : kept) {
+                const auto address = chunk->address + at;
+                if (!std::ranges::any_of(held, [&](const auto& wait) { return address < wait.address + wait.bytes && wait.address < address + sizeof(std::uint32_t); })) {
+                    std::uint32_t value = 0;
+                    std::memcpy(&value, bytes.data() + at, sizeof(value));
+                    if (!again || (value & AgcDriver::Pm4::RewindValid) == 0 || std::ranges::binary_search(polled, address)) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                }
                 std::memcpy(target + from, bytes.data() + from, at - from);
                 from = at + 4;
             }
