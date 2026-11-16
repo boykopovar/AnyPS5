@@ -294,6 +294,7 @@ std::optional<std::size_t> evaluatedArguments(IrOpcode opcode) {
         case IrOpcode::BitCastF32U32:
         case IrOpcode::ConvertF32U32:
         case IrOpcode::ConvertU32F32:
+        case IrOpcode::ConvertS32F32:
         case IrOpcode::FPTrunc32:
         case IrOpcode::FPIsNan32:
         case IrOpcode::BitwiseNot32:
@@ -680,6 +681,16 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
                     return false;
                 }
                 result = static_cast<std::uint32_t>(value);
+                return true;
+            }
+            return false;
+        case IrOpcode::ConvertS32F32:
+            if (Arg(inst, 0, a)) {
+                const auto value = Float32(a);
+                if (!std::isfinite(value) || value < -2147483648.0f || value > 2147483520.0f) {
+                    return false;
+                }
+                result = static_cast<std::uint32_t>(static_cast<std::int32_t>(value));
                 return true;
             }
             return false;
