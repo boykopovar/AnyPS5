@@ -3702,5 +3702,13 @@ class TakeTests(unittest.TestCase):
                 import_audit.take(data, offset, size, "f", "what")
 
 
+class CStringTests(unittest.TestCase):
+    def test_cstring_reads_terminated_text_inside_limit(self):
+        data = b"xx" + b"name\0" + b"tail"
+        self.assertEqual(import_audit.cstring(data, 2, len(data), "f", "what"), "name")
+        with self.assertRaisesRegex(import_audit.AuditError, "NUL-terminated"):
+            import_audit.cstring(b"no-terminator", 0, 13, "f", "what")
+
+
 if __name__ == "__main__":
     unittest.main()
