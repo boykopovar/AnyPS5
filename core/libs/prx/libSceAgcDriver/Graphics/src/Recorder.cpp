@@ -4726,6 +4726,7 @@ void Recorder::Submit() {
         Recorder& recorder;
         std::unique_ptr<Batch>& batch;
         ~DiscardUnsubmitted() {
+            if (batch != nullptr && batch->submitter != nullptr) batch->submitter->WaitSubmitReturned(batch->submitPosition);
             if (batch != nullptr && !batch->submitted) recorder.discard(std::move(batch));
         }
     } discardUnsubmitted{*this, batch};
@@ -4863,7 +4864,7 @@ VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphore
     for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
         // As for the fence wait in finish(): a hung batch is reported every 5 s.
         std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (timeline wait)\n", static_cast<unsigned long long>(serial), waited);
-        if (QueueSubmitter::FailedSubmits() != 0) return VK_ERROR_UNKNOWN;
+        if (QueueSubmitter::FailedSubmits(device) != 0) return VK_ERROR_UNKNOWN;
         result = waitSemaphores(device, &wait, 5'000'000'000ull);
     }
     return result;
@@ -5250,6 +5251,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
                 }
                 if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::terminate();
             }
+            removeLabels(*batch);
             release(*batch);
             Check(submitted, "vkQueueSubmit recorder");
         }

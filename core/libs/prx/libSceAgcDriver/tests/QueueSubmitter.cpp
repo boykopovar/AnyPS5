@@ -147,16 +147,17 @@ void drainedBeforeAccessAndRetirement() {
 void failureReachesItsJob() {
     const auto device = Fake<VkDevice>(0xc000);
     const auto queue = Fake<VkQueue>(0xd000);
-    const auto failedBefore = QueueSubmitter::FailedSubmits();
     auto& submitter = QueueSubmitter::For(device, queue, FailingSubmit);
     VkResult result = VK_SUCCESS;
     submitter.WaitSubmitReturned(submitter.Enqueue(JobFor(1, &result)));
     Require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a failed submit did not reach its job");
-    Require(QueueSubmitter::FailedSubmits() == failedBefore + 1, "a failed submit was not counted");
+    Require(QueueSubmitter::FailedSubmits(device) == 1, "a failed submit was not counted for its device");
+    Require(QueueSubmitter::FailedSubmits(Fake<VkDevice>(0xe000)) == 0, "a failed submit was counted for another device");
     VkResult next = VK_ERROR_UNKNOWN;
     submitter.WaitSubmitReturned(submitter.Enqueue(JobFor(2, &next)));
     Require(next == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a job after a failed submit was not submitted");
     QueueSubmitter::RetireDevice(device);
+    Require(QueueSubmitter::FailedSubmits(device) == 0, "a retired device still counts failed submits");
 }
 
 }

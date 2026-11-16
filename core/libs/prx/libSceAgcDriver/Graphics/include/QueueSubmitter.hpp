@@ -28,7 +28,9 @@ public:
     static QueueSubmitter& For(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit);
     static QueueSubmitter* Existing(VkQueue queue);
     static void RetireDevice(VkDevice device);
-    static std::uint64_t FailedSubmits();
+    static std::uint64_t FailedSubmits(VkDevice device);
+
+    ~QueueSubmitter();
 
     std::uint64_t Enqueue(const Job& job);
     bool Returned(std::uint64_t position) const { return returned.load(std::memory_order_acquire) >= position; }
@@ -57,6 +59,7 @@ private:
     std::uint64_t enqueued = 0;
     std::uint64_t taken = 0;
     std::atomic<std::uint64_t> returned{0};
+    std::atomic<std::uint64_t> failed{0};
     std::thread thread;
 };
 

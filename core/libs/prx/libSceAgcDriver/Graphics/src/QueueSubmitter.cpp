@@ -24,7 +24,6 @@ Submitters& AllSubmitters() {
 }
 
 std::atomic<std::size_t> liveSubmitters{0};
-std::atomic<std::uint64_t> failedSubmits{0};
 
 }
 
@@ -63,25 +62,36 @@ QueueSubmitter* QueueSubmitter::Existing(VkQueue queue) {
 }
 
 void QueueSubmitter::RetireDevice(VkDevice device) {
+    auto& all = AllSubmitters();
     std::vector<QueueSubmitter*> retired;
     {
-        auto& all = AllSubmitters();
         std::lock_guard lock(all.mutex);
-        for (auto entry = all.byQueue.begin(); entry != all.byQueue.end();) {
-            if (entry->second->device != device) {
-                ++entry;
-                continue;
-            }
-            retired.push_back(entry->second);
-            entry = all.byQueue.erase(entry);
-            liveSubmitters.fetch_sub(1, std::memory_order_release);
+        for (const auto& entry : all.byQueue) {
+            if (entry.second->device == device) retired.push_back(entry.second);
         }
     }
     for (auto* submitter : retired) submitter->stop();
+    std::lock_guard lock(all.mutex);
+    for (auto* submitter : retired) {
+        const auto found = all.byQueue.find(submitter->queue);
+        if (found == all.byQueue.end() || found->second != submitter) continue;
+        all.byQueue.erase(found);
+        liveSubmitters.fetch_sub(1, std::memory_order_release);
+    }
 }
 
-std::uint64_t QueueSubmitter::FailedSubmits() {
-    return failedSubmits.load(std::memory_order_acquire);
+std::uint64_t QueueSubmitter::FailedSubmits(VkDevice device) {
+    auto& all = AllSubmitters();
+    std::lock_guard lock(all.mutex);
+    std::uint64_t count = 0;
+    for (const auto& entry : all.byQueue) {
+        if (entry.second->device == device) count += entry.second->failed.load(std::memory_order_acquire);
+    }
+    return count;
+}
+
+QueueSubmitter::~QueueSubmitter() {
+    stop();
 }
 
 QueueSubmitter::QueueSubmitter(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit) :
@@ -120,7 +130,7 @@ std::uint64_t QueueSubmitter::Enqueue(const Job& job) {
 }
 
 void QueueSubmitter::WaitSubmitReturned(std::uint64_t position) const {
-    while (!Returned(position)) std::this_thread::yield();
+    for (auto seen = returned.load(std::memory_order_acquire); seen < position; seen = returned.load(std::memory_order_acquire)) returned.wait(seen, std::memory_order_acquire);
 }
 
 void QueueSubmitter::Drain() {
@@ -175,8 +185,9 @@ void QueueSubmitter::run() {
             result = submit(queue, 1, &submission, job.fence);
         }
         if (job.result != nullptr) *job.result = result;
-        if (result != VK_SUCCESS) failedSubmits.fetch_add(1, std::memory_order_release);
+        if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) failed.fetch_add(1, std::memory_order_release);
         returned.store(position, std::memory_order_release);
+        returned.notify_all();
         {
             std::lock_guard lock(mutex);
             busy = false;
