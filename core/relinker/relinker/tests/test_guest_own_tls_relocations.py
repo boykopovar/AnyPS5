@@ -76,13 +76,14 @@ def main():
             return result, case / "app0" / "sce_module" / "module.prx.guest.prx", output
 
         for sce in (False, True):
-            for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4)):
-                image = fixture(sce, kind=kind, addend=addend)
-                for system in ("linux", "windows", "macos"):
-                    result, artifact, output = convert(f"{sce}-{kind}", system, image)
-                    assert result.returncode == 0, (sce, kind, system, result.stdout, result.stderr)
-                    if system == "linux":
-                        assert relocations(artifact.read_bytes()) == [(TARGET, kind, addend)], (sce, kind)
+            for info in (3, 6):
+                for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4)):
+                    image = fixture(sce, info=info, kind=kind, addend=addend)
+                    for system in ("linux", "windows", "macos"):
+                        result, artifact, output = convert(f"{sce}-{info}-{kind}", system, image)
+                        assert result.returncode == 0, (sce, info, kind, system, result.stdout, result.stderr)
+                        if system == "linux":
+                            assert relocations(artifact.read_bytes()) == [(TARGET, kind, addend)], (sce, info, kind)
             for name, image in (("no-tls", fixture(sce, tls=False)),
                                 ("valued-section", fixture(sce, value=8)),
                                 ("notype", fixture(sce, info=0)),

@@ -1,0 +1,5 @@
+# relinker
+
+## change TLS relocations against an undefined `STT_TLS` symbol with an empty name and `STB_LOCAL` binding
+
+- An `R_X86_64_TPOFF64` against an undefined `STT_TLS` symbol with an empty name and `STB_LOCAL` binding, or an `R_X86_64_DTPMOD64` or `R_X86_64_DTPOFF64` against one with a nonzero value, is still accepted by the [guest image reader](../../../core/relinker/relinker/src/guest/GuestImageReader.cpp) with its symbol kept. The [Windows guest writer](../../../core/relinker/elfpatcher/src/windows/WindowsGuestModuleWriter.cpp) and the [macOS guest writer](../../../core/relinker/elfpatcher/src/macos/MacOsGuestModuleWriter.cpp) refuse the `TPOFF64`; for the other two the Windows writer emits a runtime import with an empty name, and the program stops at startup with `unresolved ELF import` (error 127). A `DTPMOD64` or `DTPOFF64` against such a symbol with value 0 is passed on without the symbol, as a relocation against the module's own TLS block. No title with such a symbol is known.
