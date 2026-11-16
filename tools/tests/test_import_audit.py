@@ -3695,6 +3695,14 @@ class RegistryAndLabelTests(unittest.TestCase):
             with self.assertRaisesRegex(import_audit.AuditError, "cannot read needed libraries"):
                 import_audit.read_needed_registry(path)
 
+    def test_label_names_the_import_and_its_module(self):
+        record = {"nid": "abc", "name": "sceFoo", "weak": False, "module": "libA"}
+        self.assertEqual(import_audit.label(record), "abc  sceFoo  (imported by libA)")
+        self.assertEqual(import_audit.label({"nid": "abc", "name": None, "weak": True}), "abc  (weak import)")
+        self.assertEqual(import_audit.label({"nid": "abc", "name": "sceFoo", "weak": False,
+                                             "name_verified": False}),
+                         "abc  sceFoo (name does not hash to this NID)")
+
 
 if __name__ == "__main__":
     unittest.main()
