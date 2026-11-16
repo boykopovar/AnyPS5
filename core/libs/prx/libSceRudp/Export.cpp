@@ -782,7 +782,7 @@ int APS5_VABI sceRudpListen(int ctxId, int backlog) {
     if (!context.bound || context.muxMode != RUDP_MUXMODE_SERVER) {
         return RUDP_ERROR_NOT_ACCEPTABLE;
     }
-    if (context.activated) NotImplemented_nid_no_patch(__func__);
+    if (context.activated) return RUDP_ERROR_NOT_ACCEPTABLE;
     if (context.listening) {
         return RUDP_ERROR_IN_PROGRESS;
     }
