@@ -557,5 +557,14 @@ class DebtSplitTests(unittest.TestCase):
         self.assertNotEqual(before, "")
 
 
+class RelinkUnfencedTests(unittest.TestCase):
+    def test_relink_unfenced_rewrites_relative_links_and_keeps_urls(self):
+        text = "see [x](../img/x.png) and [y](https://example.com/a) and [z](#anchor)"
+        moved = debt_split.relink_unfenced(text, "docs/dev/a.md", "docs/dev/debt/b.md")
+        self.assertIn("[x](../../img/x.png)", moved)
+        self.assertIn("[y](https://example.com/a)", moved)
+        self.assertIn("[z](../a.md#anchor)", moved)
+
+
 if __name__ == "__main__":
     unittest.main()
