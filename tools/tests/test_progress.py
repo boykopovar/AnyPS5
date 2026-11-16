@@ -1278,6 +1278,18 @@ class LibraryProgressTests(unittest.TestCase):
         self.assertEqual(progress.library_progress(None), ('Not present', None))
         self.assertEqual(progress.library_progress({'shared_sources': 'libY'}), ('Shared sources: `libY`', None))
         self.assertEqual(progress.library_progress({'done': 1}), ('Counts unavailable', None))
+class DistinctReportTests(unittest.TestCase):
+    def test_require_distinct_reports_refuses_hard_linked_reports(self):
+        names = progress.SITE_REPORTS[:2]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / names[0]).write_text('a', encoding='utf-8')
+            (output / names[1]).write_text('b', encoding='utf-8')
+            progress.require_distinct_reports(output)
+            (output / names[1]).unlink()
+            os.link(output / names[0], output / names[1])
+            with self.assertRaisesRegex(ValueError, 'are the same file'):
+                progress.require_distinct_reports(output)
 
 
 if __name__ == "__main__":
