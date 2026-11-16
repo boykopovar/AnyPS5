@@ -837,5 +837,16 @@ class ExportGapTests(unittest.TestCase):
         self.assertTrue(export_gap.is_safe_module("libSceFoo"))
 
 
+    def test_parse_nids_file_dedupes_and_rejects_bad_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "nids.txt"
+            good.write_text("\ufeffAAAAAAAAAAA # first\n# skipped\nBBBBBBBBBBB\nAAAAAAAAAAA\n", encoding="utf-8")
+            self.assertEqual(export_gap.parse_nids_file(good), ["AAAAAAAAAAA", "BBBBBBBBBBB"])
+            bad = Path(directory) / "bad.txt"
+            bad.write_text("not-a-nid-too-long\n", encoding="utf-8")
+            with self.assertRaises(export_gap.GapError):
+                export_gap.parse_nids_file(bad)
+
+
 if __name__ == "__main__":
     unittest.main()
