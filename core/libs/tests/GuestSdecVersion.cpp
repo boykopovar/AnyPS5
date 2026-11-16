@@ -38,8 +38,11 @@ void CheckVersion(GetVersion getVersion, std::uint32_t expected, const char* nam
 
 int main() {
     CheckVersion(sceSdecGetVersionSw, 0u, "sceSdecGetVersionSw");
+    sceSdecGetVersionSw(reinterpret_cast<std::uint32_t*>(0x10));
     CheckVersion(sceSdecGetVersionSw2, 0x13590001u, "sceSdecGetVersionSw2");
+    sceSdecGetVersionSw2(reinterpret_cast<std::uint32_t*>(0x10));
     CheckVersion(sceSdecGetVersionSwHevc, 0x13590001u, "sceSdecGetVersionSwHevc");
+    sceSdecGetVersionSwHevc(reinterpret_cast<std::uint32_t*>(0x10));
     std::puts("sdec version tests passed");
     return 0;
 }

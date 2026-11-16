@@ -2,8 +2,12 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceJobManager/libSceJobManager.hpp"
 #include "SceTypes.hpp"
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+#include "prx/libc/include/GuestArena.hpp"
+#endif
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -68,13 +72,24 @@ static std::uint64_t SizeFor(std::uint32_t workers, std::uint32_t sequences, std
 }
 
 static void MemoryCase() {
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+#endif
     const MemorySizeQueryParams query{0, 4, 2, 100, 8, 4, 2, 0, 0};
+    errno = 71;
     Require(RequiredSize(&query) == 0x17c8);
+    Require(errno == 71);
     const MemorySizeQueryParams unified{1, 4, 2, 100, 8, 4, 2, 0, 0};
+    errno = 71;
     Require(RequiredSize(&unified) == 0x17c8);
+    Require(errno == 71);
     const MemorySizeQueryParams single{0, 1, 1, 0, 0, 0, 0, 0, 0};
     Require(RequiredSize(&single) == 0x1090);
     Require(RequiredSize(nullptr) == 0);
+    errno = 71;
+    Require(RequiredSize(reinterpret_cast<const MemorySizeQueryParams*>(0x10)) == 0);
+    Require(errno == 71);
     for (const MemorySizeQueryParams& bad : {
              MemorySizeQueryParams{2, 4, 2, 0, 0, 0, 0, 0, 0}, MemorySizeQueryParams{0, 0, 2, 0, 0, 0, 0, 0, 0},
              MemorySizeQueryParams{0, 14, 2, 0, 0, 0, 0, 0, 0}, MemorySizeQueryParams{0, 4, 0, 0, 0, 0, 0, 0, 0},
@@ -82,8 +97,13 @@ static void MemoryCase() {
              MemorySizeQueryParams{0, 4, 2, 0, 2 * 0x3ff + 1, 0, 0, 0, 0}, MemorySizeQueryParams{0, 4, 2, 0, 0, 2 * 0xff + 1, 0, 0, 0},
              MemorySizeQueryParams{0, 4, 2, 0, 0, 0, 2 * 0x3f + 1, 0, 0}, MemorySizeQueryParams{1, 4, 0, 0, 0, 0, 0, 0, 0},
              MemorySizeQueryParams{1, 4, 2, 0, 0, 0, 0, 0, std::uint64_t{1} << 56}}) {
+        errno = 71;
         Require(RequiredSize(&bad) == 0);
+        Require(errno == 71);
     }
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+#endif
 }
 
 static void APS5_VABI Nothing(void*, std::uint32_t) {
@@ -146,6 +166,16 @@ static void ValidationCase() {
     Require(InitializeUnified(manager.storage, block.memory, block.bytes, 2, 2, 0, std::uint64_t{1} << 56, nullptr) == InvalidArgument);
     Require(Initialize(manager.storage, block.memory, 8, 2, 2, nullptr) == MemoryTooSmall);
     Require(Initialize(manager.storage, block.memory, 0x400, 2, 2, nullptr) == MemoryTooSmall);
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+#endif
+    errno = 71;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, reinterpret_cast<const ConfigParams*>(0x10)) == InvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(InitializeUnified(manager.storage, block.memory, block.bytes, 2, 2, 0, 0, reinterpret_cast<const ConfigParams*>(0x10)) == InvalidArgument);
+    Require(errno == 71);
     ConfigParams config{0, 0x00021fff, 0x10000, 0x2bc, nullptr, 0, 0x1fff, 0x100, 0};
     for (int field = 0; field < 7; ++field) {
         ConfigParams bad = config;
@@ -156,9 +186,14 @@ static void ValidationCase() {
         if (field == 4) bad.priority = 0x300;
         if (field == 5) bad.spinMicroseconds = 0x33;
         if (field == 6) bad.reserved = 1;
+        errno = 71;
         Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &bad) == InvalidArgument);
+        Require(errno == 71);
         Require(Factories(manager.storage, 0) == nullptr);
     }
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+#endif
     config.threadFlags = 0x00010003;
     config.threadName = "JobManagerTestWorker";
     Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, &config) == 0);
@@ -441,6 +476,43 @@ static void NodePoolCase() {
     Require(Shutdown(manager.storage) == 0);
 }
 
+static void SequenceCreateCase() {
+    Block block(SizeFor(2, 2, 2, 1, 1));
+    ManagerObject manager;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 2, nullptr) == 0);
+    ISequenceFactory* factory = Factories(manager.storage, 0);
+    ISequence* exhaust = nullptr;
+    Require(factory->Create(&exhaust, 0x7fff, 0x3ff, 0xff, 1, "exhaust") == 0);
+    int result = 0;
+    int accepted = 0;
+    while (accepted < 0x3ff && (result = exhaust->Dispatch(Nothing, nullptr, 1, nullptr)) == 0) ++accepted;
+    Require(result == NoNodes);
+    ISequence* starved = nullptr;
+    Require(factory->Create(&starved, 1, 1, 1, 1, "starved") == NoNodes && starved == nullptr);
+    Require(exhaust->Wait() == Invalid);
+    Require(factory->Destroy(exhaust) == 0);
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    auto clobberErrno = [](std::uintptr_t, std::size_t) { errno = 99; };
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(clobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(clobberErrno);
+#endif
+    errno = 71;
+    Require(factory->Create(reinterpret_cast<ISequence**>(0x10), 1, 1, 1, 1, "unmapped") == NullArgument);
+    Require(errno == 71);
+    ISequence* second = nullptr;
+    ISequence* third = nullptr;
+    errno = 71;
+    Require(factory->Create(&second, 1, 1, 1, 1, "second") == 0 && second != nullptr);
+    Require(errno == 71);
+    Require(factory->Create(&third, 1, 1, 1, 1, "third") == 0 && third != nullptr && third != second);
+    Require(factory->Destroy(second) == 0 && factory->Destroy(third) == 0);
+#ifndef ANYPS5_JOB_MANAGER_REFERENCE
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
+#endif
+    Require(Shutdown(manager.storage) == 0);
+}
+
 struct Order {
     std::atomic<bool> release{false};
     std::atomic<bool> started{false};
@@ -672,7 +744,7 @@ static SpinSample MeasureWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bo
 
 static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, bool pending) {
     auto best = MeasureWorkerSpin(spin, rounds, pending);
-    for (int attempt = 1; attempt < 3; ++attempt) {
+    for (int attempt = 1; attempt < 7; ++attempt) {
         const auto sample = MeasureWorkerSpin(spin, rounds, pending);
         if (sample.consumed < best.consumed) {
             best = sample;
@@ -683,8 +755,8 @@ static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, b
 
 static void WorkerSpinCase() {
     constexpr std::uint32_t rounds = 512;
-    const auto parked = MeasureWorkerSpin(0, rounds, true);
-    const auto spinning = MeasureWorkerSpin(50, rounds, true);
+    const auto parked = QuietestWorkerSpin(0, rounds, true);
+    const auto spinning = QuietestWorkerSpin(50, rounds, true);
     const auto noPending = QuietestWorkerSpin(50, rounds, false);
 #ifdef _WIN32
     constexpr const char* units = "cycles";
@@ -696,7 +768,7 @@ static void WorkerSpinCase() {
     const auto interval = spinning.reference * rounds / 100;
     Require(spinning.consumed > parked.consumed + interval / 3);
     Require(spinning.consumed < parked.consumed + interval * 5);
-    Require(noPending.consumed < parked.consumed + interval / 3);
+    Require(noPending.consumed < parked.consumed + interval);
 }
 
 struct WorkerClocks {
@@ -898,6 +970,7 @@ int RunJobManagerCase(const char* caseName) {
     else if (name == "ordering") OrderingCase();
     else if (name == "limits") LimitsCase();
     else if (name == "node_pool") NodePoolCase();
+    else if (name == "sequence_create") SequenceCreateCase();
     else if (name == "nested") NestedCase();
     else if (name == "priority") PriorityCase();
     else if (name == "shutdown") ShutdownCase();

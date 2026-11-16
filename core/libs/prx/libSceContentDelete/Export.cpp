@@ -1,4 +1,5 @@
 #include "prx/libSceContentDelete/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -18,7 +19,12 @@ constexpr int AlreadyInitialized = static_cast<int>(0x809D5003u);
 extern "C" {
 
 int APS5_VABI sceContentDeleteInitialize(const ContentDeleteInitParam* initParam) {
-    if (initParam == nullptr || initParam->heap_size != 0x4000) return InvalidArgument;
+    if (initParam == nullptr) return InvalidArgument;
+    ContentDeleteInitParam localParam{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localParam, initParam, sizeof(localParam));
+    errno = savedErrno;
+    if (!read || localParam.heap_size != 0x4000) return InvalidArgument;
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) return AlreadyInitialized;
     return 0;
@@ -27,7 +33,11 @@ int APS5_VABI sceContentDeleteInitialize(const ContentDeleteInitParam* initParam
 int APS5_VABI sceContentDeleteByPath(const char* contentPath) {
     if (!g_initialized.load()) return NotInitialized;
     if (contentPath == nullptr) APS5_INVALID_ARG_EX;
-    if (*contentPath == 0) return InvalidArgument;
+    char firstChar = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&firstChar, contentPath, sizeof(firstChar));
+    errno = savedErrno;
+    if (!copied || firstChar == '\0') return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -39,6 +49,7 @@ int APS5_VABI sceContentDeleteById(std::int64_t contentId) {
 }
 
 int APS5_VABI sceContentDeleteByIdListForSf(const std::int64_t* contentIds, std::size_t count) {
+    if (!g_initialized.load()) return NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

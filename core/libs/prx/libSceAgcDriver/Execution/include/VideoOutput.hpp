@@ -32,6 +32,11 @@ struct FlipInfo {
     std::int64_t argument;
 };
 
+class EopFlipAlreadyReserved final : public std::runtime_error {
+public:
+    EopFlipAlreadyReserved() : std::runtime_error("EOP flip token is already reserved for this flip") {}
+};
+
 class IFlipRequest {
 public:
     virtual ~IFlipRequest() = default;

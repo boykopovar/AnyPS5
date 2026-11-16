@@ -18,7 +18,7 @@ extern std::atomic<std::uint64_t> labelFallbacks[5];
 
 extern std::atomic<std::uint64_t> queuedLabels, labelGroups, immediateLabels;
 
-extern std::atomic<std::uint64_t> packetLockRecords, packetLockSubmits, packetLockDeferred, packetSubmitDeferred, captureTryRecords, captureRetries, suspendPoints;
+extern std::atomic<std::uint64_t> packetLockRecords, packetLockSubmits, packetLockDeferred, packetSubmitDeferred, captureTryRecords, captureRetries, captureChangeRetries, suspendPoints;
 
 extern std::atomic<std::uint64_t> recordTriesSkipped;
 
@@ -30,7 +30,7 @@ enum TrySite { TryLabel = 0, TryFlush, TryReap, TryPoll, TryIdle, TryCapture, Tr
 
 extern std::atomic<std::uint64_t> triesFailed[TrySites];
 
-extern std::atomic<std::uint64_t> storesOnGpu, storesBehindCompletions, storesOnCpu, storesDrained, dmaFills, copiesToHostMemory, copiesBehindPendingSources;
+extern std::atomic<std::uint64_t> storesOnGpu, storesBehindCompletions, storesOnCpu, storesDrained, dmaFills, copiesToHostMemory, copiesBehindPendingSources, sampleDumpsQueued;
 
 extern std::map<std::uint32_t, std::uint64_t> drainCounts;
 

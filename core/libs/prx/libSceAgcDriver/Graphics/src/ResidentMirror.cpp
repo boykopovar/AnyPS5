@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #ifndef _WIN32
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -29,6 +30,7 @@ namespace AgcDriver::Graphics {
 namespace {
 
 constexpr std::uint64_t BlockSize = ResidentBuffer::BlockBytes;
+constexpr VkDeviceSize StagingChunkBytes = VkDeviceSize{32} << 20u;
 constexpr std::uint64_t SlabBytes = std::uint64_t{16} << 20u;
 constexpr std::uint32_t SlabBlocks = static_cast<std::uint32_t>(SlabBytes / BlockSize);
 constexpr std::uint64_t ZeroBytes = SlabBytes;
@@ -216,22 +218,10 @@ struct Mapping {
 };
 
 std::vector<Mapping> mappings(std::uint64_t begin, std::uint64_t end) {
-    std::ifstream maps("/proc/self/maps");
-    Require(static_cast<bool>(maps), "cannot read /proc/self/maps for a heap mirror's pages");
     std::vector<Mapping> found;
-    std::string line;
-    while (std::getline(maps, line)) {
-        std::istringstream fields(line);
-        std::string span, permissions, offset, device;
-        unsigned long long inode = 0;
-        fields >> span >> permissions >> offset >> device >> inode;
-        const auto dash = span.find('-');
-        Require(dash != std::string::npos && permissions.size() == 4, "unexpected /proc/self/maps line: " + line);
-        const auto first = std::stoull(span.substr(0, dash), nullptr, 16);
-        const auto last = std::stoull(span.substr(dash + 1), nullptr, 16);
-        if (last <= begin || first >= end) continue;
-        found.push_back({std::max<std::uint64_t>(first, begin), std::min<std::uint64_t>(last, end), permissions[0] == 'r', inode == 0 && permissions[3] == 'p'});
-    }
+    HostMapping::Walk(begin, end, "heap mirror pages", [&](const HostMapping::Mapping& mapping) {
+        found.push_back({std::max(mapping.start, begin), std::min(mapping.end, end), mapping.readable, mapping.inode == 0 && !mapping.shared});
+    });
     return found;
 }
 
@@ -287,7 +277,14 @@ void populatedPages(std::vector<Candidate>& maybe, const Mapping& mapping) {
 std::vector<Candidate> possiblyNonzero(std::uint64_t begin, std::uint64_t end) {
     std::vector<Candidate> maybe;
 #ifdef _WIN32
-    maybe.push_back({begin, end, true});
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> zero;
+    GuestArena::GuestArenaKnownZero_nid_no_patch(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin), [](void* context, std::uintptr_t first, std::uintptr_t last) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(first, last); }, &zero);
+    auto cursor = begin;
+    for (const auto& [first, last] : zero) {
+        if (first > cursor) maybe.push_back({cursor, first, true});
+        cursor = std::max<std::uint64_t>(cursor, last);
+    }
+    if (cursor < end) maybe.push_back({cursor, end, true});
 #else
     for (const auto& mapping : mappings(begin, end)) {
         int file = -1;
@@ -313,7 +310,14 @@ std::vector<Candidate> possiblyNonzero(std::uint64_t begin, std::uint64_t end) {
 }
 
 bool GuestBytesZero(std::uint64_t begin, std::uint64_t end) {
+#ifdef _WIN32
+    for (const auto& candidate : possiblyNonzero(begin, end)) {
+        if (!allZero(candidate.begin, candidate.end)) return false;
+    }
+    return true;
+#else
     return allZero(begin, end);
+#endif
 }
 
 GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates) {
@@ -573,18 +577,34 @@ void ResidentBuffer::flush() {
             cursor = std::max(cursor, last);
         }
         if (regions.empty()) return;
-        auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(total), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        struct Chunk {
+            std::shared_ptr<Buffer> staging;
+            std::vector<VkBufferCopy> copies;
+        };
+        std::vector<Chunk> chunks;
+        VkDeviceSize filled = StagingChunkBytes;
         for (const auto& region : regions) {
             for (VkDeviceSize done = 0; done < region.size;) {
+                if (filled == StagingChunkBytes) {
+                    const auto remaining = total - (region.srcOffset + done);
+                    chunks.push_back({std::make_shared<Buffer>(context, static_cast<std::size_t>(std::min(StagingChunkBytes, remaining)), VK_BUFFER_USAGE_TRANSFER_SRC_BIT), {}});
+                    filled = 0;
+                }
+                auto& chunk = chunks.back();
                 const auto at = origin + region.dstOffset + done;
-                const auto length = std::min<VkDeviceSize>(region.size - done, BlockSize - (at - origin) % BlockSize);
-                std::memcpy(staging->Bytes().data() + region.srcOffset + done, Block(at), static_cast<std::size_t>(length));
+                const auto length = std::min({region.size - done, BlockSize - (at - origin) % BlockSize, StagingChunkBytes - filled});
+                std::memcpy(chunk.staging->Bytes().data() + filled, Block(at), static_cast<std::size_t>(length));
+                if (!chunk.copies.empty() && chunk.copies.back().srcOffset + chunk.copies.back().size == filled && chunk.copies.back().dstOffset + chunk.copies.back().size == region.dstOffset + done) chunk.copies.back().size += length;
+                else chunk.copies.push_back({filled, region.dstOffset + done, length});
+                filled += length;
                 done += length;
             }
         }
         recordTransfer(context, [&](VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept) {
-            context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, staging->Handle(), buffer, static_cast<std::uint32_t>(regions.size()), regions.data());
-            kept.push_back(staging);
+            for (const auto& chunk : chunks) {
+                context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, chunk.staging->Handle(), buffer, static_cast<std::uint32_t>(chunk.copies.size()), chunk.copies.data());
+                kept.push_back(chunk.staging);
+            }
             kept.push_back(shared_from_this());
         });
     } catch (...) {

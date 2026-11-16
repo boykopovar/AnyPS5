@@ -2,9 +2,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace {
 // Guest FreeBSD errno numbering, not the host CRT's numbering.
@@ -83,8 +86,13 @@ int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length
     char text[128];
     Describe(error, text);
     *__error_nid_postfix() = saved;
-    std::strncpy(buffer, text, length - 1);
-    buffer[length - 1] = '\0';
+    const std::size_t used = std::min(std::strlen(text), length - 1);
+    bool written = GuestCopyOut_nid_no_patch(buffer, text, used);
+    constexpr char zeros[256] = {};
+    for (std::size_t offset = used; written && offset < length; offset += sizeof(zeros)) {
+        written = GuestCopyOut_nid_no_patch(buffer + offset, zeros, std::min(sizeof(zeros), length - offset));
+    }
+    if (!written) throw std::invalid_argument("strerror_r: an unwritable buffer, which the console writes through");
     return 0;
 }
 
@@ -93,9 +101,10 @@ void APS5_VABI perror_nid_postfix(const char* prefix) {
     const int saved = *__error_nid_postfix();
     char message[128];
     strerror_r_nid_postfix(saved, message, sizeof(message));
-
+    _Stderr_nid_postfix.Orientation(-1);
     auto* stream = GetNativeStream(&_Stderr_nid_postfix);
-    if (prefix && *prefix) std::fprintf(stream, "%s: %s\n", prefix, message);
+    std::string copied;
+    if (prefix && CopyGuestString_nid_no_patch(prefix, 65536, copied) == 0 && !copied.empty()) std::fprintf(stream, "%s: %s\n", copied.c_str(), message);
     else std::fprintf(stream, "%s\n", message);
     *__error_nid_postfix() = saved;
 }

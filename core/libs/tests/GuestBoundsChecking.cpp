@@ -101,6 +101,12 @@ void CheckBsearch() {
     before = constraintCalls;
     Require(bsearch_s_nid_postfix(nullptr, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s zero stride accepted a null key");
     RequireViolation(before, "bsearch_s: bad argument", 22);
+    before = constraintCalls;
+    calls = 0;
+    constexpr std::size_t twoToThe32 = std::size_t{1} << 32;
+    Require(bsearch_s_nid_postfix(&key, values, twoToThe32, twoToThe32, CompareInts, &calls) == nullptr && calls == 0,
+        "bsearch_s searched a count times size product past SIZE_MAX");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
 }
 
 void CheckWcstok() {
@@ -137,6 +143,84 @@ void CheckWcstok() {
     RequireViolation(before, "wcstok_s: bad argument", 22);
 }
 
+void CheckMemset() {
+    unsigned char bytes[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 4) == 0 && bytes[0] == 9 && bytes[3] == 9 && bytes[4] == 5, "memset_s did not fill count bytes");
+    Require(memset_s_nid_postfix(bytes, 0, 7, 0) == 0 && bytes[0] == 9, "memset_s rejected an empty fill");
+    Require(memset_s_nid_postfix(bytes, tooLarge - 1, 6, 1) == 0 && bytes[0] == 6 && bytes[1] == 9, "memset_s rejected the largest size");
+    struct Violation {
+        bool null;
+        std::size_t size;
+        std::size_t count;
+    };
+    constexpr Violation violations[] = {{false, 4, 8}, {false, 0, 1}, {true, 8, 4}, {true, 0, 0}, {false, tooLarge, 4}, {false, 8, tooLarge}, {false, SIZE_MAX, 0}};
+    for (const auto& violation : violations) {
+        unsigned char sentinel[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        const int before = constraintCalls;
+        Require(memset_s_nid_postfix(violation.null ? nullptr : sentinel, violation.size, 0, violation.count) == 34, "memset_s accepted a violation");
+        RequireViolation(before, "memset_s: bad destination argument", 34);
+        Require(sentinel[0] == 1 && sentinel[7] == 8, "memset_s wrote on a violation");
+    }
+}
+
+void CheckStrtok() {
+    char text[] = ",,ab;c,,;";
+    std::size_t remaining = sizeof(text);
+    char* context = nullptr;
+    char* token = strtok_s_nid_postfix(text, &remaining, ",;", &context);
+    Require(token == text + 2 && std::strcmp(token, "ab") == 0 && remaining == 5 && context == text + 5, "strtok_s did not return the first token");
+    token = strtok_s_nid_postfix(nullptr, &remaining, ",;", &context);
+    Require(token == text + 5 && std::strcmp(token, "c") == 0 && remaining == 3 && context == text + 7, "strtok_s did not return the second token");
+    token = strtok_s_nid_postfix(nullptr, &remaining, ",;", &context);
+    Require(token == nullptr && remaining == 1 && context == text + 9, "strtok_s did not stop at the end of the string");
+
+    int before = constraintCalls;
+    char unterminated[] = "abc";
+    remaining = 2;
+    Require(strtok_s_nid_postfix(unterminated, &remaining, ",;", &context) == nullptr, "strtok_s read past s1max");
+    RequireViolation(before, "strtok_s: missing delimiter", 22);
+    before = constraintCalls;
+    char separators[] = ",,,x";
+    remaining = 3;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s skipped past s1max");
+    RequireViolation(before, "strtok_s: missing token", 22);
+    before = constraintCalls;
+    remaining = 0;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s accepted a zero s1max");
+    RequireViolation(before, "strtok_s: missing token", 22);
+    before = constraintCalls;
+    remaining = tooLarge;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s accepted an oversized s1max");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    context = nullptr;
+    remaining = 4;
+    Require(strtok_s_nid_postfix(nullptr, &remaining, ",;", &context) == nullptr, "strtok_s accepted a null context string");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, &remaining, nullptr, &context) == nullptr, "strtok_s accepted null delimiters");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, nullptr, ",;", &context) == nullptr, "strtok_s accepted a null s1max");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", nullptr) == nullptr && remaining == 4, "strtok_s accepted a null ptr");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    char exact[] = "ab,";
+    remaining = 2;
+    context = nullptr;
+    Require(strtok_s_nid_postfix(exact, &remaining, ",;", &context) == nullptr && remaining == 2 && context == nullptr, "strtok_s accepted a token that fills s1max");
+    RequireViolation(before, "strtok_s: missing delimiter", 22);
+    before = constraintCalls;
+    char largest[] = ",x";
+    remaining = tooLarge - 1;
+    Require(strtok_s_nid_postfix(largest, &remaining, ",;", &context) == largest + 1 && remaining == tooLarge - 3 && context == largest + 2 && constraintCalls == before, "strtok_s rejected the largest s1max");
+    remaining = 3;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr && remaining == 3 && context == largest + 2, "strtok_s changed its state on a missing token");
+    RequireViolation(before, "strtok_s: missing token", 22);
+}
+
 void CheckWideToMultibyte() {
     int status = 7;
     char bytes[4] = {'x', 'x', 'x', 'x'};
@@ -157,6 +241,13 @@ void CheckWideToMultibyte() {
     before = constraintCalls;
     Require(wctomb_s_nid_postfix(nullptr, bytes, sizeof(bytes), 'A') == 22, "wctomb_s accepted a null status");
     RequireViolation(before, "wctomb_s: bad argument", 22);
+    before = constraintCalls;
+    Require(wctomb_s_nid_postfix(reinterpret_cast<int*>(0x10), bytes, sizeof(bytes), 'A') == 22, "wctomb_s accepted an unwritable status");
+    RequireViolation(before, "wctomb_s: bad argument", 22);
+    status = 7;
+    before = constraintCalls;
+    Require(wctomb_s_nid_postfix(&status, reinterpret_cast<char*>(0x10), sizeof(bytes), 'A') == 22 && status == 7, "wctomb_s accepted an unwritable buffer");
+    RequireViolation(before, "wctomb_s: bad argument", 22);
 
     unsigned char state[128]{};
     std::size_t result = 7;
@@ -172,6 +263,13 @@ void CheckWideToMultibyte() {
     before = constraintCalls;
     bytes[0] = 'x';
     Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 'B', nullptr) == 22 && result == failed && bytes[0] == 0, "wcrtomb_s accepted a null state");
+    RequireViolation(before, "wcrtomb_s: bad argument", 22);
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(reinterpret_cast<std::size_t*>(0x10), bytes, sizeof(bytes), 'B', state) == 22, "wcrtomb_s accepted an unwritable result");
+    RequireViolation(before, "wcrtomb_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(&result, reinterpret_cast<char*>(0x10), sizeof(bytes), 'B', state) == 22 && result == failed, "wcrtomb_s accepted an unwritable buffer");
     RequireViolation(before, "wcrtomb_s: bad argument", 22);
     before = constraintCalls;
     bytes[0] = 'x';
@@ -193,10 +291,24 @@ void CheckMultibyteToWide() {
     wide[0] = 'x';
     Require(mbstowcs_s_nid_postfix(&result, wide, 5, "hello", 8) == 34 && result == failed && wide[0] == 0, "mbstowcs_s overflowed the buffer");
     RequireViolation(before, "mbstowcs_s: buffer overflow", 34);
+    Require(wide[1] == 'e' && wide[4] == 'o', "mbstowcs_s did not keep the converted characters after an overflow");
     before = constraintCalls;
     wide[0] = 'x';
     Require(mbstowcs_s_nid_postfix(&result, wide, 8, nullptr, 8) == 22 && result == failed && wide[0] == 0, "mbstowcs_s accepted a null source");
     RequireViolation(before, "mbstowcs_s: bad argument", 22);
+    before = constraintCalls;
+    Require(mbstowcs_s_nid_postfix(reinterpret_cast<std::size_t*>(0x10), wide, 8, "hello", 8) == 22, "mbstowcs_s accepted an unwritable result");
+    RequireViolation(before, "mbstowcs_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    Require(mbstowcs_s_nid_postfix(&result, reinterpret_cast<std::uint16_t*>(0x10), 8, "hello", 8) == 22 && result == failed, "mbstowcs_s accepted an unwritable buffer");
+    RequireViolation(before, "mbstowcs_s: bad argument", 22);
+    std::uint16_t longWide[400];
+    std::memset(longWide, 0x5a, sizeof(longWide));
+    const std::string longText(300, 'x');
+    Require(mbstowcs_s_nid_postfix(&result, longWide, 400, longText.c_str(), 399) == 0 && result == 300 && longWide[0] == 'x' && longWide[299] == 'x' &&
+                longWide[300] == 0 && longWide[301] == 0x5a5a,
+        "mbstowcs_s did not convert a long string");
 
     unsigned char state[128]{};
     const char* source = "world";
@@ -213,6 +325,12 @@ void CheckMultibyteToWide() {
     Require(mbsrtowcs_s_nid_postfix(&result, wide, 3, &source, 8, state) == 34 && result == failed && wide[0] == 0 && source == text + 3,
         "mbsrtowcs_s overflowed the buffer");
     RequireViolation(before, "mbsrtowcs_s: buffer too small", 34);
+    Require(wide[1] == 'o' && wide[2] == 'r', "mbsrtowcs_s did not keep the converted characters after an overflow");
+    const char* longSource = longText.c_str();
+    std::memset(longWide, 0x5a, sizeof(longWide));
+    Require(mbsrtowcs_s_nid_postfix(&result, longWide, 400, &longSource, 399, state) == 0 && result == 300 && longSource == nullptr && longWide[299] == 'x' &&
+                longWide[300] == 0 && longWide[301] == 0x5a5a,
+        "mbsrtowcs_s did not convert a long string");
     before = constraintCalls;
     source = nullptr;
     Require(mbsrtowcs_s_nid_postfix(&result, wide, 8, &source, 8, state) == 22 && result == failed, "mbsrtowcs_s accepted a null source string");
@@ -220,6 +338,19 @@ void CheckMultibyteToWide() {
     before = constraintCalls;
     source = text;
     Require(mbsrtowcs_s_nid_postfix(&result, wide, tooLarge, &source, 8, state) == 22 && result == failed, "mbsrtowcs_s accepted an oversized buffer");
+    RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    Require(mbsrtowcs_s_nid_postfix(&result, wide, 8, reinterpret_cast<const char**>(0x10), 8, state) == 22 && result == failed, "mbsrtowcs_s accepted an unreadable source pointer");
+    RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
+    result = 7;
+    before = constraintCalls;
+    source = text;
+    Require(mbsrtowcs_s_nid_postfix(&result, reinterpret_cast<std::uint16_t*>(0x10), 8, &source, 8, state) == 22 && result == failed, "mbsrtowcs_s accepted an unwritable buffer");
+    RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
+    before = constraintCalls;
+    source = text;
+    Require(mbsrtowcs_s_nid_postfix(reinterpret_cast<std::size_t*>(0x10), wide, 8, &source, 8, state) == 22, "mbsrtowcs_s accepted an unwritable result");
     RequireViolation(before, "mbsrtowcs_s: bad argument", 22);
 }
 
@@ -261,6 +392,8 @@ int main(int argc, char** argv) {
 
     CheckBsearch();
     CheckWcstok();
+    CheckMemset();
+    CheckStrtok();
     CheckWideToMultibyte();
     CheckMultibyteToWide();
     CheckGets(argv[1]);

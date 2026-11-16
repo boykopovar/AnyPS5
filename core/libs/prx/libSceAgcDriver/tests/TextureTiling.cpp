@@ -1,13 +1,19 @@
 #include "GraphicsTests.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -181,7 +187,8 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     const std::uint32_t tileIndex = ((y / 8u) % bankHeight) * bankWidth + ((x / 8u) / pipes) % bankWidth;
     const std::uint64_t sliceBytes = static_cast<std::uint64_t>(pitch / macroPitch) * (height / macroHeight) * macroBytes;
     const std::uint64_t total = splitSlice * sliceBytes + macroOffset + elementOffset + static_cast<std::uint64_t>(tileIndex) * microBytes;
-    const std::uint32_t px = prt ? x % macroPitch : x, py = prt ? y % macroHeight : y;
+    const bool prtNoRotation = mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnThinPrt;
+    const std::uint32_t px = prtNoRotation ? x % macroPitch : x, py = prtNoRotation ? y % macroHeight : y;
     const std::uint32_t tx = px / 8u, ty = py / 8u;
     const bool pipe8x16 = mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnThinPrt;
     const std::uint32_t pipe = pipe8x16 ? (bit(tx, 1) ^ bit(ty, 0) ^ bit(tx, 2)) | ((bit(tx, 0) ^ bit(ty, 1)) << 1u) | ((bit(tx, 2) ^ bit(ty, 2)) << 2u)
@@ -195,6 +202,80 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     bank &= banks - 1u;
     const std::uint32_t bankBits = static_cast<std::uint32_t>(std::countr_zero(banks));
     return ((total >> 8u) << (8u + 3u + bankBits)) | (static_cast<std::uint64_t>(bank) << 11u) | (static_cast<std::uint64_t>(pipe) << 8u) | (total & 0xffu);
+}
+
+void gcnThickTilingTests() {
+    for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+        const auto geometry = GcnTiling(TextureTileMode::kGcnThick1D, bytes);
+        const auto what = "PS4 thick tile mode at " + std::to_string(bytes) + " bytes";
+        Require(geometry.blockBytes == 256u * bytes && geometry.blockWidth == 8u && geometry.blockHeight == 8u, what + ": a micro tile holds 8x8x4 elements");
+        std::vector<std::uint8_t> seen(256u, 0u);
+        const auto address = [&](std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+            std::uint32_t offset = 0;
+            for (std::uint32_t bit = 0; bit < 16u; ++bit) offset |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u) ^ ((z << 24u) & geometry.equation[bit] & 0xff000000u)) & 1) << bit;
+            return offset;
+        };
+        for (std::uint32_t z = 0; z < 4u; ++z) {
+            for (std::uint32_t y = 0; y < 8u; ++y) {
+                for (std::uint32_t x = 0; x < 8u; ++x) {
+                    const auto offset = address(x, y, z);
+                    Require(offset % bytes == 0 && offset / bytes < 256u && seen[offset / bytes]++ == 0, what + ": two elements share an address or one leaves the micro tile");
+                }
+            }
+        }
+        const std::uint32_t zBit = bytes <= 2u ? 4u : bytes == 4u ? 3u : 2u;
+        Require(address(1u, 0u, 0u) == bytes && address(0u, 1u, 0u) == 2u * bytes && address(0u, 0u, 1u) == (bytes << zBit) && address(4u, 4u, 0u) == 0xc0u * bytes, what + ": element order differs from addrlib's thick micro tile");
+    }
+    GuestTextureResource volume{};
+    volume.width = 16u;
+    volume.height = 8u;
+    volume.depthOrLastArray = 7u;
+    volume.mipCount = 2u;
+    volume.lastLevel = 1u;
+    volume.tileMode = TextureTileMode::kGcnThick1D;
+    volume.dimension = TextureDimension::k3D;
+    volume.format = 20u;
+    volume.gcnPitch = 16u;
+    const auto geometry = DescribeSurface(volume);
+    Require(geometry.thick && geometry.levelMajor && geometry.blockDepth == 4u && geometry.imageDepth == 8u && geometry.guestBytes == 5120u, "PS4 thick volume size changed");
+    Require(geometry.mips[0].tiledSize == 2048u && geometry.mips[1].tiledOffset == 4096u && geometry.mips[1].tiledSize == 1024u && geometry.mips[0].blocksPerRow == 2u, "PS4 thick volume levels are not slabs of four slices");
+    Require(geometry.GuestOffset(5u, geometry.mips[0]) == 2048u && geometry.GuestOffset(3u, geometry.mips[1]) == 4096u, "PS4 thick volume slab offset is misplaced");
+    Require(geometry.mips[0].linearSize == 512u && geometry.mips[1].linearOffset == 512u && geometry.sliceLinearBytes == 640u, "PS4 thick volume linear staging is not per slice");
+    GuestTextureResource deep = volume;
+    deep.width = 32u;
+    deep.height = 32u;
+    deep.depthOrLastArray = 31u;
+    deep.mipCount = 4u;
+    deep.lastLevel = 3u;
+    deep.gcnPitch = 32u;
+    const auto deepGeometry = DescribeSurface(deep);
+    Require(deepGeometry.levelMajor && deepGeometry.mips.size() == 4u, "PS4 thick volume with four levels is not level-major");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> slabs;
+    for (std::uint32_t level = 0; level < 4u; ++level) {
+        const auto& mip = deepGeometry.mips[level];
+        for (std::uint32_t z = 0; z < std::max(32u >> level, 1u); ++z) {
+            const auto begin = deepGeometry.GuestOffset(z, mip);
+            Require(begin == deepGeometry.GuestOffset(z & ~3u, mip), "PS4 thick volume slices of one slab are not at one offset");
+            Require(begin + mip.tiledSize <= deepGeometry.guestBytes, "PS4 thick volume slab lies past the surface");
+            if (z % 4u == 0) slabs.emplace_back(begin, begin + mip.tiledSize);
+        }
+    }
+    std::sort(slabs.begin(), slabs.end());
+    for (std::size_t i = 1; i < slabs.size(); ++i) Require(slabs[i].first >= slabs[i - 1].second, "PS4 thick volume slabs overlap");
+    Require(slabs.size() == 8u + 4u + 2u + 1u && slabs.back().second == deepGeometry.guestBytes, "PS4 thick volume slab count or size changed");
+    Require(deepGeometry.GuestOffset(4u, deepGeometry.mips[1]) == deepGeometry.mips[1].tiledOffset + deepGeometry.mips[1].tiledSize, "PS4 thick volume level 1 slab stride is not its own slab size");
+    deep.mipCount = 6u;
+    deep.lastLevel = 5u;
+    const auto full = DescribeSurface(deep);
+    Require(full.guestBytes == 151296u && full.mips[4].tiledOffset == 150528u && full.mips[5].tiledOffset == 151040u, "PS4 full volume mip chain differs from addrlib");
+    Require(full.mips[4].tiledSize == 256u && full.GuestOffset(1u, full.mips[4]) == 150784u, "PS4 two-slice mip must use separate thin slices");
+    Require(MipTileMode(deep.tileMode, full.mips[4]) == TextureTileMode::kGcnThin1D && MipTileMode(deep.tileMode, full.mips[3]) == deep.tileMode, "PS4 mip tile mode must degrade only below four slices");
+    for (const auto format : {1u, 12u}) {
+        deep.format = format;
+        const auto narrow = DescribeSurface(deep);
+        Require(narrow.mips[5].tiledSize == 256u && narrow.mips[5].pitchBytes == 32u, "PS4 thin volume mip needs SI slice alignment at small element sizes");
+    }
+
 }
 
 void gcnTilingTests() {
@@ -247,6 +328,7 @@ void gcnTilingTests() {
                     for (std::uint32_t layer = 0; layer < surface.layers; ++layer) {
                         for (std::uint32_t y = 0; y < height; ++y) {
                             for (std::uint32_t x = 0; x < width; ++x) {
+                                if (layer != 0 && (x + layer) % 8u != y % 8u) continue;
                                 std::uint32_t inBlock = 0, split = 0;
                                 for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u)) & 1) << bit;
                                 for (std::uint32_t bit = 0; bit < 4u; ++bit) split |= static_cast<std::uint32_t>(std::popcount((x & geometry.splitMasks[bit] & 0xfffu) ^ ((y << 12u) & geometry.splitMasks[bit] & 0xfff000u)) & 1) << bit;
@@ -295,6 +377,26 @@ void gcnTilingTests() {
         array.mipCount = 1u;
         array.lastLevel = 0u;
         Require(!DescribeSurface(array).levelMajor, "a single-level PS4 array is slice-major");
+        auto volume = array;
+        volume.dimension = TextureDimension::k3D;
+        volume.depthOrLastArray = 3u;
+        volume.mipCount = 3u;
+        volume.lastLevel = 2u;
+        const auto volumeGeometry = DescribeSurface(volume);
+        Require(volumeGeometry.levelMajor && volumeGeometry.layers == 4u && volumeGeometry.imageDepth == 4u && volumeGeometry.imageLayers == 1u, "a PS4 volume is not one image of four slices");
+        Require(volumeGeometry.mips[1].tiledOffset == 4096u && volumeGeometry.mips[2].tiledOffset == 4608u && volumeGeometry.guestBytes == 4864u, "PS4 volume levels do not halve their slices");
+        Require(volumeGeometry.GuestOffset(1u, volumeGeometry.mips[1]) == 4352u, "PS4 slice of a volume level is misplaced");
+        Require(volumeGeometry.HasLayer(1u, 1u) && !volumeGeometry.HasLayer(1u, 2u) && volumeGeometry.HasLayer(2u, 0u) && !volumeGeometry.HasLayer(2u, 1u), "PS4 volume levels keep slices they do not have");
+        volume.mipCount = 1u;
+        volume.lastLevel = 0u;
+        const auto singleLevel = DescribeSurface(volume);
+        Require(!singleLevel.levelMajor && singleLevel.guestBytes == 4096u && singleLevel.layerBytes == 1024u && singleLevel.imageDepth == 4u, "a single-level PS4 volume is not four slices of one level");
+        volume.depthOrLastArray = 5u;
+        volume.mipCount = 2u;
+        volume.lastLevel = 1u;
+        Require(DescribeSurface(volume).guestBytes == 1024u * 6u + 256u * 3u, "a PS4 volume level does not keep half the slices of the level before");
+        volume.gcnPow2Pad = true;
+        Require(DescribeSurface(volume).guestBytes == 1024u * 6u + 256u * 4u, "a pow2-padded PS4 volume level does not round its slices up to a power of two");
     }
     {
         const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnDepth2D64, 20u, 2048u, 1152u, 2048u, false, 1u);
@@ -307,18 +409,218 @@ void gcnTilingTests() {
         reject([] { ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 14u, 212u, 35u, 216u, false, 1u); }, "is not padded the way its tile mode pads a row");
     }
     {
+        const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 20u, 68u, 68u, 128u, true, 7u);
+        Require(mips[0].tiledSize == 128u * 128u * 4u && mips[1].tiledOffset == 0x10000u && mips[2].tiledOffset == 0x14000u, "a POW2_PAD PS4 mip chain pads the rows of level 0");
+        Require(ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 20u, 68u, 68u, 128u, true, 1u)[0].tiledSize == 128u * 72u * 4u, "a single POW2_PAD PS4 level keeps its micro-tile rows");
+    }
+    {
         const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnDisplay2D, 56u, 256u, 256u, 256u, false, 4u);
         Require(!mips[0].gcnMicroTiled && !mips[1].gcnMicroTiled && mips[2].gcnMicroTiled && mips[3].gcnMicroTiled, "PS4 2D tiled mips switch to 1D tiling below one macro tile");
         Require(mips[0].tiledOffset == 0u && mips[1].tiledOffset == 256u * 256u * 4u && mips[1].blocksPerRow == 1u, "PS4 mips follow level 0 in order");
         Require(mips[2].tiledOffset == mips[1].tiledOffset + 128u * 128u * 4u && mips[2].blocksPerRow == 8u, "PS4 1D tiled mip after the 2D levels");
         Require(MipTileMode(TextureTileMode::kGcnDisplay2D, mips[2]) == TextureTileMode::kGcnDisplay1D, "a 1D tiled level of a 2D surface uses the 1D display mode");
     }
+    {
+        Require(ColorTargetLayout(100u, 4u, ColorTileMode::GcnLinear, 4u).Bytes() == 112u * 4u * 4u, "a PS4 linear-aligned 32-bit target row is not padded to 16 elements");
+        Require(ColorTargetLayout(100u, 4u, ColorTileMode::GcnLinear, 1u).Bytes() == 128u * 4u, "a PS4 linear-aligned 8-bit target row is not padded to 64 elements");
+        Require(ColorTargetLayout(100u, 4u, ColorTileMode::GcnLinear, 16u).Bytes() == 104u * 4u * 16u, "a PS4 linear-aligned 128-bit target row is not padded to 8 elements");
+        Require(ColorTargetLayout(100u, 4u, ColorTileMode::Linear, 4u).Bytes() == 128u * 4u * 4u, "a PS5 linear target row is not padded to 256 bytes");
+    }
+    for (const auto mode : {ColorTileMode::GcnDisplay2D, ColorTileMode::GcnThin2D}) {
+        for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+            const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytes);
+            const auto width = geometry.blockWidth * 2u;
+            const auto height = geometry.blockHeight;
+            for (std::uint32_t slice = 0; slice < 6u; ++slice) {
+                const ColorTargetLayout layout(width, height, mode, bytes, GcnLayerBankXor(geometry, slice));
+                for (std::uint32_t y = 0; y < height; ++y) {
+                    for (std::uint32_t x = 0; x < width; ++x) {
+                        const auto expected = referenceGcnAddress(ColorTextureTileMode(mode), bytes, width, height, x, y, slice);
+                        if (layout.Offset(x, y) != expected) Require(false, "PS4 color tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes places element " + std::to_string(x) + "," + std::to_string(y) + " of array slice " + std::to_string(slice) + " at " + std::to_string(layout.Offset(x, y)) + ", addrlib places it at " + std::to_string(expected));
+                    }
+                }
+            }
+        }
+    }
+    reject([] { ColorTargetLayout(64u, 64u, ColorTileMode::GcnThin1D, 4u, 1u << 11u); }, "bank bits of a 2D-tiled mode");
+    reject([] { ColorTargetLayout(128u, 64u, ColorTileMode::GcnThin2D, 4u, 1u << 8u); }, "bank bits of a 2D-tiled mode");
+    reject([] { ColorTargetLayout(64u, 4u, ColorTileMode::GcnLinear, 4u, 1u << 11u); }, "whole 256-byte units of XOR swizzle blocks");
+}
+
+bool sameMip(const TileMipLayout& a, const TileMipLayout& b) {
+    return a.tiledOffset == b.tiledOffset && a.tiledSize == b.tiledSize && a.linearOffset == b.linearOffset && a.linearSize == b.linearSize && a.width == b.width && a.height == b.height && a.blocksPerRow == b.blocksPerRow && a.pitchBytes == b.pitchBytes && a.tail == b.tail && a.tailX == b.tailX && a.tailY == b.tailY && a.gcnMicroTiled == b.gcnMicroTiled && a.gcnSplitStride == b.gcnSplitStride;
+}
+
+template<typename TAction>
+std::string failure(TAction action) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return std::string("rejected: ") + error.what();
+    }
+    return {};
+}
+
+TileMipLayout sentinelMip() {
+    TileMipLayout mip{};
+    mip.tiledOffset = 0x5a5a5a5a5a5a5a5aull;
+    mip.tiledSize = 0xa5a5a5a5a5a5a5a5ull;
+    mip.width = 0xdeadbeefu;
+    mip.gcnSplitStride = 0x1234u;
+    return mip;
+}
+
+struct SizeOnlyCounts {
+    std::size_t layouts = 0;
+    std::size_t layoutRejections = 0;
+    std::size_t sizeOnly = 0;
+    std::size_t described = 0;
+    std::size_t rejected = 0;
+    std::size_t switched = 0;
+};
+
+void compareMipLayoutInto(TextureTileMode mode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, std::uint32_t linearPitch, SizeOnlyCounts& counts) {
+    std::vector<TileMipLayout> full;
+    const auto fullError = failure([&] { full = ComputeMipLayout(mode, format, width, height, mipCount, linearPitch); });
+    MipLayoutStorage storage;
+    storage.fill(sentinelMip());
+    std::span<const TileMipLayout> into;
+    const auto intoError = failure([&] { into = ComputeMipLayoutInto(storage, mode, format, width, height, mipCount, linearPitch); });
+    Require(intoError == fullError, "ComputeMipLayoutInto rejects unlike ComputeMipLayout: '" + intoError + "' / '" + fullError + "'");
+    if (!fullError.empty()) {
+        ++counts.layoutRejections;
+        return;
+    }
+    Require(into.data() == storage.data() && into.size() == full.size() && std::equal(into.begin(), into.end(), full.begin(), sameMip), "ComputeMipLayoutInto differs from ComputeMipLayout");
+    Require(std::all_of(storage.begin() + static_cast<std::ptrdiff_t>(into.size()), storage.end(), [](const TileMipLayout& mip) { return sameMip(mip, sentinelMip()); }), "ComputeMipLayoutInto wrote past its mip count");
+    ++counts.layouts;
+}
+
+void compareSurfaceBytes(const GuestTextureResource& resource, bool checkSwitch, SizeOnlyCounts& counts) {
+    std::uint64_t expected = 0;
+    const auto expectedError = failure([&] { expected = DescribeSurface(resource).guestBytes; });
+    std::uint64_t bytes = 0;
+    const auto error = failure([&] { bytes = DescribeSurfaceGuestBytes(resource); });
+    Require(error == expectedError, "DescribeSurfaceGuestBytes rejects unlike DescribeSurface: '" + error + "' / '" + expectedError + "'");
+    Require(bytes == expected, "DescribeSurfaceGuestBytes differs from DescribeSurface: " + std::to_string(bytes) + " / " + std::to_string(expected));
+    if (checkSwitch) {
+        for (const auto set : {true, false}) {
+            RuntimeSwitches::Assign(RuntimeSwitch::NoSizeOnlySurfaceBytes, set);
+            std::uint64_t switched = 0;
+            Require(failure([&] { switched = SurfaceGuestBytes(resource); }) == expectedError && switched == expected, "SurfaceGuestBytes differs from DescribeSurface");
+        }
+        ++counts.switched;
+    }
+    const bool multisampled = resource.samples != 1u && resource.tileMode != TextureTileMode::kLinear;
+    const bool thin = resource.gcnPitch == 0 && !multisampled && resource.dimension != TextureDimension::k3D && (resource.dimension != TextureDimension::k2DMsaa || resource.tileMode == TextureTileMode::kLinear);
+    if (!expectedError.empty()) ++counts.rejected;
+    else ++(thin ? counts.sizeOnly : counts.described);
+}
+
+GuestTextureResource sweptResource(TextureTileMode mode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, TextureDimension dimension, std::uint32_t lastLayer, std::uint32_t samples, bool pitched) {
+    GuestTextureResource resource{};
+    resource.width = width;
+    resource.height = height;
+    resource.depthOrLastArray = lastLayer;
+    resource.mipCount = mipCount;
+    resource.allocatedMipCount = mipCount;
+    resource.lastLevel = mipCount - 1u;
+    resource.tileMode = mode;
+    resource.dimension = dimension;
+    resource.format = format;
+    resource.samples = samples;
+    if (pitched && IsGcnTiled(mode)) resource.gcnPitch = (width + 63u) & ~63u;
+    else if (pitched) resource.linearPitch = width + 13u;
+    return resource;
+}
+
+void sizeOnlySurfaceTests() {
+    constexpr TextureTileMode modes[] = {TextureTileMode::kLinear, TextureTileMode::kStandard256B, TextureTileMode::kStandard4KB, TextureTileMode::kStandard64KB, TextureTileMode::kZ64KBX, TextureTileMode::kS64KBX, TextureTileMode::kD64KBX, TextureTileMode::kR64KBX, TextureTileMode::kD256B, TextureTileMode::kD4KB, TextureTileMode::kD64KB, TextureTileMode::kS64KBT, TextureTileMode::kD64KBT, TextureTileMode::kS4KBX, TextureTileMode::kD4KBX};
+    constexpr TextureTileMode pitchModes[] = {TextureTileMode::kLinear, TextureTileMode::kR64KBX, TextureTileMode::kGcnThin1D, TextureTileMode::kGcnDisplay2D};
+    constexpr TextureTileMode edgeModes[] = {TextureTileMode::kLinear, TextureTileMode::kStandard64KB, TextureTileMode::kR64KBX, TextureTileMode::kD4KBX, TextureTileMode::kGcnThin1D};
+    constexpr std::pair<TextureDimension, std::uint32_t> dimensionLayers[] = {{TextureDimension::k1D, 0u}, {TextureDimension::k2D, 0u}, {TextureDimension::k2DArray, 5u}, {TextureDimension::kCube, 5u}, {TextureDimension::k1DArray, 5u}, {TextureDimension::k3D, 5u}, {TextureDimension::k2DMsaa, 0u}};
+    constexpr std::uint32_t widths[] = {1, 333, 1920};
+    constexpr std::uint32_t heights[] = {5, 1080};
+    constexpr std::uint32_t mipCounts[] = {1, 5, 16};
+    constexpr std::uint32_t sampleCounts[] = {1, 4, 8};
+    constexpr std::array<std::uint32_t, 4> edges[] = {{0u, 5u, 1u, 1u}, {7u, 0u, 1u, 1u}, {7u, 5u, 0u, 1u}, {7u, 5u, 17u, 1u}, {7u, 5u, 0xffffffffu, 1u}, {64u, 64u, 1u, 2u}, {64u, 64u, 3u, 8u}, {16384u, 16384u, 1u, 8u}, {16385u, 64u, 1u, 2u}};
+    const auto noSizeOnly = RuntimeSwitches::Set(RuntimeSwitch::NoSizeOnlySurfaceBytes);
+    std::vector<std::uint32_t> formats;
+    std::vector<std::array<std::uint32_t, 3>> shapes;
+    std::vector<std::uint32_t> shapeFormats;
+    for (std::uint32_t format = 0; format < 256; ++format) {
+        std::array<std::uint32_t, 3> shape{};
+        if (!failure([&] { shape = {BytesPerElement(format), BlockWidth(format), BlockHeight(format)}; }).empty()) continue;
+        formats.push_back(format);
+        if (std::find(shapes.begin(), shapes.end(), shape) != shapes.end()) continue;
+        shapes.push_back(shape);
+        shapeFormats.push_back(format);
+    }
+    SizeOnlyCounts counts;
+    std::size_t index = 0;
+    for (const auto format : shapeFormats) {
+        for (const auto mode : modes) {
+            for (const auto width : widths) {
+                for (const auto height : heights) {
+                    for (const auto mipCount : mipCounts) {
+                        compareMipLayoutInto(mode, format, width, height, mipCount, 0u, counts);
+                        for (const auto& [dimension, lastLayer] : dimensionLayers) compareSurfaceBytes(sweptResource(mode, format, width, height, mipCount, dimension, lastLayer, 1u, false), index++ % 5u == 0u, counts);
+                    }
+                }
+            }
+        }
+        for (const auto mode : pitchModes) {
+            for (const auto mipCount : {1u, 17u}) {
+                for (const auto linearPitch : {0u, 333u, 346u}) compareMipLayoutInto(mode, format, 333u, 5u, mipCount, linearPitch, counts);
+                for (const auto& [dimension, lastLayer] : dimensionLayers) {
+                    for (const auto samples : sampleCounts) {
+                        for (const auto pitched : {false, true}) compareSurfaceBytes(sweptResource(mode, format, 333u, 5u, mipCount, dimension, lastLayer, samples, pitched), index++ % 3u == 0u, counts);
+                    }
+                }
+            }
+        }
+        for (const auto mode : edgeModes) {
+            for (const auto& [width, height, mipCount, samples] : edges) {
+                compareMipLayoutInto(mode, format, width, height, mipCount, 0u, counts);
+                for (const auto& [dimension, lastLayer] : dimensionLayers) compareSurfaceBytes(sweptResource(mode, format, width, height, mipCount, dimension, lastLayer, samples, false), index++ % 3u == 0u, counts);
+            }
+        }
+    }
+    for (const auto format : formats) {
+        for (const auto mode : modes) {
+            for (const auto mipCount : {1u, 11u}) {
+                compareMipLayoutInto(mode, format, 333u, 1080u, mipCount, 0u, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, mipCount, TextureDimension::k2D, 0u, 1u, false), index++ % 3u == 0u, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, mipCount, TextureDimension::k2DArray, 5u, 1u, false), false, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, mipCount, TextureDimension::k3D, 5u, 1u, false), false, counts);
+                compareSurfaceBytes(sweptResource(mode, format, 333u, 1080u, 1u, TextureDimension::k2DMsaa, 0u, 4u, false), false, counts);
+            }
+        }
+    }
+    RuntimeSwitches::Assign(RuntimeSwitch::NoSizeOnlySurfaceBytes, noSizeOnly);
+    Require(formats.size() > 60 && shapes.size() > 6 && counts.layouts > 3000 && counts.layoutRejections > 500 && counts.sizeOnly > 10000 && counts.described > 2500 && counts.rejected > 5000 && counts.switched > 4000, "the size-only surface sweep covered too little");
+
+    GuestTextureResource array{};
+    array.width = 4;
+    array.height = 4;
+    array.mipCount = 2;
+    array.allocatedMipCount = 2;
+    array.lastLevel = 1;
+    array.tileMode = TextureTileMode::kLinear;
+    array.dimension = TextureDimension::k2DArray;
+    array.format = 1;
+    array.depthOrLastArray = 5;
+    Require(DescribeSurfaceGuestBytes(array) == 1536u * 6u && DescribeSurface(array).guestBytes == 1536u * 6u, "a six-layer linear 4x4 chain of two levels holds six 1536-byte slices");
+    array.mipCount = 17;
+    reject([&] { DescribeSurfaceGuestBytes(array); }, "texture mip count is out of range");
 }
 
 }
 
 void RunTextureTilingTests() {
     gcnTilingTests();
+    gcnThickTilingTests();
+    sizeOnlySurfaceTests();
     {
         const auto mips = ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 2);
         Require(mips.size() == 2, "linear mip chain must contain the requested mip count");

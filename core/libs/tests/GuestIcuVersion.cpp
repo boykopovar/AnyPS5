@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -207,6 +208,35 @@ void VersionToString() {
     u_versionToString_nid_postfix(version.data(), nullptr);
 }
 
+void GetVersion() {
+    Version version{9, 9, 9, 9};
+    u_getVersion_nid_postfix(version.data());
+    Require(version == Version{78, 1, 0, 0}, "library version is 78.1.0.0");
+    Require(ToString(version) == "78.1", "library version string");
+    u_getVersion_nid_postfix(nullptr);
+}
+
+void UnreadableBuffers() {
+    const auto* unreadableText = reinterpret_cast<const char*>(0x10);
+    const auto* unreadableUnits = reinterpret_cast<const char16_t*>(0x10);
+    auto* unwritable = reinterpret_cast<std::uint8_t*>(0x10);
+    errno = 71;
+    Version version{9, 9, 9, 9};
+    u_versionFromString_nid_postfix(version.data(), unreadableText);
+    Require(version == Version{0, 0, 0, 0}, "an unreadable string clears the version, as a null one does");
+    version = {9, 9, 9, 9};
+    u_versionFromUString_nid_postfix(version.data(), unreadableUnits);
+    Require(version == Version{9, 9, 9, 9}, "an unreadable UTF-16 string leaves the version unchanged, as a null one does");
+    std::array<char, 4> text{'X', 'X', 'X', 'X'};
+    u_versionToString_nid_postfix(reinterpret_cast<const std::uint8_t*>(0x10), text.data());
+    Require(text[0] == 0 && text[1] == 'X', "an unreadable version writes an empty string, as a null one does");
+    u_versionFromString_nid_postfix(unwritable, "1.2");
+    u_versionToString_nid_postfix(version.data(), reinterpret_cast<char*>(0x10));
+    u_getUnicodeVersion_nid_postfix(unwritable);
+    u_getVersion_nid_postfix(unwritable);
+    Require(errno == 71, "unreadable and unwritable buffers keep errno");
+}
+
 void RoundTrip() {
     const auto written = [](std::uint32_t part) { return part < 100 || part % 100 >= 10; };
     for (std::uint32_t part = 0; part < 256; ++part) {
@@ -226,6 +256,8 @@ int main() {
     VersionFromString();
     VersionFromUString();
     VersionToString();
+    GetVersion();
+    UnreadableBuffers();
     RoundTrip();
     return 0;
 }

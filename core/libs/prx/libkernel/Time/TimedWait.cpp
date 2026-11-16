@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -21,7 +23,9 @@ namespace TimedWait {
 
 namespace {
 
-constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
+constexpr std::uint64_t SHORT_SLEEP_NANOS = 50000ULL;
+constexpr std::uint64_t SHORT_SLEEP_SPIN_RUN_NANOS = 1000000ULL;
+constexpr unsigned SHORT_SLEEP_PAUSES_PER_CLOCK_READ = 8;
 constexpr std::uint64_t LEAD_NANOS = 20000ULL;
 
 std::mutex& ChangeSleepersMutex() {
@@ -49,7 +53,16 @@ std::condition_variable& ChangeCondition() {
 struct ThreadWaitState {
     std::atomic<int> own{0};
     std::atomic<int>* bound = &own;
+    int timerDepth = 0;
 };
+
+struct DeferredDrain {
+    void (*run)(void*);
+    void* argument;
+};
+
+std::mutex drainBoxesLock;
+std::unordered_map<unsigned long, std::vector<DeferredDrain>> drainBoxes;
 ThreadWaitState& WaitState() {
 #ifdef _WIN32
     return WindowsThreadLocal<ThreadWaitState>::Get();
@@ -72,6 +85,7 @@ void DrainApcs() {
     state->fetch_sub(1, std::memory_order_seq_cst);
     if (testAlert) testAlert();
     else SleepEx(0, TRUE);
+    ReapDeliveryDrain();
 }
 
 DWORD AlertableWait(DWORD count, const HANDLE* handles, DWORD milliseconds) {
@@ -99,16 +113,16 @@ HANDLE CreateHighResolutionTimer() {
 }
 
 bool TimerWait(HANDLE timer, std::uint64_t nanos) {
-    thread_local int depth = 0;
     struct Nesting {
+        int& depth;
         HANDLE own;
-        explicit Nesting(bool nested) : own(nested ? CreateHighResolutionTimer() : nullptr) { ++depth; }
+        explicit Nesting(int& depth) : depth(depth), own(depth != 0 ? CreateHighResolutionTimer() : nullptr) { ++depth; }
         ~Nesting() {
             --depth;
             if (own) CloseHandle(own);
         }
-    } nesting(depth != 0);
-    if (depth > 1) timer = nesting.own;
+    } nesting(WaitState().timerDepth);
+    if (nesting.depth > 1) timer = nesting.own;
     if (!timer) return false;
     LARGE_INTEGER due{};
     due.QuadPart = -static_cast<LONGLONG>(nanos / 100ULL);
@@ -123,10 +137,6 @@ DWORD WholeMilliseconds(std::uint64_t nanos) {
 }
 
 void SleepNanosCoarse(std::uint64_t nanos) {
-    if (nanos < YIELD_BELOW_NANOS) {
-        SwitchToThread();
-        return;
-    }
     const HANDLE timer = ThreadTimer(0);
     if (TimerWait(timer, nanos)) return;
     AlertableSleep(static_cast<DWORD>((nanos + 999999ULL) / 1000000ULL));
@@ -147,6 +157,8 @@ struct Waiter {
     Waiter* nested = nullptr;
     const void* key = nullptr;
     HANDLE wake = nullptr;
+    std::uint64_t shortSleepRunStartNanos = 0;
+    std::uint64_t shortSleepEndNanos = 0;
     bool queued = false;
     bool busy = false;
 
@@ -159,6 +171,48 @@ struct Waiter {
     }
 };
 
+std::atomic<void (*)()>& DrainPostHook() {
+    static std::atomic<void (*)()> hook{nullptr};
+    return hook;
+}
+
+void SetDeliveryDrainPostHook(void (*hook)()) {
+    DrainPostHook().store(hook, std::memory_order_release);
+}
+
+void QueueForDeliveryDrain(unsigned long thread, const std::atomic<bool>* targetFinished, void (*run)(void*), void* argument) {
+    if (const auto hook = DrainPostHook().load(std::memory_order_acquire)) hook();
+    bool queued = false;
+    {
+        const std::lock_guard lock(drainBoxesLock);
+        if (targetFinished == nullptr || !targetFinished->load(std::memory_order_acquire)) {
+            drainBoxes[thread].push_back({run, argument});
+            queued = true;
+        }
+    }
+    if (!queued) run(argument);
+}
+
+void ReapDeliveryDrain() {
+    std::vector<DeferredDrain> deferred;
+    {
+        const std::lock_guard lock(drainBoxesLock);
+        const auto box = drainBoxes.find(GetCurrentThreadId());
+        if (box != drainBoxes.end()) {
+            deferred = std::move(box->second);
+            drainBoxes.erase(box);
+        }
+    }
+    for (const auto& entry : deferred) entry.run(entry.argument);
+}
+
+std::size_t DeliveryDrainPending() {
+    const std::lock_guard lock(drainBoxesLock);
+    std::size_t pending = 0;
+    for (const auto& box : drainBoxes) pending += box.second.size();
+    return pending;
+}
+
 namespace {
 
 Waiter* ThisThreadWaiter() {
@@ -169,6 +223,26 @@ HANDLE ThreadTimer(unsigned kind) {
     auto& timer = ThisThreadWaiter()->sleepTimers[kind];
     if (!timer) timer = CreateHighResolutionTimer();
     return timer;
+}
+
+void SleepShort(std::uint64_t nanos) {
+    Waiter* waiter = ThisThreadWaiter();
+    std::uint64_t now = NowNanos();
+    const std::uint64_t deadlineNanos = now + nanos;
+    if (now - waiter->shortSleepEndNanos >= nanos) waiter->shortSleepRunStartNanos = now;
+    if (now - waiter->shortSleepRunStartNanos >= SHORT_SLEEP_SPIN_RUN_NANOS) {
+        if (!TimerWait(ThreadTimer(0), nanos)) AlertableSleep(1);
+        now = NowNanos();
+    }
+    {
+        DeliveryDeferral deferral;
+        while (now < deadlineNanos) {
+            for (unsigned pause = 0; pause < SHORT_SLEEP_PAUSES_PER_CLOCK_READ; ++pause) YieldProcessor();
+            now = NowNanos();
+        }
+    }
+    DrainApcs();
+    waiter->shortSleepEndNanos = NowNanos();
 }
 
 Waiter* AcquireWaiter() {
@@ -253,7 +327,7 @@ bool Condition::waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
 
 void Condition::NotifyOne() {
     if (Coarse()) {
-        coarse.notify_one();
+        if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_one();
         return;
     }
     std::lock_guard lock(queueLock);
@@ -265,7 +339,7 @@ void Condition::NotifyOne() {
 
 void Condition::NotifyAll() {
     if (Coarse()) {
-        coarse.notify_all();
+        if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_all();
         return;
     }
     std::lock_guard lock(queueLock);
@@ -390,11 +464,11 @@ void Unpark(const void* key) {
 #else
 
 void Condition::NotifyOne() {
-    coarse.notify_one();
+    if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_one();
 }
 
 void Condition::NotifyAll() {
-    coarse.notify_all();
+    if (coarseWaiters.load(std::memory_order_seq_cst) != 0) coarse.notify_all();
 }
 
 namespace {
@@ -552,7 +626,7 @@ void SleepUntil(std::uint64_t deadlineNanos) {
 bool SleepNanosUnlessChanged(std::uint64_t nanos, const std::atomic<std::uint64_t>& counter, std::uint64_t observed) {
     const std::uint64_t deadlineNanos = NowNanos() + nanos;
 #ifdef _WIN32
-    if (Coarse() || nanos < YIELD_BELOW_NANOS) {
+    if (Coarse() || nanos < SHORT_SLEEP_NANOS) {
         SleepNanos(nanos);
         return false;
     }
@@ -626,12 +700,12 @@ void WakeChangeSleepers() {
 void SleepNanos(std::uint64_t nanos) {
     if (nanos == 0) return;
 #ifdef _WIN32
-    if (Coarse()) {
-        SleepNanosCoarse(nanos);
+    if (nanos < SHORT_SLEEP_NANOS) {
+        SleepShort(nanos);
         return;
     }
-    if (nanos < YIELD_BELOW_NANOS) {
-        SwitchToThread();
+    if (Coarse()) {
+        SleepNanosCoarse(nanos);
         return;
     }
     SleepUntil(NowNanos() + nanos);
@@ -644,7 +718,9 @@ void SleepNanos(std::uint64_t nanos) {
     struct timespec req{};
     req.tv_sec = static_cast<time_t>(nanos / 1000000000ULL);
     req.tv_nsec = static_cast<long>(nanos % 1000000000ULL);
+    const int savedErrno = errno;
     while (nanosleep(&req, &req) == -1 && errno == EINTR) {}
+    errno = savedErrno;
 #endif
 }
 

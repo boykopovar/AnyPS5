@@ -6,7 +6,7 @@
 namespace AgcDriver {
 
 inline bool SubgroupControlBarrierUsable(VkDriverId driver) {
-    return driver != VK_DRIVER_ID_AMD_PROPRIETARY;
+    return driver != VK_DRIVER_ID_AMD_PROPRIETARY && driver != VK_DRIVER_ID_MOLTENVK;
 }
 
 inline bool WorkgroupScopeFenceUsable(VkDriverId driver) {
