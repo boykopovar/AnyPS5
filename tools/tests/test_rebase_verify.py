@@ -294,5 +294,10 @@ class RebaseDiffTextTests(unittest.TestCase):
         self.assertEqual(len(rebase_verify.differences(old, new)), 2)
 
 
+class CountHelperTests(unittest.TestCase):
+    def test_default_onto_returns_an_explicit_name_without_asking_git(self):
+        self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
+
+
 if __name__ == "__main__":
     unittest.main()
