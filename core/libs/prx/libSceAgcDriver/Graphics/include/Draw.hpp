@@ -66,7 +66,8 @@ struct DrawInputCopy {
     std::uint64_t registryGeneration = 0;
     Recorder::OwnedDrawInputProof owned;
 };
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from = 0);
+DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use, std::size_t from = 0, bool hostOnly = false);
+bool BindsIndexCopy(const State& state);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride = 0);
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived, std::uint32_t lowest = 0);
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite = nullptr);
@@ -190,6 +191,12 @@ using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t
 AddressDrawReuseCounts AddressDrawReuseCounters();
 const char* AddressDrawReuseName(AddressDrawReuse outcome);
 std::uint64_t AddressDrawReuseVerifications();
+struct VertexPlanScratchState {
+    bool busy = false;
+    std::size_t resting = 0;
+    std::size_t capacity = 0;
+};
+VertexPlanScratchState ThreadVertexPlanScratch();
 enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);

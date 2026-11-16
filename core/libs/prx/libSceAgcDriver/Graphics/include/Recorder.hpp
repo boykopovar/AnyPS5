@@ -228,9 +228,12 @@ public:
     static constexpr std::size_t UnwrittenSnapshotEntries = 4096;
     static constexpr std::size_t DrawInputBudget = std::size_t{1024} << 20u;
     static constexpr std::size_t DrawInputEntries = 16384;
+    static constexpr std::size_t DrawInputMirrorBudget = std::size_t{512} << 20u;
+    static bool DrawInputMirrors();
+    std::pair<std::size_t, std::size_t> DrawInputBytes() const;
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
-    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr);
+    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr, std::size_t from = 0, std::uint32_t* lowest = nullptr, bool mirrored = false);
     struct OwnedDrawInputProof {
         std::vector<std::uint64_t> words;
         std::uint64_t since = 0;
@@ -258,11 +261,13 @@ public:
     void OnComplete(std::function<void()> action);
     using Validation = std::function<void()>;
     void OnValidated(Validation validation);
+    void OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
     void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void NoteStampedWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static constexpr std::int16_t ReachValue = -2;
     void NotePendingReach(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
@@ -272,6 +277,8 @@ public:
     // memory; its completion stores are the caller's business, see VulkanDevice::CopyBuffer).
     bool PendingWriteSettled(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t LastWriteNote(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t WriteNoteCount() const { return writeNoteCount; }
+    std::vector<std::uint64_t> StampedNotesSince(std::uint64_t note) const;
     std::uint64_t NewestWriteNote(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t NewestStoreNote(std::uint64_t address, std::size_t bytes) const;
     struct PendingWrite {
@@ -580,6 +587,8 @@ public:
     // The recorder of the current device, for code that only has guest addresses (the flush hook)
     // and for helpers that must not recycle resources the recorded work still uses.
     static Recorder* Active();
+    bool RenderPassOpen() const;
+    std::uint64_t RenderPassGeneration() const { return passGeneration; }
     VkDevice Device() const { return context.device; }
     std::uint64_t Id() const { return id; }
     static bool Alive(std::uint64_t id);
@@ -650,7 +659,7 @@ public:
     // or APS5_PROFILE_GPU). A class range covers the command with its own barriers (a dispatch's
     // barriers are classes of their own, its program range stays keyed by the program), so the
     // union of every range of a batch and the batch span differ by what no class times ('untimed').
-    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, Count };
+    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, InputMirror, Count };
     static constexpr std::uint64_t ClassKey(CommandClass which) { return 0x10 + static_cast<std::uint64_t>(which); }
     std::uint32_t BeginGpuTiming(CommandClass which) { return BeginGpuTiming(ClassKey(which)); }
     static void CountBarriers(CommandClass which, std::uint32_t count = 1);
@@ -740,6 +749,7 @@ private:
         std::uint32_t validationCount = 0;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
+        std::vector<std::uint64_t> stampedNotes;
         std::vector<std::int16_t> writeValues;
         std::vector<std::int64_t> writeWords;
         // In-place reads (see NotePendingRead), dying with the batch: a finished batch's reads are done.
@@ -1047,6 +1057,7 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
+    std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
     std::deque<std::unique_ptr<Batch>> inFlight;
@@ -1075,6 +1086,7 @@ private:
         std::uint32_t derived;
         std::size_t from;
         std::uint32_t lowest;
+        std::shared_ptr<Buffer> mirror;
         OwnedDrawInputProof owned;
     };
     struct DrawSnapshotPool {
@@ -1094,6 +1106,9 @@ private:
     std::array<DrawSnapshotPool, 2> drawSnapshotPools;
     std::size_t ownedDrawInputs = 0;
     void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
+    std::size_t drawInputMirrorBytes = 0;
+    void dropDrawInputMirror(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
+    std::shared_ptr<Buffer> mirrorDrawInput(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     struct IndexRange {
         std::uint64_t generation;
         std::uint64_t registryGeneration;

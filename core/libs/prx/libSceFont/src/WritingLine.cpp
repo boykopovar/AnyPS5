@@ -2,12 +2,14 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
 
+#include "prx/libSceFont/include/FontInternal.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 
 namespace {
@@ -250,7 +252,15 @@ int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t wr
             throw;
         }
     }
-    *pWritingLine = line;
+    if (!Font::CopyOutGuest(pWritingLine, static_cast<void*>(line))) {
+        {
+            std::lock_guard lock(linesMutex);
+            lines.erase(line);
+        }
+        std::destroy_at(line);
+        memory->iface->dealloc(memory->mspace_handle, allocation);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     return SCE_FONT_OK;
 }
 
@@ -360,12 +370,12 @@ const FontWritingLineStep* APS5_VABI sceFontWritingLineRefersRenderStep(void* wr
 
 int APS5_VABI sceFontWritingLineGetRenderMetrics(void* writingLine, FontWritingMetrics* writingMetrics) {
     if (!writingMetrics) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *writingMetrics = {};
+    if (!Font::CopyOutGuest(writingMetrics, FontWritingMetrics{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!writingLine) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* line = static_cast<WritingLine*>(writingLine);
     std::lock_guard lock(linesMutex);
     if (!lines.contains(line)) return SCE_FONT_ERROR_INVALID_WRITING;
-    *writingMetrics = line->renderMetrics;
+    if (!Font::CopyOutGuest(writingMetrics, line->renderMetrics)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -379,26 +389,28 @@ int APS5_VABI sceFontWritingLineGetOrderingSpace(void* writingLine, float* advan
         else if (line->form != WRITING_FORM_HORIZONTAL_RTL && line->form != WRITING_FORM_HORIZONTAL_LTR) error = SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (error != SCE_FONT_OK) {
-        if (advanceSpace) *advanceSpace = 0.0f;
-        if (headSpace) *headSpace = 0.0f;
-        if (inlineSpace) *inlineSpace = 0.0f;
-        if (tailSpace) *tailSpace = 0.0f;
+        for (float* space : {advanceSpace, headSpace, inlineSpace, tailSpace}) {
+            if (space) Font::CopyOutGuest(space, 0.0f);
+        }
         return error;
     }
     if (headSpace && !tailSpace) Unsupported(__func__, "a head space pointer without a tail space pointer is not modelled");
-    if (advanceSpace) *advanceSpace = line->advanceX;
+    if (advanceSpace && !Font::CopyOutGuest(advanceSpace, line->advanceX)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (headSpace) {
         const WritingOrder* leading = IsRightToLeft(*line) ? line->tail : line->head;
         const WritingOrder* trailing = IsRightToLeft(*line) ? line->head : line->tail;
+        float head = 0.0f;
+        float tail = 0.0f;
         if (IsRightToLeft(*line)) {
-            *headSpace = leading ? leading->metrics.Extent.right : 0.0f;
-            *tailSpace = trailing ? trailing->metrics.advanceX - trailing->metrics.Extent.left : 0.0f;
+            head = leading ? leading->metrics.Extent.right : 0.0f;
+            tail = trailing ? trailing->metrics.advanceX - trailing->metrics.Extent.left : 0.0f;
         } else {
-            *headSpace = leading ? leading->metrics.Extent.left : 0.0f;
-            *tailSpace = trailing ? trailing->metrics.advanceX - trailing->metrics.Extent.right : 0.0f;
+            head = leading ? leading->metrics.Extent.left : 0.0f;
+            tail = trailing ? trailing->metrics.advanceX - trailing->metrics.Extent.right : 0.0f;
         }
+        if (!Font::CopyOutGuest(headSpace, head) || !Font::CopyOutGuest(tailSpace, tail)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    if (inlineSpace) *inlineSpace = line->orderingSpace;
+    if (inlineSpace && !Font::CopyOutGuest(inlineSpace, line->orderingSpace)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
