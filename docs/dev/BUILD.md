@@ -31,6 +31,8 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 
 `relinker_fuzz_seeds.py` writes the executables built by the relinker's Python tests as seeds, one per target system. With `BUILD_TESTING=ON`, CTest runs 20000 inputs from an empty corpus as `relinker_conversion_fuzzer`. Findings are written to the working directory as `crash-*`, `timeout-*` or `oom-*`; reproduce one with `build-fuzz/tests/relinker_conversion_fuzzer <file>`.
 
+`tools/relinker_seed_manifest.py <corpus>` describes each file of a flat fuzz corpus as one JSON object: its name, its size, the SHA-256 of its content and its first byte, which selects the target system.
+
 ## Full build
 
 ```sh
