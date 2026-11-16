@@ -199,10 +199,9 @@ auto Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> cod
     request.useCache = false;
     const auto available = device.Target().supportedCapabilities;
     std::vector<std::uint32_t> capabilities(available.begin(), available.end());
-    if (!atomics) {
-        std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityInt64Atomics));
-        request.target.supportedCapabilities = capabilities;
-    }
+    if (!atomics) std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityInt64Atomics));
+    else if (!TargetHasCapability(device.Target(), spv::CapabilityInt64Atomics)) capabilities.push_back(spv::CapabilityInt64Atomics);
+    request.target.supportedCapabilities = capabilities;
     return ShaderRecompiler::Recompile(request);
 }
 
@@ -704,6 +703,10 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         AgcDriver::QueueState queue;
         const std::string mode = argc > 1 ? argv[1] : "operations";
+        if (mode != "requirements" && !TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
+            std::puts("skipped, the device has no shaderBufferInt64Atomics");
+            return VulkanTestSkipped;
+        }
         for (const auto wave : {32u, 64u}) {
             if (mode == "operations") {
                 CheckOperations(*device, queue, wave, Threads, false);

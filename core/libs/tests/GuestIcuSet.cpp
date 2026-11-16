@@ -1,13 +1,24 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -54,6 +65,78 @@ void Empty() {
     std::int32_t start = 3, end = 4, error = Success;
     Require(uset_getItem_nid_postfix(set, 0, &start, &end, nullptr, 0, &error) == -1 && error == IndexOutOfBounds && start == 3 && end == 4, "no items");
     uset_close_nid_postfix(set);
+}
+
+void BinaryPropertySet() {
+    constexpr std::int32_t alphabetic = 0;
+    std::int32_t error = Success;
+    const auto* set = u_getBinaryPropertySet_nid_postfix(alphabetic, &error);
+    Require(set != nullptr && error == Success, "alphabetic property set");
+    Require(u_getBinaryPropertySet_nid_postfix(alphabetic, &error) == set, "borrowed identity");
+    Require(uset_contains_nid_postfix(set, 'A') && uset_contains_nid_postfix(set, 0x10400), "letter membership");
+    Require(!uset_contains_nid_postfix(set, '1'), "nonletter is excluded");
+    const auto ranges = Items(set);
+    Require(std::ranges::find(ranges, std::pair{0x41, 0x5a}) != ranges.end(), "alphabetic range enumeration");
+    auto* copy = uset_openEmpty_nid_postfix();
+    Require(copy != nullptr, "mutable set allocation");
+    uset_addAll_nid_postfix(copy, set);
+    Require(Items(copy) == ranges, "copy borrowed ranges into a mutable set");
+    uset_add_nid_postfix(copy, '1');
+    Require(uset_contains_nid_postfix(copy, '1') && !uset_contains_nid_postfix(set, '1'), "copy is independent");
+    uset_close_nid_postfix(copy);
+    Require(u_getBinaryPropertySet_nid_postfix(-1, &error) == nullptr && error == IllegalArgument, "invalid property");
+    Require(u_getBinaryPropertySet_nid_postfix(alphabetic, &error) == nullptr && error == IllegalArgument,
+            "incoming error is preserved");
+}
+
+template<class F>
+void RequiresRuntimeErrorKeepingErrno(F call, const char* message) {
+    errno = 71;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == 71, message);
+}
+
+void BinaryPropertySetGuestPointers() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr, "allocate status page");
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "allocate status page");
+#endif
+    const std::int32_t failing = IllegalArgument;
+    std::memset(page, 0, pageSize);
+    std::memcpy(static_cast<char*>(page) + 16, &failing, sizeof(failing));
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect status page");
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0, "protect status page");
+#endif
+    auto* readOnlyZero = static_cast<std::int32_t*>(page);
+    auto* readOnlyFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(page) + 16);
+    auto* unmapped = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    constexpr std::int32_t alphabetic = 0;
+
+    RequiresRuntimeErrorKeepingErrno([&] { u_getBinaryPropertySet_nid_postfix(alphabetic, unmapped); },
+                                     "unreadable error throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { u_getBinaryPropertySet_nid_postfix(-1, readOnlyZero); },
+                                     "unwritable error throws and keeps errno");
+    Require(u_getBinaryPropertySet_nid_postfix(-1, readOnlyFailing) == nullptr, "read-only incoming error returns immediately");
+    Require(u_getBinaryPropertySet_nid_postfix(alphabetic, readOnlyZero) != nullptr, "success does not write the error");
+
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 void SingleCodePoints() {
@@ -204,6 +287,8 @@ void Random() {
 
 int main() {
     Empty();
+    BinaryPropertySet();
+    BinaryPropertySetGuestPointers();
     SingleCodePoints();
     CodePointRanges();
     Union();
