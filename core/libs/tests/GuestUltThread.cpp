@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -345,6 +346,34 @@ static void UnderscoredCreate() {
     CHECK(sceUltQueueDataResourcePoolDestroy(dataPool) == Ok);
 }
 
+static void UnwritableStatus() {
+    Runtime runtime;
+    Thread thread;
+    auto* unwritable = reinterpret_cast<std::int32_t*>(0x10);
+    std::int32_t status = 0;
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "thread", Immediate, 0x27, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    errno = 71;
+    CHECK(sceUltUlthreadJoin(&thread, unwritable) == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltUlthreadJoin(&thread, &status) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "thread", Immediate, 0x27, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    int joined;
+    do {
+        errno = 71;
+        joined = sceUltUlthreadTryJoin(&thread, unwritable);
+        if (joined == Again) std::this_thread::yield();
+    } while (joined == Again);
+    CHECK(joined == Null);
+    CHECK(errno == 71);
+    CHECK(sceUltUlthreadTryJoin(&thread, &status) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltFinalize() == Ok);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     CHECK(sceUltInitialize() == Ok);
@@ -356,5 +385,6 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "cancel-blocked") == 0) CanceledJoin(false);
     else if (std::strcmp(argv[1], "cancel-pending") == 0) CanceledJoin(true);
     else if (std::strcmp(argv[1], "self-join") == 0) SelfJoin();
+    else if (std::strcmp(argv[1], "unwritable-status") == 0) UnwritableStatus();
     else CHECK(false);
 }

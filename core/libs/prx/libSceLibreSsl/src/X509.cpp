@@ -170,6 +170,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include "prx/libSceLibreSsl/include/OcspResponse.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
@@ -2154,7 +2155,7 @@ const Item IssuingDistPointItem{.kind = Kind::Sequence, .type = Sequence, .templ
 
 const Template OcspCrlIdTemplates[] = {
     {ExplicitTag | ContextClass | Optional, 0, offsetof(LibreSslOcspCrlId, crlUrl), &Ia5StringItem},
-    {ExplicitTag | ContextClass | Optional, 1, offsetof(LibreSslOcspCrlId, crlNumber), &IntegerItem},
+    {ExplicitTag | ContextClass | Optional, 1, offsetof(LibreSslOcspCrlId, crlNum), &IntegerItem},
     {ExplicitTag | ContextClass | Optional, 2, offsetof(LibreSslOcspCrlId, crlTime), &GeneralizedTimeItem},
 };
 const Item OcspCrlIdItem{.kind = Kind::Sequence, .type = Sequence, .templates = OcspCrlIdTemplates, .count = 3, .size = sizeof(LibreSslOcspCrlId)};
