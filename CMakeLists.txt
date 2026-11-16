@@ -454,6 +454,9 @@ if(BUILD_TESTING)
         add_test(NAME package_headers_package COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers_package.py)
         set_tests_properties(package_headers_package PROPERTIES TIMEOUT 60)
+        add_test(NAME prepare_release_notes_output COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_prepare_release_notes.py)
+        set_tests_properties(prepare_release_notes_output PROPERTIES TIMEOUT 60)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME tools_compile_plan COMMAND ${Python3_EXECUTABLE}
