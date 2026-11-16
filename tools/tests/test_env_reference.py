@@ -638,6 +638,15 @@ class HelperTests(unittest.TestCase):
         self.assertIn('getenv("ANYPS5_A")', blanked)
         self.assertNotIn("ANYPS5_B", blanked)
 
+    def test_list_names_writes_sorted_tab_separated_rows(self):
+        found = {"ANYPS5_B": [("core/a.cpp", 3, "getenv", "1")],
+                 "ANYPS5_A": [("core/b.cpp", 7, "IsEnvironmentSet", "")]}
+        out = io.StringIO()
+        env_reference.list_names(found, out)
+        self.assertEqual(out.getvalue(),
+                         "ANYPS5_A\tIsEnvironmentSet\tcore/b.cpp:7\t\n"
+                         "ANYPS5_B\tgetenv\tcore/a.cpp:3\t1\n")
+
 
 if __name__ == "__main__":
     unittest.main()
