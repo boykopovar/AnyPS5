@@ -320,8 +320,10 @@ int APS5_VABI sceHttpUriEscape(char* out, size_t* require, size_t prepare, const
 
 int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacity, const char* input) {
     if (!input || (!out && !requiredSize)) return ERROR_INVALID_VALUE;
+    std::string copied;
+    if (!CopyGuestCString(input, copied)) return ERROR_INVALID_VALUE;
 
-    const std::string_view source(input);
+    const std::string_view source(copied);
     const auto decode = [](const char* digits, unsigned int& value) {
         const auto result = std::from_chars(digits, digits + 2, value, 16);
         return result.ec == std::errc{} && result.ptr == digits + 2;
@@ -349,9 +351,8 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacit
         }
     }
 
-    size_t written = 0;
+    std::string unescaped;
     for (size_t index = 0; index < source.size(); ++index) {
-        if (out && written >= capacity) return ERROR_OUT_OF_MEMORY;
         char value = source[index];
         if (value == '%') {
             unsigned int decoded = 0;
@@ -359,14 +360,17 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* requiredSize, size_t capacit
             value = static_cast<char>(decoded);
             index += 2;
         }
-        if (out) out[written] = value;
-        ++written;
+        unescaped.push_back(value);
     }
     if (out) {
-        if (written >= capacity) return ERROR_OUT_OF_MEMORY;
-        out[written] = '\0';
+        if (unescaped.size() >= capacity) {
+            if (capacity != 0 && !WriteGuestBytes(out, unescaped.data(), capacity)) return ERROR_INVALID_VALUE;
+            return ERROR_OUT_OF_MEMORY;
+        }
+        if (!WriteGuestBytes(out, unescaped.c_str(), unescaped.size() + 1)) return ERROR_INVALID_VALUE;
     }
-    if (requiredSize) *requiredSize = written + 1;
+    const size_t size = unescaped.size() + 1;
+    if (requiredSize && !WriteGuestBytes(requiredSize, &size, sizeof(size))) return ERROR_INVALID_VALUE;
     return 0;
 }
 
