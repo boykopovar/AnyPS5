@@ -6,7 +6,10 @@ function(add_png_decoder target runtimeTarget)
     add_library(${target} STATIC ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/src/Png.cpp)
     target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/include)
     target_include_directories(${target} SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/3rdparty/stb)
-    target_link_libraries(${target} PRIVATE ${runtimeTarget})
+    target_link_libraries(${target} PRIVATE ${runtimeTarget} zlibstatic)
+    if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(${target} INTERFACE "LINKER:--exclude-libs,$<TARGET_FILE_NAME:zlibstatic>")
+    endif()
     set_target_properties(${target} PROPERTIES
         CXX_EXTENSIONS OFF
         CXX_VISIBILITY_PRESET hidden

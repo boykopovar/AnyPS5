@@ -180,6 +180,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace {
 
@@ -221,28 +222,39 @@ extern "C" {
 
 int APS5_VABI CONF_modules_load_file_nid_postfix(const char* filename, const char* appname, std::uint64_t flags) {
     static_cast<void>(appname);
-    void* const conf = malloc_nid_postfix(ConfSize);
+    void* conf = malloc_nid_postfix(ConfSize);
     if (!conf) {
         LibreSslPutError_nid_no_patch(ConfLibrary, UnnamedFunction, MallocFailure, __FILE__, __LINE__);
         return 0;
     }
     char* file = nullptr;
-    if (filename == nullptr && asprintf_nid_postfix(&file, "%s/openssl.cnf", CertificateArea) == -1) file = nullptr;
-    const char* const path = filename != nullptr ? filename : file;
+    const auto cleanup = [&] {
+        try {
+            free_nid_postfix(std::exchange(file, nullptr));
+        } catch (...) {
+            try { free_nid_postfix(std::exchange(conf, nullptr)); } catch (...) {}
+            throw;
+        }
+        free_nid_postfix(std::exchange(conf, nullptr));
+    };
+    bool exists = false;
     int result = 0;
-    if (path != nullptr) {
-        if (Opens(path)) {
-            if (filename == nullptr) free_nid_postfix(file);
-            free_nid_postfix(conf);
-            NotImplemented_nid_no_patch("CONF_modules_load_file of a configuration file that exists");
+    try {
+        if (filename == nullptr && asprintf_nid_postfix(&file, "%s/openssl.cnf", CertificateArea) == -1) file = nullptr;
+        const char* const path = filename != nullptr ? filename : file;
+        if (path != nullptr) {
+            exists = Opens(path);
+            if (!exists && (flags & IgnoreMissingFile) != 0 && Reason(LibreSslPeekLastError_nid_no_patch()) == ConfNoSuchFile) {
+                ERR_clear_error_nid_postfix();
+                result = 1;
+            }
         }
-        if ((flags & IgnoreMissingFile) != 0 && Reason(LibreSslPeekLastError_nid_no_patch()) == ConfNoSuchFile) {
-            ERR_clear_error_nid_postfix();
-            result = 1;
-        }
+    } catch (...) {
+        try { cleanup(); } catch (...) {}
+        throw;
     }
-    if (filename == nullptr) free_nid_postfix(file);
-    free_nid_postfix(conf);
+    cleanup();
+    if (exists) NotImplemented_nid_no_patch("CONF_modules_load_file of a configuration file that exists");
     return result;
 }
 

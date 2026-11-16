@@ -120,6 +120,13 @@ static void CheckSoloSched() {
     }
     Require(pthread_attr_setsolosched_np_nid_postfix(&attr, 0) == 0);
     Require(scePthreadAttrGetsolosched(&attr, &soloSched) == SCE_OK && soloSched == 0);
+    PthreadAttr fresh = nullptr;
+    Require(scePthreadAttrInit(&fresh) == SCE_OK);
+    for (int rejected : {1, 2, -1, 0x7fffffff, static_cast<int>(0x80000000u)}) {
+        Require(scePthreadAttrSetsolosched(&fresh, rejected) == SceKernelErrorEopnotsupp);
+        Require(scePthreadAttrGetsolosched(&fresh, &soloSched) == SCE_OK && soloSched == 0);
+    }
+    Require(scePthreadAttrDestroy(&fresh) == SCE_OK);
     PthreadAttr unset = nullptr;
     Require(scePthreadAttrSetsolosched(&unset, 16) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrSetsolosched(nullptr, 16) == SCE_KERNEL_ERROR_EINVAL);
@@ -510,6 +517,12 @@ static void CheckBadPointers() {
         Require(pthread_attr_setschedpolicy_nid_postfix(attrs, 1) == GUEST_EFAULT);
         Require(pthread_attr_setscope_nid_postfix(attrs, SCOPE_SYSTEM) == GUEST_EFAULT);
         Require(pthread_attr_setstacksize_nid_postfix(attrs, STACK_SIZE) == GUEST_EFAULT);
+        void* stackAddress = reinterpret_cast<void*>(1);
+        Require(pthread_attr_getstack_nid_postfix(attrs, &stackAddress, &size) == GUEST_EFAULT && stackAddress == reinterpret_cast<void*>(1) && size == 1);
+        Require(pthread_attr_setstack_nid_postfix(attrs, &value, STACK_SIZE) == GUEST_EFAULT);
+        Require(scePthreadAttrSetstack(attrs, &value, STACK_SIZE) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_attr_setsolosched_np_nid_postfix(attrs, 0) == GUEST_EFAULT);
+        Require(pthread_attr_destroy_nid_postfix(attrs) == GUEST_EFAULT);
 
         PthreadAttr attr = nullptr;
         Require(pthread_attr_init_nid_postfix(&attr) == 0);
@@ -521,6 +534,8 @@ static void CheckBadPointers() {
         Require(pthread_attr_getscope_nid_postfix(&attr, ints) == GUEST_EFAULT);
         Require(pthread_attr_getstacksize_nid_postfix(&attr, sizes) == GUEST_EFAULT);
         Require(pthread_attr_setschedparam_nid_postfix(&attr, params) == GUEST_EFAULT);
+        Require(pthread_attr_getstack_nid_postfix(&attr, static_cast<void**>(pointer), sizes) == GUEST_EFAULT);
+        Require(pthread_attr_getstack_nid_postfix(&attr, &stackAddress, sizes) == GUEST_EFAULT);
         Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
     }
 }

@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "FreeTypeQueryOutputFixture.hpp"
 
 #include FT_MODULE_H
 
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 
 using FreeType::GuestLibrary;
 
@@ -37,7 +39,34 @@ void CheckVersion(GuestLibrary* guest, FT_Library native) {
     }
 }
 
+static void CheckVersionProtection(GuestLibrary* library) {
+    QueryOutputFixture::Pages pages;
+    for (std::size_t selected = 0; selected < 3; ++selected) {
+        pages.Reject(sizeof(std::int32_t), [&](void* pointer) {
+            std::array<std::int32_t, 3> values{11, 22, 33};
+            const auto before = values;
+            std::array outputs{&values[0], &values[1], &values[2]};
+            outputs[selected] = static_cast<std::int32_t*>(pointer);
+            bool refused = false;
+            try {
+                FT_Library_Version_nid_postfix(library, outputs[0], outputs[1], outputs[2]);
+            } catch (const std::invalid_argument&) {
+                refused = true;
+            }
+            return refused && values == before;
+        });
+    }
+    FT_Int major = 0;
+    FT_Library_Version(library ? library->host : nullptr, &major, nullptr, nullptr);
+    pages.Accept(sizeof(std::int32_t), [&](void* pointer) {
+        auto* output = static_cast<std::int32_t*>(pointer);
+        FT_Library_Version_nid_postfix(library, output, nullptr, nullptr);
+        return *output == major;
+    });
+}
+
 int main() {
+    CheckVersionProtection(nullptr);
     CheckVersion(nullptr, nullptr);
     Require(FT_Get_TrueType_Engine_Type_nid_postfix(nullptr) == FT_TRUETYPE_ENGINE_TYPE_NONE);
     GuestLibrary* first = nullptr;
@@ -47,6 +76,7 @@ int main() {
     Require(FT_Init_FreeType_nid_postfix(&second) == 0);
     Require(FT_Init_FreeType(&native) == 0);
     CheckVersion(first, native);
+    CheckVersionProtection(first);
     CheckVersion(second, native);
     const auto initialEngine = FT_Get_TrueType_Engine_Type(native);
     Require(FT_Get_TrueType_Engine_Type_nid_postfix(first) == initialEngine);
