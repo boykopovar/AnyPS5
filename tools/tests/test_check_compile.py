@@ -1193,5 +1193,12 @@ class CheckCompileLauncherTests(unittest.TestCase):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
 
+class EntriesTests(unittest.TestCase):
+    def test_entries_rejects_a_build_that_is_not_a_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                check_compile.entries(Path(directory) / "missing-build")
+
+
 if __name__ == "__main__":
     unittest.main()
