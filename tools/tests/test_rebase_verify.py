@@ -331,6 +331,18 @@ class ChangedModeTests(unittest.TestCase):
             tip = self.commit(root, "make executable")
             self.assertEqual(rebase_verify.changed_modes(root, base, tip), {b"f.txt": ("100644", "100755")})
 
+    def test_changed_modes_is_empty_for_a_content_only_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            (root / "f.txt").write_text("y\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            tip = self.commit(root, "edit")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {})
+
 
 if __name__ == "__main__":
     unittest.main()
