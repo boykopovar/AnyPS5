@@ -365,6 +365,14 @@ class GraphHelperTests(unittest.TestCase):
         block.end = end
         self.assertEqual(list(agc_test_split.flatten(block)), [header, inner, other_header, other, end])
         self.assertEqual(list(agc_test_split.flatten(inner)), [inner])
+class ReadSetTests(unittest.TestCase):
+    def test_reads_uses_defines_and_accumulates(self):
+        class Facts:
+            def __init__(self, uses, defines, accumulates):
+                self.uses, self.defines, self.accumulates = set(uses), set(defines), set(accumulates)
+        self.assertEqual(agc_test_split.reads(Facts({'a'}, set(), set())), {'a'})
+        self.assertEqual(agc_test_split.reads(Facts({'a'}, {'a'}, set())), set())
+        self.assertEqual(agc_test_split.reads(Facts(set(), {'a'}, {'b'})), {'b'})
 
 
 if __name__ == "__main__":
