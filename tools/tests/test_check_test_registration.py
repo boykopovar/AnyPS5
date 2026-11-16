@@ -21,6 +21,12 @@ class CheckTestRegistrationTests(unittest.TestCase):
         self.assertNotIn("ANYPS5_X", check_test_registration.cpp_source(text))
         self.assertIn("ANYPS5_X", check_test_registration.cpp_source(text, keep_strings=True))
 
+    def test_is_disabled_accepts_on_spellings_only(self):
+        for value in ("1", "ON", "on", "Yes", "true", "Y"):
+            self.assertTrue(check_test_registration.is_disabled(value), value)
+        for value in ("0", "OFF", "", "NO", None):
+            self.assertFalse(check_test_registration.is_disabled(value), value)
+
 
 if __name__ == "__main__":
     unittest.main()
