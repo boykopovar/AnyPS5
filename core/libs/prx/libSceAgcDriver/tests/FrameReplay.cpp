@@ -734,6 +734,7 @@ void copyInFlightAtDelta(const std::filesystem::path& tool, bool held) {
     if (held) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         const auto copying = [&] {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             const auto* recorder = AgcDriver::Graphics::Recorder::Active();
             return recorder != nullptr && recorder->PendingWriteOverlaps(at(target + Stored), 4096 - Stored);
         };
