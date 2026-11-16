@@ -32,6 +32,8 @@ ctest --test-dir build --output-on-failure
 
 Python 3 is optional; without it some relinker tests are not registered.
 
+Register new Python tool tests in `tools/tests/registrations/<tool>.json` using [the metadata format](docs/dev/BUILD.md#python-tool-test-registration); do not add their registrations to root `CMakeLists.txt`. Existing registrations stay where they are unless the change preserves their names, commands and properties.
+
 Every push to `main`, including a merged pull request, automatically runs full Linux and Windows builds and tests, which include the relinker tests, using the pushed commit without contributor checks. The relinker-only build and tests run separately on macOS, for arm64 and x86_64, and the relinker-only build with the address sanitizer runs on Linux, only when the push changes a file the relinker-only build uses.
 
 For pull requests, full Linux and Windows builds and tests run only when a collaborator with write access selects Actions > Build > Run workflow on `main` and enters up to 40 numbers of open pull requests targeting `main`, separated by spaces or commas; they are merged in that order and built together. A collaborator can start the same manual run from the command line, replacing `1234` with the pull request numbers:

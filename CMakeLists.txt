@@ -571,21 +571,8 @@ if(BUILD_TESTING)
         add_test(NAME relinker_fuzz_configurations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_configurations.py)
         set_tests_properties(relinker_fuzz_configurations PROPERTIES TIMEOUT 30)
-        add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
-        set_tests_properties(configure_seed PROPERTIES TIMEOUT 30)
-        add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
-        set_tests_properties(configure_seed_paths PROPERTIES TIMEOUT 20)
-        add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
-        set_tests_properties(configure_seed_round_trips PROPERTIES TIMEOUT 30)
-        add_test(NAME configure_seed_stdout COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedStdoutTests)
-        set_tests_properties(configure_seed_stdout PROPERTIES TIMEOUT 20)
-        add_test(NAME configure_seed_parsing COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ChecksParsingTests)
-        set_tests_properties(configure_seed_parsing PROPERTIES TIMEOUT 20)
+        include(cmake/ToolTestRegistration.cmake)
+        register_python_tool_tests("${CMAKE_CURRENT_SOURCE_DIR}")
         add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
         add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}

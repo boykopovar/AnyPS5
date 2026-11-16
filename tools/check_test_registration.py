@@ -5,9 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "cmake"))
+from tool_test_registration import load_registrations
+
 TEST_OUTPUT = r"tests[\\/]"
 SCOPE_START = {"if", "foreach", "while", "function", "macro", "block"}
-COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|set_property|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
+COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|set_property|subdirs|include|register_python_tool_tests|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
 ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|[^\s()]+', re.S)
 LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=literal_equals)\]'
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
@@ -138,7 +141,7 @@ def unbuilt_exports(root, sources, skipped=()):
     return unbuilt
 
 
-def commands(content):
+def commands(content, scope_arguments=False):
     content = content.removeprefix("\ufeff")
     content = LEXICAL.sub(lambda match: re.sub(r"[^\n]", " ", match.group())
                           if match.group("comment") is not None else match.group(), content)
@@ -156,7 +159,7 @@ def commands(content):
             if depth:
                 raise ValueError(f"unterminated {name} command at position {command.start()}")
             parsed_until = position
-            yield name, []
+            yield name, [content[command.end():position - 1].strip()] if scope_arguments else []
             continue
         position, arguments = command.end(), []
         while position < len(content):
@@ -317,20 +320,48 @@ def is_disabled(value):
 
 def run_scripts(root, files):
     run = set()
+    registrations = load_registrations(root)
     for name in files:
         if name.endswith("CMakeLists.txt") or name.endswith(".cmake"):
             content = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
             tests = []
             scopes = []
-            for index, (command, arguments) in enumerate(commands(content)):
+            metadata_scopes = []
+            metadata_readers = []
+            for index, (command, arguments) in enumerate(commands(content, scope_arguments=True)):
+                condition = re.sub(r"\s+", " ", arguments[0]).upper() if arguments else ""
+                truth = {"1": True, "ON": True, "YES": True, "TRUE": True, "Y": True,
+                         "0": False, "OFF": False, "NO": False, "FALSE": False, "N": False,
+                         "IGNORE": False, "NOTFOUND": False}.get(condition.removeprefix("NOT ").strip('"'))
+                if condition.startswith("NOT ") and truth is not None:
+                    truth = not truth
                 if command in SCOPE_START:
                     scopes.append((index, index, command))
+                    metadata_scopes.append([command not in {"function", "macro"} and
+                                            (command not in {"if", "while"} or truth is not False), truth is True])
                 elif command.removeprefix("end") in SCOPE_START:
                     if scopes:
                         scopes.pop()
+                        metadata_scopes.pop()
                 elif command in {"else", "elseif"}:
                     if scopes:
                         scopes[-1] = (scopes[-1][0], index, scopes[-1][2])
+                        previous = metadata_scopes[-1][1]
+                        metadata_scopes[-1] = [not previous and (command == "else" or truth is not False),
+                                               previous or command == "else" or truth is True]
+                elif command == "include" and name == "CMakeLists.txt" and arguments:
+                    if arguments[0] in {"cmake/ToolTestRegistration.cmake",
+                                        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ToolTestRegistration.cmake",
+                                        "${CMAKE_SOURCE_DIR}/cmake/ToolTestRegistration.cmake"} and all(
+                                            scope[0] for scope in metadata_scopes):
+                        if (Path(root) / "cmake/ToolTestRegistration.cmake").is_file():
+                            metadata_readers.append(scopes[:])
+                elif command == "register_python_tool_tests" and name == "CMakeLists.txt" and metadata_readers:
+                    connected = any(not any(left[0] == right[0] and left[1] != right[1]
+                                            for left, right in zip(reader, scopes)) for reader in metadata_readers)
+                    if arguments == ["${CMAKE_CURRENT_SOURCE_DIR}"] and connected and all(scope[0] for scope in metadata_scopes):
+                        tests.extend([record["name"], ["tools/tests/" + record["script"]], ("", False), scopes[:]]
+                                     for record in registrations)
                 elif command == "add_test" and arguments:
                     if arguments and arguments[0] == "NAME":
                         if "COMMAND" not in arguments[2:]:

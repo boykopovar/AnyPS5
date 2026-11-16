@@ -715,6 +715,9 @@ class DisabledScriptRegistrationTests(unittest.TestCase):
         (self.source / self.script).write_text('print("registration-probe-ran")\n', encoding="utf-8")
         self.tool = self.source / "tools/check_test_registration.py"
         self.tool.write_bytes(Path(check_test_registration.__file__).read_bytes())
+        validator = Path(check_test_registration.__file__).resolve().parents[1] / "cmake/tool_test_registration.py"
+        (self.source / "cmake").mkdir()
+        (self.source / "cmake/tool_test_registration.py").write_bytes(validator.read_bytes())
         subprocess.run(["git", "init", "-q", str(self.source)], check=True, capture_output=True)
 
     def run_project(self, registrations, workflow=None):

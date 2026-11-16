@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "tests": [
+    {
+      "name": "configure_seed",
+      "script": "test_configure_seed.py",
+      "arguments": ["ConfigureSeedTests"],
+      "timeout": 30
+    },
+    {
+      "name": "configure_seed_paths",
+      "script": "test_configure_seed.py",
+      "arguments": ["ConfigureSeedPathTests"],
+      "timeout": 20
+    },
+    {
+      "name": "configure_seed_round_trips",
+      "script": "test_configure_seed.py",
+      "arguments": ["ConfigureSeedRoundTripTests"],
+      "timeout": 30
+    },
+    {
+      "name": "configure_seed_stdout",
+      "script": "test_configure_seed.py",
+      "arguments": ["ConfigureSeedStdoutTests"],
+      "timeout": 20
+    },
+    {
+      "name": "configure_seed_parsing",
+      "script": "test_configure_seed.py",
+      "arguments": ["ChecksParsingTests"],
+      "timeout": 20
+    }
+  ]
+}

@@ -18,6 +18,12 @@ The output is x86-64: Linux ELF by default, Windows PE with `--windows` or Mach-
 
 Use a separate build directory for the full build.
 
+### Python tool test registration
+
+Register new Python tool tests in `tools/tests/registrations/<tool>.json`. The root object has exactly `"version": 1` and a nonempty `"tests"` array. Each test requires exactly `"name"`, `"script"`, `"arguments"` and `"timeout"`, as in [configure_seed.json](../../tools/tests/registrations/configure_seed.json). Names match `[A-Za-z_][A-Za-z0-9_]*` and must be unique across metadata files and existing CTest registrations. The script is an existing nonsymlink basename matching `test_[A-Za-z0-9_]+.py` in `tools/tests`; paths and other executables are rejected. Arguments are a list of nonempty literal strings. Control characters, semicolons, backslashes, square brackets, `${` and `$<` are rejected. The timeout is a finite positive number of seconds at most 30. Split tests that exceed that budget.
+
+Validate the metadata with `python3 cmake/tool_test_registration.py .`. Configuration fails on invalid metadata. CMake reads files in sorted filename order, preserves each test array's order, and reruns configuration when a metadata file is added, removed or changed, or the validator changes. Metadata registers tests only when `BUILD_TESTING` is enabled and Python is found. Existing Windows tooling timeout and UTF-8 policies also apply to these tests. Metadata cannot set other properties or run CMake code.
+
 ## Fuzzing
 
 `ANYPS5_BUILD_FUZZERS` builds `relinker_conversion_fuzzer`, a libFuzzer target that runs the whole conversion on its input, as the web converter does. It requires `ANYPS5_RELINKER_ONLY`, Clang on Linux and the compiler-rt sanitizer runtimes (`libclang-rt-18-dev` on Ubuntu 24.04). Every target is built with AddressSanitizer and UndefinedBehaviorSanitizer, without `-fsanitize=function`: that check reads a signature before the target of every indirect call and faults on the generated code the codegen tests call. The first input byte selects the target system (modulo 3: Linux, Windows, macOS), bit 2 `--to-intel` and the byte shifted right by 3, modulo 3, the `unused-filter` level; the remaining bytes are the executable. A conversion that throws a `std::exception` is a rejected input; a sanitizer report, an abort or a timeout is a finding.
