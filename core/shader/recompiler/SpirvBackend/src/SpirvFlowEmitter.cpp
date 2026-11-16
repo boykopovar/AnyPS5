@@ -4,8 +4,6 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvRuntimeBuffer.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
-#include <algorithm>
-#include <map>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -14,6 +12,8 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <algorithm>
+#include <map>
 
 namespace ShaderRecompiler {
 namespace {
