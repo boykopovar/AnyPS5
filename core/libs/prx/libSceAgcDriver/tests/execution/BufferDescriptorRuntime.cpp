@@ -95,7 +95,7 @@ void Run(AgcDriver::VulkanDevice& device, bool registrationModules, bool coheren
         device.WaitIdle();
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
             std::uint32_t expected = 0;
-            if (test.present && lane * 4u + 4u <= test.records) std::memcpy(&expected, Input.data() + test.baseOffset + lane * 4u, sizeof(expected));
+            if (test.present && lane * 4u + 4u <= test.records) std::memcpy(&expected, Input.data() + (test.baseOffset & ~3u) + lane * 4u, sizeof(expected));
             Require(Output[lane] == expected, "buffer descriptor runtime, " + mode + ", " + test.name + ": lane " + std::to_string(lane) + " is " + Hex(Output[lane]) + ", expected " + Hex(expected));
         }
     }
