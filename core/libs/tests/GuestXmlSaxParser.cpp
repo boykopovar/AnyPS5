@@ -72,6 +72,7 @@ struct Handler {
     void* expectedUserData = nullptr;
     int failOn = 0;
     int calls = 0;
+    bool lookupNames = false;
 };
 
 std::string Text(const XmlString* string) {
@@ -96,6 +97,14 @@ int APS5_VABI OnStartElement(Handler* h, void* u, const XmlString* name, const X
         XmlString value{};
         _ZNK3sce3Xml13AttributeList12getAttributeEj(&value, attributes, static_cast<std::uint32_t>(i));
         event += "," + std::to_string(i) + "=" + Text(&value);
+    }
+    if (h->lookupNames) {
+        for (const char* wanted : {"x", "y", "z", "w"}) {
+            const XmlString key{wanted, 1};
+            XmlString value{};
+            _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&value, attributes, &key);
+            event += std::string(";") + wanted + "=" + Text(&value);
+        }
     }
     return Record(h, u, event);
 }
@@ -257,6 +266,16 @@ void TestDocument() {
     Require(f.Take() == "SD|SE:a|CH: |SE:b|EE:b|CH: t |EE:a|ED|", "white space is delivered when skipping is off");
 }
 
+void TestAttributeLookup() {
+    Fixture f;
+    f.handler.lookupNames = true;
+    f.Start();
+    Require(f.Parse("<e y='two' x=\"1\" z=\"\"/>", true) == 0, "attributes parse");
+    Require(f.Take() == "SD|SE:e,0=two,1=1,2=;x=1;y=two;z=;w=|EE:e|ED|", "each attribute is found by its name");
+    Require(f.Parse("<e/>", true) == 0, "no attributes");
+    Require(f.Take() == "SD|SE:e;x=;y=;z=;w=|EE:e|ED|", "a name that is absent gives an empty string");
+}
+
 void TestStreaming() {
     Fixture f;
     f.Start();
@@ -331,6 +350,7 @@ int main() {
     TestLifecycle();
     TestAllocationFailure();
     TestDocument();
+    TestAttributeLookup();
     TestStreaming();
     TestErrors();
     TestUnmeasured();
