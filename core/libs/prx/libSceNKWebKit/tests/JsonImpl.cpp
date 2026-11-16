@@ -318,6 +318,34 @@ static void TestWriteJSONEscapesLikeUpstream() {
     Require(Serialize(nullStringValue.Get()) == "\"\"");
 }
 
+static void TestWriteJSONNumbersAndNesting() {
+    auto negativeZero = _ZN3WTF8JSONImpl5Value6createEd(-0.0);
+    auto large = _ZN3WTF8JSONImpl5Value6createEd(1e21);
+    auto belowLarge = _ZN3WTF8JSONImpl5Value6createEd(123456789012345680000.0);
+    auto small = _ZN3WTF8JSONImpl5Value6createEd(1.5e-7);
+    auto aboveSmall = _ZN3WTF8JSONImpl5Value6createEd(0.000001);
+    auto huge = _ZN3WTF8JSONImpl5Value6createEd(-2.5e300);
+    Require(Serialize(negativeZero.Get()) == "0");
+    Require(Serialize(large.Get()) == "1e+21");
+    Require(Serialize(belowLarge.Get()) == "123456789012345680000");
+    Require(Serialize(small.Get()) == "1.5e-7");
+    Require(Serialize(aboveSmall.Get()) == "0.000001");
+    Require(Serialize(huge.Get()) == "-2.5e+300");
+
+    auto inner = _ZN3WTF8JSONImpl5Array6createEv();
+    _ZN3WTF8JSONImpl9ArrayBase10pushDoubleEd(inner.Get(), -0.0);
+    _ZN3WTF8JSONImpl9ArrayBase10pushDoubleEd(inner.Get(), 1e21);
+    auto empty = _ZN3WTF8JSONImpl5Array6createEv();
+    auto outer = _ZN3WTF8JSONImpl5Array6createEv();
+    _ZN3WTF8JSONImpl9ArrayBase11pushIntegerEi(outer.Get(), 1);
+    _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(outer.Get(), false);
+    _ZN3WTF8JSONImpl9ArrayBase11pushBooleanEb(outer.Get(), false);
+    Require(outer->elements.size == 3U);
+    outer->elements.buffer[1] = NKWebKit::JsonAbi::Ref<Value>(inner);
+    outer->elements.buffer[2] = NKWebKit::JsonAbi::Ref<Value>(empty);
+    Require(Serialize(outer.Get()) == "[1,[0,1e+21],[]]");
+}
+
 static void TestArrayConstructorsAndDestructors() {
     alignas(alignof(ArrayBase)) unsigned char buf[sizeof(ArrayBase)];
     auto* p = reinterpret_cast<ArrayBase*>(buf);
@@ -406,6 +434,7 @@ int main() {
     TestArrayCreateAndPush();
     TestWriteJSON();
     TestWriteJSONEscapesLikeUpstream();
+    TestWriteJSONNumbersAndNesting();
     TestArrayConstructorsAndDestructors();
     TestNullPointerExceptions();
     return 0;
