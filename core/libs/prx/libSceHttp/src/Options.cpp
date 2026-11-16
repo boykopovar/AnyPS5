@@ -34,14 +34,21 @@ void AddHttpContext(int contextId) {
 }
 
 void RemoveHttpContext(int contextId) {
-    std::lock_guard lock(g_optionsMutex);
+    std::unique_lock lock(g_optionsMutex);
     g_contextAcceptEncodingGzip.erase(contextId);
     if (g_contextAcceptEncodingGzip.empty()) g_objectOptions.clear();
+    lock.unlock();
+    RemoveHttpCookieJar(contextId);
 }
 
 bool HttpInitialised() {
     std::lock_guard lock(g_optionsMutex);
     return !g_contextAcceptEncodingGzip.empty();
+}
+
+bool IsHttpContext(int contextId) {
+    std::lock_guard lock(g_optionsMutex);
+    return g_contextAcceptEncodingGzip.contains(contextId);
 }
 
 void AddHttpTemplate(int templateId, int contextId) {
@@ -74,6 +81,14 @@ bool SetHttpOption(int id, bool HttpOptions::*option, bool enable) {
     const auto found = g_objectOptions.find(id);
     if (found == g_objectOptions.end()) return false;
     found->second.*option = enable;
+    return true;
+}
+
+bool SetHttpCookieEnabled(int id, int enable) {
+    std::lock_guard lock(g_optionsMutex);
+    const auto found = g_objectOptions.find(id);
+    if (found == g_objectOptions.end()) return false;
+    found->second.cookieEnabled = enable;
     return true;
 }
 

@@ -55,6 +55,19 @@ WebRtcVideoFrameBuilder& Checked(WebRtcVideoFrameBuilder* builder, const char* f
     return *builder;
 }
 
+using BufferRelease = int(APS5_VABI*)(const void*);
+
+constexpr std::size_t ReleaseSlot = 1;
+
+void ReleaseVideoFrameBuffer(void* buffer) {
+    if (!buffer)
+        return;
+    const void* const* vtable;
+    if (!GuestCopyIn_nid_no_patch(&vtable, buffer, sizeof(vtable)) || !vtable || !vtable[ReleaseSlot])
+        throw std::invalid_argument("VideoFrame::Builder destructor requires a buffer virtual function");
+    reinterpret_cast<BufferRelease>(const_cast<void*>(vtable[ReleaseSlot]))(buffer);
+}
+
 }
 
 extern "C" {
@@ -65,8 +78,9 @@ void APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(WebRtcVideoFrameBu
 
 void APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder) {
     const WebRtcVideoFrameBuilder& checked = Checked(builder, "VideoFrame::Builder destructor requires a builder");
-    if (checked.packetInfos || checked.videoFrameBuffer)
-        NotImplemented_nid_no_patch("VideoFrame::Builder destructor with a buffer or packet infos: releasing guest references");
+    if (checked.packetInfos)
+        NotImplemented_nid_no_patch("VideoFrame::Builder destructor with packet infos: releasing the guest packet info vector");
+    ReleaseVideoFrameBuffer(checked.videoFrameBuffer);
 }
 
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(WebRtcVideoFrameBuilder* builder, std::int64_t timestampMs) {

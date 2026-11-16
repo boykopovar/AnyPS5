@@ -22,6 +22,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -97,6 +99,38 @@ public:
     std::atomic<int> ready = 0;
 };
 
+class HeldOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return std::make_shared<Request>(ready); }
+    void WaitForFlipRoom() override {
+        std::unique_lock lock(mutex);
+        ++waiting;
+        changed.notify_all();
+        changed.wait(lock, [&] { return room; });
+    }
+    void Fail(std::exception_ptr error) noexcept override {
+        if (!error) std::terminate();
+    }
+    bool WaitUntilHeld() {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(10), [&] { return waiting != 0; });
+    }
+    void Open() {
+        {
+            std::lock_guard lock(mutex);
+            room = true;
+        }
+        changed.notify_all();
+    }
+    std::atomic<int> ready = 0;
+
+private:
+    std::mutex mutex;
+    std::condition_variable changed;
+    int waiting = 0;
+    bool room = false;
+};
+
 struct Layout {
     std::byte* base = nullptr;
     std::uint32_t* firstCommands = nullptr;
@@ -107,7 +141,7 @@ struct Layout {
     std::uint32_t* label = nullptr;
 };
 
-Layout allocate(std::size_t bytes = BlockBytes) {
+Layout allocate(std::size_t bytes = BlockBytes, std::size_t registrationBytes = 0) {
     auto* const block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
     check(block != nullptr, "cannot allocate guest memory");
     GuestArena::GuestArenaCommit_nid_postfix(block, bytes, 0x04, bytes);
@@ -116,7 +150,9 @@ Layout allocate(std::size_t bytes = BlockBytes) {
 #endif
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true, true);
+        const auto piece = registrationBytes == 0 ? bytes : registrationBytes;
+        check(piece != 0 && bytes % piece == 0, "invalid guest registration size");
+        for (std::size_t offset = 0; offset < bytes; offset += piece) mutation.Add(block + offset, piece, true, true, true);
     }
     Layout layout;
     layout.base = block;
@@ -367,6 +403,75 @@ void testParkedRewindReplays(const std::filesystem::path& tool) {
     check(readFile(dump) == copied, "the replay did not run the copy chained from the released REWIND tail");
 }
 
+std::uint32_t encodeWrite(std::uint32_t* words, std::byte* target, std::uint32_t value) {
+    CommandBuffer buffer{words, words + CommandBytes / sizeof(std::uint32_t), words, words + CommandBytes / sizeof(std::uint32_t), nullptr, nullptr, 0};
+    sceAgcDcbWriteData(&buffer, GraphicsMemory, 0, at(target), &value, 1, 0, 1);
+    return static_cast<std::uint32_t>(buffer.cursor_up - words);
+}
+
+void testRewindTargetReuse(const std::filesystem::path& tool) {
+    constexpr std::uint32_t First = 0x1234abcdu;
+    constexpr std::uint32_t Second = 0x5678ef01u;
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const std::filesystem::path capture(directory);
+    const auto layout = allocate();
+    const auto copied = pattern(91);
+    std::memcpy(layout.source, copied.data(), copied.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    auto* const words = layout.firstCommands;
+    const std::array<std::uint32_t, 6> commands{0xc0005900u, 0u, 0xc0023f00u, 0u, 0u, 1u << 20u};
+    std::memcpy(words, commands.data(), sizeof(commands));
+    Packet packet{words, static_cast<std::uint32_t>(commands.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the REWIND submission failed");
+    const auto parked = [&] {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        return std::any_of(awaited.begin(), awaited.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(words + 1); });
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!parked() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(parked(), "the queue did not park at the unreleased REWIND");
+    auto* const target = layout.secondCommands;
+    const auto segment = encodeWrite(target, layout.firstTarget, First);
+    words[3] = static_cast<std::uint32_t>(at(target));
+    words[4] = static_cast<std::uint32_t>(at(target) >> 32u);
+    words[5] = (1u << 20u) | segment;
+    std::atomic_ref<std::uint32_t>(words[1]).store(AgcDriver::Pm4::RewindValid, std::memory_order_release);
+    AgcDriverWaitIdle_nid_postfix();
+    flip();
+    check(encodeWrite(target, layout.secondTarget, Second) == segment, "the reused target does not have the length of the tail it replaces");
+    copyFrame(layout.secondCommands + CommandBytes / sizeof(std::uint32_t) / 2, layout, layout.base + BlockBytes / 2);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    std::uint32_t first = 0, second = 0;
+    std::memcpy(&first, layout.firstTarget, sizeof(first));
+    std::memcpy(&second, layout.secondTarget, sizeof(second));
+    check(first == First && second == 0, "the driver did not run the tail before its target was reused");
+
+    const FrameCaptureReader reader(capture);
+    check(!reader.Truncated(), "the capture is truncated");
+    const auto firstDump = capture / "first.bin";
+    const auto secondDump = capture / "second.bin";
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --no-pace --repeat 5 --dump " + std::to_string(at(layout.firstTarget)) + ":4:\"" + firstDump.string() + "\" --dump " +
+                   std::to_string(at(layout.secondTarget)) + ":4:\"" + secondDump.string() + "\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
+    const auto code = std::system(command.c_str());
+    check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
+    const auto replayedFirst = readFile(firstDump);
+    const auto replayedSecond = readFile(secondDump);
+    check(replayedFirst.size() == 4 && replayedSecond.size() == 4, "the replay did not dump both targets");
+    std::memcpy(&first, replayedFirst.data(), sizeof(first));
+    std::memcpy(&second, replayedSecond.data(), sizeof(second));
+    check(first == First, "the replay did not run the REWIND tail as captured");
+    check(second == 0, "the replay ran the REWIND tail from the bytes of a later delta");
+}
+
 void testReservationError(const std::filesystem::path& tool) {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
     check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
@@ -440,6 +545,12 @@ void waitUntil(const std::function<bool()>& done, const char* message) {
         check(std::chrono::steady_clock::now() < deadline, message);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+}
+
+bool parkedOn(const volatile void* address) {
+    std::array<AgcDriver::AwaitedWait, 8> waits{};
+    const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+    return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(address); });
 }
 
 std::filesystem::path checkCapture(std::uint64_t inFlight) {
@@ -562,11 +673,7 @@ void testLabelFromLaterSubmission(const std::filesystem::path& tool) {
     sceAgcAcbWriteData(&compute, ComputeMemory, 0, at(layout.label), &Done, 1, 0, 1);
     Packet consumer{layout.secondCommands, static_cast<std::uint32_t>(compute.cursor_up - layout.secondCommands), 0, {}};
     check(sceAgcDriverSubmitAcb(ComputeQueue, &consumer) == 0, "compute submission failed");
-    waitUntil([&] {
-        std::array<AgcDriver::AwaitedWait, 8> waits{};
-        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
-        return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(awaited); });
-    }, "the compute wait never reached the awaited-wait registry");
+    waitUntil([&] { return parkedOn(awaited); }, "the compute wait never reached the awaited-wait registry");
     *layout.source = std::byte{0x77};
     auto graphics = commands(layout.firstCommands);
     writeDone(graphics, awaited);
@@ -601,15 +708,15 @@ void testReleaseDuringDelta(const std::filesystem::path& tool) {
     }, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
     for (std::size_t offset = 0; offset + DataBytes < BulkBytes; offset += 2 * DataBytes) std::memset(bulk.base + offset, 0x6b, DataBytes);
     std::memcpy(target, stored.data(), stored.size());
-    std::atomic<bool> flipping{false};
+    bool held = false;
     std::thread opener([&] {
-        while (!flipping.load()) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!(held = parkedOn(gate) && AgcDriverSettledHeld_nid_postfix()) && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
         std::atomic_ref<std::uint32_t>(*gate).store(Done, std::memory_order_release);
     });
-    flipping.store(true);
     flip();
     opener.join();
+    check(held, "the recorder never held the queue parked on its gate while it read the memory delta");
     release(control);
     flip();
     AgcDriverWaitIdle_nid_postfix();
@@ -709,6 +816,41 @@ void testFenceReused(const std::filesystem::path& tool) {
     }(), "the replay did not run both copies behind the fence the title released and re-armed between recorded calls");
 }
 
+void testRegisteredRangeBoundaries(const std::filesystem::path& tool) {
+    const auto layout = allocate(2 * BlockBytes, BlockBytes);
+    auto* const otherTarget = layout.base + BlockBytes + DataBytes;
+    const auto expected = pattern(43);
+    std::memcpy(layout.source, expected.data(), expected.size());
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    copyFrame(layout.firstCommands, layout, otherTarget);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    auto back = layout;
+    back.source = otherTarget;
+    copyFrame(layout.secondCommands, back, layout.firstTarget);
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(equal(layout.firstTarget, expected) && equal(otherTarget, expected), "the driver did not copy across the registered boundary in both directions");
+
+    const auto capture = checkCapture(0);
+    const FrameCaptureReader reader(capture);
+    const auto boundary = at(layout.base + BlockBytes);
+    const auto recorded = [&](std::uint64_t address) {
+        return std::any_of(reader.Chunks().begin(), reader.Chunks().end(), [&](const auto& chunk) {
+            return chunk.kind == FrameMemoryKind::Range && chunk.address == address && chunk.bytes == BlockBytes;
+        });
+    };
+    check(recorded(at(layout.base)) && recorded(boundary), "the capture merged adjacent registered ranges with identical access and protection");
+    const auto dumped = replayed(tool, capture, layout.base, 2 * BlockBytes);
+    check(dumped.size() == 2 * BlockBytes, "the replay dump has the wrong size");
+    check(std::equal(expected.begin(), expected.end(), dumped.begin() + (layout.firstTarget - layout.base)) &&
+              std::equal(expected.begin(), expected.end(), dumped.begin() + (otherTarget - layout.base)),
+          "the replay did not preserve copies across the registered boundary in both directions");
+}
+
 void testQueueBusyPastPacing(const std::filesystem::path& tool) {
     constexpr std::uint32_t ComputeQueue = 0x20;
     constexpr std::size_t CopyBytes = 64u << 20;
@@ -743,14 +885,94 @@ void testQueueBusyPastPacing(const std::filesystem::path& tool) {
     check(replayed(tool, checkCapture(0), layout.firstTarget, DataBytes, " --pace-timeout-ms 1") == copied, "the replay gave up pacing or released the compute queue while the graphics queue was still copying");
 }
 
+void testRewindPageRestored(const std::filesystem::path& tool) {
+    constexpr std::uint32_t ComputeQueue = 0x20;
+    constexpr std::size_t Deltas = 8;
+    const auto layout = allocate();
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    auto* const control = submitRewound(layout.firstCommands, [](CommandBuffer&) {}, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
+    waitUntil([&] {
+        std::array<AgcDriver::AwaitedWait, 8> waits{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+        return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == at(control); });
+    }, "the queue did not park at the unreleased REWIND");
+    auto* const neighbours = layout.firstCommands + 16;
+    auto* const scratch = layout.label + 2;
+    for (std::size_t delta = 0; delta < Deltas; ++delta) {
+        neighbours[delta] = static_cast<std::uint32_t>(delta + 1);
+        auto* const words = layout.secondCommands + delta * 16;
+        auto compute = commands(words);
+        sceAgcAcbWriteData(&compute, ComputeMemory, 0, at(scratch), &Done, 1, 0, 1);
+        Packet packet{words, static_cast<std::uint32_t>(compute.cursor_up - words), 0, {}};
+        check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "compute submission failed");
+    }
+    release(control);
+    flip();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    check(*layout.label == Done, "the driver did not run the REWIND tail");
+    check(replayed(tool, checkCapture(1), layout.label, 4) == std::vector<std::byte>{std::byte{Done}, std::byte{0}, std::byte{0}, std::byte{0}}, "the replay did not run the REWIND tail after the deltas that restored the page of its control");
+}
+
+void testSharedRewindTail() {
+    const auto layout = allocate();
+    auto output = std::make_shared<HeldOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    AgcDriverTrackRewindTails_nid_postfix();
+    auto* const words = layout.firstCommands;
+    auto buffer = commands(words);
+    auto* const control = sceAgcDcbRewind(&buffer, 0) + 1;
+    const std::array<std::uint32_t, 6> flip{AgcDriver::FlipPacketHeader, Handle, 0, 1, 0, 0};
+    std::memcpy(buffer.cursor_up, flip.data(), sizeof(flip));
+    buffer.cursor_up += flip.size();
+    Packet packet{words, static_cast<std::uint32_t>(buffer.cursor_up - words), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the first submission of the REWIND buffer failed");
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the second submission of the REWIND buffer failed");
+    waitUntil([&] { return parkedOn(control); }, "the queue did not park at the unreleased REWIND");
+    check(!AgcDriverRewindTailsUnread_nid_postfix(), "a tail behind an unreleased REWIND counts as unread");
+    release(control);
+    const bool held = output->WaitUntilHeld();
+    const bool secondUnread = AgcDriverRewindTailsUnread_nid_postfix();
+    output->Open();
+    AgcDriverWaitIdle_nid_postfix();
+    check(held, "the first submission's tail did not wait for flip room");
+    check(secondUnread, "after the first of two submissions sharing a REWIND buffer copied its tail, the second submission's unread copy of the same tail was forgotten");
+    check(!AgcDriverRewindTailsUnread_nid_postfix(), "a tail counts as unread after both submissions copied it");
+    check(output->ready.load() == 2, "the flips in both copies of the tail did not run");
+}
+
+
+void testSettledBesideReleasedTail() {
+    const auto layout = allocate();
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    AgcDriverTrackRewindTails_nid_postfix();
+    auto* const control = submitRewound(layout.firstCommands, [](CommandBuffer&) {}, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
+    waitUntil([&] { return parkedOn(control); }, "the queue did not park at the unreleased REWIND");
+    check(AgcDriverHoldSettled_nid_postfix(10000), "the driver did not settle with its queue parked at an unreleased REWIND");
+    release(control);
+    const bool settledUnread = AgcDriverSettled_nid_postfix();
+    AgcDriverReleaseSettled_nid_postfix();
+    check(!settledUnread, "the driver counted as settled while a released REWIND tail was unread, so a replay holding it would wait for a tail its queue cannot copy");
+    const bool settled = AgcDriverHoldSettled_nid_postfix(10000);
+    const bool unread = AgcDriverRewindTailsUnread_nid_postfix();
+    AgcDriverReleaseSettled_nid_postfix();
+    check(settled, "the driver did not settle once its queue could copy the released REWIND tail");
+    check(!unread, "a settled hold was taken while a released REWIND tail was unread");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*layout.label).load() == Done, "the driver did not run the released REWIND tail");
+}
 }
 
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}};
-    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue]\n");
+        {"rewind_store", testStoreAfterGatedCopy}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}};
+    if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || mode == "rewind_settled_tail" || rewound.contains(mode)))) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|allocation_ranges]\n");
         return 2;
     }
     int status = 0;
@@ -767,6 +989,9 @@ int main(int argc, char** argv) {
         } else if (mode == "concurrent") testConcurrentCopies(argv[1]);
         else if (mode == "reservation_error") testReservationError(argv[1]);
         else if (mode == "rewind") testParkedRewindReplays(argv[1]);
+        else if (mode == "rewind_reuse") testRewindTargetReuse(argv[1]);
+        else if (mode == "rewind_shared_tail") testSharedRewindTail();
+        else if (mode == "rewind_settled_tail") testSettledBesideReleasedTail();
         else testCaptureAndReplay(argv[1], mode == "pipelines");
     } catch (const Inconclusive& error) {
         std::printf("skipped, %s\n", error.what());

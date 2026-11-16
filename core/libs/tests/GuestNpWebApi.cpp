@@ -1,7 +1,9 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceNpWebApi/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +12,8 @@
 #include <climits>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -42,6 +46,10 @@ constexpr int MethodPost = 1;
 constexpr int MethodPatch = 4;
 
 alignas(16) std::array<std::byte, 0x40> process{};
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 const char onlineId[20] = "player";
 const char filterParam[16] = {};
 const char body[] = "{}";
@@ -190,6 +198,9 @@ void TestRequests() {
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content without a type");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content is checked before the user context");
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPatch, nullptr, &request) == InvalidArgument, "PATCH with SDK 2.50 or later");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", -1, nullptr, &request) == InvalidArgument && request == 0, "negative method rejected");
+    SetSdkVersion(0x02000000);
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", -1, nullptr, &request) == InvalidArgument && request == 0, "negative method rejected before SDK 2.50");
     SetSdkVersion(0x05050001);
     request = 0;
     Require(sceNpWebApiCreateRequest(user, "userProfile", "/v1/users/me/profile", 99, nullptr, &request) == InvalidArgument && request == 0, "method 99 at SDK 0x05050001");
@@ -333,6 +344,8 @@ void TestConsoleMeasuredExports() {
     Require(sceNpWebApiGetMemoryPoolStats(context, &stats) == 0 && stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0, "memory pool stats of a fresh context");
     Require(sceNpWebApiGetMemoryPoolStats(0x7fff + 1, &stats) == LibContextNotFound, "memory pool stats of an unknown context");
     Require(sceNpWebApiGetMemoryPoolStats(context, nullptr) == InvalidArgument, "memory pool stats without a buffer");
+    errno = 71;
+    Require(sceNpWebApiGetMemoryPoolStats(context, reinterpret_cast<NpWebApiMemoryPoolStats*>(0x10)) == InvalidArgument && errno == 71, "memory pool stats with an unwritable buffer");
 
     Require(sceNpWebApiCreateContextA(context, -1) == InvalidArgument, "user context for a negative user");
     Require(sceNpWebApiCreateContextA(0x7fff + 1, InitialUser) == InvalidLibContextId, "user context of an unknown library context by user id");
@@ -490,6 +503,7 @@ void TestMultipartRequests() {
     Require(sceNpWebApiCreateMultipartRequest(user, nullptr, "/path", MethodPost, &request) == InvalidArgument, "multipart request without an API group");
     Require(sceNpWebApiCreateMultipartRequest(user, "group", nullptr, MethodPost, &request) == InvalidArgument, "multipart request without a path");
     Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPatch, &request) == InvalidArgument, "the method is checked before the user context from SDK 2.50");
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", -1, &request) == InvalidArgument && request == 0, "negative multipart method rejected");
     Require(sceNpWebApiCreateMultipartRequest(user + 1, "group", "/path", MethodPost, &request) == UserContextNotFound, "multipart request of an unknown user context");
     Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPost, &request) == LibContextNotFound, "multipart request of user context 0");
     Require(request == 0, "a failed multipart request leaves the id alone");
@@ -507,6 +521,8 @@ void TestMultipartRequests() {
     Require(sceNpWebApiSendRequest(request, nullptr, 0) == RequestNotFound, "send a deleted multipart request");
 
     SetSdkVersion(0x02000000);
+    std::int64_t negRequest = 55;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", -1, &negRequest) == InvalidArgument && negRequest == 55, "negative multipart method rejected before SDK 2.50");
     Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPatch, &request) == 0, "multipart PATCH before SDK 2.50");
     SetSdkVersion(0x04508001);
     Require(sceNpWebApiTerminate(context) == 0, "terminate the multipart library context");
@@ -559,6 +575,11 @@ void TestMultipartParts() {
     Require(sceNpWebApiAddMultipartPart(-1, nullptr, &index) == InvalidArgument, "null multipart parameter before lookup");
     Require(index == 0, "failed add part leaves index unmodified");
 
+    errno = 71;
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, reinterpret_cast<const NpWebApiMultipartPartParameter*>(0x10), &index) == InvalidArgument, "unreadable multipart parameter");
+    Require(errno == 71, "unreadable multipart parameter changed host errno");
+    Require(index == 0, "unreadable multipart parameter leaves index unmodified");
+
     const NpWebApiHttpHeader headers[2] = {{"Header1", "Val1"}, {"Content-Length", "100"}};
     const NpWebApiMultipartPartParameter validParam{headers, 2, 10};
 
@@ -572,6 +593,11 @@ void TestMultipartParts() {
 
     Require(sceNpWebApiAddMultipartPart(multipartRequest, &validParam, &index) == 0, "add first multipart part");
     Require(index == 1, "first part index is 1");
+
+    errno = 71;
+    const NpWebApiMultipartPartParameter unindexedParam{nullptr, 0, 7};
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, &unindexedParam, reinterpret_cast<int*>(0x10)) == InvalidArgument, "unwritable part index");
+    Require(errno == 71, "unwritable part index changed host errno");
 
     int index2 = 0;
     const NpWebApiMultipartPartParameter paramNoHeaders{nullptr, 0, 20};
@@ -645,11 +671,28 @@ void TestMultipartParts() {
     sceNpWebApiCheckTimeout();
     Require(sceNpWebApiSendMultipartRequest(timedReq, 1, "67890", 5) == NotSignedIn, "timed out multipart request returns NotSignedIn");
 
+    std::int64_t overflowReq = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &overflowReq) == 0, "create overflow multipart request");
+    int oIndex = 0;
+    const NpWebApiMultipartPartParameter overflowParam{nullptr, 0, 10};
+    Require(sceNpWebApiAddMultipartPart(overflowReq, &overflowParam, &oIndex) == 0, "add overflow part");
+    Require(sceNpWebApiSendMultipartRequest(overflowReq, 1, "12345", 5) == 0, "partial send before overflow");
+    Require(sceNpWebApiSendMultipartRequest(overflowReq, 1, "x", std::numeric_limits<std::size_t>::max() - 2) == NotSignedIn, "large send saturates instead of wrapping");
+
+    std::int64_t overflowReq2 = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &overflowReq2) == 0, "create overflow2 multipart request");
+    int oIndex2 = 0;
+    Require(sceNpWebApiAddMultipartPart(overflowReq2, &overflowParam, &oIndex2) == 0, "add overflow2 part");
+    Require(sceNpWebApiSendMultipartRequest2(overflowReq2, 1, "12345", 5, nullptr) == 0, "partial send2 before overflow");
+    Require(sceNpWebApiSendMultipartRequest2(overflowReq2, 1, "x", std::numeric_limits<std::size_t>::max(), nullptr) == NotSignedIn, "large send2 saturates instead of wrapping");
+
     Require(sceNpWebApiDeleteRequest(multipartRequest) == 0, "delete multipart request");
     Require(sceNpWebApiDeleteRequest(emptyMultipart) == 0, "delete empty multipart request");
     Require(sceNpWebApiDeleteRequest(chunkReq) == 0, "delete chunked multipart request");
     Require(sceNpWebApiDeleteRequest(abortReq) == 0, "delete abort multipart request");
     Require(sceNpWebApiDeleteRequest(timedReq) == 0, "delete timed multipart request");
+    Require(sceNpWebApiDeleteRequest(overflowReq) == 0, "delete overflow multipart request");
+    Require(sceNpWebApiDeleteRequest(overflowReq2) == 0, "delete overflow2 multipart request");
     Require(sceNpWebApiTerminate(context) == 0, "terminate multipart parts library context");
 }
 
@@ -658,9 +701,20 @@ void TestUtilityParseNpId() {
     Require(sceNpWebApiUtilityParseNpId(nullptr, &npId) == NpInvalidArgument, "null jsonNpId");
     Require(sceNpWebApiUtilityParseNpId(nullptr, nullptr) == NpInvalidArgument, "null jsonNpId and null npId");
     Require(sceNpWebApiUtilityParseNpId("cGxheWVy", nullptr) == 0, "null npId with valid jsonNpId");
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVy", reinterpret_cast<NpId*>(0x10)) == NpInvalidArgument, "unwritable npId");
+    Require(errno == 71, "unwritable npId changed host errno");
 
     std::memset(&npId, 0xCC, sizeof(npId));
-    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0, "parse serialized npId");
+    const NpId untouchedNpId = npId;
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId(reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10)), &npId) == NpInvalidArgument && errno == 71,
+            "unreadable jsonNpId must return InvalidArgument without changing errno");
+    Require(std::memcmp(&npId, &untouchedNpId, sizeof(npId)) == 0, "failed parseNpId modified output");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0 && errno == 71, "parse serialized npId");
     Require(std::strcmp(npId.handle.data, "player") == 0, "handle matches string before at");
     Require(std::memcmp(npId.opt, "seg1seg2", 8) == 0, "opt concatenates segments");
     Require(npId.reserved[0] == 0x01, "reserved 0 is 1");
@@ -703,7 +757,87 @@ void TestIntCreateCtxIndExtdPushEventFilter() {
     Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(0x7fff + 1, handle, filterParam, 1) == LibContextNotFound, "extended push event filter of an unknown context");
     Require(sceNpWebApiIntCreateCtxIndExtdPushEventFilter(other, handle, filterParam, 1) == HandleNotFound, "extended push event filter with another context's handle");
 
+    const int filter = sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, filterParam, 1);
+    Require(filter > 0 && static_cast<unsigned>(filter) < 0xf0000000u, "extended push event filter id");
+    const int second = sceNpWebApiIntCreateCtxIndExtdPushEventFilter(context, handle, filterParam, 2);
+    Require(second > 0 && second != filter, "a second extended push event filter gets a new id");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(other, filter) == ExtdPushEventFilterNotFound, "the filter belongs to its library context");
+
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for extended push event callbacks");
+    int argument = 0;
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, nullptr, &argument) == InvalidArgument, "extended callback without a function on an existing filter");
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(user, second, nullptr, &argument) == InvalidArgument, "extended callback A without a function on an existing filter");
+    const int callback = sceNpWebApiRegisterExtdPushEventCallback(user, filter, PushEventCallback(), &argument);
+    Require(callback > 0 && static_cast<unsigned>(callback) < 0xf0000000u, "extended push event callback id");
+    const int callbackA = sceNpWebApiRegisterExtdPushEventCallbackA(user, second, PushEventCallback(), &argument);
+    Require(callbackA > 0 && callbackA != callback, "extended push event callback A id");
+    Require(sceNpWebApiUnregisterPushEventCallback(user, callback) == PushEventCallbackNotFound, "an extended callback is not a push event callback");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user + 1, callback) == UserContextNotFound, "unregister an extended callback through an unknown user context");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, callback) == 0, "unregister the extended callback");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, callback) == ExtdPushEventCallbackNotFound, "extended callback unregistered twice");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, callbackA) == 0, "unregister the extended callback A");
+
+    Require(sceNpWebApiDeleteExtdPushEventFilter(context, filter) == 0, "delete the extended push event filter");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(context, filter) == ExtdPushEventFilterNotFound, "extended push event filter deleted twice");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "extended callback on a deleted filter");
+    Require(sceNpWebApiRegisterServicePushEventCallback(user, second, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "an extended filter is not a service filter");
+
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the extended push event filter library contexts");
+}
+
+void TestInternalServicePushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(context > 0 && other > 0 && handle > 0, "library contexts and handle for internal service filters");
+
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, nullptr, 0, nullptr, 1) == InvalidArgument, "internal service filter without filter parameter");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(other, handle, nullptr, 0, filterParam, 1) == HandleNotFound, "internal service filter with another context's handle");
+    const int filter = sceNpWebApiIntCreateServicePushEventFilter(context, handle, nullptr, 0xffffffffu, filterParam, 1);
+    Require(filter > 0 && static_cast<unsigned>(filter) < 0xf0000000u, "internal service filter id");
+    const int second = sceNpWebApiIntCreateServicePushEventFilter(context, handle, nullptr, 0, filterParam, 1);
+    Require(second > 0 && second != filter, "a second internal service filter gets a new id");
+    Require(sceNpWebApiDeleteServicePushEventFilter(other, filter) == ServicePushEventFilterNotFound, "the service filter belongs to its library context");
+
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for internal service callbacks");
+    int argument = 0;
+    const int callback = sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument);
+    Require(callback > 0 && static_cast<unsigned>(callback) < 0xf0000000u, "service callback on an internal service filter");
+    const int intCallback = sceNpWebApiIntRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument);
+    const int intCallbackA = sceNpWebApiIntRegisterServicePushEventCallbackA(user, second, PushEventCallback(), &argument);
+    Require(intCallback > 0 && intCallbackA > 0 && intCallback != callback && intCallbackA != intCallback, "internal service callbacks");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "a service filter is not an extended filter");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, callback) == 0, "unregister the service callback");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, intCallback) == 0 && sceNpWebApiUnregisterServicePushEventCallback(user, intCallbackA) == 0, "unregister the internal service callbacks");
+
+    Require(sceNpWebApiDeleteServicePushEventFilter(context, filter) == 0, "delete the internal service filter");
+    Require(sceNpWebApiDeleteServicePushEventFilter(context, filter) == ServicePushEventFilterNotFound, "internal service filter deleted twice");
+    Require(sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "service callback on a deleted filter");
+
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the internal service filter library contexts");
+}
+
+void TestMultipartSendOnPlainRequest() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for multipart sends on a plain request");
+    std::int64_t request = 0;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, nullptr, &request) == 0, "create a plain request");
+
+    int index = 0;
+    const NpWebApiMultipartPartParameter part{nullptr, 0, 100};
+    Require(sceNpWebApiAddMultipartPart(request, &part, &index) == 0 && index == 1, "a part is added to a plain request");
+    Require(sceNpWebApiSendMultipartRequest(request, 0, body, sizeof(body)) == InvalidArgument, "part index 0 on a plain request");
+    Require(sceNpWebApiSendMultipartRequest(request, 1, body, sizeof(body)) == NotSignedIn, "a plain request is sent whole by a multipart send");
+    Require(sceNpWebApiSendMultipartRequest(request, 9, body, sizeof(body)) == NotSignedIn, "the part index is not range checked on a plain request");
+    Require(sceNpWebApiSendMultipartRequest2(request, 1, body, sizeof(body), nullptr) == NotSignedIn, "send2 on a plain request");
+    Require(sceNpWebApiAbortRequest(request) == 0, "abort the plain request");
+    Require(sceNpWebApiSendMultipartRequest(request, 1, body, sizeof(body)) == Aborted, "multipart send of an aborted plain request");
+    Require(sceNpWebApiSendMultipartRequest2(request, 1, body, sizeof(body), nullptr) == Aborted, "send2 of an aborted plain request");
+
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the plain request library context");
 }
 
 void TestConnectionChecks() {
@@ -735,6 +869,8 @@ void TestConnectionChecks() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
     TestUnknownFieldChecks();
@@ -753,6 +889,66 @@ int main() {
     TestMultipartParts();
     TestUtilityParseNpId();
     TestIntCreateCtxIndExtdPushEventFilter();
+    TestInternalServicePushEventFilter();
+    TestMultipartSendOnPlainRequest();
     TestConnectionChecks();
+    {
+        errno = 71;
+        Require(sceNpWebApiIntInitialize(reinterpret_cast<const NpWebApiIntInitializeArgs*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unreadable IntInitialize args must return InvalidArgument without changing errno");
+        const int libCtx = sceNpWebApiInitialize(1, 4096);
+        Require(libCtx > 0, "libCtx created");
+        const int userCtx = sceNpWebApiCreateContext(libCtx, "user");
+        Require(userCtx > 0, "userCtx created");
+        std::int64_t reqId = 0;
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0,
+                                         reinterpret_cast<const NpWebApiContentParameter*>(static_cast<std::uintptr_t>(0x10)),
+                                         &reqId) == InvalidArgument && errno == 71,
+                "unreadable contentParameter must fail");
+        errno = 71;
+        Require(sceNpWebApiCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                         reinterpret_cast<std::int64_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument && errno == 71,
+                "unwritable requestId must fail");
+        errno = 71;
+        Require(sceNpWebApiIntCreateRequest(userCtx, "sdk", "/v1/test", 0, nullptr,
+                                            reinterpret_cast<const NpWebApiIntCreateRequestExtraArgs*>(static_cast<std::uintptr_t>(0x10)),
+                                            &reqId) == InvalidArgument && errno == 71,
+                "unreadable internalArgs must fail");
+        Require(sceNpWebApiDeleteContext(userCtx) == 0, "delete userCtx");
+        Require(sceNpWebApiTerminate(libCtx) == 0, "terminate libCtx");
+
+        alignas(8) std::array<std::byte, 0x30> inventoryObj{};
+        std::memset(inventoryObj.data(), 0xff, inventoryObj.size());
+        errno = 71;
+        Require(!libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(inventoryObj.data()) && errno == 71, "ojGP5vur+qM -1 check");
+        errno = 71;
+        Require(!libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(inventoryObj.data()) && errno == 71, "zQE2rxZdLy8 -1 check");
+        std::memset(inventoryObj.data(), 0, inventoryObj.size());
+        errno = 71;
+        Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(inventoryObj.data()) && errno == 71, "ojGP5vur+qM valid check");
+        errno = 71;
+        Require(libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(inventoryObj.data()) && errno == 71, "zQE2rxZdLy8 valid check");
+        for (const void* badObj : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10))}) {
+            bool threwOj = false;
+            errno = 71;
+            try {
+                libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(badObj);
+            } catch (const std::runtime_error&) {
+                threwOj = true;
+            }
+            Require(threwOj && errno == 71, "ojGP5vur+qM invalid object threw and preserved errno");
+            bool threwZq = false;
+            errno = 71;
+            try {
+                libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(badObj);
+            } catch (const std::runtime_error&) {
+                threwZq = true;
+            }
+            Require(threwZq && errno == 71, "zQE2rxZdLy8 invalid object threw and preserved errno");
+        }
+    }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }
