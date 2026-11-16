@@ -4,6 +4,7 @@
 #include "unicode/uniset.h"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -69,13 +70,29 @@ CodePointSet& Check(USet* set) {
 
 }
 
+namespace {
+
+void WriteError(std::int32_t* error, std::int32_t value, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(error, &value, sizeof(value));
+    errno = savedErrno;
+    if (!ok) NotImplemented_nid_no_patch(caller);
+}
+
+}
+
 extern "C" {
 
 const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, std::int32_t* error) {
     if (!error) APS5_INVALID_ARG_EX;
-    if (*error > 0) return nullptr;
+    std::int32_t incoming = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (incoming > 0) return nullptr;
     if (property < UCHAR_BINARY_START || property >= UCHAR_BINARY_LIMIT) {
-        *error = U_ILLEGAL_ARGUMENT_ERROR;
+        WriteError(error, U_ILLEGAL_ARGUMENT_ERROR, __func__);
         return nullptr;
     }
     if (Icu::PropertyNeedsData(property)) NotImplemented_nid_no_patch(__func__);
@@ -89,7 +106,7 @@ const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, 
             auto status = U_ZERO_ERROR;
             const auto* source = u_getBinaryPropertySet(static_cast<UProperty>(property), &status);
             if (U_FAILURE(status)) {
-                *error = status;
+                WriteError(error, status, __func__);
                 return nullptr;
             }
             const auto* nativeSet = icu::UnicodeSet::fromUSet(source);
@@ -101,7 +118,7 @@ const USet* APS5_VABI u_getBinaryPropertySet_nid_postfix(std::int32_t property, 
             set.ranges = std::move(ranges);
             set.frozen = true;
         } catch (const std::bad_alloc&) {
-            *error = U_MEMORY_ALLOCATION_ERROR;
+            WriteError(error, U_MEMORY_ALLOCATION_ERROR, __func__);
             return nullptr;
         }
     }
