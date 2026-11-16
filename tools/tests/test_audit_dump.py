@@ -847,5 +847,18 @@ class AuditDumpTests(unittest.TestCase):
         self.assertIn(f"{dump}: no eboot.bin", result.stderr.decode("utf-8"))
 
 
+class StageRefusalTests(unittest.TestCase):
+    def test_stage_refuses_a_non_elf_input_and_writes_nothing(self):
+        import unwrap_self
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'junk.prx'
+            source.write_bytes(b'nope' * 100)
+            destination = root / 'out' / 'junk.prx'
+            with self.assertRaises(unwrap_self.Refused):
+                audit_dump.stage(source, destination)
+            self.assertFalse(destination.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
