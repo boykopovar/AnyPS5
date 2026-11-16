@@ -25,6 +25,7 @@ static bool Equal(const char* left, const char* right) { return std::strcmp(left
 
 
 static_assert(sizeof(HttpMemoryPoolStats) == 24);
+static_assert(sizeof(SceHttpUriElement) == 80 && offsetof(SceHttpUriElement, scheme) == 8 && offsetof(SceHttpUriElement, port) == 64);
 
 template <typename TCall>
 static bool Throws(TCall call) {
@@ -1012,6 +1013,7 @@ int main(int argc, char** argv) {
         Require(copy.scheme == pool && copy.hostname == pool + 5 && copy.path == pool + 17 && copy.username == pool + 22 && copy.password == pool + 27);
         Require(allBytes(pool + 30, 34, 0) && pool[64] == '~' && copy.query == nullptr && copy.fragment == nullptr);
         Require(allBytes(reinterpret_cast<const unsigned char*>(&copy) + 4, 4, 0) && allBytes(copy.reserved, sizeof(copy.reserved), 0));
+        Require(allBytes(reinterpret_cast<const unsigned char*>(&copy) + 76, 4, 0));
 
         std::memset(pool, '~', sizeof(pool));
         std::memset(&copy, 0x5a, sizeof(copy));
