@@ -608,6 +608,13 @@ class HelperPathTests(unittest.TestCase):
         self.assertEqual(pr_overlap.code_span("plain"), "`plain`")
         self.assertEqual(pr_overlap.code_span("a`b"), "`` a`b ``")
 
+    def test_library_for_path_names_the_library_directory_only(self):
+        self.assertEqual(pr_overlap.library_for_path("core/libs/prx/libSceFoo/src/Export.cpp"),
+                         "core/libs/prx/libSceFoo")
+        self.assertEqual(pr_overlap.library_for_path("core/libs/prx/libSceFoo"), "core/libs/prx/libSceFoo")
+        self.assertEqual(pr_overlap.library_for_path("core/libs/prx"), "")
+        self.assertEqual(pr_overlap.library_for_path("tools/pr_overlap.py"), "")
+
 
 if __name__ == "__main__":
     unittest.main()
