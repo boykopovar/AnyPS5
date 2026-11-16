@@ -344,6 +344,15 @@ class TokenHelperTests(unittest.TestCase):
     def test_leading_walks_back_over_comment_lines_only(self):
         self.assertEqual(agc_test_split.leading(["x", "# a", "# b", "code"], 3), 1)
         self.assertEqual(agc_test_split.leading(["code", "y"], 1), 1)
+class GraphHelperTests(unittest.TestCase):
+    def test_union_find_joins_sets_transitively(self):
+        find, join = agc_test_split.union_find(4)
+        join(0, 1)
+        join(2, 3)
+        self.assertEqual(find(0), find(1))
+        self.assertNotEqual(find(0), find(2))
+        join(1, 3)
+        self.assertEqual(find(0), find(2))
 
 
 if __name__ == "__main__":
