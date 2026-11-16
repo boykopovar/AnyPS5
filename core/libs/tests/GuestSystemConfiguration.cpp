@@ -19,9 +19,6 @@ static_assert(offsetof(SceKernelSystemSwVersion, size) == 0x00);
 static_assert(offsetof(SceKernelSystemSwVersion, versionString) == 0x08);
 static_assert(offsetof(SceKernelSystemSwVersion, version) == 0x24);
 static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
-extern "C" {
-extern char** environ_nid_postfix;
-}
 static void Require(bool value) { if (!value) std::abort(); }
 static void CheckProcessorCountSysctl() {
     const int mib[] = {6, 3};

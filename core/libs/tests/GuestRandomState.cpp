@@ -224,6 +224,25 @@ int main() {
         threw = true;
     }
     Require(threw, "setstate with a null state must throw");
+    const std::uint16_t knownSeed[3] = {1, 2, 3};
+    std::uint16_t knownCopy[3] = {1, 2, 3};
+    const double knownNext = erand48_nid_postfix(knownCopy);
+    seed48_nid_postfix(knownSeed);
+    threw = false;
+    try {
+        seed48_nid_postfix(reinterpret_cast<const std::uint16_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "seed48 with an unreadable seed must throw");
+    threw = false;
+    try {
+        lcong48_nid_postfix(reinterpret_cast<const std::uint16_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "lcong48 with unreadable parameters must throw");
+    Require(drand48_nid_postfix() == knownNext, "unreadable seed48 and lcong48 input must keep the rand48 state");
 
     constexpr std::size_t threadCount = 4;
     constexpr std::size_t callsPerThread = 2000;

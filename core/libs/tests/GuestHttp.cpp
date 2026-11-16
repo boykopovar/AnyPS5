@@ -721,6 +721,10 @@ int main(int argc, char** argv) {
     HttpConnectionStat preStat{};
     Require(sceHttpGetConnectionStat(1, &preStat) == beforeInit);
     Require(sceHttpGetConnectionStat(1, nullptr) == beforeInit);
+    int cookie = 0x5a5a;
+    Require(sceHttpSetCookieEnabled(12345, 0) == invalidId);
+    Require(sceHttpSetCookieEnabled(12345, 2) == invalidId);
+    Require(sceHttpGetCookieEnabled(12345, &cookie) == invalidId && cookie == 0x5a5a);
     const int context = sceHttpInit_nid_postfix(0, 0, 0x10000);
     Require(context > 0);
     static_assert(sizeof(HttpConnectionStat) == 16);
@@ -728,6 +732,14 @@ int main(int argc, char** argv) {
     Require(sceHttpGetConnectionStat(12345, &preStat) == invalidId);
     const int tmpl = sceHttpCreateTemplate(context, "test-agent", 1, 0);
     Require(tmpl > 0);
+    for (const int value : {0, 1, 2, 3, 255, 256, -1, static_cast<int>(0x80000000u)}) {
+        Require(sceHttpSetCookieEnabled(tmpl, value) == 0);
+        cookie = 0x5a5a;
+        Require(sceHttpGetCookieEnabled(tmpl, &cookie) == 0 && cookie == value);
+    }
+    Require(sceHttpSetCookieEnabled(9999, 0) == invalidId);
+    cookie = 0x5a5a;
+    Require(sceHttpGetCookieEnabled(9999, &cookie) == invalidId && cookie == 0x5a5a);
     const int conn = sceHttpCreateConnectionWithURL(tmpl, "http://127.0.0.1:8080", 0);
     Require(conn > 0);
     HttpConnectionStat connStat{};
@@ -854,6 +866,7 @@ int main(int argc, char** argv) {
     Require(sceHttpsSetSslVersion(1, 0) == 0);
     Require(sceHttpSetRedirectCallback(1, nullptr, nullptr) == 0);
     Require(sceHttpSetCookieRecvCallback(1, nullptr, nullptr) == 0);
+    Require(sceHttpSetCookieSendCallback(1, nullptr, nullptr) == 0);
     int sslError = -1;
     std::uint32_t sslDetail = 0xFFFFFFFFu;
     Require(sceHttpsGetSslError(1, &sslError, &sslDetail) == 0);
@@ -938,6 +951,9 @@ int main(int argc, char** argv) {
     Require(sceHttpUriSweepPath(nullptr, "/foo", 5) == invalidValue);
     char sweptPath[16];
     Require(sceHttpUriSweepPath(sweptPath, nullptr, 5) == invalidValue);
+    errno = 71;
+    Require(sceHttpUriSweepPath(reinterpret_cast<char*>(0x10), "/foo", 5) == invalidValue && errno == 71);
+    Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), 5) == invalidValue && errno == 71);
     Require(sweep("foo/../bar", "foo/../bar"));
     Require(sweep("/foo/../bar", "/bar"));
     Require(sweep("/foo/./bar", "/foo/bar"));
