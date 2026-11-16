@@ -2,7 +2,7 @@
 
 ## change [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`
 
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`, `_Getstr`, `_Gettime`, `_Getzone`, `_Hypot`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`, `_Getstr`, `_Gettime`, `_Getzone`
 
 ## add Functional
 
