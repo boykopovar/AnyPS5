@@ -17,6 +17,9 @@
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -481,10 +484,8 @@ auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
 }
 
 bool FlushToZeroEnabled() {
-#if defined(__x86_64__) || defined(__i386__)
-    std::uint32_t mxcsr = 0;
-    asm volatile("stmxcsr %0" : "=m"(mxcsr));
-    return (mxcsr & 0x8000) != 0;
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+    return (_mm_getcsr() & 0x8000) != 0;
 #else
     return false;
 #endif
@@ -525,7 +526,7 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
     if (!hexadecimal) {
         if constexpr (std::is_same_v<TFloat, double>) {
             const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
-            if (FlushToZeroEnabled() && bits != 0 && (bits & 0x7ff0000000000000ull) == 0) {
+            if (FlushToZeroEnabled() && (bits & 0x7fffffffffffffffull) != 0 && (bits & 0x7ff0000000000000ull) == 0) {
                 errno = ERANGE;
                 return std::signbit(value) ? -TFloat{0} : TFloat{0};
             }

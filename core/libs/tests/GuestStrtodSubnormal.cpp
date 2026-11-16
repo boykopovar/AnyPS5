@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -94,17 +97,17 @@ static void CheckLongHexadecimalDigitRuns() {
     CheckBoth(fraction + "+99999999999999999999", 0x7ff0000000000000ull, ERANGE, "long fraction digit run with a saturated exponent");
 }
 
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
 static std::uint32_t ReadMxcsr() {
-    std::uint32_t mxcsr = 0;
-    asm volatile("stmxcsr %0" : "=m"(mxcsr));
-    return mxcsr;
+    return _mm_getcsr();
 }
 
 static void WriteMxcsr(std::uint32_t mxcsr) {
-    asm volatile("ldmxcsr %0" : : "m"(mxcsr));
+    _mm_setcsr(mxcsr);
 }
+#endif
 
+#if defined(__x86_64__) || defined(__i386__)
 static void CheckFlushToZero() {
     const std::uint32_t saved = ReadMxcsr();
     WriteMxcsr(0x9fc0);
@@ -112,6 +115,7 @@ static void CheckFlushToZero() {
     Check("4.9406564584124654e-324", 0, ERANGE, "FTZ flushes the smallest decimal subnormal");
     Check("2.4703282292062328e-324", 0, ERANGE, "FTZ flushes a decimal half below the smallest subnormal");
     Check("0x1p-1074", 1, 7, "FTZ keeps a hexadecimal subnormal");
+    Check("-0.0", 0x8000000000000000ull, 7, "FTZ keeps negative zero");
     WriteMxcsr(saved);
 }
 #endif
