@@ -514,6 +514,16 @@ class ValueHelperTests(unittest.TestCase):
         self.assertEqual(shader_scan.throw_areas(sites),
                          [{"name": "a", "count": 2}, {"name": "Recompiler", "count": 1}])
 
+    def test_classify_maps_flat_and_own_encoding_tags(self):
+        self.assertEqual(shader_scan.classify("ENC_FLAT_GLBL", "x"), ("GLOBAL", "base"))
+        self.assertEqual(shader_scan.classify("ENC_FLAT_SCRATCH", "x"), ("SCRATCH", "base"))
+        self.assertEqual(shader_scan.classify("ENC_SMEM", "x"), ("SMEM", "base"))
+        self.assertIsNone(shader_scan.classify("OTHER", "x"))
+
+    def test_classify_reads_dpp_forms_of_vector_encodings(self):
+        self.assertEqual(shader_scan.classify("VOP2_VOP_DPP16", "x"), ("VOP2", "dpp16"))
+        self.assertEqual(shader_scan.classify("VOPC_VOP_DPP8", "x"), ("VOPC", "dpp8"))
+
 
 if __name__ == "__main__":
     unittest.main()
