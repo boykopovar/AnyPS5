@@ -162,6 +162,44 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
+void RunSaturatedMaximum(AgcDriver::VulkanDevice& device) {
+    alignas(256) constexpr std::array<std::uint32_t, 10> code{
+        0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+        0xd510800au, 0x00020880u, 0xe0701000u, 0x80010a03u, 0xbf810000u,
+    };
+    constexpr std::array<std::uint32_t, 16> inputs{
+        0u, 0x80000000u, 1u, 0x80000001u, 0x007fffffu, 0x807fffffu, 0x00800000u, 0x80800000u,
+        0x3f000000u, 0x3f800001u, 0x7f800000u, 0xff800000u, 0x7f800001u, 0xff800001u, 0x7fc12345u, 0xffc12345u,
+    };
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid * Inputs] = inputs[tid % inputs.size()];
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, ShaderRecompiler::ShaderComputeStageInfo{{Threads, 1, 1}, 0u, {false, false, false}, false, 1}, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    request.target.float32FlushToZero = false;
+    for (const auto mode : {0xc0u, 0xf0u}) {
+        request.context.floatMode = ShaderRecompiler::ShaderFloatMode{mode, true, false, false};
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.WaitIdle();
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            auto bits = Input[tid * Inputs];
+            if (mode == 0xc0u && (bits & 0x7f800000u) == 0u) bits &= 0x80000000u;
+            const auto expected = bits - 1u < 0x7f800000u ? std::min(bits, 0x3f800000u) : 0u;
+            Expect(tid, Output[tid * Results], expected, "saturated maximum with zero");
+        }
+    }
+}
+
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
@@ -180,6 +218,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device);
         Check();
+        RunSaturatedMaximum(*device);
         std::puts("f32 result clamp tests passed");
         return 0;
     } catch (const std::exception& error) {
