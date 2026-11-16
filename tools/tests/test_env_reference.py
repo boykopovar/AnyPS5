@@ -636,6 +636,12 @@ class ConstantTableTests(unittest.TestCase):
         self.assertEqual(env_reference.shadowed_names('const char* kName = "ANYPS5_A";\n'), set())
         self.assertEqual(env_reference.shadowed_names("constexpr int kX = 1;\n"), set())
 
+    def test_identifier_reads_resolves_a_single_known_constant_only(self):
+        reads = env_reference.identifier_reads("getenv(kName)", {"kName": {"ANYPS5_A"}}, set())
+        self.assertEqual([kind for kind, _ in reads], ["getenv"])
+        self.assertEqual(env_reference.identifier_reads("getenv(kName)", {"kName": {"ANYPS5_A", "ANYPS5_B"}}, set()), [])
+        self.assertEqual(env_reference.identifier_reads("getenv(kName)", {"kName": {"ANYPS5_A"}}, {"kName"}), [])
+
 
 if __name__ == "__main__":
     unittest.main()
