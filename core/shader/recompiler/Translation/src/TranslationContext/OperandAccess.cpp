@@ -70,6 +70,8 @@ RdnaOperand TranslationContext::destinationOperand(const RdnaInstruction& inst) 
 RdnaOperand TranslationContext::accumulatorOperand(const RdnaInstruction& inst) {
     RdnaOperand accumulator = inst.destination;
     accumulator.dpp = false;
+    accumulator.absolute = inst.source2.absolute;
+    accumulator.negate = inst.source2.negate;
     return accumulator;
 }
 
