@@ -226,6 +226,26 @@ def shared_source_owners(path):
     return list(dict.fromkeys(owner for owner in owners if owner != path.name and (path.parent / owner).is_dir()))
 
 
+def anon_namespaces(text):
+    ranges, stack, previous = [], [], ""
+    for match in CPP_TOKEN.finditer(text):
+        token = match.group()
+        if token == "{":
+            stack.append((previous == "namespace", match.start()))
+        elif token == "}" and stack:
+            anonymous, start = stack.pop()
+            if anonymous:
+                ranges.append((start, match.end()))
+        previous = token
+    return ranges
+
+
+def internal_linkage(text, end, ranges):
+    begin = max(text.rfind(";", 0, end), text.rfind("}", 0, end), text.rfind("{", 0, end)) + 1
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text[begin:end]) if match.group("code") is not None]
+    return "static" in tokens or any(start <= end < stop for start, stop in ranges)
+
+
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
     flavor = PureWindowsPath if os.name == "nt" else Path
@@ -248,9 +268,12 @@ def scan_library(path):
     for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
+        ranges = anon_namespaces(text)
         for match in DEFINITION.finditer(text):
             name = match.group(1)
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
+                continue
+            if internal_linkage(text, match.start(), ranges) and name not in exported:
                 continue
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())

@@ -669,6 +669,62 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(group["done_names"], ["Ready_nid_no_patch"])
             self.assertEqual(group["todo_names"], ["Pending_nid_no_patch"])
 
+    def test_internal_linkage_definitions_are_not_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "namespace {\n"
+                "int APS5_VABI AnonDone(int value) { return value; }\n"
+                "int APS5_VABI AnonPending() { NotImplemented_nid_no_patch(__func__); }\n"
+                "}\n"
+                "static int APS5_VABI StaticDone(int value) { return value; }\n"
+                "static void APS5_VABI StaticPending() { NotImplemented_nid_no_patch(__func__); }\n"
+                "struct Holder {\n"
+                "    static int APS5_VABI MemberDone(Holder* holder) { return holder != nullptr; }\n"
+                "};\n"
+                "int APS5_VABI Exported() { return 1; }\n"
+                "int APS5_VABI ExportedPending() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], ["Exported"])
+            self.assertEqual(group["todo_names"], ["ExportedPending"])
+            self.assertEqual(group["inert_names"], ["Exported"])
+            self.assertEqual((group["done"], group["todo"]), (1, 1))
+
+    def test_internal_callback_sharing_an_exported_name_keeps_the_export_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Callbacks.cpp").write_text(
+                "namespace {\n"
+                "int APS5_VABI Ready(int value) { return value; }\n"
+                "int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n"
+                "}\n"
+                "static int APS5_VABI Ready(int value) { return value + 1; }\n", encoding="utf-8")
+            (library / "Export.cpp").write_text(
+                "int APS5_VABI Ready(int value) { return value + 2; }\n"
+                "int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], ["Ready"])
+            self.assertEqual(group["todo_names"], ["Pending"])
+            self.assertEqual((group["done"], group["todo"]), (1, 1))
+
+    def test_exported_internal_linkage_definition_is_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Callbacks.cpp").write_text(
+                "namespace {\n"
+                "int APS5_VABI Hidden() { return 1; }\n"
+                "int APS5_VABI Renamed() { return 2; }\n"
+                "}\n", encoding="utf-8")
+            (library / "Export.cpp").write_text(
+                'APS5_EXPORT("AAAAAAAAAAA", Renamed);\n', encoding="utf-8")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], ["Renamed"])
+            self.assertEqual(group["todo_names"], [])
+            self.assertEqual(group["inert_names"], ["Renamed"])
+
     def test_empty_libraries(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
