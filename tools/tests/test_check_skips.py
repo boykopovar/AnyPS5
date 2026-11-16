@@ -646,7 +646,14 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
-
+class RequiredTestsTests(unittest.TestCase):
+    def test_skips_refuses_an_empty_report_when_tests_are_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.xml'
+            path.write_text('<testsuite></testsuite>', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'no testcases'):
+                list(check_skips.skips(path, require_tests=True))
+            self.assertEqual(list(check_skips.skips(path)), [])
 
 
 if __name__ == "__main__":
