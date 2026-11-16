@@ -98,6 +98,8 @@ The full build also requires Python 3 for glslang and Git for Windows with Bash 
 
 For MSYS2, install `mingw-w64-ucrt-x86_64-gcc` with `pacman -S mingw-w64-ucrt-x86_64-gcc` and use `C:\msys64\ucrt64\bin` in PowerShell. Adjust the prefix for a Scoop installation of MSYS2. Use a separate build directory for each toolchain, and select both `gcc` and `g++` from the same installation.
 
+Checking out another branch changes the timestamps of every file that differs, so the next build compiles those files again even if they were built before. With MSYS2, install `mingw-w64-ucrt-x86_64-ccache` and configure with `-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache`. On a Ryzen 5 5600 with 12 jobs, switching a build directory back to a branch it had built before took 126 s with 98.5 % of 1,638 compilations served from the cache, against 622 s without it; the first build of a tree is not faster. LLD cannot replace the default linker here: the runtime libraries link against each other's `.prx` files directly, which GNU ld accepts and `ld.lld` rejects with `unknown file type`.
+
 Configuration rejects MinGW libstdc++ builds that combine atomic `weak_ptr::lock()` with mutex-based reference-count updates ([GCC PR125312](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125312)). Concurrent ownership changes can otherwise destroy live objects. Use a corrected distribution or the supported WinLibs GCC 15.2.0 release above, and configure in a new build directory.
 
 The [Windows MSYS2 workflow](../../.github/workflows/windows-msys2.yml) builds and tests the full runtime nightly at 08:23 UTC and can be started manually with `workflow_dispatch`. The regular Windows build uses WinLibs.
