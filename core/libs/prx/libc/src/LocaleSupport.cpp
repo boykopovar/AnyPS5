@@ -212,6 +212,40 @@ std::int64_t APS5_VABI WideCollateHash(const GuestLocale::CollateFacet*, const c
 
 const GuestLocale::CollateVtable g_wideCollateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideCollateCompare, WideCollateTransform, WideCollateHash};
 
+constexpr std::size_t GuestStringMaxSize = std::numeric_limits<std::size_t>::max() - 1;
+constexpr std::size_t GuestWideStringMaxSize = std::numeric_limits<std::size_t>::max() / GuestWideCharacterSize - 1;
+
+GuestLocale::String* CopyStringUnits(GuestLocale::String* result, const GuestLocale::String* source, std::size_t unit, std::size_t inlineCapacity, std::size_t maxSize) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("basic_string copy: null string");
+    const std::size_t size = source->size;
+    if (size > maxSize) throw std::invalid_argument("basic_string copy: size beyond max_size");
+    const char* data = source->capacity > inlineCapacity ? source->pointer : source->buffer;
+    if (data == nullptr) throw std::invalid_argument("basic_string copy: null storage");
+    if (size <= inlineCapacity) {
+        std::memmove(result->buffer, data, sizeof(result->buffer));
+        result->size = size;
+        result->capacity = inlineCapacity;
+        return result;
+    }
+    const std::size_t capacity = std::min(size | inlineCapacity, maxSize);
+    auto* copy = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * unit));
+    std::memcpy(copy, data, (size + 1) * unit);
+    result->pointer = copy;
+    result->size = size;
+    result->capacity = capacity;
+    return result;
+}
+
+std::int32_t APS5_VABI MessagesOpen(const GuestLocale::Facet*, const GuestLocale::String*, const void*) {
+    return -1;
+}
+
+GuestLocale::String* APS5_VABI MessagesGet(GuestLocale::String* result, const GuestLocale::Facet*, std::int32_t, std::int32_t, std::int32_t, const GuestLocale::String* fallback) {
+    return CopyStringUnits(result, fallback, 1, GuestLocale::StringInlineCapacity, GuestStringMaxSize);
+}
+
+void APS5_VABI MessagesClose(const GuestLocale::Facet*, std::int32_t) {}
+
 GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
     if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
     const std::size_t length = std::strlen(source);
@@ -554,6 +588,12 @@ GuestLocale::OutputIterator APS5_VABI NumPutPointer(const GuestLocale::Facet*, G
 const GuestLocale::NumPutVtable g_numPutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, NumPutBool, NumPutLong, NumPutUnsignedLong, NumPutLongLong, NumPutUnsignedLongLong, NumPutDouble, NumPutLongDouble, NumPutPointer};
 const GuestLocale::TimePutVtable g_timePutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, TimePutDoPut};
 
+GuestLocale::OutputIterator APS5_VABI WideTimePutDoPut(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier) {
+    return LibcWideTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);
+}
+
+const GuestLocale::WideTimePutVtable g_wideTimePutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideTimePutDoPut};
+
 constexpr std::size_t GuestTimePutFacetSize = 0xb8;
 
 constexpr std::array<short, 257> MakeClassificationTable() {
@@ -608,12 +648,24 @@ int ConvertCharacter(int value, bool upper) {
 
 }
 
+extern "C" GuestLocale::OutputIterator LibcTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
+    return TimePutDoPut(self, out, stream, fill, time, format, modifier);
+}
+
 extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source) {
     return AssignCString(result, source);
 }
 
 extern "C" GuestLocale::String* LibcAssignWideCString_nid_no_patch(GuestLocale::String* result, const std::uint16_t* source) {
     return AssignWideCString(result, source);
+}
+
+extern "C" GuestLocale::String* LibcCopyString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source) {
+    return CopyStringUnits(result, source, 1, GuestLocale::StringInlineCapacity, GuestStringMaxSize);
+}
+
+extern "C" GuestLocale::String* LibcCopyWideString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source) {
+    return CopyStringUnits(result, source, GuestWideCharacterSize, GuestWideInlineCapacity, GuestWideStringMaxSize);
 }
 
 extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last) {
@@ -747,7 +799,17 @@ std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
     reinterpret_cast<std::uintptr_t>(&CollateHash),
 };
 std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {};
-std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {};
+std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&MessagesOpen),
+    reinterpret_cast<std::uintptr_t>(&MessagesGet),
+    reinterpret_cast<std::uintptr_t>(&MessagesClose),
+};
 std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots] {};
@@ -763,6 +825,7 @@ std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots] {};
 std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots] {};
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
@@ -1341,6 +1404,16 @@ std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIc
         auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(GuestTimePutFacetSize));
         std::memset(object, 0, GuestTimePutFacetSize);
         object->vtable = &g_timePutVtable.facet;
+        *facet = object;
+    }
+    return 5;
+}
+
+std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    if (facet != nullptr && *facet == nullptr) {
+        if (locale == nullptr) NotImplemented_nid_no_patch(__func__);
+        auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        *object = {&g_wideTimePutVtable.facet, 0, 0};
         *facet = object;
     }
     return 5;

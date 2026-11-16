@@ -263,6 +263,10 @@ if(BUILD_TESTING)
     target_include_directories(pad_command_file_tests PRIVATE core/libs)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
     set_tests_properties(pad_command_file PROPERTIES TIMEOUT 20)
+    add_test_executable(pad_recording_tests core/libs/prx/libScePad/tests/PadRecording.cpp)
+    target_include_directories(pad_recording_tests PRIVATE core/libs)
+    add_test(NAME pad_recording COMMAND pad_recording_tests)
+    set_tests_properties(pad_recording PROPERTIES TIMEOUT 20)
     if(Python3_Interpreter_FOUND)
         get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
@@ -333,6 +337,8 @@ if(BUILD_TESTING)
         add_test(NAME tools_progress_diff_json COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff_json.py)
         set_tests_properties(tools_progress_diff_json PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_progress_diff COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_diff.py)
         add_test(NAME progress_wrappers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
@@ -842,8 +848,8 @@ if(BUILD_TESTING)
         add_test(NAME tools_cmake_fuzzer_sanitizers COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_cmake_fuzzer_sanitizers.py)
         set_tests_properties(tools_cmake_fuzzer_sanitizers PROPERTIES TIMEOUT 120)
 
-        add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py)
+        add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE} -u
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py -v)
         set_tests_properties(title_run_paths PROPERTIES TIMEOUT 30)
         add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)

@@ -18,9 +18,18 @@ RECIPE_FIELDS = {"title_id", "build_commands", "build_dir", "games", "seconds", 
                  "regression_pct", "max_spread_pct", "titles", "content"}
 
 
+def unique_recipe_fields(pairs):
+    fields = {}
+    for name, value in pairs:
+        if name in fields:
+            raise ValueError(f"recipe has a duplicate field: {name}")
+        fields[name] = value
+    return fields
+
+
 def load_recipe(path):
     recipe_path = Path(path).resolve()
-    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8"), object_pairs_hook=unique_recipe_fields)
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be a JSON object")
     unknown = set(recipe) - RECIPE_FIELDS
