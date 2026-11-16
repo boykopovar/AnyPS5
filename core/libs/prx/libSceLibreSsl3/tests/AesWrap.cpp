@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -118,6 +119,21 @@ int main() {
         threw = true;
     }
     Require(threw);
+    const auto* const unreadable = reinterpret_cast<const unsigned char*>(0x10);
+    const auto wrapThrows = [](auto call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    errno = 71;
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(reinterpret_cast<AesKey*>(0x10), nullptr, wrapped, plain, sizeof(plain)); }));
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, unreadable, wrapped, plain, sizeof(plain)); }));
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, sizeof(plain)); }));
+    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), plain, sizeof(plain)); }));
+    Require(errno == 71);
     CheckRfc3394();
     CheckIv();
     CheckLong(336, "d293d9a1178a1c56", "9c7c803cf8f7ec53");

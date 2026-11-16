@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -146,6 +147,13 @@ void TestNullArguments() {
     RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, nullptr, Rfc41.data(), 24); });
     RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), nullptr, 24); });
     Require(Filled(out.data(), out.size(), 0xCC));
+    const auto* const unreadable = reinterpret_cast<const unsigned char*>(0x10);
+    errno = 71;
+    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(reinterpret_cast<AesKey*>(0x10), nullptr, out.data(), Rfc41.data(), 24); });
+    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 24); });
+    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, unreadable, out.data(), Rfc41.data(), 24); });
+    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), Rfc41.data(), 24); });
+    Require(errno == 71 && Filled(out.data(), out.size(), 0xCC));
 }
 
 }
