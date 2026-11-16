@@ -3672,5 +3672,14 @@ class StrictProviderTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class TakeTests(unittest.TestCase):
+    def test_take_returns_slice_or_raises_outside_file(self):
+        data = b"abcdef"
+        self.assertEqual(import_audit.take(data, 1, 3, "f", "what"), b"bcd")
+        for offset, size in ((-1, 2), (4, 3), (0, -1)):
+            with self.assertRaisesRegex(import_audit.AuditError, "lies outside the file"):
+                import_audit.take(data, offset, size, "f", "what")
+
+
 if __name__ == "__main__":
     unittest.main()
