@@ -1,4 +1,5 @@
 #include "prx/libSceFont/libSceFont.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -129,6 +130,9 @@ static void CreateValidation() {
     Require(sceFontCreateWords(&badMemory, &source, 0, &words) == SCE_FONT_ERROR_INVALID_MEMORY && words == nullptr);
     Require(sceFontCreateWords(&fixture.memory, nullptr, 0, &words) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCreateWords(&fixture.memory, &source, 0, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontCreateWords(&fixture.memory, &source, 0, reinterpret_cast<FontWords**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     FontTextSource noParser = source;
     noParser.textParser = nullptr;
     words = reinterpret_cast<FontWords*>(1);

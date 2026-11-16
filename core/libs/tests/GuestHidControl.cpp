@@ -1,6 +1,7 @@
 #include "prx/libSceHidControl/libSceHidControl.hpp"
 
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -186,6 +187,9 @@ void CheckArguments() {
     Require(sceHidControlIsForceUpdateNeeded(0, 1, nullptr) == ErrorInvalidArgument, "IsForceUpdateNeeded null result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), nullptr) == ErrorInvalidArgument, "PswUpdateIsUpdateNeeded null result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, nullptr, &first) == ErrorInvalidArgument && first == 0, "PswUpdateIsUpdateNeeded clears result before the image check");
+    errno = 71;
+    Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), reinterpret_cast<std::uint16_t*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeeded unwritable result");
     first = 0x5a5a;
     Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &first, nullptr, &second) == ErrorInvalidArgument && second == 0x5a5a,
             "PswUpdateIsUpdateNeededForMultiDevice null first result");
@@ -193,6 +197,12 @@ void CheckArguments() {
             "PswUpdateIsUpdateNeededForMultiDevice clears only the first result before the version check");
     Require(libSceHidControlUnknown_00qes5NswlQ_nid_no_patch(0, nullptr, &flag) == ErrorInvalidArgument && flag == 0x5a, "00qes5NswlQ null data");
     Require(libSceHidControlUnknown_00qes5NswlQ_nid_no_patch(0, buffer.data(), nullptr) == ErrorInvalidArgument, "00qes5NswlQ null result");
+    errno = 71;
+    Require(libSceHidControlUnknown_00qes5NswlQ_nid_no_patch(0, buffer.data(), reinterpret_cast<std::uint8_t*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "00qes5NswlQ unwritable result");
+    flag = 0x5a;
+    Require(libSceHidControlUnknown_00qes5NswlQ_nid_no_patch(0, reinterpret_cast<const void*>(0x10), &flag) == ErrorInvalidArgument && flag == 0 && errno == 71,
+            "00qes5NswlQ unreadable data clears the result first");
     Require(sceHidControlPswUpdateIsReady(0, nullptr) == ErrorInvalidArgument, "PswUpdateIsReady null state");
     Require(sceHidControlPswUpdateStart(0, nullptr) == ErrorInvalidArgument, "PswUpdateStart null image");
     Require(sceHidControlPswUpdateGetStatus(0, nullptr) == ErrorInvalidArgument, "PswUpdateGetStatus null status");
@@ -210,6 +220,28 @@ void CheckArguments() {
     Require(sceHidControlSetPswControllerCommunicationMethod(0) == 0, "SetPswControllerCommunicationMethod 0");
     Require(sceHidControlSetPswControllerCommunicationMethod(1) == 0, "SetPswControllerCommunicationMethod 1");
     Require(sceHidControlSetPswControllerCommunicationMethod(2) == ErrorInvalidArgument, "SetPswControllerCommunicationMethod 2");
+}
+
+void CheckGuestPointerFaults() {
+    std::uint16_t version = 0x1234;
+    std::uint16_t first = 0x5a5a;
+    std::uint16_t second = 0x5a5a;
+    const auto unmapped16 = reinterpret_cast<std::uint16_t*>(0x10);
+    const auto unmappedVersion = reinterpret_cast<const std::uint16_t*>(0x10);
+    errno = 71;
+    Require(sceHidControlGetAuthInformation(1, 0, 1, reinterpret_cast<void*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "GetAuthInformation unmapped output");
+    Require(sceHidControlPswUpdateSendData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateSendData unreadable chunk header");
+    Require(sceHidControlPswUpdateSendAppendixData(7, unmappedVersion) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateSendAppendixData unreadable chunk header");
+    Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &version, unmapped16, &second) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeededForMultiDevice unmapped first result");
+    Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &version, &first, unmapped16) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeededForMultiDevice unmapped second result");
+    Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, unmappedVersion, &first, &second) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeededForMultiDevice unmapped version");
+    Require(first == 0 && second == 0, "multi-device zeroes the outputs before the version read fails");
 }
 
 }
@@ -231,6 +263,7 @@ int main() {
     Require(sceHidControlInit() == 0, "Init opens /dev/hid");
     Require(sceHidControlInit() == 0, "Init again returns 0");
     CheckArguments();
+    CheckGuestPointerFaults();
     std::filesystem::current_path(original);
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);

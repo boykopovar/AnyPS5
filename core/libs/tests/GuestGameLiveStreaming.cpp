@@ -238,6 +238,11 @@ int main() {
     Require(sceGameLiveStreamingTerminate() == notInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == notInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingGetProgramInfo(nullptr) == notInitialized);
+    std::array<std::uint8_t, 0x134C> uninitializedInfo;
+    uninitializedInfo.fill(0xaa);
+    Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(uninitializedInfo.data())) == notInitialized);
+    for (const std::uint8_t byte : uninitializedInfo) Require(byte == 0xaa);
     GameLiveStreamingStatus liveStatus{};
     std::memset(&liveStatus, 0x5a, sizeof(liveStatus));
     Require(sceGameLiveStreamingGetCurrentStatus(&liveStatus) == notInitialized);
