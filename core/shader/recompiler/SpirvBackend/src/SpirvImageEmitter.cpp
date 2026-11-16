@@ -2296,7 +2296,7 @@ struct TableWord {
     std::uint32_t poisoned = 0;
 };
 
-TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false) {
+TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false, std::uint32_t active = 0u) {
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
     const auto field = [&](std::uint32_t index) { return dynamicHeader ? TableMapAt(state, header, index) : LoadTableMap(state, ConstantU32(state, header + index)); };
@@ -2309,14 +2309,13 @@ TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, s
     const auto outsideCode = field(ImageTableAbi::TableOutsideCode);
     const auto tableFault = field(ImageTableAbi::TableFault);
     if (column.laneKey) {
-        if (handle->ArgumentCount() < 2u) ctx.Fail(inst, "has a lane image table handle without its descriptor-load predicate");
-        const auto active = Binary(state, spv::OpINotEqual, boolean, ctx.Def(handle->Argument(1)), ConstantU32(state, 0u));
+        const auto isActive = Binary(state, spv::OpINotEqual, boolean, active, ConstantU32(state, 0u));
         const auto inMap = Binary(state, spv::OpULessThan, boolean, offset, keys);
         const auto mapped = LoadTableMap(state, Select(state, u32, inMap, Binary(state, spv::OpIAdd, u32, mapStart, offset), ConstantU32(state, 0u)));
         const auto loaded = Binary(state, spv::OpULessThan, boolean, offset, field(ImageTableAbi::TableRecordCount));
         const auto outside = Select(state, u32, loaded, ConstantU32(state, ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison)), ConstantU32(state, ImageTableAbi::NullCode));
         TableWord word;
-        word.code = Select(state, u32, active, Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outside)), ConstantU32(state, ImageTableAbi::NullCode));
+        word.code = Select(state, u32, isActive, Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outside)), ConstantU32(state, ImageTableAbi::NullCode));
         word.addressLow = baseLow;
         word.addressHigh = baseHigh;
         word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
@@ -2426,13 +2425,18 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     const auto& column = *sources[source].tableColumn;
     const auto offset = ctx.Def(handle->Argument(0));
     const auto header = ImageTableAbi::TableHeader(table);
+    std::uint32_t active = 0u;
+    if (column.laneKey) {
+        if (handle->ArgumentCount() < 2u) ctx.Fail(inst, "has a lane image table handle without its descriptor-load predicate");
+        active = ctx.Def(handle->Argument(1));
+    }
     const auto& parent = sources.at(column.heapSource).tableColumn;
-    if (!parent.has_value()) return LookupTableWord(state, column, offset, header);
+    if (!parent.has_value()) return LookupTableWord(state, column, offset, header, false, active);
     if (!parent->buffer || !parent->indirect || handle->ArgumentCount() < 3u) ctx.Fail(inst, "has a nested image table without its buffer pointer");
     const auto root = LookupTablePointer(state, ctx.Def(handle->Argument(1)), ctx.Def(handle->Argument(2)), header);
     const auto u32 = TypeU32(state);
     const auto childHeader = Select(state, u32, root.poisoned, ConstantU32(state, header), root.code);
-    auto word = LookupTableWord(state, column, offset, childHeader, true);
+    auto word = LookupTableWord(state, column, offset, childHeader, true, active);
     word.code = Select(state, u32, root.poisoned, root.code, word.code);
     word.addressLow = Select(state, u32, root.poisoned, root.addressLow, word.addressLow);
     word.addressHigh = Select(state, u32, root.poisoned, root.addressHigh, word.addressHigh);

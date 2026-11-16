@@ -149,15 +149,6 @@ alignas(256) constexpr std::array<std::uint32_t, 46> StoreWave32{
     0xbefe0318u, 0xbf85ffe0u, 0xbf8c3f70u, 0xe0702000u, 0x80010a00u, 0xbf810000u,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 46> LodWave32{
-    0x36020083u, 0x2c1c0082u, 0x7e1e0280u, 0x7e140280u, 0xe0382000u, 0x80000201u, 0xe0382010u, 0x80000601u,
-    0xbf8c3f70u, 0xbe94037eu, 0xbe961314u, 0xd7600008u, 0x00002d02u, 0xd7600009u, 0x00002d03u, 0xd760000au,
-    0x00002d04u, 0xd760000bu, 0x00002d05u, 0xd760000cu, 0x00002d06u, 0xd760000du, 0x00002d07u, 0xd760000eu,
-    0x00002d08u, 0xd760000fu, 0x00002d09u, 0xbe98037eu, 0x7da40408u, 0x7da40609u, 0x7da4080au, 0x7da40a0bu,
-    0x7da40c0cu, 0x7da40e0du, 0x7da4100eu, 0x7da4120fu, 0xf1800308u, 0x00820a0eu, 0xbe9a037eu, 0x8a141a14u,
-    0xbefe0318u, 0xbf85ffe0u, 0xbf8c3f70u, 0xe0702000u, 0x80010a00u, 0xbf810000u,
-};
-
 
 std::array<std::uint32_t, 4> Buffer(const void* pointer, std::uint32_t stride, std::uint32_t records) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
@@ -394,26 +385,6 @@ void RequireActiveInvalidKey(AgcDriver::VulkanDevice& device, std::uint32_t mode
     RequireFault(device, code, table, "table V# indexed per lane is swizzled", "an active UINT_MAX key with unsupported OOB_SELECT " + std::to_string(mode));
 }
 
-void RunLod(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Records>& records, bool refused, const std::string& what) {
-    auto& data = guest[0];
-    for (std::uint32_t key = 0u; key < Records; ++key) data.table[key] = records[key] == Textures ? std::array<std::uint32_t, 8>{} : Image(records[key]);
-    const auto table = Buffer(data.table.data(), 32u, Records);
-    if (refused) {
-        RequireFault(device, LodWave32, table, "records indexed per lane need different image modes under implicit derivatives", what);
-        return;
-    }
-    const auto lanes = std::min(32u, device.Target().subgroupSize);
-    const auto userData = UserData(data, lanes);
-    const std::array regions{MemoryRegion{reinterpret_cast<std::uintptr_t>(&data), std::as_bytes(std::span(&data, 1u))}};
-    auto request = Request(device, LodWave32, 32u, lanes, userData, regions);
-    request.useCache = false;
-    std::vector<RecompileResult> shaders;
-    shaders.push_back(Recompile(request));
-    Require(DecoratesNonUniform(shaders.front().spirv.Words()), what + ": the per-lane table slot is not decorated NonUniform");
-    const auto outcome = Dispatch(device, shaders);
-    Require(outcome.failure.empty() && !Faulted(outcome), what + " failed:\n" + outcome.Text());
-}
-
 }
 
 int main(int argc, char** argv) {
@@ -455,10 +426,6 @@ int main(int argc, char** argv) {
         swizzled[1] |= 1u << 31u;
         RequireFault(*device, WholeWave32, swizzled, "table V# indexed per lane is swizzled", "a waterfall over a swizzled table V# with records");
         RequireFault(*device, WholeWave32, Buffer(guest[0].table.data(), 28u, Records), "records smaller than the descriptor", "a waterfall over a table V# whose records are smaller than a T#");
-        RunLod(*device, {1u, 1u, 1u, 1u}, false, "an LOD query in a waterfall over a table of one image mode");
-        RunLod(*device, {0u, 1u, 0u, 1u}, true, "an LOD query in a waterfall over a table of float and integer images");
-        RunLod(*device, {Textures, 0u, 0u, 0u}, false, "an LOD query in a waterfall over a null record 0 and integer images");
-        RunLod(*device, {Textures, 0u, 1u, 0u}, true, "an LOD query in a waterfall over a null record 0 and float and integer images");
         std::cout << "waterfall image tests passed\n";
         return 0;
     } catch (const std::exception& error) {

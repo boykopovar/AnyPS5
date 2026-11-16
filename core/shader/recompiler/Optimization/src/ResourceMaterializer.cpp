@@ -1542,7 +1542,7 @@ private:
         memos.resize(kept);
     }
 
-    ImageTableColumnSnapshot CopyRecords(const ColumnRecords& records) {
+    ImageTableColumnSnapshot CopyRecords(const ColumnRecords& records, bool sharedMode) {
         ImageTableColumnSnapshot out;
         out.base = records.base;
         out.size = records.size;
@@ -1551,7 +1551,7 @@ private:
         out.fault = records.fault;
         out.outside = records.outside;
         out.nested = records.nested;
-        out.sharedMode = column.laneKey && column.implicitDerivatives;
+        out.sharedMode = sharedMode;
         if (!records.pointers.empty()) out.pointers = SharedValues<std::uint64_t>(records.pointers);
         out.codes = records.contents.codes;
         out.words = records.contents.words;
@@ -1599,7 +1599,7 @@ private:
             }
             const auto index = static_cast<std::uint32_t>(tables.nested.size());
             if (!child.sealed) Seal(child);
-            tables.nested.push_back(CopyRecords(child));
+            tables.nested.push_back(CopyRecords(child, false));
             children.emplace(value.dwords, index);
             records.words[key] = index;
         }
@@ -1609,7 +1609,7 @@ private:
         const auto& column = *plan.descriptorSources.at(source).tableColumn;
         const auto& records = Column(source);
         auto& out = tables.tables.at(table);
-        out = CopyRecords(records);
+        out = CopyRecords(records, column.laneKey && column.implicitDerivatives);
         for (std::uint32_t resource = 0; resource < plan.info.images.size(); ++resource) {
             const auto& image = plan.info.images[resource];
             if (image.table != table || !registeredSampledArrayCandidate(image) || runtime.normalizeImageView == nullptr) continue;
