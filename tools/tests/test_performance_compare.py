@@ -672,6 +672,12 @@ class CompareHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'duplicate JSON field'):
             performance_compare.unique_json_object([('a', 1), ('a', 2)])
 
+    def test_cell_escapes_table_characters_and_line_breaks(self):
+        self.assertEqual(performance_compare.cell('a|b'), 'a&#124;b')
+        self.assertEqual(performance_compare.cell('<x> & y'), '&lt;x&gt; &amp; y')
+        self.assertEqual(performance_compare.cell('x\ny'), 'x y')
+        self.assertEqual(performance_compare.cell(1.5), '1.5')
+
 
 if __name__ == "__main__":
     unittest.main()
