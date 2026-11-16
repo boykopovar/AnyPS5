@@ -8,7 +8,7 @@ HANDLE exitReceipt = INVALID_HANDLE_VALUE;
 }
 
 extern "C" bool CaptureTracePrepareProcessExit() {
-    const wchar_t* path = _wgetenv(L"APS5_CAPTURE_TRACE_EXIT_RECEIPT");
+    const wchar_t* path = _wgetenv(L"CAPTURE_TRACE_TEST_EXIT_RECEIPT");
     if (path == nullptr || path[0] == L'\0') return false;
     exitReceipt = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     return exitReceipt != INVALID_HANDLE_VALUE;
