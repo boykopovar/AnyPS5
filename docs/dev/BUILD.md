@@ -191,6 +191,8 @@ python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
 
+`tools/compile_database_inventory.py` reads a saved compilation database and prints JSON that groups its records by source directory and file, with the number of variants of each file. It does not invoke a compiler or a build tool.
+
 ## Repeated Vulkan validation
 
 `tools/vulkan_validation_gate.py` builds two pinned clean source worktrees into a new output directory and alternates the same focused CTests between them. Linux and Windows hardware runs establish GPU behaviour; macOS synthetic tool tests do not establish native Linux/Windows or GPU correctness. Use native Windows Python or a POSIX host; Cygwin and MSYS Python are rejected because they cannot contain native Windows processes. Each configure, build and CTest command runs in its own process group on POSIX and in its own close-terminated job object on Windows, under a close-terminated guard job on the gate process itself so killing the gate also terminates active children and descendants. On Windows the command starts suspended until it has joined its job, waits in short slices so `Ctrl+C` interrupts promptly, and drains the job for up to 10 seconds on completion, timeout or interruption, failing the run with exit code 2 if any process in the job survives termination after normal command exit.
