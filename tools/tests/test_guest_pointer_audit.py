@@ -206,5 +206,11 @@ class CommandLineTests(unittest.TestCase):
                 self.assertIn("not a library under core/libs/prx:", errors.getvalue())
 
 
+    def test_split_top_level_ignores_commas_inside_brackets(self):
+        parts = guest_pointer_audit.split_top_level("a, f(b, c), [d, e]")
+        self.assertEqual([text for _, text in parts], ["a", " f(b, c)", " [d, e]"])
+        self.assertEqual(parts[0][0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
