@@ -25,12 +25,6 @@ void Require(bool value, const char* what) {
 
 int main() {
     VideoOutTestEnvironment environment;
-    KernelEqueue queue = 0;
-    Require(sceKernelCreateEqueue(&queue, "display position test") == 0, "event queue creation failed");
-    Require(sceVideoOutAddDisplayPositionEvent(queue, -1, nullptr) == InvalidHandle, "a display-position event was added on an unknown handle");
-    Require(sceVideoOutAddDisplayPositionEvent(0, -1, nullptr) == InvalidHandle, "the queue was checked before the handle on add");
-    Require(sceVideoOutDeleteDisplayPositionEvent(0, -1) == InvalidHandle, "the queue was checked before the handle on delete");
-
     int handle = 0;
     try {
         handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
@@ -40,6 +34,12 @@ int main() {
         return 77;
     }
     Require(handle > 0, "sceVideoOutOpen failed");
+
+    KernelEqueue queue = 0;
+    Require(sceKernelCreateEqueue(&queue, "display position test") == 0, "event queue creation failed");
+    Require(sceVideoOutAddDisplayPositionEvent(queue, -1, nullptr) == InvalidHandle, "a display-position event was added on an unknown handle");
+    Require(sceVideoOutAddDisplayPositionEvent(0, -1, nullptr) == InvalidHandle, "the queue was checked before the handle on add");
+    Require(sceVideoOutDeleteDisplayPositionEvent(0, -1) == InvalidHandle, "the queue was checked before the handle on delete");
 
     Require(sceVideoOutAddDisplayPositionEvent(queue, handle + 1, nullptr) == InvalidHandle, "a display-position event was added on a port that is not open");
     Require(sceVideoOutDeleteDisplayPositionEvent(queue, handle + 1) == InvalidHandle, "a display-position event was deleted on a port that is not open");
