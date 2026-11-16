@@ -1193,5 +1193,12 @@ class CheckCompileLauncherTests(unittest.TestCase):
                     check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
 
+    def test_validate_arguments_requires_a_nonempty_string_list(self):
+        check_compile.validate_arguments(["cc", "-c", "a.cpp"])
+        for bad in ([], ["", "x"], "cc -c a.cpp", [1, "x"]):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                check_compile.validate_arguments(bad)
+
+
 if __name__ == "__main__":
     unittest.main()
