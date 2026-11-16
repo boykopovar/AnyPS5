@@ -72,7 +72,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address, const
         if (pipeline.Busy() && pipeline.Overlaps(first, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture, 0x100, "shader_code");
     };
     static std::mutex cacheMutex;
-    static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
+    static auto& cache = *new std::list<std::shared_ptr<const ShaderSnapshot>>;
     static std::size_t cacheBytes = 0;
     std::shared_ptr<const ShaderSnapshot> cached = retained != nullptr && retained->codeAddress == address && retained->header.empty() && !retained->code.empty() ? retained : nullptr;
     if (cached == nullptr) {
@@ -158,7 +158,7 @@ std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shad
 namespace {
 std::atomic<bool> rawGraphicsDrawn{false};
 std::mutex rawGraphicsMutex;
-std::map<std::uint64_t, std::uint64_t> rawGraphicsRanges;
+std::map<std::uint64_t, std::uint64_t>& rawGraphicsRanges = *new std::map<std::uint64_t, std::uint64_t>;
 }
 
 void NoteRawGraphicsDraw(const ShaderSnapshot& snapshot) {

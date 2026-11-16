@@ -197,9 +197,9 @@ void Driver::fillClearCount(const Graphics::StorageTexture::FillCoverage& covera
     static constexpr std::array<const char*, 8> names{"none", "exact", "inside", "around", "straddle", "several", "keys", "layer"};
     static AgcDriver::Mutex countsMutex;
     static std::array<std::uint64_t, 8> counts{}, coverBytes{};
-    static std::map<std::uint32_t, std::uint64_t> coveredFormats;
-    static std::map<std::string, std::uint64_t> refusals;
-    static std::map<std::uint32_t, std::uint64_t> keyCodes;
+    static auto& coveredFormats = *new std::map<std::uint32_t, std::uint64_t>;
+    static auto& refusals = *new std::map<std::string, std::uint64_t>;
+    static auto& keyCodes = *new std::map<std::uint32_t, std::uint64_t>;
     static std::uint64_t clears = 0, clearedBytes = 0, layerClears = 0, withOthers = 0, othersInside = 0, discards = 0;
     static auto lastReport = std::chrono::steady_clock::now();
     std::lock_guard lock(countsMutex);
