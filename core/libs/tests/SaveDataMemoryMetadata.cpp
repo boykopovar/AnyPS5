@@ -185,6 +185,20 @@ int main() {
     Require(sceSaveDataSetSaveDataMemory2(&badParamWithDataSet) == static_cast<int>(0x809F0000u));
     Require(errno == 76);
     Require(Read(memoryPath) == memoryOriginal);
+    std::array<char, 20> excessiveBuf{};
+    std::array<SaveDataMemoryData, 2> excessiveData{{
+        {excessiveBuf.data(), excessiveBuf.size(), 0},
+        {excessiveBuf.data(), excessiveBuf.size(), 0}
+    }};
+    SaveDataMemorySet2 excessiveSet{};
+    excessiveSet.user_id = 7531;
+    excessiveSet.slot_id = 0;
+    excessiveSet.data_num = 2;
+    excessiveSet.data = excessiveData.data();
+    errno = 77;
+    Require(sceSaveDataSetSaveDataMemory2(&excessiveSet) == static_cast<int>(0x809F0000u));
+    Require(errno == 77);
+    Require(Read(memoryPath) == memoryOriginal);
     const auto original = Read(path);
     Require(original.size() == sizeof(param));
     param.user_param = 42;
