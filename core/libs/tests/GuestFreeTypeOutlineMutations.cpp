@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 using namespace FreeType;
@@ -141,6 +143,73 @@ static void RenderModifiedOutline() {
     Require(FT_Done_FreeType(library.host) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
 }
 
+static void CheckGuestPointers() {
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && errno == 71);
+    };
+
+    auto* badOutline = reinterpret_cast<GuestOutline*>(std::uintptr_t{0x10});
+    auto* badPoints = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+    auto* badTags = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    auto* badContours = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+    auto* badBox = reinterpret_cast<GuestBBox*>(std::uintptr_t{0x10});
+    static const GuestBBox readOnlyBox{1, 2, 3, 4};
+    static const std::array<GuestVector, 3> readOnlyPoints{{{5, 6}, {7, 8}, {9, 10}}};
+    static const std::array<unsigned char, 3> readOnlyTags{4, 5, 6};
+    GuestBBox box{11, 12, 13, 14};
+
+    rejectsRuntime([&] { FT_Outline_Check_nid_postfix(badOutline); });
+    rejectsRuntime([&] { FT_Outline_Get_CBox_nid_postfix(badOutline, &box); });
+    rejectsRuntime([&] { FT_Outline_Translate_nid_postfix(badOutline, 1, 2); });
+    rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(badOutline); });
+    FT_Outline_Get_CBox_nid_postfix(badOutline, nullptr);
+    Require(box.xMin == 11 && box.yMin == 12 && box.xMax == 13 && box.yMax == 14);
+
+    GuestOutline empty{1, 0, badPoints, badTags, badContours, 0};
+    Require(FT_Outline_Check_nid_postfix(&empty) == FT_Err_Invalid_Outline);
+    GuestOutline unreadable{1, 3, badPoints, badTags, badContours, 0x40};
+    rejectsRuntime([&] { FT_Outline_Check_nid_postfix(&unreadable); });
+    rejectsRuntime([&] { FT_Outline_Get_CBox_nid_postfix(&unreadable, &box); });
+    rejectsRuntime([&] { FT_Outline_Translate_nid_postfix(&unreadable, 1, 2); });
+    rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(&unreadable); });
+    Require(box.xMin == 11 && box.yMin == 12 && box.xMax == 13 && box.yMax == 14);
+
+    std::array<std::uint16_t, 1> contours{2};
+    std::array<unsigned char, 3> tags{1, 2, 3};
+    std::array<GuestVector, 3> points{{{-1, 4}, {6, -3}, {2, 9}}};
+    GuestOutline badArrays{1, 3, badPoints, tags.data(), contours.data(), 0x40};
+    rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(&badArrays); });
+    badArrays.points = points.data();
+    badArrays.tags = badTags;
+    rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(&badArrays); });
+    Require(badArrays.flags == 0x40 && tags == (std::array<unsigned char, 3>{1, 2, 3}));
+    Require(Equal(points[0], {-1, 4}) && Equal(points[1], {6, -3}) && Equal(points[2], {2, 9}));
+
+    GuestOutline valid{1, 3, points.data(), tags.data(), contours.data(), 0x40};
+    rejectsRuntime([&] { FT_Outline_Get_CBox_nid_postfix(&valid, badBox); });
+    rejectsRuntime([&] { FT_Outline_Get_CBox_nid_postfix(&valid, const_cast<GuestBBox*>(&readOnlyBox)); });
+    Require(readOnlyBox.xMin == 1 && readOnlyBox.yMin == 2 && readOnlyBox.xMax == 3 && readOnlyBox.yMax == 4);
+    FT_Outline_Get_CBox_nid_postfix(&valid, &box);
+    Require(box.xMin == -1 && box.yMin == -3 && box.xMax == 6 && box.yMax == 9);
+
+    GuestOutline readOnly{1, 3, const_cast<GuestVector*>(readOnlyPoints.data()), tags.data(), contours.data(), 0x40};
+    rejectsRuntime([&] { FT_Outline_Translate_nid_postfix(&readOnly, 1, 2); });
+    rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(&readOnly); });
+    Require(Equal(readOnlyPoints[0], {5, 6}) && Equal(readOnlyPoints[1], {7, 8}) && Equal(readOnlyPoints[2], {9, 10}));
+
+    GuestOutline readOnlyTagOutline{1, 3, points.data(), const_cast<unsigned char*>(readOnlyTags.data()), contours.data(), 0x40};
+    rejectsRuntime([&] { FT_Outline_Reverse_nid_postfix(&readOnlyTagOutline); });
+    Require(readOnlyTagOutline.flags == 0x40 && readOnlyTags == (std::array<unsigned char, 3>{4, 5, 6}));
+    Require(Equal(points[0], {-1, 4}) && Equal(points[1], {6, -3}) && Equal(points[2], {2, 9}));
+}
+
 int main() {
     FT_Outline_Reverse_nid_postfix(nullptr);
     FT_Outline_Translate_nid_postfix(nullptr, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max());
@@ -167,4 +236,5 @@ int main() {
     TranslateOracle(65535, 99, -17);
     WideTranslation();
     RenderModifiedOutline();
+    CheckGuestPointers();
 }
