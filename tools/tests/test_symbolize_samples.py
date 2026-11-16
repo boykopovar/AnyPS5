@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import errno
 import io
@@ -1523,6 +1524,13 @@ class MappedExportTests(unittest.TestCase):
         self.data[0xAFE:0xB08] = b"ab_beyond\0"
         with self.assertRaisesRegex(ValueError, "address space"):
             self.module()
+
+
+class WindowHelperTests(unittest.TestCase):
+    def test_subtract_keeps_only_positive_differences(self):
+        later = collections.Counter({"a": 3, "b": 1})
+        earlier = collections.Counter({"a": 1, "b": 1, "c": 2})
+        self.assertEqual(symbolize_samples.subtract(later, earlier), collections.Counter({"a": 2}))
 
 
 if __name__ == "__main__":
