@@ -868,5 +868,15 @@ class LabelledTests(unittest.TestCase):
         self.assertEqual(progress_history.labelled(datetime.date(2026, 1, 12), 200), "")
 
 
+class ShaderCountsTests(unittest.TestCase):
+    def test_shader_counts_follow_the_point_metric(self):
+        import progress_history
+        point = {"shaders": 3, "shader_metric": "decoded", "gfx1013": 7}
+        self.assertEqual(progress_history.shader_metric({}), "decoded")
+        self.assertEqual(progress_history.shader_counts(point, "decoded"), 3)
+        self.assertIsNone(progress_history.shader_counts(point, "other"))
+        self.assertEqual(progress_history.shader_counts(point, "gfx1013"), 7)
+
+
 if __name__ == "__main__":
     unittest.main()
