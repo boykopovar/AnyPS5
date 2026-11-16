@@ -1822,6 +1822,7 @@ std::size_t APS5_VABI _ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPK
 std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9];
+extern std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9];
 std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self);
 char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self);
