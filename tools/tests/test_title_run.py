@@ -963,5 +963,17 @@ class RunReportTests(unittest.TestCase):
         self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
 
 
+class ModuleFileTests(unittest.TestCase):
+    def test_is_module_recognises_the_elf_magic_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / 'm.prx'
+            module.write_bytes(b'\x7fELF' + b'0' * 20)
+            text = root / 't.txt'
+            text.write_text('hello', encoding='utf-8')
+            self.assertTrue(title_run.is_module(module))
+            self.assertFalse(title_run.is_module(text))
+
+
 if __name__ == "__main__":
     unittest.main()
