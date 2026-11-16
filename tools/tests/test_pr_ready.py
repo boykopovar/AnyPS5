@@ -380,6 +380,17 @@ class LatestCheckTests(unittest.TestCase):
     def test_latest_checks_keeps_the_newest_run_and_drops_bot_checks(self):
         checks = [{'name': 'a', 'id': 1}, {'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}, {'name': 'labels', 'id': 9}]
         self.assertEqual(pr_ready.latest_checks(checks), [{'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}])
+class LabelApplyTests(unittest.TestCase):
+    def test_apply_dry_run_reports_queue_label_changes_without_writing(self):
+        import contextlib, io
+        prs = [{'number': 1, 'labels': []}, {'number': 2, 'labels': [pr_ready.QUEUE_LABEL]}]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pr_ready.apply('owner/repo', prs, [{'number': 1}], True, closed=(3,))
+        text = out.getvalue()
+        self.assertIn(f'would change #1: +{pr_ready.QUEUE_LABEL}', text)
+        self.assertIn(f'would change #2: -{pr_ready.QUEUE_LABEL}', text)
+        self.assertIn(f'would change #3: -{pr_ready.QUEUE_LABEL}', text)
 
 
 if __name__ == "__main__":
