@@ -839,5 +839,19 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(gate.identity(root, head), {"source": str(root), "commit": head})
 
 
+
+class CacheTests(unittest.TestCase):
+    def test_cache_values_reads_typed_entries_and_skips_comments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "CMakeCache.txt").write_text(
+                "\ufeff# comment: ignored\n"
+                "CMAKE_BUILD_TYPE:STRING=Release\n"
+                "ANYPS5_GPU:BOOL=ON\n"
+                "//doc:STRING=skipped\n", encoding="utf-8")
+            self.assertEqual(gate.cache_values(build),
+                             {"CMAKE_BUILD_TYPE": "Release", "ANYPS5_GPU": "ON"})
+
+
 if __name__ == "__main__":
     unittest.main()
