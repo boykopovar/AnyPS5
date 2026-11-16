@@ -6,6 +6,7 @@
 #include <chrono>
 #include <limits>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
 namespace PosixThread {
@@ -26,8 +27,11 @@ inline int ToSce(int error) {
 }
 
 // Converts an absolute deadline on the guest clock into a relative wait, clamped to what the sce layer accepts.
-inline bool RelativeMicroseconds(int clockId, const KernelTimespec* abstime, KernelUseconds* usec) {
-    if (!abstime || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return false;
+inline bool RelativeMicroseconds(int clockId, const KernelTimespec* guestDeadline, KernelUseconds* usec) {
+    KernelTimespec deadline{};
+    if (!guestDeadline || !GuestCopyIn_nid_no_patch(&deadline, guestDeadline, sizeof(deadline))) return false;
+    const KernelTimespec* const abstime = &deadline;
+    if (abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return false;
     KernelTimespec now{};
     clock_gettime_nid_postfix(clockId, &now);
 
