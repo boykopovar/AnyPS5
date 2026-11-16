@@ -2470,8 +2470,6 @@ int APS5_VABI _ZN7WebCore16TrackPrivateBasedaEPv();
 int APS5_VABI _ZN7WebCore16TrackPrivateBasedlEPv();
 int APS5_VABI _ZN7WebCore16TrackPrivateBasenaEm();
 int APS5_VABI _ZN7WebCore16TrackPrivateBasenwEm();
-int APS5_VABI _ZN7WebCore16UserGestureTokenD1Ev();
-int APS5_VABI _ZN7WebCore16UserGestureTokenD2Ev();
 int APS5_VABI _ZN7WebCore16VisibleSelection20adjustPositionForEndERKNS_8PositionEPNS_4NodeE();
 int APS5_VABI _ZN7WebCore16VisibleSelection22adjustPositionForStartERKNS_8PositionEPNS_4NodeE();
 int APS5_VABI _ZN7WebCore16VisibleSelection22expandUsingGranularityENS_15TextGranularityE();
@@ -2922,8 +2920,6 @@ int APS5_VABI _ZN7WebCore20ResourceResponseBaseC2ERKN3WTF3URLERKNS1_6StringExS7_
 int APS5_VABI _ZN7WebCore20ResourceResponseBaseC2Ev();
 int APS5_VABI _ZN7WebCore20ScrollingCoordinator13pageDestroyedEv();
 int APS5_VABI _ZN7WebCore20ScrollingCoordinator45setForceSynchronousScrollLayerPositionUpdatesEb();
-int APS5_VABI _ZN7WebCore20UserGestureIndicatorD1Ev();
-int APS5_VABI _ZN7WebCore20UserGestureIndicatorD2Ev();
 int APS5_VABI _ZN7WebCore20endOfEditableContentERKNS_15VisiblePositionE();
 int APS5_VABI _ZN7WebCore20findClosestPlainTextERKNS_11SimpleRangeERKN3WTF6StringENS3_9OptionSetINS_14FindOptionFlagEEEm();
 int APS5_VABI _ZN7WebCore20lastOffsetForEditingERKNS_4NodeE();
