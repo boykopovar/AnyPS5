@@ -145,7 +145,7 @@ void ApplyRangeName(uintptr_t address, VirtualQueryInfo* info) {
 
 void ReleaseClaimedDirectMemory(int64_t start, size_t len) {
  try {
-  UnmapDirectMemoryViews(DirectMemoryViews(start, len));
+  UnmapDirectMemoryRange(start, len);
  } catch (...) {
   DirectMemoryAbandonRelease(start, len);
   throw;

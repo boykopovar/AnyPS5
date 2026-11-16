@@ -3,6 +3,8 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 
 #include <libusb.h>
 
@@ -115,7 +117,7 @@ void DropDeviceReference(UsbdState& state, libusb_device* device) {
 
 struct UsbdEvents {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     std::atomic<std::thread::id> owner{};
     std::atomic<std::thread::id> handler{};
     std::atomic<std::uint64_t> completions{0};
@@ -156,7 +158,7 @@ void UnlockEventsAndRelease(UsbdEvents& events, const char* function) {
     RequireEventLock(events, function);
     if (events.handler.load() == std::this_thread::get_id()) {
         events.handler.store(std::thread::id{});
-        events.changed.notify_all();
+        events.changed.NotifyAll();
     }
     ReleaseEvents(events, function);
 }
@@ -167,10 +169,10 @@ int WaitForChange(UsbdEvents& events, const UsbdTimeval* timeout) {
     events.owner.store(std::thread::id{});
     bool timedOut = false;
     if (timeout == nullptr) {
-        events.changed.wait(guard);
+        events.changed.Wait(guard);
     } else {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout->seconds) + std::chrono::microseconds(timeout->microseconds);
-        timedOut = events.changed.wait_until(guard, deadline) == std::cv_status::timeout;
+        const auto micros = static_cast<std::uint64_t>(timeout->seconds) * 1000000ULL + static_cast<std::uint64_t>(timeout->microseconds);
+        timedOut = !events.changed.WaitUntil(guard, TimedWait::DeadlineNanos(micros));
     }
     guard.release();
     events.owner.store(self);
@@ -188,7 +190,8 @@ int HandleAsHandler(UsbdEvents& events, const UsbdTimeval* timeout) {
     libusb_context* context = CurrentContext();
     int result = 0;
     if (timeout != nullptr && context == nullptr) {
-        std::this_thread::sleep_for(std::chrono::seconds(timeout->seconds) + std::chrono::microseconds(timeout->microseconds));
+        const auto micros = static_cast<unsigned long long>(timeout->seconds) * 1000000ULL + static_cast<unsigned long long>(timeout->microseconds);
+        PreciseSleepUs(micros);
     } else if (timeout != nullptr) {
         timeval host{};
         host.tv_sec = static_cast<decltype(host.tv_sec)>(timeout->seconds);
@@ -207,7 +210,7 @@ int HandleAsHandler(UsbdEvents& events, const UsbdTimeval* timeout) {
     }
     events.lock.lock();
     events.owner.store(self);
-    events.changed.notify_all();
+    events.changed.NotifyAll();
     return result;
 }
 
