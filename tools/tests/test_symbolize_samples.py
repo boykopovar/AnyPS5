@@ -1540,6 +1540,15 @@ class WindowHelperTests(unittest.TestCase):
         self.assertEqual(self_counts, collections.Counter({"WORK": 3, "IDLE": 1}))
         self.assertEqual(inclusive, collections.Counter({"MAIN": 4, "WORK": 3, "IDLE": 1}))
 
+    def test_summarize_lists_the_hottest_self_symbol_with_its_share(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        lines = symbolize_samples.summarize(FakeSymbolizer(), samples, top=1)
+        self.assertEqual(lines[0], "4 samples")
+        self.assertIn("hottest by self:", lines)
+        self.assertTrue(any("75.0%" in line and "WORK" in line for line in lines))
+        self.assertFalse(any("IDLE" in line for line in lines))
+
 
 if __name__ == "__main__":
     unittest.main()
