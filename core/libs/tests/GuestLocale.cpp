@@ -22,6 +22,7 @@ extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
@@ -568,7 +569,13 @@ static void CheckFacetGetcat() {
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 11;
     Require(_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 11);
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut}) {
+    GuestLocale::Facet* wideTimePut = nullptr;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&wideTimePut, &locale) == 5 && wideTimePut != nullptr);
+    Require(sizeof(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix) == 8 && _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 0);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 11;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 11);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
+    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut, wideTimePut}) {
         facet->vtable->retain(facet);
         facet->vtable->retain(facet);
         Require(facet->references == 2);

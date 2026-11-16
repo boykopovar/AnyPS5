@@ -554,6 +554,12 @@ GuestLocale::OutputIterator APS5_VABI NumPutPointer(const GuestLocale::Facet*, G
 const GuestLocale::NumPutVtable g_numPutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, NumPutBool, NumPutLong, NumPutUnsignedLong, NumPutLongLong, NumPutUnsignedLongLong, NumPutDouble, NumPutLongDouble, NumPutPointer};
 const GuestLocale::TimePutVtable g_timePutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, TimePutDoPut};
 
+GuestLocale::OutputIterator APS5_VABI WideTimePutDoPut(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier) {
+    return LibcWideTimePutDoPut_nid_no_patch(self, out, stream, fill, time, format, modifier);
+}
+
+const GuestLocale::WideTimePutVtable g_wideTimePutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideTimePutDoPut};
+
 constexpr std::size_t GuestTimePutFacetSize = 0xb8;
 
 constexpr std::array<short, 257> MakeClassificationTable() {
@@ -763,6 +769,7 @@ std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots] {};
 std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots] {};
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
@@ -1341,6 +1348,16 @@ std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIc
         auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(GuestTimePutFacetSize));
         std::memset(object, 0, GuestTimePutFacetSize);
         object->vtable = &g_timePutVtable.facet;
+        *facet = object;
+    }
+    return 5;
+}
+
+std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    if (facet != nullptr && *facet == nullptr) {
+        if (locale == nullptr) NotImplemented_nid_no_patch(__func__);
+        auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        *object = {&g_wideTimePutVtable.facet, 0, 0};
         *facet = object;
     }
     return 5;

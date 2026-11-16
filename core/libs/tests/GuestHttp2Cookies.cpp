@@ -49,6 +49,10 @@ static void CheckUnmappedOutputs(int box) {
     Require(sceHttp2GetCookie(box, url, badCookie, &required, 1) == InvalidValue);
     Require(sceHttp2GetCookie(box, url, badCookie, &required, sizeof(header)) == InvalidValue);
     Require(sceHttp2GetCookie(box, url, header, badSize, sizeof(header)) == InvalidValue);
+    const char* const badText = reinterpret_cast<const char*>(0x10);
+    Require(sceHttp2GetCookie(box, badText, header, &required, sizeof(header)) == InvalidValue);
+    Require(sceHttp2AddCookie(box, badText, "a=b", 3) == InvalidValue);
+    Require(sceHttp2AddCookie(box, url, badText, 3) == InvalidValue);
     Require(errno == 71);
 }
 

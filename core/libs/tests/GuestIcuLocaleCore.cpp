@@ -111,6 +111,32 @@ int main() {
     CheckKeyword("en_US", "currency", "");
     CheckKeyword("en@currency=USD;badstuff", "calendar", "", 1);
     CheckKeyword("en@currency=", "currency", "", 1);
+    CheckKeyword("en@ currency = USD ", "currency", "USD");
+    CheckKeyword("en@currency=USD; calendar = buddhist ", "calendar", "buddhist");
+    CheckKeyword("en@currency=a+b/c_d-e", "currency", "a+b/c_d-e");
+    CheckKeyword("en@cur.rency=USD;calendar=buddhist", "calendar", "", 1);
+    CheckKeyword("en@badstuff;currency=USD", "currency", "", 1);
+    CheckKeyword("en@currency=USD", "cur-rency", "", 1);
+    CheckKeyword("en_US@currency=USD", "cur rency", "", 1);
+    CheckKeyword("en@currency= ", "currency", "", 1);
+    CheckKeyword("en@currency=USD;", "calendar", "", 1);
+    CheckKeyword("en@", "currency", "", 1);
+    CheckKeyword("en@currency=.US", "currency", "", 1);
+    CheckKeyword("en@currency= .S", "currency", "", 1);
+    CheckKeyword("en-x-foo", "x", "foo");
+    CheckKeyword("EN-X-FOO", "X", "foo");
+    CheckKeyword("de-DE-1901-x-ab", "x", "ab");
+    CheckKeyword("en-a-bbb-x-foo-bar", "a", "bbb");
+    CheckKeyword("en-a-bbb-x-foo-bar", "x", "foo-bar");
+    CheckKeyword("und-x-priv", "x", "priv");
+    CheckKeyword("en-u-attr2-attr1", "attribute", "attr1-attr2");
+    CheckKeyword("en-x-foo", "calendar", "");
+    CheckKeyword("C", "currency", "");
+    CheckKeyword("en-x", "x", "");
+    CheckKeyword("en_x_foo", "x", "");
+    CheckKeyword("en-u-ca-buddhist", "cur-rency", "", 1);
+    CheckKeyword("en-u-abcdefg1-abcdefg2-abcdefg3-abcdefg4-abcdefg5-abcdefg6-abcdefg7-abcdefg8-abcdefg9-abcdefga-abcdefgb-abcdefgc",
+                 "attribute", "", 1);
 
     std::array<char, 16> output{};
     output.fill('Q');
@@ -129,6 +155,17 @@ int main() {
         assert(function(nullptr, output.data(), 16, &status) == 0);
         assert(status == 15 && output[0] == 'Q');
     }
+    status = 0;
+    bool keywordThrown = false;
+    try {
+        uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status);
+    } catch (const std::runtime_error&) {
+        keywordThrown = true;
+    }
+    assert(keywordThrown && status == 0 && output[0] == 'Q');
+    status = 15;
+    assert(uloc_getKeywordValue("en-u-ca-buddhist", "calendar", output.data(), 16, &status) == 0);
+    assert(status == 15 && output[0] == 'Q');
     status = 0;
     assert(uloc_getScript("sr_Latn", nullptr, 8, &status) == 0);
     assert(status == 1);
