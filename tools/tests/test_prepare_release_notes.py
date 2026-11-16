@@ -17,6 +17,13 @@ class PrepareReleaseNotesTests(unittest.TestCase):
         self.assertNotIn("What's Changed", prepare_release_notes.release_body(long))
         self.assertIn("**Full Changelog**: x", prepare_release_notes.release_body(long))
 
+    def test_prepare_notes_rejects_aliased_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.json"
+            source.write_text(json.dumps({"body": "x"}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                prepare_release_notes.prepare_notes(source, source, Path(directory) / "full.md")
+
 
 if __name__ == "__main__":
     unittest.main()
