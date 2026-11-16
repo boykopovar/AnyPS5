@@ -54,12 +54,13 @@ public:
     StderrCapture(const StderrCapture&) = delete;
     StderrCapture& operator=(const StderrCapture&) = delete;
 
-    std::string ReadReport() const {
+    std::string ReadReport(std::size_t occurrence = 0) const {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         do {
             std::ifstream file(path, std::ios::binary);
             const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-            const auto begin = text.find("[draw] pipelined ");
+            auto begin = text.find("[draw] pipelined ");
+            for (std::size_t skipped = 0; skipped < occurrence && begin != std::string::npos; ++skipped) begin = text.find("[draw] pipelined ", begin + 1);
             if (begin != std::string::npos) {
                 const auto end = text.find('\n', begin);
                 if (end != std::string::npos) return text.substr(begin, end - begin);
@@ -87,6 +88,7 @@ void TestReport() {
     const auto reportAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(10100);
     StderrCapture capture;
     std::binary_semaphore release{0};
+    bool released = false;
     std::exception_ptr failure;
     try {
         pipeline.Enqueue([&] { release.acquire(); }, {}, 0, {}, {{0x1000, 0x1010}, {0x2000, 0x2010}}, true);
@@ -94,10 +96,14 @@ void TestReport() {
         for (unsigned i = 0; i < 3; ++i) pipeline.NoteDecodeDrain();
         std::this_thread::sleep_until(reportAfter);
         pipeline.Enqueue([] {}, {}, 0, {}, {}, true);
+        release.release();
+        released = true;
+        std::this_thread::sleep_until(reportAfter + std::chrono::milliseconds(10100));
+        pipeline.Enqueue([] {}, {}, 0, {}, {}, true);
     } catch (...) {
         failure = std::current_exception();
     }
-    release.release();
+    if (!released) release.release();
     pipeline.Stop();
     if (failure) std::rethrow_exception(failure);
     const auto report = capture.ReadReport();
@@ -108,6 +114,9 @@ void TestReport() {
     Check(Count(report, " decode drains") == 1, "pipeline decode-drain counters were printed more than once");
     Check(report.find("; drains:") != std::string::npos, "pipeline drain counters were lost");
     Check(report.find("packet drains by opcode:") != std::string::npos, "pipeline opcode counters were lost");
+    const auto second = capture.ReadReport(1);
+    std::cout << second << '\n';
+    Check(second.find(" 0 read ranges, 0 stores held, 0 decode drains") != std::string::npos, "a later report repeated the read ranges of an earlier one");
 }
 
 }
