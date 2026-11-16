@@ -646,6 +646,7 @@ private:
         bool sourceEligible = false;
         bool depthCompare = false;
         bool sourceRefreshed = false;
+        const StorageTexture* alias = nullptr;
     };
     // `serialBefore` is StorageTexture::PendingSerial() loaded before any check of this Revalidate;
     // `refreshed` the surfaces refreshOwnObjects resolved earlier in the same Revalidate (empty on

@@ -5924,6 +5924,10 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
     return containing != nullptr ? containing->weak_from_this().lock() : nullptr;
 }
 
+bool StorageTexture::IsPendingAlias(const StorageTexture& pending) const {
+    return &pending != this && pendingAlias().get() == &pending;
+}
+
 VkDevice StorageTexture::Device() const {
     return context.device;
 }
