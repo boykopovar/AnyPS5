@@ -74,6 +74,13 @@ static void CheckDatagram(bool net) {
     size = 123;
     Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, &size) == sizeof(payload));
     Require(size == 123 && std::strcmp(received, payload) == 0);
+    Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, receiverAddress.data(), receiverAddress.size()) == sizeof(payload));
+    std::array<unsigned char, 16> untouched;
+    untouched.fill(0xaa);
+    std::array<unsigned char, 16> from = untouched;
+    std::memset(received, 0, sizeof(received));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, from.data(), nullptr) == sizeof(payload));
+    Require(std::strcmp(received, payload) == 0 && from == untouched);
     Require(Failed(connect_nid_postfix(sender, nullptr, receiverAddress.size()), 14));
     Require(connect_nid_postfix(sender, receiverAddress.data(), receiverAddress.size()) == 0);
     const auto sent = net ? sceNetSend(sender, payload, sizeof(payload), 0)
@@ -124,7 +131,8 @@ static void CheckArguments(bool net) {
     Require(Failed(sendto_nid_postfix(socket, "x", std::uint64_t{INT_MAX} + 1, 0, local.data(), 16), 40));
     char received[8]{};
     Require(Failed(recvfrom_nid_postfix(socket, nullptr, 1, 0, nullptr, nullptr), 14));
-    Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0, local.data(), nullptr), 14));
+    const auto bound = local;
+    Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0x80, local.data(), nullptr), 35) && local == bound);
     Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0, nullptr, reinterpret_cast<std::uint32_t*>(unreadable)), 14));
     Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0, local.data(), reinterpret_cast<std::uint32_t*>(unreadable)), 14));
     Require(Failed(recvfrom_nid_postfix(socket, received, sizeof(received), 0x1, nullptr, nullptr), 45));
