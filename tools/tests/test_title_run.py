@@ -975,6 +975,13 @@ class ReportFileTests(unittest.TestCase):
                               json.dumps({"format": "anyps5-report", "run": {"averageFps": 60}}))
             self.assertEqual(title_run.read_report(path)["averageFps"], 60)
 
+    def test_read_report_returns_none_for_other_or_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(title_run.read_report(Path(directory) / "missing.json"))
+            self.assertIsNone(title_run.read_report(self.write(directory, "a.json", '{"format": "other"}')))
+            self.assertIsNone(title_run.read_report(self.write(directory, "b.json", "{not json")))
+            self.assertIsNone(title_run.read_report(self.write(directory, "c.json", "[1]")))
+
 
 if __name__ == "__main__":
     unittest.main()
