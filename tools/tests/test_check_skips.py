@@ -658,6 +658,11 @@ class JUnitRefusalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'expected a JUnit testsuite'):
             list(check_skips.skips(self.write('<other/>')))
 
+    def test_skips_refuses_a_test_name_listed_twice(self):
+        xml = '<testsuite><testcase name="a"/><testcase name="a"/></testsuite>'
+        with self.assertRaisesRegex(ValueError, 'listed more than once'):
+            list(check_skips.skips(self.write(xml)))
+
 
 if __name__ == "__main__":
     unittest.main()
