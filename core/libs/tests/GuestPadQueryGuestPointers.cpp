@@ -15,12 +15,22 @@ static void Require(bool condition) { if (!condition) std::abort(); }
 int main() {
     auto* const unreadableDeviceId = reinterpret_cast<std::int32_t*>(0x10);
     auto* const unwritableStatus = reinterpret_cast<std::uint16_t*>(0x10);
+    auto* const unreadableLeonardoData = reinterpret_cast<const PadLeonardoData*>(0x10);
+    auto* const unwritableLeonardoUniqueData = reinterpret_cast<PadLeonardoUniqueData*>(0x10);
     std::int32_t deviceId = 7;
     std::uint16_t status = 7;
+    PadLeonardoData leonardoData{};
+    PadLeonardoUniqueData leonardoUniqueData{};
+    for (std::uint8_t& byte : leonardoUniqueData.data) byte = 0xaa;
 
     Require(scePadGetDeviceId(12345, unreadableDeviceId) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, unwritableStatus) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, &status) == PAD_ERROR_INVALID_ARG && status == 0);
+    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, &leonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, &leonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
+    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0xaa);
     Require(scePadInit_nid_postfix() == PAD_OK);
 
     errno = 71;
@@ -31,6 +41,13 @@ int main() {
     Require(errno == 71);
     status = 7;
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, &status) == PAD_ERROR_INVALID_ARG && status == 0);
+    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, &leonardoUniqueData) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0xaa);
+    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
 
 #ifdef _WIN32
     SYSTEM_INFO info{};
@@ -46,6 +63,17 @@ int main() {
     Require(scePadGetDeviceId(12345, static_cast<std::int32_t*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, static_cast<std::uint16_t*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
+    Require(scePadParseUniqueDataLeonardo(12345, static_cast<const PadLeonardoData*>(page), static_cast<PadLeonardoUniqueData*>(page)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, static_cast<PadLeonardoUniqueData*>(page)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadParseUniqueDataLeonardo(12345, static_cast<const PadLeonardoData*>(page), &leonardoUniqueData) == PAD_ERROR_INVALID_HANDLE);
+    Require(errno == 71);
+    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0);
+    for (std::uint8_t& byte : leonardoUniqueData.data) byte = 0xaa;
+    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, &leonardoUniqueData) == PAD_ERROR_INVALID_HANDLE);
+    Require(errno == 71);
+    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0);
     const int special = scePadOpen_nid_postfix(200, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special > 0);
     Require(scePadGetExtControllerInformation(special, reinterpret_cast<void*>(0x10)) == PAD_ERROR_INVALID_ARG);
