@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -24,7 +25,7 @@ constexpr std::uint32_t Checked = 8;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 47> Code{
+alignas(256) constexpr std::array<std::uint32_t, 63> Code{
     0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
     0x7e1a0280u, 0x7e1c0280u, 0x7e1e0280u, 0x7e200280u, 0x7e220280u, 0x7e240280u, 0x7e260280u, 0x7e280280u,
     0x7e2a0280u, 0x7e2c0280u, 0x7e2e0280u, 0x7e300280u, 0x7e320280u,
@@ -36,10 +37,27 @@ alignas(256) constexpr std::array<std::uint32_t, 47> Code{
     0xd70b800fu, 0x00020b04u,
     0xd70c8010u, 0x00020b04u,
     0xd7148011u, 0x00020b04u,
+    0xd7050012u, 0x00020b04u,
+    0xd7070013u, 0x00020b04u,
+    0xd7080014u, 0x00020b04u,
+    0xd7090015u, 0x00020b04u,
+    0xd70a0016u, 0x00020b04u,
+    0xd70b0017u, 0x00020b04u,
+    0xd70c0018u, 0x00020b04u,
+    0xd7140019u, 0x00020b04u,
     0xe0781000u, 0x80010a02u,
     0xe0781010u, 0x80010e02u,
     0xe0781020u, 0x80011202u,
     0xe0781030u, 0x80011602u,
+    0xbf8c3f70u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 17> AddCode{
+    0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+    0x7e140280u, 0x7e160280u, 0x7e180280u, 0x7e1a0280u,
+    0xd703800au, 0x00020b04u,
+    0xd703000bu, 0x00020b04u,
+    0xe0781000u, 0x80010a02u,
     0xbf8c3f70u, 0xbf810000u,
 };
 
@@ -135,7 +153,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -143,7 +161,6 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -158,19 +175,69 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
+void CheckModifiersReject() {
+    constexpr std::uint32_t opcodes[8] = {
+        0xd705800au, 0xd707800bu, 0xd708800cu, 0xd709800du,
+        0xd70a800eu, 0xd70b800fu, 0xd70c8010u, 0xd7148011u
+    };
+    for (const auto op : opcodes) {
+        bool threwAbs = false;
+        try {
+            const std::array<std::uint32_t, 2> words{op | (1u << 8u), 0x00020b04u};
+            ShaderRecompiler::DecodeRdnaInstruction(0u, words, 0u);
+        } catch (const std::invalid_argument&) {
+            threwAbs = true;
+        }
+        Require(threwAbs, "VOP3 B16 abs modifier must throw");
+
+        bool threwNeg = false;
+        try {
+            const std::array<std::uint32_t, 2> words{op, 0x00020b04u | (1u << 29u)};
+            ShaderRecompiler::DecodeRdnaInstruction(0u, words, 0u);
+        } catch (const std::invalid_argument&) {
+            threwNeg = true;
+        }
+        Require(threwNeg, "VOP3 B16 neg modifier must throw");
+
+        bool threwOmod = false;
+        try {
+            const std::array<std::uint32_t, 2> words{op, 0x00020b04u | (1u << 27u)};
+            ShaderRecompiler::DecodeRdnaInstruction(0u, words, 0u);
+        } catch (const std::invalid_argument&) {
+            threwOmod = true;
+        }
+        Require(threwOmod, "VOP3 B16 omod modifier must throw");
+    }
+}
+
 }
 
 int main() {
     try {
+        CheckModifiersReject();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
+        Run(*device, Code);
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
             for (std::uint32_t index = 0; index < Checked; ++index) {
-                const std::uint32_t actual = Output[tid * Results + index];
-                Require(actual == Expected[tid][index], std::string("VOP3 16-bit integer clamp: lane ") + std::to_string(tid) + " " + Names[index] + " of " + Hex(Rows[tid][0]) + " and " +
-                                                            Hex(Rows[tid][1]) + " is " + Hex(actual) + ", expected " + Hex(Expected[tid][index]));
+                const std::uint32_t actualClamp = Output[tid * Results + index];
+                const std::uint32_t actualNoClamp = Output[tid * Results + 8u + index];
+                Require(actualClamp == Expected[tid][index], std::string("VOP3 16-bit integer clamp: lane ") + std::to_string(tid) + " " + Names[index] + " of " + Hex(Rows[tid][0]) + " and " +
+                                                                Hex(Rows[tid][1]) + " is " + Hex(actualClamp) + ", expected " + Hex(Expected[tid][index]));
+                Require(actualClamp == actualNoClamp, std::string("VOP3 16-bit integer clamp mismatch against no-clamp control: lane ") + std::to_string(tid) + " " + Names[index] + " clamp is " +
+                                                          Hex(actualClamp) + ", no-clamp is " + Hex(actualNoClamp));
             }
+        }
+        Run(*device, AddCode);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            const std::uint32_t a = Rows[tid][0] & 0xffffu;
+            const std::uint32_t b = Rows[tid][1] & 0xffffu;
+            const std::uint32_t expectedClamp = std::min(a + b, 0xffffu);
+            const std::uint32_t expectedNoClamp = (a + b) & 0xffffu;
+            const std::uint32_t actualClamp = Output[tid * Results + 0u];
+            const std::uint32_t actualNoClamp = Output[tid * Results + 1u];
+            Require(actualClamp == expectedClamp, std::string("v_add_nc_u16 clamp saturation mismatch: lane ") + std::to_string(tid) + " is " + Hex(actualClamp) + ", expected " + Hex(expectedClamp));
+            Require(actualNoClamp == expectedNoClamp, std::string("v_add_nc_u16 no-clamp mismatch: lane ") + std::to_string(tid) + " is " + Hex(actualNoClamp) + ", expected " + Hex(expectedNoClamp));
         }
         std::puts("VOP3 16-bit integer clamp tests passed");
         return 0;
