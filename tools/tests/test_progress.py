@@ -1063,5 +1063,14 @@ class ProgressConstantReturnTests(unittest.TestCase):
         self.assertEqual(group["inert_names"], ["Discarded"])
 
 
+class InertStatementTests(unittest.TestCase):
+    def test_inert_statement_accepts_constant_and_bare_returns(self):
+        self.assertTrue(progress.inert_statement('return;', set(), set()))
+        self.assertTrue(progress.inert_statement('return x;', set(), set()))
+
+    def test_inert_statement_refuses_returning_a_parameter(self):
+        self.assertFalse(progress.inert_statement('return x;', set(), {'x'}))
+
+
 if __name__ == "__main__":
     unittest.main()
