@@ -246,15 +246,19 @@ int APS5_VABI sceFontGetFontGlyphsOutlineProfile(FontHandle fontHandle, FontOutl
     std::uint32_t fontLock = 0;
     int rc = SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     if (font && font->magic == HANDLE_MAGIC) {
-        if (!profile) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (!profile || !Font::CopyOutGuest(profile, FontOutlineProfile{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
         if (font->open_info.fontset_record) NotImplemented_nid_no_patch(__func__);
         if (AcquireFontLock(font, fontLock)) {
-            rc = ComputeFontGlyphsOutlineProfile(fontHandle, profile);
+            FontOutlineProfile localProfile{};
+            rc = ComputeFontGlyphsOutlineProfile(fontHandle, &localProfile);
             ReleaseFontLock(font, fontLock);
-            if (rc == SCE_FONT_OK) return rc;
+            if (rc == SCE_FONT_OK) {
+                if (!Font::CopyOutGuest(profile, localProfile)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+                return rc;
+            }
         }
     }
-    if (profile) *profile = {};
+    if (profile) Font::CopyOutGuest(profile, FontOutlineProfile{});
     return rc;
 }
 
