@@ -503,5 +503,16 @@ class ReportTests(unittest.TestCase):
             self.assertIn("no SOP1 opcode table", err)
 
 
+class StripCommentsTests(unittest.TestCase):
+    def test_strip_comments_blanks_comments_and_keeps_strings(self):
+        source = 'int a; // gone\n/* gone too */ int b; const char* s = "// kept";\n'
+        cleaned = shader_scan.strip_comments(source)
+        self.assertIn("int a;", cleaned)
+        self.assertIn("int b;", cleaned)
+        self.assertNotIn("gone", cleaned)
+        self.assertIn('"// kept"', cleaned)
+        self.assertEqual(cleaned.count("\n"), source.count("\n"))
+
+
 if __name__ == "__main__":
     unittest.main()
