@@ -6,14 +6,20 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED = static_cast<int>(0x8178000A);
+
+}
+
 extern "C" {
 
 int APS5_VABI sceEsvmEngineAddDecoder2() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineAppAudioSyncFlush() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineGetMetrics() {
@@ -21,7 +27,7 @@ int APS5_VABI sceEsvmEngineGetMetrics() {
 }
 
 int APS5_VABI sceEsvmEngineGetVideoPlaybackQuality() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineInitializeCdm() {
@@ -45,19 +51,19 @@ int APS5_VABI sceEsvmEngineProcessAckResponse() {
 }
 
 int APS5_VABI sceEsvmEngineReleaseVideoFrame() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineSetAudiblePlaybackRate() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineSetMediaKeys() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineSyncVideo() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineDestroyMediaKeySystemAccess() {
@@ -160,31 +166,31 @@ int APS5_VABI sceEsvmEngineRequestMediaKeySystemAccess() {
 extern "C" {
 
 int APS5_VABI sceEsvmEngineAddDecoder() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineCreateContext() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineDbgOverrideMediaKeySession() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineDeleteContext() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineFlush() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineGetAudioFrame() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineGetPlaybackRate() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineGetProvisioningRequest() {
@@ -196,7 +202,7 @@ int APS5_VABI sceEsvmEngineGetServiceCertificateRequest() {
 }
 
 int APS5_VABI sceEsvmEngineGetVideoFrame() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineHandleProvisioningResponse() {
@@ -224,15 +230,15 @@ int APS5_VABI sceEsvmEngineParseAndLoadServerCertificateResponse() {
 }
 
 int APS5_VABI sceEsvmEnginePause() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEnginePlay() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEnginePushAccessUnit() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineQueryVideoMemory() {
@@ -240,11 +246,11 @@ int APS5_VABI sceEsvmEngineQueryVideoMemory() {
 }
 
 int APS5_VABI sceEsvmEngineRemoveDecoder() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineSetPlaybackRate() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceEsvmEngineSetServerCertificate2() {
@@ -256,7 +262,7 @@ int APS5_VABI sceEsvmEngineTerminate() {
 }
 
 int APS5_VABI libSceEsvmEngineUnknown_TLCfQqZ_minus_6AU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_ESVM_ENGINE_ERROR_NOT_INITIALIZED;
 }
 APS5_EXPORT("TLCfQqZ-6AU", libSceEsvmEngineUnknown_TLCfQqZ_minus_6AU_nid_no_patch);
 

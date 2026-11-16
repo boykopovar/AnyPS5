@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "unicode/utf8.h"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -223,6 +224,91 @@ void InvalidArguments() {
     Require(utf8_appendCharSafeBody_nid_postfix(nullptr, 0, INT32_MIN, -1, nullptr) == 0);
 }
 
+struct NativeChecks {
+    std::uint64_t decoding = 0;
+    std::uint64_t cursor = 0;
+};
+
+void CompareNative(const std::array<std::uint8_t, 8>& text, int length, int strict, NativeChecks& checks) {
+    constexpr int start = 2;
+    auto expectedNext = start + 1;
+    auto actualNext = expectedNext;
+    const auto expectedForward = utf8_nextCharSafeBody(text.data(), &expectedNext, start + length, text[start], static_cast<std::int8_t>(strict));
+    const auto actualForward = utf8_nextCharSafeBody_nid_postfix(text.data(), &actualNext, start + length, text[start], static_cast<std::int8_t>(strict));
+    auto expectedPrevious = start + length - 1;
+    auto actualPrevious = expectedPrevious;
+    const auto expectedBackward = utf8_prevCharSafeBody(text.data(), start, &expectedPrevious, text[expectedPrevious], static_cast<std::int8_t>(strict));
+    const auto actualBackward = utf8_prevCharSafeBody_nid_postfix(text.data(), start, &actualPrevious, text[actualPrevious], static_cast<std::int8_t>(strict));
+    checks.decoding += 2;
+    if (expectedForward != actualForward || expectedNext != actualNext || expectedBackward != actualBackward || expectedPrevious != actualPrevious) {
+        std::fprintf(stderr, "Native UTF-8 mismatch: %02x %02x %02x %02x length=%d strict=%d next=%x/%x next_index=%d/%d prev=%x/%x prev_index=%d/%d\n",
+                     static_cast<unsigned>(text[2]), static_cast<unsigned>(text[3]), static_cast<unsigned>(text[4]), static_cast<unsigned>(text[5]), length, strict,
+                     static_cast<unsigned>(expectedForward), static_cast<unsigned>(actualForward), expectedNext, actualNext,
+                     static_cast<unsigned>(expectedBackward), static_cast<unsigned>(actualBackward), expectedPrevious, actualPrevious);
+        Require(false);
+    }
+    if (strict == 0) {
+        const auto expectedBack = utf8_back1SafeBody(text.data(), start, start + length - 1);
+        const auto actualBack = utf8_back1SafeBody_nid_postfix(text.data(), start, start + length - 1);
+        ++checks.cursor;
+        if (expectedBack != actualBack) {
+            std::fprintf(stderr, "Native UTF-8 cursor mismatch: %02x %02x %02x %02x length=%d expected=%d actual=%d\n",
+                         static_cast<unsigned>(text[2]), static_cast<unsigned>(text[3]), static_cast<unsigned>(text[4]), static_cast<unsigned>(text[5]), length, expectedBack, actualBack);
+            Require(false);
+        }
+    }
+}
+
+void NativeMalformedSequences() {
+    NativeChecks checks;
+    std::array<std::uint8_t, 8> text{};
+    text[0] = text[1] = 0x80;
+    constexpr std::array<int, 6> modes{-128, -3, -2, -1, 0, 127};
+    for (int first = 0; first <= 255; ++first) {
+        text[2] = static_cast<std::uint8_t>(first);
+        for (int second = 0; second <= 255; ++second) {
+            text[3] = static_cast<std::uint8_t>(second);
+            for (const int strict : modes) CompareNative(text, 2, strict, checks);
+        }
+    }
+    for (int first = 0xe0; first <= 0xf4; ++first) {
+        text[2] = static_cast<std::uint8_t>(first);
+        for (int second = 0; second <= 255; ++second) {
+            text[3] = static_cast<std::uint8_t>(second);
+            for (int third = 0; third <= 255; ++third) {
+                text[4] = static_cast<std::uint8_t>(third);
+                for (const int strict : modes) CompareNative(text, 3, strict, checks);
+            }
+        }
+    }
+    constexpr std::array<std::uint8_t, 11> boundaries{0, 0x41, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xff};
+    for (int first = 0xf0; first <= 0xf4; ++first) {
+        text[2] = static_cast<std::uint8_t>(first);
+        for (const auto second : boundaries) {
+            text[3] = second;
+            for (const auto third : boundaries) {
+                text[4] = third;
+                for (const auto fourth : boundaries) {
+                    text[5] = fourth;
+                    for (const int strict : modes) CompareNative(text, 4, strict, checks);
+                }
+            }
+        }
+    }
+    constexpr std::array<std::array<std::uint8_t, 4>, 9> samples{{
+        {0x41, 0, 0, 0}, {0x80, 0x80, 0x80, 0x80}, {0xc2, 0xa2, 0, 0},
+        {0xe0, 0xa0, 0x80, 0}, {0xed, 0xa0, 0x80, 0}, {0xef, 0xb7, 0x90, 0},
+        {0xf0, 0x90, 0x80, 0x80}, {0xf4, 0x8f, 0xbf, 0xbf}, {0xff, 0xbf, 0xbf, 0xbf},
+    }};
+    for (int strict = -128; strict <= 127; ++strict) {
+        for (const auto& sample : samples) {
+            std::copy(sample.begin(), sample.end(), text.begin() + 2);
+            for (int length = 1; length <= 4; ++length) CompareNative(text, length, strict, checks);
+        }
+    }
+    std::printf("ICU UTF-8 native comparisons: %llu decoding, %llu cursor\n", static_cast<unsigned long long>(checks.decoding), static_cast<unsigned long long>(checks.cursor));
+}
+
 }
 
 int main() {
@@ -231,4 +317,5 @@ int main() {
     AppendFailures();
     TerminatedAndBounded();
     InvalidArguments();
+    NativeMalformedSequences();
 }

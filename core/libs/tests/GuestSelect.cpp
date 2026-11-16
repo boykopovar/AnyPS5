@@ -167,6 +167,51 @@ static void Kqueues() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void ReusedDescriptorNumberIsSelectedFresh() {
+    const int held = socket_nid_postfix(2, 2, 0);
+    Require(held >= 0);
+    const int closed = socket_nid_postfix(2, 2, 0);
+    Require(closed > held);
+    Require(close_nid_postfix(closed) == 0);
+    const int reused = socket_nid_postfix(2, 2, 0);
+    Require(reused == closed);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(reused, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(reused, address.data(), &size) == 0);
+    Require(connect_nid_postfix(reused, address.data(), address.size()) == 0);
+    Require(send_nid_postfix(reused, "r", 1, 0) == 1);
+    GuestDescriptorSet read{};
+    read.Add(reused);
+    const GuestTimeval none{0, 0};
+    Require(select_nid_postfix(reused + 1, read.words.data(), nullptr, nullptr, &none) == 1 && read.Has(reused));
+    char byte{};
+    Require(recv_nid_postfix(reused, &byte, sizeof(byte), 0) == 1 && byte == 'r');
+    Require(close_nid_postfix(reused) == 0 && close_nid_postfix(held) == 0);
+}
+
+static void BadPointersFault() {
+    constexpr int fault = 14;
+    auto* unmapped = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    const GuestTimeval zero{};
+    GuestDescriptorSet write{};
+    write.Add(1);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(2, nullptr, write.words.data(), nullptr, unmapped) == -1 && *__error_nid_postfix() == fault);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(-1, nullptr, nullptr, nullptr, unmapped) == -1 && *__error_nid_postfix() == fault);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(2, unmapped, nullptr, nullptr, &zero) == -1 && *__error_nid_postfix() == fault);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<std::uint64_t*>(page);
+    readOnly[0] = 0x2;
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(select_nid_postfix(2, nullptr, readOnly, nullptr, &zero) == -1 && *__error_nid_postfix() == fault);
+    Require(readOnly[0] == 0x2);
+}
+
 static void ClosesDuringAWait() {
     for (int attempt = 0; attempt < 200; ++attempt) {
         int pair[2]{-1, -1};
@@ -192,6 +237,7 @@ static void ClosesDuringAWait() {
 }
 
 int main() {
+    BadPointersFault();
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     Kqueues();
     SocketsShutForReading();
@@ -389,4 +435,5 @@ int main() {
         Require(*__error_nid_postfix() == GuestEbadf);
     }
     SocketClosedDuringAWait();
+    ReusedDescriptorNumberIsSelectedFresh();
 }
