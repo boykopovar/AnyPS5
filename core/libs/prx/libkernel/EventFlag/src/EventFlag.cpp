@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -114,9 +115,13 @@ std::shared_ptr<EventFlagHandle> ResolveEventFlag(KernelEventFlag handle) {
     return it == eventFlagRegistry.end() ? std::shared_ptr<EventFlagHandle>{} : it->second;
 }
 
-KernelEventFlag RegisterEventFlag(const std::shared_ptr<EventFlagHandle>& entry) {
+KernelEventFlag RegisterEventFlag(const std::shared_ptr<EventFlagHandle>& entry, KernelEventFlag* output) {
     const auto handle = reinterpret_cast<KernelEventFlag>(entry.get());
     eventFlagRegistry.emplace(handle, entry);
+    if (!GuestCopyOut_nid_no_patch(output, &handle, sizeof(handle))) {
+        eventFlagRegistry.erase(handle);
+        return nullptr;
+    }
     return handle;
 }
 
@@ -153,6 +158,13 @@ static int CopyEventFlagName(const char* name, std::string& copy) {
     return SCE_KERNEL_ERROR_EFAULT;
 }
 
+static bool StoreWaitCount(int* destination, int value) {
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return stored;
+}
+
 static void Consume(KernelEventFlagPrivate* flag, uint64_t bitPattern, uint32_t waitMode, uint64_t* resultPattern) {
     if (resultPattern) *resultPattern = flag->_pattern;
     if (waitMode & EVF_WAITMODE_CLEAR_ALL) flag->_pattern = 0;
@@ -186,11 +198,11 @@ int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, ui
                 if (!otherEntry->flag->_deleted && otherEntry->flag->_name == flag->_name) return SCE_KERNEL_ERROR_EPERM;
             }
         }
-        handle = RegisterEventFlag(entry);
+        handle = RegisterEventFlag(entry, ef);
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
-    *ef = handle;
+    if (!handle) return SCE_KERNEL_ERROR_EFAULT;
     if (TraceSync()) std::fprintf(stderr, "[evf] create %p '%s' attr=0x%x init=0x%llx\n", static_cast<void*>(handle), nameCopy.c_str(), attr, static_cast<unsigned long long>(init_pattern));
     return SCE_OK;
 }
@@ -211,7 +223,8 @@ int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name) {
         }
         if (!target) return SCE_KERNEL_ERROR_ESRCH;
         if (!ef) return SCE_KERNEL_ERROR_EFAULT;
-        *ef = RegisterEventFlag(std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true}));
+        if (!RegisterEventFlag(std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true}), ef))
+            return SCE_KERNEL_ERROR_EFAULT;
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
@@ -285,10 +298,10 @@ int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, uint64_t set_pattern,
     std::lock_guard lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (num_wait_threads) *num_wait_threads = 0;
+        if (num_wait_threads && !StoreWaitCount(num_wait_threads, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_OK;
     }
-    if (num_wait_threads) *num_wait_threads = flag->_waiters;
+    if (num_wait_threads && !StoreWaitCount(num_wait_threads, flag->_waiters)) return SCE_KERNEL_ERROR_EFAULT;
     flag->_pattern = set_pattern;
     for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
         if (waiter->outcome == WaiterNode::Outcome::Pending) {

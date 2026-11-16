@@ -778,6 +778,12 @@ void CheckUserIdQueries() {
     Require(sceNpCheckNpAvailabilityA(0, InitialUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject request id 0");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a request that was never created");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must check the user before the request");
+    NpOnlineId availabilityId{};
+    std::uint8_t available = 0xff;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, &available) == UserNotFound && available == 0, "sceNpCheckNpAvailability must report the online id as unavailable");
+    Require(sceNpCheckNpAvailability(1, &availabilityId, nullptr) == UserNotFound, "sceNpCheckNpAvailability must allow a null availability output");
+    errno = 71;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, reinterpret_cast<std::uint8_t*>(0x10)) == InvalidArgument && errno == 71, "sceNpCheckNpAvailability must refuse an unwritable availability output and keep errno");
     Require(sceNpGetAccountLanguageA(request, InitialUserId, nullptr) == InvalidArgument, "sceNpGetAccountLanguageA must reject a null output");
     Require(sceNpGetAccountLanguageA(request, InvalidUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject the invalid user id");
     Require(sceNpGetAccountLanguageA(0, InitialUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject request id 0");

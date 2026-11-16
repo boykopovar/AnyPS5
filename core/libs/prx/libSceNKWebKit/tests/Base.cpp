@@ -1473,6 +1473,99 @@ static void TestPopupMenuItem() {
     Require(threw);
 }
 
+static void TestMediaSessionMetadata() {
+    Require(WKMediaSessionMetadataGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::MediaSessionMetadata));
+    auto meta = NKWebKit::Make<NKWebKit::MediaSessionMetadata>();
+    const void* ref = meta.Get();
+    Require(WKGetTypeID(ref) == WKMediaSessionMetadataGetTypeID());
+
+    auto* unsetTitle = WKMediaSessionMetadataCopyTitle(ref);
+    Require(unsetTitle != nullptr);
+    Require(WKStringGetLength(unsetTitle) == 0);
+    WKRelease(unsetTitle);
+
+    auto* unsetAlbum = WKMediaSessionMetadataCopyAlbum(ref);
+    Require(unsetAlbum != nullptr);
+    Require(WKStringGetLength(unsetAlbum) == 0);
+    WKRelease(unsetAlbum);
+
+    auto* unsetArtist = WKMediaSessionMetadataCopyArtist(ref);
+    Require(unsetArtist != nullptr);
+    Require(WKStringGetLength(unsetArtist) == 0);
+    WKRelease(unsetArtist);
+
+    Require(WKMediaSessionMetadataCopyArtworkURL(ref) == nullptr);
+
+    meta->title = NKWebKit::String::FromUtf8("Test Song");
+    meta->album = NKWebKit::String::FromUtf8("Test Album");
+    meta->artist = NKWebKit::String::FromUtf8("Test Artist");
+    meta->artworkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/artwork.jpg");
+
+    auto* title = WKMediaSessionMetadataCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Test Song"));
+    WKRelease(title);
+
+    auto* album = WKMediaSessionMetadataCopyAlbum(ref);
+    Require(album != nullptr);
+    Require(WKStringIsEqualToUTF8CString(album, "Test Album"));
+    WKRelease(album);
+
+    auto* artist = WKMediaSessionMetadataCopyArtist(ref);
+    Require(artist != nullptr);
+    Require(WKStringIsEqualToUTF8CString(artist, "Test Artist"));
+    WKRelease(artist);
+
+    auto* artworkURL = WKMediaSessionMetadataCopyArtworkURL(ref);
+    Require(artworkURL != nullptr);
+    Require(WKGetTypeID(artworkURL) == WKURLGetTypeID());
+    auto* urlStr = WKURLCopyString(artworkURL);
+    Require(WKStringIsEqualToUTF8CString(urlStr, "https://example.com/artwork.jpg"));
+    WKRelease(urlStr);
+    WKRelease(artworkURL);
+
+    bool threw = false;
+    try {
+        WKMediaSessionMetadataCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyAlbum(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyArtist(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyArtworkURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyTitle(wrongObj.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestOpenPanelResultListener() {
     Require(WKOpenPanelResultListenerGetTypeID() == 80);
 
@@ -2790,6 +2883,7 @@ int main() {
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
+    TestMediaSessionMetadata();
     TestOpenPanelResultListener();
     TestProtectionSpace();
     TestPermissionRequests();

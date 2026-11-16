@@ -13,8 +13,9 @@ import unwrap_self
 DESCRIPTION = """Audit the imports of an extracted title before it is launched. Unwraps the dump's eboot.bin and the modules
 it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and module files beside
 eboot.bin) into a work directory, converts them with relinker --registry, and runs tools/import_audit.py on the
-registries with the unwrapped modules as --modules. The dump is only read; the source/ and output/ directories of a
-reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
+registries with the unwrapped modules as --modules. A file found by its header rather than a module suffix that is
+not a shared module after unwrapping, such as a dumper's eboot.bin.esbak backup, is skipped with a message. The dump
+is only read; the source/ and output/ directories of a reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
 when unwrapping or conversion fails."""
 
 STANDARD_DIRECTORIES = ("sce_module", "sce_modules", "prx")
@@ -23,6 +24,7 @@ MODULE_SUFFIXES = import_audit.MODULE_FILE_SUFFIXES
 ELF_MAGIC = b"\x7fELF"
 MODULE_MAGICS = (ELF_MAGIC, unwrap_self.SELF_MAGIC.to_bytes(4, "little"),
                  unwrap_self.SELF_MAGIC_KERNEL.to_bytes(4, "little"))
+SHARED_MODULE_TYPES = (3, 0xFE18)
 
 
 def stage(source, destination):
@@ -36,6 +38,28 @@ def stage(source, destination):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
         return "copied"
+
+
+def elf_type(path):
+    with open(path, "rb") as file:
+        header = file.read(18)
+    return int.from_bytes(header[16:18], "little") if len(header) == 18 else None
+
+
+def stage_modules(modules, source, log):
+    staged = []
+    for module in modules:
+        destination = source / module.name
+        stage(module, destination)
+        if module.suffix.lower() not in MODULE_SUFFIXES:
+            kind = elf_type(destination)
+            if kind not in SHARED_MODULE_TYPES:
+                destination.unlink()
+                described = "unknown" if kind is None else f"0x{kind:x}"
+                log(f"skipped {module.name}: not a shared module (ELF type {described})")
+                continue
+        staged.append(module)
+    return staged
 
 
 def modules_of(directory):
@@ -64,19 +88,15 @@ def prepare(dump, source, log=print):
         directory = dump / relative
         if not directory.is_dir():
             continue
-        modules = modules_of(directory)
+        modules = stage_modules(modules_of(directory), source / relative, log)
         if not modules:
             continue
-        for module in modules:
-            stage(module, source / relative / module.name)
         count += len(modules)
         module_directories.append(source / relative)
         if relative in EXTRA_DIRECTORIES:
             extra.append(relative)
-    beside = [module for module in modules_of(dump) if not module.samefile(dump / "eboot.bin")]
+    beside = stage_modules([module for module in modules_of(dump) if not module.samefile(dump / "eboot.bin")], source, log)
     if beside:
-        for module in beside:
-            stage(module, source / module.name)
         count += len(beside)
         module_directories.append(source)
         extra.append(".")
