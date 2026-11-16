@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/include/General.hpp"
 
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
@@ -1150,6 +1151,11 @@ static_assert(sizeof(IntrusivePtr) == 0x18);
 
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
+}
+
+static void* GuestIntrusiveObject(const IntrusivePtr* self) {
+    IntrusivePtr value{};
+    return GuestPtr<const IntrusivePtr>(self).CopyIn(value) ? value.object : nullptr;
 }
 
 static void CopyIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* source, const std::size_t referenceCountOffset) {
@@ -3350,13 +3356,17 @@ void APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V121GetRankingRequestBody17set
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122RecordScoreRequestBody15setWaitsForDataERKb(void* self, const bool* value) {
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 0x79) = *value ? 1 : 0;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 0x7a) = 1;
+    bool flag = false;
+    if (!GuestPtr<const bool>(value).CopyIn(flag)) return;
+    GuestPtr<std::uint8_t>(static_cast<std::uint8_t*>(self) + 0x79).CopyOut(static_cast<std::uint8_t>(flag ? 1 : 0));
+    GuestPtr<std::uint8_t>(static_cast<std::uint8_t*>(self) + 0x7a).CopyOut(static_cast<std::uint8_t>(1));
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V122RecordScoreRequestBody17setNpServiceLabelERKj(void* self, const std::uint32_t* label) {
-    *reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(self) + 0x44) = *label;
-    *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 0x48) = 1;
+    std::uint32_t labelValue = 0;
+    if (!GuestPtr<const std::uint32_t>(label).CopyIn(labelValue)) return;
+    GuestPtr<std::uint32_t>(static_cast<std::uint8_t*>(self) + 0x44).CopyOut(labelValue);
+    GuestPtr<std::uint8_t>(static_cast<std::uint8_t*>(self) + 0x48).CopyOut(static_cast<std::uint8_t>(1));
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinition9setfieldsEPKc(void* self, const char* fields) {
@@ -3464,7 +3474,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V149PostPlayerSessionsSessionIdInvitationsRequestBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv() {
@@ -3488,11 +3499,12 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V12ToEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V160PostPlayerSessionsSessionIdJoinableSpecifiedUsersRequestBodyEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source) {
@@ -3500,7 +3512,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V120PlayerSessionForReadEEEEEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V161PostPlayerSessionsSessionIdJoinableSpecifiedUsersResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(void* self) {
@@ -3571,7 +3583,9 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBase14getHeaderValueEPKcRNS2_12IntrusivePtrINS2_6StringEEE(const CommonResponseHeaderBase* self, const char* name, IntrusivePtr* value) {
     (void)name;
     (void)value;
-    if (self->headers == nullptr) return ParameterBodyMissing;
+    CommonResponseHeaderBase header{};
+    if (!GuestPtr<const CommonResponseHeaderBase>(self).CopyIn(header)) return ParameterBodyMissing;
+    if (header.headers == nullptr) return ParameterBodyMissing;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -3625,42 +3639,42 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi30CommunicationRestrictionStatus2V338Communi
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V118GetFriendsResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetBlockingUsersResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderBaseEE3getEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderBaseEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 static_assert(sizeof(CommonResponseHeaderBase) == 0x10 && offsetof(CommonResponseHeaderBase, headers) == 0x08);
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseC1Ev(CommonResponseHeaderBase* self) {
-    self->referenceCount = 0;
-    self->headers = nullptr;
+    const CommonResponseHeaderBase initial{0, nullptr};
+    GuestPtr<CommonResponseHeaderBase>(self).CopyOut(initial);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseC2Ev(CommonResponseHeaderBase* self) {
@@ -3676,27 +3690,27 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseD2Ev(CommonRespons
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEE3getEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V113BasicPresenceEEEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V113BasicPresenceEEEEEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V118GetFriendsResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_() {
@@ -3729,7 +3743,8 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14Sess
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V150PostPlayerSessionsSessionIdInvitationsResponseBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    const IntrusivePtr empty{};
+    GuestPtr<IntrusivePtr>(self).CopyOut(empty);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V143PutPlayerSessionsSessionIdLeaderRequestBodyEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source) {
@@ -3741,7 +3756,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V150PostPlayerSessionsSessionIdInvitationsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(void* self) {
@@ -3766,7 +3781,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V113PlayerSessionEEEEEE3getEv(const IntrusivePtr* self) {
-    return self->object;
+    return GuestIntrusiveObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V149PostPlayerSessionsSessionIdInvitationsRequestBodyEEptEv(const IntrusivePtr* self) {
