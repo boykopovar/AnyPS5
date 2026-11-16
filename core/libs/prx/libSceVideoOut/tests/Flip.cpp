@@ -273,6 +273,20 @@ void testPs4Buffers() {
         check(sceVideoOutSubmitChangeBufferAttribute(invalid, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "the legacy change checked its handle before a null attribute");
         unchanged();
     }
+    for (int index : {-1, 4, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
+        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, index, &linearChange, nullptr); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
+    }
+    rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 3, &linearChange, nullptr); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
+    rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, nullptr, nullptr); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
+    int dummyOption = 42;
+    rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &linearChange, &dummyOption); }, "VIDEO_OUT_ERROR_INVALID_OPTION");
+    for (int index : {-1, 4, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
+        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, index, &linearChange, &dummyOption); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
+    }
+    for (int invalid : {-1, 0, VIDEO_OUT_NUM_MAX}) {
+        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(invalid, -1, &linearChange, nullptr); }, "VIDEO_OUT_ERROR_INVALID_HANDLE");
+        rejected([&] { sceVideoOutSubmitChangeBufferAttribute2(invalid, 0, nullptr, nullptr); }, "VIDEO_OUT_ERROR_INVALID_HANDLE");
+    }
     for (int field = 0; field < 3; ++field) {
         auto invalid = changed;
         if (field == 0) invalid.reserved0 = 1;
