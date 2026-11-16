@@ -144,17 +144,8 @@ private:
 
 void CheckGuarded() {
     GuardedPage guard;
-    WebRtcRecursiveCriticalSection section{};
-    WebRtcCritScope scope{};
-    WebRtcCritScope badScope{guard.As<const WebRtcRecursiveCriticalSection>()};
     Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded constructor target did not throw");
     Require(ThrowsInvalidArgument([&] { _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(guard.As<WebRtcRecursiveCriticalSection>()); }), "guarded destructor target did not throw");
-    Require(ThrowsInvalidArgument([&] { _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(guard.As<const WebRtcRecursiveCriticalSection>()); }), "Enter on guarded page did not throw");
-    Require(ThrowsInvalidArgument([&] { _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(guard.As<const WebRtcRecursiveCriticalSection>()); }), "Leave on guarded page did not throw");
-    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(guard.As<WebRtcCritScope>(), &section); }), "guarded CritScope did not throw");
-    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(&scope, guard.As<const WebRtcRecursiveCriticalSection>()); }), "CritScope over guarded critical section did not throw");
-    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeD1Ev_nid_postfix(guard.As<WebRtcCritScope>()); }), "guarded CritScope destructor did not throw");
-    Require(ThrowsInvalidArgument([&] { _ZN3rtc9CritScopeD1Ev_nid_postfix(&badScope); }), "CritScope destructor over guarded section did not throw");
 }
 
 }

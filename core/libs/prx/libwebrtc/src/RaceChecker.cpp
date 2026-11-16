@@ -41,34 +41,15 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
-#include "prx/libc/include/GuestPtr.hpp"
 
-#include <cerrno>
-#include <cstddef>
-#include <cstdint>
 #include <stdexcept>
-
-namespace {
-
-struct ErrnoGuard {
-    int savedErrno = errno;
-    ~ErrnoGuard() { errno = savedErrno; }
-};
-
-}
 
 extern "C" {
 
 void APS5_VABI _ZN3rtc11RaceCheckerC1Ev_nid_postfix(WebRtcRaceChecker* checker) {
     if (!checker)
         throw std::invalid_argument("RaceChecker constructor requires a checker");
-    ErrnoGuard guard;
-    if (!GuestWritable_nid_no_patch(checker, sizeof(*checker)))
-        throw std::invalid_argument("RaceChecker constructor requires a checker");
-    const std::int32_t zero = 0;
-    auto* accessCount = reinterpret_cast<std::int32_t*>(reinterpret_cast<std::uintptr_t>(checker) + offsetof(WebRtcRaceChecker, accessCount));
-    if (!GuestPtr<std::int32_t>(accessCount).CopyOut(zero))
-        throw std::invalid_argument("RaceChecker constructor requires a checker");
+    checker->accessCount = 0;
 }
 
 }

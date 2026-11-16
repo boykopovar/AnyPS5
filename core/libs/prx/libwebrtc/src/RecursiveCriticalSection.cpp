@@ -79,13 +79,15 @@ void Check(int result, const char* call) {
 }
 
 void Enter(const WebRtcRecursiveCriticalSection* section, const char* caller) {
-    RequireWritable(section, caller);
-    Check(pthread_mutex_lock_nid_postfix(MutexField(section)), "pthread_mutex_lock");
+    if (!section)
+        throw std::invalid_argument(std::string(caller) + " requires a critical section");
+    Check(pthread_mutex_lock_nid_postfix(const_cast<PthreadMutex*>(&section->mutex)), "pthread_mutex_lock");
 }
 
 void Leave(const WebRtcRecursiveCriticalSection* section, const char* caller) {
-    RequireWritable(section, caller);
-    Check(pthread_mutex_unlock_nid_postfix(MutexField(section)), "pthread_mutex_unlock");
+    if (!section)
+        throw std::invalid_argument(std::string(caller) + " requires a critical section");
+    Check(pthread_mutex_unlock_nid_postfix(const_cast<PthreadMutex*>(&section->mutex)), "pthread_mutex_unlock");
 }
 
 }
@@ -120,25 +122,14 @@ void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(const WebR
 void APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(WebRtcCritScope* scope, const WebRtcRecursiveCriticalSection* section) {
     if (!scope)
         throw std::invalid_argument("CritScope::CritScope requires a scope");
-    RequireWritable(section, "CritScope::CritScope");
-    {
-        ErrnoGuard guard;
-        if (!GuestPtr<WebRtcCritScope>(scope).CopyOut(WebRtcCritScope{section}))
-            throw std::invalid_argument("CritScope::CritScope requires a scope");
-    }
-    Check(pthread_mutex_lock_nid_postfix(MutexField(section)), "pthread_mutex_lock");
+    Enter(section, "CritScope::CritScope");
+    scope->section = section;
 }
 
 void APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(WebRtcCritScope* scope) {
     if (!scope)
         throw std::invalid_argument("CritScope::~CritScope requires a scope");
-    WebRtcCritScope hostScope{};
-    {
-        ErrnoGuard guard;
-        if (!GuestPtr<const WebRtcCritScope>(scope).CopyIn(hostScope))
-            throw std::invalid_argument("CritScope::~CritScope requires a scope");
-    }
-    Leave(hostScope.section, "CritScope::~CritScope");
+    Leave(scope->section, "CritScope::~CritScope");
 }
 
 }
