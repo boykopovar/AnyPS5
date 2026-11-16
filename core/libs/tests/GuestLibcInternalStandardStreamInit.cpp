@@ -41,8 +41,8 @@ void CheckRelease(Member construct, Member destroy, const std::filesystem::path&
 }
 
 int main() {
-    const auto path = std::filesystem::temp_directory_path() / ("anyps5-stream-init-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
-    const std::string name = path.string();
+    const std::string name = "guest_libc_internal_standard_stream_init_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt";
+    const std::filesystem::path path(name);
     Require(freopen_nid_postfix(name.c_str(), "w", &_Stdout_nid_postfix) == &_Stdout_nid_postfix, "the guest standard output opens the file");
     Require(setvbuf_nid_postfix(&_Stdout_nid_postfix, nullptr, 0, 4096) == 0, "the guest standard output is fully buffered");
     CheckRelease(libSceLibcInternalInventory_144_nid_no_patch, libSceLibcInternalInventory_145_nid_no_patch, path, "narrow", "");
