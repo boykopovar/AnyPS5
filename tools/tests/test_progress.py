@@ -1074,6 +1074,11 @@ class SvgHelperTests(unittest.TestCase):
         self.assertIn("&lt;b&gt;&amp;", markup)
         self.assertNotIn("<b>", markup)
 
+    def test_plain_text_sets_the_anchor_and_escapes_its_content(self):
+        markup = progress.plain_text(0, 0, "a<", size=12, anchor="end")
+        self.assertIn('text-anchor="end"', markup)
+        self.assertIn("a&lt;", markup)
+
 
 if __name__ == "__main__":
     unittest.main()
