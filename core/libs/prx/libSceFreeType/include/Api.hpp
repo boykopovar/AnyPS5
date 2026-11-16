@@ -129,6 +129,7 @@ std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestF
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning);
 int APS5_VABI FT_Outline_Get_Bitmap_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, const FreeType::GuestBitmap* bitmap);
+int APS5_VABI FreeTypeOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, const FreeType::GuestBitmap* bitmap);
 void* APS5_VABI FT_Get_Sfnt_Table_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t tag);
 void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
 void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
