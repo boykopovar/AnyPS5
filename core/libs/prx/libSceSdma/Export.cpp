@@ -54,6 +54,12 @@ SdmaSlot* SlotOf(void* handle) {
     return nullptr;
 }
 
+bool IsOpen(void* handle) {
+    std::lock_guard lock(g_mutex);
+    const SdmaSlot* slot = SlotOf(handle);
+    return slot && slot->open;
+}
+
 void Emit(SdmaSlot& slot, std::uint32_t dwords, std::function<void()> operation) {
     slot.writeIndex = static_cast<std::uint32_t>((static_cast<std::uint64_t>(slot.writeIndex) + dwords) % slot.ringDwords);
     slot.pendingDwords += dwords;
@@ -131,6 +137,7 @@ int CopyLinear(void* handle, std::uint64_t source, std::uint64_t destination, st
 }
 
 int ConstantFill(void* handle, std::uint32_t value, std::uint64_t destination, std::uint32_t bytes, std::uint32_t mode, bool blocking) {
+    if (!IsOpen(handle)) return SdmaErrorInvalidArgument;
     const auto low = static_cast<std::uint8_t>(value);
     const bool uniform = value == low * 0x01010101u;
     if (!uniform && mode == 0) NotImplemented_nid_no_patch("sceSdmaConstantFill: the pattern of the default fill size");
@@ -160,6 +167,7 @@ std::uint32_t ElementBytes(std::uint32_t bitsPerElement) {
 int CopyWindow(void* handle, std::uint64_t source, std::uint64_t destination, std::uint32_t bitsPerElement, std::uint32_t width, std::uint32_t height,
                std::uint32_t sourcePitch, std::uint32_t sourceX, std::uint32_t sourceY, std::uint32_t destinationPitch, std::uint32_t destinationX,
                std::uint32_t destinationY, bool blocking) {
+    if (!IsOpen(handle)) return SdmaErrorInvalidArgument;
     const bool inRange = width - 1 < 0x4000 && height - 1 < 0x4000 && sourceX < 0x4000 && sourceY < 0x4000 && destinationX < 0x4000 &&
                          destinationY < 0x4000 && sourcePitch - 1 < 0x80000 && destinationPitch - 1 < 0x80000;
     if (!inRange) NotImplemented_nid_no_patch("sceSdmaCopyWindowL2L: a window outside the packet field ranges");
