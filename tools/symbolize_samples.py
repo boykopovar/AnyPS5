@@ -168,6 +168,10 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
+        if size < 40:
+            raise ValueError("PE export directory is smaller than its header")
+        if rva + size > 0x100000000:
+            raise ValueError("PE export directory exceeds address space")
         directory = self.read_bytes(data, rva, 40)
         functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", directory, 20)
         if not names:
