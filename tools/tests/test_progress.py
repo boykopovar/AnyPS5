@@ -1063,5 +1063,13 @@ class ProgressConstantReturnTests(unittest.TestCase):
         self.assertEqual(group["inert_names"], ["Discarded"])
 
 
+class TileAndPercentTests(unittest.TestCase):
+    def test_tile_label_shows_a_label_that_fits_and_hides_short_tiles(self):
+        group = {'label': 'Abcdef'}
+        self.assertEqual(progress.tile_label(group, 100, 40), 'Abcdef')
+        self.assertEqual(progress.tile_label(group, 100, 20), '')
+        self.assertEqual(progress.tile_label({'label': 'Abcdefghijklmnop'}, 30, 40), '')
+
+
 if __name__ == "__main__":
     unittest.main()
