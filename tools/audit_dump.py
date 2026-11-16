@@ -84,6 +84,21 @@ def prepare(dump, source, log=print):
     return module_directories, extra
 
 
+def audit_directories(directories, source):
+    audited = []
+    for directory in directories:
+        if directory == source:
+            directory = Path(tempfile.mkdtemp(prefix="modules-", dir=source))
+            for module in sorted(source.iterdir()):
+                if module.is_file() and module.name != "eboot.elf":
+                    try:
+                        os.link(module, directory / module.name)
+                    except OSError:
+                        shutil.copyfile(module, directory / module.name)
+        audited.append(directory)
+    return audited
+
+
 def convert(relinker, source, output, extra, windows):
     command = [str(relinker), "--registry"]
     if windows:
@@ -222,7 +237,12 @@ def main(argv=None):
             return 2
         registries = sorted(str(path) for path in output.rglob("*.registry.json"))
         audit = registries + [option for library in args.libs for option in ("--libs", library)]
-        audit += [option for directory in module_directories for option in ("--modules", str(directory))]
+        try:
+            audited = audit_directories(module_directories, source)
+        except OSError as error:
+            print(f"FAIL: cannot gather the modules beside eboot.bin: {error}", file=sys.stderr)
+            return 2
+        audit += [option for directory in audited for option in ("--modules", str(directory))]
         if args.json:
             audit += ["--json", args.json]
         return import_audit.main(audit)
