@@ -324,6 +324,10 @@ class FindLoopTests(unittest.TestCase):
         self.assertIsNone(agc_test_split.find_loop(lines, lambda index, text: False, "marker"))
         with self.assertRaises(agc_test_split.SplitError):
             agc_test_split.find_loop(lines, lambda index, text: True, "marker")
+class TokenHelperTests(unittest.TestCase):
+    def test_until_returns_the_arguments_before_the_first_keyword(self):
+        self.assertEqual(agc_test_split.until(["a", "--", "b"], {"--"}), ["a"])
+        self.assertEqual(agc_test_split.until(["a", "b"], {"--"}), ["a", "b"])
 
 
 if __name__ == "__main__":
